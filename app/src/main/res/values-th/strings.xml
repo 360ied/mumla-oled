@@ -175,7 +175,7 @@
     <string name="chat_message_tts_short_link">(ลิงค์ถึง %1$s)</string>
     <string name="chat_message_to">%1$s → %2$s</string>
     <string name="drawer_public">เซิฟเวอร์สาธารณะ</string>
-    <string name="drawer_favorites">เซิฟเวอร์ที่ชอบ</string>
+    <string name="drawer_favorites">รายการโปรด</string>
     <string name="drawer_header_servers">เซิฟเวอร์</string>
     <string name="drawer_pinned">แชนเนลที่ปักไว้</string>
     <string name="drawer_tokens">เข้าถึงโทเคน</string>
