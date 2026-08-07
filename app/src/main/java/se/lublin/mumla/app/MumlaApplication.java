@@ -44,7 +44,7 @@ public class MumlaApplication extends Application implements SharedPreferences.O
     public static void applyTheme(Context context) {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
         applyTheme(preferences);
-        String theme = preferences.getString(PREF_THEME, "system");
+        String theme = preferences.getString(PREF_THEME, "forceBlack");
         if ("forceBlack".equals(theme)) {
             context.setTheme(R.style.Theme_Mumla_Oled);
         }
@@ -54,7 +54,7 @@ public class MumlaApplication extends Application implements SharedPreferences.O
         // The "system" and "force*" values are new (see preference_notranslate.xml).
         // We let other (older) value result in system default theme, and write that
         // to the preference store.
-        switch (preferences.getString(PREF_THEME, "system")) {
+        switch (preferences.getString(PREF_THEME, "forceBlack")) {
             case "forceLight":
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
                 break;
@@ -66,8 +66,8 @@ public class MumlaApplication extends Application implements SharedPreferences.O
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
                 break;
             default:
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
-                preferences.edit().putString(PREF_THEME, "system").apply();
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                preferences.edit().putString(PREF_THEME, "forceBlack").apply();
                 break;
         }
     }

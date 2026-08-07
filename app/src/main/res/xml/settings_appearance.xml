@@ -21,7 +21,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <ListPreference
         android:key="theme"
-        android:defaultValue="system"
+        android:defaultValue="forceBlack"
         android:entries="@array/themeNames"
         android:entryValues="@array/themeValues"
         app:useSimpleSummaryProvider="true"
