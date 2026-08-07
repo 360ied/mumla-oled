@@ -31,4 +31,38 @@
     <style name="Theme.Mumla.Dark.CardView" parent="CardView">
         <item name="cardBackgroundColor">#202020</item>
     </style>
+
+    <style name="Theme.Mumla.Oled" parent="Theme.Mumla">
+        <item name="android:windowBackground">@color/black</item>
+        <item name="android:colorBackground">@color/black</item>
+        <item name="colorSurface">@color/black</item>
+        <item name="colorSurfaceDim">@color/black</item>
+        <item name="colorSurfaceContainer">@color/black</item>
+        <item name="colorSurfaceContainerLow">@color/black</item>
+        <item name="colorSurfaceContainerLowest">@color/black</item>
+        <item name="colorSurfaceContainerHigh">#000000</item>
+        <item name="colorSurfaceContainerHighest">#000000</item>
+        <item name="colorPrimary">@color/black</item>
+        <item name="colorPrimaryDark">@color/black</item>
+        <item name="pttPressed">#222222</item>
+        <item name="cardStyle">@style/Theme.Mumla.Oled.CardView</item>
+        <item name="materialAlertDialogTheme">@style/TweakedMaterialAlertDialog.Oled</item>
+        <item name="alertDialogTheme">@style/TweakedAlertDialog.Oled</item>
+    </style>
+
+    <style name="Theme.Mumla.Oled.CardView" parent="CardView">
+        <item name="cardBackgroundColor">#000000</item>
+    </style>
+
+    <style name="TweakedMaterialAlertDialog.Oled" parent="TweakedMaterialAlertDialog">
+        <item name="android:background">@color/black</item>
+        <item name="colorSurface">@color/black</item>
+        <item name="android:windowBackground">@color/black</item>
+    </style>
+
+    <style name="TweakedAlertDialog.Oled" parent="TweakedAlertDialog">
+        <item name="android:background">@color/black</item>
+        <item name="colorSurface">@color/black</item>
+        <item name="android:windowBackground">@color/black</item>
+    </style>
 </resources>

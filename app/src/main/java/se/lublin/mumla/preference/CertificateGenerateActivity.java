@@ -26,11 +26,12 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
 import se.lublin.mumla.db.DatabaseCertificate;
+import se.lublin.mumla.app.BaseActivity;
 
 /**
  * Created by andrew on 12/01/16.
  */
-public class CertificateGenerateActivity extends AppCompatActivity {
+public class CertificateGenerateActivity extends BaseActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {

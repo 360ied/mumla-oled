@@ -26,6 +26,7 @@
     <string name="theme_system">System default</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="theme_black">OLED Black</string>
 
     <!-- Language -->
     <string name="language_system">System default</string>

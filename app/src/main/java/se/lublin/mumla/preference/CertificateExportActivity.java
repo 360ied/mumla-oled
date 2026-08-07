@@ -51,11 +51,12 @@ import se.lublin.mumla.R;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.app.BaseActivity;
 
 /**
  * Created by andrew on 12/01/16.
  */
-public class CertificateExportActivity extends AppCompatActivity implements DialogInterface.OnClickListener {
+public class CertificateExportActivity extends BaseActivity implements DialogInterface.OnClickListener {
     private static final String TAG = CertificateExportActivity.class.getName();
 
     /**

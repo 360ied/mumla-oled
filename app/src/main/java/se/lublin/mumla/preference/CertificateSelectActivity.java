@@ -38,11 +38,12 @@ import se.lublin.mumla.Settings;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.app.BaseActivity;
 
 /**
  * Created by andrew on 11/01/16.
  */
-public class CertificateSelectActivity extends AppCompatActivity implements DialogInterface.OnClickListener, DialogInterface.OnDismissListener {
+public class CertificateSelectActivity extends BaseActivity implements DialogInterface.OnClickListener, DialogInterface.OnDismissListener {
     private List<ICertificateItem> mCertificates;
 
     @Override

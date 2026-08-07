@@ -34,6 +34,8 @@ import android.widget.Toast;
 
 import androidx.preference.PreferenceManager;
 
+import se.lublin.mumla.app.MumlaApplication;
+
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -302,7 +304,7 @@ public class MumlaService extends HumlaService implements
 
         // Manually set theme to style overlay views
         // XML <application> theme does NOT do this!
-        setTheme(R.style.Theme_Mumla);
+        MumlaApplication.applyTheme(this);
 
         mMessageLog = new ArrayList<>();
         mMessageNotification = new MumlaMessageNotification(MumlaService.this);
@@ -445,6 +447,9 @@ public class MumlaService extends HumlaService implements
                 break;
             case Settings.PREF_SHORT_TTS_MESSAGES:
                 mShortTtsMessagesEnabled = mSettings.isShortTextToSpeechMessagesEnabled();
+                break;
+            case Settings.PREF_THEME:
+                MumlaApplication.applyTheme(this);
                 break;
             case Settings.PREF_AMPLITUDE_BOOST:
                 changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
