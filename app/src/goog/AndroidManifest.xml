@@ -23,7 +23,7 @@
     <application>
         <provider
             android:name="se.lublin.mumla.channel.ChannelSearchProvider"
-            android:authorities="se.lublin.mumla.channel.ChannelSearchProvider"
+            android:authorities="${applicationId}.channel.ChannelSearchProvider"
             android:exported="false" />
     </application>
 
