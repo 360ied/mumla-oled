@@ -7,11 +7,14 @@ import static se.lublin.mumla.Settings.PREF_LANGUAGE;
 import static se.lublin.mumla.Settings.PREF_THEME;
 
 import android.app.Application;
+import android.content.Context;
 import android.content.SharedPreferences;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.preference.PreferenceManager;
+
+import se.lublin.mumla.R;
 
 public class MumlaApplication extends Application implements SharedPreferences.OnSharedPreferenceChangeListener {
     @Override
@@ -38,6 +41,15 @@ public class MumlaApplication extends Application implements SharedPreferences.O
         }
     }
 
+    public static void applyTheme(Context context) {
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
+        applyTheme(preferences);
+        String theme = preferences.getString(PREF_THEME, "system");
+        if ("forceBlack".equals(theme)) {
+            context.setTheme(R.style.Theme_Mumla_Oled);
+        }
+    }
+
     private static void applyTheme(SharedPreferences preferences) {
         // The "system" and "force*" values are new (see preference_notranslate.xml).
         // We let other (older) value result in system default theme, and write that
@@ -47,6 +59,7 @@ public class MumlaApplication extends Application implements SharedPreferences.O
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
                 break;
             case "forceDark":
+            case "forceBlack":
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
                 break;
             case "system":

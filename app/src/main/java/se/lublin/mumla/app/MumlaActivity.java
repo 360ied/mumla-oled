@@ -109,10 +109,9 @@ import se.lublin.mumla.util.HumlaServiceFragment;
 import se.lublin.mumla.util.HumlaServiceProvider;
 import se.lublin.mumla.util.MumlaTrustStore;
 
-public class MumlaActivity extends AppCompatActivity implements ListView.OnItemClickListener,
+public class MumlaActivity extends BaseActivity implements ListView.OnItemClickListener,
         FavouriteServerListFragment.ServerConnectHandler, HumlaServiceProvider, DatabaseProvider,
-        SharedPreferences.OnSharedPreferenceChangeListener, DrawerAdapter.DrawerDataProvider,
-        ServerEditFragment.ServerEditListener {
+        DrawerAdapter.DrawerDataProvider, ServerEditFragment.ServerEditListener {
     private static final String TAG = MumlaActivity.class.getName();
 
     /**
@@ -842,6 +841,7 @@ public class MumlaActivity extends AppCompatActivity implements ListView.OnItemC
 
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, @Nullable String key) {
+        super.onSharedPreferenceChanged(sharedPreferences, key);
         if (key == null) {
             return;
         }

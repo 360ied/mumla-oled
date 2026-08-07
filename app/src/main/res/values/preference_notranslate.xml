@@ -49,12 +49,14 @@
         <item>@string/theme_system</item>
         <item>@string/theme_light</item>
         <item>@string/theme_dark</item>
+        <item>@string/theme_black</item>
     </string-array>
 
     <string-array name="themeValues">
         <item>system</item>
         <item>forceLight</item>
         <item>forceDark</item>
+        <item>forceBlack</item>
     </string-array>
 
     <string-array name="hotCornerNames">

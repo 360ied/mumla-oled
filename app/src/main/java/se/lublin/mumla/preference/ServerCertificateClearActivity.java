@@ -20,15 +20,14 @@ package se.lublin.mumla.preference;
 import android.os.Bundle;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AppCompatActivity;
-
 import se.lublin.mumla.R;
+import se.lublin.mumla.app.BaseActivity;
 import se.lublin.mumla.util.MumlaTrustStore;
 
 /**
  * Created by andrew on 13/01/16.
  */
-public class ServerCertificateClearActivity extends AppCompatActivity {
+public class ServerCertificateClearActivity extends BaseActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);

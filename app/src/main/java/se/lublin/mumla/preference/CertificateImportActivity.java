@@ -45,11 +45,12 @@ import java.util.UUID;
 import se.lublin.mumla.R;
 import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.app.BaseActivity;
 
 /**
  * Created by andrew on 11/01/16.
  */
-public class CertificateImportActivity extends AppCompatActivity {
+public class CertificateImportActivity extends BaseActivity {
     public static final int REQUEST_FILE = 0;
 
     @Override
