@@ -137,6 +137,7 @@ android {
     // betas may be released every minute
     // TODO? dynamic stuff, have to rebuild a lot
     applicationVariants.all { variant ->
+        variant.resValue "string", "search_suggest_authority", "${variant.applicationId}.channel.ChannelSearchProvider"
         if (variant.flavorName == "beta") {
             variant.outputs.each { output ->
                 output.versionCodeOverride = System.currentTimeSeconds() / 60
