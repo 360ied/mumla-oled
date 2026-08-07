@@ -106,13 +106,12 @@ android {
     buildTypes {
         // signingConfig beta will override
         release {
-            if (android.hasProperty("signingConfigs")) {
-                if (signingConfigs.hasProperty("release")) {
-                    signingConfig = signingConfigs.release
-                }
-                if (signingConfigs.hasProperty("beta")) {
-                    signingConfig = signingConfigs.beta
-                }
+            if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("release")) {
+                signingConfig = signingConfigs.release
+            } else if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("beta")) {
+                signingConfig = signingConfigs.beta
+            } else {
+                signingConfig = signingConfigs.debug
             }
         }
         debug {
