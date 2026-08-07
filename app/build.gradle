@@ -117,6 +117,8 @@ android {
         }
         debug {
             versionNameSuffix "-debug"
+            applicationIdSuffix ".oled"
+            resValue "string", "app_name", "Mumla OLED"
             if (android.hasProperty("signingConfigs")) {
                 if (signingConfigs.hasProperty("beta")) {
                     signingConfig = signingConfigs.beta
