@@ -132,15 +132,7 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         @Override
         public void onUserStateUpdated(IUser user) {
             mChannelListAdapter.updateUserStates(user, mChannelView);
-            if (getService() != null && getService().isConnected()) {
-                try {
-                    if (user.getSession() == getService().HumlaSession().getSessionId()) {
-                        mChannelListAdapter.notifyDataSetChanged();
-                    }
-                } catch (IllegalStateException e) {
-                    Log.d(TAG, "exception in onUserStateUpdated: " + e);
-                }
-            }
+            mChannelListAdapter.notifyDataSetChanged();
             if (getActivity() != null) {
                 getActivity().supportInvalidateOptionsMenu(); // Update self mute/deafen state
             }

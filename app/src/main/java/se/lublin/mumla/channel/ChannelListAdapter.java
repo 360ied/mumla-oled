@@ -197,8 +197,8 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
                 cvh.mJoinButton.setAlpha(1.0f);
             }
 
-            boolean isListeningChannel = false;
-            if (mService != null && mService.isConnected()) {
+            boolean isListeningChannel = (channel.getListeners() != null && !channel.getListeners().isEmpty());
+            if (!isListeningChannel && mService != null && mService.isConnected()) {
                 try {
                     IUser selfUser = mService.HumlaSession().getSessionUser();
                     if (selfUser != null && selfUser.getListeningChannels() != null
