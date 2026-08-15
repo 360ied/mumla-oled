@@ -144,25 +144,21 @@ public class CertificateImportActivity extends BaseActivity {
         }
 
         if (!loaded) {
-            // If failed with empty password, prompt user for password
-            if (password == null || password.length == 0) {
-                final EditText passwordField = new EditText(this);
-                passwordField.setHint(R.string.password);
-                passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-                new MaterialAlertDialogBuilder(this)
-                        .setTitle(R.string.decrypt_certificate)
-                        .setView(passwordField)
-                        .setOnCancelListener(dialog -> finish())
-                        .setPositiveButton(android.R.string.ok, (dialog, which) ->
-                                storeKeystore(passwordField.getText().toString().toCharArray(), fileName, fileBytes))
-                        .show();
-                return;
-            } else {
-                Log.e(TAG, "Failed to load PKCS12 with supplied password", lastException);
-                Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-                finish();
-                return;
+            if (password != null && password.length > 0) {
+                Toast.makeText(this, R.string.invalid_password, Toast.LENGTH_SHORT).show();
             }
+            final EditText passwordField = new EditText(this);
+            passwordField.setHint(R.string.password);
+            passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.decrypt_certificate)
+                    .setView(passwordField)
+                    .setOnCancelListener(dialog -> finish())
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> finish())
+                    .setPositiveButton(android.R.string.ok, (dialog, which) ->
+                            storeKeystore(passwordField.getText().toString().toCharArray(), fileName, fileBytes))
+                    .show();
+            return;
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
