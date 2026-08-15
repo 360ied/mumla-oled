@@ -56,6 +56,17 @@
         android:textSize="14sp"/>
 
     <ImageView
+        android:id="@+id/user_row_listening"
+        android:layout_width="24dp"
+        android:layout_height="match_parent"
+        custom:srcCompat="@drawable/ic_action_headphones"
+        android:layout_gravity="center"
+        android:padding="2dp"
+        android:tint="?android:textColorSecondary"
+        android:visibility="gone"
+        android:contentDescription="@string/channel_listening" />
+
+    <ImageView
         android:id="@+id/user_row_more"
         android:layout_width="32dp"
         android:layout_height="match_parent"

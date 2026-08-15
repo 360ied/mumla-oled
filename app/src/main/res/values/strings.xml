@@ -49,6 +49,9 @@
 
     <!-- Channel menu -->
     <string name="channel_menu_pin">Pin</string>
+    <string name="context_channel_listen">Listen</string>
+    <string name="channel_listening">Listening</string>
+    <string name="channel_enter_restricted">Entry restricted</string>
 
     <!-- Comment Fragment -->
     <string name="comment_view">View</string>
@@ -68,6 +71,8 @@
     <string name="server_info_codec">Codec: %s</string>
     <string name="server_info_max_bandwidth">Maximum %.1f kbit/s</string>
     <string name="server_info_current_bandwidth">Current %.1f kbit/s</string>
+    <string name="server_info_recording_allowed">Recording: Allowed</string>
+    <string name="server_info_recording_disallowed">Recording: Disallowed</string>
 
     <!-- Server matching -->
     <string name="server_match">Find Server</string>

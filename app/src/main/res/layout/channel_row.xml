@@ -54,6 +54,24 @@
         android:padding="10dp"/>
 
     <ImageView
+        android:id="@+id/channel_row_lock"
+        android:layout_width="24dp"
+        android:layout_height="match_parent"
+        app:srcCompat="@drawable/ic_lock"
+        android:tint="?android:attr/textColorSecondary"
+        android:visibility="gone"
+        android:contentDescription="@string/channel_enter_restricted" />
+
+    <ImageView
+        android:id="@+id/channel_row_listening"
+        android:layout_width="24dp"
+        android:layout_height="match_parent"
+        app:srcCompat="@drawable/ic_action_headphones"
+        android:tint="?android:attr/textColorSecondary"
+        android:visibility="gone"
+        android:contentDescription="@string/channel_listening" />
+
+    <ImageView
         android:id="@+id/channel_row_join"
         android:layout_width="32dp"
         android:layout_height="match_parent"

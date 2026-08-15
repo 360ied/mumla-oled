@@ -184,6 +184,31 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
                 cvh.mChannelUserCount.setVisibility(View.GONE);
             }
 
+            boolean enterRestricted = channel.isEnterRestricted();
+            boolean canEnter = channel.canEnter();
+            cvh.mChannelLock.setVisibility(enterRestricted ? View.VISIBLE : View.GONE);
+            if (enterRestricted && !canEnter) {
+                cvh.mJoinButton.setEnabled(false);
+                cvh.mJoinButton.setAlpha(0.3f);
+            } else {
+                cvh.mJoinButton.setEnabled(true);
+                cvh.mJoinButton.setAlpha(1.0f);
+            }
+
+            boolean isListeningChannel = false;
+            if (mService != null && mService.isConnected()) {
+                try {
+                    IUser selfUser = mService.HumlaSession().getSessionUser();
+                    if (selfUser != null && selfUser.getListeningChannels() != null
+                            && selfUser.getListeningChannels().contains(channel.getId())) {
+                        isListeningChannel = true;
+                    }
+                } catch (IllegalStateException e) {
+                    Log.d(TAG, "exception checking listening state: " + e);
+                }
+            }
+            cvh.mChannelListening.setVisibility(isListeningChannel ? View.VISIBLE : View.GONE);
+
             // Pad the view depending on channel's nested level.
             DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
             float margin = node.getDepth() * TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 25, metrics);
@@ -249,6 +274,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             uvh.mUserName.setTypeface(null, typefaceStyle);
 
             uvh.mUserTalkHighlight.setImageDrawable(getTalkStateDrawable(user));
+
+            boolean isUserListening = user.getListeningChannels() != null && !user.getListeningChannels().isEmpty();
+            uvh.mUserListening.setVisibility(isUserListening ? View.VISIBLE : View.GONE);
 
             // Pad the view depending on channel's nested level.
             DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
@@ -341,6 +369,8 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             if (state != null && !state.equals(newState.getConstantState())) {
                 uvh.mUserTalkHighlight.setImageDrawable(newState);
             }
+            boolean isUserListening = user.getListeningChannels() != null && !user.getListeningChannels().isEmpty();
+            uvh.mUserListening.setVisibility(isUserListening ? View.VISIBLE : View.GONE);
         }
     }
 
@@ -495,12 +525,14 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         public TextView mUserName;
 //        public ImageView mUserAvatar;
         public ImageView mUserTalkHighlight;
+        public ImageView mUserListening;
         public ImageView mMoreButton;
 
         public UserViewHolder(View itemView) {
             super(itemView);
             mUserHolder = (LinearLayout) itemView.findViewById(R.id.user_row_title);
             mUserTalkHighlight = (ImageView) itemView.findViewById(R.id.user_row_talk_highlight);
+            mUserListening = (ImageView) itemView.findViewById(R.id.user_row_listening);
             mUserName = (TextView) itemView.findViewById(R.id.user_row_name);
             mMoreButton = (ImageView) itemView.findViewById(R.id.user_row_more);
         }
@@ -511,6 +543,8 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         public ImageView mChannelExpandToggle;
         public TextView mChannelName;
         public TextView mChannelUserCount;
+        public ImageView mChannelLock;
+        public ImageView mChannelListening;
         public ImageView mJoinButton;
         public ImageView mMoreButton;
 
@@ -520,6 +554,8 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             mChannelExpandToggle = (ImageView) itemView.findViewById(R.id.channel_row_expand);
             mChannelName = (TextView) itemView.findViewById(R.id.channel_row_name);
             mChannelUserCount = (TextView) itemView.findViewById(R.id.channel_row_count);
+            mChannelLock = (ImageView) itemView.findViewById(R.id.channel_row_lock);
+            mChannelListening = (ImageView) itemView.findViewById(R.id.channel_row_listening);
             mJoinButton = (ImageView) itemView.findViewById(R.id.channel_row_join);
             mMoreButton = (ImageView) itemView.findViewById(R.id.channel_row_more);
         }

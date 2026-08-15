@@ -37,6 +37,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.IChannel;
+import se.lublin.humla.model.IUser;
 import se.lublin.humla.model.Server;
 import se.lublin.humla.model.WhisperTargetChannel;
 import se.lublin.humla.net.Permissions;
@@ -91,6 +92,15 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             if (ourChan != null) {
                 menu.findItem(R.id.context_channel_link).setChecked(mChannel.getLinks().contains(ourChan));
             }
+            try {
+                IUser selfUser = mService.HumlaSession().getSessionUser();
+                if (selfUser != null) {
+                    menu.findItem(R.id.context_channel_listen)
+                            .setChecked(selfUser.getListeningChannels().contains(mChannel.getId()));
+                }
+            } catch (IllegalStateException e) {
+                Log.d(TAG, "exception in onMenuPrepare: " + e);
+            }
         }
     }
 
@@ -102,6 +112,17 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
         int itemId = item.getItemId();
         if (itemId == R.id.context_channel_join) {
             mService.HumlaSession().joinChannel(mChannel.getId());
+        } else if (itemId == R.id.context_channel_listen) {
+            IHumlaSession session = mService.HumlaSession();
+            IUser selfUser = session.getSessionUser();
+            if (selfUser != null) {
+                boolean isListening = selfUser.getListeningChannels().contains(mChannel.getId());
+                if (isListening) {
+                    session.leaveListeningChannel(mChannel.getId());
+                } else {
+                    session.joinListeningChannel(mChannel.getId());
+                }
+            }
         } else if (itemId == R.id.context_channel_add || itemId == R.id.context_channel_edit) {
             Bundle args = new Bundle();
             if (itemId == R.id.context_channel_add) {
