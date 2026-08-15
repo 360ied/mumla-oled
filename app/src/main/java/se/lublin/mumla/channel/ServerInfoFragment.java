@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
+import se.lublin.humla.model.Server;
 import se.lublin.humla.net.HumlaUDPMessageType;
 import se.lublin.mumla.R;
 import se.lublin.mumla.util.HumlaServiceFragment;
@@ -109,9 +110,14 @@ public class ServerInfoFragment extends HumlaServiceFragment {
         mTCPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getTCPLatency()*Math.pow(10, -3)));
         mUDPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getUDPLatency()*Math.pow(10, -3)));
         // TODO SRV note also getHost,Port?
-        mHostView.setText(getString(R.string.server_info_host,
-                getService().getTargetServer().getSrvHost(),
-                getService().getTargetServer().getSrvPort()));
+        Server targetServer = getService().getTargetServer();
+        if (targetServer != null) {
+            mHostView.setText(getString(R.string.server_info_host,
+                    targetServer.getSrvHost(),
+                    targetServer.getSrvPort()));
+        } else {
+            mHostView.setText("");
+        }
 
         String codecName = "<null>";
         HumlaUDPMessageType codecType = session.getCodec();

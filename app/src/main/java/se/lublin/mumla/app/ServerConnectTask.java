@@ -51,6 +51,9 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
 
     @Override
     protected Intent doInBackground(Server... params) {
+        if (params == null || params.length == 0 || params[0] == null) {
+            return null;
+        }
         Server server = params[0];
 
         // Resolve SRV in background before passing to MumlaService
@@ -110,6 +113,8 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
     @Override
     protected void onPostExecute(Intent intent) {
         super.onPostExecute(intent);
-        mContext.startService(intent);
+        if (intent != null && mContext != null) {
+            mContext.startService(intent);
+        }
     }
 }

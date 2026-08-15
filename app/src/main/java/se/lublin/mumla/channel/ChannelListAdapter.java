@@ -222,6 +222,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             cvh.mJoinButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    if (channel.isEnterRestricted() && !channel.canEnter()) {
+                        return;
+                    }
                     if (mService != null && mService.isConnected()) {
                         mService.HumlaSession().joinChannel(channel.getId());
                     }
@@ -368,8 +371,10 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         UserViewHolder uvh = (UserViewHolder) view.findViewHolderForItemId(itemId);
         if (uvh != null) {
             Drawable newState = getTalkStateDrawable(user);
-            ConstantState state = uvh.mUserTalkHighlight.getDrawable().getCurrent().getConstantState();
-            if (state != null && !state.equals(newState.getConstantState())) {
+            Drawable currentDrawable = uvh.mUserTalkHighlight.getDrawable();
+            ConstantState state = (currentDrawable != null && currentDrawable.getCurrent() != null) ?
+                    currentDrawable.getCurrent().getConstantState() : null;
+            if (state == null || !state.equals(newState.getConstantState())) {
                 uvh.mUserTalkHighlight.setImageDrawable(newState);
             }
             boolean isUserListening = user.getListeningChannels() != null && !user.getListeningChannels().isEmpty();

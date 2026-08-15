@@ -21,6 +21,7 @@ import android.app.SearchManager;
 import android.content.ComponentName;
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.database.Cursor;
@@ -129,19 +130,24 @@ public class ChannelSearchProvider extends ContentProvider {
 
         query = query.toLowerCase(Locale.getDefault());
 
+        Context context = getContext();
+        if (context == null)
+            return null;
+
         MatrixCursor cursor = new MatrixCursor(new String[] { "_ID", SearchManager.SUGGEST_COLUMN_INTENT_EXTRA_DATA, SearchManager.SUGGEST_COLUMN_TEXT_1, SearchManager.SUGGEST_COLUMN_ICON_1, SearchManager.SUGGEST_COLUMN_TEXT_2, SearchManager.SUGGEST_COLUMN_INTENT_DATA });
 
         List<IChannel> channels = channelSearch(session.getRootChannel(), query);
         List<IUser> users = userSearch(session.getRootChannel(), query);
 
+        int rowId = 0;
         for(int x=0;x<channels.size();x++) {
             IChannel channel = channels.get(x);
-            cursor.addRow(new Object[] { x, INTENT_DATA_CHANNEL, channel.getName(), R.drawable.ic_action_channels, getContext().getResources().getQuantityString(R.plurals.search_channel_users, channel.getSubchannelUserCount(), channel.getSubchannelUserCount()), channel.getId() });
+            cursor.addRow(new Object[] { rowId++, INTENT_DATA_CHANNEL, channel.getName(), R.drawable.ic_action_channels, context.getResources().getQuantityString(R.plurals.search_channel_users, channel.getSubchannelUserCount(), channel.getSubchannelUserCount()), channel.getId() });
         }
 
         for(int x=0;x<users.size();x++) {
             IUser user = users.get(x);
-            cursor.addRow(new Object[] { x, INTENT_DATA_USER, user.getName(), R.drawable.ic_action_user_dark, getContext().getString(R.string.user), user.getSession() });
+            cursor.addRow(new Object[] { rowId++, INTENT_DATA_USER, user.getName(), R.drawable.ic_action_user_dark, context.getString(R.string.user), user.getSession() });
         }
         return cursor;
     }

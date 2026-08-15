@@ -74,15 +74,23 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
         if (joinItem != null && mChannel.isEnterRestricted() && !mChannel.canEnter()) {
             joinItem.setEnabled(false);
         }
-        menu.findItem(R.id.context_channel_edit).setVisible((permissions & Permissions.Write) > 0);
-        menu.findItem(R.id.context_channel_remove).setVisible((permissions & Permissions.Write) > 0);
-        menu.findItem(R.id.context_channel_view_description)
-                .setVisible(mChannel.getDescription() != null ||
-                        mChannel.getDescriptionHash() != null);
+        MenuItem editItem = menu.findItem(R.id.context_channel_edit);
+        if (editItem != null) {
+            editItem.setVisible((permissions & Permissions.Write) > 0);
+        }
+        MenuItem removeItem = menu.findItem(R.id.context_channel_remove);
+        if (removeItem != null) {
+            removeItem.setVisible((permissions & Permissions.Write) > 0);
+        }
+        MenuItem descItem = menu.findItem(R.id.context_channel_view_description);
+        if (descItem != null) {
+            descItem.setVisible(mChannel.getDescription() != null ||
+                    mChannel.getDescriptionHash() != null);
+        }
         Server server = mService.getTargetServer();
-        if(server != null) {
-            menu.findItem(R.id.context_channel_pin)
-                    .setChecked(mDatabase.isChannelPinned(server.getId(), mChannel.getId()));
+        MenuItem pinItem = menu.findItem(R.id.context_channel_pin);
+        if (pinItem != null && server != null) {
+            pinItem.setChecked(mDatabase.isChannelPinned(server.getId(), mChannel.getId()));
         }
         if (mService.isConnected()) {
             IChannel ourChan = null;
@@ -91,8 +99,9 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             } catch(IllegalStateException e) {
                 Log.d(TAG, "exception in onMenuPrepare: " + e);
             }
-            if (ourChan != null) {
-                menu.findItem(R.id.context_channel_link).setChecked(mChannel.getLinks().contains(ourChan));
+            MenuItem linkItem = menu.findItem(R.id.context_channel_link);
+            if (linkItem != null && ourChan != null) {
+                linkItem.setChecked(mChannel.getLinks().contains(ourChan));
             }
             try {
                 IUser selfUser = mService.HumlaSession().getSessionUser();
@@ -113,7 +122,9 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
 
         int itemId = item.getItemId();
         if (itemId == R.id.context_channel_join) {
-            mService.HumlaSession().joinChannel(mChannel.getId());
+            if (!mChannel.isEnterRestricted() || mChannel.canEnter()) {
+                mService.HumlaSession().joinChannel(mChannel.getId());
+            }
         } else if (itemId == R.id.context_channel_listen) {
             IHumlaSession session = mService.HumlaSession();
             IUser selfUser = session.getSessionUser();
