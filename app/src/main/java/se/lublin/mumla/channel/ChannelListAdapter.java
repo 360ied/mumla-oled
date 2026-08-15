@@ -205,7 +205,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
                             && selfUser.getListeningChannels().contains(channel.getId())) {
                         isListeningChannel = true;
                     }
-                } catch (IllegalStateException e) {
+                } catch (HumlaDisconnectedException | IllegalStateException e) {
                     Log.d(TAG, "exception checking listening state: " + e);
                 }
             }
