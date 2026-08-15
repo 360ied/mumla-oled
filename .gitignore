@@ -17,3 +17,7 @@ local.properties
 
 # Java
 *.class
+
+# direnv
+.direnv/
+.gradle-home/
