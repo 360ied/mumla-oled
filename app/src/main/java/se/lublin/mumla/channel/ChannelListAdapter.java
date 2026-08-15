@@ -461,6 +461,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
      */
     private void constructNodes(Node parent, IChannel channel, int depth,
                                 List<Node> nodes) {
+        if (channel == null || depth > 64) {
+            return;
+        }
         Node channelNode = new Node(parent, depth, channel);
         nodes.add(channelNode);
 
