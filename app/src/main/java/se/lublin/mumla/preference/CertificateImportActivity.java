@@ -23,6 +23,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.util.Log;
 import android.widget.EditText;
 import android.widget.Toast;
 
@@ -32,17 +33,23 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.spongycastle.jce.provider.BouncyCastleProvider;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.Key;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
+import java.util.Enumeration;
 import java.util.UUID;
 
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
+import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
 import se.lublin.mumla.app.BaseActivity;
@@ -51,6 +58,7 @@ import se.lublin.mumla.app.BaseActivity;
  * Created by andrew on 11/01/16.
  */
 public class CertificateImportActivity extends BaseActivity {
+    private static final String TAG = CertificateImportActivity.class.getName();
     public static final int REQUEST_FILE = 0;
 
     @Override
@@ -70,18 +78,29 @@ public class CertificateImportActivity extends BaseActivity {
         if (requestCode != REQUEST_FILE)
             return;
 
-        if (resultCode == RESULT_CANCELED) {
+        if (resultCode == RESULT_CANCELED || data == null || data.getData() == null) {
             finish();
             return;
         }
 
         Uri uri = data.getData();
-        InputStream is;
-        try {
-            is = getContentResolver().openInputStream(uri);
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-            // FIXME(acomminos)
+        byte[] fileBytes;
+        try (InputStream is = getContentResolver().openInputStream(uri)) {
+            if (is == null) {
+                Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            }
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                buffer.write(buf, 0, n);
+            }
+            fileBytes = buffer.toByteArray();
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to read certificate uri: " + uri, e);
+            Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
             finish();
             return;
         }
@@ -96,49 +115,106 @@ public class CertificateImportActivity extends BaseActivity {
         if (cursor != null)
             cursor.close();
 
-        storeKeystore(new char[0], displayName, is);
+        storeKeystore(new char[0], displayName, fileBytes);
     }
 
-    private void storeKeystore(final char[] password, final String fileName, final InputStream input) {
-        KeyStore keyStore;
+    private void storeKeystore(final char[] password, final String fileName, final byte[] fileBytes) {
+        KeyStore keyStore = null;
+        boolean loaded = false;
+        Exception lastException = null;
+
+        // 1. Try standard platform PKCS12 provider first (handles modern PBES2 PKCS12)
         try {
-            keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
-            keyStore.load(input, password);
-        } catch (CertificateException e) {
-            // A problem occurred when reading the stream; interpret this as a password being
-            // required. Request a password from the user and reattempt decryption.
-            // FIXME(acomminos): examine p12 file's SafeBags to determine the presence of a password
-            final EditText passwordField = new EditText(this);
-            passwordField.setHint(R.string.password);
-            passwordField.setInputType(InputType.TYPE_TEXT_VARIATION_PASSWORD);
-            new MaterialAlertDialogBuilder(this)
-                    .setTitle(R.string.decrypt_certificate)
-                    .setView(passwordField)
-                    .setOnCancelListener(dialog -> finish())
-                    .setPositiveButton(android.R.string.ok, (dialog, which) ->
-                            storeKeystore(passwordField.getText().toString().toCharArray(), fileName, input))
-                    .show();
-            return;
-        } catch (KeyStoreException|IOException|NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-            finish();
-            return;
+            keyStore = KeyStore.getInstance("PKCS12");
+            keyStore.load(new ByteArrayInputStream(fileBytes), password);
+            loaded = true;
+        } catch (Exception e) {
+            lastException = e;
+        }
+
+        // 2. Fall back to SpongyCastle / BouncyCastle provider if platform provider fails
+        if (!loaded) {
+            try {
+                keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+                keyStore.load(new ByteArrayInputStream(fileBytes), password);
+                loaded = true;
+            } catch (Exception e) {
+                lastException = e;
+            }
+        }
+
+        if (!loaded) {
+            // If failed with empty password, prompt user for password
+            if (password == null || password.length == 0) {
+                final EditText passwordField = new EditText(this);
+                passwordField.setHint(R.string.password);
+                passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                new MaterialAlertDialogBuilder(this)
+                        .setTitle(R.string.decrypt_certificate)
+                        .setView(passwordField)
+                        .setOnCancelListener(dialog -> finish())
+                        .setPositiveButton(android.R.string.ok, (dialog, which) ->
+                                storeKeystore(passwordField.getText().toString().toCharArray(), fileName, fileBytes))
+                        .show();
+                return;
+            } else {
+                Log.e(TAG, "Failed to load PKCS12 with supplied password", lastException);
+                Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            }
         }
 
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         try {
-            keyStore.store(output, new char[0]);
-        } catch (KeyStoreException|IOException|NoSuchAlgorithmException|CertificateException e) {
-            e.printStackTrace();
+            // Create a clean PKCS12 keystore so that private keys are re-stored unencrypted for internal use
+            KeyStore cleanKeyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+            cleanKeyStore.load(null, null);
+
+            Enumeration<String> aliases = keyStore.aliases();
+            boolean hasKeys = false;
+            while (aliases != null && aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                if (keyStore.isKeyEntry(alias)) {
+                    Key key = null;
+                    try {
+                        key = keyStore.getKey(alias, password);
+                    } catch (Exception e) {
+                        try {
+                            key = keyStore.getKey(alias, new char[0]);
+                        } catch (Exception ignored) {}
+                    }
+                    if (key != null) {
+                        Certificate[] chain = keyStore.getCertificateChain(alias);
+                        cleanKeyStore.setKeyEntry(alias, key, null, chain);
+                        hasKeys = true;
+                    }
+                } else if (keyStore.isCertificateEntry(alias)) {
+                    Certificate cert = keyStore.getCertificate(alias);
+                    cleanKeyStore.setCertificateEntry(alias, cert);
+                }
+            }
+
+            if (hasKeys) {
+                cleanKeyStore.store(output, "".toCharArray());
+            } else {
+                keyStore.store(output, new char[0]);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to re-store clean keystore", e);
             Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
             finish();
             return;
         }
 
         MumlaDatabase database = new MumlaSQLiteDatabase(this);
-        database.addCertificate(fileName, output.toByteArray());
+        DatabaseCertificate certificate = database.addCertificate(fileName, output.toByteArray());
         database.close();
+
+        if (certificate != null) {
+            Settings settings = Settings.getInstance(this);
+            settings.setDefaultCertificateId(certificate.getId());
+        }
 
         Toast.makeText(this, getString(R.string.certificate_import_success, fileName),
                        Toast.LENGTH_LONG).show();
