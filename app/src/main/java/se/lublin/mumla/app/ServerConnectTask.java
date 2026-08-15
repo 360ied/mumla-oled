@@ -53,6 +53,10 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
     protected Intent doInBackground(Server... params) {
         Server server = params[0];
 
+        // Resolve SRV in background before passing to MumlaService
+        server.getSrvHost();
+        server.getSrvPort();
+
         /* Convert input method defined in settings to an integer format used by Humla. */
         int inputMethod = mSettings.getHumlaInputMethod();
 
