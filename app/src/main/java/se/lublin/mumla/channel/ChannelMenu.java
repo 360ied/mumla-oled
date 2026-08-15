@@ -70,8 +70,10 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
     @Override
     public void onMenuPrepare(Menu menu, int permissions) {
         // TODO This breaks uMurmur ACL. Put in a fix based on server version perhaps?
-        //menu.getMenu().findItem(R.id.menu_channel_add)
-        // .setVisible((permissions & (Permissions.MakeChannel | Permissions.MakeTempChannel)) > 0);
+        MenuItem joinItem = menu.findItem(R.id.context_channel_join);
+        if (joinItem != null && mChannel.isEnterRestricted() && !mChannel.canEnter()) {
+            joinItem.setEnabled(false);
+        }
         menu.findItem(R.id.context_channel_edit).setVisible((permissions & Permissions.Write) > 0);
         menu.findItem(R.id.context_channel_remove).setVisible((permissions & Permissions.Write) > 0);
         menu.findItem(R.id.context_channel_view_description)
