@@ -21,3 +21,15 @@
 ### 5. Never Rewrite Git History
 - Never rewrite, squash, or mutate existing git history (no rebasing, squashing existing commits, or force-pushing).
 - All changes, bug fixes, and improvements must be introduced as new, forward-only atomic commits on top of the current branch.
+
+## ADB Deployment & Launching
+
+### Application ID vs Package Name
+- The Android application ID includes the `.oled` suffix for all builds (`debug` and `release`):
+  - **Application ID**: `se.lublin.mumla.oled`
+  - **Java Package / Namespace**: `se.lublin.mumla`
+- When launching the app via ADB, **ALWAYS** target the full component name using the `.oled` application ID:
+  ```bash
+  adb shell am start -n se.lublin.mumla.oled/se.lublin.mumla.app.MumlaActivity
+  ```
+- **NEVER** use `se.lublin.mumla/.app.MumlaActivity`, as that targets/launches upstream Mumla rather than Mumla OLED.
