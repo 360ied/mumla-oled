@@ -57,6 +57,7 @@ public class ServerInfoFragment extends HumlaServiceFragment {
     private TextView mCodecView;
     private TextView mMaxBandwidthView;
     private TextView mCurrentBandwidthView;
+    private TextView mRecordingView;
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -69,6 +70,7 @@ public class ServerInfoFragment extends HumlaServiceFragment {
         mMaxBandwidthView = (TextView) view.findViewById(R.id.server_info_max_bandwidth);
         mCurrentBandwidthView = (TextView) view.findViewById(R.id.server_info_current_bandwidth);
         mCodecView = (TextView) view.findViewById(R.id.server_info_codec);
+        mRecordingView = (TextView) view.findViewById(R.id.server_info_recording);
         return view;
     }
 
@@ -81,7 +83,28 @@ public class ServerInfoFragment extends HumlaServiceFragment {
 
         IHumlaSession session = getService().HumlaSession();
 
-        mProtocolView.setText(getString(R.string.server_info_protocol, session.getServerRelease()));
+        long versionV2 = 0;
+        try {
+            versionV2 = session.getServerVersionV2();
+        } catch (Exception e) {
+            // ignore
+        }
+
+        String protocolText;
+        if (versionV2 > 0) {
+            int major = (int) ((versionV2 >> 48) & 0xffff);
+            int minor = (int) ((versionV2 >> 32) & 0xffff);
+            int patch = (int) ((versionV2 >> 16) & 0xffff);
+            String release = session.getServerRelease();
+            if (release != null && !release.isEmpty()) {
+                protocolText = getString(R.string.server_info_protocol, String.format(java.util.Locale.US, "%d.%d.%d (%s)", major, minor, patch, release));
+            } else {
+                protocolText = getString(R.string.server_info_protocol, String.format(java.util.Locale.US, "%d.%d.%d", major, minor, patch));
+            }
+        } else {
+            protocolText = getString(R.string.server_info_protocol, session.getServerRelease());
+        }
+        mProtocolView.setText(protocolText);
         mOSVersionView.setText(getString(R.string.server_info_version, session.getServerOSName(), session.getServerOSVersion()));
         mTCPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getTCPLatency()*Math.pow(10, -3)));
         mUDPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getUDPLatency()*Math.pow(10, -3)));
@@ -114,6 +137,14 @@ public class ServerInfoFragment extends HumlaServiceFragment {
         mMaxBandwidthView.setText(getString(R.string.server_info_max_bandwidth, (float)session.getMaxBandwidth()/1000f));
         mCurrentBandwidthView.setText(getString(R.string.server_info_current_bandwidth, (float)session.getCurrentBandwidth()/1000f));
         mCodecView.setText(getString(R.string.server_info_codec, codecName));
+
+        if (session.getServerSettings() != null) {
+            boolean recordingAllowed = session.getServerSettings().isRecordingAllowed();
+            mRecordingView.setText(recordingAllowed ? R.string.server_info_recording_allowed : R.string.server_info_recording_disallowed);
+            mRecordingView.setVisibility(View.VISIBLE);
+        } else {
+            mRecordingView.setVisibility(View.GONE);
+        }
     }
 
     @Override

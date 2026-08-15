@@ -135,5 +135,13 @@
             android:layout_marginBottom="8dp"
             />
 
+        <TextView
+            android:id="@+id/server_info_recording"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/server_info_recording_allowed"
+            android:layout_marginBottom="8dp"
+            />
+
     </LinearLayout>
 </ScrollView>
