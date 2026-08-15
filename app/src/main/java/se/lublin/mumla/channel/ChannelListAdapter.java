@@ -40,8 +40,10 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 
 import se.lublin.humla.HumlaService;
 import se.lublin.humla.IHumlaService;
@@ -343,11 +345,12 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
 
         IHumlaSession session = mService.HumlaSession();
         mNodes.clear();
+        Set<Integer> visited = new HashSet<Integer>();
         try {
             for (int cid : mRootChannels) {
                 IChannel channel = session.getChannel(cid);
                 if (channel != null) {
-                    constructNodes(null, channel, 0, mNodes);
+                    constructNodes(null, channel, 0, mNodes, visited);
                 }
             }
         } catch (IllegalStateException e) {
@@ -458,10 +461,11 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
      * @param channel The parent channel.
      * @param depth The current depth of the subtree.
      * @param nodes An accumulator to store generated nodes into.
+     * @param visited An accumulator set of visited channel IDs to prevent infinite loops on cycles.
      */
     private void constructNodes(Node parent, IChannel channel, int depth,
-                                List<Node> nodes) {
-        if (channel == null || depth > 64) {
+                                List<Node> nodes, Set<Integer> visited) {
+        if (channel == null || depth > 64 || !visited.add(channel.getId())) {
             return;
         }
         Node channelNode = new Node(parent, depth, channel);
@@ -481,7 +485,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             nodes.add(new Node(channelNode, depth, user));
         }
         for (IChannel subc : channel.getSubchannels()) {
-            constructNodes(channelNode, subc, depth + 1, nodes);
+            constructNodes(channelNode, subc, depth + 1, nodes, visited);
         }
     }
 

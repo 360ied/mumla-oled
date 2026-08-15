@@ -96,9 +96,9 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             }
             try {
                 IUser selfUser = mService.HumlaSession().getSessionUser();
-                if (selfUser != null) {
-                    menu.findItem(R.id.context_channel_listen)
-                            .setChecked(selfUser.getListeningChannels().contains(mChannel.getId()));
+                MenuItem listenItem = menu.findItem(R.id.context_channel_listen);
+                if (listenItem != null && selfUser != null && selfUser.getListeningChannels() != null) {
+                    listenItem.setChecked(selfUser.getListeningChannels().contains(mChannel.getId()));
                 }
             } catch (IllegalStateException e) {
                 Log.d(TAG, "exception in onMenuPrepare: " + e);
@@ -117,7 +117,7 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
         } else if (itemId == R.id.context_channel_listen) {
             IHumlaSession session = mService.HumlaSession();
             IUser selfUser = session.getSessionUser();
-            if (selfUser != null) {
+            if (selfUser != null && selfUser.getListeningChannels() != null) {
                 boolean isListening = selfUser.getListeningChannels().contains(mChannel.getId());
                 if (isListening) {
                     session.leaveListeningChannel(mChannel.getId());

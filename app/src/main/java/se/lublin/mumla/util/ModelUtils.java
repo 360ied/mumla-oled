@@ -17,8 +17,10 @@
 
 package se.lublin.mumla.util;
 
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 
 import se.lublin.humla.model.IChannel;
 
@@ -34,15 +36,21 @@ public class ModelUtils {
      */
     public static List<IChannel> getChannelList(IChannel channel) {
         LinkedList<IChannel> channels = new LinkedList<IChannel>();
-        getChannelList(channel, channels);
+        if (channel != null) {
+            Set<Integer> visited = new HashSet<Integer>();
+            getChannelList(channel, channels, visited);
+        }
         return channels;
     }
 
-    private static void getChannelList(IChannel channel, List<IChannel> channels) {
+    private static void getChannelList(IChannel channel, List<IChannel> channels, Set<Integer> visited) {
+        if (channel == null || !visited.add(channel.getId())) {
+            return;
+        }
         channels.add(channel);
         for (IChannel subc : channel.getSubchannels()) {
             if (subc != null) {
-                getChannelList(subc, channels);
+                getChannelList(subc, channels, visited);
             }
         }
     }

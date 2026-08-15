@@ -29,9 +29,11 @@ import android.net.Uri;
 import android.os.IBinder;
 import android.util.Log;
 
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
@@ -117,10 +119,12 @@ public class ChannelSearchProvider extends ContentProvider {
         IHumlaSession session = mService.HumlaSession();
 
         String query = "";
-        for(int x=0;x<selectionArgs.length;x++) {
-            query += selectionArgs[x];
-            if(x != selectionArgs.length-1)
-                query += " ";
+        if (selectionArgs != null) {
+            for(int x=0;x<selectionArgs.length;x++) {
+                query += selectionArgs[x];
+                if(x != selectionArgs.length-1)
+                    query += " ";
+            }
         }
 
         query = query.toLowerCase(Locale.getDefault());
@@ -151,26 +155,29 @@ public class ChannelSearchProvider extends ContentProvider {
      */
     private List<IUser> userSearch(IChannel root, String str) {
         List<IUser> list = new LinkedList<IUser>();
-        userSearch(root, str, list);
+        if (root != null) {
+            Set<Integer> visited = new HashSet<Integer>();
+            userSearch(root, str, list, visited);
+        }
         return list;
     }
 
     /**
      * @see #userSearch(IChannel,String)
      */
-    private void userSearch(IChannel root, String str, List<IUser> users) {
-        if (root == null) {
+    private void userSearch(IChannel root, String str, List<IUser> users, Set<Integer> visited) {
+        if (root == null || !visited.add(root.getId())) {
             return;
         }
         for (IUser user : root.getUsers()) {
             if (user != null && user.getName() != null
-                    && user.getName().toLowerCase().contains(str.toLowerCase())) {
+                    && user.getName().toLowerCase(Locale.getDefault()).contains(str)) {
                 users.add(user);
             }
         }
         for (IChannel subc : root.getSubchannels()) {
             if (subc != null)
-                userSearch(subc, str, users);
+                userSearch(subc, str, users, visited);
         }
     }
 
@@ -183,25 +190,28 @@ public class ChannelSearchProvider extends ContentProvider {
      */
     private List<IChannel> channelSearch(IChannel root, String str) {
         List<IChannel> list = new LinkedList<IChannel>();
-        channelSearch(root, str, list);
+        if (root != null) {
+            Set<Integer> visited = new HashSet<Integer>();
+            channelSearch(root, str, list, visited);
+        }
         return list;
     }
 
     /**
      * @see #channelSearch(IChannel,String)
      */
-    private void channelSearch(IChannel root, String str, List<IChannel> channels) {
-        if (root == null) {
+    private void channelSearch(IChannel root, String str, List<IChannel> channels, Set<Integer> visited) {
+        if (root == null || !visited.add(root.getId())) {
             return;
         }
 
-        if (root.getName().toLowerCase().contains(str.toLowerCase())) {
+        if (root.getName() != null && root.getName().toLowerCase(Locale.getDefault()).contains(str)) {
             channels.add(root);
         }
 
         for (IChannel subc : root.getSubchannels()) {
             if (subc != null)
-                channelSearch(subc, str, channels);
+                channelSearch(subc, str, channels, visited);
         }
     }
 
