@@ -34,6 +34,11 @@ public final class Channel implements IChannel, Comparable<Channel> {
     private List<User> mUsers;
     private List<Channel> mLinks;
     private int mPermissions;
+    private int mMaxUsers;
+    private boolean mEnterRestricted;
+    private boolean mCanEnter = true;
+    private boolean mListening;
+    private float mListeningVolume = 1.0f;
 
     public Channel() {
         mSubchannels = new ArrayList<Channel>();
@@ -200,6 +205,51 @@ public final class Channel implements IChannel, Comparable<Channel> {
 
     public void setPermissions(int permissions) {
         mPermissions = permissions;
+    }
+
+    @Override
+    public int getMaxUsers() {
+        return mMaxUsers;
+    }
+
+    public void setMaxUsers(int maxUsers) {
+        mMaxUsers = maxUsers;
+    }
+
+    @Override
+    public boolean isEnterRestricted() {
+        return mEnterRestricted;
+    }
+
+    public void setEnterRestricted(boolean enterRestricted) {
+        mEnterRestricted = enterRestricted;
+    }
+
+    @Override
+    public boolean canEnter() {
+        return mCanEnter;
+    }
+
+    public void setCanEnter(boolean canEnter) {
+        mCanEnter = canEnter;
+    }
+
+    @Override
+    public boolean isListening() {
+        return mListening;
+    }
+
+    public void setListening(boolean listening) {
+        mListening = listening;
+    }
+
+    @Override
+    public float getListeningVolume() {
+        return mListeningVolume;
+    }
+
+    public void setListeningVolume(float listeningVolume) {
+        mListeningVolume = listeningVolume;
     }
 
     @Override

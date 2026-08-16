@@ -43,4 +43,14 @@ public interface IChannel {
     List<? extends IChannel> getLinks();
 
     int getPermissions();
+
+    int getMaxUsers();
+
+    boolean isEnterRestricted();
+
+    boolean canEnter();
+
+    boolean isListening();
+
+    float getListeningVolume();
 }

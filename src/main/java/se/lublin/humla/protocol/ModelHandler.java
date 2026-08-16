@@ -182,6 +182,15 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             }
         }
 
+        if(msg.hasMaxUsers())
+            channel.setMaxUsers(msg.getMaxUsers());
+
+        if(msg.hasIsEnterRestricted())
+            channel.setEnterRestricted(msg.getIsEnterRestricted());
+
+        if(msg.hasCanEnter())
+            channel.setCanEnter(msg.getCanEnter());
+
         if(newChannel)
             mObserver.onChannelAdded(channel);
         else
@@ -408,6 +417,43 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         if(msg.hasComment()) {
             user.setComment(msg.getComment());
             user.setCommentHash(null);
+        }
+
+        if (msg.getListeningChannelAddCount() > 0) {
+            for (int channelId : msg.getListeningChannelAddList()) {
+                user.addListeningChannel(channelId);
+                if (user.getSession() == mSession) {
+                    Channel ch = mChannels.get(channelId);
+                    if (ch != null) {
+                        ch.setListening(true);
+                        mObserver.onChannelStateUpdated(ch);
+                    }
+                }
+            }
+        }
+
+        if (msg.getListeningChannelRemoveCount() > 0) {
+            for (int channelId : msg.getListeningChannelRemoveList()) {
+                user.removeListeningChannel(channelId);
+                if (user.getSession() == mSession) {
+                    Channel ch = mChannels.get(channelId);
+                    if (ch != null) {
+                        ch.setListening(false);
+                        mObserver.onChannelStateUpdated(ch);
+                    }
+                }
+            }
+        }
+
+        if (msg.getListeningVolumeAdjustmentCount() > 0) {
+            for (Mumble.UserState.VolumeAdjustment adj : msg.getListeningVolumeAdjustmentList()) {
+                if (adj.hasListeningChannel() && adj.hasVolumeAdjustment()) {
+                    Channel ch = mChannels.get(adj.getListeningChannel());
+                    if (ch != null) {
+                        ch.setListeningVolume(adj.getVolumeAdjustment());
+                    }
+                }
+            }
         }
 
         if (newUser)
