@@ -22,6 +22,12 @@
 - Never rewrite, squash, or mutate existing git history (no rebasing, squashing existing commits, or force-pushing).
 - All changes, bug fixes, and improvements must be introduced as new, forward-only atomic commits on top of the current branch.
 
+## Build & Packaging Guidelines
+
+### FOSS Flavor Only
+- **ALWAYS** build the `foss` product flavor (e.g., `./gradlew assembleFossDebug`, `./gradlew installFossDebug`, or `./gradlew assembleFossRelease`).
+- **NEVER** build or package the `goog`, `beta`, or `donation` flavors unless explicitly requested.
+
 ## ADB Deployment & Launching
 
 ### Application ID vs Package Name
