@@ -31,12 +31,12 @@
 ## ADB Deployment & Launching
 
 ### Application ID vs Package Name
-- The Android application ID includes the `.oled` suffix for all builds (`debug` and `release`):
-  - **Application ID**: `se.lublin.mumla.oled`
+- The Android application ID includes the `.oled15` suffix for all builds (`debug` and `release`):
+  - **Application ID**: `se.lublin.mumla.oled15`
   - **Java Package / Namespace**: `se.lublin.mumla`
-- When launching the app via ADB, **ALWAYS** target the full component name using the `.oled` application ID:
+- When launching the app via ADB, **ALWAYS** target the full component name using the `.oled15` application ID:
   ```bash
-  adb shell am start -n se.lublin.mumla.oled/se.lublin.mumla.app.MumlaActivity
+  adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
   ```
 - **NEVER** use `se.lublin.mumla/.app.MumlaActivity`, as that targets/launches upstream Mumla rather than Mumla OLED.
 
