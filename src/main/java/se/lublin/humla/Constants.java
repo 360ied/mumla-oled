@@ -17,19 +17,64 @@
 
 package se.lublin.humla;
 
-/**
- * @deprecated Constant values should be associated with the class in which they are used.
- */
 public class Constants {
     public static final int PROTOCOL_MAJOR = 1;
-    public static final int PROTOCOL_MINOR = 2;
-    public static final int PROTOCOL_PATCH = 5;
+    public static final int PROTOCOL_MINOR = 5;
+    public static final int PROTOCOL_PATCH = 0;
 
     public static final int TRANSMIT_VOICE_ACTIVITY = 0;
     public static final int TRANSMIT_PUSH_TO_TALK = 1;
     public static final int TRANSMIT_CONTINUOUS = 2;
 
     public static final int PROTOCOL_VERSION = (PROTOCOL_MAJOR << 16) | (PROTOCOL_MINOR << 8) | PROTOCOL_PATCH;
-    public static final String PROTOCOL_STRING = PROTOCOL_MAJOR+ "." +PROTOCOL_MINOR+"."+PROTOCOL_PATCH;
+    public static final long PROTOCOL_VERSION_V2 = toVersionV2(PROTOCOL_MAJOR, PROTOCOL_MINOR, PROTOCOL_PATCH);
+    public static final String PROTOCOL_STRING = PROTOCOL_MAJOR + "." + PROTOCOL_MINOR + "." + PROTOCOL_PATCH;
     public static final int DEFAULT_PORT = 64738;
+
+    public static final long PROTOBUF_INTRODUCTION_VERSION_V2 = toVersionV2(1, 5, 0);
+    public static final int PROTOBUF_INTRODUCTION_VERSION_V1 = (1 << 16) | (5 << 8);
+
+    public static long toVersionV2(int major, int minor, int patch) {
+        return (((long) (major & 0xFFFF)) << 48) |
+               (((long) (minor & 0xFFFF)) << 32) |
+               ((long) (patch & 0xFFFFFFFFL));
+    }
+
+    public static long toVersionV2FromLegacy(int legacyVersion) {
+        int major = (legacyVersion >> 16) & 0xFFFF;
+        int minor = (legacyVersion >> 8) & 0xFF;
+        int patch = legacyVersion & 0xFF;
+        return toVersionV2(major, minor, patch);
+    }
+
+    public static int toLegacyVersion(long versionV2) {
+        int major = (int) ((versionV2 >> 48) & 0xFFFF);
+        int minor = (int) ((versionV2 >> 32) & 0xFFFF);
+        int patch = (int) (versionV2 & 0xFFFFFFFFL);
+        return ((major & 0xFFFF) << 16) | ((minor & 0xFF) << 8) | (patch & 0xFF);
+    }
+
+    public static String formatVersion(long versionV2) {
+        int major = (int) ((versionV2 >> 48) & 0xFFFF);
+        int minor = (int) ((versionV2 >> 32) & 0xFFFF);
+        long patch = versionV2 & 0xFFFFFFFFL;
+        return major + "." + minor + "." + patch;
+    }
+
+    public static String formatLegacyVersion(int legacyVersion) {
+        int major = (legacyVersion >> 16) & 0xFFFF;
+        int minor = (legacyVersion >> 8) & 0xFF;
+        int patch = legacyVersion & 0xFF;
+        return major + "." + minor + "." + patch;
+    }
+
+    public static boolean isProtobufUdpSupported(long versionV2, int versionV1) {
+        if (versionV2 > 0) {
+            return versionV2 >= PROTOBUF_INTRODUCTION_VERSION_V2;
+        }
+        if (versionV1 > 0) {
+            return versionV1 >= PROTOBUF_INTRODUCTION_VERSION_V1;
+        }
+        return false;
+    }
 }
