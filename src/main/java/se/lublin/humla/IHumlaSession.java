@@ -47,6 +47,11 @@ public interface IHumlaSession {
     int getServerVersion();
 
     /**
+     * @return the 64-bit protocol version (Mumble 1.5+).
+     */
+    long getServerVersionV2();
+
+    /**
      * @return a user-readable string with the server's Mumble release info.
      */
     String getServerRelease();
@@ -215,4 +220,25 @@ public interface IHumlaSession {
      * @return Settings of the current server.
      */
     ServerSettings getServerSettings();
+
+    /**
+     * Start or stop listening to a channel (Mumble 1.5+).
+     * @param channelId The channel ID to listen to.
+     * @param listening True to start listening, false to stop.
+     */
+    void setListeningChannel(int channelId, boolean listening);
+
+    /**
+     * Adjust listening volume for a channel (Mumble 1.5+).
+     * @param channelId The channel ID.
+     * @param volumeAdjustment Volume multiplier factor.
+     */
+    void setListeningVolume(int channelId, float volumeAdjustment);
+
+    /**
+     * Checks if currently listening to the specified channel.
+     * @param channelId The channel ID.
+     * @return True if listening.
+     */
+    boolean isListeningToChannel(int channelId);
 }

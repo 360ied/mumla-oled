@@ -346,7 +346,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // Send version information and authenticate.
         final Mumble.Version.Builder version = Mumble.Version.newBuilder();
         version.setRelease(mClientName);
-        version.setVersion(Constants.PROTOCOL_VERSION);
+        version.setVersionV1(Constants.PROTOCOL_VERSION);
+        version.setVersionV2(Constants.PROTOCOL_VERSION_V2);
         version.setOs("Android");
         version.setOsVersion(Build.VERSION.RELEASE);
 
@@ -386,6 +387,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     mModelHandler.getUser(mConnection.getSession()),
                     mConnection.getMaxBandwidth(), mConnection.getCodec(),
                     mVoiceTargetId);
+            mAudioHandler.setProtobufUdp(mConnection.isProtobufUdpSupported());
             mConnection.addTCPMessageHandlers(mAudioHandler);
             mConnection.addUDPMessageHandlers(mAudioHandler);
         } catch (AudioException e) {
@@ -803,6 +805,15 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
+    public long getServerVersionV2() {
+        try {
+            return getConnection().getServerVersionV2();
+        } catch (NotSynchronizedException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Override
     public String getServerRelease() {
         try {
             return getConnection().getServerRelease();
@@ -1199,6 +1210,41 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return getModelHandler().getServerSettings();
         } catch (NotSynchronizedException e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    @Override
+    public void setListeningChannel(int channelId, boolean listening) {
+        if (!isSynchronized()) return;
+        Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
+        usb.setSession(getSessionId());
+        if (listening) {
+            usb.addListeningChannelAdd(channelId);
+        } else {
+            usb.addListeningChannelRemove(channelId);
+        }
+        getConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState);
+    }
+
+    @Override
+    public void setListeningVolume(int channelId, float volumeAdjustment) {
+        if (!isSynchronized()) return;
+        Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
+        usb.setSession(getSessionId());
+        Mumble.UserState.VolumeAdjustment.Builder vab = Mumble.UserState.VolumeAdjustment.newBuilder();
+        vab.setListeningChannel(channelId);
+        vab.setVolumeAdjustment(volumeAdjustment);
+        usb.addListeningVolumeAdjustment(vab);
+        getConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState);
+    }
+
+    @Override
+    public boolean isListeningToChannel(int channelId) {
+        try {
+            Channel ch = getModelHandler().getChannels().get(channelId);
+            return ch != null && ch.isListening();
+        } catch (NotSynchronizedException e) {
+            return false;
         }
     }
 
