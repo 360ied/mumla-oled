@@ -40,6 +40,10 @@
           android:title="@string/context_channel_link"
           android:checkable="true"
         />
+    <item android:id="@+id/context_channel_listen"
+          android:title="@string/context_channel_listen"
+          android:checkable="true"
+        />
     <item android:id="@+id/context_channel_unlink_all"
           android:title="@string/context_channel_unlink_all"
         />

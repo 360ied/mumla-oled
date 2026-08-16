@@ -98,7 +98,7 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
         menu.findItem(R.id.context_reset_comment).setVisible(
                 !self && ((mUser.getComment() != null && !mUser.getComment().isEmpty()) ||
                         (mUser.getCommentHash() != null)) &&
-                        (perms & (Permissions.Move | Permissions.Write)) > 0);
+                        (perms & (Permissions.ResetUserContent | Permissions.Move | Permissions.Write)) > 0);
         menu.findItem(R.id.context_view_comment).setVisible(
                 (mUser.getComment() != null && !mUser.getComment().isEmpty()) ||
                         (mUser.getCommentHash() != null));

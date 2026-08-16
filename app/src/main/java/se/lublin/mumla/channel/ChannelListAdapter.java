@@ -184,6 +184,8 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
                 cvh.mChannelUserCount.setVisibility(View.GONE);
             }
 
+            cvh.mChannelListening.setVisibility(channel.isListening() ? View.VISIBLE : View.GONE);
+
             // Pad the view depending on channel's nested level.
             DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
             float margin = node.getDepth() * TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 25, metrics);
@@ -510,6 +512,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         public LinearLayout mChannelHolder;
         public ImageView mChannelExpandToggle;
         public TextView mChannelName;
+        public ImageView mChannelListening;
         public TextView mChannelUserCount;
         public ImageView mJoinButton;
         public ImageView mMoreButton;
@@ -519,6 +522,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             mChannelHolder = (LinearLayout) itemView.findViewById(R.id.channel_row_title);
             mChannelExpandToggle = (ImageView) itemView.findViewById(R.id.channel_row_expand);
             mChannelName = (TextView) itemView.findViewById(R.id.channel_row_name);
+            mChannelListening = (ImageView) itemView.findViewById(R.id.channel_row_listening);
             mChannelUserCount = (TextView) itemView.findViewById(R.id.channel_row_count);
             mJoinButton = (ImageView) itemView.findViewById(R.id.channel_row_join);
             mMoreButton = (ImageView) itemView.findViewById(R.id.channel_row_more);

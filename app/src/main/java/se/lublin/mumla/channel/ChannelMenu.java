@@ -91,6 +91,12 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             if (ourChan != null) {
                 menu.findItem(R.id.context_channel_link).setChecked(mChannel.getLinks().contains(ourChan));
             }
+            MenuItem listenItem = menu.findItem(R.id.context_channel_listen);
+            if (listenItem != null) {
+                boolean isListening = mChannel.isListening();
+                listenItem.setChecked(isListening);
+                listenItem.setTitle(isListening ? R.string.context_channel_stop_listen : R.string.context_channel_listen);
+            }
         }
     }
 
@@ -145,6 +151,9 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             } else {
                 mService.HumlaSession().unlinkChannels(channel, mChannel);
             }
+        } else if (itemId == R.id.context_channel_listen) {
+            boolean isListening = mChannel.isListening();
+            mService.HumlaSession().setListeningChannel(mChannel.getId(), !isListening);
         } else if (itemId == R.id.context_channel_unlink_all) {
             mService.HumlaSession().unlinkAllChannels(mChannel);
         } else if (itemId == R.id.context_channel_shout) {
