@@ -42,6 +42,7 @@ import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.User;
 import se.lublin.humla.net.HumlaUDPMessageType;
 import se.lublin.humla.net.PacketBuffer;
+import se.lublin.humla.protobuf.MumbleUDP;
 import se.lublin.humla.protocol.AudioHandler;
 
 /**
@@ -243,7 +244,58 @@ public class AudioOutput implements Runnable, AudioOutputSpeech.TalkStateListene
                 mInactiveLock.notify();
             }
         }
+    }
 
+    public void queueProtobufVoiceData(MumbleUDP.Audio audioMsg) {
+        if (!mRunning)
+            return;
+
+        int session = (int) audioMsg.getSenderSession();
+        User user = mListener.getUser(session);
+        if (user != null && !user.isLocalMuted()) {
+            mPacketLock.lock();
+            AudioOutputSpeech aop = mAudioOutputs.get(session);
+            if (aop != null && aop.getCodec() != HumlaUDPMessageType.UDPVoiceOpus) {
+                aop.destroy();
+                aop = null;
+            }
+            if (aop == null) {
+                try {
+                    aop = new AudioOutputSpeech(user, HumlaUDPMessageType.UDPVoiceOpus, mBufferSize, this);
+                } catch (NativeAudioException e) {
+                    Log.v(TAG, "Failed to create audio user " + user.getName());
+                    e.printStackTrace();
+                    mPacketLock.unlock();
+                    return;
+                }
+                Log.v(TAG, "Created audio user " + user.getName());
+                mAudioOutputs.put(session, aop);
+            }
+            mPacketLock.unlock();
+
+            byte[] opusBytes = audioMsg.getOpusData().toByteArray();
+            int size = opusBytes.length;
+            if (size == 0) return;
+
+            boolean isTerminator = audioMsg.getIsTerminator();
+            int seq = (int) audioMsg.getFrameNumber();
+            byte msgFlags = 0; // Normal speech / context
+
+            PacketBuffer dataBuffer = new PacketBuffer(new byte[size + 16], size + 16);
+            long header = size;
+            if (isTerminator) {
+                header |= (1 << 13);
+            }
+            dataBuffer.writeLong(header);
+            dataBuffer.append(opusBytes, size);
+            dataBuffer.rewind();
+
+            aop.addFrameToBuffer(dataBuffer, msgFlags, seq);
+
+            synchronized (mInactiveLock) {
+                mInactiveLock.notify();
+            }
+        }
     }
 
     @Override

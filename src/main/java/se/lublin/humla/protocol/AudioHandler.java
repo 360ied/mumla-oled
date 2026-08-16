@@ -25,6 +25,8 @@ import android.util.Log;
 import se.lublin.humla.R;
 import se.lublin.humla.audio.AudioInput;
 import se.lublin.humla.audio.AudioOutput;
+import com.google.protobuf.ByteString;
+
 import se.lublin.humla.audio.encoder.CELT11Encoder;
 import se.lublin.humla.audio.encoder.CELT7Encoder;
 import se.lublin.humla.audio.encoder.IEncoder;
@@ -40,6 +42,7 @@ import se.lublin.humla.net.HumlaConnection;
 import se.lublin.humla.net.HumlaUDPMessageType;
 import se.lublin.humla.net.PacketBuffer;
 import se.lublin.humla.protobuf.Mumble;
+import se.lublin.humla.protobuf.MumbleUDP;
 import se.lublin.humla.util.HumlaLogger;
 import se.lublin.humla.util.HumlaNetworkListener;
 
@@ -92,6 +95,7 @@ public class AudioHandler extends HumlaNetworkListener implements AudioInput.Aud
 
     private final Object mEncoderLock;
     private byte mTargetId;
+    private boolean mProtobufUdp;
 
     public AudioHandler(Context context, HumlaLogger logger, int audioStream, int audioSource,
                         int sampleRate, int targetBitrate, int targetFramesPerPacket,
@@ -408,6 +412,26 @@ public class AudioHandler extends HumlaNetworkListener implements AudioInput.Aud
     }
 
     @Override
+    public void messageProtobufAudio(MumbleUDP.Audio msg) {
+        synchronized (mOutput) {
+            mOutput.queueProtobufVoiceData(msg);
+        }
+    }
+
+    @Override
+    public void messageProtobufPing(MumbleUDP.Ping msg) {
+        // Ping handling is managed in HumlaConnection
+    }
+
+    public void setProtobufUdp(boolean protobufUdp) {
+        mProtobufUdp = protobufUdp;
+    }
+
+    public boolean isProtobufUdp() {
+        return mProtobufUdp;
+    }
+
+    @Override
     public void onAudioInputReceived(short[] frame, int frameSize) {
         boolean talking = mInputMode.shouldTransmit(frame, frameSize);
         talking &= !mMuted;
@@ -485,23 +509,50 @@ public class AudioHandler extends HumlaNetworkListener implements AudioInput.Aud
      */
     private void sendEncodedAudio() {
         int frames = mEncoder.getBufferedFrames();
+        long frameNumber = mFrameCounter - frames;
 
-        int flags = 0;
-        flags |= mCodec.ordinal() << 5;
-        flags |= mTargetId & 0x1F;
+        if (mProtobufUdp) {
+            final byte[] rawBuffer = new byte[1024];
+            PacketBuffer ds = new PacketBuffer(rawBuffer, 1024);
+            mEncoder.getEncodedData(ds);
+            ds.rewind();
+            long header = ds.readLong();
+            int opusLength = (int) (header & ((1 << 13) - 1));
+            boolean isTerminator = (header & (1 << 13)) != 0;
+            byte[] opusBytes = ds.dataBlock(opusLength);
 
-        final byte[] packetBuffer = new byte[1024];
-        packetBuffer[0] = (byte) (flags & 0xFF);
+            MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
+            if (mTargetId != 0) {
+                audioBuilder.setTarget(mTargetId & 0xFF);
+            }
+            audioBuilder.setFrameNumber(frameNumber);
+            audioBuilder.setOpusData(ByteString.copyFrom(opusBytes));
+            if (isTerminator) {
+                audioBuilder.setIsTerminator(true);
+            }
+            byte[] protoBytes = audioBuilder.build().toByteArray();
+            byte[] packet = new byte[1 + protoBytes.length];
+            packet[0] = 0x00; // Protobuf Audio type
+            System.arraycopy(protoBytes, 0, packet, 1, protoBytes.length);
+            mEncodeListener.onAudioEncoded(packet, packet.length);
+        } else {
+            int flags = 0;
+            flags |= mCodec.ordinal() << 5;
+            flags |= mTargetId & 0x1F;
 
-        PacketBuffer ds = new PacketBuffer(packetBuffer, 1024);
-        ds.skip(1);
-        ds.writeLong(mFrameCounter - frames);
-        mEncoder.getEncodedData(ds);
-        int length = ds.size();
-        ds.rewind();
+            final byte[] packetBuffer = new byte[1024];
+            packetBuffer[0] = (byte) (flags & 0xFF);
 
-        byte[] packet = ds.dataBlock(length);
-        mEncodeListener.onAudioEncoded(packet, length);
+            PacketBuffer ds = new PacketBuffer(packetBuffer, 1024);
+            ds.skip(1);
+            ds.writeLong(frameNumber);
+            mEncoder.getEncodedData(ds);
+            int length = ds.size();
+            ds.rewind();
+
+            byte[] packet = ds.dataBlock(length);
+            mEncodeListener.onAudioEncoded(packet, length);
+        }
     }
 
     public interface AudioEncodeListener {
