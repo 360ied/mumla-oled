@@ -46,5 +46,6 @@ public enum HumlaTCPMessageType {
     UserStats,
     RequestBlob,
     ServerConfig,
-    SuggestConfig
+    SuggestConfig,
+    PluginDataTransmission
 }

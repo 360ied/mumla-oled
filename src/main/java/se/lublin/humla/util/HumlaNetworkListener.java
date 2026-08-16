@@ -19,6 +19,7 @@ package se.lublin.humla.util;
 
 import se.lublin.humla.net.HumlaUDPMessageType;
 import se.lublin.humla.protobuf.Mumble;
+import se.lublin.humla.protobuf.MumbleUDP;
 import se.lublin.humla.protocol.HumlaTCPMessageListener;
 import se.lublin.humla.protocol.HumlaUDPMessageListener;
 
@@ -162,12 +163,27 @@ public class HumlaNetworkListener implements HumlaTCPMessageListener, HumlaUDPMe
     }
 
     @Override
+    public void messagePluginDataTransmission(Mumble.PluginDataTransmission msg) {
+
+    }
+
+    @Override
     public void messageUDPPing(byte[] data) {
 
     }
 
     @Override
     public void messageVoiceData(byte[] data, HumlaUDPMessageType messageType) {
+
+    }
+
+    @Override
+    public void messageProtobufAudio(MumbleUDP.Audio msg) {
+
+    }
+
+    @Override
+    public void messageProtobufPing(MumbleUDP.Ping msg) {
 
     }
 }

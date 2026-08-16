@@ -18,6 +18,7 @@
 package se.lublin.humla.protocol;
 
 import se.lublin.humla.net.HumlaUDPMessageType;
+import se.lublin.humla.protobuf.MumbleUDP;
 
 /**
  * Created by andrew on 21/01/14.
@@ -27,10 +28,14 @@ public interface HumlaUDPMessageListener {
 
     public void messageUDPPing(byte[] data);
     public void messageVoiceData(byte[] data, HumlaUDPMessageType messageType);
+    public void messageProtobufAudio(MumbleUDP.Audio msg);
+    public void messageProtobufPing(MumbleUDP.Ping msg);
 
     public static class Stub implements HumlaUDPMessageListener {
 
         public void messageUDPPing(byte[] data) {}
         public void messageVoiceData(byte[] data, HumlaUDPMessageType messageType) {}
+        public void messageProtobufAudio(MumbleUDP.Audio msg) {}
+        public void messageProtobufPing(MumbleUDP.Ping msg) {}
     }
 }
