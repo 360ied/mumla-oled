@@ -201,6 +201,9 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     public void messageChannelRemove(Mumble.ChannelRemove msg) {
         final Channel channel = mChannels.get(msg.getChannelId());
         if(channel != null && channel.getId() != 0) {
+            for (User u : mUsers.values()) {
+                u.removeListeningChannel(channel.getId());
+            }
             mChannels.remove(channel.getId());
             Channel parent = channel.getParent();
             if(parent != null) {
@@ -542,7 +545,9 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     @Override
     public void messageServerSync(Mumble.ServerSync msg) {
         mSession = msg.getSession();
-        mLogger.logInfo(msg.getWelcomeText());
+        if(mLogger != null && msg.hasWelcomeText()) {
+            mLogger.logInfo(msg.getWelcomeText());
+        }
     }
 
     @Override
