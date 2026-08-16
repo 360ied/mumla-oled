@@ -93,9 +93,14 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             }
             MenuItem listenItem = menu.findItem(R.id.context_channel_listen);
             if (listenItem != null) {
-                boolean isListening = mChannel.isListening();
-                listenItem.setChecked(isListening);
-                listenItem.setTitle(isListening ? R.string.context_channel_stop_listen : R.string.context_channel_listen);
+                if (ourChan != null && mChannel.getId() == ourChan.getId()) {
+                    listenItem.setVisible(false);
+                } else {
+                    listenItem.setVisible(true);
+                    boolean isListening = mChannel.isListening();
+                    listenItem.setChecked(isListening);
+                    listenItem.setTitle(isListening ? R.string.context_channel_stop_listen : R.string.context_channel_listen);
+                }
             }
         }
     }
