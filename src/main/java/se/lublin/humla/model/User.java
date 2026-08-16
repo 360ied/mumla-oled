@@ -19,6 +19,10 @@ package se.lublin.humla.model;
 
 import com.google.protobuf.ByteString;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
 public class User implements IUser, Comparable<User> {
 
     private int mSession;
@@ -43,6 +47,8 @@ public class User implements IUser, Comparable<User> {
     private Channel mChannel;
 
     private TalkState mTalkState = TalkState.PASSIVE;
+
+    private final Set<Integer> mListeningChannels = new HashSet<Integer>();
 
     // Local state
     private boolean mLocalMuted;
@@ -243,6 +249,24 @@ public class User implements IUser, Comparable<User> {
 
     public void setAverageAvailable(float averageAvailable) {
         mAverageAvailable = averageAvailable;
+    }
+
+    @Override
+    public Set<Integer> getListeningChannels() {
+        return Collections.unmodifiableSet(mListeningChannels);
+    }
+
+    public void addListeningChannel(int channelId) {
+        mListeningChannels.add(channelId);
+    }
+
+    public void removeListeningChannel(int channelId) {
+        mListeningChannels.remove(channelId);
+    }
+
+    @Override
+    public boolean isListeningTo(int channelId) {
+        return mListeningChannels.contains(channelId);
     }
 
     @Override

@@ -20,6 +20,8 @@ package se.lublin.humla.model;
 /**
  * Created by andrew on 15/10/15.
  */
+import java.util.Set;
+
 public interface IUser {
     int getSession();
 
@@ -62,4 +64,8 @@ public interface IUser {
     void setLocalIgnored(boolean ignored);
 
     TalkState getTalkState();
+
+    Set<Integer> getListeningChannels();
+
+    boolean isListeningTo(int channelId);
 }
