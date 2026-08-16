@@ -81,7 +81,16 @@ public class ServerInfoFragment extends HumlaServiceFragment {
 
         IHumlaSession session = getService().HumlaSession();
 
-        mProtocolView.setText(getString(R.string.server_info_protocol, session.getServerRelease()));
+        String release = session.getServerRelease();
+        if (release == null || release.isEmpty()) {
+            long v2 = session.getServerVersionV2();
+            if (v2 != 0) {
+                release = se.lublin.humla.Constants.formatVersion(v2);
+            } else {
+                release = se.lublin.humla.Constants.formatLegacyVersion(session.getServerVersion());
+            }
+        }
+        mProtocolView.setText(getString(R.string.server_info_protocol, release));
         mOSVersionView.setText(getString(R.string.server_info_version, session.getServerOSName(), session.getServerOSVersion()));
         mTCPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getTCPLatency()*Math.pow(10, -3)));
         mUDPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getUDPLatency()*Math.pow(10, -3)));

@@ -44,6 +44,16 @@
         android:padding="4dp"
         android:text="Channel name\nLine 2\nLine 3\nLine 4"/>
 
+    <ImageView
+        android:id="@+id/channel_row_listening"
+        android:layout_width="24dp"
+        android:layout_height="match_parent"
+        app:srcCompat="@drawable/ic_action_headphones"
+        android:tint="?android:attr/textColorSecondary"
+        android:visibility="gone"
+        android:layout_gravity="center"
+        android:padding="2dp" />
+
     <TextView
         android:id="@+id/channel_row_count"
         android:layout_width="wrap_content"
