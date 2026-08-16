@@ -17,3 +17,10 @@ local.properties
 
 # Java
 *.class
+
+# direnv
+.direnv/
+.gradle-home/
+
+# for working with agents
+bug_report/
