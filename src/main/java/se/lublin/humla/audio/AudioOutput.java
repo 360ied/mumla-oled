@@ -279,7 +279,7 @@ public class AudioOutput implements Runnable, AudioOutputSpeech.TalkStateListene
 
             boolean isTerminator = audioMsg.getIsTerminator();
             int seq = (int) audioMsg.getFrameNumber();
-            byte msgFlags = 0; // Normal speech / context
+            byte msgFlags = (byte) (audioMsg.hasContext() ? audioMsg.getContext() : 0);
 
             PacketBuffer dataBuffer = new PacketBuffer(new byte[size + 16], size + 16);
             long header = size;

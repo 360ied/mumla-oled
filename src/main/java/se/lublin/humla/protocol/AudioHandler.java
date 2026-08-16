@@ -511,7 +511,7 @@ public class AudioHandler extends HumlaNetworkListener implements AudioInput.Aud
         int frames = mEncoder.getBufferedFrames();
         long frameNumber = mFrameCounter - frames;
 
-        if (mProtobufUdp) {
+        if (mProtobufUdp && mCodec == HumlaUDPMessageType.UDPVoiceOpus) {
             final byte[] rawBuffer = new byte[1024];
             PacketBuffer ds = new PacketBuffer(rawBuffer, 1024);
             mEncoder.getEncodedData(ds);
