@@ -106,8 +106,8 @@ android {
     buildTypes {
         // signingConfig beta will override
         release {
-            applicationIdSuffix ".oled"
-            resValue "string", "app_name", "Mumla OLED"
+            applicationIdSuffix ".oled15"
+            resValue "string", "app_name", "Mumla OLED (1.5)"
             if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("release")) {
                 signingConfig = signingConfigs.release
             } else if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("beta")) {
@@ -118,8 +118,8 @@ android {
         }
         debug {
             versionNameSuffix "-debug"
-            applicationIdSuffix ".oled"
-            resValue "string", "app_name", "Mumla OLED"
+            applicationIdSuffix ".oled15"
+            resValue "string", "app_name", "Mumla OLED (1.5)"
             if (android.hasProperty("signingConfigs")) {
                 if (signingConfigs.hasProperty("beta")) {
                     signingConfig = signingConfigs.beta
