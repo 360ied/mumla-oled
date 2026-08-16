@@ -37,7 +37,7 @@ public class Constants {
     public static long toVersionV2(int major, int minor, int patch) {
         return (((long) (major & 0xFFFF)) << 48) |
                (((long) (minor & 0xFFFF)) << 32) |
-               ((long) (patch & 0xFFFFFFFFL));
+               (((long) (patch & 0xFFFF)) << 16);
     }
 
     public static long toVersionV2FromLegacy(int legacyVersion) {
@@ -50,14 +50,14 @@ public class Constants {
     public static int toLegacyVersion(long versionV2) {
         int major = (int) ((versionV2 >> 48) & 0xFFFF);
         int minor = (int) ((versionV2 >> 32) & 0xFFFF);
-        int patch = (int) (versionV2 & 0xFFFFFFFFL);
+        int patch = (int) ((versionV2 >> 16) & 0xFFFF);
         return ((major & 0xFFFF) << 16) | ((minor & 0xFF) << 8) | (patch & 0xFF);
     }
 
     public static String formatVersion(long versionV2) {
         int major = (int) ((versionV2 >> 48) & 0xFFFF);
         int minor = (int) ((versionV2 >> 32) & 0xFFFF);
-        long patch = versionV2 & 0xFFFFFFFFL;
+        int patch = (int) ((versionV2 >> 16) & 0xFFFF);
         return major + "." + minor + "." + patch;
     }
 
