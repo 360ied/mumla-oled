@@ -33,3 +33,11 @@
   adb shell am start -n se.lublin.mumla.oled/se.lublin.mumla.app.MumlaActivity
   ```
 - **NEVER** use `se.lublin.mumla/.app.MumlaActivity`, as that targets/launches upstream Mumla rather than Mumla OLED.
+
+## Reference Implementation & Protocol Definitions
+
+### Upstream Mumble Codebase (`../mumble`)
+- When implementing features, debugging protocol issues, or verifying correct behavior and message handling, **ALWAYS** reference the original Mumble client and server source code located in `../mumble`.
+- Check official protocol definitions and schemas (e.g. `../mumble/src/Mumble.proto`, `../mumble/src/MumbleUDP.proto`) when updating or verifying Protobuf models.
+- Inspect the C++ reference implementations (e.g. connection lifecycle, audio/voice packet encoding/decoding, channel listeners, permissions, and server sync) in `../mumble/src/` to ensure exact behavioral parity.
+
