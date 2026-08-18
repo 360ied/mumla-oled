@@ -34,6 +34,7 @@ import android.os.PowerManager;
 import android.util.Log;
 
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties;
+import org.minidns.hla.ResolverApi;
 
 import java.security.Security;
 import java.security.cert.X509Certificate;
@@ -279,6 +280,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
         // initialize minidns dns lookup mechanisms
         AndroidUsingLinkProperties.setup(this);
+        try {
+            ResolverApi.INSTANCE.getClient().getDataSource().setTimeout(1000);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not configure MiniDNS timeout: " + e);
+        }
     }
 
     @Override
