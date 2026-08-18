@@ -169,13 +169,27 @@ public class Server implements Parcelable {
     }
 
     public String getSrvHost() {
+        if (mResolvedHost != null) {
+            return mResolvedHost;
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(TAG, "getSrvHost() called on main thread; returning fallback host without caching.");
+            return mHost;
+        }
         srvResolve();
-        return mResolvedHost;
+        return mResolvedHost != null ? mResolvedHost : mHost;
     }
 
     public int getSrvPort() {
+        if (mResolvedHost != null) {
+            return mResolvedPort;
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(TAG, "getSrvPort() called on main thread; returning fallback port without caching.");
+            return (mPort != 0) ? mPort : Constants.DEFAULT_PORT;
+        }
         srvResolve();
-        return mResolvedPort;
+        return mResolvedPort != 0 ? mResolvedPort : ((mPort != 0) ? mPort : Constants.DEFAULT_PORT);
     }
 
     public synchronized void setResolved(String host, int port) {
@@ -203,8 +217,6 @@ public class Server implements Parcelable {
         // Do not block main (UI) thread on synchronous DNS queries
         if (Looper.myLooper() == Looper.getMainLooper()) {
             Log.w(TAG, "srvResolve() called on main thread; skipping synchronous DNS query to prevent ANR.");
-            mResolvedHost = mHost;
-            mResolvedPort = (mPort != 0) ? mPort : Constants.DEFAULT_PORT;
             return;
         }
         // set to our fallback values in case of no SRV or resolve fail
@@ -234,7 +246,11 @@ public class Server implements Parcelable {
                     List<SRV> srvs = SrvUtil.sortSrvRecords(answers);
                     for (SRV srv : srvs) {
                         Log.d(TAG, "resolved " + lookup + " SRV: " + srv.toString());
-                        srvHost = srv.target.toString();
+                        String target = srv.target.toString();
+                        if (target.endsWith(".")) {
+                            target = target.substring(0, target.length() - 1);
+                        }
+                        srvHost = target;
                         srvPort = srv.port;
                         break;
                     }
