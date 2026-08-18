@@ -124,7 +124,11 @@ public class HumlaTCP extends HumlaNetworkThread {
                                 List<SRV> srvs = SrvUtil.sortSrvRecords(answers);
                                 for (SRV srv : srvs) {
                                     Log.d(TAG, "resolved " + lookup + " SRV: " + srv.toString());
-                                    mHost = srv.target.toString();
+                                    String target = srv.target.toString();
+                                    if (target.endsWith(".")) {
+                                        target = target.substring(0, target.length() - 1);
+                                    }
+                                    mHost = target;
                                     mPort = srv.port;
                                     break;
                                 }

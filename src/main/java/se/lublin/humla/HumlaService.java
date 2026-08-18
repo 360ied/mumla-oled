@@ -260,7 +260,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     public static void init(Context context) {
         try {
-            AndroidUsingLinkProperties.setup(context);
+            Context appContext = context != null ? context.getApplicationContext() : null;
+            if (appContext != null) {
+                AndroidUsingLinkProperties.setup(appContext);
+            }
             ResolverApi.INSTANCE.getClient().getDataSource().setTimeout(800);
         } catch (Exception e) {
             Log.w(TAG, "Could not configure MiniDNS: " + e);
