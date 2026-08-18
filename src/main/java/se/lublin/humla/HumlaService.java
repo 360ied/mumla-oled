@@ -316,7 +316,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
             mCallbacks.onConnecting();
 
-            mConnection.connect(mServer.getSrvHost(), mServer.getSrvPort());
+            mConnection.connect(mServer.getHost(), mServer.getPort());
         } catch (HumlaException e) {
             e.printStackTrace();
             mCallbacks.onDisconnected(e);
@@ -343,6 +343,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void onConnectionEstablished() {
+        if (mServer != null && mConnection != null) {
+            mServer.setResolved(mConnection.getHost(), mConnection.getPort());
+        }
+
         // Send version information and authenticate.
         final Mumble.Version.Builder version = Mumble.Version.newBuilder();
         version.setRelease(mClientName);

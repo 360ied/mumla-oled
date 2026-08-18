@@ -382,6 +382,14 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         return mConnected;
     }
 
+    public String getHost() {
+        return mHost;
+    }
+
+    public int getPort() {
+        return mPort;
+    }
+
     /**
      * Returns whether or not the service is fully synchronized with the remote server- this happens when we get the ServerSync message.
      * You shouldn't log any user actions until the connection is synchronized.
@@ -678,6 +686,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     @Override
     public void onTCPConnectionEstablished() {
         mConnected = true;
+        if (mTCP != null) {
+            mHost = mTCP.getHost();
+            mPort = mTCP.getPort();
+        }
 
         // Attempt to start UDP thread once connected.
         if (!shouldForceTCP()) {
