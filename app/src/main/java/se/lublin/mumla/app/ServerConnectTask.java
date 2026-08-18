@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.app;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.media.AudioManager;
@@ -56,10 +57,8 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
     }
 
     private boolean isPortOpen(final String host, final int port, final int timeout) {
-        try {
-            Socket socket = new Socket();
+        try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(host, port), timeout);
-            socket.close();
             return true;
         } catch (Exception e) {
             return false;
@@ -131,6 +130,12 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
     protected void onPostExecute(Intent intent) {
         super.onPostExecute(intent);
         if (mTorPortError) {
+            if (mContext instanceof Activity) {
+                Activity activity = (Activity) mContext;
+                if (activity.isFinishing() || activity.isDestroyed()) {
+                    return;
+                }
+            }
             new MaterialAlertDialogBuilder(mContext)
                     .setMessage(mContext.getString(R.string.orbot_tor_failed, HumlaConnection.TOR_PORT))
                     .setPositiveButton(android.R.string.ok, null)

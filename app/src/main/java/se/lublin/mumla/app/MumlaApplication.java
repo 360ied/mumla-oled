@@ -9,7 +9,6 @@ import static se.lublin.mumla.Settings.PREF_THEME;
 import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
