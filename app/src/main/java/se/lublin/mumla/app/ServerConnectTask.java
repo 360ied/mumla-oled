@@ -23,10 +23,15 @@ import android.media.AudioManager;
 import android.media.MediaRecorder;
 import android.os.AsyncTask;
 
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.ArrayList;
+
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import se.lublin.humla.HumlaService;
 import se.lublin.humla.model.Server;
+import se.lublin.humla.net.HumlaConnection;
 import se.lublin.mumla.BuildConfig;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
@@ -42,6 +47,7 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
     private Context mContext;
     private MumlaDatabase mDatabase;
     private Settings mSettings;
+    private boolean mTorPortError = false;
 
     public ServerConnectTask(Context context, MumlaDatabase database) {
         mContext = context;
@@ -49,9 +55,27 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         mSettings = Settings.getInstance(context);
     }
 
+    private boolean isPortOpen(final String host, final int port, final int timeout) {
+        try {
+            Socket socket = new Socket();
+            socket.connect(new InetSocketAddress(host, port), timeout);
+            socket.close();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     @Override
     protected Intent doInBackground(Server... params) {
         Server server = params[0];
+
+        if (mSettings.isTorEnabled()) {
+            if (!isPortOpen(HumlaConnection.TOR_HOST, HumlaConnection.TOR_PORT, 2000)) {
+                mTorPortError = true;
+                return null;
+            }
+        }
 
         /* Convert input method defined in settings to an integer format used by Humla. */
         int inputMethod = mSettings.getHumlaInputMethod();
@@ -106,6 +130,15 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
     @Override
     protected void onPostExecute(Intent intent) {
         super.onPostExecute(intent);
-        mContext.startService(intent);
+        if (mTorPortError) {
+            new MaterialAlertDialogBuilder(mContext)
+                    .setMessage(mContext.getString(R.string.orbot_tor_failed, HumlaConnection.TOR_PORT))
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show();
+            return;
+        }
+        if (intent != null) {
+            mContext.startService(intent);
+        }
     }
 }
