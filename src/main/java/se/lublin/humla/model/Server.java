@@ -32,6 +32,12 @@ import org.minidns.util.SrvUtil;
 import java.io.IOException;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import se.lublin.humla.Constants;
 
@@ -206,7 +212,22 @@ public class Server implements Parcelable {
         int srvPort = Constants.DEFAULT_PORT;
         try {
             final String lookup = "_mumble._tcp." + srvHost;
-            SrvResolverResult res = ResolverApi.INSTANCE.resolveSrv(lookup);
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<SrvResolverResult> future = executor.submit(new Callable<SrvResolverResult>() {
+                @Override
+                public SrvResolverResult call() throws Exception {
+                    return ResolverApi.INSTANCE.resolveSrv(lookup);
+                }
+            });
+            SrvResolverResult res = null;
+            try {
+                res = future.get(800, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException te) {
+                future.cancel(true);
+                Log.d(TAG, "SRV lookup timed out for " + lookup);
+            } finally {
+                executor.shutdownNow();
+            }
             if (res != null && res.wasSuccessful()) {
                 Set<SRV> answers = res.getAnswersOrEmptySet();
                 if (answers != null && !answers.isEmpty()) {
@@ -223,12 +244,8 @@ public class Server implements Parcelable {
             } else if (res != null) {
                 Log.d(TAG, "resolveSrv " + lookup + ": " + res.getResponseCode());
             }
-        } catch (IOException | IllegalArgumentException e) {
-            // java.net.IDN.toASCII down in resolveSrv() happens to throw IAE
-            // https://github.com/MiniDNS/minidns/issues/104
-            Log.d(TAG, "exception in srvResolve: " + e);
         } catch (Exception e) {
-            Log.d(TAG, "resolveSRV() " + e);
+            Log.d(TAG, "exception in srvResolve: " + e);
         }
         mResolvedHost = srvHost;
         mResolvedPort = srvPort;
