@@ -258,6 +258,15 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         return START_NOT_STICKY;
     }
 
+    public static void init(Context context) {
+        try {
+            AndroidUsingLinkProperties.setup(context);
+            ResolverApi.INSTANCE.getClient().getDataSource().setTimeout(800);
+        } catch (Exception e) {
+            Log.w(TAG, "Could not configure MiniDNS: " + e);
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -279,12 +288,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mWhisperTargetList = new WhisperTargetList();
 
         // initialize minidns dns lookup mechanisms
-        AndroidUsingLinkProperties.setup(this);
-        try {
-            ResolverApi.INSTANCE.getClient().getDataSource().setTimeout(1000);
-        } catch (Exception e) {
-            Log.w(TAG, "Could not configure MiniDNS timeout: " + e);
-        }
+        init(this);
     }
 
     @Override

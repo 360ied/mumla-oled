@@ -37,6 +37,12 @@ import java.net.SocketException;
 import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLSocket;
@@ -96,7 +102,22 @@ public class HumlaTCP extends HumlaNetworkThread {
                 if (!mUseTor && !InetAddresses.isInetAddress(mHost) && !mHost.endsWith(".onion")) {
                     try {
                         final String lookup = "_mumble._tcp." + mHost;
-                        SrvResolverResult res = ResolverApi.INSTANCE.resolveSrv(lookup);
+                        ExecutorService executor = Executors.newSingleThreadExecutor();
+                        Future<SrvResolverResult> future = executor.submit(new Callable<SrvResolverResult>() {
+                            @Override
+                            public SrvResolverResult call() throws Exception {
+                                return ResolverApi.INSTANCE.resolveSrv(lookup);
+                            }
+                        });
+                        SrvResolverResult res = null;
+                        try {
+                            res = future.get(800, TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException te) {
+                            future.cancel(true);
+                            Log.d(TAG, "SRV lookup timed out for " + lookup);
+                        } finally {
+                            executor.shutdownNow();
+                        }
                         if (res != null && res.wasSuccessful()) {
                             Set<SRV> answers = res.getAnswersOrEmptySet();
                             if (answers != null && !answers.isEmpty()) {
