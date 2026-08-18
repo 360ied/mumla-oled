@@ -9,11 +9,13 @@ import static se.lublin.mumla.Settings.PREF_THEME;
 import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.preference.PreferenceManager;
 
+import se.lublin.humla.HumlaService;
 import se.lublin.mumla.R;
 
 public class MumlaApplication extends Application implements SharedPreferences.OnSharedPreferenceChangeListener {
@@ -23,6 +25,8 @@ public class MumlaApplication extends Application implements SharedPreferences.O
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         applyTheme(preferences);
         preferences.registerOnSharedPreferenceChangeListener(this);
+
+        HumlaService.init(this);
     }
 
     @Override
