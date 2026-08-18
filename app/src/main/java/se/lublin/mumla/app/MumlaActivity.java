@@ -66,9 +66,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import org.jetbrains.annotations.NotNull;
 import org.spongycastle.util.encoders.Hex;
 
-import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
-import java.net.Socket;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -616,14 +614,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         .setPositiveButton(android.R.string.ok, null)
                         .show();
                 return;
-            } else {
-                if (!isPortOpen(HumlaConnection.TOR_HOST, HumlaConnection.TOR_PORT, 2000)) {
-                    new MaterialAlertDialogBuilder(MumlaActivity.this)
-                            .setMessage(getString(R.string.orbot_tor_failed, HumlaConnection.TOR_PORT))
-                            .setPositiveButton(android.R.string.ok, null)
-                            .show();
-                    return;
-                }
             }
         }
 
@@ -663,31 +653,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 connectToServerWithPerm();
                 break;
         }
-    }
-
-    private boolean isPortOpen(final String host, final int port, final int timeout) {
-        final AtomicBoolean open = new AtomicBoolean(false);
-        try {
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        Socket socket = new Socket();
-                        socket.connect(new InetSocketAddress(host, port), timeout);
-                        socket.close();
-                        open.set(true);
-                    } catch (Exception e) {
-                        Log.d(TAG, "isPortOpen() run()" + e);
-                    }
-                }
-            });
-            thread.start();
-            thread.join();
-            return open.get();
-        } catch (Exception e) {
-            Log.d(TAG, "isPortOpen() " + e);
-        }
-        return false;
     }
 
     public void connectToPublicServer(final PublicServer server) {
