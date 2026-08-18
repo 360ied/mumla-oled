@@ -21,7 +21,13 @@ import android.net.SSLCertificateSocketFactory;
 import android.os.Build;
 import android.util.Log;
 
+import com.google.common.net.InetAddresses;
 import com.google.protobuf.Message;
+
+import org.minidns.hla.ResolverApi;
+import org.minidns.hla.SrvResolverResult;
+import org.minidns.record.SRV;
+import org.minidns.util.SrvUtil;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -29,10 +35,13 @@ import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketException;
 import java.security.cert.X509Certificate;
+import java.util.List;
+import java.util.Set;
 
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLSocket;
 
+import se.lublin.humla.Constants;
 import se.lublin.humla.util.HumlaException;
 
 /**
@@ -72,10 +81,44 @@ public class HumlaTCP extends HumlaNetworkThread {
         return mRunning;
     }
 
+    public String getHost() {
+        return mHost;
+    }
+
+    public int getPort() {
+        return mPort;
+    }
+
     public void run() {
         mRunning = true;
         try {
-            Log.i(TAG, "Connecting");
+            if (mPort == 0) {
+                if (!mUseTor && !InetAddresses.isInetAddress(mHost) && !mHost.endsWith(".onion")) {
+                    try {
+                        final String lookup = "_mumble._tcp." + mHost;
+                        SrvResolverResult res = ResolverApi.INSTANCE.resolveSrv(lookup);
+                        if (res != null && res.wasSuccessful()) {
+                            Set<SRV> answers = res.getAnswersOrEmptySet();
+                            if (answers != null && !answers.isEmpty()) {
+                                List<SRV> srvs = SrvUtil.sortSrvRecords(answers);
+                                for (SRV srv : srvs) {
+                                    Log.d(TAG, "resolved " + lookup + " SRV: " + srv.toString());
+                                    mHost = srv.target.toString();
+                                    mPort = srv.port;
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "SRV resolution failed for " + mHost + ": " + e);
+                    }
+                }
+                if (mPort == 0) {
+                    mPort = Constants.DEFAULT_PORT;
+                }
+            }
+
+            Log.i(TAG, "Connecting to " + mHost + ":" + mPort);
 
             if(mUseTor)
                 mTCPSocket = mSocketFactory.createTorSocket(mHost, mPort, HumlaConnection.TOR_HOST, HumlaConnection.TOR_PORT);
