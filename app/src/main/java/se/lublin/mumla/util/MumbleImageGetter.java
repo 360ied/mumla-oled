@@ -29,9 +29,9 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
 
+import java.io.InputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLDecoder;
@@ -72,11 +72,16 @@ public class MumbleImageGetter implements Html.ImageGetter {
     public Drawable getDrawable(String source) {
         String decodedSource; // Decode from URL encoding
         try {
-            decodedSource = URLDecoder.decode(source, "UTF-8");
+            // Preserve literal '+' characters in raw base64 data URIs before URLDecoder converts them to spaces
+            String safeSource = (source != null && source.startsWith("data:image"))
+                    ? source.replace("+", "%2B") : source;
+            decodedSource = safeSource != null ? URLDecoder.decode(safeSource, "UTF-8") : null;
         } catch (UnsupportedEncodingException e) {
             Log.w(TAG, "exception when decoding source: " + e.toString());
             return null;
         }
+
+        if (decodedSource == null) return null;
 
         Bitmap bitmap = mBitmapCache.get(decodedSource);
         if (bitmap == null) {
@@ -89,8 +94,8 @@ public class MumbleImageGetter implements Html.ImageGetter {
                 } else if (mSettings.shouldLoadExternalImages()) {
                     bitmap = getURLImage(decodedSource);
                 }
-            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException e) {
-                Log.w(TAG, "exception when decoding image: " + e.toString());
+            } catch (Throwable t) {
+                Log.w(TAG, "exception when decoding image: " + t.toString());
                 return null;
             }
             if (bitmap != null) {
@@ -134,12 +139,16 @@ public class MumbleImageGetter implements Html.ImageGetter {
         try {
             URL url = new URL(source);
             URLConnection conn = url.openConnection();
-            if(conn.getContentLength() > MAX_LENGTH) return null;
-            return BitmapFactory.decodeStream(conn.getInputStream());
-        } catch (MalformedURLException e) {
-            e.printStackTrace();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            if (conn.getContentLength() > MAX_LENGTH) return null;
+            try (InputStream is = conn.getInputStream()) {
+                return BitmapFactory.decodeStream(is);
+            }
         } catch (IOException e) {
-            e.printStackTrace();
+            Log.w(TAG, "failed to load URL image: " + e.toString());
+        } catch (OutOfMemoryError e) {
+            Log.w(TAG, "OOM decoding URL image: " + e.toString());
         }
         return null;
     }
