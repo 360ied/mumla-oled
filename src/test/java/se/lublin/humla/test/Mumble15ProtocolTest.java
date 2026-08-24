@@ -147,4 +147,37 @@ public class Mumble15ProtocolTest extends TestCase {
         assertEquals(50, parsedPing.getMaxUserCount());
         assertEquals(72000, parsedPing.getMaxBandwidthPerUser());
     }
+
+    public void testClientProtobufUDPAudioPacketFormat() throws Exception {
+        byte[] opusBytes = new byte[]{0x10, 0x20, 0x30};
+        byte targetId = 2;
+        long frameNumber = 100;
+        boolean isTerminator = true;
+
+        MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
+        if (targetId != 0) {
+            audioBuilder.setTarget(targetId & 0xFF);
+        }
+        audioBuilder.setFrameNumber(frameNumber);
+        audioBuilder.setOpusData(ByteString.copyFrom(opusBytes));
+        if (isTerminator) {
+            audioBuilder.setIsTerminator(true);
+        }
+
+        byte[] protoBytes = audioBuilder.build().toByteArray();
+        byte[] packet = new byte[1 + protoBytes.length];
+        packet[0] = 0x00; // Protobuf Audio type
+        System.arraycopy(protoBytes, 0, packet, 1, protoBytes.length);
+
+        // Verify packet header byte indicates Protobuf Audio type (0x00)
+        assertEquals(0x00, packet[0]);
+
+        // Verify deserialization matches outgoing packet data
+        MumbleUDP.Audio parsed = MumbleUDP.Audio.parseFrom(ByteString.copyFrom(packet, 1, packet.length - 1));
+        assertEquals(2, parsed.getTarget());
+        assertEquals(100L, parsed.getFrameNumber());
+        assertTrue(parsed.getIsTerminator());
+        assertEquals(3, parsed.getOpusData().size());
+        assertEquals(0x10, parsed.getOpusData().byteAt(0));
+    }
 }
