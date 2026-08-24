@@ -54,6 +54,17 @@ public class MumbleImageGetter implements Html.ImageGetter {
     /** Estimated total horizontal padding/margin around chat message text in dp. */
     private static final int HORIZONTAL_PADDING_DP = 48;
 
+    /**
+     * Timeout for external image HTTP connection and stream reads in milliseconds.
+     * Set to 5000ms to stay within Android's 5-second Application Not Responding (ANR)
+     * watchdog threshold, since Html.fromHtml currently executes getDrawable() synchronously
+     * on the main UI thread during view binding.
+     *
+     * FIXME: Once image fetching is moved to an asynchronous background worker pipeline,
+     * this timeout can be safely extended (e.g. 15-30s for slow or Tor-routed networks).
+     */
+    private static final int NETWORK_TIMEOUT_MS = 5000;
+
     private Context mContext;
     private Settings mSettings;
     private Map<String, Bitmap> mBitmapCache;
@@ -139,8 +150,8 @@ public class MumbleImageGetter implements Html.ImageGetter {
         try {
             URL url = new URL(source);
             URLConnection conn = url.openConnection();
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(NETWORK_TIMEOUT_MS);
+            conn.setReadTimeout(NETWORK_TIMEOUT_MS);
             if (conn.getContentLength() > MAX_LENGTH) return null;
             try (InputStream is = conn.getInputStream()) {
                 return BitmapFactory.decodeStream(is);
