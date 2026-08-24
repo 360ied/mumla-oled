@@ -54,3 +54,14 @@
 - Check official protocol definitions and schemas (e.g. `../mumble/src/Mumble.proto`, `../mumble/src/MumbleUDP.proto`) when updating or verifying Protobuf models.
 - Inspect the C++ reference implementations (e.g. connection lifecycle, audio/voice packet encoding/decoding, channel listeners, permissions, and server sync) in `../mumble/src/` to ensure exact behavioral parity.
 
+## Versioning & Release Bumping Protocol
+
+### Semantic Versioning & Dynamic Tag Resolution
+- **Version Scheme**: Mumla OLED uses Semantic Versioning (`0.X.X`).
+- **Dynamic Resolution**: `versionName` in `app/build.gradle` is dynamically determined via `git describe --tags --match "[0-9]*.[0-9]*.[0-9]*" --always`.
+- **Release Tagging**: Releases are tagged using annotated Git tags (`git tag -a <version> -m "Release <version>"`).
+- **Tag Retention**: Only `0.X.X` release tags are kept in the repository; upstream legacy tags (`3.X.X`) must not be reintroduced.
+- **Upstream Tag Isolation**: `remote.upstream.tagOpt` is set to `--no-tags` to prevent `git fetch upstream` from importing upstream Plumble/Mumla tags.
+- **Release Verification**: Run `nix develop --command ./gradlew test assembleFossRelease` to verify the build before publishing tags.
+
+
