@@ -491,7 +491,7 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         public ChannelChatAdapter(Context context, IHumlaService service, List<IChatMessage> messages) {
             super(context, 0, new ArrayList<>(messages));
             mService = service;
-            mImageGetter = new MumbleImageGetter(context);
+            mImageGetter = new MumbleImageGetter(context, this::notifyDataSetChanged);
             mDateFormat = SimpleDateFormat.getTimeInstance();
         }
 

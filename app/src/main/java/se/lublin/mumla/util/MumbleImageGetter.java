@@ -22,7 +22,8 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.os.StrictMode;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Html;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -35,14 +36,21 @@ import java.io.UnsupportedEncodingException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLDecoder;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 
 import se.lublin.mumla.Settings;
 
 /**
  * Implementation of ImageGetter designed for Mumble MOTDs and messages.
- * Can read base64-embedded images and references. Caches them too.
+ * Reads base64-embedded images synchronously and fetches external image URLs asynchronously
+ * on background worker threads without blocking the main UI thread. Caches loaded bitmaps.
  * Created by andrew on 07/02/14.
  */
 public class MumbleImageGetter implements Html.ImageGetter {
@@ -56,27 +64,50 @@ public class MumbleImageGetter implements Html.ImageGetter {
 
     /**
      * Timeout for external image HTTP connection and stream reads in milliseconds.
-     * Set to 5000ms to stay within Android's 5-second Application Not Responding (ANR)
-     * watchdog threshold, since Html.fromHtml currently executes getDrawable() synchronously
-     * on the main UI thread during view binding.
-     *
-     * FIXME: Once image fetching is moved to an asynchronous background worker pipeline,
-     * this timeout can be safely extended (e.g. 15-30s for slow or Tor-routed networks).
+     * Safe to keep at 15000ms as requests are performed asynchronously in background threads.
      */
-    private static final int NETWORK_TIMEOUT_MS = 5000;
+    private static final int NETWORK_TIMEOUT_MS = 15000;
 
-    private Context mContext;
-    private Settings mSettings;
-    private Map<String, Bitmap> mBitmapCache;
+    /**
+     * Callback interface invoked on the main UI thread when a background image finishes loading.
+     */
+    public interface OnImageLoadedListener {
+        void onImageLoaded();
+    }
+
+    private final Context mContext;
+    private final Settings mSettings;
+    private final Map<String, Bitmap> mBitmapCache;
+    private final Set<String> mPendingDownloads;
+    private final Handler mMainHandler;
+    private final ExecutorService mExecutor;
+    private OnImageLoadedListener mListener;
 
     public MumbleImageGetter(Context context) {
+        this(context, null);
+    }
+
+    public MumbleImageGetter(Context context, OnImageLoadedListener listener) {
         mContext = context;
         mSettings = Settings.getInstance(context);
-        mBitmapCache = new HashMap<String, Bitmap>();
+        mListener = listener;
+        mBitmapCache = new HashMap<>();
+        mPendingDownloads = Collections.synchronizedSet(new HashSet<>());
+        mMainHandler = new Handler(Looper.getMainLooper());
+        mExecutor = Executors.newFixedThreadPool(2, new ThreadFactory() {
+            private int mCount = 1;
 
-        // We have to enable network on the main thread here. FIXME
-        StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
-        StrictMode.setThreadPolicy(policy);
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "MumbleImageLoader-" + mCount++);
+                t.setDaemon(true);
+                return t;
+            }
+        });
+    }
+
+    public void setOnImageLoadedListener(OnImageLoadedListener listener) {
+        mListener = listener;
     }
 
     @Override
@@ -96,26 +127,31 @@ public class MumbleImageGetter implements Html.ImageGetter {
 
         Bitmap bitmap = mBitmapCache.get(decodedSource);
         if (bitmap == null) {
-            try {
-                if (decodedSource.startsWith("data:image")) {
+            if (decodedSource.startsWith("data:image")) {
+                try {
                     int commaIndex = decodedSource.indexOf(',');
                     if (commaIndex != -1 && commaIndex < decodedSource.length() - 1) {
                         bitmap = getBase64Image(decodedSource.substring(commaIndex + 1));
                     }
-                } else if (mSettings.shouldLoadExternalImages()) {
-                    bitmap = getURLImage(decodedSource);
+                } catch (Throwable t) {
+                    Log.w(TAG, "exception when decoding base64 image: " + t.toString());
+                    return null;
                 }
-            } catch (Throwable t) {
-                Log.w(TAG, "exception when decoding image: " + t.toString());
+                if (bitmap != null) {
+                    mBitmapCache.put(decodedSource, bitmap);
+                }
+            } else if (mSettings.shouldLoadExternalImages()) {
+                fetchURLImageAsync(decodedSource);
                 return null;
-            }
-            if (bitmap != null) {
-                mBitmapCache.put(decodedSource, bitmap);
             }
         }
 
         if (bitmap == null) return null;
 
+        return createDrawable(bitmap);
+    }
+
+    private Drawable createDrawable(Bitmap bitmap) {
         BitmapDrawable drawable = new BitmapDrawable(mContext.getResources(), bitmap);
         DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
 
@@ -141,12 +177,40 @@ public class MumbleImageGetter implements Html.ImageGetter {
         return drawable;
     }
 
+    private void fetchURLImageAsync(final String source) {
+        if (!mPendingDownloads.add(source)) {
+            return; // Already in flight
+        }
+
+        mExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final Bitmap bitmap = fetchURLImage(source);
+                    if (bitmap != null) {
+                        mBitmapCache.put(source, bitmap);
+                        mMainHandler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (mListener != null) {
+                                    mListener.onImageLoaded();
+                                }
+                            }
+                        });
+                    }
+                } finally {
+                    mPendingDownloads.remove(source);
+                }
+            }
+        });
+    }
+
     private Bitmap getBase64Image(String base64) throws IllegalArgumentException {
         byte[] src = Base64.decode(base64, Base64.DEFAULT);
         return BitmapFactory.decodeByteArray(src, 0, src.length);
     }
 
-    private Bitmap getURLImage(String source) {
+    private Bitmap fetchURLImage(String source) {
         try {
             URL url = new URL(source);
             URLConnection conn = url.openConnection();
