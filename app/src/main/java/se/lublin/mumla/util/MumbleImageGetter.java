@@ -27,6 +27,7 @@ import android.text.Html;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -50,14 +51,17 @@ public class MumbleImageGetter implements Html.ImageGetter {
     /** The maximum image size in bytes to load. */
     private static final int MAX_LENGTH = 64000;
 
+    /** Estimated total horizontal padding/margin around chat message text in dp. */
+    private static final int HORIZONTAL_PADDING_DP = 48;
+
     private Context mContext;
     private Settings mSettings;
-    private Map<String, Drawable> mBitmapCache;
+    private Map<String, Bitmap> mBitmapCache;
 
     public MumbleImageGetter(Context context) {
         mContext = context;
         mSettings = Settings.getInstance(context);
-        mBitmapCache = new HashMap<String, Drawable>();
+        mBitmapCache = new HashMap<String, Bitmap>();
 
         // We have to enable network on the main thread here. FIXME
         StrictMode.ThreadPolicy policy = new StrictMode.ThreadPolicy.Builder().permitAll().build();
@@ -66,34 +70,58 @@ public class MumbleImageGetter implements Html.ImageGetter {
 
     @Override
     public Drawable getDrawable(String source) {
-        Drawable cachedDrawable = mBitmapCache.get(source);
-        if(cachedDrawable != null) return cachedDrawable;
-
         String decodedSource; // Decode from URL encoding
         try {
             decodedSource = URLDecoder.decode(source, "UTF-8");
         } catch (UnsupportedEncodingException e) {
-            e.printStackTrace();
+            Log.w(TAG, "exception when decoding source: " + e.toString());
             return null;
         }
 
-        Bitmap bitmap = null;
-        try {
-            if(decodedSource.startsWith("data:image")) {
-                bitmap = getBase64Image(decodedSource.split(",")[1]);
-            } else if(mSettings.shouldLoadExternalImages()) {
-                bitmap = getURLImage(decodedSource);
+        Bitmap bitmap = mBitmapCache.get(decodedSource);
+        if (bitmap == null) {
+            try {
+                if (decodedSource.startsWith("data:image")) {
+                    int commaIndex = decodedSource.indexOf(',');
+                    if (commaIndex != -1 && commaIndex < decodedSource.length() - 1) {
+                        bitmap = getBase64Image(decodedSource.substring(commaIndex + 1));
+                    }
+                } else if (mSettings.shouldLoadExternalImages()) {
+                    bitmap = getURLImage(decodedSource);
+                }
+            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException e) {
+                Log.w(TAG, "exception when decoding image: " + e.toString());
+                return null;
             }
-        } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException e) {
-            Log.w(TAG, "exception when decoding data:image: " + e.toString());
-            return null;
+            if (bitmap != null) {
+                mBitmapCache.put(decodedSource, bitmap);
+            }
         }
-        if(bitmap == null) return null;
+
+        if (bitmap == null) return null;
 
         BitmapDrawable drawable = new BitmapDrawable(mContext.getResources(), bitmap);
-        DisplayMetrics metrics = mContext.getResources().getDisplayMetrics(); // Use display metrics to scale image to mdpi
-        drawable.setBounds(0, 0, (int)((float)drawable.getIntrinsicWidth()*metrics.density), (int)((float)drawable.getIntrinsicHeight()*metrics.density));
-        mBitmapCache.put(source, drawable);
+        DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
+
+        int intrinsicWidth = drawable.getIntrinsicWidth();
+        int intrinsicHeight = drawable.getIntrinsicHeight();
+        if (intrinsicWidth <= 0 || intrinsicHeight <= 0) {
+            return null;
+        }
+
+        int horizontalPaddingPx = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, HORIZONTAL_PADDING_DP, metrics);
+        int maxWidth = Math.max(metrics.widthPixels - horizontalPaddingPx, 1);
+
+        int targetWidth = intrinsicWidth;
+        int targetHeight = intrinsicHeight;
+
+        if (targetWidth > maxWidth) {
+            targetWidth = maxWidth;
+            targetHeight = Math.max(1, (int) ((float) intrinsicHeight * maxWidth / (float) intrinsicWidth));
+        }
+
+        drawable.setBounds(0, 0, targetWidth, targetHeight);
         return drawable;
     }
 
