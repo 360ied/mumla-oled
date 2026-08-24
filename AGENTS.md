@@ -1,5 +1,12 @@
 # Agent Guidelines
 
+## Branching Strategy
+
+### Dedicated Branch Before Changes
+- **ALWAYS** check out or create a dedicated branch (e.g., `feature/<name>` or `bugfix/<name>`) before making any code or project modifications.
+- **NEVER** make development changes directly on `master`.
+- **Exception**: Modifications to `AGENTS.md` itself may be made directly on the current branch without creating or switching to a new branch.
+
 ## Commit Strategy & Rules
 
 ### 1. Practice Atomic Commits
