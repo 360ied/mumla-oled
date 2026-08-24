@@ -28,18 +28,17 @@ import android.text.Html;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.LruCache;
 import android.util.TypedValue;
 
-import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLConnection;
-import java.net.URLDecoder;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -54,7 +53,7 @@ import se.lublin.mumla.Settings;
  * Created by andrew on 07/02/14.
  */
 public class MumbleImageGetter implements Html.ImageGetter {
-    private static final String TAG = MumbleImageGetter.class.getName();
+    private static final String TAG = "MumbleImageGetter";
 
     /** The maximum image size in bytes to load. */
     private static final int MAX_LENGTH = 64000;
@@ -77,22 +76,43 @@ public class MumbleImageGetter implements Html.ImageGetter {
 
     private final Context mContext;
     private final Settings mSettings;
-    private final Map<String, Bitmap> mBitmapCache;
+    private final LruCache<String, Bitmap> mBitmapCache;
     private final Set<String> mPendingDownloads;
+    private final Set<String> mFailedDownloads;
     private final Handler mMainHandler;
     private final ExecutorService mExecutor;
     private OnImageLoadedListener mListener;
+
+    private final Runnable mNotifyRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (mListener != null) {
+                mListener.onImageLoaded();
+            }
+        }
+    };
 
     public MumbleImageGetter(Context context) {
         this(context, null);
     }
 
     public MumbleImageGetter(Context context, OnImageLoadedListener listener) {
-        mContext = context;
-        mSettings = Settings.getInstance(context);
+        mContext = context.getApplicationContext();
+        mSettings = Settings.getInstance(mContext);
         mListener = listener;
-        mBitmapCache = new HashMap<>();
+
+        // Allocate up to 1/8th of available runtime memory for the LRU bitmap cache (in KB)
+        int maxMemoryKb = (int) (Runtime.getRuntime().maxMemory() / 1024);
+        int cacheSizeKb = Math.max(maxMemoryKb / 8, 1024); // at least 1MB
+        mBitmapCache = new LruCache<String, Bitmap>(cacheSizeKb) {
+            @Override
+            protected int sizeOf(String key, Bitmap bitmap) {
+                return bitmap.getByteCount() / 1024;
+            }
+        };
+
         mPendingDownloads = Collections.synchronizedSet(new HashSet<>());
+        mFailedDownloads = Collections.synchronizedSet(new HashSet<>());
         mMainHandler = new Handler(Looper.getMainLooper());
         mExecutor = Executors.newFixedThreadPool(2, new ThreadFactory() {
             private int mCount = 1;
@@ -110,45 +130,57 @@ public class MumbleImageGetter implements Html.ImageGetter {
         mListener = listener;
     }
 
+    /**
+     * Shuts down the background executor and clears callbacks to prevent memory/thread leaks.
+     */
+    public void shutdown() {
+        mListener = null;
+        mMainHandler.removeCallbacksAndMessages(null);
+        mExecutor.shutdownNow();
+    }
+
     @Override
     public Drawable getDrawable(String source) {
-        String decodedSource; // Decode from URL encoding
-        try {
-            // Preserve literal '+' characters in raw base64 data URIs before URLDecoder converts them to spaces
-            String safeSource = (source != null && source.startsWith("data:image"))
-                    ? source.replace("+", "%2B") : source;
-            decodedSource = safeSource != null ? URLDecoder.decode(safeSource, "UTF-8") : null;
-        } catch (UnsupportedEncodingException e) {
-            Log.w(TAG, "exception when decoding source: " + e.toString());
+        if (source == null || source.isEmpty()) {
             return null;
         }
 
-        if (decodedSource == null) return null;
-
-        Bitmap bitmap = mBitmapCache.get(decodedSource);
-        if (bitmap == null) {
-            if (decodedSource.startsWith("data:image")) {
-                try {
-                    int commaIndex = decodedSource.indexOf(',');
-                    if (commaIndex != -1 && commaIndex < decodedSource.length() - 1) {
-                        bitmap = getBase64Image(decodedSource.substring(commaIndex + 1));
-                    }
-                } catch (Throwable t) {
-                    Log.w(TAG, "exception when decoding base64 image: " + t.toString());
-                    return null;
-                }
-                if (bitmap != null) {
-                    mBitmapCache.put(decodedSource, bitmap);
-                }
-            } else if (mSettings.shouldLoadExternalImages()) {
-                fetchURLImageAsync(decodedSource);
-                return null;
+        if (source.startsWith("data:image")) {
+            Bitmap bitmap = mBitmapCache.get(source);
+            if (bitmap != null) {
+                return createDrawable(bitmap);
             }
+            try {
+                int commaIndex = source.indexOf(',');
+                if (commaIndex != -1 && commaIndex < source.length() - 1) {
+                    bitmap = getBase64Image(source.substring(commaIndex + 1));
+                    if (bitmap != null) {
+                        mBitmapCache.put(source, bitmap);
+                        return createDrawable(bitmap);
+                    }
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "exception when decoding base64 image: " + t.toString());
+            }
+            return null;
         }
 
-        if (bitmap == null) return null;
+        // Check cache for downloaded HTTP/HTTPS image
+        Bitmap bitmap = mBitmapCache.get(source);
+        if (bitmap != null) {
+            return createDrawable(bitmap);
+        }
 
-        return createDrawable(bitmap);
+        // Avoid re-fetching failed URLs
+        if (mFailedDownloads.contains(source)) {
+            return null;
+        }
+
+        if (mSettings.shouldLoadExternalImages()) {
+            fetchURLImageAsync(source);
+        }
+
+        return null;
     }
 
     private Drawable createDrawable(Bitmap bitmap) {
@@ -178,6 +210,9 @@ public class MumbleImageGetter implements Html.ImageGetter {
     }
 
     private void fetchURLImageAsync(final String source) {
+        if (mFailedDownloads.contains(source)) {
+            return;
+        }
         if (!mPendingDownloads.add(source)) {
             return; // Already in flight
         }
@@ -189,14 +224,9 @@ public class MumbleImageGetter implements Html.ImageGetter {
                     final Bitmap bitmap = fetchURLImage(source);
                     if (bitmap != null) {
                         mBitmapCache.put(source, bitmap);
-                        mMainHandler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                if (mListener != null) {
-                                    mListener.onImageLoaded();
-                                }
-                            }
-                        });
+                        notifyImageLoaded();
+                    } else {
+                        mFailedDownloads.add(source);
                     }
                 } finally {
                     mPendingDownloads.remove(source);
@@ -205,26 +235,73 @@ public class MumbleImageGetter implements Html.ImageGetter {
         });
     }
 
+    private void notifyImageLoaded() {
+        mMainHandler.removeCallbacks(mNotifyRunnable);
+        mMainHandler.post(mNotifyRunnable);
+    }
+
     private Bitmap getBase64Image(String base64) throws IllegalArgumentException {
         byte[] src = Base64.decode(base64, Base64.DEFAULT);
+        if (src == null || src.length == 0 || src.length > MAX_LENGTH) {
+            return null;
+        }
         return BitmapFactory.decodeByteArray(src, 0, src.length);
     }
 
     private Bitmap fetchURLImage(String source) {
+        HttpURLConnection httpConn = null;
         try {
             URL url = new URL(source);
+            String protocol = url.getProtocol();
+            if (protocol == null || (!protocol.equalsIgnoreCase("http") && !protocol.equalsIgnoreCase("https"))) {
+                Log.w(TAG, "Refusing to load image with non-HTTP protocol: " + protocol);
+                return null;
+            }
+
             URLConnection conn = url.openConnection();
+            if (conn instanceof HttpURLConnection) {
+                httpConn = (HttpURLConnection) conn;
+                httpConn.setInstanceFollowRedirects(true);
+            }
             conn.setConnectTimeout(NETWORK_TIMEOUT_MS);
             conn.setReadTimeout(NETWORK_TIMEOUT_MS);
-            if (conn.getContentLength() > MAX_LENGTH) return null;
+
+            int contentLength = conn.getContentLength();
+            if (contentLength > MAX_LENGTH) {
+                return null;
+            }
+
             try (InputStream is = conn.getInputStream()) {
-                return BitmapFactory.decodeStream(is);
+                byte[] data = readStreamWithLimit(is, MAX_LENGTH);
+                if (data == null || data.length == 0) {
+                    return null;
+                }
+                return BitmapFactory.decodeByteArray(data, 0, data.length);
             }
         } catch (IOException e) {
             Log.w(TAG, "failed to load URL image: " + e.toString());
         } catch (OutOfMemoryError e) {
             Log.w(TAG, "OOM decoding URL image: " + e.toString());
+        } finally {
+            if (httpConn != null) {
+                httpConn.disconnect();
+            }
         }
         return null;
+    }
+
+    private static byte[] readStreamWithLimit(InputStream is, int maxBytes) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int totalRead = 0;
+        int bytesRead;
+        while ((bytesRead = is.read(buffer)) != -1) {
+            totalRead += bytesRead;
+            if (totalRead > maxBytes) {
+                return null; // Exceeded maximum allowable byte size
+            }
+            baos.write(buffer, 0, bytesRead);
+        }
+        return baos.toByteArray();
     }
 }

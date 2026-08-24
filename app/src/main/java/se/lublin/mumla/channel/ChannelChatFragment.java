@@ -224,6 +224,14 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
     }
 
     @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (mChatAdapter != null) {
+            mChatAdapter.shutdown();
+        }
+    }
+
+    @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         inflater.inflate(R.menu.fragment_chat, menu);
     }
@@ -463,6 +471,9 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
             return;
         }
 
+        if (mChatAdapter != null) {
+            mChatAdapter.shutdown();
+        }
         mChatAdapter = new ChannelChatAdapter(getActivity(), service, getService().getMessageLog());
         mChatList.setAdapter(mChatAdapter);
         mChatList.post(new Runnable() {
@@ -493,6 +504,10 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
             mService = service;
             mImageGetter = new MumbleImageGetter(context, this::notifyDataSetChanged);
             mDateFormat = SimpleDateFormat.getTimeInstance();
+        }
+
+        public void shutdown() {
+            mImageGetter.shutdown();
         }
 
         @Override
