@@ -400,18 +400,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mWakeLock.acquire();
 
         try {
-            mAudioHandler = mAudioBuilder.initialize(
-                    mModelHandler.getUser(mConnection.getSession()),
-                    mConnection.getMaxBandwidth(), mConnection.getCodec(),
-                    mVoiceTargetId);
-            mAudioHandler.setProtobufUdp(mConnection.isProtobufUdpSupported());
-            mConnection.addTCPMessageHandlers(mAudioHandler);
-            mConnection.addUDPMessageHandlers(mAudioHandler);
+            createAudioHandler();
         } catch (AudioException e) {
             e.printStackTrace();
             onConnectionWarning(e.getMessage());
-        } catch (NotSynchronizedException e) {
-            throw new RuntimeException("Connection should be synchronized in callback for synchronization!", e);
         }
 
         mCallbacks.onConnected();
@@ -534,6 +526,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     mModelHandler.getUser(mConnection.getSession()),
                     mConnection.getMaxBandwidth(), mConnection.getCodec(),
                     mVoiceTargetId);
+            mAudioHandler.setProtobufUdp(mConnection.isProtobufUdpSupported());
             mConnection.addTCPMessageHandlers(mAudioHandler);
             mConnection.addUDPMessageHandlers(mAudioHandler);
         } catch (NotSynchronizedException e) {
