@@ -40,7 +40,6 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -155,9 +154,12 @@ public class MumbleImageGetter implements Html.ImageGetter {
             try {
                 int commaIndex = source.indexOf(',');
                 if (commaIndex != -1 && commaIndex < source.length() - 1) {
-                    String base64Data = source.substring(commaIndex + 1);
-                    if (base64Data.endsWith("\"") || base64Data.endsWith("'")) {
-                        base64Data = base64Data.substring(0, base64Data.length() - 1);
+                    String base64Data = source.substring(commaIndex + 1).trim();
+                    while (base64Data.startsWith("\"") || base64Data.startsWith("'")) {
+                        base64Data = base64Data.substring(1).trim();
+                    }
+                    while (base64Data.endsWith("\"") || base64Data.endsWith("'")) {
+                        base64Data = base64Data.substring(0, base64Data.length() - 1).trim();
                     }
                     bitmap = getBase64Image(base64Data);
                     if (bitmap != null) {
@@ -262,12 +264,12 @@ public class MumbleImageGetter implements Html.ImageGetter {
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
             if (c == '%' && i + 2 < s.length()) {
-                try {
-                    int code = Integer.parseInt(s.substring(i + 1, i + 3), 16);
-                    sb.append((char) code);
+                int d1 = Character.digit(s.charAt(i + 1), 16);
+                int d2 = Character.digit(s.charAt(i + 2), 16);
+                if (d1 != -1 && d2 != -1) {
+                    sb.append((char) ((d1 << 4) | d2));
                     i += 2;
                     continue;
-                } catch (NumberFormatException ignored) {
                 }
             }
             sb.append(c);
@@ -284,10 +286,18 @@ public class MumbleImageGetter implements Html.ImageGetter {
         try {
             src = Base64.decode(decodedBase64, Base64.DEFAULT);
             if (src == null) {
-                src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+                try {
+                    src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+                } catch (Throwable ignored) {
+                    return null;
+                }
             }
         } catch (Throwable t) {
-            src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+            try {
+                src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+            } catch (Throwable ignored) {
+                return null;
+            }
         }
         if (src == null || src.length == 0 || src.length > MAX_LENGTH) {
             return null;
