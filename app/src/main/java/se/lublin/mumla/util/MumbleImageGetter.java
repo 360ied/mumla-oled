@@ -22,6 +22,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Html;
@@ -39,6 +40,7 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,7 +58,7 @@ public class MumbleImageGetter implements Html.ImageGetter {
     private static final String TAG = "MumbleImageGetter";
 
     /** The maximum image size in bytes to load. */
-    private static final int MAX_LENGTH = 64000;
+    private static final int MAX_LENGTH = 10 * 1024 * 1024;
 
     /** Estimated total horizontal padding/margin around chat message text in dp. */
     private static final int HORIZONTAL_PADDING_DP = 48;
@@ -145,7 +147,7 @@ public class MumbleImageGetter implements Html.ImageGetter {
             return null;
         }
 
-        if (source.startsWith("data:image")) {
+        if (source.regionMatches(true, 0, "data:image", 0, 10)) {
             Bitmap bitmap = mBitmapCache.get(source);
             if (bitmap != null) {
                 return createDrawable(bitmap);
@@ -153,7 +155,11 @@ public class MumbleImageGetter implements Html.ImageGetter {
             try {
                 int commaIndex = source.indexOf(',');
                 if (commaIndex != -1 && commaIndex < source.length() - 1) {
-                    bitmap = getBase64Image(source.substring(commaIndex + 1));
+                    String base64Data = source.substring(commaIndex + 1);
+                    if (base64Data.endsWith("\"") || base64Data.endsWith("'")) {
+                        base64Data = base64Data.substring(0, base64Data.length() - 1);
+                    }
+                    bitmap = getBase64Image(base64Data);
                     if (bitmap != null) {
                         mBitmapCache.put(source, bitmap);
                         return createDrawable(bitmap);
@@ -240,12 +246,66 @@ public class MumbleImageGetter implements Html.ImageGetter {
         mMainHandler.post(mNotifyRunnable);
     }
 
-    private Bitmap getBase64Image(String base64) throws IllegalArgumentException {
-        byte[] src = Base64.decode(base64, Base64.DEFAULT);
+    public static String percentDecode(String s) {
+        if (s == null || s.indexOf('%') == -1) {
+            return s;
+        }
+        try {
+            String decoded = Uri.decode(s);
+            if (decoded != null) {
+                return decoded;
+            }
+        } catch (Throwable ignored) {
+        }
+        // Fallback for JVM unit tests or unmocked stubs
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '%' && i + 2 < s.length()) {
+                try {
+                    int code = Integer.parseInt(s.substring(i + 1, i + 3), 16);
+                    sb.append((char) code);
+                    i += 2;
+                    continue;
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    public static byte[] decodeBase64Bytes(String base64) throws IllegalArgumentException {
+        if (base64 == null || base64.isEmpty()) {
+            return null;
+        }
+        String decodedBase64 = percentDecode(base64);
+        byte[] src;
+        try {
+            src = Base64.decode(decodedBase64, Base64.DEFAULT);
+            if (src == null) {
+                src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+            }
+        } catch (Throwable t) {
+            src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+        }
         if (src == null || src.length == 0 || src.length > MAX_LENGTH) {
             return null;
         }
-        return BitmapFactory.decodeByteArray(src, 0, src.length);
+        return src;
+    }
+
+    private Bitmap getBase64Image(String base64) throws IllegalArgumentException {
+        byte[] src = decodeBase64Bytes(base64);
+        if (src == null) {
+            return null;
+        }
+        try {
+            return BitmapFactory.decodeByteArray(src, 0, src.length);
+        } catch (OutOfMemoryError e) {
+            Log.w(TAG, "OOM decoding base64 image: " + e.toString());
+            return null;
+        }
     }
 
     private Bitmap fetchURLImage(String source) {

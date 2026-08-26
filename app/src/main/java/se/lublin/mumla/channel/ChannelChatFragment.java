@@ -59,6 +59,7 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts.GetContent;
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission;
+import androidx.core.text.HtmlCompat;
 import androidx.exifinterface.media.ExifInterface;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -66,7 +67,9 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -375,7 +378,12 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         }
 
         String imageStr = Base64.encodeToString(compressed, Base64.NO_WRAP);
-        String encoded = URLEncoder.encode(imageStr);
+        String encoded;
+        try {
+            encoded = URLEncoder.encode(imageStr, StandardCharsets.UTF_8.name());
+        } catch (UnsupportedEncodingException e) {
+            encoded = URLEncoder.encode(imageStr);
+        }
         sendMessage("<img src=\"data:image/jpeg;base64," + encoded + "\"/>");
     }
 
@@ -569,7 +577,7 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                 }
             });
             timeText.setText(mDateFormat.format(new Date(message.getReceivedTime())));
-            messageText.setText(Html.fromHtml(message.getBody(), mImageGetter, null));
+            messageText.setText(HtmlCompat.fromHtml(message.getBody(), HtmlCompat.FROM_HTML_MODE_LEGACY, mImageGetter, null));
             messageText.setMovementMethod(LinkMovementMethod.getInstance());
 
             return v;
