@@ -106,4 +106,24 @@ public class MumbleImageGetterTest extends TestCase {
         assertNull(MumbleImageGetter.decodeBase64Bytes(null));
         assertNull(MumbleImageGetter.decodeBase64Bytes(""));
     }
+
+    public void testPercentDecode_MalformedPercent() {
+        assertEquals("test%", MumbleImageGetter.percentDecode("test%"));
+        assertEquals("test%2", MumbleImageGetter.percentDecode("test%2"));
+        assertEquals("test%ZZ", MumbleImageGetter.percentDecode("test%ZZ"));
+        assertEquals("test%2G", MumbleImageGetter.percentDecode("test%2G"));
+        assertEquals("hello%world", MumbleImageGetter.percentDecode("hello%world"));
+    }
+
+    public void testDecodeBase64Bytes_MalformedBase64() {
+        assertNull(MumbleImageGetter.decodeBase64Bytes("!invalid_base64_data!"));
+        assertNull(MumbleImageGetter.decodeBase64Bytes("a"));
+    }
+
+    public void testDecodeBase64Bytes_ExceedsMaxLength() {
+        // Exceeds 10MB limit (MAX_LENGTH = 10 * 1024 * 1024)
+        byte[] oversized = new byte[10 * 1024 * 1024 + 1];
+        String base64 = Base64.getEncoder().encodeToString(oversized);
+        assertNull("Payload exceeding MAX_LENGTH must return null", MumbleImageGetter.decodeBase64Bytes(base64));
+    }
 }
