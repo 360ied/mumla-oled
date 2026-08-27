@@ -36,3 +36,9 @@ Sessionx.vim
 .netrwhist
 [._]*.un~
 tags
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
