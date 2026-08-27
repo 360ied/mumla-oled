@@ -183,7 +183,6 @@
     </plurals>
     <string name="shout_include_linked">Voix vers les salons liés</string>
     <string name="shout_include_subchannels">Voix vers les sous-salons</string>
-    <string name="donation_thanks">Merci pour le don.</string>
     <string name="orbot_tor_failed">Impossible de se connecter au mandataire Tor local sur le port %d (SOCKS).
 \n
 \nVeuillez vous assurer que l\'application Orbot est en cours d\'exécution.</string>
