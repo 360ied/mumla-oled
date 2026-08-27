@@ -17,7 +17,7 @@
 - **Forward-Only History**: Never rewrite, rebase, squash, or force-push existing git history.
 
 ## Build & Deployment
-- **FOSS Flavor**: Always build the `foss` product flavor (e.g., `./gradlew assembleFossDebug`). Never build `goog`, `beta`, or `donation` flavors unless requested.
+- **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor (e.g., `./gradlew assembleFossDebug`).
 - **ADB Launch**: Application ID is `se.lublin.mumla.oled15` (Java namespace is `se.lublin.mumla`). Launch with:
   ```bash
   adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity

@@ -33,8 +33,6 @@ repositories {
 
 def signingFile = file 'signing.gradle'
 if (signingFile.exists()) apply from: signingFile
-def signingBetaFile = file 'signing-beta.gradle'
-if (signingBetaFile.exists()) apply from: signingBetaFile
 
 allprojects {
     tasks.withType(JavaCompile) {
@@ -85,33 +83,18 @@ android {
 
     flavorDimensions "release"
     productFlavors {
-        goog {
-            dimension "release"
-            applicationId "se.lublin.mumla"
-        }
         foss {
             dimension "release"
             applicationId "se.lublin.mumla"
         }
-        donation {
-            dimension "release"
-            applicationId "se.lublin.mumla.donation"
-        }
-        beta {
-            dimension "release"
-            applicationId "se.lublin.mumla.beta"
-        }
     }
 
     buildTypes {
-        // signingConfig beta will override
         release {
             applicationIdSuffix ".oled15"
             resValue "string", "app_name", "Mumla OLED (1.5)"
             if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("release")) {
                 signingConfig = signingConfigs.release
-            } else if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("beta")) {
-                signingConfig = signingConfigs.beta
             } else {
                 signingConfig = signingConfigs.debug
             }
@@ -120,11 +103,6 @@ android {
             versionNameSuffix "-debug"
             applicationIdSuffix ".oled15"
             resValue "string", "app_name", "Mumla OLED (1.5)"
-            if (android.hasProperty("signingConfigs")) {
-                if (signingConfigs.hasProperty("beta")) {
-                    signingConfig = signingConfigs.beta
-                }
-            }
         }
     }
     lint {
@@ -135,15 +113,8 @@ android {
         ignoreWarnings = false
         quiet = false
     }
-    // betas may be released every minute
-    // TODO? dynamic stuff, have to rebuild a lot
     applicationVariants.all { variant ->
         variant.resValue "string", "search_suggest_authority", "${variant.applicationId}.channel.ChannelSearchProvider"
-        if (variant.flavorName == "beta") {
-            variant.outputs.each { output ->
-                output.versionCodeOverride = System.currentTimeSeconds() / 60
-            }
-        }
     }
 
     testOptions {
@@ -163,8 +134,6 @@ dependencies {
     implementation 'androidx.preference:preference:1.2.1'
     implementation 'org.jsoup:jsoup:1.13.1'
     implementation 'info.guardianproject.netcipher:netcipher:2.1.0'
-
-    googImplementation 'com.android.billingclient:billing:7.1.1'
 
     testImplementation 'junit:junit:4.13.2'
 }

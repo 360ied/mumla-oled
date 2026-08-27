@@ -32,7 +32,7 @@ echo "========================================"
 echo " 3. Running Gradle Tests"
 echo "========================================"
 if [ "$FULL_TEST" = true ]; then
-  echo "Running full test suite across all flavors..."
+  echo "Running full test suite..."
   nix develop --command ./gradlew test
 else
   echo "Running fast FOSS debug unit tests..."
