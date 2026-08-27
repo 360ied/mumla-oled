@@ -13,7 +13,7 @@ description: >-
    - Always create and work on a dedicated branch (`feature/<name>`, `bugfix/<name>`, `docs/<name>`, `chore/<name>`). Never commit directly on `master`.
 
 2. **Commit Wrapper & 50/72 Rule**:
-   - Use `python3 scripts/commit.py -m "<message>"` (or `-s "<subject>" -b "<body>"`) to automatically format and execute `git commit`.
+   - Use `python3 scripts/commit.py -m "<message>"` to automatically format to the 50/72 rule and execute `git commit`.
    - Subject line: <= 50 characters, concise and imperative with a scope prefix (e.g. `proto:`, `nix:`, `core:`, `docs:`, `chat:`, `util:`, `app:`, `ui:`).
    - Body: Automatically wrapped to 72 columns with structured sections:
      - Context & Motivation
