@@ -488,9 +488,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return;
         }
         String msg = getString(R.string.first_run_generate_certificate);
-        if (BuildConfig.FLAVOR.equals("donation")) {
-            msg = getString(R.string.donation_thanks) + "\n\n" + msg;
-        }
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.first_run_generate_certificate_title)
                 .setMessage(msg)
