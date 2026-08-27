@@ -94,7 +94,7 @@ android {
     buildTypes {
         release {
             applicationIdSuffix ".oled15"
-            resValue "string", "app_name", "Mumla OLED (1.5)"
+            resValue "string", "app_name", "Mumla OLED"
             if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("release")) {
                 signingConfig = signingConfigs.release
             } else {
@@ -104,7 +104,7 @@ android {
         debug {
             versionNameSuffix "-debug"
             applicationIdSuffix ".oled15"
-            resValue "string", "app_name", "Mumla OLED (1.5)"
+            resValue "string", "app_name", "Mumla OLED"
         }
     }
     lint {
