@@ -247,8 +247,9 @@ public class MumbleImageGetter implements Html.ImageGetter {
             return null;
         }
 
-        float safeDensity = density > 0f ? density : 1.0f;
-        int maxWidth = Math.max(displayWidth - horizontalPaddingPx, 1);
+        float safeDensity = (!Float.isNaN(density) && Float.isFinite(density) && density > 0f) ? density : 1.0f;
+        int safePadding = Math.max(0, horizontalPaddingPx);
+        int maxWidth = Math.max(displayWidth - safePadding, 1);
         int maxHeight = Math.max((int) (displayHeight * 0.65f), 1);
 
         int targetWidth;
@@ -279,8 +280,8 @@ public class MumbleImageGetter implements Html.ImageGetter {
         BitmapDrawable drawable = new BitmapDrawable(mContext.getResources(), bitmap);
         DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
 
-        int intrinsicWidth = drawable.getIntrinsicWidth();
-        int intrinsicHeight = drawable.getIntrinsicHeight();
+        int intrinsicWidth = bitmap.getWidth();
+        int intrinsicHeight = bitmap.getHeight();
         int horizontalPaddingPx = (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, HORIZONTAL_PADDING_DP, metrics);
 

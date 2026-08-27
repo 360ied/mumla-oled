@@ -234,6 +234,36 @@ public class MumbleImageGetterTest extends TestCase {
         assertNull(MumbleImageGetter.calculateImageBounds(100, 100, 1080, 0, 144));
     }
 
+    public void testCalculateImageBounds_NegativePaddingClampedToZero() {
+        // Negative padding clamped to 0 -> maxWidth = displayWidth
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                600, 400, 1080, 2400, -50, 1.0f);
+        assertNotNull(bounds);
+        assertEquals(1080, bounds.width);
+        assertEquals(720, bounds.height);
+    }
+
+    public void testCalculateImageBounds_SpecialDensityValues() {
+        // NaN, Infinity, negative density should fall back to safe 1.0f density
+        MumbleImageGetter.ImageBounds nanBounds = MumbleImageGetter.calculateImageBounds(
+                32, 32, 1080, 2400, 144, Float.NaN);
+        assertNotNull(nanBounds);
+        assertEquals(32, nanBounds.width);
+        assertEquals(32, nanBounds.height);
+
+        MumbleImageGetter.ImageBounds infBounds = MumbleImageGetter.calculateImageBounds(
+                32, 32, 1080, 2400, 144, Float.POSITIVE_INFINITY);
+        assertNotNull(infBounds);
+        assertEquals(32, infBounds.width);
+        assertEquals(32, infBounds.height);
+
+        MumbleImageGetter.ImageBounds negBounds = MumbleImageGetter.calculateImageBounds(
+                32, 32, 1080, 2400, 144, -2.0f);
+        assertNotNull(negBounds);
+        assertEquals(32, negBounds.width);
+        assertEquals(32, negBounds.height);
+    }
+
     public void testImageBounds_EqualsHashCodeToString() {
         MumbleImageGetter.ImageBounds b1 = new MumbleImageGetter.ImageBounds(100, 200);
         MumbleImageGetter.ImageBounds b2 = new MumbleImageGetter.ImageBounds(100, 200);
