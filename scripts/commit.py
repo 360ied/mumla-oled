@@ -13,7 +13,6 @@ Usage:
   python3 scripts/commit.py -m "docs: update readme\n\nDetailed explanation..."
   python3 scripts/commit.py -s "docs: update readme" -b "Detailed explanation..."
   python3 scripts/commit.py -m "docs: update readme" -m "Body paragraph 1..." -m "Body paragraph 2..."
-  python3 scripts/commit.py --dry-run -m "..."
   python3 scripts/commit.py --check -m "..."
 """
 
@@ -282,7 +281,6 @@ def main() -> int:
     messages: List[str] = []
     subject: Optional[str] = None
     body: Optional[str] = None
-    dry_run = False
     check_only = False
     forwarded_git_args: List[str] = []
 
@@ -310,9 +308,6 @@ def main() -> int:
             else:
                 print("Error: -b requires a body argument.", file=sys.stderr)
                 return 1
-        elif arg == "--dry-run":
-            dry_run = True
-            i += 1
         elif arg in ("--check", "--lint"):
             check_only = True
             i += 1
@@ -348,13 +343,6 @@ def main() -> int:
 
     if check_only:
         print("OK: Commit message complies with 50/72 rule.")
-        return 0
-
-    if dry_run:
-        print("Formatted 50/72 commit message:\n")
-        print(formatted_msg)
-        print("\nGit command that would run:")
-        print(f"  git commit -m <formatted_message> {' '.join(forwarded_git_args)}".strip())
         return 0
 
     # Execute git commit

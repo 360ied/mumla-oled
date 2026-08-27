@@ -10,7 +10,8 @@ import sys
 import tempfile
 import unittest
 
-from scripts.commit import format_commit_message, MAX_SUBJECT, MAX_BODY
+from unittest.mock import patch, MagicMock
+from scripts.commit import format_commit_message, main, MAX_SUBJECT, MAX_BODY
 
 
 class TestCommitFormatter(unittest.TestCase):
@@ -142,21 +143,47 @@ class TestCLIIntegration(unittest.TestCase):
             text=True,
         )
 
-    def test_cli_dry_run_message(self):
-        proc = self.run_cli(["--dry-run", "-m", "docs: test subject\n\nLong body line that should be wrapped if it is long enough."])
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("docs: test subject", proc.stdout)
-        self.assertIn("git commit -m", proc.stdout)
+    @patch("subprocess.run")
+    def test_cli_execution_with_message_flag(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
 
-    def test_cli_multiple_message_flags(self):
-        proc = self.run_cli(["--dry-run", "-m", "docs: multi message", "-m", "Body line 1", "-m", "Body line 2"])
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("docs: multi message\n\nBody line 1\n\nBody line 2", proc.stdout)
+        with patch("sys.argv", ["commit.py", "-m", "docs: test subject\n\nLong body line that should be wrapped if it is long enough."]):
+            ret = main()
+            self.assertEqual(ret, 0)
+            mock_run.assert_called_once()
+            cmd_args = mock_run.call_args[0][0]
+            self.assertEqual(cmd_args[0], "git")
+            self.assertEqual(cmd_args[1], "commit")
+            self.assertEqual(cmd_args[2], "-m")
+            self.assertIn("docs: test subject", cmd_args[3])
 
-    def test_cli_subject_and_body_flags(self):
-        proc = self.run_cli(["--dry-run", "-s", "docs: test flags", "-b", "Body text from flag."])
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("docs: test flags\n\nBody text from flag.", proc.stdout)
+    @patch("subprocess.run")
+    def test_cli_multiple_message_flags(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        with patch("sys.argv", ["commit.py", "-m", "docs: multi message", "-m", "Body line 1", "-m", "Body line 2"]):
+            ret = main()
+            self.assertEqual(ret, 0)
+            mock_run.assert_called_once()
+            cmd_args = mock_run.call_args[0][0]
+            self.assertEqual(cmd_args[3], "docs: multi message\n\nBody line 1\n\nBody line 2")
+
+    @patch("subprocess.run")
+    def test_cli_subject_and_body_flags(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
+        with patch("sys.argv", ["commit.py", "-s", "docs: test flags", "-b", "Body text from flag."]):
+            ret = main()
+            self.assertEqual(ret, 0)
+            mock_run.assert_called_once()
+            cmd_args = mock_run.call_args[0][0]
+            self.assertEqual(cmd_args[3], "docs: test flags\n\nBody text from flag.")
 
     def test_cli_check_flag_valid(self):
         proc = self.run_cli(["--check", "-m", "docs: valid subject\n\nValid body."])
@@ -168,11 +195,21 @@ class TestCLIIntegration(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("exceeds 50 characters", proc.stderr)
 
-    def test_cli_stdin(self):
+    @patch("subprocess.run")
+    def test_cli_stdin(self, mock_run):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_run.return_value = mock_proc
+
         raw = "docs: from stdin\n\nBody from stdin."
-        proc = self.run_cli(["--dry-run"], input_data=raw)
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn(raw, proc.stdout)
+        with patch("sys.argv", ["commit.py"]):
+            with patch("sys.stdin.isatty", return_value=False):
+                with patch("sys.stdin.read", return_value=raw):
+                    ret = main()
+                    self.assertEqual(ret, 0)
+                    mock_run.assert_called_once()
+                    cmd_args = mock_run.call_args[0][0]
+                    self.assertEqual(cmd_args[3], raw)
 
 
 if __name__ == "__main__":
