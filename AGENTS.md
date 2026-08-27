@@ -7,7 +7,12 @@
 ## Commit Strategy
 - **Atomic Commits**: Single logical unit per commit. Separate automated code generation (e.g., `protoc`) from manual edits when feasible.
 - **Working State**: Every commit must leave the codebase working and passing tests (`nix develop --command ./gradlew test`).
-- **Commit Messages**: Concise and imperative with a scope prefix (e.g., `proto:`, `nix:`, `core:`, `docs:`).
+- **Commit Messages & Detailed Descriptions**:
+  - **Subject Line**: Concise and imperative with a scope prefix (e.g., `proto:`, `nix:`, `core:`, `docs:`, `chat:`, `util:`).
+  - **Detailed Body**: Always include a descriptive body separated by a blank line from the subject. Explain:
+    - **Context & Motivation**: Why the change is needed and what problem it solves.
+    - **Technical Approach**: Architectural decisions, algorithmic details, and notable changes across components.
+    - **Edge Cases & Impact**: Handled boundary conditions, defensive checks, or protocol parity considerations.
 - **Forward-Only History**: Never rewrite, rebase, squash, or force-push existing git history.
 
 ## Build & Deployment
