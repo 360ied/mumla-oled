@@ -333,7 +333,7 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                     matrix, false);
         }
 
-        Bitmap resized = BitmapUtils.resizeKeepingAspect(bitmap, 600, 400);
+        Bitmap resized = BitmapUtils.resizeKeepingAspect(bitmap, 1600, 1600);
 
         ImageView preview = new ImageView(requireContext());
         preview.setImageBitmap(resized);
