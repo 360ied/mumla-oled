@@ -302,19 +302,18 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         }
         Log.d(TAG, "flipped:" + flipped + " rotationDeg:" + rotationDeg);
 
-        InputStream imageStream;
-        try {
-            imageStream = requireContext().getContentResolver().openInputStream(uri);
+        Bitmap bitmap = null;
+        try (InputStream imageStream = requireContext().getContentResolver().openInputStream(uri)) {
             if (imageStream == null) {
                 Log.w(TAG, "openInputStream(uri) failed");
                 return;
             }
+            bitmap = BitmapFactory.decodeStream(imageStream);
         } catch (IOException e) {
             Log.w(TAG, "exception when opening stream: " + e);
             return;
         }
 
-        Bitmap bitmap = BitmapFactory.decodeStream(imageStream);
         if (bitmap == null) {
             Log.w(TAG, "decode to bitmap failed");
             return;
@@ -349,44 +348,70 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                 .show();
     }
 
-    private void onImageConfirmed(Bitmap resized) {
-        int maxSize = getService().HumlaSession().getServerSettings().getImageMessageLength();
-
-        // Lower the quality, compressing image harder until it fits
-        int quality = 97;
-        byte[] compressed;
-        String formattedMessage = null;
-        do {
-            ByteArrayOutputStream stream = new ByteArrayOutputStream();
-            if (!resized.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
-                Log.w(TAG, "compress failed, quality==" + quality);
-            } else {
-                compressed = stream.toByteArray();
-                String imageStr = Base64.encodeToString(compressed, Base64.NO_WRAP);
-                String encoded;
-                try {
-                    encoded = URLEncoder.encode(imageStr, StandardCharsets.UTF_8.name());
-                } catch (UnsupportedEncodingException e) {
-                    encoded = URLEncoder.encode(imageStr);
-                }
-                String candidateMessage = "<img src=\"data:image/jpeg;base64," + encoded + "\"/>";
-                if (maxSize == 0 || candidateMessage.length() <= maxSize) {
-                    formattedMessage = candidateMessage;
-                    break;
-                } else {
-                    Log.d(TAG, "compress(quality==" + quality + ") candidate length " + candidateMessage.length() + " >= " + maxSize + " bytes");
-                }
-            }
-            compressed = null;
-            quality -= 10;
-        } while (quality > 0);
-
-        if (formattedMessage == null) {
-            Log.w(TAG, "all compress attempts failed");
+    private void onImageConfirmed(Bitmap initialBitmap) {
+        IHumlaService service = getService();
+        if (service == null || service.HumlaSession() == null || service.HumlaSession().getServerSettings() == null) {
+            Log.w(TAG, "onImageConfirmed: service or session is null");
             return;
         }
 
-        sendMessage(formattedMessage);
+        int maxSize = service.HumlaSession().getServerSettings().getImageMessageLength();
+
+        Bitmap currentBitmap = initialBitmap;
+        String formattedMessage = null;
+
+        while (currentBitmap != null && formattedMessage == null) {
+            int quality = 97;
+            do {
+                ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                if (!currentBitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
+                    Log.w(TAG, "compress failed, quality==" + quality);
+                } else {
+                    byte[] compressed = stream.toByteArray();
+                    String imageStr = Base64.encodeToString(compressed, Base64.NO_WRAP);
+                    String encoded;
+                    try {
+                        encoded = URLEncoder.encode(imageStr, StandardCharsets.UTF_8.name());
+                    } catch (UnsupportedEncodingException e) {
+                        encoded = URLEncoder.encode(imageStr);
+                    }
+                    String candidateMessage = "<img src=\"data:image/jpeg;base64," + encoded + "\"/>";
+                    if (maxSize == 0 || candidateMessage.length() <= maxSize) {
+                        formattedMessage = candidateMessage;
+                        break;
+                    } else {
+                        Log.d(TAG, "compress(quality==" + quality + ") candidate length " + candidateMessage.length() + " >= " + maxSize + " bytes");
+                    }
+                }
+                quality -= 15;
+            } while (quality > 10);
+
+            if (formattedMessage == null && maxSize > 0) {
+                int currentWidth = currentBitmap.getWidth();
+                int currentHeight = currentBitmap.getHeight();
+                if (currentWidth > 320 && currentHeight > 320) {
+                    int nextWidth = Math.max(320, currentWidth * 2 / 3);
+                    int nextHeight = Math.max(320, currentHeight * 2 / 3);
+                    currentBitmap = BitmapUtils.resizeKeepingAspect(currentBitmap, nextWidth, nextHeight);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if (formattedMessage == null) {
+            Log.w(TAG, "all compress attempts failed");
+            if (getContext() != null) {
+                Toast.makeText(getContext(), R.string.image_too_large, Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+
+        try {
+            sendMessage(formattedMessage);
+        } catch (HumlaDisconnectedException e) {
+            Log.d(TAG, "exception from sendMessage: " + e);
+        }
     }
 
     /**
