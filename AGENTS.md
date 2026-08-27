@@ -8,6 +8,7 @@
 - **Atomic Commits**: Single logical unit per commit. Separate automated code generation (e.g., `protoc`) from manual edits when feasible.
 - **Working State**: Every commit must leave the codebase working and passing tests (`nix develop --command ./gradlew test`).
 - **Commit Messages & Detailed Descriptions**:
+  - **50/72 Rule**: Subject line <= 50 chars, blank line 2, body wrapped <= 72 cols. Use `python3 scripts/format_commit_msg.py` to format or `--check` to validate.
   - **Subject Line**: Concise and imperative with a scope prefix (e.g., `proto:`, `nix:`, `core:`, `docs:`, `chat:`, `util:`).
   - **Detailed Body**: Always include a descriptive body separated by a blank line from the subject. Explain:
     - **Context & Motivation**: Why the change is needed and what problem it solves.
