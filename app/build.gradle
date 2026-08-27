@@ -79,6 +79,8 @@ android {
         buildConfigField "String", "VERSIONTAG", "\"" + gitDescribe.split("-")[0] + "\""
 
         testInstrumentationRunner "android.test.InstrumentationTestRunner"
+
+        resourceConfigurations += ["en", "fr", "zh-rCN"]
     }
 
     flavorDimensions "release"

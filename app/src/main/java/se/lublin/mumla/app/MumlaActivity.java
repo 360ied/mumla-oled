@@ -301,20 +301,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         View headerView = getLayoutInflater().inflate(R.layout.list_drawer_headerlogo, mDrawerList, false);
         mDrawerList.addHeaderView(headerView, null, false);
 
-        if (BuildConfig.FLAVOR.equals("foss")) {
-            final int layoutResId = getResources().getIdentifier("list_drawer_headerdonate_foss", "xml", getPackageName());
-            final int stringResId = getResources().getIdentifier("donate_link_foss", "string", getPackageName());
-            if ((layoutResId != 0) && (stringResId != 0)) {
-                View footerView = getLayoutInflater().inflate(layoutResId, mDrawerList, false);
-                mDrawerList.addHeaderView(footerView, null, true);
-                footerView.setOnClickListener(v -> {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(getString(stringResId)));
-                    startActivity(intent);
-                    mDrawerLayout.closeDrawers();
-                });
-            }
-        }
-
         mDrawerList.setOnItemClickListener(this);
         mDrawerAdapter = new DrawerAdapter(this, this);
         mDrawerList.setAdapter(mDrawerAdapter);

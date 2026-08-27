@@ -204,7 +204,6 @@
     <string name="orbot_not_installed">The Orbot app is not installed. Not using Tor.</string>
     <string name="orbot_tor_failed">Could not connect to local Tor proxy on port %d (SOCKS).\n\nPlease ensure the Orbot app is running.</string>
     <string name="default_">Default</string>
-    <string name="donation_thanks">Thank you for the donation.</string>
     <string name="image_confirm_send">Send this image?</string>
     <string name="image_too_large">Image is too large to send to server.</string>
 
@@ -231,15 +230,4 @@
 • Add some translations, thank you all translators!\n</string>
     <string name="app_news_items_v3_7_3">• Make PTT hot corner visible on Android 12 and later, and on dark and light background\n
 • Make the Back-button ask to disconnect from server again on Android 16+\n</string>
-
-    <!-- Used only by flavor "goog" -->
-    <string name="donate_dialog_title_goog">Enjoying Mumla?</string>
-    <string name="donate_dialog_message_goog">Thank you for using Mumla! Please consider making a small donation to help keep Mumla alive — and to remove this message.</string>
-    <string name="donate_dialog_positivebutton_goog">Support Mumla</string>
-    <string name="donate_dialog_negativebutton_goog">Later</string>
-    <string name="donate_purchase_pending_goog">Your donation is pending and may be ready at a later restart. Thank you!</string>
-    <string name="donate_thanks_goog">Thank you for your support!</string>
-
-    <!-- Used only by flavor "foss" -->
-    <string name="donate_foss">Donate</string>
 </resources>
