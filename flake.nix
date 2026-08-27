@@ -39,6 +39,7 @@
             pkgs.protobuf
             pkgs.git
             pkgs.gnumake
+            pkgs.python3
             androidSdk
           ];
 
