@@ -191,29 +191,83 @@ public class MumbleImageGetter implements Html.ImageGetter {
         return null;
     }
 
+    public static class ImageBounds {
+        public final int width;
+        public final int height;
+
+        public ImageBounds(int width, int height) {
+            this.width = width;
+            this.height = height;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ImageBounds that = (ImageBounds) o;
+            return width == that.width && height == that.height;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * width + height;
+        }
+
+        @Override
+        public String toString() {
+            return "ImageBounds{" + width + "x" + height + "}";
+        }
+    }
+
+    /**
+     * Calculates the display bounds for an image so that it fits the screen width (accounting for padding)
+     * while preserving aspect ratio, and capping maximum height to prevent tall images from dominating the viewport.
+     */
+    public static ImageBounds calculateImageBounds(
+            int intrinsicWidth,
+            int intrinsicHeight,
+            int displayWidth,
+            int displayHeight,
+            int horizontalPaddingPx) {
+        if (intrinsicWidth <= 0 || intrinsicHeight <= 0 || displayWidth <= 0 || displayHeight <= 0) {
+            return null;
+        }
+
+        int maxWidth = Math.max(displayWidth - horizontalPaddingPx, 1);
+        int maxHeight = Math.max((int) (displayHeight * 0.65f), 1);
+
+        int targetWidth = maxWidth;
+        int targetHeight = Math.max(1, Math.round((float) intrinsicHeight * maxWidth / (float) intrinsicWidth));
+
+        if (targetHeight > maxHeight) {
+            targetHeight = maxHeight;
+            targetWidth = Math.max(1, Math.round((float) intrinsicWidth * maxHeight / (float) intrinsicHeight));
+        }
+
+        return new ImageBounds(targetWidth, targetHeight);
+    }
+
     private Drawable createDrawable(Bitmap bitmap) {
         BitmapDrawable drawable = new BitmapDrawable(mContext.getResources(), bitmap);
         DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
 
         int intrinsicWidth = drawable.getIntrinsicWidth();
         int intrinsicHeight = drawable.getIntrinsicHeight();
-        if (intrinsicWidth <= 0 || intrinsicHeight <= 0) {
+        int horizontalPaddingPx = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, HORIZONTAL_PADDING_DP, metrics);
+
+        ImageBounds bounds = calculateImageBounds(
+                intrinsicWidth,
+                intrinsicHeight,
+                metrics.widthPixels,
+                metrics.heightPixels,
+                horizontalPaddingPx);
+
+        if (bounds == null) {
             return null;
         }
 
-        int horizontalPaddingPx = (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, HORIZONTAL_PADDING_DP, metrics);
-        int maxWidth = Math.max(metrics.widthPixels - horizontalPaddingPx, 1);
-
-        int targetWidth = intrinsicWidth;
-        int targetHeight = intrinsicHeight;
-
-        if (targetWidth > maxWidth) {
-            targetWidth = maxWidth;
-            targetHeight = Math.max(1, (int) ((float) intrinsicHeight * maxWidth / (float) intrinsicWidth));
-        }
-
-        drawable.setBounds(0, 0, targetWidth, targetHeight);
+        drawable.setBounds(0, 0, bounds.width, bounds.height);
         return drawable;
     }
 

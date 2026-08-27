@@ -126,4 +126,57 @@ public class MumbleImageGetterTest extends TestCase {
         String base64 = Base64.getEncoder().encodeToString(oversized);
         assertNull("Payload exceeding MAX_LENGTH must return null", MumbleImageGetter.decodeBase64Bytes(base64));
     }
+
+    public void testCalculateImageBounds_LandscapeFillsMaxWidth() {
+        // 1080x2400 portrait display with 144px padding -> maxWidth = 936, maxHeight = 1560
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                600, 338, 1080, 2400, 144);
+        assertNotNull(bounds);
+        assertEquals(936, bounds.width);
+        assertEquals(527, bounds.height);
+    }
+
+    public void testCalculateImageBounds_SquareFillsMaxWidth() {
+        // 1080x2400 portrait display with 144px padding -> maxWidth = 936, maxHeight = 1560
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                500, 500, 1080, 2400, 144);
+        assertNotNull(bounds);
+        assertEquals(936, bounds.width);
+        assertEquals(936, bounds.height);
+    }
+
+    public void testCalculateImageBounds_PortraitCappedByMaxHeight() {
+        // 9:16 portrait image (225x400) on 1080x2400 display -> maxHeight = 1560
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                225, 400, 1080, 2400, 144);
+        assertNotNull(bounds);
+        assertEquals(1560, bounds.height);
+        assertEquals(878, bounds.width);
+    }
+
+    public void testCalculateImageBounds_UltraTallImageClampedToMaxHeight() {
+        // Ultra-tall 1:10 aspect ratio image (100x1000)
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                100, 1000, 1080, 2400, 144);
+        assertNotNull(bounds);
+        assertEquals(1560, bounds.height);
+        assertEquals(156, bounds.width);
+    }
+
+    public void testCalculateImageBounds_LandscapeDeviceOrientation() {
+        // 2400x1080 landscape screen with 144px padding -> maxWidth = 2256, maxHeight = 702
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                1920, 1080, 2400, 1080, 144);
+        assertNotNull(bounds);
+        assertEquals(702, bounds.height);
+        assertEquals(1248, bounds.width);
+    }
+
+    public void testCalculateImageBounds_InvalidInputs() {
+        assertNull(MumbleImageGetter.calculateImageBounds(0, 100, 1080, 2400, 144));
+        assertNull(MumbleImageGetter.calculateImageBounds(100, 0, 1080, 2400, 144));
+        assertNull(MumbleImageGetter.calculateImageBounds(-10, 100, 1080, 2400, 144));
+        assertNull(MumbleImageGetter.calculateImageBounds(100, 100, 0, 2400, 144));
+        assertNull(MumbleImageGetter.calculateImageBounds(100, 100, 1080, 0, 144));
+    }
 }
