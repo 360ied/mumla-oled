@@ -339,7 +339,7 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         preview.setImageBitmap(resized);
         preview.setAdjustViewBounds(true);
         preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        preview.setMaxHeight(Resources.getSystem().getDisplayMetrics().heightPixels / 3);
+        preview.setMaxHeight(requireContext().getResources().getDisplayMetrics().heightPixels / 3);
         new MaterialAlertDialogBuilder(requireContext())
                 .setMessage(R.string.image_confirm_send)
                 .setPositiveButton(android.R.string.ok, (dlg, which) -> onImageConfirmed(resized))
@@ -355,36 +355,38 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         // Lower the quality, compressing image harder until it fits
         int quality = 97;
         byte[] compressed;
+        String formattedMessage = null;
         do {
             ByteArrayOutputStream stream = new ByteArrayOutputStream();
             if (!resized.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
                 Log.w(TAG, "compress failed, quality==" + quality);
             } else {
                 compressed = stream.toByteArray();
-                // Account for the base64 overhead
-                if (4 * (compressed.length / 3) + 4 < maxSize || maxSize == 0) {
+                String imageStr = Base64.encodeToString(compressed, Base64.NO_WRAP);
+                String encoded;
+                try {
+                    encoded = URLEncoder.encode(imageStr, StandardCharsets.UTF_8.name());
+                } catch (UnsupportedEncodingException e) {
+                    encoded = URLEncoder.encode(imageStr);
+                }
+                String candidateMessage = "<img src=\"data:image/jpeg;base64," + encoded + "\"/>";
+                if (maxSize == 0 || candidateMessage.length() <= maxSize) {
+                    formattedMessage = candidateMessage;
                     break;
                 } else {
-                    Log.d(TAG, "compress(quality==" + quality + ") >= " + maxSize + " bytes");
+                    Log.d(TAG, "compress(quality==" + quality + ") candidate length " + candidateMessage.length() + " >= " + maxSize + " bytes");
                 }
             }
             compressed = null;
             quality -= 10;
         } while (quality > 0);
 
-        if (compressed == null) {
+        if (formattedMessage == null) {
             Log.w(TAG, "all compress attempts failed");
             return;
         }
 
-        String imageStr = Base64.encodeToString(compressed, Base64.NO_WRAP);
-        String encoded;
-        try {
-            encoded = URLEncoder.encode(imageStr, StandardCharsets.UTF_8.name());
-        } catch (UnsupportedEncodingException e) {
-            encoded = URLEncoder.encode(imageStr);
-        }
-        sendMessage("<img src=\"data:image/jpeg;base64," + encoded + "\"/>");
+        sendMessage(formattedMessage);
     }
 
     /**
