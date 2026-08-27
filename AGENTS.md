@@ -32,7 +32,7 @@
 ## Build & Packaging Guidelines
 
 ### FOSS Flavor Only
-- **ALWAYS** build the `foss` product flavor (e.g., `./gradlew assembleFossDebug`, `./gradlew installFossDebug`, or `./gradlew assembleFossRelease`).
+- **ALWAYS** build the `foss` product flavor (e.g., `./gradlew assembleFossDebug`).
 - **NEVER** build or package the `goog`, `beta`, or `donation` flavors unless explicitly requested.
 
 ## ADB Deployment & Launching
@@ -60,8 +60,3 @@
 - **Version Scheme**: Mumla OLED uses Semantic Versioning (`0.X.X`).
 - **Dynamic Resolution**: `versionName` in `app/build.gradle` is dynamically determined via `git describe --tags --match "[0-9]*.[0-9]*.[0-9]*" --always`.
 - **Release Tagging**: Releases are tagged using annotated Git tags (`git tag -a <version> -m "Release <version>"`).
-- **Tag Retention**: Only `0.X.X` release tags are kept in the repository; upstream legacy tags (`3.X.X`) must not be reintroduced.
-- **Upstream Tag Isolation**: `remote.upstream.tagOpt` is set to `--no-tags` to prevent `git fetch upstream` from importing upstream Plumble/Mumla tags.
-- **Release Verification**: Run `nix develop --command ./gradlew test assembleFossRelease` to verify the build before publishing tags.
-
-
