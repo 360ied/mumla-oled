@@ -99,8 +99,8 @@
         <item>system</item>
     </string-array>
 
-    <string name="copyright">Copyright &#169; 2026 Brian Zhu\nCopyright &#169; 2020–2026 Daniel Lublin mumla@lublin.se\nCopyright &#169; 2014–2017 Andrew Comminos\nhttps://mumla-app.gitlab.io</string>
-    <string name="project_link">https://mumla-app.gitlab.io</string>
+    <string name="copyright">Copyright &#169; 2026 Brian Zhu\nCopyright &#169; 2020–2026 Daniel Lublin mumla@lublin.se\nCopyright &#169; 2014–2017 Andrew Comminos\nhttps://github.com/360ied/mumla-oled</string>
+    <string name="project_link">https://github.com/360ied/mumla-oled</string>
     <string name="releases_link">https://github.com/360ied/mumla-oled/releases</string>
     <string name="acknowledgements_link">https://github.com/360ied/mumla-oled/graphs/contributors</string>
     <string name="license_gplv3">GNU General Public License v3.0</string>
