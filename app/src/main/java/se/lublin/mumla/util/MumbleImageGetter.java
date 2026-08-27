@@ -62,6 +62,9 @@ public class MumbleImageGetter implements Html.ImageGetter {
     /** Estimated total horizontal padding/margin around chat message text in dp. */
     private static final int HORIZONTAL_PADDING_DP = 48;
 
+    /** Maximum dimension in dp for an image to be treated as an icon/emoji rather than a photo. */
+    public static final int ICON_MAX_SIZE_DP = 96;
+
     /**
      * Timeout for external image HTTP connection and stream reads in milliseconds.
      * Safe to keep at 15000ms as requests are performed asynchronously in background threads.
@@ -222,6 +225,7 @@ public class MumbleImageGetter implements Html.ImageGetter {
     /**
      * Calculates the display bounds for an image so that it fits the screen width (accounting for padding)
      * while preserving aspect ratio, and capping maximum height to prevent tall images from dominating the viewport.
+     * Small icons/emojis are scaled according to display density rather than stretched to the full screen width.
      */
     public static ImageBounds calculateImageBounds(
             int intrinsicWidth,
@@ -229,15 +233,39 @@ public class MumbleImageGetter implements Html.ImageGetter {
             int displayWidth,
             int displayHeight,
             int horizontalPaddingPx) {
+        return calculateImageBounds(intrinsicWidth, intrinsicHeight, displayWidth, displayHeight, horizontalPaddingPx, 1.0f);
+    }
+
+    public static ImageBounds calculateImageBounds(
+            int intrinsicWidth,
+            int intrinsicHeight,
+            int displayWidth,
+            int displayHeight,
+            int horizontalPaddingPx,
+            float density) {
         if (intrinsicWidth <= 0 || intrinsicHeight <= 0 || displayWidth <= 0 || displayHeight <= 0) {
             return null;
         }
 
+        float safeDensity = density > 0f ? density : 1.0f;
         int maxWidth = Math.max(displayWidth - horizontalPaddingPx, 1);
         int maxHeight = Math.max((int) (displayHeight * 0.65f), 1);
 
-        int targetWidth = maxWidth;
-        int targetHeight = Math.max(1, Math.round((float) intrinsicHeight * maxWidth / (float) intrinsicWidth));
+        int targetWidth;
+        int targetHeight;
+
+        float widthDp = intrinsicWidth / safeDensity;
+        float heightDp = intrinsicHeight / safeDensity;
+
+        if (widthDp <= ICON_MAX_SIZE_DP && heightDp <= ICON_MAX_SIZE_DP) {
+            // Small icon / emoji: scale according to display density
+            targetWidth = Math.min(maxWidth, Math.max(1, Math.round(intrinsicWidth * safeDensity)));
+            targetHeight = Math.max(1, Math.round((float) intrinsicHeight * targetWidth / (float) intrinsicWidth));
+        } else {
+            // Photo / chat image: expand to fill chat width
+            targetWidth = maxWidth;
+            targetHeight = Math.max(1, Math.round((float) intrinsicHeight * maxWidth / (float) intrinsicWidth));
+        }
 
         if (targetHeight > maxHeight) {
             targetHeight = maxHeight;
@@ -261,7 +289,8 @@ public class MumbleImageGetter implements Html.ImageGetter {
                 intrinsicHeight,
                 metrics.widthPixels,
                 metrics.heightPixels,
-                horizontalPaddingPx);
+                horizontalPaddingPx,
+                metrics.density);
 
         if (bounds == null) {
             return null;

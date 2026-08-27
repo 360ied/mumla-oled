@@ -172,11 +172,78 @@ public class MumbleImageGetterTest extends TestCase {
         assertEquals(1248, bounds.width);
     }
 
+    public void testCalculateImageBounds_TinyIconScaledByDensity() {
+        // 32x32 icon on 3.0x density screen (1080x2400) -> 32 * 3.0 = 96x96 px (32dp), not stretched to 936px
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                32, 32, 1080, 2400, 144, 3.0f);
+        assertNotNull(bounds);
+        assertEquals(96, bounds.width);
+        assertEquals(96, bounds.height);
+    }
+
+    public void testCalculateImageBounds_StickerScaledByDensity() {
+        // 64x64 sticker on 3.0x density screen (1080x2400) -> 64 * 3.0 = 192x192 px (64dp)
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                64, 64, 1080, 2400, 144, 3.0f);
+        assertNotNull(bounds);
+        assertEquals(192, bounds.width);
+        assertEquals(192, bounds.height);
+    }
+
+    public void testCalculateImageBounds_PhotoExpandsToMaxWidthWithDensity() {
+        // 600x400 photo on 3.0x density screen (1080x2400) -> expands to maxWidth 936
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                600, 400, 1080, 2400, 144, 3.0f);
+        assertNotNull(bounds);
+        assertEquals(936, bounds.width);
+        assertEquals(624, bounds.height);
+    }
+
+    public void testCalculateImageBounds_MultiDensityVariations() {
+        // 32x32 emote across 1.0x, 2.0x, and 4.0x display densities
+        MumbleImageGetter.ImageBounds mdpi = MumbleImageGetter.calculateImageBounds(32, 32, 1080, 2400, 144, 1.0f);
+        assertNotNull(mdpi);
+        assertEquals(32, mdpi.width);
+        assertEquals(32, mdpi.height);
+
+        MumbleImageGetter.ImageBounds xhdpi = MumbleImageGetter.calculateImageBounds(32, 32, 1080, 2400, 144, 2.0f);
+        assertNotNull(xhdpi);
+        assertEquals(64, xhdpi.width);
+        assertEquals(64, xhdpi.height);
+
+        MumbleImageGetter.ImageBounds xxxhdpi = MumbleImageGetter.calculateImageBounds(32, 32, 1080, 2400, 144, 4.0f);
+        assertNotNull(xxxhdpi);
+        assertEquals(128, xxxhdpi.width);
+        assertEquals(128, xxxhdpi.height);
+    }
+
+    public void testCalculateImageBounds_PaddingExceedsDisplayWidth() {
+        // Padding exceeds display width -> clamped to 1px
+        MumbleImageGetter.ImageBounds bounds = MumbleImageGetter.calculateImageBounds(
+                600, 400, 100, 2400, 144, 3.0f);
+        assertNotNull(bounds);
+        assertEquals(1, bounds.width);
+        assertEquals(1, bounds.height);
+    }
+
     public void testCalculateImageBounds_InvalidInputs() {
         assertNull(MumbleImageGetter.calculateImageBounds(0, 100, 1080, 2400, 144));
         assertNull(MumbleImageGetter.calculateImageBounds(100, 0, 1080, 2400, 144));
         assertNull(MumbleImageGetter.calculateImageBounds(-10, 100, 1080, 2400, 144));
         assertNull(MumbleImageGetter.calculateImageBounds(100, 100, 0, 2400, 144));
         assertNull(MumbleImageGetter.calculateImageBounds(100, 100, 1080, 0, 144));
+    }
+
+    public void testImageBounds_EqualsHashCodeToString() {
+        MumbleImageGetter.ImageBounds b1 = new MumbleImageGetter.ImageBounds(100, 200);
+        MumbleImageGetter.ImageBounds b2 = new MumbleImageGetter.ImageBounds(100, 200);
+        MumbleImageGetter.ImageBounds b3 = new MumbleImageGetter.ImageBounds(100, 300);
+
+        assertEquals(b1, b2);
+        assertEquals(b1.hashCode(), b2.hashCode());
+        assertFalse(b1.equals(b3));
+        assertFalse(b1.equals(null));
+        assertFalse(b1.equals("other"));
+        assertEquals("ImageBounds{100x200}", b1.toString());
     }
 }
