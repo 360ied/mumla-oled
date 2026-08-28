@@ -4,8 +4,6 @@ import static java.util.Objects.requireNonNull;
 import static se.lublin.mumla.Settings.DEFAULT_ECHO_CANCELLATION_METHOD;
 import static se.lublin.mumla.Settings.PREF_ECHO_CANCELLATION_METHOD;
 
-import android.media.AudioFormat;
-import android.media.AudioRecord;
 import android.media.audiofx.AcousticEchoCanceler;
 import android.os.Bundle;
 
@@ -30,16 +28,6 @@ public class AudioSettingsFragment extends MumlaPreferenceFragment {
             updateAudioDependents(getPreferenceScreen(), (String) newValue);
             return true;
         });
-
-        // Scan each bitrate and determine if the device supports it
-        ListPreference inputQualityPreference = getPreferenceScreen().findPreference(Settings.PREF_INPUT_RATE);
-        String[] bitrateNames = new String[requireNonNull(inputQualityPreference).getEntryValues().length];
-        for (int x = 0; x < bitrateNames.length; x++) {
-            int bitrate = Integer.parseInt(inputQualityPreference.getEntryValues()[x].toString());
-            boolean supported = AudioRecord.getMinBufferSize(bitrate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT) > 0;
-            bitrateNames[x] = bitrate + "Hz" + (supported ? "" : " (unsupported)");
-        }
-        inputQualityPreference.setEntries(bitrateNames);
 
         ListPreference echoCancellationPref = findPreference(PREF_ECHO_CANCELLATION_METHOD);
         if (echoCancellationPref != null) {
