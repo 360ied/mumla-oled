@@ -93,6 +93,9 @@ android {
 
     buildTypes {
         release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             applicationIdSuffix ".oled15"
             resValue "string", "app_name", "Mumla OLED"
             if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("release")) {
