@@ -20,8 +20,7 @@ package se.lublin.humla.net;
 import android.net.SSLCertificateSocketFactory;
 import android.os.Build;
 import android.util.Log;
-
-import com.google.common.net.InetAddresses;
+import android.util.Patterns;
 import com.google.protobuf.Message;
 
 import org.minidns.hla.ResolverApi;
@@ -99,7 +98,7 @@ public class HumlaTCP extends HumlaNetworkThread {
         mRunning = true;
         try {
             if (mPort == 0) {
-                if (!mUseTor && !InetAddresses.isInetAddress(mHost) && !mHost.endsWith(".onion")) {
+                if (!mUseTor && !Patterns.IP_ADDRESS.matcher(mHost).matches() && !mHost.contains(":") && !mHost.endsWith(".onion")) {
                     try {
                         final String lookup = "_mumble._tcp." + mHost;
                         ExecutorService executor = Executors.newSingleThreadExecutor();
