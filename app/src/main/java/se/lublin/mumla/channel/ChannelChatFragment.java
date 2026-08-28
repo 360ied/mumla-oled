@@ -350,12 +350,22 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
 
     private void onImageConfirmed(Bitmap initialBitmap) {
         IHumlaService service = getService();
-        if (service == null || service.HumlaSession() == null || service.HumlaSession().getServerSettings() == null) {
-            Log.w(TAG, "onImageConfirmed: service or session is null");
+        if (service == null || !service.isConnected()) {
+            Log.w(TAG, "onImageConfirmed: service is not connected");
             return;
         }
 
-        int maxSize = service.HumlaSession().getServerSettings().getImageMessageLength();
+        int maxSize;
+        try {
+            IHumlaSession session = service.HumlaSession();
+            if (session == null || session.getServerSettings() == null) {
+                return;
+            }
+            maxSize = session.getServerSettings().getImageMessageLength();
+        } catch (HumlaDisconnectedException | IllegalStateException e) {
+            Log.w(TAG, "onImageConfirmed: disconnected", e);
+            return;
+        }
 
         Bitmap currentBitmap = initialBitmap;
         String formattedMessage = null;
@@ -486,17 +496,22 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
     public void updateChatTargetText(final ChatTargetProvider.ChatTarget target) {
         if (getService() == null || !getService().isConnected()) return;
 
-        IHumlaSession session = getService().HumlaSession();
-        String hint = null;
-        if (target == null && session.getSessionChannel() != null) {
-            hint = getString(R.string.messageToChannel, session.getSessionChannel().getName());
-        } else if (target != null && target.getUser() != null) {
-            hint = getString(R.string.messageToUser, target.getUser().getName());
-        } else if (target != null && target.getChannel() != null) {
-            hint = getString(R.string.messageToChannel, target.getChannel().getName());
+        try {
+            IHumlaSession session = getService().HumlaSession();
+            String hint = null;
+            if (target == null && session.getSessionChannel() != null) {
+                hint = getString(R.string.messageToChannel, session.getSessionChannel().getName());
+            } else if (target != null && target.getUser() != null) {
+                hint = getString(R.string.messageToUser, target.getUser().getName());
+            } else if (target != null && target.getChannel() != null) {
+                hint = getString(R.string.messageToChannel, target.getChannel().getName());
+            }
+            if (mChatTextEdit != null) {
+                mChatTextEdit.setHint(hint);
+                mChatTextEdit.requestLayout(); // Needed to update bounds after hint change.
+            }
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
         }
-        mChatTextEdit.setHint(hint);
-        mChatTextEdit.requestLayout(); // Needed to update bounds after hint change.
     }
 
 
@@ -529,13 +544,13 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         updateChatTargetText(target);
     }
 
-    private static class ChannelChatAdapter extends ArrayAdapter<IChatMessage> {
-        private final MumbleImageGetter mImageGetter;
-        private final IHumlaService mService;
-        private final DateFormat mDateFormat;
+    private class ChannelChatAdapter extends ArrayAdapter<IChatMessage> {
+        private MumbleImageGetter mImageGetter;
+        private DateFormat mDateFormat;
+        private IHumlaService mService;
 
         public ChannelChatAdapter(Context context, IHumlaService service, List<IChatMessage> messages) {
-            super(context, 0, new ArrayList<>(messages));
+            super(context, 0, messages);
             mService = service;
             mImageGetter = new MumbleImageGetter(context, this::notifyDataSetChanged);
             mDateFormat = SimpleDateFormat.getTimeInstance();
@@ -562,28 +577,31 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                 @Override
                 public void visit(IChatMessage.TextMessage message) {
                     IMessage textMessage = message.getMessage();
-                    String targetMessage = getContext().getString(R.string.unknown);
-                    boolean selfAuthored;
-                    try {
-                        selfAuthored = textMessage.getActor() == mService.HumlaSession().getSessionId();
-                    } catch (HumlaDisconnectedException e) {
-                        selfAuthored = false;
+                    Context ctx = getContext();
+                    String targetMessage = ctx != null ? ctx.getString(R.string.unknown) : "";
+                    boolean selfAuthored = false;
+                    if (mService != null && mService.isConnected()) {
+                        try {
+                            selfAuthored = textMessage.getActor() == mService.HumlaSession().getSessionId();
+                        } catch (HumlaDisconnectedException | IllegalStateException e) {
+                            selfAuthored = false;
+                        }
                     }
 
                     if (textMessage.getTargetChannels() != null && !textMessage.getTargetChannels().isEmpty()) {
                         IChannel currentChannel = (IChannel) textMessage.getTargetChannels().get(0);
-                        if (currentChannel != null && currentChannel.getName() != null) {
-                            targetMessage = getContext().getString(R.string.chat_message_to, textMessage.getActorName(), currentChannel.getName());
+                        if (currentChannel != null && currentChannel.getName() != null && ctx != null) {
+                            targetMessage = ctx.getString(R.string.chat_message_to, textMessage.getActorName(), currentChannel.getName());
                         }
                     } else if (textMessage.getTargetTrees() != null && !textMessage.getTargetTrees().isEmpty()) {
                         IChannel currentChannel = (IChannel) textMessage.getTargetTrees().get(0);
-                        if (currentChannel != null && currentChannel.getName() != null) {
-                            targetMessage = getContext().getString(R.string.chat_message_to, textMessage.getActorName(), currentChannel.getName());
+                        if (currentChannel != null && currentChannel.getName() != null && ctx != null) {
+                            targetMessage = ctx.getString(R.string.chat_message_to, textMessage.getActorName(), currentChannel.getName());
                         }
                     } else if (textMessage.getTargetUsers() != null && !textMessage.getTargetUsers().isEmpty()) {
                         User user = textMessage.getTargetUsers().get(0);
-                        if (user != null && user.getName() != null) {
-                            targetMessage = getContext().getString(R.string.chat_message_to, textMessage.getActorName(), user.getName());
+                        if (user != null && user.getName() != null && ctx != null) {
+                            targetMessage = ctx.getString(R.string.chat_message_to, textMessage.getActorName(), user.getName());
                         }
                     } else {
                         targetMessage = textMessage.getActorName();

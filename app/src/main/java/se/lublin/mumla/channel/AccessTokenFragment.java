@@ -37,6 +37,7 @@ import android.widget.TextView.OnEditorActionListener;
 import java.util.ArrayList;
 import java.util.List;
 
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.mumla.R;
 import se.lublin.mumla.db.DatabaseProvider;
 import se.lublin.mumla.util.HumlaServiceFragment;
@@ -121,7 +122,10 @@ public class AccessTokenFragment extends HumlaServiceFragment {
         mTokenList.smoothScrollToPosition(mTokens.size() - 1);
         mProvider.getDatabase().addAccessToken(getServerId(), tokenText);
         if (getService() != null && getService().isConnected()) {
-            getService().HumlaSession().sendAccessTokens(mTokens);
+            try {
+                getService().HumlaSession().sendAccessTokens(mTokens);
+            } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+            }
         }
     }
 
@@ -161,7 +165,10 @@ public class AccessTokenFragment extends HumlaServiceFragment {
                     notifyDataSetChanged();
                     mProvider.getDatabase().removeAccessToken(getServerId(), token);
                     if (getService() != null && getService().isConnected()) {
-                        getService().HumlaSession().sendAccessTokens(mTokens);
+                        try {
+                            getService().HumlaSession().sendAccessTokens(mTokens);
+                        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+                        }
                     }
                 }
             });

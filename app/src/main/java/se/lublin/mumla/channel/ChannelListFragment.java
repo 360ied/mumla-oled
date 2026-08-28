@@ -68,13 +68,17 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     private IHumlaObserver mServiceObserver = new HumlaObserver() {
         @Override
         public void onDisconnected(HumlaException e) {
-            mChannelView.setAdapter(null);
+            if (mChannelView != null) {
+                mChannelView.setAdapter(null);
+            }
         }
 
         @Override
         public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {
-            mChannelListAdapter.updateChannels();
-            mChannelListAdapter.notifyDataSetChanged();
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.updateChannels();
+                mChannelListAdapter.notifyDataSetChanged();
+            }
 
             if (getService() == null || !getService().isConnected()) {
                 return;
@@ -88,33 +92,41 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
                 return;
             }
 
-            if (user.getSession() == selfSession) {
+            if (user != null && user.getSession() == selfSession) {
                 scrollToChannel(newChannel.getId());
             }
         }
 
         @Override
         public void onChannelAdded(IChannel channel) {
-            mChannelListAdapter.updateChannels();
-            mChannelListAdapter.notifyDataSetChanged();
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.updateChannels();
+                mChannelListAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
         public void onChannelRemoved(IChannel channel) {
-            mChannelListAdapter.updateChannels();
-            mChannelListAdapter.notifyDataSetChanged();
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.updateChannels();
+                mChannelListAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
         public void onChannelStateUpdated(IChannel channel) {
-            mChannelListAdapter.updateChannels();
-            mChannelListAdapter.notifyDataSetChanged();
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.updateChannels();
+                mChannelListAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
         public void onUserConnected(IUser user) {
-            mChannelListAdapter.updateChannels();
-            mChannelListAdapter.notifyDataSetChanged();
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.updateChannels();
+                mChannelListAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
@@ -125,19 +137,27 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
                 return;
             }
 
-            mChannelListAdapter.updateChannels();
-            mChannelListAdapter.notifyDataSetChanged();
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.updateChannels();
+                mChannelListAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
         public void onUserStateUpdated(IUser user) {
-            mChannelListAdapter.updateUserStates(user, mChannelView);
-            getActivity().supportInvalidateOptionsMenu(); // Update self mute/deafen state
+            if (mChannelListAdapter != null && mChannelView != null && user != null) {
+                mChannelListAdapter.updateUserStates(user, mChannelView);
+            }
+            if (getActivity() != null) {
+                getActivity().supportInvalidateOptionsMenu(); // Update self mute/deafen state
+            }
         }
 
         @Override
         public void onUserTalkStateUpdated(IUser user) {
-            mChannelListAdapter.updateUserStates(user, mChannelView);
+            if (mChannelListAdapter != null && mChannelView != null && user != null) {
+                mChannelListAdapter.updateUserStates(user, mChannelView);
+            }
         }
     };
 
@@ -239,22 +259,37 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         MenuItem muteItem = menu.findItem(R.id.menu_mute_button);
         MenuItem deafenItem = menu.findItem(R.id.menu_deafen_button);
 
-        if(getService() != null && getService().isConnected()) {
-            IHumlaSession session = getService().HumlaSession();
+        if (getService() != null && getService().isConnected()) {
+            try {
+                IHumlaSession session = getService().HumlaSession();
 
-            // Color the action bar icons to the primary text color of the theme, TODO move this elsewhere
-            int foregroundColor = getActivity().getTheme().obtainStyledAttributes(new int[]{android.R.attr.textColorPrimaryInverse}).getColor(0, -1);
+                // Color the action bar icons to the primary text color of the theme, TODO move this elsewhere
+                if (getActivity() != null) {
+                    int foregroundColor = getActivity().getTheme().obtainStyledAttributes(new int[]{android.R.attr.textColorPrimaryInverse}).getColor(0, -1);
 
-            IUser self = session.getSessionUser();
-            if (self != null) {
-                muteItem.setIcon(self.isSelfMuted() ? R.drawable.ic_action_microphone_muted : R.drawable.ic_action_microphone);
-                deafenItem.setIcon(self.isSelfDeafened() ? R.drawable.ic_action_audio_muted : R.drawable.ic_action_audio);
-                muteItem.getIcon().mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY);
-                deafenItem.getIcon().mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY);
+                    IUser self = session.getSessionUser();
+                    if (self != null) {
+                        if (muteItem != null) {
+                            muteItem.setIcon(self.isSelfMuted() ? R.drawable.ic_action_microphone_muted : R.drawable.ic_action_microphone);
+                            if (muteItem.getIcon() != null) {
+                                muteItem.getIcon().mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY);
+                            }
+                        }
+                        if (deafenItem != null) {
+                            deafenItem.setIcon(self.isSelfDeafened() ? R.drawable.ic_action_audio_muted : R.drawable.ic_action_audio);
+                            if (deafenItem.getIcon() != null) {
+                                deafenItem.getIcon().mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY);
+                            }
+                        }
+                    }
+                }
+
+                MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth);
+                if (bluetoothItem != null) {
+                    bluetoothItem.setChecked(session.usingBluetoothSco());
+                }
+            } catch (HumlaDisconnectedException | IllegalStateException ignored) {
             }
-
-            MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth);
-            bluetoothItem.setChecked(session.usingBluetoothSco());
         }
     }
 
@@ -283,17 +318,20 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
                 String itemType = cursor.getString(typeColumn);
                 int itemId = cursor.getInt(dataIdColumn);
 
-                IHumlaSession session = getService().HumlaSession();
-                if(ChannelSearchProvider.INTENT_DATA_CHANNEL.equals(itemType)) {
-                    if(session.getSessionChannel().getId() != itemId) {
-                        session.joinChannel(itemId);
-                    } else {
-                        scrollToChannel(itemId);
+                try {
+                    IHumlaSession session = getService().HumlaSession();
+                    if (ChannelSearchProvider.INTENT_DATA_CHANNEL.equals(itemType)) {
+                        if (session.getSessionChannel().getId() != itemId) {
+                            session.joinChannel(itemId);
+                        } else {
+                            scrollToChannel(itemId);
+                        }
+                        return true;
+                    } else if (ChannelSearchProvider.INTENT_DATA_USER.equals(itemType)) {
+                        scrollToUser(itemId);
+                        return true;
                     }
-                    return true;
-                } else if(ChannelSearchProvider.INTENT_DATA_USER.equals(itemType)) {
-                    scrollToUser(itemId);
-                    return true;
+                } catch (HumlaDisconnectedException | IllegalStateException ignored) {
                 }
                 return false;
             }
@@ -305,7 +343,13 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         if (getService() == null || !getService().isConnected())
             return super.onOptionsItemSelected(item);
 
-        IHumlaSession session = getService().HumlaSession();
+        IHumlaSession session;
+        try {
+            session = getService().HumlaSession();
+        } catch (HumlaDisconnectedException | IllegalStateException e) {
+            return super.onOptionsItemSelected(item);
+        }
+
         int itemId = item.getItemId();
         if (itemId == R.id.menu_mute_button) {
             IUser self = session.getSessionUser();
@@ -316,7 +360,9 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
                 session.setSelfMuteDeafState(muted, deafened);
             }
 
-            getActivity().supportInvalidateOptionsMenu();
+            if (getActivity() != null) {
+                getActivity().supportInvalidateOptionsMenu();
+            }
             return true;
         } else if (itemId == R.id.menu_deafen_button) {
             IUser self = session.getSessionUser();
@@ -325,7 +371,9 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
                 session.setSelfMuteDeafState(deafened, deafened);
             }
 
-            getActivity().supportInvalidateOptionsMenu();
+            if (getActivity() != null) {
+                getActivity().supportInvalidateOptionsMenu();
+            }
             return true;
         } else if (itemId == R.id.menu_search) {
             return false;

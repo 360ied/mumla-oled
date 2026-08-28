@@ -153,25 +153,28 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
 
             int nameTypeface = Typeface.NORMAL;
             if (mService != null && mService.isConnected()) {
-                IHumlaSession session = mService.HumlaSession();
-                IChannel ourChan = null;
                 try {
-                    ourChan = session.getSessionChannel();
-                } catch(IllegalStateException e) {
-                    Log.d(TAG, "exception in onBindViewHolder: " + e);
-                }
-                if (ourChan != null) {
-                    if (channel.equals(ourChan)) {
-                        nameTypeface |= Typeface.BOLD;
-                        // Always italicize our current channel if it has a link.
-                        if (channel.getLinks().size() > 0) {
+                    IHumlaSession session = mService.HumlaSession();
+                    IChannel ourChan = null;
+                    try {
+                        ourChan = session.getSessionChannel();
+                    } catch(IllegalStateException e) {
+                        Log.d(TAG, "exception in onBindViewHolder: " + e);
+                    }
+                    if (ourChan != null) {
+                        if (channel.equals(ourChan)) {
+                            nameTypeface |= Typeface.BOLD;
+                            // Always italicize our current channel if it has a link.
+                            if (channel.getLinks().size() > 0) {
+                                nameTypeface |= Typeface.ITALIC;
+                            }
+                        }
+                        // Italicize channels in a link with our current channel.
+                        if (channel.getLinks().contains(ourChan)) {
                             nameTypeface |= Typeface.ITALIC;
                         }
                     }
-                    // Italicize channels in a link with our current channel.
-                    if (channel.getLinks().contains(ourChan)) {
-                        nameTypeface |= Typeface.ITALIC;
-                    }
+                } catch (HumlaDisconnectedException | IllegalStateException ignored) {
                 }
             }
             cvh.mChannelName.setTypeface(null, nameTypeface);
@@ -198,7 +201,10 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
                 @Override
                 public void onClick(View v) {
                     if (mService != null && mService.isConnected()) {
-                        mService.HumlaSession().joinChannel(channel.getId());
+                        try {
+                            mService.HumlaSession().joinChannel(channel.getId());
+                        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+                        }
                     }
                 }
             });
@@ -315,16 +321,16 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             return;
         }
 
-        IHumlaSession session = mService.HumlaSession();
-        mNodes.clear();
         try {
+            IHumlaSession session = mService.HumlaSession();
+            mNodes.clear();
             for (int cid : mRootChannels) {
                 IChannel channel = session.getChannel(cid);
                 if (channel != null) {
                     constructNodes(null, channel, 0, mNodes);
                 }
             }
-        } catch (IllegalStateException e) {
+        } catch (HumlaDisconnectedException | IllegalStateException e) {
             Log.d(TAG, "exception in updateChannels: " + e);
         }
     }
@@ -335,13 +341,17 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
      * @param view The view containing this adapter.
      */
     public void updateUserStates(IUser user, RecyclerView view) {
+        if (user == null || view == null) return;
         long itemId = user.getSession() | USER_ID_MASK;
         UserViewHolder uvh = (UserViewHolder) view.findViewHolderForItemId(itemId);
-        if (uvh != null) {
+        if (uvh != null && uvh.mUserTalkHighlight != null && uvh.mUserTalkHighlight.getDrawable() != null) {
             Drawable newState = getTalkStateDrawable(user);
-            ConstantState state = uvh.mUserTalkHighlight.getDrawable().getCurrent().getConstantState();
-            if (state != null && !state.equals(newState.getConstantState())) {
-                uvh.mUserTalkHighlight.setImageDrawable(newState);
+            if (newState != null && newState.getConstantState() != null) {
+                Drawable currentDrawable = uvh.mUserTalkHighlight.getDrawable().getCurrent();
+                ConstantState state = currentDrawable != null ? currentDrawable.getConstantState() : null;
+                if (state != null && !state.equals(newState.getConstantState())) {
+                    uvh.mUserTalkHighlight.setImageDrawable(newState);
+                }
             }
         }
     }

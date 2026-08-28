@@ -40,6 +40,7 @@ import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.Server;
 import se.lublin.humla.model.WhisperTargetChannel;
 import se.lublin.humla.net.Permissions;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.VoiceTargetMode;
 import se.lublin.mumla.R;
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment;
@@ -85,7 +86,7 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             IChannel ourChan = null;
             try {
                 ourChan = mService.HumlaSession().getSessionChannel();
-            } catch(IllegalStateException e) {
+            } catch(HumlaDisconnectedException | IllegalStateException e) {
                 Log.d(TAG, "exception in onMenuPrepare: " + e);
             }
             if (ourChan != null) {
@@ -106,89 +107,101 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             return false;
 
         int itemId = item.getItemId();
-        if (itemId == R.id.context_channel_join) {
-            mService.HumlaSession().joinChannel(mChannel.getId());
-        } else if (itemId == R.id.context_channel_add || itemId == R.id.context_channel_edit) {
-            Bundle args = new Bundle();
-            if (itemId == R.id.context_channel_add) {
-                args.putInt("parent", mChannel.getId());
-                args.putBoolean("adding", true);
+        try {
+            if (itemId == R.id.context_channel_join) {
+                mService.HumlaSession().joinChannel(mChannel.getId());
+            } else if (itemId == R.id.context_channel_add || itemId == R.id.context_channel_edit) {
+                Bundle args = new Bundle();
+                if (itemId == R.id.context_channel_add) {
+                    args.putInt("parent", mChannel.getId());
+                    args.putBoolean("adding", true);
+                } else {
+                    args.putInt("channel", mChannel.getId());
+                    args.putBoolean("adding", false);
+                }
+                ChannelEditFragment addFragment = new ChannelEditFragment();
+                addFragment.setArguments(args);
+                addFragment.show(mFragmentManager, "ChannelAdd");
+            } else if (itemId == R.id.context_channel_remove) {
+                new MaterialAlertDialogBuilder(mContext)
+                        .setTitle(R.string.confirm)
+                        .setMessage(R.string.confirm_delete_channel)
+                        .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                            if (mService.isConnected()) {
+                                try {
+                                    mService.HumlaSession().removeChannel(mChannel.getId());
+                                } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+                                }
+                            }
+                        })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+            } else if (itemId == R.id.context_channel_view_description) {
+                Bundle commentArgs = new Bundle();
+                commentArgs.putInt("channel", mChannel.getId());
+                commentArgs.putString("comment", mChannel.getDescription());
+                commentArgs.putBoolean("editing", false);
+                DialogFragment commentFragment = (DialogFragment) Fragment.instantiate(mContext,
+                        ChannelDescriptionFragment.class.getName(), commentArgs);
+                commentFragment.show(mFragmentManager, ChannelDescriptionFragment.class.getName());
+            } else if (itemId == R.id.context_channel_pin) {
+                Server server = mService.getTargetServer();
+                if (server != null) {
+                    long serverId = server.getId();
+                    boolean pinned = mDatabase.isChannelPinned(serverId, mChannel.getId());
+                    if (!pinned) mDatabase.addPinnedChannel(serverId, mChannel.getId());
+                    else mDatabase.removePinnedChannel(serverId, mChannel.getId());
+                }
+            } else if (itemId == R.id.context_channel_link) {
+                IChannel channel = mService.HumlaSession().getSessionChannel();
+                if (!item.isChecked()) {
+                    mService.HumlaSession().linkChannels(channel, mChannel);
+                } else {
+                    mService.HumlaSession().unlinkChannels(channel, mChannel);
+                }
+            } else if (itemId == R.id.context_channel_listen) {
+                boolean isListening = mChannel.isListening();
+                mService.HumlaSession().setListeningChannel(mChannel.getId(), !isListening);
+            } else if (itemId == R.id.context_channel_unlink_all) {
+                mService.HumlaSession().unlinkAllChannels(mChannel);
+            } else if (itemId == R.id.context_channel_shout) {
+                LinearLayout layout = new LinearLayout(mContext);
+                layout.setOrientation(LinearLayout.VERTICAL);
+                final CheckBox subchannelBox = new CheckBox(mContext);
+                subchannelBox.setText(R.string.shout_include_subchannels);
+                layout.addView(subchannelBox);
+                final CheckBox linkedBox = new CheckBox(mContext);
+                linkedBox.setText(R.string.shout_include_linked);
+                layout.addView(linkedBox);
+                new MaterialAlertDialogBuilder(mContext)
+                        .setTitle(R.string.shout_configure)
+                        .setView(layout)
+                        .setPositiveButton(R.string.confirm, (dialog, which) -> {
+                            if (!mService.isConnected()) {
+                                return;
+                            }
+                            try {
+                                IHumlaSession session = mService.HumlaSession();
+                                // Unregister any existing voice target.
+                                if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
+                                    session.unregisterWhisperTarget(session.getVoiceTargetId());
+                                }
+                                WhisperTargetChannel channelTarget = new WhisperTargetChannel(mChannel, linkedBox.isChecked(), subchannelBox.isChecked(), null);
+                                byte id = session.registerWhisperTarget(channelTarget);
+                                if (id > 0) {
+                                    session.setVoiceTargetId(id);
+                                } else {
+                                    Toast.makeText(mContext, R.string.shout_failed, Toast.LENGTH_LONG).show();
+                                }
+                            } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+                            }
+                        })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
             } else {
-                args.putInt("channel", mChannel.getId());
-                args.putBoolean("adding", false);
+                return false;
             }
-            ChannelEditFragment addFragment = new ChannelEditFragment();
-            addFragment.setArguments(args);
-            addFragment.show(mFragmentManager, "ChannelAdd");
-        } else if (itemId == R.id.context_channel_remove) {
-            new MaterialAlertDialogBuilder(mContext)
-                    .setTitle(R.string.confirm)
-                    .setMessage(R.string.confirm_delete_channel)
-                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        if (mService.isConnected()) {
-                            mService.HumlaSession().removeChannel(mChannel.getId());
-                        }
-                    })
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show();
-        } else if (itemId == R.id.context_channel_view_description) {
-            Bundle commentArgs = new Bundle();
-            commentArgs.putInt("channel", mChannel.getId());
-            commentArgs.putString("comment", mChannel.getDescription());
-            commentArgs.putBoolean("editing", false);
-            DialogFragment commentFragment = (DialogFragment) Fragment.instantiate(mContext,
-                    ChannelDescriptionFragment.class.getName(), commentArgs);
-            commentFragment.show(mFragmentManager, ChannelDescriptionFragment.class.getName());
-        } else if (itemId == R.id.context_channel_pin) {
-            long serverId = mService.getTargetServer().getId();
-            boolean pinned = mDatabase.isChannelPinned(serverId, mChannel.getId());
-            if (!pinned) mDatabase.addPinnedChannel(serverId, mChannel.getId());
-            else mDatabase.removePinnedChannel(serverId, mChannel.getId());
-        } else if (itemId == R.id.context_channel_link) {
-            IChannel channel = mService.HumlaSession().getSessionChannel();
-            if (!item.isChecked()) {
-                mService.HumlaSession().linkChannels(channel, mChannel);
-            } else {
-                mService.HumlaSession().unlinkChannels(channel, mChannel);
-            }
-        } else if (itemId == R.id.context_channel_listen) {
-            boolean isListening = mChannel.isListening();
-            mService.HumlaSession().setListeningChannel(mChannel.getId(), !isListening);
-        } else if (itemId == R.id.context_channel_unlink_all) {
-            mService.HumlaSession().unlinkAllChannels(mChannel);
-        } else if (itemId == R.id.context_channel_shout) {
-            LinearLayout layout = new LinearLayout(mContext);
-            layout.setOrientation(LinearLayout.VERTICAL);
-            final CheckBox subchannelBox = new CheckBox(mContext);
-            subchannelBox.setText(R.string.shout_include_subchannels);
-            layout.addView(subchannelBox);
-            final CheckBox linkedBox = new CheckBox(mContext);
-            linkedBox.setText(R.string.shout_include_linked);
-            layout.addView(linkedBox);
-            new MaterialAlertDialogBuilder(mContext)
-                    .setTitle(R.string.shout_configure)
-                    .setView(layout)
-                    .setPositiveButton(R.string.confirm, (dialog, which) -> {
-                        if (!mService.isConnected()) {
-                            return;
-                        }
-                        IHumlaSession session = mService.HumlaSession();
-                        // Unregister any existing voice target.
-                        if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
-                            session.unregisterWhisperTarget(session.getVoiceTargetId());
-                        }
-                        WhisperTargetChannel channelTarget = new WhisperTargetChannel(mChannel, linkedBox.isChecked(), subchannelBox.isChecked(), null);
-                        byte id = session.registerWhisperTarget(channelTarget);
-                        if (id > 0) {
-                            session.setVoiceTargetId(id);
-                        } else {
-                            Toast.makeText(mContext, R.string.shout_failed, Toast.LENGTH_LONG).show();
-                        }
-                    })
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show();
-        } else {
-            return false;
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
         }
         return true;
     }

@@ -25,6 +25,7 @@ import androidx.appcompat.widget.PopupMenu;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.model.IChannel;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaObserver;
 import se.lublin.humla.util.IHumlaObserver;
 
@@ -63,19 +64,28 @@ public class PermissionsPopupMenu implements PopupMenu.OnDismissListener {
     }
 
     private int getPermissions() {
-        if (mService.isConnected()) {
-            return mChannel.getId() == 0 ? mService.HumlaSession().getPermissions()
-                                         : mChannel.getPermissions();
+        if (mService != null && mService.isConnected()) {
+            try {
+                return mChannel.getId() == 0 ? mService.HumlaSession().getPermissions()
+                                             : mChannel.getPermissions();
+            } catch (HumlaDisconnectedException | IllegalStateException e) {
+                return 0;
+            }
         }
         return 0;
     }
 
     public void show() {
-        mService.registerObserver(mPermissionsObserver);
+        if (mService != null) {
+            mService.registerObserver(mPermissionsObserver);
+        }
         if (getPermissions() == 0) {
             // onMenuPrepare will be called once more once permissions have loaded.
-            if (mService.isConnected()) {
-                mService.HumlaSession().requestPermissions(mChannel.getId());
+            if (mService != null && mService.isConnected()) {
+                try {
+                    mService.HumlaSession().requestPermissions(mChannel.getId());
+                } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+                }
             }
         } else {
             mPrepareListener.onMenuPrepare(mMenu.getMenu(), getPermissions());

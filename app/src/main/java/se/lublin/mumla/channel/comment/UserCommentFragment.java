@@ -19,6 +19,7 @@ package se.lublin.mumla.channel.comment;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaObserver;
 
 /**
@@ -40,14 +41,20 @@ public class UserCommentFragment extends AbstractCommentFragment {
                 }
             }
         });
-        service.HumlaSession().requestComment(getSession());
+        try {
+            service.HumlaSession().requestComment(getSession());
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+        }
     }
 
     @Override
     public void editComment(IHumlaService service, String comment) {
         if (!service.isConnected())
             return;
-        service.HumlaSession().setUserComment(getSession(), comment);
+        try {
+            service.HumlaSession().setUserComment(getSession(), comment);
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+        }
     }
 
     public int getSession() {

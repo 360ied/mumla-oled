@@ -23,6 +23,7 @@ import android.content.Intent;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
+import se.lublin.humla.util.HumlaDisconnectedException;
 
 /**
  * Created by andrew on 08/08/14.
@@ -43,17 +44,20 @@ public class TalkBroadcastReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (BROADCAST_TALK.equals(intent.getAction())) {
-            if (!mService.isConnected())
+            if (mService == null || !mService.isConnected())
                 return;
-            IHumlaSession session = mService.HumlaSession();
-            String status = intent.getStringExtra(EXTRA_TALK_STATUS);
-            if (status == null) status = TALK_STATUS_TOGGLE;
-            if (TALK_STATUS_ON.equals(status)) {
-                session.setTalkingState(true);
-            } else if (TALK_STATUS_OFF.equals(status)) {
-                session.setTalkingState(false);
-            } else if (TALK_STATUS_TOGGLE.equals(status)) {
-                session.setTalkingState(!session.isTalking());
+            try {
+                IHumlaSession session = mService.HumlaSession();
+                String status = intent.getStringExtra(EXTRA_TALK_STATUS);
+                if (status == null) status = TALK_STATUS_TOGGLE;
+                if (TALK_STATUS_ON.equals(status)) {
+                    session.setTalkingState(true);
+                } else if (TALK_STATUS_OFF.equals(status)) {
+                    session.setTalkingState(false);
+                } else if (TALK_STATUS_TOGGLE.equals(status)) {
+                    session.setTalkingState(!session.isTalking());
+                }
+            } catch (HumlaDisconnectedException | IllegalStateException ignored) {
             }
         } else {
             throw new UnsupportedOperationException();

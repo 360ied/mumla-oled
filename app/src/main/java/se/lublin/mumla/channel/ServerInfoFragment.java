@@ -33,7 +33,9 @@ import java.util.concurrent.TimeUnit;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
+import se.lublin.humla.model.Server;
 import se.lublin.humla.net.HumlaUDPMessageType;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.mumla.R;
 import se.lublin.mumla.util.HumlaServiceFragment;
 
@@ -79,50 +81,56 @@ public class ServerInfoFragment extends HumlaServiceFragment {
         if(getService() == null || !getService().isConnected())
             return;
 
-        IHumlaSession session = getService().HumlaSession();
+        try {
+            IHumlaSession session = getService().HumlaSession();
 
-        String release = session.getServerRelease();
-        if (release == null || release.isEmpty()) {
-            long v2 = session.getServerVersionV2();
-            if (v2 != 0) {
-                release = se.lublin.humla.Constants.formatVersion(v2);
-            } else {
-                release = se.lublin.humla.Constants.formatLegacyVersion(session.getServerVersion());
+            String release = session.getServerRelease();
+            if (release == null || release.isEmpty()) {
+                long v2 = session.getServerVersionV2();
+                if (v2 != 0) {
+                    release = se.lublin.humla.Constants.formatVersion(v2);
+                } else {
+                    release = se.lublin.humla.Constants.formatLegacyVersion(session.getServerVersion());
+                }
             }
-        }
-        mProtocolView.setText(getString(R.string.server_info_protocol, release));
-        mOSVersionView.setText(getString(R.string.server_info_version, session.getServerOSName(), session.getServerOSVersion()));
-        mTCPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getTCPLatency()*Math.pow(10, -3)));
-        mUDPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getUDPLatency()*Math.pow(10, -3)));
-        // TODO SRV note also getHost,Port?
-        mHostView.setText(getString(R.string.server_info_host,
-                getService().getTargetServer().getSrvHost(),
-                getService().getTargetServer().getSrvPort()));
-
-        String codecName = "<null>";
-        HumlaUDPMessageType codecType = session.getCodec();
-        if (codecType != null) {
-            switch (codecType) {
-                case UDPVoiceOpus:
-                    codecName = "Opus";
-                    break;
-                case UDPVoiceCELTBeta:
-                    codecName = "CELT 0.11.0";
-                    break;
-                case UDPVoiceCELTAlpha:
-                    codecName = "CELT 0.7.0";
-                    break;
-                case UDPVoiceSpeex:
-                    codecName = "Speex";
-                    break;
-                default:
-                    codecName = "???";
+            mProtocolView.setText(getString(R.string.server_info_protocol, release));
+            mOSVersionView.setText(getString(R.string.server_info_version, session.getServerOSName(), session.getServerOSVersion()));
+            mTCPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getTCPLatency()*Math.pow(10, -3)));
+            mUDPLatencyView.setText(getString(R.string.server_info_latency, (float)session.getUDPLatency()*Math.pow(10, -3)));
+            // TODO SRV note also getHost,Port?
+            Server targetServer = getService().getTargetServer();
+            if (targetServer != null) {
+                mHostView.setText(getString(R.string.server_info_host,
+                        targetServer.getSrvHost(),
+                        targetServer.getSrvPort()));
             }
-        }
 
-        mMaxBandwidthView.setText(getString(R.string.server_info_max_bandwidth, (float)session.getMaxBandwidth()/1000f));
-        mCurrentBandwidthView.setText(getString(R.string.server_info_current_bandwidth, (float)session.getCurrentBandwidth()/1000f));
-        mCodecView.setText(getString(R.string.server_info_codec, codecName));
+            String codecName = "<null>";
+            HumlaUDPMessageType codecType = session.getCodec();
+            if (codecType != null) {
+                switch (codecType) {
+                    case UDPVoiceOpus:
+                        codecName = "Opus";
+                        break;
+                    case UDPVoiceCELTBeta:
+                        codecName = "CELT 0.11.0";
+                        break;
+                    case UDPVoiceCELTAlpha:
+                        codecName = "CELT 0.7.0";
+                        break;
+                    case UDPVoiceSpeex:
+                        codecName = "Speex";
+                        break;
+                    default:
+                        codecName = "???";
+                }
+            }
+
+            mMaxBandwidthView.setText(getString(R.string.server_info_max_bandwidth, (float)session.getMaxBandwidth()/1000f));
+            mCurrentBandwidthView.setText(getString(R.string.server_info_current_bandwidth, (float)session.getCurrentBandwidth()/1000f));
+            mCodecView.setText(getString(R.string.server_info_codec, codecName));
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+        }
     }
 
     @Override

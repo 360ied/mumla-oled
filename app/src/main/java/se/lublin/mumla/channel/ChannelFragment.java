@@ -116,7 +116,7 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             int selfSession;
             try {
                 selfSession = getService().HumlaSession().getSessionId();
-            } catch (IllegalStateException e) {
+            } catch (HumlaDisconnectedException | IllegalStateException e) {
                 Log.d(TAG, "exception in onUserStateUpdated: " + e);
                 return;
             }
@@ -184,11 +184,14 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                 if (getService() == null || !getService().isConnected())
                     return;
 
-                IHumlaSession session = getService().HumlaSession();
-                if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
-                    byte target = session.getVoiceTargetId();
-                    session.setVoiceTargetId((byte) 0);
-                    session.unregisterWhisperTarget(target);
+                try {
+                    IHumlaSession session = getService().HumlaSession();
+                    if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
+                        byte target = session.getVoiceTargetId();
+                        session.setVoiceTargetId((byte) 0);
+                        session.unregisterWhisperTarget(target);
+                    }
+                } catch (HumlaDisconnectedException | IllegalStateException ignored) {
                 }
             }
         });
@@ -248,10 +251,14 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     public void onPause() {
         super.onPause();
         if (getService() != null && getService().isConnected() &&
+            getActivity() != null &&
             !Settings.getInstance(getActivity()).isPushToTalkToggle()) {
             // XXX: This ensures that push to talk is disabled when we pause.
             // We don't want to leave the talk state active if the fragment is paused while pressed.
-            getService().HumlaSession().setTalkingState(false);
+            try {
+                getService().HumlaSession().setTalkingState(false);
+            } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+            }
         }
     }
 
@@ -281,13 +288,17 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             return;
         }
 
-        IHumlaSession session = getService().HumlaSession();
-        VoiceTargetMode mode = session.getVoiceTargetMode();
-        if (mode == VoiceTargetMode.WHISPER) {
-            WhisperTarget target = session.getWhisperTarget();
-            mTargetPanel.setVisibility(View.VISIBLE);
-            mTargetPanelText.setText(getString(R.string.shout_target, target.getName()));
-        } else {
+        try {
+            IHumlaSession session = getService().HumlaSession();
+            VoiceTargetMode mode = session.getVoiceTargetMode();
+            if (mode == VoiceTargetMode.WHISPER) {
+                WhisperTarget target = session.getWhisperTarget();
+                mTargetPanel.setVisibility(View.VISIBLE);
+                mTargetPanelText.setText(getString(R.string.shout_target, target.getName()));
+            } else {
+                mTargetPanel.setVisibility(View.GONE);
+            }
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
             mTargetPanel.setVisibility(View.GONE);
         }
     }

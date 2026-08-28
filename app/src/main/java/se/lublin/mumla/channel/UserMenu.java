@@ -36,6 +36,7 @@ import java.util.List;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.net.Permissions;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.mumla.R;
 import se.lublin.mumla.channel.comment.UserCommentFragment;
 import se.lublin.mumla.service.MumlaService;
@@ -64,15 +65,19 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
 
     @Override
     public void onMenuPrepare(Menu menu, int permissions) {
+        if (!mService.isConnected()) {
+            return;
+        }
         // Use permission data to determine the actions available.
         boolean self;
+        int perms;
         try {
             self = mUser.getSession() == mService.getSessionId();
-        } catch (IllegalStateException e) {
+            perms = mService.getPermissions();
+        } catch (HumlaDisconnectedException | IllegalStateException e) {
             Log.d(TAG, "exception in onMenuPrepare: " + e);
             return;
         }
-        int perms = mService.getPermissions();
         IChannel channel = mUser.getChannel();
         if (channel == null) {
             Log.d(TAG, "mUser.getChannel()==null in onMenuPrepare");
@@ -176,7 +181,19 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
     }
 
     private void showChannelMoveDialog() {
-        final List<IChannel> channels = ModelUtils.getChannelList(mService.getRootChannel());
+        if (!mService.isConnected()) {
+            return;
+        }
+        IChannel root;
+        try {
+            root = mService.getRootChannel();
+        } catch (HumlaDisconnectedException | IllegalStateException e) {
+            return;
+        }
+        if (root == null) {
+            return;
+        }
+        final List<IChannel> channels = ModelUtils.getChannelList(root);
         final CharSequence[] channelNames = new CharSequence[channels.size()];
         for (int i = 0; i < channels.size(); i++) {
             channelNames[i] = channels.get(i).getName();
@@ -184,8 +201,13 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
         new MaterialAlertDialogBuilder(mContext)
                 .setTitle(R.string.user_menu_move)
                 .setItems(channelNames, (dialog, which) -> {
-                    IChannel channel = channels.get(which);
-                    mService.moveUserToChannel(mUser.getSession(), channel.getId());
+                    if (mService.isConnected()) {
+                        try {
+                            IChannel channel = channels.get(which);
+                            mService.moveUserToChannel(mUser.getSession(), channel.getId());
+                        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+                        }
+                    }
                 })
                 .show();
     }

@@ -37,6 +37,7 @@ import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.mumla.R;
 import se.lublin.mumla.service.MumlaService;
 
@@ -114,32 +115,36 @@ public class ChannelSearchProvider extends ContentProvider {
         if (!mService.isConnected())
             return null;
 
-        IHumlaSession session = mService.HumlaSession();
+        try {
+            IHumlaSession session = mService.HumlaSession();
 
-        String query = "";
-        for(int x=0;x<selectionArgs.length;x++) {
-            query += selectionArgs[x];
-            if(x != selectionArgs.length-1)
-                query += " ";
+            String query = "";
+            for(int x=0;x<selectionArgs.length;x++) {
+                query += selectionArgs[x];
+                if(x != selectionArgs.length-1)
+                    query += " ";
+            }
+
+            query = query.toLowerCase(Locale.getDefault());
+
+            MatrixCursor cursor = new MatrixCursor(new String[] { "_ID", SearchManager.SUGGEST_COLUMN_INTENT_EXTRA_DATA, SearchManager.SUGGEST_COLUMN_TEXT_1, SearchManager.SUGGEST_COLUMN_ICON_1, SearchManager.SUGGEST_COLUMN_TEXT_2, SearchManager.SUGGEST_COLUMN_INTENT_DATA });
+
+            List<IChannel> channels = channelSearch(session.getRootChannel(), query);
+            List<IUser> users = userSearch(session.getRootChannel(), query);
+
+            for(int x=0;x<channels.size();x++) {
+                IChannel channel = channels.get(x);
+                cursor.addRow(new Object[] { x, INTENT_DATA_CHANNEL, channel.getName(), R.drawable.ic_action_channels, getContext().getResources().getQuantityString(R.plurals.search_channel_users, channel.getSubchannelUserCount(), channel.getSubchannelUserCount()), channel.getId() });
+            }
+
+            for(int x=0;x<users.size();x++) {
+                IUser user = users.get(x);
+                cursor.addRow(new Object[] { x, INTENT_DATA_USER, user.getName(), R.drawable.ic_action_user_dark, getContext().getString(R.string.user), user.getSession() });
+            }
+            return cursor;
+        } catch (HumlaDisconnectedException | IllegalStateException e) {
+            return null;
         }
-
-        query = query.toLowerCase(Locale.getDefault());
-
-        MatrixCursor cursor = new MatrixCursor(new String[] { "_ID", SearchManager.SUGGEST_COLUMN_INTENT_EXTRA_DATA, SearchManager.SUGGEST_COLUMN_TEXT_1, SearchManager.SUGGEST_COLUMN_ICON_1, SearchManager.SUGGEST_COLUMN_TEXT_2, SearchManager.SUGGEST_COLUMN_INTENT_DATA });
-
-        List<IChannel> channels = channelSearch(session.getRootChannel(), query);
-        List<IUser> users = userSearch(session.getRootChannel(), query);
-
-        for(int x=0;x<channels.size();x++) {
-            IChannel channel = channels.get(x);
-            cursor.addRow(new Object[] { x, INTENT_DATA_CHANNEL, channel.getName(), R.drawable.ic_action_channels, getContext().getResources().getQuantityString(R.plurals.search_channel_users, channel.getSubchannelUserCount(), channel.getSubchannelUserCount()), channel.getId() });
-        }
-
-        for(int x=0;x<users.size();x++) {
-            IUser user = users.get(x);
-            cursor.addRow(new Object[] { x, INTENT_DATA_USER, user.getName(), R.drawable.ic_action_user_dark, getContext().getString(R.string.user), user.getSession() });
-        }
-        return cursor;
     }
 
     /**

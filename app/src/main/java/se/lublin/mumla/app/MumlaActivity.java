@@ -82,6 +82,7 @@ import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.Server;
 import se.lublin.humla.net.HumlaConnection;
 import se.lublin.humla.protobuf.Mumble;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
 import se.lublin.humla.util.MumbleURLParser;
@@ -271,8 +272,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             @Override
             public void handleOnBackPressed() {
                 if (mService != null && mService.isConnected()) {
+                    Server targetServer = mService.getTargetServer();
+                    String serverName = targetServer != null ? targetServer.getName() : "";
                     new MaterialAlertDialogBuilder(MumlaActivity.this)
-                            .setMessage(getString(R.string.disconnectSure, mService.getTargetServer().getName()))
+                            .setMessage(getString(R.string.disconnectSure, serverName))
                             .setPositiveButton(R.string.confirm, (dialog, which) -> {
                                 mService.disconnect();
                                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
@@ -315,9 +318,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 super.onDrawerStateChanged(newState);
                 // Prevent push to talk from getting stuck on when the drawer is opened.
                 if (getService() != null && getService().isConnected()) {
-                    IHumlaSession session = getService().HumlaSession();
-                    if (session.isTalking() && !mSettings.isPushToTalkToggle()) {
-                        session.setTalkingState(false);
+                    try {
+                        IHumlaSession session = getService().HumlaSession();
+                        if (session.isTalking() && !mSettings.isPushToTalkToggle()) {
+                            session.setTalkingState(false);
+                        }
+                    } catch (HumlaDisconnectedException | IllegalStateException ignored) {
                     }
                 }
             }
@@ -506,9 +512,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 break;
             case DrawerAdapter.ITEM_ACCESS_TOKENS:
                 fragmentClass = AccessTokenFragment.class;
-                Server connectedServer = getService().getTargetServer();
-                args.putLong("server", connectedServer.getId());
-                args.putStringArrayList("access_tokens", (ArrayList<String>) mDatabase.getAccessTokens(connectedServer.getId()));
+                Server connectedServer = getService() != null ? getService().getTargetServer() : null;
+                if (connectedServer != null) {
+                    args.putLong("server", connectedServer.getId());
+                    args.putStringArrayList("access_tokens", (ArrayList<String>) mDatabase.getAccessTokens(connectedServer.getId()));
+                }
                 break;
             case DrawerAdapter.ITEM_PINNED_CHANNELS:
                 fragmentClass = ChannelFragment.class;
@@ -531,8 +539,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         getSupportFragmentManager().beginTransaction()
                 .replace(R.id.content_frame, fragment, fragmentClass.getName())
                 .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
-                .commit();
-        requireNonNull(getSupportActionBar()).setTitle(mDrawerAdapter.getItemWithId(fragmentId).title);
+                .commitAllowingStateLoss();
+        if (getSupportActionBar() != null) {
+            DrawerAdapter.DrawerRow item = mDrawerAdapter.getItemWithId(fragmentId);
+            if (item != null) {
+                getSupportActionBar().setTitle(item.title);
+            }
+        }
     }
 
     public void connectToServer(final Server server) {
@@ -679,13 +692,23 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private void updateConnectionState(IHumlaService service) {
         if (mConnectingDialog != null) {
             mConnectingDialog.dismiss();
+            mConnectingDialog = null;
         }
-        if (mErrorDialog != null)
+        if (mErrorDialog != null) {
             mErrorDialog.dismiss();
+            mErrorDialog = null;
+        }
 
-        switch (mService.getConnectionState()) {
+        if (service == null) {
+            return;
+        }
+
+        switch (service.getConnectionState()) {
             case CONNECTING:
                 Server server = service.getTargetServer();
+                if (server == null) {
+                    break;
+                }
                 // SRV lookup is done later, so we no longer show the port in the connection
                 // progress dialog (and only the configured hostname)
                 mConnectingDialog = new MaterialAlertDialogBuilder(this)
@@ -693,7 +716,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         .setView(R.layout.dialog_progress)
                         .setCancelable(true)
                         .setOnCancelListener(dialog -> {
-                            mService.disconnect();
+                            if (mService != null) {
+                                mService.disconnect();
+                            }
                             Toast.makeText(MumlaActivity.this, R.string.cancelled,
                                     Toast.LENGTH_SHORT).show();
                         })
@@ -812,10 +837,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     public String getConnectedServerName() {
         if (mService != null && mService.isConnected()) {
             Server server = mService.getTargetServer();
-            return server.getName().isEmpty() ? server.getHost() : server.getName();
+            if (server != null) {
+                return (server.getName() != null && !server.getName().isEmpty()) ? server.getName() : server.getHost();
+            }
         }
-        if (BuildConfig.DEBUG)
-            throw new RuntimeException("getConnectedServerName should only be called if connected!");
         return "";
     }
 

@@ -19,6 +19,7 @@ package se.lublin.mumla.channel.comment;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.model.IChannel;
+import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaObserver;
 
 /**
@@ -40,7 +41,10 @@ public class ChannelDescriptionFragment extends AbstractCommentFragment {
                 }
             }
         });
-        service.HumlaSession().requestChannelDescription(getChannelId());
+        try {
+            service.HumlaSession().requestChannelDescription(getChannelId());
+        } catch (HumlaDisconnectedException | IllegalStateException ignored) {
+        }
     }
 
     @Override
