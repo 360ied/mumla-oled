@@ -88,6 +88,11 @@ public class AudioHandler extends HumlaNetworkListener
     private byte mTargetId;
     private boolean mProtobufUdp;
 
+    // Pre-allocated packet buffers for zero heap allocation on audio path
+    private final byte[] mProtobufPacketBuffer = new byte[2048];
+    private final byte[] mLegacyPacketBuffer = new byte[1024];
+    private final PacketBuffer mLegacyDataStream = new PacketBuffer(mLegacyPacketBuffer, 1024);
+
     public AudioHandler(Context context, HumlaLogger logger, int audioStream, int audioSource,
                         int sampleRate, int targetBitrate, int targetFramesPerPacket,
                         IInputMode inputMode, byte targetId, float amplitudeBoost,
@@ -99,7 +104,7 @@ public class AudioHandler extends HumlaNetworkListener
         mLogger = logger;
         mAudioStream = audioStream;
         mBitrate = targetBitrate;
-        mFramesPerPacket = targetFramesPerPacket > 0 ? targetFramesPerPacket : 2;
+        mFramesPerPacket = sanitizeFramesPerPacket(targetFramesPerPacket);
         mInputMode = inputMode;
         mAmplitudeBoost = amplitudeBoost;
         mBluetoothOn = bluetoothEnabled;
@@ -137,6 +142,14 @@ public class AudioHandler extends HumlaNetworkListener
 
         mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod);
         mOutput = new AudioOutput(mOutputListener);
+    }
+
+    private static int sanitizeFramesPerPacket(int fpp) {
+        // Opus supports 10ms, 20ms, 40ms, 60ms (1, 2, 4, 6 frames @ 10ms)
+        if (fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6) {
+            return fpp;
+        }
+        return 2; // Default 20ms
     }
 
     public synchronized void initialize(User self, int maxBandwidth, HumlaUDPMessageType codec) throws AudioException {
@@ -237,6 +250,7 @@ public class AudioHandler extends HumlaNetworkListener
             }
         }
         bitrate = Math.max(8000, bitrate);
+        framesPerPacket = sanitizeFramesPerPacket(framesPerPacket);
 
         if (bitrate != mBitrate || framesPerPacket != mFramesPerPacket) {
             mBitrate = bitrate;
@@ -369,34 +383,32 @@ public class AudioHandler extends HumlaNetworkListener
             }
 
             byte[] protoBytes = audioBuilder.build().toByteArray();
-            byte[] packet = new byte[1 + protoBytes.length];
-            packet[0] = 0x00; // Protobuf Audio header
-            System.arraycopy(protoBytes, 0, packet, 1, protoBytes.length);
-            mEncodeListener.onAudioEncoded(packet, packet.length);
+            int totalLen = 1 + protoBytes.length;
+            if (totalLen <= mProtobufPacketBuffer.length) {
+                mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
+                System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
+                mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+            }
         } else {
             int flags = 0;
             HumlaUDPMessageType msgType = (mCodec != null) ? mCodec : HumlaUDPMessageType.UDPVoiceOpus;
             flags |= msgType.ordinal() << 5;
             flags |= mTargetId & 0x1F;
 
-            final byte[] packetBuffer = new byte[1024];
-            packetBuffer[0] = (byte) (flags & 0xFF);
-
-            PacketBuffer ds = new PacketBuffer(packetBuffer, 1024);
-            ds.skip(1);
-            ds.writeLong(frameNumber);
+            mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
+            mLegacyDataStream.rewind();
+            mLegacyDataStream.skip(1);
+            mLegacyDataStream.writeLong(frameNumber);
 
             long header = length & ((1 << 13) - 1);
             if (isTerminator) {
                 header |= (1 << 13);
             }
-            ds.writeLong(header);
-            ds.append(data, length);
+            mLegacyDataStream.writeLong(header);
+            mLegacyDataStream.append(data, length);
 
-            int totalLen = ds.size();
-            ds.rewind();
-            byte[] packet = ds.dataBlock(totalLen);
-            mEncodeListener.onAudioEncoded(packet, totalLen);
+            int totalLen = mLegacyDataStream.size();
+            mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
         }
     }
 

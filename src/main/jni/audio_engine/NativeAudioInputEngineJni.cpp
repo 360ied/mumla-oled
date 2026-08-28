@@ -30,6 +30,7 @@ struct EngineContext {
     std::unique_ptr<AudioInputEngine> engine;
     JavaVM* jvm;
     jobject listenerGlobalRef;
+    jbyteArray cachedBufferGlobalRef;
     jmethodID onPacketMethod;
     jmethodID onTalkingMethod;
 };
@@ -59,8 +60,13 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
         jclass listenerClass = env->GetObjectClass(listener);
         ctx->onPacketMethod = env->GetMethodID(listenerClass, "onAudioPacketEncoded", "([BIIZJ)V");
         ctx->onTalkingMethod = env->GetMethodID(listenerClass, "onTalkingStateChanged", "(ZF)V");
+
+        jbyteArray localBuf = env->NewByteArray(AudioInputEngine::MAX_OPUS_BUFFER_BYTES);
+        ctx->cachedBufferGlobalRef = reinterpret_cast<jbyteArray>(env->NewGlobalRef(localBuf));
+        env->DeleteLocalRef(localBuf);
     } else {
         ctx->listenerGlobalRef = nullptr;
+        ctx->cachedBufferGlobalRef = nullptr;
         ctx->onPacketMethod = nullptr;
         ctx->onTalkingMethod = nullptr;
     }
@@ -70,7 +76,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
             bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, mode);
 
     ctx->engine->setPacketCallback([ctx](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
-        if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr || ctx->onPacketMethod == nullptr) {
+        if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr ||
+            ctx->onPacketMethod == nullptr || ctx->cachedBufferGlobalRef == nullptr) {
             return;
         }
         JNIEnv* env = nullptr;
@@ -83,14 +90,10 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
             attached = true;
         }
 
-        jbyteArray byteArray = env->NewByteArray(static_cast<jsize>(size));
-        if (byteArray != nullptr) {
-            env->SetByteArrayRegion(byteArray, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(data));
-            env->CallVoidMethod(ctx->listenerGlobalRef, ctx->onPacketMethod,
-                                byteArray, static_cast<jint>(size), static_cast<jint>(frames),
-                                static_cast<jboolean>(isTerminator), static_cast<jlong>(frameNumber));
-            env->DeleteLocalRef(byteArray);
-        }
+        env->SetByteArrayRegion(ctx->cachedBufferGlobalRef, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(data));
+        env->CallVoidMethod(ctx->listenerGlobalRef, ctx->onPacketMethod,
+                            ctx->cachedBufferGlobalRef, static_cast<jint>(size), static_cast<jint>(frames),
+                            static_cast<jboolean>(isTerminator), static_cast<jlong>(frameNumber));
 
         if (attached) {
             ctx->jvm->DetachCurrentThread();
@@ -130,6 +133,10 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeDestroy(
     auto ctx = getContext(handle);
     if (ctx == nullptr) return;
 
+    if (ctx->cachedBufferGlobalRef != nullptr) {
+        env->DeleteGlobalRef(ctx->cachedBufferGlobalRef);
+        ctx->cachedBufferGlobalRef = nullptr;
+    }
     if (ctx->listenerGlobalRef != nullptr) {
         env->DeleteGlobalRef(ctx->listenerGlobalRef);
         ctx->listenerGlobalRef = nullptr;
