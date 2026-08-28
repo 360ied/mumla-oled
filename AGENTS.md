@@ -1,5 +1,13 @@
 # Agent Guidelines
 
+## Repository Architecture
+- **Monorepo Layout**:
+  - `app/` (`:app`): Android application UI, activities, fragments, overlay, preferences.
+  - `libraries/humla/` (`:libraries:humla`): In-tree core library with Mumble protocol engine, background service, JNI audio pipeline (`rnnoise`, Oboe/AAudio), and codec bindings.
+- **Third-Party Submodules**: External native codecs and crypto are direct 1st-level submodules defined in the root `.gitmodules`:
+  - `libraries/humla/src/main/jni/{opus, celt-0.11.0-src, celt-0.7.0-src, speex}`
+  - `libraries/humla/libs/humla-spongycastle`
+
 ## Branching Strategy
 - **Dedicated Branch**: Always check out or create a dedicated branch (e.g., `feature/<name>`, `bugfix/<name>`) before making changes; never develop directly on `master`.
 - **Exception**: Modifications to `AGENTS.md` itself may be made directly on the current branch.
@@ -9,7 +17,7 @@
 - **Working State**: Every commit must leave the codebase working and passing tests (`./scripts/check.sh` or `nix develop --command ./gradlew testFossDebugUnitTest`).
 - **Commit Messages & Detailed Descriptions**:
   - **Commit Wrapper**: Use `python3 scripts/commit.py -m "<message>"` to automatically format to the 50/72 rule, validate, and execute `git commit`.
-  - **Subject Line**: Concise and imperative with a scope prefix (e.g., `proto:`, `nix:`, `core:`, `docs:`, `chat:`, `util:`), max 50 chars.
+  - **Subject Line**: Concise and imperative with a scope prefix (e.g., `app:`, `ui:`, `humla:`, `audio:`, `proto:`, `build:`, `nix:`, `docs:`, `util:`), max 50 chars.
   - **Detailed Body**: Always include a descriptive body separated by a blank line from the subject. Explain:
     - **Context & Motivation**: Why the change is needed and what problem it solves.
     - **Technical Approach**: Architectural decisions, algorithmic details, and notable changes across components.
