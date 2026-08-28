@@ -48,7 +48,8 @@ def dump_blob(c_file_path, out_bin_path):
 
     BLOCK_SIZE = 64
     HEAD_MAGIC = b'DNNw'
-    VERSION = 0
+    if not arrays:
+        raise ValueError(f"No weight arrays parsed from {c_file_path}")
 
     os.makedirs(os.path.dirname(os.path.abspath(out_bin_path)), exist_ok=True)
     with open(out_bin_path, 'wb') as f:
