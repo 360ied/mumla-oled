@@ -101,8 +101,49 @@ android {
     }
     preBuild.dependsOn buildSpongycastle
 
+    // Prepare RNNoise pre-trained model weights from official upstream model archive
+    task prepareRnnoiseModel {
+        def versionFile = file('src/main/jni/rnnoise/model_version')
+        def outputDir = file('src/main/jni/rnnoise-build/generated')
+        def dataC = file('src/main/jni/rnnoise-build/generated/rnnoise_data.c')
+        def dataH = file('src/main/jni/rnnoise-build/generated/rnnoise_data.h')
+
+        inputs.file(versionFile).optional()
+        outputs.file(dataC)
+        outputs.file(dataH)
+
+        doLast {
+            if (dataC.exists() && dataH.exists()) {
+                return
+            }
+            def modelHash = versionFile.exists() ? versionFile.text.trim() : '5e7841199cf2947fc32f6eeaf6faffab5c2dd3da69e6a6e4830625a10285a09d'
+            def cacheDir = file("${project.buildDir}/model_cache")
+            cacheDir.mkdirs()
+            def tarGz = file("${cacheDir}/rnnoise_data-${modelHash}.tar.gz")
+            if (!tarGz.exists()) {
+                println "Downloading RNNoise model weights (${modelHash.substring(0, 7)})..."
+                def modelUrl = new URL("https://media.xiph.org/rnnoise/models/rnnoise_data-${modelHash}.tar.gz")
+                modelUrl.withInputStream { ins ->
+                    tarGz.withOutputStream { outs -> outs << ins }
+                }
+            }
+            outputDir.mkdirs()
+            copy {
+                from tarTree(tarGz)
+                into outputDir
+                include 'src/rnnoise_data.c', 'src/rnnoise_data.h'
+                eachFile { fcd ->
+                    fcd.path = fcd.name
+                }
+                includeEmptyDirs = false
+            }
+        }
+    }
+    preBuild.dependsOn prepareRnnoiseModel
+
     // Trigger NDK build on java compilation task with full core parallelism and incremental tracking.
     task ndkBuild(type: Exec) {
+        dependsOn prepareRnnoiseModel
         inputs.dir file('src/main/jni')
         outputs.dir file('src/main/libs')
         def ndkExe = "$project.android.ndkDirectory/ndk-build"
@@ -114,6 +155,7 @@ android {
     }
 
     preBuild.dependsOn ndkBuild
+
 
     tasks.withType(JavaCompile) {
         compileTask -> compileTask.dependsOn ndkBuild

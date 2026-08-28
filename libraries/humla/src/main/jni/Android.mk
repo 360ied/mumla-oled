@@ -97,17 +97,19 @@ include $(CLEAR_VARS)
 LOCAL_PATH := $(ROOT)
 LOCAL_MODULE := humlaaudio
 LOCAL_C_INCLUDES := $(ROOT)/opus/include $(ROOT)/opus/celt $(ROOT)/opus/silk \
-                    $(ROOT)/rnnoise $(ROOT)/audio_engine
-LOCAL_SRC_FILES := rnnoise/rnnoise_data.c \
-                   rnnoise/rnnoise_tables.c \
-                   rnnoise/rnn.c \
-                   rnnoise/pitch.c \
-                   rnnoise/nnet.c \
-                   rnnoise/nnet_default.c \
-                   rnnoise/parse_lpcnet_weights.c \
-                   rnnoise/kiss_fft.c \
-                   rnnoise/denoise.c \
-                   rnnoise/celt_lpc.c \
+                    $(ROOT)/rnnoise/include $(ROOT)/rnnoise/src \
+                    $(ROOT)/rnnoise-build $(ROOT)/rnnoise-build/generated \
+                    $(ROOT)/audio_engine
+LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
+                   rnnoise/src/rnnoise_tables.c \
+                   rnnoise/src/rnn.c \
+                   rnnoise/src/pitch.c \
+                   rnnoise/src/nnet.c \
+                   rnnoise/src/nnet_default.c \
+                   rnnoise/src/parse_lpcnet_weights.c \
+                   rnnoise/src/kiss_fft.c \
+                   rnnoise/src/denoise.c \
+                   rnnoise/src/celt_lpc.c \
                    audio_engine/PreSpeechRingBuffer.cpp \
                    audio_engine/SoftLimiter.cpp \
                    audio_engine/HysteresisVad.cpp \
@@ -115,9 +117,10 @@ LOCAL_SRC_FILES := rnnoise/rnnoise_data.c \
                    audio_engine/OpusVoiceEncoder.cpp \
                    audio_engine/AudioInputEngine.cpp \
                    audio_engine/NativeAudioInputEngineJni.cpp
-LOCAL_CFLAGS := -DHAVE_CONFIG_H -O3 -fvisibility=hidden -DVAR_ARRAYS
+LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -O3 -fvisibility=hidden -DVAR_ARRAYS
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus
 LOCAL_LDLIBS := -llog
 LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
 include $(BUILD_SHARED_LIBRARY)
+
