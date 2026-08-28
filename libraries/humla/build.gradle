@@ -92,19 +92,25 @@ android {
 
     // Build custom Spongy Castle JARs from submodule if needed
     task buildSpongycastle(type: GradleBuild) {
+        def provJar = file('libs/humla-spongycastle/prov/build/libs/prov-1.51.0.0.jar')
+        def pkixJar = file('libs/humla-spongycastle/pkix/build/libs/pkix-1.51.0.0.jar')
+        onlyIf { !provJar.exists() || !pkixJar.exists() }
         buildFile = file('libs/humla-spongycastle/build.gradle')
         dir = file('libs/humla-spongycastle')
         tasks = ['jar']
     }
     preBuild.dependsOn buildSpongycastle
 
-    // Trigger NDK build on java compilation task.
+    // Trigger NDK build on java compilation task with full core parallelism and incremental tracking.
     task ndkBuild(type: Exec) {
+        inputs.dir file('src/main/jni')
+        outputs.dir file('src/main/libs')
         def ndkExe = "$project.android.ndkDirectory/ndk-build"
         if (DefaultNativePlatform.getCurrentOperatingSystem().isWindows()) {
           ndkExe += '.cmd'
         }
-        commandLine ndkExe, '-C', file('src/main/jni/').absolutePath
+        def jobs = Runtime.runtime.availableProcessors()
+        commandLine ndkExe, "-j${jobs}", '-C', file('src/main/jni/').absolutePath
     }
 
     tasks.withType(JavaCompile) {
