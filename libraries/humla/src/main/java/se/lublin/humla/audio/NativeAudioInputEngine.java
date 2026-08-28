@@ -37,6 +37,29 @@ public class NativeAudioInputEngine {
         System.loadLibrary("humlaaudio");
     }
 
+    private static volatile byte[] sCachedRnnoiseModel = null;
+
+    public static synchronized void loadRnnoiseModel(android.content.Context context) {
+        if (sCachedRnnoiseModel != null || context == null) {
+            return;
+        }
+        try (java.io.InputStream is = context.getAssets().open("rnnoise_model.bin")) {
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            byte[] data = new byte[16384];
+            int nRead;
+            while ((nRead = is.read(data, 0, data.length)) != -1) {
+                buffer.write(data, 0, nRead);
+            }
+            sCachedRnnoiseModel = buffer.toByteArray();
+        } catch (java.io.IOException e) {
+            android.util.Log.w("NativeAudioInputEngine", "Failed to load rnnoise_model.bin from assets", e);
+        }
+    }
+
+    public static byte[] getCachedRnnoiseModel() {
+        return sCachedRnnoiseModel;
+    }
+
     private long mNativeHandle;
     private final AudioInputEngineListener mListener;
 
@@ -46,8 +69,18 @@ public class NativeAudioInputEngine {
                                   boolean rnnoiseEnabled,
                                   int inputMode,
                                   AudioInputEngineListener listener) {
+        this(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, inputMode, sCachedRnnoiseModel, listener);
+    }
+
+    public NativeAudioInputEngine(int bitrate,
+                                  int framesPerPacket,
+                                  float amplitudeBoost,
+                                  boolean rnnoiseEnabled,
+                                  int inputMode,
+                                  byte[] rnnoiseModel,
+                                  AudioInputEngineListener listener) {
         mListener = listener;
-        mNativeHandle = nativeCreate(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, inputMode, listener);
+        mNativeHandle = nativeCreate(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, inputMode, rnnoiseModel, listener);
     }
 
     public synchronized void processFrame(short[] pcm, int offset, int length) {
@@ -112,6 +145,19 @@ public class NativeAudioInputEngine {
         return false;
     }
 
+    public synchronized void setRnnoiseModel(byte[] modelData) {
+        if (mNativeHandle != 0) {
+            nativeSetRnnoiseModel(mNativeHandle, modelData);
+        }
+    }
+
+    public synchronized boolean hasRnnoiseModel() {
+        if (mNativeHandle != 0) {
+            return nativeHasRnnoiseModel(mNativeHandle);
+        }
+        return false;
+    }
+
     public synchronized void setVadThresholds(float vadMax, float vadMin) {
         if (mNativeHandle != 0) {
             nativeSetVadThresholds(mNativeHandle, vadMax, vadMin);
@@ -152,7 +198,7 @@ public class NativeAudioInputEngine {
     }
 
     // Native JNI Methods
-    private static native long nativeCreate(int bitrate, int framesPerPacket, float amplitudeBoost, boolean rnnoiseEnabled, int inputMode, Object listener);
+    private static native long nativeCreate(int bitrate, int framesPerPacket, float amplitudeBoost, boolean rnnoiseEnabled, int inputMode, byte[] rnnoiseModel, Object listener);
     private static native void nativeDestroy(long handle);
     private static native void nativeProcessFrame(long handle, short[] pcm, int offset, int length);
     private static native void nativeSetInputMode(long handle, int inputMode);
@@ -164,6 +210,8 @@ public class NativeAudioInputEngine {
     private static native void nativeSetAmplitudeBoost(long handle, float boost);
     private static native void nativeSetRnnoiseEnabled(long handle, boolean enabled);
     private static native boolean nativeIsRnnoiseEnabled(long handle);
+    private static native void nativeSetRnnoiseModel(long handle, byte[] modelData);
+    private static native boolean nativeHasRnnoiseModel(long handle);
     private static native void nativeSetVadThresholds(long handle, float vadMax, float vadMin);
     private static native void nativeSetVadHoldFrames(long handle, int holdFrames);
     private static native void nativeReset(long handle);

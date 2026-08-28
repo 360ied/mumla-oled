@@ -25,20 +25,55 @@
 namespace mumla {
 namespace audio {
 
-RnnoiseProcessor::RnnoiseProcessor(bool enabled)
+RnnoiseProcessor::RnnoiseProcessor(bool enabled, const uint8_t* modelData, size_t modelSize)
     : m_state(nullptr),
+      m_model(nullptr),
+      m_modelData(modelData),
+      m_modelSize(modelSize),
       m_enabled(enabled),
       m_floatIn(FRAME_SIZE, 0.0f),
       m_floatOut(FRAME_SIZE, 0.0f) {
     if (m_enabled) {
-        m_state = rnnoise_create(nullptr);
+        initModel();
     }
 }
 
 RnnoiseProcessor::~RnnoiseProcessor() {
+    cleanupModel();
+}
+
+void RnnoiseProcessor::initModel() {
+    if (m_state != nullptr) return;
+    if (m_modelData != nullptr && m_modelSize > 0) {
+        if (m_model == nullptr) {
+            m_model = rnnoise_model_from_buffer(m_modelData, static_cast<int>(m_modelSize));
+        }
+        if (m_model != nullptr) {
+            m_state = rnnoise_create(m_model);
+        }
+    }
+}
+
+void RnnoiseProcessor::cleanupModel() {
     if (m_state != nullptr) {
         rnnoise_destroy(m_state);
         m_state = nullptr;
+    }
+    if (m_model != nullptr) {
+        rnnoise_model_free(m_model);
+        m_model = nullptr;
+    }
+}
+
+void RnnoiseProcessor::setModel(const uint8_t* modelData, size_t modelSize) {
+    if (m_modelData == modelData && m_modelSize == modelSize) {
+        return;
+    }
+    cleanupModel();
+    m_modelData = modelData;
+    m_modelSize = modelSize;
+    if (m_enabled) {
+        initModel();
     }
 }
 
@@ -47,18 +82,20 @@ void RnnoiseProcessor::setEnabled(bool enabled) {
         return;
     }
     m_enabled = enabled;
-    if (m_enabled && m_state == nullptr) {
-        m_state = rnnoise_create(nullptr);
-    } else if (!m_enabled && m_state != nullptr) {
-        rnnoise_destroy(m_state);
-        m_state = nullptr;
+    if (m_enabled) {
+        initModel();
+    } else {
+        cleanupModel();
     }
 }
 
 void RnnoiseProcessor::reset() {
     if (m_state != nullptr) {
         rnnoise_destroy(m_state);
-        m_state = rnnoise_create(nullptr);
+        m_state = nullptr;
+        if (m_model != nullptr) {
+            m_state = rnnoise_create(m_model);
+        }
     }
 }
 

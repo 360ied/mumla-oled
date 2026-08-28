@@ -65,7 +65,9 @@ public:
                      int framesPerPacket = 2,
                      float amplitudeBoost = 1.0f,
                      bool rnnoiseEnabled = true,
-                     InputMode mode = InputMode::VOICE_ACTIVITY);
+                     InputMode mode = InputMode::VOICE_ACTIVITY,
+                     const uint8_t* rnnoiseModelData = nullptr,
+                     size_t rnnoiseModelSize = 0);
     ~AudioInputEngine() = default;
 
     /**
@@ -97,6 +99,9 @@ public:
     void setRnnoiseEnabled(bool enabled);
     bool isRnnoiseEnabled() const;
 
+    void setRnnoiseModel(const uint8_t* modelData, size_t modelSize);
+    bool hasRnnoiseModel() const;
+
     void setVadThresholds(float vadMax, float vadMin);
     void setVadHoldFrames(uint32_t holdFrames);
 
@@ -117,6 +122,7 @@ private:
 
     // Submodules
     PreSpeechRingBuffer m_ringBuffer;
+    std::vector<uint8_t> m_rnnoiseModelData;
     RnnoiseProcessor m_rnnoise;
     HysteresisVad m_vad;
     OpusVoiceEncoder m_opus;

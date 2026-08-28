@@ -106,13 +106,17 @@ android {
         def outputDir = file('src/main/jni/rnnoise-build/generated')
         def dataC = file('src/main/jni/rnnoise-build/generated/rnnoise_data.c')
         def dataH = file('src/main/jni/rnnoise-build/generated/rnnoise_data.h')
+        def modelBin = file('src/main/assets/rnnoise_model.bin')
+        def dumpScript = file('tools/dump_rnnoise_blob.py')
 
         inputs.file(versionFile).optional()
+        inputs.file(dumpScript).optional()
         outputs.file(dataC)
         outputs.file(dataH)
+        outputs.file(modelBin)
 
         doLast {
-            if (dataC.exists() && dataH.exists()) {
+            if (dataC.exists() && dataH.exists() && modelBin.exists()) {
                 return
             }
             def modelHash = versionFile.exists() ? versionFile.text.trim() : '5e7841199cf2947fc32f6eeaf6faffab5c2dd3da69e6a6e4830625a10285a09d'
@@ -136,21 +140,12 @@ android {
                 }
                 includeEmptyDirs = false
             }
-            // Strip redundant 32-bit float tables for 8-bit quantized operation
-            def cText = dataC.text
-            def floatTables = [
-                'conv2_weights_float',
-                'gru1_input_weights_float',
-                'gru1_recurrent_weights_float',
-                'gru2_input_weights_float',
-                'gru2_recurrent_weights_float',
-                'gru3_input_weights_float',
-                'gru3_recurrent_weights_float'
-            ]
-            for (String tbl : floatTables) {
-                cText = cText.replaceAll(/(?s)#define WEIGHTS_${tbl}_DEFINED\n#define WEIGHTS_${tbl}_TYPE WEIGHT_TYPE_float\nstatic const float ${tbl}\[\d+\] = \{.*?\};\n/, '')
+
+            // Dump 8-bit quantized binary model asset
+            modelBin.parentFile.mkdirs()
+            exec {
+                commandLine 'python3', dumpScript.absolutePath, dataC.absolutePath, modelBin.absolutePath
             }
-            dataC.text = cText
         }
     }
     preBuild.dependsOn prepareRnnoiseModel
