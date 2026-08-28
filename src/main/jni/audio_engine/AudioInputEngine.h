@@ -38,9 +38,10 @@ enum class InputMode {
     CONTINUOUS = 2
 };
 
-struct EncodedPacket {
-    std::vector<uint8_t> data;
-    int frameCount;
+struct DispatchedPacket {
+    uint8_t data[1024];
+    size_t size;
+    int frames;
     bool isTerminator;
     uint64_t frameNumber;
 };
@@ -75,22 +76,22 @@ public:
     void setTalkingCallback(TalkingStateCallback callback);
 
     void setInputMode(InputMode mode);
-    InputMode getInputMode() const { return m_inputMode; }
+    InputMode getInputMode() const;
 
     void setPttTalking(bool talking);
-    bool isPttTalking() const { return m_pttTalking; }
+    bool isPttTalking() const;
 
     void setMuted(bool muted);
-    bool isMuted() const { return m_muted; }
+    bool isMuted() const;
 
     void setBitrate(int bitrate);
     int getBitrate() const;
 
     void setFramesPerPacket(int framesPerPacket);
-    int getFramesPerPacket() const { return m_framesPerPacket; }
+    int getFramesPerPacket() const;
 
     void setAmplitudeBoost(float boost);
-    float getAmplitudeBoost() const { return m_amplitudeBoost; }
+    float getAmplitudeBoost() const;
 
     void setRnnoiseEnabled(bool enabled);
     bool isRnnoiseEnabled() const;
@@ -101,8 +102,7 @@ public:
     void reset();
 
 private:
-    void encodeAndDispatch(const int16_t* pcm, size_t sampleCount, bool isTerminator);
-    void flushAccumulator(bool isTerminator);
+    void flushAccumulatorLocked(bool isTerminator, std::vector<DispatchedPacket>& packetsOut);
 
     mutable std::mutex m_mutex;
 
@@ -120,7 +120,7 @@ private:
     HysteresisVad m_vad;
     OpusVoiceEncoder m_opus;
 
-    // Buffers
+    // Pre-allocated Buffers
     std::vector<int16_t> m_processedFrame;
     std::vector<int16_t> m_accumulatedPcm;
     size_t m_accumulatedFrames;
