@@ -44,5 +44,6 @@ __pycache__/
 
 # Generated RNNoise Model
 libraries/humla/src/main/jni/rnnoise-build/generated/
+libraries/humla/src/main/assets/rnnoise_model.bin
 
 

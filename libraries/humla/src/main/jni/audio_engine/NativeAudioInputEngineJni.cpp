@@ -51,6 +51,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
         jfloat amplitudeBoost,
         jboolean rnnoiseEnabled,
         jint inputMode,
+        jbyteArray rnnoiseModelData,
         jobject listener) {
 
     auto ctx = new EngineContext();
@@ -73,8 +74,17 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
     }
 
     auto mode = static_cast<InputMode>(inputMode);
-    ctx->engine = std::make_unique<AudioInputEngine>(
-            bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, mode);
+    if (rnnoiseModelData != nullptr) {
+        jsize modelLen = env->GetArrayLength(rnnoiseModelData);
+        jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
+        ctx->engine = std::make_unique<AudioInputEngine>(
+                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, mode,
+                reinterpret_cast<const uint8_t*>(modelBytes), static_cast<size_t>(modelLen));
+        env->ReleaseByteArrayElements(rnnoiseModelData, modelBytes, JNI_ABORT);
+    } else {
+        ctx->engine = std::make_unique<AudioInputEngine>(
+                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, mode);
+    }
 
     ctx->engine->setPacketCallback([ctx](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
         if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr ||
@@ -267,6 +277,37 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeIsRnnoiseEnabled(
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
         return ctx->engine->isRnnoiseEnabled();
+    }
+    return false;
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetRnnoiseModel(
+        JNIEnv* env,
+        jobject thiz,
+        jlong handle,
+        jbyteArray rnnoiseModelData) {
+    auto ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        if (rnnoiseModelData != nullptr) {
+            jsize modelLen = env->GetArrayLength(rnnoiseModelData);
+            jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
+            ctx->engine->setRnnoiseModel(reinterpret_cast<const uint8_t*>(modelBytes), static_cast<size_t>(modelLen));
+            env->ReleaseByteArrayElements(rnnoiseModelData, modelBytes, JNI_ABORT);
+        } else {
+            ctx->engine->setRnnoiseModel(nullptr, 0);
+        }
+    }
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeHasRnnoiseModel(
+        JNIEnv* env,
+        jobject thiz,
+        jlong handle) {
+    auto ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        return ctx->engine->hasRnnoiseModel();
     }
     return false;
 }

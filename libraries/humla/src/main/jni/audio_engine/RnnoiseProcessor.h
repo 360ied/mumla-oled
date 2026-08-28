@@ -23,6 +23,7 @@
 #include <vector>
 
 struct DenoiseState;
+struct RNNModel;
 
 namespace mumla {
 namespace audio {
@@ -37,7 +38,7 @@ class RnnoiseProcessor {
 public:
     static constexpr size_t FRAME_SIZE = 480; // 10ms @ 48kHz
 
-    explicit RnnoiseProcessor(bool enabled = true);
+    explicit RnnoiseProcessor(bool enabled = true, const uint8_t* modelData = nullptr, size_t modelSize = 0);
     ~RnnoiseProcessor();
 
     // Non-copyable
@@ -57,10 +58,19 @@ public:
     void setEnabled(bool enabled);
     bool isEnabled() const { return m_enabled; }
 
+    void setModel(const uint8_t* modelData, size_t modelSize);
+    bool hasModel() const { return m_modelData != nullptr && m_modelSize > 0; }
+
     void reset();
 
 private:
+    void initModel();
+    void cleanupModel();
+
     DenoiseState* m_state;
+    RNNModel* m_model;
+    const uint8_t* m_modelData;
+    size_t m_modelSize;
     bool m_enabled;
     std::vector<float> m_floatIn;
     std::vector<float> m_floatOut;

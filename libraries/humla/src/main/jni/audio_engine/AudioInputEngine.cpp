@@ -27,7 +27,9 @@ AudioInputEngine::AudioInputEngine(int bitrate,
                                    int framesPerPacket,
                                    float amplitudeBoost,
                                    bool rnnoiseEnabled,
-                                   InputMode mode)
+                                   InputMode mode,
+                                   const uint8_t* rnnoiseModelData,
+                                   size_t rnnoiseModelSize)
     : m_framesPerPacket((framesPerPacket == 1 || framesPerPacket == 2 || framesPerPacket == 4 || framesPerPacket == 6) ? framesPerPacket : 2),
       m_amplitudeBoost(amplitudeBoost),
       m_inputMode(mode),
@@ -36,7 +38,8 @@ AudioInputEngine::AudioInputEngine(int bitrate,
       m_talking(false),
       m_frameCounter(0),
       m_ringBuffer(8, SAMPLES_PER_10MS),
-      m_rnnoise(rnnoiseEnabled),
+      m_rnnoiseModelData(rnnoiseModelData != nullptr && rnnoiseModelSize > 0 ? std::vector<uint8_t>(rnnoiseModelData, rnnoiseModelData + rnnoiseModelSize) : std::vector<uint8_t>()),
+      m_rnnoise(rnnoiseEnabled, m_rnnoiseModelData.data(), m_rnnoiseModelData.size()),
       m_vad(0.50f, 0.35f, 25),
       m_opus(bitrate),
       m_processedFrame(SAMPLES_PER_10MS, 0),
@@ -269,6 +272,21 @@ void AudioInputEngine::setRnnoiseEnabled(bool enabled) {
 bool AudioInputEngine::isRnnoiseEnabled() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_rnnoise.isEnabled();
+}
+
+void AudioInputEngine::setRnnoiseModel(const uint8_t* modelData, size_t modelSize) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (modelData != nullptr && modelSize > 0) {
+        m_rnnoiseModelData.assign(modelData, modelData + modelSize);
+    } else {
+        m_rnnoiseModelData.clear();
+    }
+    m_rnnoise.setModel(m_rnnoiseModelData.data(), m_rnnoiseModelData.size());
+}
+
+bool AudioInputEngine::hasRnnoiseModel() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_rnnoise.hasModel();
 }
 
 void AudioInputEngine::setVadThresholds(float vadMax, float vadMin) {

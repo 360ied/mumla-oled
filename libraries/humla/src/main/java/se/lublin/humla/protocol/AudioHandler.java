@@ -133,12 +133,19 @@ public class AudioHandler extends HumlaNetworkListener
             nativeMode = NativeAudioInputEngine.INPUT_MODE_CONTINUOUS;
         }
 
+        byte[] modelData = null;
+        if (mPreprocessorEnabled) {
+            NativeAudioInputEngine.loadRnnoiseModel(context);
+            modelData = NativeAudioInputEngine.getCachedRnnoiseModel();
+        }
+
         mNativeEngine = new NativeAudioInputEngine(
                 mBitrate,
                 mFramesPerPacket,
                 mAmplitudeBoost,
                 mPreprocessorEnabled,
                 nativeMode,
+                modelData,
                 this);
 
         mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod);
