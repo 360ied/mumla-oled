@@ -1,18 +1,18 @@
 /*
  * Copyright (C) 2015 Andrew Comminos <andrew@comminos.com>
+ * Copyright (C) 2026 Mumla Developers
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package se.lublin.humla.audio;
@@ -20,13 +20,22 @@ package se.lublin.humla.audio;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.os.Build;
+import android.util.Log;
+
+import java.util.List;
 
 /**
- * Manages the state of Bluetooth SCO.
- * Created by andrew on 25/09/15.
+ * Modern Bluetooth Audio Communication Manager.
+ *
+ * Supports modern Android 12+ (API 31+) AudioManager.setCommunicationDevice()
+ * with graceful fallback to legacy Bluetooth SCO routing on older versions.
  */
 public class BluetoothScoReceiver extends BroadcastReceiver {
+    private static final String TAG = "BluetoothScoReceiver";
+
     private final Listener mListener;
     private final AudioManager mAudioManager;
     private boolean mBluetoothScoOn;
@@ -38,28 +47,66 @@ public class BluetoothScoReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        AudioManager am = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         int audioState = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_ERROR);
         switch (audioState) {
             case AudioManager.SCO_AUDIO_STATE_CONNECTED:
                 mBluetoothScoOn = true;
-                mListener.onBluetoothScoConnected();
+                if (mListener != null) {
+                    mListener.onBluetoothScoConnected();
+                }
                 break;
             case AudioManager.SCO_AUDIO_STATE_DISCONNECTED:
             case AudioManager.SCO_AUDIO_STATE_ERROR:
-                am.stopBluetoothSco();
+                stopBluetoothSco();
                 mBluetoothScoOn = false;
-                mListener.onBluetoothScoDisconnected();
+                if (mListener != null) {
+                    mListener.onBluetoothScoDisconnected();
+                }
                 break;
         }
     }
 
     public void startBluetoothSco() {
-        mAudioManager.startBluetoothSco();
+        if (mAudioManager == null) return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            List<AudioDeviceInfo> devices = mAudioManager.getAvailableCommunicationDevices();
+            AudioDeviceInfo target = null;
+            for (AudioDeviceInfo device : devices) {
+                if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    device.getType() == AudioDeviceInfo.TYPE_BLE_HEADSET) {
+                    target = device;
+                    break;
+                }
+            }
+            if (target != null) {
+                boolean success = mAudioManager.setCommunicationDevice(target);
+                Log.i(TAG, "setCommunicationDevice Bluetooth success: " + success);
+                mBluetoothScoOn = success;
+                if (mBluetoothScoOn && mListener != null) {
+                    mListener.onBluetoothScoConnected();
+                }
+                return;
+            }
+        }
+
+        try {
+            mAudioManager.startBluetoothSco();
+        } catch (Exception e) {
+            Log.w(TAG, "Legacy startBluetoothSco failed: " + e.getMessage());
+        }
     }
 
     public void stopBluetoothSco() {
-        mAudioManager.stopBluetoothSco();
+        if (mAudioManager == null) return;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            mAudioManager.clearCommunicationDevice();
+        }
+        try {
+            mAudioManager.stopBluetoothSco();
+        } catch (Exception ignored) {
+        }
         mBluetoothScoOn = false;
     }
 

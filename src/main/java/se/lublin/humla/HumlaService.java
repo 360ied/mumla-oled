@@ -957,6 +957,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public void setTalkingState(boolean talking) {
         mToggleInputMode.setTalkingOn(talking);
+        if (mAudioHandler != null) {
+            mAudioHandler.setPttTalking(talking);
+        }
     }
 
     @Override

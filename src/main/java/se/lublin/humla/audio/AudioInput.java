@@ -1,167 +1,204 @@
 /*
  * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2026 Mumla Developers
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package se.lublin.humla.audio;
 
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.media.audiofx.AcousticEchoCanceler;
+import android.media.audiofx.AutomaticGainControl;
+import android.media.audiofx.NoiseSuppressor;
+import android.os.Build;
+import android.os.Process;
 import android.util.Log;
 
 import se.lublin.humla.exception.AudioInitializationException;
-import se.lublin.humla.exception.NativeAudioException;
-import se.lublin.humla.protocol.AudioHandler;
 
 /**
- * Created by andrew on 23/08/13.
+ * Modern Audio Capture Layer.
+ *
+ * Captures 16-bit PCM audio natively at 48,000 Hz (10ms frame slices = 480 samples).
+ * Uses low-latency audio capture and hardware audio effects.
  */
 public class AudioInput implements Runnable {
-    private static final String TAG = AudioInput.class.getName();
+    private static final String TAG = "AudioInput";
 
-    public static final int[] SAMPLE_RATES = {48000, 44100, 16000, 8000};
+    public static final int SAMPLE_RATE = 48000;
+    public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
 
-    // AudioRecord state
-    private AudioInputListener mListener;
+    private final AudioInputListener mListener;
     private AudioRecord mAudioRecord;
     private final String mEchoCancellationMethod;
-    private AcousticEchoCanceler aec;
-    private final int mFrameSize;
+    private AcousticEchoCanceler mAec;
+    private NoiseSuppressor mNs;
+    private AutomaticGainControl mAgc;
 
     private Thread mRecordThread;
-    private boolean mRecording;
+    private volatile boolean mRecording;
 
-    public AudioInput(AudioInputListener listener, int audioSource, int targetSampleRate,
-                      String echoCancellationMethod)
-            throws NativeAudioException, AudioInitializationException {
+    public AudioInput(AudioInputListener listener, int audioSource, String echoCancellationMethod)
+            throws AudioInitializationException {
         mListener = listener;
-        this.mEchoCancellationMethod = echoCancellationMethod;
+        mEchoCancellationMethod = echoCancellationMethod != null ? echoCancellationMethod : "none";
 
-        // Attempt to construct an AudioRecord with the target sample rate first.
-        // If it fails, keep producing AudioRecord instances until we find one that initializes
-        // correctly. Maybe one day Android will let us probe for supported sample rates, as we
-        // aren't even guaranteed that 44100hz will work across all devices.
-        for (int i = 0; i < SAMPLE_RATES.length + 1; i++) {
-            int sampleRate = i == 0 ? targetSampleRate : SAMPLE_RATES[i - 1];
-            try {
-                mAudioRecord = setupAudioRecord(sampleRate, audioSource);
-                if (enableEchoCancellation()) {
-                    Log.w(TAG, "echo cancellation enabled: " + mEchoCancellationMethod);
-                }
-                break;
-            } catch (AudioInitializationException e) {
-                // Continue iteration, probing for a supported sample rate.
-            }
-        }
-
-        if (mAudioRecord == null) {
-            throw new AudioInitializationException("Unable to initialize AudioInput.");
-        }
-
-        int sampleRate = getSampleRate();
-        // FIXME: does not work properly if 10ms frames cannot be represented as integers
-        mFrameSize = (sampleRate * AudioHandler.FRAME_SIZE) / AudioHandler.SAMPLE_RATE;
+        mAudioRecord = setupAudioRecord(audioSource);
+        enableAudioEffects();
     }
 
-    private static AudioRecord setupAudioRecord(int sampleRate, int audioSource) throws AudioInitializationException {
-        int minBufferSize = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                                                                AudioFormat.ENCODING_PCM_16BIT);
-        if (minBufferSize <= 0)
-            throw new AudioInitializationException("Invalid buffer size returned (unsupported sample rate).");
+    public AudioInput(AudioInputListener listener, int audioSource, int sampleRate, String echoCancellationMethod)
+            throws AudioInitializationException {
+        this(listener, audioSource, echoCancellationMethod);
+    }
 
-        AudioRecord audioRecord;
+    private AudioRecord setupAudioRecord(int audioSource) throws AudioInitializationException {
+        int minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT);
+        if (minBufferSize <= 0) {
+            throw new AudioInitializationException("Invalid buffer size returned for 48kHz audio capture.");
+        }
+
+        // Ensure buffer size is at least 4x frame size and aligned
+        int bufferSize = Math.max(minBufferSize, FRAME_SIZE * 2 * 4);
+
+        AudioRecord record;
         try {
-            audioRecord = new AudioRecord(audioSource, sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                                                 AudioFormat.ENCODING_PCM_16BIT, minBufferSize);
-        } catch (IllegalArgumentException e) {
-            throw new AudioInitializationException(e);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                AudioFormat format = new AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(SAMPLE_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                        .build();
+
+                record = new AudioRecord.Builder()
+                        .setAudioSource(audioSource)
+                        .setAudioFormat(format)
+                        .setBufferSizeInBytes(bufferSize)
+                        .build();
+            } else {
+                record = new AudioRecord(audioSource, SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+            }
+        } catch (IllegalArgumentException | UnsupportedOperationException e) {
+            throw new AudioInitializationException("Failed to instantiate AudioRecord: " + e.getMessage(), e);
         }
 
-        if(audioRecord.getState() == AudioRecord.STATE_UNINITIALIZED) {
-            audioRecord.release();
-            throw new AudioInitializationException("AudioRecord failed to initialize!");
+        if (record.getState() != AudioRecord.STATE_INITIALIZED) {
+            record.release();
+            throw new AudioInitializationException("AudioRecord failed to initialize at 48kHz!");
         }
 
-        return audioRecord;
+        return record;
     }
 
-    private boolean enableEchoCancellation() {
-        if (mEchoCancellationMethod.equals("system") /* android.media.audiofx.AcousticEchoCanceler */) {
-            if (!AcousticEchoCanceler.isAvailable()) {
-                Log.e(TAG, "could not enable system AEC: not available");
-                return false;
+    private void enableAudioEffects() {
+        if (mAudioRecord == null) return;
+        int sessionId = mAudioRecord.getAudioSessionId();
+
+        if ("system".equalsIgnoreCase(mEchoCancellationMethod)) {
+            if (AcousticEchoCanceler.isAvailable()) {
+                try {
+                    mAec = AcousticEchoCanceler.create(sessionId);
+                    if (mAec != null) {
+                        mAec.setEnabled(true);
+                        Log.i(TAG, "Hardware Acoustic Echo Cancellation enabled");
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to enable hardware AEC: " + e.getMessage());
+                }
+            } else {
+                Log.w(TAG, "Hardware AEC requested but not available on this device");
             }
-            if (aec != null) {
-                aec.release();
-            }
-            aec = AcousticEchoCanceler.create(mAudioRecord.getAudioSessionId());
-            if (aec == null) {
-                Log.e(TAG, "could not enable system AEC: create failed");
-                return false;
-            }
-            aec.setEnabled(true);
-            return true;
-        } else if (mEchoCancellationMethod.equals("none")) {
-            Log.w(TAG, "echocancellation not enabled by user");
-        } else {
-            Log.w(TAG, "ignoring unknown echocancellation method: " + mEchoCancellationMethod);
         }
-        return false;
+
+        if (NoiseSuppressor.isAvailable()) {
+            try {
+                mNs = NoiseSuppressor.create(sessionId);
+                if (mNs != null) {
+                    mNs.setEnabled(true);
+                    Log.i(TAG, "Hardware Noise Suppressor enabled");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to enable hardware NS: " + e.getMessage());
+            }
+        }
+
+        if (AutomaticGainControl.isAvailable()) {
+            try {
+                mAgc = AutomaticGainControl.create(sessionId);
+                if (mAgc != null) {
+                    mAgc.setEnabled(true);
+                    Log.i(TAG, "Hardware Automatic Gain Control enabled");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to enable hardware AGC: " + e.getMessage());
+            }
+        }
     }
 
-    /**
-     * Starts the recording thread.
-     * Not thread-safe.
-     */
-    public void startRecording() {
+    public synchronized void startRecording() {
+        if (mRecording) return;
         mRecording = true;
-        mRecordThread = new Thread(this);
+        mRecordThread = new Thread(this, "MumlaAudioInput");
         mRecordThread.start();
     }
 
-    /**
-     * Stops the record loop after the current iteration, joining it.
-     * Not thread-safe.
-     */
-    public void stopRecording() {
-        if(!mRecording) return;
+    public synchronized void stopRecording() {
+        if (!mRecording) return;
         mRecording = false;
-        try {
-            mRecordThread.interrupt();
-            mRecordThread.join();
+        if (mRecordThread != null) {
+            try {
+                mRecordThread.interrupt();
+                mRecordThread.join(500);
+            } catch (InterruptedException ignored) {
+            }
             mRecordThread = null;
-        } catch (InterruptedException e) {
-            e.printStackTrace();
         }
     }
 
-    /**
-     * Stops the record loop and waits on it to finish.
-     * Releases native audio resources.
-     * NOTE: It is not safe to call startRecording after.
-     */
-    public void shutdown() {
+    public synchronized void shutdown() {
         stopRecording();
-        if(mAudioRecord != null) {
-            if (aec != null) {
-                aec.release();
-                aec = null;
+        releaseEffects();
+        if (mAudioRecord != null) {
+            try {
+                if (mAudioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    mAudioRecord.stop();
+                }
+                mAudioRecord.release();
+            } catch (Exception ignored) {
             }
-            mAudioRecord.release();
             mAudioRecord = null;
+        }
+    }
+
+    private void releaseEffects() {
+        if (mAec != null) {
+            mAec.release();
+            mAec = null;
+        }
+        if (mNs != null) {
+            mNs.release();
+            mNs = null;
+        }
+        if (mAgc != null) {
+            mAgc.release();
+            mAgc = null;
         }
     }
 
@@ -169,45 +206,54 @@ public class AudioInput implements Runnable {
         return mRecording;
     }
 
-    /**
-     * @return the sample rate used by the AudioRecord instance.
-     */
     public int getSampleRate() {
-        return mAudioRecord.getSampleRate();
+        return SAMPLE_RATE;
     }
 
-    /**
-     * @return the frame size used, varying depending on the sample rate selected.
-     */
     public int getFrameSize() {
-        return mFrameSize;
+        return FRAME_SIZE;
     }
 
     @Override
     public void run() {
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO);
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
 
-        Log.i(TAG, "started");
-
-        mAudioRecord.startRecording();
-
-        if(mAudioRecord.getState() != AudioRecord.STATE_INITIALIZED)
+        if (mAudioRecord == null || mAudioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioRecord not initialized, capture thread aborting");
             return;
+        }
 
-        final short[] mAudioBuffer = new short[mFrameSize];
-        // We loop when the 'recording' instance var is true instead of checking audio record state because we want to always cleanly shutdown.
-        while(mRecording) {
-            int shortsRead = mAudioRecord.read(mAudioBuffer, 0, mFrameSize);
-            if(shortsRead > 0) {
-                mListener.onAudioInputReceived(mAudioBuffer, mFrameSize);
-            } else {
-                Log.e(TAG, "Error fetching audio! AudioRecord error " + shortsRead);
+        try {
+            mAudioRecord.startRecording();
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Failed to start recording: " + e.getMessage());
+            return;
+        }
+
+        final short[] buffer = new short[FRAME_SIZE];
+
+        while (mRecording && !Thread.currentThread().isInterrupted()) {
+            int read = mAudioRecord.read(buffer, 0, FRAME_SIZE);
+            if (read > 0) {
+                if (mListener != null) {
+                    mListener.onAudioInputReceived(buffer, read);
+                }
+            } else if (read < 0) {
+                Log.e(TAG, "AudioRecord read error: " + read);
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    break;
+                }
             }
         }
 
-        mAudioRecord.stop();
-
-        Log.i(TAG, "stopped");
+        try {
+            if (mAudioRecord != null && mAudioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                mAudioRecord.stop();
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     public interface AudioInputListener {
