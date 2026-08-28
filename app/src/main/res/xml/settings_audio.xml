@@ -104,15 +104,6 @@
     <PreferenceCategory android:title="@string/advancedAudio"
         app:iconSpaceReserved="false">
 
-        <!-- TODO add an actual min of 8000hz -->
-        <ListPreference
-            android:key="input_quality"
-            android:defaultValue="48000"
-            android:title="@string/audioSampleRate"
-            android:summary="@string/audioSampleRateSum"
-            android:entries="@array/audioSampleRateValues"
-            android:entryValues="@array/audioSampleRateValues"
-            app:iconSpaceReserved="false"/>
 
         <se.lublin.mumla.preference.SeekBarDialogPreference
             android:key="input_bitrate"
