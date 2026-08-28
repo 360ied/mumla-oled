@@ -136,6 +136,21 @@ android {
                 }
                 includeEmptyDirs = false
             }
+            // Strip redundant 32-bit float tables for 8-bit quantized operation
+            def cText = dataC.text
+            def floatTables = [
+                'conv2_weights_float',
+                'gru1_input_weights_float',
+                'gru1_recurrent_weights_float',
+                'gru2_input_weights_float',
+                'gru2_recurrent_weights_float',
+                'gru3_input_weights_float',
+                'gru3_recurrent_weights_float'
+            ]
+            for (String tbl : floatTables) {
+                cText = cText.replaceAll(/(?s)#define WEIGHTS_${tbl}_DEFINED\n#define WEIGHTS_${tbl}_TYPE WEIGHT_TYPE_float\nstatic const float ${tbl}\[\d+\] = \{.*?\};\n/, '')
+            }
+            dataC.text = cText
         }
     }
     preBuild.dependsOn prepareRnnoiseModel
