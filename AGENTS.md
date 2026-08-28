@@ -38,3 +38,7 @@
 ## Versioning
 - **Semantic Versioning**: Uses `0.X.X`. `versionName` is resolved dynamically via `git describe --tags --match "[0-9]*.[0-9]*.[0-9]*" --always`.
 - **Release Tagging**: Tag releases using annotated Git tags: `git tag -a <version> -m "Release <version>"`.
+
+## Licensing
+- **Project License**: GNU General Public License v3.0 or later (`GPL-3.0-or-later`).
+- **File Headers**: New source files must include the standard GPL-3.0-or-later header; do not use Apache, MIT, or other permissive/incompatible licenses.
