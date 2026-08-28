@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2015 Andrew Comminos <andrew@comminos.com>
  * Copyright (C) 2026 Mumla Developers
  *
  * This program is free software: you can redistribute it and/or modify
