@@ -9,7 +9,6 @@
     <string name="drawer_pinned">已钉选频道</string>
     <string name="drawer_header_servers">服务器</string>
     <string name="drawer_favorites">收藏</string>
-    <string name="drawer_public">公共服务器</string>
     <!-- Chat formatting -->
     <string name="chat_message_to">%1$s → %2$s</string>
     <string name="chat_message_tts_short_link">(链接到 %1$s)</string>
@@ -45,19 +44,6 @@
     <string name="server_info_codec">编解码器：%s</string>
     <string name="server_info_max_bandwidth">最大 %.1f 千比特/秒</string>
     <string name="server_info_current_bandwidth">当前 %.1f 千比特/秒</string>
-    <!-- Server matching -->
-    <string name="server_match">查找服务器</string>
-    <string name="server_match_progress">正在查找服务器…</string>
-    <string name="server_match_found">找到服务器</string>
-    <string name="server_match_not_found">无法找到服务器</string>
-    <string name="server_match_expand_country">无法在您的区域找到最佳服务器。是否在全球范围内搜索？</string>
-    <string name="server_match_info">名称：%1$s
-\n主机：%2$s:%3$d
-\n用户：%4$d / %5$d
-\n版本：%6$s
-\n区域：%7$s
-\n延迟：%8$d 毫秒</string>
-    <string name="server_match_description">Mumla 可以根据区域、版本与延迟自动为您寻找最佳的空服务器。</string>
     <!-- Common -->
     <string name="no_servers">请先点击操作栏上的“添加”按钮添加一个服务器。</string>
     <string name="server_password">密码</string>
@@ -81,7 +67,6 @@
     <string name="confirm_delete_channel">您确定要删除此频道吗？</string>
     <string name="reset_key">重置按键</string>
     <string name="externalStorageUnavailable">外部存储不可用，无法加载证书</string>
-    <string name="addFavorite">添加为收藏</string>
     <string name="accessAdd">添加访问令牌</string>
     <string name="messageReceived">新消息</string>
     <string name="generateCertSuccess">您的证书已被设置并保存为 %s</string>
@@ -108,20 +93,14 @@
     <string name="channel">频道</string>
     <string name="user">用户</string>
     <string name="unknown">未知</string>
-    <string name="sort">排序</string>
-    <string name="sortBy">排序方式…</string>
     <string name="name">名称</string>
-    <string name="country">区域</string>
     <string name="share">分享</string>
     <string name="description">描述</string>
     <string name="shareMessage">用 Mumla 加入这个 Mumble 服务器。%s</string>
     <string name="status_notify_muted_and_deafened">已关闭麦克风和扬声器。</string>
     <string name="status_notify_muted">已关闭麦克风。</string>
     <string name="close">关闭</string>
-    <string name="search_name">名称</string>
-    <string name="search_country">区域</string>
     <string name="information">信息</string>
-    <string name="error_fetching_servers">无法获取服务器。\n您确定已连接互联网吗？</string>
     <string name="overlay">浮窗</string>
     <string name="hint_reason">原因</string>
     <string name="action_settings">设置</string>
@@ -129,7 +108,6 @@
     <string name="reconnect_dialog_message">您已连接到其他服务器。改为连接此服务器吗？</string>
     <string name="confirm_reset_comment">您确定要重置 %s 的简介吗？</string>
     <string name="confirm">确认</string>
-    <string name="expand">展开</string>
     <string name="temporary">临时</string>
     <string name="position">位置</string>
     <string name="channel_edit">编辑频道</string>
