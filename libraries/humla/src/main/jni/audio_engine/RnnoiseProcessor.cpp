@@ -19,11 +19,48 @@
 #include <rnnoise.h>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+// Completes the opaque RNNModel handle declared in rnnoise.h. This mirrors the
+// exact layout of `struct RNNModel` in rnnoise/src/denoise.c (submodule pinned
+// at v0.2-14-gd983458; keep in sync if the pin ever moves).
+//
+// We cannot use rnnoise_model_from_buffer(): it never initializes the FILE*
+// member, so rnnoise_model_free() later calls fclose() on uninitialized heap
+// garbage. Depending on what the recycled allocation contains, fclose() either
+// blocks forever on a bogus internal lock (UI freeze) or segfaults inside
+// __FILE_close(). Observed as a consistent freeze/crash on disconnect, when
+// NativeAudioInputEngine.nativeDestroy() tears the engine down on the main
+// thread. Constructing the handle ourselves with every field initialized makes
+// rnnoise_model_free() safe.
+struct RNNModel {
+    const void *const_blob;
+    void *blob;
+    int blob_len;
+    FILE *file;
+};
 
 namespace mumla {
 namespace audio {
+
+static RNNModel *ModelFromBuffer(const uint8_t *data, size_t size) {
+    if (data == nullptr || size == 0 || size > static_cast<size_t>(INT_MAX)) {
+        return nullptr;
+    }
+    RNNModel *model = static_cast<RNNModel *>(malloc(sizeof(*model)));
+    if (model == nullptr) {
+        return nullptr;
+    }
+    model->const_blob = data;
+    model->blob = nullptr;
+    model->blob_len = static_cast<int>(size);
+    model->file = nullptr;
+    return model;
+}
 
 RnnoiseProcessor::RnnoiseProcessor(bool enabled, const uint8_t* modelData, size_t modelSize)
     : m_state(nullptr),
@@ -46,7 +83,7 @@ void RnnoiseProcessor::initModel() {
     if (m_state != nullptr) return;
     if (m_modelData != nullptr && m_modelSize > 0) {
         if (m_model == nullptr) {
-            m_model = rnnoise_model_from_buffer(m_modelData, static_cast<int>(m_modelSize));
+            m_model = ModelFromBuffer(m_modelData, m_modelSize);
         }
         if (m_model != nullptr) {
             m_state = rnnoise_create(m_model);
