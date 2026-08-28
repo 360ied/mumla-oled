@@ -5,8 +5,9 @@
   - `app/` (`:app`): Android application UI, activities, fragments, overlay, preferences.
   - `libraries/humla/` (`:libraries:humla`): In-tree core library with Mumble protocol engine, background service, JNI audio pipeline (`rnnoise`, Oboe/AAudio), and codec bindings.
 - **Third-Party Submodules**: External native codecs and crypto are direct 1st-level submodules defined in the root `.gitmodules`:
-  - `libraries/humla/src/main/jni/{opus, celt-0.11.0-src, celt-0.7.0-src, speex}`
+  - `libraries/humla/src/main/jni/{opus, celt-0.11.0-src, celt-0.7.0-src, speex, rnnoise}`
   - `libraries/humla/libs/humla-spongycastle`
+
 
 ## Branching Strategy
 - **Dedicated Branch**: Always check out or create a dedicated branch (e.g., `feature/<name>`, `bugfix/<name>`) before making changes; never develop directly on `master`.

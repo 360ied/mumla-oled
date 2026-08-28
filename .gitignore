@@ -42,3 +42,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Generated RNNoise Model
+libraries/humla/src/main/jni/rnnoise-build/generated/
+
+

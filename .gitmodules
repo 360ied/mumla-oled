@@ -14,3 +14,6 @@
 	path = libraries/humla/libs/humla-spongycastle
 	url = https://gitlab.com/quite/humla-spongycastle.git
 	branch = pkcs12-keybag-fixes
+[submodule "libraries/humla/src/main/jni/rnnoise"]
+	path = libraries/humla/src/main/jni/rnnoise
+	url = https://github.com/xiph/rnnoise.git

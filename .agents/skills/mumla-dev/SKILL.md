@@ -12,8 +12,9 @@ description: >-
 - **`:app`**: Android UI layer, activities, fragments, overlay service, and preferences.
 - **`:libraries:humla`**: In-tree core library containing the Mumble protocol engine, background service, JNI native audio engine (`rnnoise`, Oboe/AAudio), and codec bindings.
 - **Submodules**: Direct 1st-level submodules defined in root `.gitmodules`:
-  - `libraries/humla/src/main/jni/{opus, celt-0.11.0-src, celt-0.7.0-src, speex}`
+  - `libraries/humla/src/main/jni/{opus, celt-0.11.0-src, celt-0.7.0-src, speex, rnnoise}`
   - `libraries/humla/libs/humla-spongycastle`
+
 
 ## Workflow Overview
 

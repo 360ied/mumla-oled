@@ -16,7 +16,7 @@
  */
 
 #include "RnnoiseProcessor.h"
-#include "../rnnoise/rnnoise.h"
+#include <rnnoise.h>
 
 #include <algorithm>
 #include <cmath>
