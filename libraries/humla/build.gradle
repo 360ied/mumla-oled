@@ -90,6 +90,14 @@ android {
 //        }
     }
 
+    // Build custom Spongy Castle JARs from submodule if needed
+    task buildSpongycastle(type: GradleBuild) {
+        buildFile = file('libs/humla-spongycastle/build.gradle')
+        dir = file('libs/humla-spongycastle')
+        tasks = ['jar']
+    }
+    preBuild.dependsOn buildSpongycastle
+
     // Trigger NDK build on java compilation task.
     task ndkBuild(type: Exec) {
         def ndkExe = "$project.android.ndkDirectory/ndk-build"
