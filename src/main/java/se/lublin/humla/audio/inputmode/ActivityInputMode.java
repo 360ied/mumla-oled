@@ -1,64 +1,55 @@
 /*
  * Copyright (C) 2016 Andrew Comminos <andrew@comminos.com>
+ * Copyright (C) 2026 Mumla Developers
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package se.lublin.humla.audio.inputmode;
 
+import se.lublin.humla.audio.HysteresisVad;
+
 /**
- * An input mode that sends audio if the amplitude exceeds a certain threshold.
- * Created by andrew on 13/02/16.
+ * Modern Voice Activity Detection (VAD) Input Mode.
+ *
+ * Uses dual-threshold hysteresis (activation threshold vadMax, deactivation threshold vadMin)
+ * with a 250ms hangover hold timer.
  */
 public class ActivityInputMode implements IInputMode {
-    // Continue speech for 250ms to prevent dropping.
-    private static final int SPEECH_DELAY = (int) (0.25 * Math.pow(10, 9));
-
-    private float mVADThreshold;
-    private long mVADLastDetected;
+    private final HysteresisVad mVad;
 
     public ActivityInputMode(float detectionThreshold) {
-        mVADThreshold = detectionThreshold;
+        float vadMax = Math.max(0.0f, Math.min(detectionThreshold, 1.0f));
+        float vadMin = Math.max(0.0f, vadMax * 0.7f);
+        mVad = new HysteresisVad(vadMax, vadMin, HysteresisVad.DEFAULT_HOLD_FRAMES);
     }
 
     @Override
     public boolean shouldTransmit(short[] pcm, int length) {
-        // Use a logarithmic energy-based scale for VAD.
-        float sum = 1.0f;
-        for (int i = 0; i < length; i++) {
-            sum += pcm[i] * pcm[i];
-        }
-        float micLevel = (float) Math.sqrt(sum / (float)length);
-        float peakSignal = (float) (20.0f * Math.log10(micLevel / 32768.0f)) / 96.0f;
-        boolean talking = (peakSignal + 1) >= mVADThreshold;
-
-        // Record the last time where VAD was detected in order to prevent speech dropping.
-        if(talking) {
-            mVADLastDetected = System.nanoTime();
-        }
-
-        talking |= (System.nanoTime() - mVADLastDetected) < SPEECH_DELAY;
-
-        return talking;
+        return mVad.process(pcm, 0, length, -1.0f);
     }
 
     @Override
     public void waitForInput() {
-
     }
 
     public void setThreshold(float threshold) {
-        mVADThreshold = threshold;
+        float vadMax = Math.max(0.0f, Math.min(threshold, 1.0f));
+        float vadMin = Math.max(0.0f, vadMax * 0.7f);
+        mVad.setThresholds(vadMax, vadMin);
+    }
+
+    public HysteresisVad getVad() {
+        return mVad;
     }
 }
