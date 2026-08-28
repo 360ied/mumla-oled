@@ -27,7 +27,6 @@
     <string name="drawer_pinned">Pinned Channels</string>
     <string name="drawer_header_servers">Servers</string>
     <string name="drawer_favorites">Favorites</string>
-    <string name="drawer_public">Public Servers</string>
 
     <!-- Chat formatting -->
     <string name="chat_message_to">%1$s → %2$s</string>
@@ -69,15 +68,6 @@
     <string name="server_info_max_bandwidth">Maximum %.1f kbit/s</string>
     <string name="server_info_current_bandwidth">Current %.1f kbit/s</string>
 
-    <!-- Server matching -->
-    <string name="server_match">Find Server</string>
-    <string name="server_match_progress">Finding a server…</string>
-    <string name="server_match_found">Server found</string>
-    <string name="server_match_not_found">Couldn\'t find server</string>
-    <string name="server_match_expand_country">Couldn\'t find any optimal servers in your country. Search worldwide?</string>
-    <string name="server_match_info">Name: %1$s\nHost: %2$s:%3$d\nUsers: %4$d / %5$d\nVersion: %6$s \nCountry: %7$s \nLatency: %8$d ms</string>
-    <string name="server_match_description">Mumla can automatically find you an empty server, optimizing for location, version, and latency.</string>
-
     <!-- Common -->
     <string name="no_servers">Press \'Add\' from the action bar to add a server first.</string>
     <string name="server_password">Password</string>
@@ -102,7 +92,6 @@
     <string name="no_ptt_key">No Key</string>
     <string name="reset_key">Reset Key</string>
     <string name="externalStorageUnavailable">External storage unavailable, cannot load certificate</string>
-    <string name="addFavorite">Add Favorite</string>
     <string name="accessAdd">Add Access Token</string>
     <string name="messageReceived">New message</string>
     <string name="generateCertSuccess">Your certificate has been set and saved as %s</string>
@@ -129,20 +118,14 @@
     <string name="channel">Channel</string>
     <string name="user">User</string>
     <string name="unknown">Unknown</string>
-    <string name="sort">Sort</string>
-    <string name="sortBy">Sort by…</string>
     <string name="name">Name</string>
-    <string name="country">Country</string>
     <string name="share">Share</string>
     <string name="description">Description</string>
     <string name="shareMessage">Join this Mumble server with Mumla. %s</string>
     <string name="status_notify_muted_and_deafened">Muted and deafened.</string>
     <string name="status_notify_muted">Muted.</string>
     <string name="close">Close</string>
-    <string name="search_name">Name</string>
-    <string name="search_country">Country</string>
     <string name="information">Information</string>
-    <string name="error_fetching_servers">Could not fetch servers.\nAre you connected to the Internet?</string>
     <string name="overlay">Overlay</string>
     <string name="hint_reason">Reason</string>
     <string name="action_settings">Settings</string>
@@ -150,7 +133,6 @@
     <string name="reconnect_dialog_message">You are already connected to a server. Connect to this server instead?</string>
     <string name="confirm_reset_comment">Are you sure you want to reset the comment of user %s?</string>
     <string name="confirm">Confirm</string>
-    <string name="expand">Expand</string>
     <string name="temporary">Temporary</string>
     <string name="position">Position</string>
     <string name="channel_edit">Edit Channel</string>

@@ -9,7 +9,6 @@
     <string name="drawer_pinned">Salons épinglés</string>
     <string name="drawer_header_servers">Serveurs</string>
     <string name="drawer_favorites">Favoris</string>
-    <string name="drawer_public">Serveurs publiques</string>
     <!--Chat formatting-->
     <string name="chat_message_to">%1$s → %2$s</string>
     <!--User menu-->
@@ -44,19 +43,6 @@
     <string name="server_info_codec">Codec : %s</string>
     <string name="server_info_max_bandwidth">Maximum %.1f kbit/s</string>
     <string name="server_info_current_bandwidth">Actuel %.1f kbit/s</string>
-    <!--Server matching-->
-    <string name="server_match">Trouver un serveur</string>
-    <string name="server_match_progress">Recherche un serveur…</string>
-    <string name="server_match_found">Serveur trouvé</string>
-    <string name="server_match_not_found">Impossible de trouver le serveur</string>
-    <string name="server_match_expand_country">Impossible de trouver aucun serveur optimal dans votre pays. Étendre la recherche au monde entier ?</string>
-    <string name="server_match_info">Nom : %1$s
-\nHôte : %2$s :%3$d
-\nUtilisateur : %4$d / %5$d
-\nVersion :%6$s
-\nPays : %7$s
-\nLatence : %8$d ms</string>
-    <string name="server_match_description">Mumla peut vous trouver automatiquement un serveur vide, en optimisant en se basant sur la position du serveur, sa version, et sa latence.</string>
     <!--Common-->
     <string name="no_servers">Appuyez sur le bouton « Ajouter » dans la barre d\'action pour commencer.</string>
     <string name="server_password">Mot de passe</string>
@@ -80,7 +66,6 @@
     <string name="confirm_delete_channel">Êtes-vous sûr·e de vouloir supprimer ce salon \?</string>
     <string name="reset_key">Réinitialiser la touche</string>
     <string name="externalStorageUnavailable">Stockage externe indisponible, impossible de charger le certificat</string>
-    <string name="addFavorite">Ajouter un favori</string>
     <string name="accessAdd">Ajouter un jeton d\'accès</string>
     <string name="messageReceived">Nouveau message</string>
     <string name="generateCertSuccess">Votre certificat a été définie et enregistré sous %s</string>
@@ -107,21 +92,14 @@
     <string name="channel">Salon</string>
     <string name="user">Utilisateur</string>
     <string name="unknown">Inconnu</string>
-    <string name="sort">Trier</string>
-    <string name="sortBy">Trier par…</string>
     <string name="name">Nom</string>
-    <string name="country">Pays</string>
     <string name="share">Partager</string>
     <string name="description">Description</string>
     <string name="shareMessage">Rejoindre ce serveur Mumble avec Mumla. %s</string>
     <string name="status_notify_muted_and_deafened">Muet et sourd.</string>
     <string name="status_notify_muted">Muet.</string>
     <string name="close">Fermer</string>
-    <string name="search_name">Nom</string>
-    <string name="search_country">Pays</string>
     <string name="information">Information</string>
-    <string name="error_fetching_servers">Erreur du chargement des serveurs.
-\nVérifiez votre connexion internet.</string>
     <string name="overlay">Superposition</string>
     <string name="hint_reason">Raison</string>
     <string name="action_settings">Paramètres</string>
@@ -129,7 +107,6 @@
     <string name="reconnect_dialog_message">Vous êtes déjà connecté·e à un serveur. Se connecter à ce serveur à la place \?</string>
     <string name="confirm_reset_comment">Êtes-vous sûr·e de vouloir remettre à zéro le commentaire de l\'utilisateur %s \?</string>
     <string name="confirm">Confirmer</string>
-    <string name="expand">Développer</string>
     <string name="temporary">Temporaire</string>
     <string name="position">Position</string>
     <string name="channel_edit">Éditer le salon</string>

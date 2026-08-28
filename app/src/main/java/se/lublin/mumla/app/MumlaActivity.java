@@ -95,11 +95,9 @@ import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.DatabaseProvider;
 import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
-import se.lublin.mumla.db.PublicServer;
 import se.lublin.mumla.preference.MumlaCertificateGenerateTask;
 import se.lublin.mumla.preference.SettingsActivity;
 import se.lublin.mumla.servers.FavouriteServerListFragment;
-import se.lublin.mumla.servers.PublicServerListFragment;
 import se.lublin.mumla.servers.ServerEditFragment;
 import se.lublin.mumla.service.IMumlaService;
 import se.lublin.mumla.service.MumlaService;
@@ -517,9 +515,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             case DrawerAdapter.ITEM_FAVOURITES:
                 fragmentClass = FavouriteServerListFragment.class;
                 break;
-            case DrawerAdapter.ITEM_PUBLIC:
-                fragmentClass = PublicServerListFragment.class;
-                break;
             case DrawerAdapter.ITEM_SETTINGS:
                 Intent prefIntent = new Intent(this, SettingsActivity.class);
                 startActivity(prefIntent);
@@ -636,28 +631,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 connectToServerWithPerm();
                 break;
         }
-    }
-
-    public void connectToPublicServer(final PublicServer server) {
-        final Settings settings = Settings.getInstance(this);
-        final EditText usernameField = new EditText(this);
-        usernameField.setHint(settings.getDefaultUsername());
-        FrameLayout layout = new FrameLayout(this);
-        layout.addView(usernameField);
-        int horizontalPadding = (int) getResources().getDimension(R.dimen.padding_medium);
-        layout.setPadding(horizontalPadding, 0, horizontalPadding, 0);
-        new MaterialAlertDialogBuilder(this)
-                .setView(layout)
-                .setTitle(R.string.connectToServer)
-                .setPositiveButton(R.string.connect, (dialog, which) -> {
-                    if (usernameField.getText().toString().isEmpty()) {
-                        server.setUsername(settings.getDefaultUsername());
-                    } else {
-                        server.setUsername(usernameField.getText().toString());
-                    }
-                    connectToServer(server);
-                })
-                .show();
     }
 
     private void setStayAwake(boolean stayAwake) {

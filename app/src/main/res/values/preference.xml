@@ -69,7 +69,7 @@
     <string name="chatNotifications">Chat notifications</string>
     <string name="chatNotificationsSum">Shown for new chat messages.</string>
     <string name="defaultUsername">Default username</string>
-    <string name="defaultUsernameSum">Prefilled name used when adding a server, or connecting to a public server.</string>
+    <string name="defaultUsernameSum">Prefilled name used when adding a server.</string>
     <string name="defaultUsernameDefault">Mumla_User</string>
     <string name="certificateGenerate">Generate certificate</string>
     <string name="certificateGenerateSum">Generates a new self-signed Mumla certificate. Recommended for beginners.</string>
