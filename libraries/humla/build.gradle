@@ -113,6 +113,8 @@ android {
         commandLine ndkExe, "-j${jobs}", '-C', file('src/main/jni/').absolutePath
     }
 
+    preBuild.dependsOn ndkBuild
+
     tasks.withType(JavaCompile) {
         compileTask -> compileTask.dependsOn ndkBuild
     }
