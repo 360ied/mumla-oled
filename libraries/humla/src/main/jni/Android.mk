@@ -117,10 +117,10 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    audio_engine/OpusVoiceEncoder.cpp \
                    audio_engine/AudioInputEngine.cpp \
                    audio_engine/NativeAudioInputEngineJni.cpp
-LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -O3 -fvisibility=hidden -DVAR_ARRAYS
+LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -O3 -fvisibility=hidden -ffunction-sections -fdata-sections -DVAR_ARRAYS
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus
 LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384" "-Wl,--gc-sections"
 include $(BUILD_SHARED_LIBRARY)
 
