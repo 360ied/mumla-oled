@@ -66,9 +66,6 @@ void RnnoiseProcessor::cleanupModel() {
 }
 
 void RnnoiseProcessor::setModel(const uint8_t* modelData, size_t modelSize) {
-    if (m_modelData == modelData && m_modelSize == modelSize) {
-        return;
-    }
     cleanupModel();
     m_modelData = modelData;
     m_modelSize = modelSize;

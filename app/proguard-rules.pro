@@ -5,6 +5,11 @@
     native <methods>;
 }
 -keep class se.lublin.humla.audio.NativeAudioInputEngine { *; }
+-keep class se.lublin.humla.audio.NativeAudioInputEngine$* { *; }
+-keepclassmembers class * implements se.lublin.humla.audio.NativeAudioInputEngine$AudioInputEngineListener {
+    public void onAudioPacketEncoded(byte[], int, int, boolean, long);
+    public void onTalkingStateChanged(boolean, float);
+}
 -keep class se.lublin.humla.audio.javacpp.** { *; }
 -keep class com.googlecode.javacpp.** { *; }
 -dontwarn com.googlecode.javacpp.BuildMojo
