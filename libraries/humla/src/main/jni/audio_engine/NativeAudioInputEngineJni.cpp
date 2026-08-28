@@ -62,6 +62,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
         jclass listenerClass = env->GetObjectClass(listener);
         ctx->onPacketMethod = env->GetMethodID(listenerClass, "onAudioPacketEncoded", "([BIIZJ)V");
         ctx->onTalkingMethod = env->GetMethodID(listenerClass, "onTalkingStateChanged", "(ZF)V");
+        env->DeleteLocalRef(listenerClass);
 
         jbyteArray localBuf = env->NewByteArray(AudioInputEngine::MAX_OPUS_BUFFER_BYTES);
         ctx->cachedBufferGlobalRef = reinterpret_cast<jbyteArray>(env->NewGlobalRef(localBuf));
@@ -164,7 +165,10 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeProcessFrame(
         jint offset,
         jint length) {
     auto ctx = getContext(handle);
-    if (ctx == nullptr || ctx->engine == nullptr || pcmArray == nullptr || length <= 0) return;
+    if (ctx == nullptr || ctx->engine == nullptr || pcmArray == nullptr || length <= 0 || offset < 0) return;
+
+    jsize arrayLen = env->GetArrayLength(pcmArray);
+    if (offset + length > arrayLen) return;
 
     jshort* pcmPtr = env->GetShortArrayElements(pcmArray, nullptr);
     if (pcmPtr != nullptr) {
