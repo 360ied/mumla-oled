@@ -78,8 +78,16 @@ public class HumlaSSLSocketFactory {
             return (SSLSocket) mContext.getSocketFactory().createSocket(InetAddress.getByName(host), port);
         }
         Socket plainSocket = new Socket();
-        plainSocket.connect(new InetSocketAddress(host, port), timeoutMs);
-        return (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+        try {
+            plainSocket.connect(new InetSocketAddress(host, port), timeoutMs);
+            return (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+        } catch (IOException e) {
+            try {
+                plainSocket.close();
+            } catch (IOException ignored) {
+            }
+            throw e;
+        }
     }
 
     /**
