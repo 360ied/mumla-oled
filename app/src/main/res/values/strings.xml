@@ -75,7 +75,6 @@
     <string name="server_port">Port</string>
     <string name="server_host">Address</string>
     <string name="server_label">Label</string>
-    <string name="connecting">Connecting</string>
     <string name="connecting_to_server">Connecting to %s…</string>
     <string name="ptt">Push-to-talk</string>
     <string name="mute">Mute</string>
@@ -111,7 +110,6 @@
     <string name="offline">Offline</string>
     <string name="clearChat">Clear Chat</string>
     <string name="connected">Connected</string>
-    <string name="mumlaConnected">Mumla connected</string>
     <string name="mumlaConnecting">Mumla connecting…</string>
     <string name="mumlaDisconnected">Mumla disconnected</string>
     <string name="channel">Channel</string>
@@ -159,7 +157,6 @@
     <string name="attempting_reconnect">Error: %s.\n\nReconnecting…</string>
     <string name="change_requires_reconnect">Reconnect to use new settings.</string>
     <string name="no_certificate">No Certificate</string>
-    <string name="certificates">Certificates</string>
     <string name="decrypt_certificate">Decrypt Certificate</string>
     <string name="password">Password</string>
     <string name="invalid_certificate">Invalid certificate could not be loaded.</string>
@@ -171,7 +168,6 @@
     <string name="context_channel_unlink_all">Unlink All</string>
     <string name="context_channel_listen">Listen to Channel</string>
     <string name="context_channel_stop_listen">Stop Listening</string>
-    <string name="context_channel_listening">Listening</string>
     <string name="context_channel_shout">Set Voice Target</string>
     <string name="shout_include_linked">Shout to linked channels</string>
     <string name="shout_include_subchannels">Shout to subchannels</string>
