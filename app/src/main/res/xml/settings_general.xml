@@ -42,7 +42,7 @@
 
     <ListPreference
         android:key="ttsEngine"
-        android:summary="@string/ttsEngineSum"
+        android:defaultValue=""
         android:title="@string/ttsEngine"
         app:iconSpaceReserved="false" />
 

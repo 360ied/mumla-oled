@@ -83,7 +83,7 @@
     <string name="useTts">Text-to-speech</string>
     <string name="useTtsSum">Read incoming message aloud using speech synthesis.</string>
     <string name="ttsEngine">Text-to-speech engine</string>
-    <string name="ttsEngineSum">Engine used to read messages aloud: %s</string>
+    <string name="ttsEngineSum">Engine used to read messages aloud: %1$s</string>
     <string name="ttsEngineSystemDefault">System default</string>
     <string name="ttsEngineNoneAvailable">No alternative engines installed. Install a text-to-speech engine such as RHVoice to choose it here.</string>
     <string name="ttsEngineDefaultSuffix">(default)</string>
