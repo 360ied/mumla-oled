@@ -153,9 +153,8 @@ public class MumlaService extends HumlaService implements
                 mReconnectNotification = null;
             }
 
-            final String tor = mSettings.isTorEnabled() ? " (Tor)" : "";
             mNotification = MumlaConnectionNotification.create(MumlaService.this,
-                    getString(R.string.mumlaConnecting) + tor,
+                    getString(R.string.mumlaConnecting),
                     MumlaService.this);
             mNotification.show();
 
@@ -165,8 +164,7 @@ public class MumlaService extends HumlaService implements
         @Override
         public void onConnected() {
             if (mNotification != null) {
-                final String tor = mSettings.isTorEnabled() ? " (Tor)" : "";
-                mNotification.setCustomContentText(getString(R.string.connected) + tor);
+                mNotification.setCustomContentText(getString(R.string.connected));
                 mNotification.setActionsShown(true);
                 mNotification.show();
             }
@@ -181,7 +179,7 @@ public class MumlaService extends HumlaService implements
             if (e != null && !mSuppressNotifications) {
                 mReconnectNotification =
                         MumlaReconnectNotification.show(MumlaService.this,
-                                e.getMessage() + (mSettings.isTorEnabled() ? " (Tor)" : ""),
+                                e.getMessage(),
                                 isReconnecting(), MumlaService.this);
             }
         }
@@ -503,7 +501,6 @@ public class MumlaService extends HumlaService implements
                 break;
             case Settings.PREF_CERT_ID:
             case Settings.PREF_FORCE_TCP:
-            case Settings.PREF_USE_TOR:
             case Settings.PREF_DISABLE_OPUS:
                 // These are settings we flag as 'requiring reconnect'.
                 requiresReconnect = true;
