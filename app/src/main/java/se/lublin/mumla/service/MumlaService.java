@@ -494,15 +494,7 @@ public class MumlaService extends HumlaService implements
             setSelfMuteDeafState(mSettings.isMuted(), mSettings.isDeafened());
         }
 
-        // Restore overlay state
-        if (mSettings.isOverlayShown()) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-                    android.provider.Settings.canDrawOverlays(getApplicationContext())) {
-                if (!mChannelOverlay.isShown()) {
-                    mChannelOverlay.show();
-                }
-            }
-        }
+        updateOverlayVisibility();
 
         ContextCompat.registerReceiver(this, mTalkReceiver,
                 new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
@@ -579,7 +571,17 @@ public class MumlaService extends HumlaService implements
                 MumlaApplication.applyTheme(this);
                 break;
             case Settings.PREF_OVERLAY_SHOWN:
-                setOverlayShown(mSettings.isOverlayShown());
+                if (mSettings.isOverlayShown() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+                    Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName()));
+                    showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(showSetting);
+                    Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
+                    mSettings.setOverlayShown(false);
+                    return;
+                }
+                updateOverlayVisibility();
                 break;
             case Settings.PREF_AMPLITUDE_BOOST:
                 changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
@@ -695,28 +697,20 @@ public class MumlaService extends HumlaService implements
 
     @Override
     public void setOverlayShown(boolean showOverlay) {
-        if (mSettings.isOverlayShown() != showOverlay) {
-            mSettings.setOverlayShown(showOverlay);
-        }
         if (showOverlay) {
-            if (isConnectionEstablished() && !mChannelOverlay.isShown()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    if (!android.provider.Settings.canDrawOverlays(getApplicationContext())) {
-                        Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + getPackageName()));
-                        showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(showSetting);
-                        Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
-                        return;
-                    }
-                }
-                mChannelOverlay.show();
-            }
-        } else {
-            if (mChannelOverlay.isShown()) {
-                mChannelOverlay.hide();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                    && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+                Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(showSetting);
+                Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
+                mSettings.setOverlayShown(false);
+                return;
             }
         }
+        mSettings.setOverlayShown(showOverlay);
+        updateOverlayVisibility();
     }
 
     @Override
@@ -775,6 +769,25 @@ public class MumlaService extends HumlaService implements
                     && mSettings.isHotCornerEnabled()
                     && Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod());
             mHotCorner.setShown(shouldShow);
+        }
+    }
+
+    private void updateOverlayVisibility() {
+        if (mChannelOverlay != null) {
+            boolean shouldShow = isConnectionEstablished() && mSettings.isOverlayShown();
+            if (shouldShow) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+                    return;
+                }
+                if (!mChannelOverlay.isShown()) {
+                    mChannelOverlay.show();
+                }
+            } else {
+                if (mChannelOverlay.isShown()) {
+                    mChannelOverlay.hide();
+                }
+            }
         }
     }
 
