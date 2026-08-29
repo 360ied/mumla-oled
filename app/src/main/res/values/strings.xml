@@ -102,7 +102,6 @@
     <string name="bluetooth">Bluetooth</string>
     <string name="quickConnect">Quick Connect</string>
     <string name="connect">Connect</string>
-    <string name="connectToServer">Connect to Server</string>
     <string name="edit">Edit</string>
     <string name="remove">Remove</string>
     <string name="delete">Delete</string>

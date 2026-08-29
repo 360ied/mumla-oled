@@ -76,7 +76,6 @@
     <string name="bluetooth">Bluetooth</string>
     <string name="quickConnect">Connexion rapide</string>
     <string name="connect">Connexion</string>
-    <string name="connectToServer">Connexion au serveur</string>
     <string name="edit">Modifier</string>
     <string name="remove">Retirer</string>
     <string name="delete">Supprimer</string>
