@@ -97,23 +97,14 @@ public class MumlaService extends HumlaService implements
     private boolean mSuppressNotifications;
 
     private TextToSpeech mTTS;
-    private TextToSpeech.OnInitListener mTTSInitListener = new TextToSpeech.OnInitListener() {
-        @Override
-        public void onInit(int status) {
-            if(status == TextToSpeech.ERROR) {
-                String pkg = mSettings.getTtsEngine();
-                if (pkg != null)
-                    logWarning(getString(R.string.tts_failed_engine, pkg));
-                else
-                    logWarning(getString(R.string.tts_failed));
-            }
-        }
-    };
 
     /**
      * (Re)bind the text-to-speech engine: shuts down any existing
      * instance, then creates a new engine bound to the user-selected
-     * engine, or the system default if none is selected.
+     * engine, or the system default if none is selected. The init
+     * listener captures the engine requested at construction time so a
+     * late failure is attributed to the engine that actually failed,
+     * not to whatever is selected when the callback fires.
      */
     private void initTts() {
         if (mTTS != null) {
@@ -122,11 +113,19 @@ public class MumlaService extends HumlaService implements
         }
         if (!mSettings.isTextToSpeechEnabled())
             return;
-        String pkg = mSettings.getTtsEngine();
+        final String pkg = mSettings.getTtsEngine();
+        TextToSpeech.OnInitListener initListener = status -> {
+            if (status == TextToSpeech.ERROR) {
+                if (pkg != null)
+                    logWarning(getString(R.string.tts_failed_engine, pkg));
+                else
+                    logWarning(getString(R.string.tts_failed));
+            }
+        };
         if (pkg != null)
-            mTTS = new TextToSpeech(this, mTTSInitListener, pkg);
+            mTTS = new TextToSpeech(this, initListener, pkg);
         else
-            mTTS = new TextToSpeech(this, mTTSInitListener);
+            mTTS = new TextToSpeech(this, initListener);
     }
 
     /** The view representing the hot corner. */
@@ -371,7 +370,10 @@ public class MumlaService extends HumlaService implements
         }
 
         unregisterObserver(mObserver);
-        if(mTTS != null) mTTS.shutdown();
+        if(mTTS != null) {
+            mTTS.shutdown();
+            mTTS = null;
+        }
         mMessageLog = null;
         mMessageNotification.dismiss();
         super.onDestroy();
@@ -462,6 +464,7 @@ public class MumlaService extends HumlaService implements
                 mHotCorner.setShown(isConnectionEstablished() && mSettings.isHotCornerEnabled());
                 break;
             case Settings.PREF_USE_TTS:
+                // Intentional fall through: rebind the engine either way.
             case Settings.PREF_TTS_ENGINE:
                 initTts();
                 break;
