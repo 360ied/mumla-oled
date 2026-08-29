@@ -19,7 +19,7 @@
 - **Working State**: Every commit must leave the codebase working and passing tests (`./scripts/check.sh` or `nix develop --command ./gradlew testFossDebugUnitTest`).
 - **Commit Messages & Detailed Descriptions**:
   - **Commit Wrapper**: Use `python3 scripts/commit.py -m "<message>"` to automatically format to the 50/72 rule, validate the body format (the wrapper hard-fails if the body does not use the three labeled sections below, exactly and in order), and execute `git commit`.
-  - **Subject Line**: Concise and imperative with a scope prefix (e.g., `app:`, `ui:`, `humla:`, `audio:`, `proto:`, `build:`, `nix:`, `docs:`, `util:`), max 50 chars.
+  - **Subject Line**: Concise and imperative with a scope prefix (e.g., `app:`, `ui:`, `humla:`, `audio:`, `proto:`, `build:`, `nix:`, `docs:`, `util:`), max 50 chars (merge commits are exempt from the 50-character limit).
   - **Detailed Body**: Always include a descriptive body separated by a blank line from the subject. Explain:
     - **Context & Motivation**: Why the change is needed and what problem it solves.
     - **Technical Approach**: Architectural decisions, algorithmic details, and notable changes across components.

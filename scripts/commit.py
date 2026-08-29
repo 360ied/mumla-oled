@@ -4,6 +4,7 @@ Git 50/72 Commit Wrapper with AGENTS.md body enforcement.
 
 Wraps `git commit` by automatically formatting and validating commit messages:
   - Subject line: <= 50 characters, concise and imperative, no trailing period.
+    (Merge commits are exempt from the 50-character subject limit).
   - Line 2: Exactly one blank line between subject and body.
   - Body: Wrapped to <= 72 characters per line (with hanging indents for lists,
     verbatim code blocks, URLs, markdown tables, and Git trailers).
@@ -56,6 +57,11 @@ AGENTS_POINTER = (
 )
 # Merge/revert/fixup commits are exempt from body style checks.
 RE_EXEMPT_SUBJECT = re.compile(r'^(Merge |Revert "|fixup! |squash! )')
+# Merge commit subject patterns exempt from MAX_SUBJECT length limit.
+RE_MERGE_SUBJECT = re.compile(
+    r'^(?:Merge\b|chore(?:\([^)]+\))?:\s*merge\b|merge:\s*|chore\(merge\):)',
+    re.IGNORECASE,
+)
 
 # Regex patterns
 RE_GIT_TRAILER = re.compile(
@@ -124,9 +130,32 @@ def wrap_paragraph(text: str) -> List[str]:
     )
 
 
-def format_commit_message(raw_text: str) -> Tuple[Optional[str], Optional[str]]:
+def is_git_merge_in_progress() -> bool:
+    """Check if Git is currently in the middle of a merge (MERGE_HEAD exists)."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def is_merge_commit(subject: str) -> bool:
+    """Determine if a commit is a merge commit by subject pattern or git state."""
+    if RE_MERGE_SUBJECT.match(subject):
+        return True
+    return is_git_merge_in_progress()
+
+
+def format_commit_message(
+    raw_text: str, is_merge: Optional[bool] = None
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Format and validate raw commit message to 50/72 rule.
+    Merge commits are exempt from the MAX_SUBJECT (50 char) limit.
     Returns (formatted_message, error_string).
     """
     lines = raw_text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -150,10 +179,13 @@ def format_commit_message(raw_text: str) -> Tuple[Optional[str], Optional[str]]:
     cleaned_subject = re.sub(r"\.+$", "", raw_subject).strip()
 
     if len(cleaned_subject) > MAX_SUBJECT:
-        return None, (
-            f"Subject line exceeds {MAX_SUBJECT} characters ({len(cleaned_subject)} chars):\n"
-            f"  > {cleaned_subject}"
-        )
+        if is_merge is None:
+            is_merge = is_merge_commit(cleaned_subject)
+        if not is_merge:
+            return None, (
+                f"Subject line exceeds {MAX_SUBJECT} characters ({len(cleaned_subject)} chars):\n"
+                f"  > {cleaned_subject}"
+            )
 
     body_raw_lines = lines[subject_idx + 1 :]
     while body_raw_lines and not body_raw_lines[0].strip():

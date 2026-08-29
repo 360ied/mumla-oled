@@ -96,9 +96,9 @@ Edge Cases & Impact: <how it was verified, e.g. check.sh, unit tests, manual dev
 Message rules:
 
 - **Subject**: `chore: merge branch '<branch>'` (matches recent history,
-  e.g. `chore: merge branch 'feature/remove-orbot'`). Must fit the 50-char
-  limit — branch names longer than ~34 chars need a shorter phrasing, e.g.
-  `chore: merge branch '<short-name>'`.
+  e.g. `chore: merge branch 'feature/remove-orbot'`). Merge commits are
+  exempt from the 50-char limit in `scripts/commit.py`, so use the full
+  branch name directly.
 - **Body**: full tripartite format (labels exact, in that order). Because
   the subject does not start with `Merge `, `commit.py` enforces the body
   check — do not use a bare `Merge branch '...'` subject, and do not pass
