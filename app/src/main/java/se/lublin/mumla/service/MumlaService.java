@@ -32,6 +32,8 @@ import android.speech.tts.TextToSpeech;
 import android.util.Log;
 import android.widget.Toast;
 
+import androidx.core.content.ContextCompat;
+
 import androidx.preference.PreferenceManager;
 
 import se.lublin.mumla.app.MumlaApplication;
@@ -375,11 +377,9 @@ public class MumlaService extends HumlaService implements
             setSelfMuteDeafState(mSettings.isMuted(), mSettings.isDeafened());
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            registerReceiver(mTalkReceiver, new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK), RECEIVER_EXPORTED);
-        } else {
-            registerReceiver(mTalkReceiver, new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK));
-        }
+        ContextCompat.registerReceiver(this, mTalkReceiver,
+                new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
+                ContextCompat.RECEIVER_EXPORTED);
 
         if (mSettings.isHotCornerEnabled()) {
             mHotCorner.setShown(true);
