@@ -166,15 +166,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onConnected() {
-            if (mSettings.shouldStartUpInPinnedMode()) {
-                loadDrawerFragment(DrawerAdapter.ITEM_PINNED_CHANNELS);
-            } else {
-                loadDrawerFragment(DrawerAdapter.ITEM_SERVER);
+            if (mDrawerAdapter != null) {
+                mDrawerAdapter.notifyDataSetChanged();
             }
-
-            mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
-
             updateConnectionState(getService());
         }
 
@@ -185,13 +180,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
         @Override
         public void onDisconnected(HumlaException e) {
-            // Re-show server list if we're showing a fragment that depends on the service.
-            if (getSupportFragmentManager().findFragmentById(R.id.content_frame) instanceof HumlaServiceFragment) {
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
+            if (mDrawerAdapter != null) {
+                mDrawerAdapter.notifyDataSetChanged();
             }
-            mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
-
             updateConnectionState(getService());
         }
 
@@ -443,44 +435,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     /**
-     * Loads a fragment from the drawer.
+     * Loads a fragment or action from the drawer.
      */
     private void loadDrawerFragment(int fragmentId) {
-        Class<? extends Fragment> fragmentClass = null;
-        Bundle args = new Bundle();
-        switch (fragmentId) {
-            case DrawerAdapter.ITEM_SERVER:
-                fragmentClass = ChannelFragment.class;
-                break;
-            case DrawerAdapter.ITEM_INFO:
-                fragmentClass = ServerInfoFragment.class;
-                break;
-            case DrawerAdapter.ITEM_ACCESS_TOKENS:
-                fragmentClass = AccessTokenFragment.class;
-                Server connectedServer = getService().getTargetServer();
-                args.putLong("server", connectedServer.getId());
-                args.putStringArrayList("access_tokens", (ArrayList<String>) mDatabase.getAccessTokens(connectedServer.getId()));
-                break;
-            case DrawerAdapter.ITEM_PINNED_CHANNELS:
-                fragmentClass = ChannelFragment.class;
-                args.putBoolean("pinned", true);
-                break;
-            case DrawerAdapter.ITEM_FAVOURITES:
-                fragmentClass = FavouriteServerListFragment.class;
-                break;
-            case DrawerAdapter.ITEM_SETTINGS:
-                Intent prefIntent = new Intent(this, SettingsActivity.class);
-                startActivity(prefIntent);
-                return;
-            default:
-                return;
+        if (fragmentId == DrawerAdapter.ITEM_SETTINGS) {
+            Intent prefIntent = new Intent(this, SettingsActivity.class);
+            startActivity(prefIntent);
         }
-        Fragment fragment = Fragment.instantiate(this, fragmentClass.getName(), args);
-        getSupportFragmentManager().beginTransaction()
-                .replace(R.id.content_frame, fragment, fragmentClass.getName())
-                .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
-                .commit();
-        requireNonNull(getSupportActionBar()).setTitle(mDrawerAdapter.getItemWithId(fragmentId).title);
     }
 
     public void connectToServer(final Server server) {
@@ -744,11 +705,15 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         switch (action) {
             case ADD_ACTION:
                 mDatabase.addServer(server);
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
+                if (mViewModel != null) {
+                    mViewModel.refreshServers();
+                }
                 break;
             case EDIT_ACTION:
                 mDatabase.updateServer(server);
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
+                if (mViewModel != null) {
+                    mViewModel.refreshServers();
+                }
                 break;
             case CONNECT_ACTION:
                 connectToServer(server);
