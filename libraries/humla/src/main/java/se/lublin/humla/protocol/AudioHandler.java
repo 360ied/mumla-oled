@@ -83,6 +83,7 @@ public class AudioHandler extends HumlaNetworkListener
     private boolean mBluetoothOn;
     private boolean mHalfDuplex;
     private boolean mPreprocessorEnabled;
+    private boolean mAdaptiveLevelerEnabled;
     private String mEchoCancellationMethod;
     private boolean mTalking;
 
@@ -101,6 +102,19 @@ public class AudioHandler extends HumlaNetworkListener
                         boolean preprocessorEnabled, String echoCancellationMethod,
                         AudioEncodeListener encodeListener,
                         AudioOutput.AudioOutputListener outputListener) throws AudioInitializationException {
+        this(context, logger, audioStream, audioSource, sampleRate, targetBitrate, targetFramesPerPacket,
+                inputMode, targetId, amplitudeBoost, bluetoothEnabled, halfDuplexEnabled,
+                preprocessorEnabled, true, echoCancellationMethod, encodeListener, outputListener);
+    }
+
+    public AudioHandler(Context context, HumlaLogger logger, int audioStream, int audioSource,
+                        int sampleRate, int targetBitrate, int targetFramesPerPacket,
+                        IInputMode inputMode, byte targetId, float amplitudeBoost,
+                        boolean bluetoothEnabled, boolean halfDuplexEnabled,
+                        boolean preprocessorEnabled, boolean adaptiveLevelerEnabled,
+                        String echoCancellationMethod,
+                        AudioEncodeListener encodeListener,
+                        AudioOutput.AudioOutputListener outputListener) throws AudioInitializationException {
         mContext = context;
         mLogger = logger;
         mAudioStream = audioStream;
@@ -111,6 +125,7 @@ public class AudioHandler extends HumlaNetworkListener
         mBluetoothOn = bluetoothEnabled;
         mHalfDuplex = halfDuplexEnabled;
         mPreprocessorEnabled = preprocessorEnabled;
+        mAdaptiveLevelerEnabled = adaptiveLevelerEnabled;
         mEchoCancellationMethod = echoCancellationMethod != null ? echoCancellationMethod : "none";
         mEncodeListener = encodeListener;
         mOutputListener = outputListener;
@@ -144,6 +159,7 @@ public class AudioHandler extends HumlaNetworkListener
                 mFramesPerPacket,
                 mAmplitudeBoost,
                 mPreprocessorEnabled,
+                mAdaptiveLevelerEnabled,
                 nativeMode,
                 modelData,
                 this);
@@ -282,6 +298,17 @@ public class AudioHandler extends HumlaNetworkListener
 
     public boolean isHalfDuplex() {
         return mHalfDuplex;
+    }
+
+    public void setAdaptiveLevelerEnabled(boolean enabled) {
+        mAdaptiveLevelerEnabled = enabled;
+        if (mNativeEngine != null) {
+            mNativeEngine.setAdaptiveLevelerEnabled(enabled);
+        }
+    }
+
+    public boolean isAdaptiveLevelerEnabled() {
+        return mAdaptiveLevelerEnabled;
     }
 
     public int getCurrentBandwidth() {
@@ -470,6 +497,7 @@ public class AudioHandler extends HumlaNetworkListener
         private boolean mBluetoothEnabled;
         private boolean mHalfDuplexEnabled;
         private boolean mPreprocessorEnabled;
+        private boolean mAdaptiveLevelerEnabled = true;
         private String mEchoCancellationMethod;
         private IInputMode mInputMode;
         private AudioEncodeListener mEncodeListener;
@@ -530,6 +558,11 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
+        public Builder setAdaptiveLevelerEnabled(boolean adaptiveLevelerEnabled) {
+            mAdaptiveLevelerEnabled = adaptiveLevelerEnabled;
+            return this;
+        }
+
         public Builder setEchoCancellationMethod(String echoCancellationMethod) {
             mEchoCancellationMethod = echoCancellationMethod;
             return this;
@@ -555,7 +588,8 @@ public class AudioHandler extends HumlaNetworkListener
             AudioHandler handler = new AudioHandler(mContext, mLogger, mAudioStream, mAudioSource,
                     mInputSampleRate, mTargetBitrate, mTargetFramesPerPacket, mInputMode, targetId,
                     mAmplitudeBoost, mBluetoothEnabled, mHalfDuplexEnabled,
-                    mPreprocessorEnabled, mEchoCancellationMethod, mEncodeListener, mTalkingListener);
+                    mPreprocessorEnabled, mAdaptiveLevelerEnabled, mEchoCancellationMethod,
+                    mEncodeListener, mTalkingListener);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
         }

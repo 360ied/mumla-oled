@@ -132,6 +132,13 @@
             android:defaultValue="true"
             app:iconSpaceReserved="false"/>
 
+        <CheckBoxPreference
+            android:key="adaptive_leveler"
+            android:title="@string/adaptive_leveler"
+            android:summary="@string/adaptive_leveler_sum"
+            android:defaultValue="true"
+            app:iconSpaceReserved="false"/>
+
         <ListPreference
             android:defaultValue="none"
             android:entries="@array/echoCancellationNames"

@@ -112,6 +112,7 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    rnnoise/src/celt_lpc.c \
                    audio_engine/PreSpeechRingBuffer.cpp \
                    audio_engine/SoftLimiter.cpp \
+                   audio_engine/AdaptiveLeveler.cpp \
                    audio_engine/HysteresisVad.cpp \
                    audio_engine/RnnoiseProcessor.cpp \
                    audio_engine/OpusVoiceEncoder.cpp \

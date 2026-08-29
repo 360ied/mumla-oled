@@ -50,6 +50,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
         jint framesPerPacket,
         jfloat amplitudeBoost,
         jboolean rnnoiseEnabled,
+        jboolean adaptiveLevelerEnabled,
         jint inputMode,
         jbyteArray rnnoiseModelData,
         jobject listener) {
@@ -79,12 +80,12 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
         jsize modelLen = env->GetArrayLength(rnnoiseModelData);
         jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
         ctx->engine = std::make_unique<AudioInputEngine>(
-                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, mode,
+                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, mode,
                 reinterpret_cast<const uint8_t*>(modelBytes), static_cast<size_t>(modelLen));
         env->ReleaseByteArrayElements(rnnoiseModelData, modelBytes, JNI_ABORT);
     } else {
         ctx->engine = std::make_unique<AudioInputEngine>(
-                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, mode);
+                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, mode);
     }
 
     ctx->engine->setPacketCallback([ctx](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
@@ -281,6 +282,30 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeIsRnnoiseEnabled(
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
         return ctx->engine->isRnnoiseEnabled();
+    }
+    return false;
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetAdaptiveLevelerEnabled(
+        JNIEnv* env,
+        jobject thiz,
+        jlong handle,
+        jboolean enabled) {
+    auto ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        ctx->engine->setAdaptiveLevelerEnabled(enabled);
+    }
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeIsAdaptiveLevelerEnabled(
+        JNIEnv* env,
+        jobject thiz,
+        jlong handle) {
+    auto ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        return ctx->engine->isAdaptiveLevelerEnabled();
     }
     return false;
 }
