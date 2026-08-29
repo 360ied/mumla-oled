@@ -2,19 +2,22 @@
 name: mumla-merge
 description: >-
   Merge a feature/bugfix branch into master for the Mumla OLED client:
-  pre-merge verification with scripts/check.sh, non-fast-forward merge with
-  a commit.py-formatted tripartite merge commit, and post-merge status
-  report. Use when the user asks to merge a branch into master, land a
-  branch, or integrate work into master.
+  pre-merge verification with scripts/check.sh, a fast-forward for
+  single-commit branches, otherwise a non-fast-forward merge commit
+  formatted via commit.py, and a post-merge status report. Use when the
+  user asks to merge a branch into master, land a branch, or integrate
+  work into master.
 ---
 
 # Mumla OLED: Merge a Branch into Master
 
-Merges into `master` are always **non-fast-forward merge commits** created
+Most merges into `master` are **non-fast-forward merge commits** created
 with plain `git merge --no-ff` — never squash, never rebase, never
-force-push (AGENTS.md "Forward-Only History"). The merge commit message is
-formatted through `scripts/commit.py` so it follows the 50/72 rule and the
-tripartite body convention.
+force-push (AGENTS.md "Forward-Only History"). Exception: a branch with
+exactly one commit is fast-forwarded when possible (`git merge
+--ff-only`) and gets no merge commit. A merge commit's message is
+formatted through `scripts/commit.py` so it follows the 50/72 rule and
+the tripartite body convention.
 
 ## 1. Pre-flight
 
@@ -49,7 +52,25 @@ git merge --ff-only origin/master
 `--ff-only` guarantees master is only fast-forwarded to origin — no local
 merge commits, no rebases.
 
-## 4. Merge (no fast-forward, two-step)
+## 4. Merge
+
+Count the branch's commits: `git rev-list --count master..<branch>`.
+
+### Fast-forward (single-commit branches)
+
+If the count is exactly **1**, land the branch as a fast-forward — no
+merge commit, no wrapper:
+
+```bash
+git merge --ff-only <branch>
+```
+
+If `--ff-only` fails (master has moved since the branch diverged), fall
+back to the non-fast-forward flow below. The single commit's own
+tripartite body already documents the change; duplicating it in a merge
+message is not warranted.
+
+### Non-fast-forward (everything else)
 
 Stage the merge without committing, so the message goes through the
 wrapper:
@@ -87,8 +108,9 @@ Message rules:
 
 ## 5. Verify and report — nothing automatic after this
 
-- `git log -1` — confirm the merge commit has two parents and the
-  tripartite body.
+- `git log -1` — for the non-fast-forward flow, confirm the merge commit
+  has two parents and the tripartite body; for a fast-forward, confirm
+  `git log -1` is the branch's single commit.
 - `git status` — clean tree, nothing left staged.
 
 Do **not** push or delete branches on your own. Instead, report success and
