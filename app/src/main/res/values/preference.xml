@@ -112,6 +112,8 @@
     <string name="pttSoundSum">Play sound effect when pressing the push-to-talk button.</string>
     <string name="preprocessor_enabled">Neural Noise Suppression</string>
     <string name="preprocessor_enabled_sum">Suppresses ambient background noise using RNNoise deep neural network.</string>
+    <string name="adaptive_leveler">Automatic Voice Leveling</string>
+    <string name="adaptive_leveler_sum">Automatically balances microphone loudness to a consistent volume without clipping.</string>
     <string name="audio_per_packet">Audio per packet</string>
     <string name="audio_per_packet_sum">The length of audio per voice packet.</string>
     <string name="stay_awake">Stay awake</string>

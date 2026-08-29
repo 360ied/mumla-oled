@@ -146,6 +146,9 @@ public class Settings {
     public static final String PREF_PREPROCESSOR_ENABLED = "preprocessor_enabled";
     public static final boolean DEFAULT_PREPROCESSOR_ENABLED = true;
 
+    public static final String PREF_ADAPTIVE_LEVELER_ENABLED = "adaptive_leveler";
+    public static final boolean DEFAULT_ADAPTIVE_LEVELER_ENABLED = true;
+
     public static final String PREF_ECHO_CANCELLATION_METHOD = "echo_cancellation_method";
     public static final String DEFAULT_ECHO_CANCELLATION_METHOD = "none";
 
@@ -377,6 +380,10 @@ public class Settings {
 
     public boolean isPreprocessorEnabled() {
         return preferences.getBoolean(PREF_PREPROCESSOR_ENABLED, DEFAULT_PREPROCESSOR_ENABLED);
+    }
+
+    public boolean isAdaptiveLevelerEnabled() {
+        return preferences.getBoolean(PREF_ADAPTIVE_LEVELER_ENABLED, DEFAULT_ADAPTIVE_LEVELER_ENABLED);
     }
 
     public String getEchoCancellationMethod() {
