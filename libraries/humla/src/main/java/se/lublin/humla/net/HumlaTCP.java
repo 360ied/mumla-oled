@@ -58,7 +58,6 @@ public class HumlaTCP extends HumlaNetworkThread {
     private final HumlaSSLSocketFactory mSocketFactory;
     private String mHost;
     private int mPort;
-    private boolean mUseTor;
     private SSLSocket mTCPSocket;
     private DataInputStream mDataInput;
     private DataOutputStream mDataOutput;
@@ -74,11 +73,10 @@ public class HumlaTCP extends HumlaNetworkThread {
         mListener = listener;
     }
 
-    public void connect(String host, int port, boolean useTor) throws ConnectException {
+    public void connect(String host, int port) throws ConnectException {
         if(mRunning) throw new ConnectException("TCP connection already established!");
         mHost = host;
         mPort = port;
-        mUseTor = useTor;
         startThreads();
     }
 
@@ -98,7 +96,7 @@ public class HumlaTCP extends HumlaNetworkThread {
         mRunning = true;
         try {
             if (mPort == 0) {
-                if (!mUseTor && !Patterns.IP_ADDRESS.matcher(mHost).matches() && !mHost.contains(":") && !mHost.endsWith(".onion")) {
+                if (!Patterns.IP_ADDRESS.matcher(mHost).matches() && !mHost.contains(":") && !mHost.endsWith(".onion")) {
                     try {
                         final String lookup = "_mumble._tcp." + mHost;
                         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -144,10 +142,7 @@ public class HumlaTCP extends HumlaNetworkThread {
 
             Log.i(TAG, "Connecting to " + mHost + ":" + mPort);
 
-            if(mUseTor)
-                mTCPSocket = mSocketFactory.createTorSocket(mHost, mPort, HumlaConnection.TOR_HOST, HumlaConnection.TOR_PORT);
-            else
-                mTCPSocket = mSocketFactory.createSocket(mHost, mPort);
+            mTCPSocket = mSocketFactory.createSocket(mHost, mPort);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) { // SNI support requires at least API 17
                 SSLCertificateSocketFactory scsf = (SSLCertificateSocketFactory) SSLCertificateSocketFactory.getDefault(0);
