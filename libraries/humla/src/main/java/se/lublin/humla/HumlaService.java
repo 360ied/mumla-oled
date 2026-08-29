@@ -94,7 +94,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     /** A {@link Server} specifying the server to connect to. */
     public static final String EXTRAS_SERVER = "server";
+    /** @deprecated Auto-reconnect is now unconditionally enabled. */
+    @Deprecated
     public static final String EXTRAS_AUTO_RECONNECT = "auto_reconnect";
+    /** @deprecated Auto-reconnect uses dynamic exponential backoff. */
+    @Deprecated
     public static final String EXTRAS_AUTO_RECONNECT_DELAY = "auto_reconnect_delay";
     public static final String EXTRAS_CERTIFICATE = "certificate";
     public static final String EXTRAS_CERTIFICATE_PASSWORD = "certificate_password";
