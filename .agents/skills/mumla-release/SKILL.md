@@ -1,11 +1,11 @@
 ---
 name: mumla-release
 description: >-
-  End-to-end release process for the Mumla OLED Android client: merge feature
-  bump the semver version via git tag, write
-  GitHub release notes from detailed commit bodies, build the signed FOSS
-  release APK, and publish the release with the APK attached. Use when the
-  user asks to cut, create, or publish a release.
+  End-to-end release process for the Mumla OLED Android client: bump the
+  semver version via git tag, write GitHub release notes from detailed
+  commit bodies, build the signed FOSS release APK, and publish the
+  release with the APK attached. Use when the user asks to cut, create,
+  or publish a release.
 ---
 
 # Mumla OLED Release Process
@@ -18,9 +18,12 @@ already merged.
 
 - Latest tag: `git tag -l | sort -V | tail -1`. Versions are `0.X.X` semver.
 - Scope of changes: `git log <last-tag>..master --oneline`.
-- Bump **minor** for features, **patch** for fixes only.
-- Confirm scope with the user if anything beyond the described core/secondary
-  changes appears in the log.
+- **Bump type (major/minor/patch) must be explicitly stated by the user.**
+  Never infer it from the commit log. If the user did not specify one, ask
+  before proceeding. You may quote a recommendation (e.g. "the log shows
+  features, so minor by convention") but the user makes the call.
+- Flag anything in the log beyond the user's described core/secondary
+  changes before tagging.
 
 ## 2. Review commit bodies for release notes
 
