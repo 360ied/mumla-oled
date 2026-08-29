@@ -102,7 +102,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_INPUT_QUALITY = "input_quality";
     public static final String EXTRAS_USE_OPUS = "use_opus";
     public static final String EXTRAS_FORCE_TCP = "force_tcp";
-    public static final String EXTRAS_USE_TOR = "use_tor";
     public static final String EXTRAS_CLIENT_NAME = "client_name";
     public static final String EXTRAS_ACCESS_TOKENS = "access_tokens";
     public static final String EXTRAS_AUDIO_SOURCE = "audio_source";
@@ -130,7 +129,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private String mCertificatePassword;
     private boolean mUseOpus;
     private boolean mForceTcp;
-    private boolean mUseTor;
     private String mClientName;
     private List<String> mAccessTokens;
     private String mTrustStore;
@@ -318,7 +316,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
             mConnection = new HumlaConnection(this);
             mConnection.setForceTCP(mForceTcp);
-            mConnection.setUseTor(mUseTor);
             mConnection.setKeys(mCertificate, mCertificatePassword);
             mConnection.setTrustStore(mTrustStore, mTrustStorePassword, mTrustStoreFormat);
 
@@ -594,11 +591,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (extras.containsKey(EXTRAS_USE_OPUS)) {
             mUseOpus = extras.getBoolean(EXTRAS_USE_OPUS);
-            reconnectNeeded = true;
-        }
-        if (extras.containsKey(EXTRAS_USE_TOR)) {
-            mUseTor = extras.getBoolean(EXTRAS_USE_TOR);
-            mForceTcp |= mUseTor; // Tor requires TCP connections to work- if it's on, force TCP.
             reconnectNeeded = true;
         }
         if (extras.containsKey(EXTRAS_FORCE_TCP)) {
