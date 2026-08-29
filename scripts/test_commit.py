@@ -11,7 +11,138 @@ import tempfile
 import unittest
 
 from unittest.mock import patch, MagicMock
-from scripts.commit import format_commit_message, main, MAX_SUBJECT, MAX_BODY
+from scripts.commit import (
+    format_commit_message,
+    main,
+    validate_tripartite_body,
+    MAX_SUBJECT,
+    MAX_BODY,
+)
+
+COMPLIANT_BODY = (
+    "Context & Motivation: The old behavior leaked file descriptors on "
+    "disconnect paths.\n\n"
+    "Technical Approach: Close descriptors in a finally block within the "
+    "shutdown handler.\n\n"
+    "Edge Cases & Impact: Covers null sockets and double-close; no behavior "
+    "change on success paths."
+)
+
+
+class TestTripartiteBody(unittest.TestCase):
+    def test_compliant_golden_shape_passes(self):
+        raw = "audio: fix rnnoise model teardown crash\n\n" + COMPLIANT_BODY
+        formatted, err = format_commit_message(raw)
+        self.assertIsNone(err)
+        subject, _, body = formatted.partition("\n\n")
+        self.assertIsNone(validate_tripartite_body(subject, body))
+
+    def test_body_missing(self):
+        err = validate_tripartite_body("docs: update readme", None)
+        self.assertIsNotNone(err)
+        self.assertIn("[body-missing]", err)
+        self.assertIn("Context & Motivation:", err)
+        self.assertIn("Technical Approach:", err)
+        self.assertIn("Edge Cases & Impact:", err)
+
+    def test_missing_label(self):
+        body = (
+            "Context & Motivation: Because things broke.\n"
+            "Edge Cases & Impact: None expected."
+        )
+        err = validate_tripartite_body("docs: x", body)
+        self.assertIsNotNone(err)
+        self.assertIn("[body-structure]", err)
+        self.assertIn('"Technical Approach:"', err)
+
+    def test_labels_out_of_order(self):
+        body = (
+            "Technical Approach: Did it this way.\n"
+            "Context & Motivation: Because things broke.\n"
+            "Edge Cases & Impact: None expected."
+        )
+        err = validate_tripartite_body("docs: x", body)
+        self.assertIsNotNone(err)
+        self.assertIn("[body-structure]", err)
+        self.assertIn("out of order", err)
+
+    def test_misspelled_label(self):
+        body = (
+            "Context and Motivation: Wrong ampersand.\n"
+            "Technical Approach: Did it this way.\n"
+            "Edge Cases & Impact: None expected."
+        )
+        err = validate_tripartite_body("docs: x", body)
+        self.assertIsNotNone(err)
+        self.assertIn("[body-structure]", err)
+        self.assertIn('"Context & Motivation:"', err)
+
+    def test_duplicated_label(self):
+        body = (
+            "Context & Motivation: First reason.\n"
+            "Context & Motivation: Second reason.\n"
+            "Technical Approach: Did it this way.\n"
+            "Edge Cases & Impact: None expected."
+        )
+        err = validate_tripartite_body("docs: x", body)
+        self.assertIsNotNone(err)
+        self.assertIn("[body-structure]", err)
+        self.assertIn("duplicated", err)
+
+    def test_markdown_variants_rejected(self):
+        for label in (
+            "- Context & Motivation:",
+            "### Context & Motivation",
+            "1. Context & Motivation:",
+        ):
+            body = (
+                f"{label} Because things broke.\n"
+                "Technical Approach: Did it this way.\n"
+                "Edge Cases & Impact: None expected."
+            )
+            err = validate_tripartite_body("docs: x", body)
+            self.assertIsNotNone(err, f"should reject: {label!r}")
+            self.assertIn("[body-structure]", err)
+
+    def test_leading_paragraph_allowed(self):
+        body = (
+            "A short summary line before the sections.\n\n" + COMPLIANT_BODY
+        )
+        self.assertIsNone(validate_tripartite_body("docs: x", body))
+
+    def test_multiline_section_content_allowed(self):
+        body = (
+            "Context & Motivation: A longer explanation that wraps across\n"
+            "multiple lines before the next label starts.\n"
+            "Technical Approach: Did it this way.\n"
+            "Edge Cases & Impact: None expected."
+        )
+        self.assertIsNone(validate_tripartite_body("docs: x", body))
+
+    def test_merge_commit_exempt(self):
+        self.assertIsNone(validate_tripartite_body("Merge branch 'feature'", None))
+
+    def test_revert_commit_exempt(self):
+        self.assertIsNone(
+            validate_tripartite_body('Revert "app: drop legacy path"', None)
+        )
+
+    def test_fixup_commit_exempt(self):
+        self.assertIsNone(validate_tripartite_body("fixup! app: drop legacy path", None))
+
+    def test_error_ends_with_agents_pointer(self):
+        for err in (
+            validate_tripartite_body("docs: x", None),
+            validate_tripartite_body("docs: x", "No labels here."),
+        ):
+            self.assertIsNotNone(err)
+            self.assertTrue(err.endswith("for the full commit style rules."), err)
+
+    def test_subject_style_not_enforced(self):
+        # Scope prefix and imperative mood are NOT checked (plan §4.3).
+        body = COMPLIANT_BODY.replace("Context & Motivation:", "Context & Motivation:")
+        for subject in ("fix: update .gitignore", "app: Added setting", "no scope here"):
+            self.assertIsNone(validate_tripartite_body(subject, body))
 
 
 class TestCommitFormatter(unittest.TestCase):
@@ -149,7 +280,7 @@ class TestCLIIntegration(unittest.TestCase):
         mock_proc.returncode = 0
         mock_run.return_value = mock_proc
 
-        with patch("sys.argv", ["commit.py", "-m", "docs: test subject\n\nLong body line that should be wrapped if it is long enough."]):
+        with patch("sys.argv", ["commit.py", "-m", "docs: test subject\n\n" + COMPLIANT_BODY]):
             ret = main()
             self.assertEqual(ret, 0)
             mock_run.assert_called_once()
@@ -165,12 +296,13 @@ class TestCLIIntegration(unittest.TestCase):
         mock_proc.returncode = 0
         mock_run.return_value = mock_proc
 
-        with patch("sys.argv", ["commit.py", "-m", "docs: multi message", "-m", "Body line 1", "-m", "Body line 2"]):
+        with patch("sys.argv", ["commit.py", "-m", "docs: multi message", "-m", COMPLIANT_BODY]):
             ret = main()
             self.assertEqual(ret, 0)
             mock_run.assert_called_once()
             cmd_args = mock_run.call_args[0][0]
-            self.assertEqual(cmd_args[3], "docs: multi message\n\nBody line 1\n\nBody line 2")
+            expected, _ = format_commit_message("docs: multi message\n\n" + COMPLIANT_BODY)
+            self.assertEqual(cmd_args[3], expected)
 
     @patch("subprocess.run")
     def test_cli_subject_and_body_flags(self, mock_run):
@@ -178,22 +310,34 @@ class TestCLIIntegration(unittest.TestCase):
         mock_proc.returncode = 0
         mock_run.return_value = mock_proc
 
-        with patch("sys.argv", ["commit.py", "-s", "docs: test flags", "-b", "Body text from flag."]):
+        with patch("sys.argv", ["commit.py", "-s", "docs: test flags", "-b", COMPLIANT_BODY]):
             ret = main()
             self.assertEqual(ret, 0)
             mock_run.assert_called_once()
             cmd_args = mock_run.call_args[0][0]
-            self.assertEqual(cmd_args[3], "docs: test flags\n\nBody text from flag.")
+            expected, _ = format_commit_message("docs: test flags\n\n" + COMPLIANT_BODY)
+            self.assertEqual(cmd_args[3], expected)
 
     def test_cli_check_flag_valid(self):
-        proc = self.run_cli(["--check", "-m", "docs: valid subject\n\nValid body."])
+        proc = self.run_cli(["--check", "-m", "docs: valid subject\n\n" + COMPLIANT_BODY])
         self.assertEqual(proc.returncode, 0)
         self.assertIn("OK:", proc.stdout)
 
-    def test_cli_check_flag_invalid(self):
+    def test_cli_check_flag_subject_too_long_is_usage_exit_code(self):
         proc = self.run_cli(["--check", "-m", "docs: " + ("x" * 50)])
-        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.returncode, 2)
         self.assertIn("exceeds 50 characters", proc.stderr)
+
+    def test_cli_check_flag_body_missing_fails(self):
+        proc = self.run_cli(["--check", "-m", "docs: valid subject"])
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("[body-missing]", proc.stderr)
+        self.assertIn("AGENTS.md", proc.stderr)
+
+    def test_cli_no_body_check_bypasses(self):
+        proc = self.run_cli(["--check", "--no-body-check", "-m", "docs: valid subject"])
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("OK:", proc.stdout)
 
     @patch("subprocess.run")
     def test_cli_stdin(self, mock_run):
@@ -201,7 +345,7 @@ class TestCLIIntegration(unittest.TestCase):
         mock_proc.returncode = 0
         mock_run.return_value = mock_proc
 
-        raw = "docs: from stdin\n\nBody from stdin."
+        raw = "docs: from stdin\n\n" + COMPLIANT_BODY
         with patch("sys.argv", ["commit.py"]):
             with patch("sys.stdin.isatty", return_value=False):
                 with patch("sys.stdin.read", return_value=raw):
@@ -209,7 +353,8 @@ class TestCLIIntegration(unittest.TestCase):
                     self.assertEqual(ret, 0)
                     mock_run.assert_called_once()
                     cmd_args = mock_run.call_args[0][0]
-                    self.assertEqual(cmd_args[3], raw)
+                    expected, _ = format_commit_message(raw)
+                    self.assertEqual(cmd_args[3], expected)
 
 
 if __name__ == "__main__":
