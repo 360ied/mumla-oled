@@ -100,10 +100,34 @@ public class MumlaService extends HumlaService implements
     private TextToSpeech.OnInitListener mTTSInitListener = new TextToSpeech.OnInitListener() {
         @Override
         public void onInit(int status) {
-            if(status == TextToSpeech.ERROR)
-                logWarning(getString(R.string.tts_failed));
+            if(status == TextToSpeech.ERROR) {
+                String pkg = mSettings.getTtsEngine();
+                if (pkg != null)
+                    logWarning(getString(R.string.tts_failed_engine, pkg));
+                else
+                    logWarning(getString(R.string.tts_failed));
+            }
         }
     };
+
+    /**
+     * (Re)bind the text-to-speech engine: shuts down any existing
+     * instance, then creates a new engine bound to the user-selected
+     * engine, or the system default if none is selected.
+     */
+    private void initTts() {
+        if (mTTS != null) {
+            mTTS.shutdown();
+            mTTS = null;
+        }
+        if (!mSettings.isTextToSpeechEnabled())
+            return;
+        String pkg = mSettings.getTtsEngine();
+        if (pkg != null)
+            mTTS = new TextToSpeech(this, mTTSInitListener, pkg);
+        else
+            mTTS = new TextToSpeech(this, mTTSInitListener);
+    }
 
     /** The view representing the hot corner. */
     private MumlaHotCorner mHotCorner;
@@ -317,8 +341,7 @@ public class MumlaService extends HumlaService implements
         mHotCorner = new MumlaHotCorner(this, mSettings.getHotCornerGravity(), mHotCornerListener);
 
         // Set up TTS
-        if(mSettings.isTextToSpeechEnabled())
-            mTTS = new TextToSpeech(this, mTTSInitListener);
+        initTts();
 
         mTalkReceiver = new TalkBroadcastReceiver(this);
     }
@@ -439,12 +462,8 @@ public class MumlaService extends HumlaService implements
                 mHotCorner.setShown(isConnectionEstablished() && mSettings.isHotCornerEnabled());
                 break;
             case Settings.PREF_USE_TTS:
-                if (mTTS == null && mSettings.isTextToSpeechEnabled())
-                    mTTS = new TextToSpeech(this, mTTSInitListener);
-                else if (mTTS != null && !mSettings.isTextToSpeechEnabled()) {
-                    mTTS.shutdown();
-                    mTTS = null;
-                }
+            case Settings.PREF_TTS_ENGINE:
+                initTts();
                 break;
             case Settings.PREF_SHORT_TTS_MESSAGES:
                 mShortTtsMessagesEnabled = mSettings.isShortTextToSpeechMessagesEnabled();
