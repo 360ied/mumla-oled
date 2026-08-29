@@ -639,17 +639,22 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (mErrorDialog != null)
             mErrorDialog.dismiss();
 
-        switch (mService.getConnectionState()) {
+        if (service == null) {
+            return;
+        }
+
+        switch (service.getConnectionState()) {
             case CONNECTING:
                 Server server = service.getTargetServer();
+                String host = (server != null && server.getHost() != null) ? server.getHost() : "";
                 // SRV lookup is done later, so we no longer show the port in the connection
                 // progress dialog (and only the configured hostname)
                 mConnectingDialog = new MaterialAlertDialogBuilder(this)
-                        .setTitle(getString(R.string.connecting_to_server, server.getHost()))
+                        .setTitle(getString(R.string.connecting_to_server, host))
                         .setView(R.layout.dialog_progress)
                         .setCancelable(true)
                         .setOnCancelListener(dialog -> {
-                            mService.disconnect();
+                            service.disconnect();
                             Toast.makeText(MumlaActivity.this, R.string.cancelled,
                                     Toast.LENGTH_SHORT).show();
                         })

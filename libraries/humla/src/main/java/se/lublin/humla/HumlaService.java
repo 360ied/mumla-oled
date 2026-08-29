@@ -260,6 +260,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         super.onCreate();
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
         mWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService");
+        mWakeLock.setReferenceCounted(false);
         mHandler = new Handler(getMainLooper());
         mCallbacks = new HumlaCallbacks();
         mAudioBuilder = new AudioHandler.Builder()
@@ -299,6 +300,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     protected void connect() {
+        if (mServer == null) {
+            Log.w(TAG, "connect() called with null mServer, cancelling reconnect");
+            setReconnecting(false);
+            return;
+        }
+
         try {
             mConnectionState = ConnectionState.DISCONNECTED;
             mVoiceTargetId = 0;
