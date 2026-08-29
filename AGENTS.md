@@ -39,6 +39,12 @@
   adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
   ```
 
+## Nix Environment
+- **No `/nix/store/` Scavenging**: Never search, glob, or grep through `/nix/store/` to locate tools or binaries (e.g. hunting for `gradle`, `sdkmanager`, or a JDK path). The store contains millions of paths and such searches waste enormous time.
+- **Correct Alternatives**:
+  - Run tools inside the dev shell: `nix develop --command <tool> <args>`.
+  - If a tool is missing from the dev shell, use `nix run nixpkgs#<package> -- <args>` as a stopgap, or (preferred) add it to the dev shell `packages` in `flake.nix`.
+
 ## Upstream Reference (`../mumble`)
 - Reference upstream C++ code and protocol schemas in `../mumble` (e.g., `../mumble/src/Mumble.proto`, `../mumble/src/MumbleUDP.proto`, connection/audio logic) to ensure exact behavioral and protocol parity.
 
