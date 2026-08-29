@@ -87,6 +87,11 @@ public class Settings {
     public static final String PREF_USE_TTS = "useTts";
     public static final Boolean DEFAULT_USE_TTS = true;
 
+    /** Package name of the TTS engine to use, or null for the system default. */
+    public static final String PREF_TTS_ENGINE = "ttsEngine";
+    /** Preference value identifying the "System default" engine entry. */
+    public static final String TTS_ENGINE_SYSTEM_DEFAULT = "";
+
     public static final String PREF_SHORT_TTS_MESSAGES = "shortTtsMessages";
     public static final boolean DEFAULT_SHORT_TTS_MESSAGES = false;
 
@@ -297,6 +302,28 @@ public class Settings {
 
     public boolean isShortTextToSpeechMessagesEnabled() {
         return preferences.getBoolean(PREF_SHORT_TTS_MESSAGES, DEFAULT_SHORT_TTS_MESSAGES);
+    }
+
+    /**
+     * Returns the package name of the preferred TTS engine,
+     * or null to use the system default engine.
+     */
+    public String getTtsEngine() {
+        String pkg = preferences.getString(PREF_TTS_ENGINE, null);
+        if (pkg == null || pkg.equals(TTS_ENGINE_SYSTEM_DEFAULT))
+            return null;
+        return pkg;
+    }
+
+    /**
+     * Sets the preferred TTS engine by package name,
+     * or the system default if pkg is null.
+     */
+    public void setTtsEngine(String pkg) {
+        if (pkg == null)
+            preferences.edit().remove(PREF_TTS_ENGINE).apply();
+        else
+            preferences.edit().putString(PREF_TTS_ENGINE, pkg).apply();
     }
 
     public boolean isAutoReconnectEnabled() {
