@@ -130,6 +130,18 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         notifyDataSetChanged();
     }
 
+    public void notifyUserChanged(IUser user) {
+        if (mChannel == null || mChannel.getUsers() == null || user == null) {
+            return;
+        }
+        int index = mChannel.getUsers().indexOf(user);
+        if (index >= 0) {
+            notifyItemChanged(index);
+        } else {
+            notifyDataSetChanged();
+        }
+    }
+
     public IChannel getChannel() {
         return mChannel;
     }
