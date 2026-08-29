@@ -53,7 +53,10 @@ public class MumlaConnectionNotification {
 
     private Service mService;
     private OnActionListener mListener;
-    private String mCustomContentText;
+    private String mContentTitle;
+    private String mContentText;
+    private String mSubText;
+    private String mBigText;
     private boolean mActionsShown;
     private boolean mReconnectingShown;
     private boolean mReceiverRegistered;
@@ -79,23 +82,32 @@ public class MumlaConnectionNotification {
      * @param listener An listener for notification actions.
      * @return A new MumlaNotification instance.
      */
-    public static MumlaConnectionNotification create(Service service, String contentText,
-                                                     OnActionListener listener) {
-        return new MumlaConnectionNotification(service, contentText, listener);
+    public static MumlaConnectionNotification create(Service service, OnActionListener listener) {
+        return new MumlaConnectionNotification(service, listener);
     }
 
-    private MumlaConnectionNotification(Service service, String contentText,
-                                        OnActionListener listener) {
+    private MumlaConnectionNotification(Service service, OnActionListener listener) {
         mService = service;
         mListener = listener;
-        mCustomContentText = contentText;
         mActionsShown = false;
         mReconnectingShown = false;
         mReceiverRegistered = false;
     }
 
-    public void setCustomContentText(String text) {
-        mCustomContentText = text;
+    public void setContentTitle(String title) {
+        mContentTitle = title;
+    }
+
+    public void setContentText(String text) {
+        mContentText = text;
+    }
+
+    public void setSubText(String subText) {
+        mSubText = subText;
+    }
+
+    public void setBigText(String bigText) {
+        mBigText = bigText;
     }
 
     public void setActionsShown(boolean actionsShown) {
@@ -106,8 +118,60 @@ public class MumlaConnectionNotification {
         mReconnectingShown = reconnectingShown;
     }
 
-    public void showReconnecting(String error) {
-        mCustomContentText = error;
+    public void showConnecting(String serverName, String host, int port) {
+        mContentTitle = serverName;
+        mContentText = mService.getString(R.string.connecting_to_server, host);
+        mSubText = mService.getString(R.string.mumlaConnecting);
+        mBigText = mService.getString(R.string.connecting_to_server, host) + (port > 0 ? (":" + port) : "");
+        mActionsShown = false;
+        mReconnectingShown = false;
+        show();
+    }
+
+    public void showConnected(String serverName, String channelName, boolean muted, boolean deafened, String hostInfo) {
+        mContentTitle = serverName;
+        String statusText;
+        if (muted && deafened) {
+            statusText = mService.getString(R.string.status_notify_muted_and_deafened);
+        } else if (muted) {
+            statusText = mService.getString(R.string.status_notify_muted);
+        } else if (deafened) {
+            statusText = mService.getString(R.string.status_notify_deafened);
+        } else {
+            statusText = mService.getString(R.string.connected);
+        }
+
+        if (channelName != null && !channelName.isEmpty()) {
+            mContentText = statusText + " • " + channelName;
+        } else {
+            mContentText = statusText;
+        }
+
+        mSubText = mService.getString(R.string.connected);
+        String ch = channelName != null ? channelName : mService.getString(R.string.channel);
+        String srv = hostInfo != null ? hostInfo : (serverName != null ? serverName : "");
+        mBigText = mService.getString(R.string.notification_connected_expanded, ch, statusText, srv);
+        mActionsShown = true;
+        mReconnectingShown = false;
+        show();
+    }
+
+    public void showReconnecting(String serverName, String error, int attempt, int delaySec, String hostInfo) {
+        String srvTitle = serverName != null ? serverName : (hostInfo != null ? hostInfo : mService.getString(R.string.app_name));
+        mContentTitle = mService.getString(R.string.notification_reconnecting_title, srvTitle);
+        mContentText = error != null ? error : mService.getString(R.string.mumlaDisconnected);
+
+        if (attempt > 0 && delaySec > 0) {
+            mSubText = mService.getString(R.string.notification_reconnect_attempt_delay, attempt, delaySec);
+        } else if (attempt > 0) {
+            mSubText = mService.getString(R.string.notification_reconnect_attempt, attempt);
+        } else {
+            mSubText = mService.getString(R.string.reconnect);
+        }
+
+        String err = error != null ? error : mService.getString(R.string.mumlaDisconnected);
+        String srv = hostInfo != null ? hostInfo : srvTitle;
+        mBigText = mService.getString(R.string.notification_reconnect_expanded, err, Math.max(attempt, 1), Math.max(delaySec, 1), srv);
         mActionsShown = false;
         mReconnectingShown = true;
         show();
@@ -168,11 +232,24 @@ public class MumlaConnectionNotification {
         NotificationCompat.Builder builder =
                 new NotificationCompat.Builder(mService, channelId);
 
-        // app name is always displayed in notification on >= O
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+        if (mContentTitle != null && !mContentTitle.isEmpty()) {
+            builder.setContentTitle(mContentTitle);
+        } else {
             builder.setContentTitle(mService.getString(R.string.app_name));
         }
-        builder.setContentText(mCustomContentText);
+
+        if (mContentText != null && !mContentText.isEmpty()) {
+            builder.setContentText(mContentText);
+        }
+
+        if (mSubText != null && !mSubText.isEmpty()) {
+            builder.setSubText(mSubText);
+        }
+
+        if (mBigText != null && !mBigText.isEmpty()) {
+            builder.setStyle(new NotificationCompat.BigTextStyle().bigText(mBigText));
+        }
+
         builder.setSmallIcon(R.drawable.ic_stat_notify);
         builder.setPriority(NotificationCompat.PRIORITY_DEFAULT);
         builder.setCategory(NotificationCompat.CATEGORY_CALL);

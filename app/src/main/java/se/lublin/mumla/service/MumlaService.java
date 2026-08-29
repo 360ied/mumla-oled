@@ -50,9 +50,12 @@ import java.util.List;
 import se.lublin.humla.Constants;
 import se.lublin.humla.HumlaService;
 import se.lublin.humla.exception.AudioException;
+import se.lublin.humla.model.Channel;
+import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.model.Message;
+import se.lublin.humla.model.Server;
 import se.lublin.humla.model.TalkState;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
@@ -151,31 +154,56 @@ public class MumlaService extends HumlaService implements
 
     private BroadcastReceiver mTalkReceiver;
 
+    private void updateConnectedNotification() {
+        Server server = getTargetServer();
+        String serverName = (server != null && server.getName() != null && !server.getName().isEmpty())
+                ? server.getName()
+                : (server != null && server.getHost() != null ? server.getHost() : getString(R.string.app_name));
+        String hostInfo = (server != null && server.getHost() != null)
+                ? (server.getHost() + ":" + (server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT))
+                : null;
+
+        IChannel channel = null;
+        try {
+            channel = getSessionChannel();
+        } catch (IllegalStateException ignored) {
+        }
+        String channelName = channel != null ? channel.getName() : null;
+
+        IUser user = null;
+        try {
+            user = getSessionUser();
+        } catch (IllegalStateException ignored) {
+        }
+        boolean muted = user != null && user.isSelfMuted();
+        boolean deafened = user != null && user.isSelfDeafened();
+
+        if (mNotification == null) {
+            mNotification = MumlaConnectionNotification.create(MumlaService.this, MumlaService.this);
+        }
+        mNotification.showConnected(serverName, channelName, muted, deafened, hostInfo);
+    }
+
     private HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onConnecting() {
-            if (mNotification == null) {
-                mNotification = MumlaConnectionNotification.create(MumlaService.this,
-                        getString(R.string.mumlaConnecting),
-                        MumlaService.this);
-            } else {
-                mNotification.setCustomContentText(getString(R.string.mumlaConnecting));
-                mNotification.setActionsShown(false);
-                mNotification.setReconnectingShown(false);
-            }
-            mNotification.show();
+            Server server = getTargetServer();
+            String serverName = (server != null && server.getName() != null && !server.getName().isEmpty())
+                    ? server.getName()
+                    : (server != null && server.getHost() != null ? server.getHost() : getString(R.string.app_name));
+            String host = (server != null && server.getHost() != null) ? server.getHost() : "";
+            int port = (server != null && server.getPort() > 0) ? server.getPort() : Constants.DEFAULT_PORT;
 
+            if (mNotification == null) {
+                mNotification = MumlaConnectionNotification.create(MumlaService.this, MumlaService.this);
+            }
+            mNotification.showConnecting(serverName, host, port);
             mErrorShown = false;
         }
 
         @Override
         public void onConnected() {
-            if (mNotification != null) {
-                mNotification.setCustomContentText(getString(R.string.connected));
-                mNotification.setReconnectingShown(false);
-                mNotification.setActionsShown(true);
-                mNotification.show();
-            }
+            updateConnectedNotification();
             if (mWasReconnecting) {
                 speakTts(getString(R.string.reconnected));
                 mWasReconnecting = false;
@@ -196,12 +224,20 @@ public class MumlaService extends HumlaService implements
                 }
                 mWasReconnecting = true;
                 String errorMsg = e != null ? e.getMessage() : getString(R.string.mumlaDisconnected);
+                Server server = getTargetServer();
+                String serverName = (server != null && server.getName() != null && !server.getName().isEmpty())
+                        ? server.getName()
+                        : (server != null ? server.getHost() : null);
+                String hostInfo = (server != null && server.getHost() != null)
+                        ? (server.getHost() + ":" + (server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT))
+                        : null;
+                int attempt = getReconnectAttempts();
+                int delaySec = getReconnectDelay() / 1000;
+
                 if (mNotification == null) {
-                    mNotification = MumlaConnectionNotification.create(MumlaService.this,
-                            errorMsg,
-                            MumlaService.this);
+                    mNotification = MumlaConnectionNotification.create(MumlaService.this, MumlaService.this);
                 }
-                mNotification.showReconnecting(errorMsg);
+                mNotification.showReconnecting(serverName, errorMsg, attempt, delaySec, hostInfo);
             } else {
                 mWasReconnecting = false;
                 if (mNotification != null) {
@@ -243,22 +279,24 @@ public class MumlaService extends HumlaService implements
 
             if (user.getSession() == selfSession) {
                 mSettings.setMutedAndDeafened(user.isSelfMuted(), user.isSelfDeafened()); // Update settings mute/deafen state
-                if(mNotification != null) {
-                    String contentText;
-                    if (user.isSelfMuted() && user.isSelfDeafened())
-                        contentText = getString(R.string.status_notify_muted_and_deafened);
-                    else if (user.isSelfMuted())
-                        contentText = getString(R.string.status_notify_muted);
-                    else
-                        contentText = getString(R.string.connected);
-                    mNotification.setCustomContentText(contentText);
-                    mNotification.show();
-                }
+                updateConnectedNotification();
             }
 
             if (user.getTextureHash() != null && user.getTexture() == null) {
                 // Update avatar data if available.
                 requestAvatar(user.getSession());
+            }
+        }
+
+        @Override
+        public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {
+            int selfSession = -1;
+            try {
+                selfSession = getSessionId();
+            } catch (IllegalStateException ignored) {
+            }
+            if (user != null && user.getSession() == selfSession) {
+                updateConnectedNotification();
             }
         }
 
@@ -440,6 +478,8 @@ public class MumlaService extends HumlaService implements
         if (mSettings.isHandsetMode()) {
             setProximitySensorOn(true);
         }
+
+        updateConnectedNotification();
     }
 
     @Override
