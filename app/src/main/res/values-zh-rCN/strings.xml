@@ -85,8 +85,11 @@
     <string name="offline">离线</string>
     <string name="clearChat">清除聊天记录</string>
     <string name="connected">已连接</string>
+    <string name="reconnected">已重新连接</string>
     <string name="mumlaConnecting">Mumla 正在连接…</string>
     <string name="mumlaDisconnected">Mumla 已断开连接</string>
+    <string name="disconnected">已断开连接</string>
+    <string name="tts_disconnected_reason">已断开连接：%s</string>
     <string name="channel">频道</string>
     <string name="user">用户</string>
     <string name="unknown">未知</string>

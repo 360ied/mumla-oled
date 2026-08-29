@@ -92,8 +92,18 @@ public class MumlaService extends HumlaService implements
     private boolean mErrorShown;
     private List<IChatMessage> mMessageLog;
     private boolean mSuppressNotifications;
+    private boolean mWasReconnecting;
 
     private TextToSpeech mTTS;
+
+    /**
+     * Helper to speak a text message using TextToSpeech with QUEUE_ADD queuing.
+     */
+    private void speakTts(String message) {
+        if (mSettings.isTextToSpeechEnabled() && mTTS != null && message != null && !message.isEmpty()) {
+            mTTS.speak(message, TextToSpeech.QUEUE_ADD, null, null);
+        }
+    }
 
     /**
      * (Re)bind the text-to-speech engine: shuts down any existing
@@ -166,11 +176,16 @@ public class MumlaService extends HumlaService implements
                 mNotification.setActionsShown(true);
                 mNotification.show();
             }
+            if (mWasReconnecting) {
+                speakTts(getString(R.string.reconnected));
+                mWasReconnecting = false;
+            }
         }
 
         @Override
         public void onDisconnected(HumlaException e) {
             if (isReconnecting()) {
+                mWasReconnecting = true;
                 String errorMsg = e != null ? e.getMessage() : getString(R.string.mumlaDisconnected);
                 if (mNotification == null) {
                     mNotification = MumlaConnectionNotification.create(MumlaService.this,
@@ -179,11 +194,19 @@ public class MumlaService extends HumlaService implements
                 }
                 mNotification.showReconnecting(errorMsg);
             } else {
+                mWasReconnecting = false;
                 if (mNotification != null) {
                     mNotification.hide();
                     mNotification = null;
                 }
             }
+            String ttsMsg;
+            if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
+                ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
+            } else {
+                ttsMsg = getString(R.string.disconnected);
+            }
+            speakTts(ttsMsg);
         }
 
         @Override
@@ -258,12 +281,10 @@ public class MumlaService extends HumlaService implements
                     message.getActorName(), ttsMessage);
 
             // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened
-            if(mSettings.isTextToSpeechEnabled() &&
-                    mTTS != null &&
-                    formattedTtsMessage.length() <= TTS_THRESHOLD &&
+            if (formattedTtsMessage.length() <= TTS_THRESHOLD &&
                     getSessionUser() != null &&
                     !getSessionUser().isSelfDeafened()) {
-                mTTS.speak(formattedTtsMessage, TextToSpeech.QUEUE_ADD, null);
+                speakTts(formattedTtsMessage);
             }
 
             // TODO: create a customizable notification sieve
@@ -588,6 +609,7 @@ public class MumlaService extends HumlaService implements
 
     @Override
     public void cancelReconnect() {
+        mWasReconnecting = false;
         if (mNotification != null) {
             mNotification.hide();
             mNotification = null;
