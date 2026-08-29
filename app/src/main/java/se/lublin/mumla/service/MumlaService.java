@@ -483,6 +483,10 @@ public class MumlaService extends HumlaService implements
                 changedExtras.putBoolean(EXTRAS_ENABLE_PREPROCESSOR,
                         mSettings.isPreprocessorEnabled());
                 break;
+            case Settings.PREF_ADAPTIVE_LEVELER_ENABLED:
+                changedExtras.putBoolean(EXTRAS_ADAPTIVE_LEVELER,
+                        mSettings.isAdaptiveLevelerEnabled());
+                break;
             case Settings.PREF_ECHO_CANCELLATION_METHOD:
                 changedExtras.putString(EXTRAS_ECHO_CANCELLATION_METHOD,
                         mSettings.getEchoCancellationMethod());
