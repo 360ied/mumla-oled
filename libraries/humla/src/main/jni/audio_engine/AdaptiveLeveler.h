@@ -71,8 +71,9 @@ public:
      * @param pcm Array of 16-bit PCM samples.
      * @param sampleCount Number of samples in the frame.
      * @param speechProb Neural speech probability from RNNoise (0.0 - 1.0, or < 0 if unavailable).
+     * @param amplitudeBoost Static user amplitude boost multiplier (default 1.0f).
      */
-    void process(int16_t* pcm, size_t sampleCount, float speechProb);
+    void process(int16_t* pcm, size_t sampleCount, float speechProb, float amplitudeBoost = 1.0f);
 
     void setEnabled(bool enabled);
     bool isEnabled() const;

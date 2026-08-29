@@ -169,4 +169,17 @@ public class AdaptiveLevelerTest {
         assertEquals(1.0f, mLeveler.getCurrentGain(), 0.0001f);
         assertEquals(AdaptiveLeveler.DEFAULT_TARGET_RMS, mLeveler.getSmoothedRms(), 0.0001f);
     }
+
+    @Test
+    public void testUnifiedAmplitudeBoostWithLeveler() {
+        short[] frame = new short[AdaptiveLeveler.SAMPLES_PER_10MS];
+        frame[0] = 5000;
+        frame[1] = -5000;
+
+        // With initial gain = 1.0f and amplitudeBoost = 1.5f, effective gain is 1.5x (7500)
+        mLeveler.process(frame, 0, frame.length, 0.0f, 1.5f);
+
+        assertEquals(7500, frame[0]);
+        assertEquals(-7500, frame[1]);
+    }
 }
