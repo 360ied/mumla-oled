@@ -26,6 +26,7 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 
 import androidx.preference.PreferenceManager;
@@ -106,36 +107,57 @@ public class MumlaOverlay {
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list);
         mOverlayList.setLayoutManager(new LinearLayoutManager(service));
 
-        mOverlayView.setOnTouchListener(new View.OnTouchListener() {
+        OverlayLayout overlayLayout = (OverlayLayout) mOverlayView;
+        final int touchSlop = ViewConfiguration.get(service).getScaledTouchSlop();
+
+        overlayLayout.setOnDispatchTouchEventListener(new OverlayLayout.OnDispatchTouchEventListener() {
+            private boolean mIsDragging = false;
+
             @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
+            public boolean onDispatchTouchEvent(MotionEvent event) {
+                switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         mInitialParamX = mOverlayParams.x;
                         mInitialParamY = mOverlayParams.y;
                         mInitialTouchX = event.getRawX();
                         mInitialTouchY = event.getRawY();
-                        return true;
+                        mIsDragging = false;
+                        return false;
 
                     case MotionEvent.ACTION_MOVE:
-                        int newX = (int) (mInitialParamX + (event.getRawX() - mInitialTouchX));
-                        int newY = (int) (mInitialParamY + (event.getRawY() - mInitialTouchY));
-
-                        DisplayMetrics dm = mService.getResources().getDisplayMetrics();
-                        int maxX = Math.max(0, dm.widthPixels - mOverlayView.getWidth());
-                        int maxY = Math.max(0, dm.heightPixels - mOverlayView.getHeight());
-
-                        mOverlayParams.x = Math.max(0, Math.min(newX, maxX));
-                        mOverlayParams.y = Math.max(0, Math.min(newY, maxY));
-                        if (mShown) {
-                            mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
+                        float deltaX = event.getRawX() - mInitialTouchX;
+                        float deltaY = event.getRawY() - mInitialTouchY;
+                        if (!mIsDragging && Math.hypot(deltaX, deltaY) > touchSlop) {
+                            mIsDragging = true;
                         }
-                        return true;
+
+                        if (mIsDragging) {
+                            int newX = (int) (mInitialParamX + deltaX);
+                            int newY = (int) (mInitialParamY + deltaY);
+
+                            DisplayMetrics dm = mService.getResources().getDisplayMetrics();
+                            int viewWidth = mOverlayView.getWidth() > 0 ? mOverlayView.getWidth() : (int) (120 * dm.density);
+                            int viewHeight = mOverlayView.getHeight() > 0 ? mOverlayView.getHeight() : (int) (60 * dm.density);
+                            int maxX = Math.max(0, dm.widthPixels - viewWidth);
+                            int maxY = Math.max(0, dm.heightPixels - viewHeight);
+
+                            mOverlayParams.x = Math.max(0, Math.min(newX, maxX));
+                            mOverlayParams.y = Math.max(0, Math.min(newY, maxY));
+                            if (mShown) {
+                                mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
+                            }
+                            return true;
+                        }
+                        return false;
 
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
-                        savePosition();
-                        return true;
+                        if (mIsDragging) {
+                            savePosition();
+                            mIsDragging = false;
+                            return true;
+                        }
+                        break;
                 }
                 return false;
             }
