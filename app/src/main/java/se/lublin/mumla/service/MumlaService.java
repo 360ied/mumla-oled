@@ -636,21 +636,7 @@ public class MumlaService extends HumlaService implements
             getApplicationContext().sendBroadcast(close);
         }
 
-        if (!mChannelOverlay.isShown()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (!android.provider.Settings.canDrawOverlays(getApplicationContext())) {
-                    Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName()));
-                    showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(showSetting);
-                    Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
-                    return;
-                }
-            }
-            mChannelOverlay.show();
-        } else {
-            mChannelOverlay.hide();
-        }
+        setOverlayShown(!mChannelOverlay.isShown());
     }
 
     @Override
@@ -670,10 +656,24 @@ public class MumlaService extends HumlaService implements
 
     @Override
     public void setOverlayShown(boolean showOverlay) {
-        if(!mChannelOverlay.isShown()) {
-            mChannelOverlay.show();
+        if (showOverlay) {
+            if (!mChannelOverlay.isShown()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (!android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+                        Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(showSetting);
+                        Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                }
+                mChannelOverlay.show();
+            }
         } else {
-            mChannelOverlay.hide();
+            if (mChannelOverlay.isShown()) {
+                mChannelOverlay.hide();
+            }
         }
     }
 

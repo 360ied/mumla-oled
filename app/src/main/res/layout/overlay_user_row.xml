@@ -18,31 +18,37 @@
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/channel_user_row_layout"
-    android:layout_width="match_parent"
-    android:layout_height="24dp"
-    android:orientation="horizontal">
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/overlay_user_row_layout"
+    android:layout_width="wrap_content"
+    android:layout_height="26dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingLeft="2dp"
+    android:paddingStart="2dp"
+    android:paddingRight="6dp"
+    android:paddingEnd="6dp">
 
     <ImageView
         android:id="@+id/user_row_state"
-        android:layout_width="18dp"
-        android:layout_height="match_parent"
-        android:layout_marginLeft="8dp"
-        app:srcCompat="@drawable/ic_talking_off" />
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_gravity="center_vertical"
+        android:importantForAccessibility="no"
+        app:srcCompat="@drawable/outline_circle_talking_off" />
 
     <TextView
         android:id="@+id/user_row_name"
-        android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical"
+        android:layout_marginLeft="6dp"
+        android:layout_marginStart="6dp"
         android:ellipsize="end"
-        android:gravity="center_vertical"
-        android:lines="1"
-        android:paddingLeft="4dp"
-        android:paddingRight="4dp"
-        android:singleLine="true"
-        android:text="User name"
-        android:textColor="#333"
-        android:textSize="12sp"/>
+        android:maxWidth="180dp"
+        android:maxLines="1"
+        android:textColor="@android:color/white"
+        android:textSize="13sp"
+        tools:text="User name" />
 
 </LinearLayout>

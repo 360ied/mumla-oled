@@ -18,6 +18,7 @@
 package se.lublin.mumla.service;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.util.DisplayMetrics;
@@ -25,38 +26,59 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
-import android.widget.ImageView;
-import android.widget.ListView;
+
+import androidx.preference.PreferenceManager;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
 import se.lublin.mumla.R;
-import se.lublin.mumla.Settings;
 import se.lublin.mumla.channel.ChannelAdapter;
 
 /**
- * An onscreen interactive overlay displaying the users in the current channel.
- * Created by andrew on 26/09/13.
+ * A minimal onscreen floating voice HUD displaying active channel members.
  */
 public class MumlaOverlay {
     private static final String TAG = MumlaOverlay.class.getName();
 
-    public static final int DEFAULT_WIDTH = 200;
-    public static final int DEFAULT_HEIGHT = 240;
+    private static final String PREF_OVERLAY_POS_X = "overlay_hud_pos_x";
+    private static final String PREF_OVERLAY_POS_Y = "overlay_hud_pos_y";
 
-    private HumlaObserver mObserver = new HumlaObserver() {
+    private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onUserTalkStateUpdated(IUser user) {
-            mChannelAdapter.notifyDataSetChanged();
+            if (mChannelAdapter != null && user != null && user.getChannel() != null
+                    && user.getChannel().equals(mService.getSessionChannel())) {
+                mChannelAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
         public void onUserStateUpdated(IUser user) {
-            if(user.getChannel() != null &&
-                    user.getChannel().equals(mService.getSessionChannel()))
+            if (mChannelAdapter != null && user != null && user.getChannel() != null
+                    && user.getChannel().equals(mService.getSessionChannel())) {
                 mChannelAdapter.notifyDataSetChanged();
+            }
+        }
+
+        @Override
+        public void onUserConnected(IUser user) {
+            if (mChannelAdapter != null && user != null && user.getChannel() != null
+                    && user.getChannel().equals(mService.getSessionChannel())) {
+                mChannelAdapter.notifyDataSetChanged();
+            }
+        }
+
+        @Override
+        public void onUserRemoved(IUser user, String reason) {
+            if (mChannelAdapter != null) {
+                mChannelAdapter.notifyDataSetChanged();
+            }
         }
 
         @Override
@@ -69,132 +91,140 @@ public class MumlaOverlay {
                 return;
             }
 
-            if (user.getSession() == selfSession) {
-                // Session user has changed channels
+            if (mChannelAdapter != null) {
+                if (user.getSession() == selfSession) {
+                    mChannelAdapter.setChannel(mService.getSessionChannel());
+                } else if (mService.getSessionChannel() != null && (
+                        (newChannel != null && newChannel.getId() == mService.getSessionChannel().getId()) ||
+                        (oldChannel != null && oldChannel.getId() == mService.getSessionChannel().getId()))) {
+                    mChannelAdapter.notifyDataSetChanged();
+                }
+            }
+        }
+
+        @Override
+        public void onConnected() {
+            if (mChannelAdapter != null) {
                 mChannelAdapter.setChannel(mService.getSessionChannel());
-            } else if (newChannel.getId() == mService.getSessionChannel().getId() ||
-                    oldChannel.getId() == mService.getSessionChannel().getId()) {
-                mChannelAdapter.notifyDataSetChanged();
+            }
+        }
+
+        @Override
+        public void onDisconnected(HumlaException e) {
+            if (mChannelAdapter != null) {
+                mChannelAdapter.setChannel(null);
             }
         }
     };
 
-    private View mOverlayView;
-    private ListView mOverlayList;
-    private ChannelAdapter mChannelAdapter;
-    private ImageView mTalkButton;
-//    private ImageView mToggleButton;
-    private ImageView mCloseButton;
-    private ImageView mDragButton;
-    private View mTitleView;
-    private WindowManager.LayoutParams mOverlayParams;
-    private boolean mShown = false;
-//    private boolean mShowChat = false;
+    private final MumlaService mService;
+    private final WindowManager mWindowManager;
+    private final View mOverlayView;
+    private final RecyclerView mOverlayList;
+    private final WindowManager.LayoutParams mOverlayParams;
 
-    private MumlaService mService;
+    private ChannelAdapter mChannelAdapter;
+    private boolean mShown = false;
+
+    private float mInitialTouchX;
+    private float mInitialTouchY;
+    private int mInitialParamX;
+    private int mInitialParamY;
 
     public MumlaOverlay(MumlaService service) {
         mService = service;
+        mWindowManager = (WindowManager) mService.getSystemService(Context.WINDOW_SERVICE);
         mOverlayView = View.inflate(service, R.layout.overlay, null);
-        mTalkButton = (ImageView) mOverlayView.findViewById(R.id.overlay_talk);
-        mDragButton = (ImageView) mOverlayView.findViewById(R.id.overlay_drag);
-        mCloseButton = (ImageView) mOverlayView.findViewById(R.id.overlay_close);
-//        mToggleButton = (ImageView) mOverlayView.findViewById(R.id.overlay_mode_toggle);
-        mTitleView = mOverlayView.findViewById(R.id.overlay_title);
-        mOverlayList = (ListView) mOverlayView.findViewById(R.id.overlay_list);
+        mOverlayList = mOverlayView.findViewById(R.id.overlay_list);
+        mOverlayList.setLayoutManager(new LinearLayoutManager(service));
 
-        mTitleView.setOnTouchListener(new View.OnTouchListener() {
-            private final WindowManager mWindowManager = (WindowManager) mService.getSystemService(Context.WINDOW_SERVICE);
-            private float mInitialX;
-            private float mInitialY;
-
+        mOverlayView.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                if(MotionEvent.ACTION_DOWN == event.getAction()) {
-                    mInitialX = event.getRawX() - mOverlayParams.x;
-                    mInitialY = event.getRawY() - mOverlayParams.y;
-                    return true;
-                } else if(MotionEvent.ACTION_MOVE == event.getAction()) {
-                    mOverlayParams.x = (int) (event.getRawX() - mInitialX);
-                    mOverlayParams.y = (int) (event.getRawY() - mInitialY);
-                    mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
-                    return true;
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                if (!mShown) {
+                    return;
                 }
-                return false;
+                DisplayMetrics dm = mService.getResources().getDisplayMetrics();
+                int viewWidth = mOverlayView.getWidth();
+                int viewHeight = mOverlayView.getHeight();
+                if (viewWidth > 0 && viewHeight > 0) {
+                    int maxX = Math.max(0, dm.widthPixels - viewWidth);
+                    int maxY = Math.max(0, dm.heightPixels - viewHeight);
+                    int clampedX = Math.max(0, Math.min(mOverlayParams.x, maxX));
+                    int clampedY = Math.max(0, Math.min(mOverlayParams.y, maxY));
+                    if (clampedX != mOverlayParams.x || clampedY != mOverlayParams.y) {
+                        mOverlayParams.x = clampedX;
+                        mOverlayParams.y = clampedY;
+                        try {
+                            mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
+                        } catch (IllegalArgumentException e) {
+                            Log.d(TAG, "exception updating overlay layout on layout change: " + e);
+                        }
+                    }
+                }
             }
         });
 
-        mDragButton.setOnTouchListener(new View.OnTouchListener() {
+        OverlayLayout overlayLayout = (OverlayLayout) mOverlayView;
+        final int touchSlop = ViewConfiguration.get(service).getScaledTouchSlop();
 
-            private final WindowManager mWindowManager = (WindowManager) mService.getSystemService(Context.WINDOW_SERVICE);
-            private float mInitialX;
-            private float mInitialY;
-            private float mInitialWidth;
-            private float mInitialHeight;
+        overlayLayout.setOnDispatchTouchEventListener(new OverlayLayout.OnDispatchTouchEventListener() {
+            private boolean mIsDragging = false;
 
             @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
+            public boolean onDispatchTouchEvent(MotionEvent event) {
+                switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
-                        mInitialX = event.getRawX();
-                        mInitialY = event.getRawY();
-                        mInitialWidth = mOverlayView.getWidth();
-                        mInitialHeight = mOverlayView.getHeight();
-                        return true;
+                        mInitialParamX = mOverlayParams.x;
+                        mInitialParamY = mOverlayParams.y;
+                        mInitialTouchX = event.getRawX();
+                        mInitialTouchY = event.getRawY();
+                        mIsDragging = false;
+                        return false;
+
                     case MotionEvent.ACTION_MOVE:
-                        mOverlayParams.width = (int) (mInitialWidth + (event.getRawX() - mInitialX));
-                        mOverlayParams.height = (int) (mInitialHeight + (event.getRawY() - mInitialY));
-                        mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
-                        return true;
+                        float deltaX = event.getRawX() - mInitialTouchX;
+                        float deltaY = event.getRawY() - mInitialTouchY;
+                        if (!mIsDragging && Math.hypot(deltaX, deltaY) > touchSlop) {
+                            mIsDragging = true;
+                        }
+
+                        if (mIsDragging) {
+                            int newX = (int) (mInitialParamX + deltaX);
+                            int newY = (int) (mInitialParamY + deltaY);
+
+                            DisplayMetrics dm = mService.getResources().getDisplayMetrics();
+                            int viewWidth = mOverlayView.getWidth() > 0 ? mOverlayView.getWidth() : (int) (120 * dm.density);
+                            int viewHeight = mOverlayView.getHeight() > 0 ? mOverlayView.getHeight() : (int) (60 * dm.density);
+                            int maxX = Math.max(0, dm.widthPixels - viewWidth);
+                            int maxY = Math.max(0, dm.heightPixels - viewHeight);
+
+                            mOverlayParams.x = Math.max(0, Math.min(newX, maxX));
+                            mOverlayParams.y = Math.max(0, Math.min(newY, maxY));
+                            if (mShown) {
+                                mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
+                            }
+                            return true;
+                        }
+                        return false;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        if (mIsDragging) {
+                            savePosition();
+                            mIsDragging = false;
+                            return true;
+                        }
+                        break;
                 }
                 return false;
             }
         });
 
-        /*
-        mToggleButton.setOnClickListener(new View.OnClickListener() {
-
-            @Override
-            public void onClick(View v) {
-                mShowChat = !mShowChat;
-                // TODO implement chat
-                if(mShowChat) {
-
-                } else {
-
-                }
-            }
-        });
-        */
-
-        mTalkButton.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                if(MotionEvent.ACTION_DOWN == event.getAction()) {
-                    mService.setTalkingState(true);
-                    return true;
-                } else if(MotionEvent.ACTION_UP == event.getAction()) {
-                    mService.setTalkingState(false);
-                    return true;
-                }
-                return false;
-            }
-        });
-
-        Settings settings = Settings.getInstance(service);
-        boolean usingPtt = Settings.ARRAY_INPUT_METHOD_PTT.equals(settings.getInputMethod());
-        setPushToTalkShown(usingPtt);
-
-        mCloseButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                hide();
-            }
-        });
-
-        DisplayMetrics metrics = mService.getResources().getDisplayMetrics();
-        mOverlayParams = new WindowManager.LayoutParams((int)(DEFAULT_WIDTH*metrics.density),
-                (int)(DEFAULT_HEIGHT*metrics.density),
+        mOverlayParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                         : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
@@ -202,8 +232,32 @@ public class MumlaOverlay {
                         | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
-        mOverlayParams.gravity = Gravity.TOP | Gravity.LEFT;
+        mOverlayParams.gravity = Gravity.TOP | Gravity.START;
         mOverlayParams.windowAnimations = android.R.style.Animation_Dialog;
+    }
+
+    private void restorePosition() {
+        DisplayMetrics dm = mService.getResources().getDisplayMetrics();
+        int defaultX = (int) (24 * dm.density);
+        int defaultY = (int) (80 * dm.density);
+
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
+        int savedX = prefs.getInt(PREF_OVERLAY_POS_X, defaultX);
+        int savedY = prefs.getInt(PREF_OVERLAY_POS_Y, defaultY);
+
+        int maxX = Math.max(0, dm.widthPixels - (int) (120 * dm.density));
+        int maxY = Math.max(0, dm.heightPixels - (int) (60 * dm.density));
+
+        mOverlayParams.x = Math.max(0, Math.min(savedX, maxX));
+        mOverlayParams.y = Math.max(0, Math.min(savedY, maxY));
+    }
+
+    private void savePosition() {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
+        prefs.edit()
+                .putInt(PREF_OVERLAY_POS_X, mOverlayParams.x)
+                .putInt(PREF_OVERLAY_POS_Y, mOverlayParams.y)
+                .apply();
     }
 
     public boolean isShown() {
@@ -211,31 +265,41 @@ public class MumlaOverlay {
     }
 
     public void show() {
-        if(mShown)
+        if (mShown) {
             return;
-        mShown = true;
+        }
+        restorePosition();
         mChannelAdapter = new ChannelAdapter(mService, mService.getSessionChannel());
         mOverlayList.setAdapter(mChannelAdapter);
         mService.registerObserver(mObserver);
-        WindowManager windowManager = (WindowManager) mService.getSystemService(Context.WINDOW_SERVICE);
-        windowManager.addView(mOverlayView, mOverlayParams);
+        try {
+            mWindowManager.addView(mOverlayView, mOverlayParams);
+            mShown = true;
+        } catch (Exception e) {
+            Log.e(TAG, "exception showing overlay: " + e);
+            mService.unregisterObserver(mObserver);
+            mOverlayList.setAdapter(null);
+            mChannelAdapter = null;
+            mShown = false;
+        }
     }
 
     public void hide() {
-        if(!mShown)
+        if (!mShown) {
             return;
+        }
         mShown = false;
         mService.unregisterObserver(mObserver);
         mOverlayList.setAdapter(null);
+        mChannelAdapter = null;
         try {
-            WindowManager windowManager = (WindowManager) mService.getSystemService(Context.WINDOW_SERVICE);
-            windowManager.removeView(mOverlayView);
+            mWindowManager.removeView(mOverlayView);
         } catch (IllegalArgumentException e) {
-            e.printStackTrace();
+            Log.d(TAG, "exception removing overlay view: " + e);
         }
     }
 
     public void setPushToTalkShown(boolean showPtt) {
-        mTalkButton.setVisibility(showPtt ? View.VISIBLE : View.GONE);
+        // No-op in minimal HUD mode
     }
 }

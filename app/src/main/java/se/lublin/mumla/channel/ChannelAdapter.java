@@ -18,80 +18,111 @@
 package se.lublin.mumla.channel;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.Drawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.BaseAdapter;
 import android.widget.ImageView;
 import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.appcompat.content.res.AppCompatResources;
+import androidx.recyclerview.widget.RecyclerView;
 
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.model.TalkState;
-import se.lublin.humla.model.User;
 import se.lublin.mumla.R;
+import se.lublin.mumla.drawable.CircleDrawable;
 
 /**
- * Simple adapter to display the users in a single channel.
- * Created by andrew on 24/11/13.
+ * Modern RecyclerView adapter to display channel members in the overlay HUD.
  */
-public class ChannelAdapter extends BaseAdapter {
+public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHolder> {
 
-    private Context mContext;
+    private final Context mContext;
     private IChannel mChannel;
+
+    public static class ViewHolder extends RecyclerView.ViewHolder {
+        final ImageView stateIcon;
+        final TextView userName;
+
+        public ViewHolder(@NonNull View itemView) {
+            super(itemView);
+            stateIcon = itemView.findViewById(R.id.user_row_state);
+            userName = itemView.findViewById(R.id.user_row_name);
+        }
+    }
 
     public ChannelAdapter(Context context, IChannel channel) {
         mContext = context;
         mChannel = channel;
+        setHasStableIds(true);
+    }
+
+    @NonNull
+    @Override
+    public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        View v = LayoutInflater.from(mContext).inflate(R.layout.overlay_user_row, parent, false);
+        return new ViewHolder(v);
     }
 
     @Override
-    public int getCount() {
-        return mChannel.getUsers().size();
+    public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+        if (mChannel == null || mChannel.getUsers() == null || position < 0 || position >= mChannel.getUsers().size()) {
+            return;
+        }
+        IUser user = mChannel.getUsers().get(position);
+        if (user == null) {
+            return;
+        }
+
+        holder.userName.setText(user.getName());
+        holder.stateIcon.setImageDrawable(getTalkStateDrawable(user));
     }
 
     @Override
-    public Object getItem(int position) {
-        return mChannel.getUsers().get(position);
+    public int getItemCount() {
+        return (mChannel != null && mChannel.getUsers() != null) ? mChannel.getUsers().size() : 0;
     }
 
     @Override
     public long getItemId(int position) {
-        IUser user = mChannel.getUsers().get(position);
-        if (user != null)
-            return user.getUserId();
-        return -1;
+        if (mChannel != null && mChannel.getUsers() != null && position >= 0 && position < mChannel.getUsers().size()) {
+            IUser user = mChannel.getUsers().get(position);
+            if (user != null) {
+                return user.getSession();
+            }
+        }
+        return RecyclerView.NO_ID;
     }
 
-    @Override
-    public View getView(int position, View convertView, ViewGroup parent) {
-        View v = convertView;
-        if(v == null) {
-            LayoutInflater layoutInflater = LayoutInflater.from(mContext);
-            v = layoutInflater.inflate(R.layout.overlay_user_row, parent, false);
+    private Drawable getTalkStateDrawable(IUser user) {
+        if (user.isSelfDeafened()) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_deafened);
+        } else if (user.isDeafened()) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_deafened);
+        } else if (user.isSelfMuted()) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_muted);
+        } else if (user.isMuted()) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_muted);
+        } else if (user.isSuppressed()) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_suppressed);
+        } else if (user.getTalkState() == TalkState.TALKING
+                || user.getTalkState() == TalkState.SHOUTING
+                || user.getTalkState() == TalkState.WHISPERING) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on);
+        } else {
+            if (user.getTexture() != null && user.getTexture().length > 0) {
+                Bitmap bitmap = BitmapFactory.decodeByteArray(user.getTexture(), 0, user.getTexture().length);
+                if (bitmap != null) {
+                    return new CircleDrawable(mContext.getResources(), bitmap);
+                }
+            }
         }
-        User user = (User) getItem(position);
-        TextView titleView = (TextView) v.findViewById(R.id.user_row_name);
-        titleView.setText(user.getName());
-
-        ImageView state = (ImageView) v.findViewById(R.id.user_row_state);
-        if (user.isSelfDeafened())
-            state.setImageResource(R.drawable.outline_circle_deafened);
-        else if (user.isSelfMuted())
-            state.setImageResource(R.drawable.outline_circle_muted);
-        else if (user.isDeafened())
-            state.setImageResource(R.drawable.outline_circle_server_deafened);
-        else if (user.isMuted())
-            state.setImageResource(R.drawable.outline_circle_server_muted);
-        else if (user.isSuppressed())
-            state.setImageResource(R.drawable.outline_circle_suppressed);
-        else
-        if (user.getTalkState() == TalkState.TALKING)
-            state.setImageResource(R.drawable.outline_circle_talking_on);
-        else
-            state.setImageResource(R.drawable.outline_circle_talking_off);
-
-        return v;
+        return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
     }
 
     public void setChannel(IChannel channel) {
