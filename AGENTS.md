@@ -12,6 +12,7 @@
 ## Branching Strategy
 - **Dedicated Branch**: Always check out or create a dedicated branch (e.g., `feature/<name>`, `bugfix/<name>`) before making changes; never develop directly on `master`.
 - **Exception**: Modifications to `AGENTS.md` itself may be made directly on the current branch.
+- **Merging into Master**: Always use a non-fast-forward merge commit (`git merge --no-ff <branch>`); never squash, rebase, or fast-forward branches into `master`. The merge commit message follows the Commit Strategy rules below (subject like `chore: merge branch '<branch>'` plus the tripartite body), created via `scripts/commit.py`. See the `mumla-merge` skill (`.agents/skills/mumla-merge/SKILL.md`) for the full procedure.
 
 ## Commit Strategy
 - **Atomic Commits**: Single logical unit per commit. Separate automated code generation (e.g., `protoc`) from manual edits when feasible.
