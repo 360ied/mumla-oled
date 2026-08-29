@@ -41,11 +41,5 @@ fi
 
 echo ""
 echo "========================================"
-echo " 4. Validating Latest Commit (50/72)"
-echo "========================================"
-python3 scripts/commit.py --check -m "$(git log -1 --pretty=%B)"
-
-echo ""
-echo "========================================"
 echo " ALL CHECKS PASSED SUCCESSFULLY!"
 echo "========================================"

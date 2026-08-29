@@ -22,12 +22,13 @@ description: >-
    - Always create and work on a dedicated branch (`feature/<name>`, `bugfix/<name>`, `docs/<name>`, `chore/<name>`). Never commit directly on `master`.
 
 2. **Commit Wrapper & 50/72 Rule**:
-   - Use `python3 scripts/commit.py -m "<message>"` to automatically format to the 50/72 rule and execute `git commit`.
+   - Use `python3 scripts/commit.py -m "<message>"` to automatically format to the 50/72 rule, enforce the body format, and execute `git commit`.
    - Subject line: <= 50 characters, concise and imperative with a scope prefix (e.g. `app:`, `ui:`, `humla:`, `audio:`, `proto:`, `build:`, `nix:`, `docs:`, `util:`).
-   - Body: Automatically wrapped to 72 columns with structured sections:
+   - Body: Automatically wrapped to 72 columns; the wrapper hard-fails (exit 1) unless the body contains the three labeled sections, labels exact and in this order, as plain line starts (no Markdown bullets/headings):
      - Context & Motivation
      - Technical Approach
      - Edge Cases & Impact
+   - On failure, the error names the problem, prints the required template, and points to AGENTS.md — fix the message and retry; do not bypass with `--no-body-check`.
 
 3. **Fast Verification**:
    - Run `./scripts/check.sh` before completing any task.
