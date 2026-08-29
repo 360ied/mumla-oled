@@ -1,13 +1,26 @@
 #!/usr/bin/env python3
 """
-Git 50/72 Commit Wrapper.
+Git 50/72 Commit Wrapper with AGENTS.md body enforcement.
 
-Wraps `git commit` by automatically formatting and validating commit messages
-according to the standard Git 50/72 rule:
+Wraps `git commit` by automatically formatting and validating commit messages:
   - Subject line: <= 50 characters, concise and imperative, no trailing period.
   - Line 2: Exactly one blank line between subject and body.
   - Body: Wrapped to <= 72 characters per line (with hanging indents for lists,
     verbatim code blocks, URLs, markdown tables, and Git trailers).
+  - Body format: MUST contain the three labeled sections below, labels exact,
+    in this order, as plain line starts (no Markdown bullets/headings):
+
+      Context & Motivation: <why this change is needed>
+      Technical Approach: <how it is implemented>
+      Edge Cases & Impact: <boundary conditions, blast radius>
+
+    Merge/revert/fixup commits are exempt; --no-body-check bypasses the check.
+
+Errors are instructions: on failure, stderr names the exact problem, prints the
+required template, and points to AGENTS.md. Fix the message and retry.
+
+Exit codes: 0 = committed/passed, 1 = fixable message error (rewrite body and
+retry), 2 = usage/environment error (do not retry, report).
 
 Usage:
   python3 scripts/commit.py -m "docs: update readme\n\nDetailed explanation..."
