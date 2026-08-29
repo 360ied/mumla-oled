@@ -300,7 +300,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     protected void connect() {
         try {
-            setReconnecting(false);
             mConnectionState = ConnectionState.DISCONNECTED;
             mVoiceTargetId = 0;
             mWhisperTargetList.clear();
@@ -328,7 +327,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mConnection.connect(mServer.getHost(), mServer.getPort());
         } catch (HumlaException e) {
             e.printStackTrace();
-            mCallbacks.onDisconnected(e);
+            onConnectionDisconnected(e);
         }
     }
 
@@ -396,6 +395,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
 
         mReconnectAttempts = 0;
+        setReconnecting(false);
         mConnectionState = ConnectionState.CONNECTED;
 
         Log.v(TAG, "Connected");
@@ -552,40 +552,39 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     public void setReconnecting(boolean reconnecting) {
-        if (mReconnecting == reconnecting)
-            return;
-
-        mReconnecting = reconnecting;
-        if (reconnecting) {
-            registerNetworkCallback();
-            int delay = getReconnectDelay();
-            Log.v(TAG, "Scheduling reconnect in " + delay + " ms (attempt " + mReconnectAttempts + ")");
-            if (mWakeLock != null) {
-                if (mWakeLock.isHeld()) {
-                    mWakeLock.release();
-                }
-                mWakeLock.acquire(delay + 15000);
-            }
-            if (mReconnectRunnable != null) {
-                mHandler.removeCallbacks(mReconnectRunnable);
-            }
-            mReconnectRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    if (mReconnecting) {
-                        mReconnectAttempts++;
-                        connect();
-                    }
-                }
-            };
-            mHandler.postDelayed(mReconnectRunnable, delay);
-        } else {
+        if (!reconnecting) {
+            mReconnecting = false;
             if (mReconnectRunnable != null) {
                 mHandler.removeCallbacks(mReconnectRunnable);
                 mReconnectRunnable = null;
             }
             unregisterNetworkCallback();
+            return;
         }
+
+        mReconnecting = true;
+        registerNetworkCallback();
+        int delay = getReconnectDelay();
+        Log.v(TAG, "Scheduling reconnect in " + delay + " ms (attempt " + mReconnectAttempts + ")");
+        if (mWakeLock != null) {
+            if (mWakeLock.isHeld()) {
+                mWakeLock.release();
+            }
+            mWakeLock.acquire(delay + 15000);
+        }
+        if (mReconnectRunnable != null) {
+            mHandler.removeCallbacks(mReconnectRunnable);
+        }
+        mReconnectRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (mReconnecting) {
+                    mReconnectAttempts++;
+                    connect();
+                }
+            }
+        };
+        mHandler.postDelayed(mReconnectRunnable, delay);
     }
 
     /**
