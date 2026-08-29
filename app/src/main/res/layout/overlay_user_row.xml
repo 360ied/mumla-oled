@@ -18,19 +18,23 @@
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/overlay_user_row_layout"
     android:layout_width="wrap_content"
     android:layout_height="26dp"
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingLeft="2dp"
-    android:paddingRight="6dp">
+    android:paddingStart="2dp"
+    android:paddingRight="6dp"
+    android:paddingEnd="6dp">
 
     <ImageView
         android:id="@+id/user_row_state"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:layout_gravity="center_vertical"
+        android:importantForAccessibility="no"
         app:srcCompat="@drawable/outline_circle_talking_off" />
 
     <TextView
@@ -39,12 +43,12 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_vertical"
         android:layout_marginLeft="6dp"
+        android:layout_marginStart="6dp"
         android:ellipsize="end"
         android:maxWidth="180dp"
         android:maxLines="1"
-        android:singleLine="true"
-        android:text="User name"
         android:textColor="@android:color/white"
-        android:textSize="13sp" />
+        android:textSize="13sp"
+        tools:text="User name" />
 
 </LinearLayout>
