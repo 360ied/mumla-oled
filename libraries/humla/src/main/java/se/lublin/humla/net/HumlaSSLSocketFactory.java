@@ -22,9 +22,6 @@ import android.util.Log;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.Proxy;
-import java.net.Socket;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
@@ -68,16 +65,6 @@ public class HumlaSSLSocketFactory {
         }
 
         mContext.init(kmf.getKeyManagers(), new TrustManager[] { mTrustWrapper }, null);
-    }
-
-    /**
-     * Creates a new SSLSocket that runs through a SOCKS5 proxy to reach its destination.
-     */
-    public SSLSocket createTorSocket(String host, int port, String proxyHost, int proxyPort) throws IOException {
-        Proxy proxy = new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(proxyHost, proxyPort));
-        Socket socket = new Socket(proxy);
-        socket.connect(InetSocketAddress.createUnresolved(host, port));
-        return (SSLSocket) mContext.getSocketFactory().createSocket(socket, host, port, true);
     }
 
     public SSLSocket createSocket(String host, int port) throws IOException {

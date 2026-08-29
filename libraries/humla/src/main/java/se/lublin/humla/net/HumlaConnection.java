@@ -76,10 +76,6 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     }
     private HumlaConnectionListener mListener;
 
-    // Tor connection details
-    public static final String TOR_HOST = "localhost";
-    public static final int TOR_PORT = 9050;
-
     // Authentication
     private byte[] mCertificate;
     private String mCertificatePassword;
@@ -97,7 +93,6 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private ScheduledFuture<?> mPingTask;
     private boolean mUsingUDP = true;
     private boolean mForceTCP;
-    private boolean mUseTor;
     private boolean mConnected;
     private boolean mSynchronized;
     private HumlaException mError;
@@ -371,7 +366,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         try {
             mTCP = new HumlaTCP(socketFactory);
             mTCP.setTCPConnectionListener(this);
-            mTCP.connect(host, port, mUseTor);
+            mTCP.connect(host, port);
             // UDP thread is formally started after TCP connection.
         } catch (ConnectException e) {
             throw new HumlaException(e, HumlaException.HumlaDisconnectReason.CONNECTION_ERROR);
@@ -419,18 +414,8 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     }
 
     /**
-     * Set whether to proxy all connections over a local Orbot instance.
-     * This will force TCP tunneling for voice packets.
-     * @param useTor true if Tor should be enabled and TCP forced.
-     */
-    public void setUseTor(boolean useTor) {
-        mUseTor = useTor;
-    }
-
-    /**
      * Set whether to tunnel all voice packets over TCP, disabling the UDP thread.
      * @param forceTcp true if voice packets should tunnel over TCP.
-     * @see #setUseTor
      */
     public void setForceTCP(boolean forceTcp) {
         mForceTCP = forceTcp;
@@ -522,10 +507,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
     /**
      * Return whether or not voice packets should be tunneled over TCP.
-     * @return true if TCP is manually forced or Tor has been disabled.
+     * @return true if TCP is manually forced.
      */
     public boolean shouldForceTCP() {
-        return mForceTCP || mUseTor;
+        return mForceTCP;
     }
 
     /**
