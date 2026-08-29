@@ -194,4 +194,33 @@ public class SettingsOverlayTest extends TestCase {
         assertFalse("Overlay should be disabled after setOverlayShown(false)", settings.isOverlayShown());
         assertEquals(false, prefs.getBoolean(Settings.PREF_OVERLAY_SHOWN, true));
     }
+
+    public void testOverlayCoordinatesPersistence() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+
+        // Defaults
+        assertEquals(0, prefs.getInt(Settings.PREF_OVERLAY_POS_X, 0));
+        assertEquals(0, prefs.getInt(Settings.PREF_OVERLAY_POS_Y, 0));
+
+        // Save position
+        prefs.edit()
+                .putInt(Settings.PREF_OVERLAY_POS_X, 150)
+                .putInt(Settings.PREF_OVERLAY_POS_Y, 300)
+                .apply();
+
+        assertEquals(150, prefs.getInt(Settings.PREF_OVERLAY_POS_X, 0));
+        assertEquals(300, prefs.getInt(Settings.PREF_OVERLAY_POS_Y, 0));
+    }
+
+    public void testRepeatedOverlayToggles() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        for (int i = 0; i < 5; i++) {
+            settings.setOverlayShown(true);
+            assertTrue(settings.isOverlayShown());
+            settings.setOverlayShown(false);
+            assertFalse(settings.isOverlayShown());
+        }
+    }
 }

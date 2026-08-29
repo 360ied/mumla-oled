@@ -52,7 +52,7 @@ public class MumlaOverlay {
         public void onUserTalkStateUpdated(IUser user) {
             if (mChannelAdapter != null && user != null && user.getChannel() != null
                     && user.getChannel().equals(mService.getSessionChannel())) {
-                mChannelAdapter.notifyDataSetChanged();
+                mChannelAdapter.notifyUserChanged(user);
             }
         }
 
@@ -60,7 +60,7 @@ public class MumlaOverlay {
         public void onUserStateUpdated(IUser user) {
             if (mChannelAdapter != null && user != null && user.getChannel() != null
                     && user.getChannel().equals(mService.getSessionChannel())) {
-                mChannelAdapter.notifyDataSetChanged();
+                mChannelAdapter.notifyUserChanged(user);
             }
         }
 
