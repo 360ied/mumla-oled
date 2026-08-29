@@ -23,6 +23,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Html;
@@ -369,7 +370,7 @@ public class MumbleImageGetter implements Html.ImageGetter {
         byte[] src;
         try {
             src = Base64.decode(decodedBase64, Base64.DEFAULT);
-            if (src == null) {
+            if (src == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try {
                     src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
                 } catch (Throwable ignored) {
@@ -377,9 +378,14 @@ public class MumbleImageGetter implements Html.ImageGetter {
                 }
             }
         } catch (Throwable t) {
-            try {
-                src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
-            } catch (Throwable ignored) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+                } catch (Throwable ignored) {
+                    return null;
+                }
+            } else {
+                // No MIME decoder available before API 26.
                 return null;
             }
         }
