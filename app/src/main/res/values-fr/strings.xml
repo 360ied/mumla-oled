@@ -157,10 +157,6 @@
     </plurals>
     <string name="shout_include_linked">Voix vers les salons liés</string>
     <string name="shout_include_subchannels">Voix vers les sous-salons</string>
-    <string name="orbot_tor_failed">Impossible de se connecter au mandataire Tor local sur le port %d (SOCKS).
-\n
-\nVeuillez vous assurer que l\'application Orbot est en cours d\'exécution.</string>
-    <string name="orbot_not_installed">L\'application Orbot n\'est pas installée. Ne pas utiliser Tor.</string>
     <string name="grant_perm_draw_over_apps">Veuillez autoriser l\'affichage sur d\'autres applications.</string>
     <string name="grant_perm_storage">Veuillez accorder une autorisation de stockage externe.</string>
     <string name="grant_perm_microphone">Veuillez autoriser le microphone.</string>
