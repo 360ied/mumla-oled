@@ -4,6 +4,7 @@ Git 50/72 Commit Wrapper with AGENTS.md body enforcement.
 
 Wraps `git commit` by automatically formatting and validating commit messages:
   - Subject line: <= 50 characters, concise and imperative, no trailing period.
+    Subjects starting with "Merge " are exempt from the length limit.
   - Line 2: Exactly one blank line between subject and body.
   - Body: Wrapped to <= 72 characters per line (with hanging indents for lists,
     verbatim code blocks, URLs, markdown tables, and Git trailers).
@@ -56,6 +57,10 @@ AGENTS_POINTER = (
 )
 # Merge/revert/fixup commits are exempt from body style checks.
 RE_EXEMPT_SUBJECT = re.compile(r'^(Merge |Revert "|fixup! |squash! )')
+# Merge subjects are additionally exempt from the MAX_SUBJECT length limit:
+# git generates them (e.g. "Merge branch 'x' of https://..."), so their length
+# is not under the author's control.
+RE_MERGE_SUBJECT = re.compile(r'^Merge ')
 
 # Regex patterns
 RE_GIT_TRAILER = re.compile(
@@ -149,7 +154,7 @@ def format_commit_message(raw_text: str) -> Tuple[Optional[str], Optional[str]]:
     raw_subject = lines[subject_idx].strip()
     cleaned_subject = re.sub(r"\.+$", "", raw_subject).strip()
 
-    if len(cleaned_subject) > MAX_SUBJECT:
+    if len(cleaned_subject) > MAX_SUBJECT and not RE_MERGE_SUBJECT.match(cleaned_subject):
         return None, (
             f"Subject line exceeds {MAX_SUBJECT} characters ({len(cleaned_subject)} chars):\n"
             f"  > {cleaned_subject}"

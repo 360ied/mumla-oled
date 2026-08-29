@@ -164,6 +164,18 @@ class TestCommitFormatter(unittest.TestCase):
         self.assertIsNotNone(err)
         self.assertIn("exceeds 50 characters", err)
 
+    def test_merge_subject_exempt_from_length_limit(self):
+        raw = "Merge remote-tracking branch 'origin/pr/1234' into oled-feature-branch"
+        formatted, err = format_commit_message(raw)
+        self.assertIsNone(err)
+        self.assertEqual(formatted.split("\n")[0], raw)
+
+    def test_merge_prefix_middle_of_subject_not_exempt(self):
+        raw = "docs: describe how to Merge branch 'x' into y and other stuff"
+        formatted, err = format_commit_message(raw)
+        self.assertIsNotNone(err)
+        self.assertIn("exceeds 50 characters", err)
+
     def test_paragraph_wrapping_at_72(self):
         raw = """docs: update installation notes
 
