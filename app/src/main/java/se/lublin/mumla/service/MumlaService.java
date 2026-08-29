@@ -244,13 +244,15 @@ public class MumlaService extends HumlaService implements
                     mNotification.hide();
                     mNotification = null;
                 }
-                String ttsMsg;
-                if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
-                    ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
-                } else {
-                    ttsMsg = getString(R.string.disconnected);
+                if (e != null) {
+                    String ttsMsg;
+                    if (e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
+                        ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
+                    } else {
+                        ttsMsg = getString(R.string.disconnected);
+                    }
+                    speakTts(ttsMsg);
                 }
-                speakTts(ttsMsg);
             }
         }
 
