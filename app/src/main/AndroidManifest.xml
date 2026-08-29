@@ -39,6 +39,12 @@
     <queries>
         <!-- We're using guardianproject's OrbotHelper to check if Orbot is installed -->
         <package android:name="org.torproject.android" />
+        <!-- TextToSpeech.getEngines() queries services with this action;
+             without this declaration package visibility filtering (API 30+)
+             hides all installed TTS engines. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <application
