@@ -49,11 +49,13 @@ public class MumlaConnectionNotification {
     private static final String BROADCAST_MUTE = "b_mute";
     private static final String BROADCAST_DEAFEN = "b_deafen";
     private static final String BROADCAST_OVERLAY = "b_overlay";
+    private static final String BROADCAST_CANCEL_RECONNECT = "b_cancel_reconnect";
 
     private Service mService;
     private OnActionListener mListener;
     private String mCustomContentText;
     private boolean mActionsShown;
+    private boolean mReconnectingShown;
 
     private BroadcastReceiver mNotificationReceiver = new BroadcastReceiver() {
         @Override
@@ -64,6 +66,8 @@ public class MumlaConnectionNotification {
                 mListener.onDeafenToggled();
             } else if (BROADCAST_OVERLAY.equals(intent.getAction())) {
                 mListener.onOverlayToggled();
+            } else if (BROADCAST_CANCEL_RECONNECT.equals(intent.getAction())) {
+                mListener.onCancelReconnect();
             }
         }
     };
@@ -95,6 +99,17 @@ public class MumlaConnectionNotification {
         mActionsShown = actionsShown;
     }
 
+    public void setReconnectingShown(boolean reconnectingShown) {
+        mReconnectingShown = reconnectingShown;
+    }
+
+    public void showReconnecting(String error) {
+        mCustomContentText = error;
+        mActionsShown = false;
+        mReconnectingShown = true;
+        show();
+    }
+
     /**
      * Shows the notification and registers the notification action button receiver.
      */
@@ -105,6 +120,7 @@ public class MumlaConnectionNotification {
         filter.addAction(BROADCAST_DEAFEN);
         filter.addAction(BROADCAST_MUTE);
         filter.addAction(BROADCAST_OVERLAY);
+        filter.addAction(BROADCAST_CANCEL_RECONNECT);
         try {
             ContextCompat.registerReceiver(mService, mNotificationReceiver, filter,
                     ContextCompat.RECEIVER_NOT_EXPORTED);
@@ -154,7 +170,13 @@ public class MumlaConnectionNotification {
         builder.setShowWhen(false);
         builder.setOngoing(true);
 
-        if (mActionsShown) {
+        if (mReconnectingShown) {
+            Intent cancelIntent = new Intent(BROADCAST_CANCEL_RECONNECT);
+            cancelIntent.setPackage(mService.getPackageName());
+            builder.addAction(R.drawable.ic_action_delete_dark,
+                    mService.getString(R.string.cancel_reconnect), PendingIntent.getBroadcast(mService, 3,
+                            cancelIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
+        } else if (mActionsShown) {
             // Add notification triggers
             Intent muteIntent = new Intent(BROADCAST_MUTE);
             muteIntent.setPackage(mService.getPackageName());
@@ -194,5 +216,6 @@ public class MumlaConnectionNotification {
         void onMuteToggled();
         void onDeafenToggled();
         void onOverlayToggled();
+        void onCancelReconnect();
     }
 }

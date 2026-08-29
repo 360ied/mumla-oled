@@ -67,19 +67,16 @@ import se.lublin.mumla.util.HtmlUtils;
  */
 public class MumlaService extends HumlaService implements
         SharedPreferences.OnSharedPreferenceChangeListener,
-        MumlaConnectionNotification.OnActionListener,
-        MumlaReconnectNotification.OnActionListener, IMumlaService {
+        MumlaConnectionNotification.OnActionListener, IMumlaService {
     private static final String TAG = MumlaService.class.getName();
 
     /** Undocumented constant that permits a proximity-sensing wake lock. */
     public static final int PROXIMITY_SCREEN_OFF_WAKE_LOCK = 32;
     public static final int TTS_THRESHOLD = 250; // Maximum number of characters to read
-    public static final int RECONNECT_DELAY = 10000;
 
     private Settings mSettings;
     private MumlaConnectionNotification mNotification;
     private MumlaMessageNotification mMessageNotification;
-    private MumlaReconnectNotification mReconnectNotification;
     /** Channel view overlay. */
     private MumlaOverlay mChannelOverlay;
     /** Proximity lock for handset mode. */
@@ -147,15 +144,15 @@ public class MumlaService extends HumlaService implements
     private HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onConnecting() {
-            // Remove old notification left from reconnect,
-            if (mReconnectNotification != null) {
-                mReconnectNotification.hide();
-                mReconnectNotification = null;
+            if (mNotification == null) {
+                mNotification = MumlaConnectionNotification.create(MumlaService.this,
+                        getString(R.string.mumlaConnecting),
+                        MumlaService.this);
+            } else {
+                mNotification.setCustomContentText(getString(R.string.mumlaConnecting));
+                mNotification.setActionsShown(false);
+                mNotification.setReconnectingShown(false);
             }
-
-            mNotification = MumlaConnectionNotification.create(MumlaService.this,
-                    getString(R.string.mumlaConnecting),
-                    MumlaService.this);
             mNotification.show();
 
             mErrorShown = false;
@@ -165,6 +162,7 @@ public class MumlaService extends HumlaService implements
         public void onConnected() {
             if (mNotification != null) {
                 mNotification.setCustomContentText(getString(R.string.connected));
+                mNotification.setReconnectingShown(false);
                 mNotification.setActionsShown(true);
                 mNotification.show();
             }
@@ -172,15 +170,19 @@ public class MumlaService extends HumlaService implements
 
         @Override
         public void onDisconnected(HumlaException e) {
-            if (mNotification != null) {
-                mNotification.hide();
-                mNotification = null;
-            }
-            if (e != null && !mSuppressNotifications) {
-                mReconnectNotification =
-                        MumlaReconnectNotification.show(MumlaService.this,
-                                e.getMessage(),
-                                isReconnecting(), MumlaService.this);
+            if (isReconnecting()) {
+                String errorMsg = e != null ? e.getMessage() : getString(R.string.mumlaDisconnected);
+                if (mNotification == null) {
+                    mNotification = MumlaConnectionNotification.create(MumlaService.this,
+                            errorMsg,
+                            MumlaService.this);
+                }
+                mNotification.showReconnecting(errorMsg);
+            } else {
+                if (mNotification != null) {
+                    mNotification.hide();
+                    mNotification = null;
+                }
             }
         }
 
@@ -353,10 +355,6 @@ public class MumlaService extends HumlaService implements
         if (mNotification != null) {
             mNotification.hide();
             mNotification = null;
-        }
-        if (mReconnectNotification != null) {
-            mReconnectNotification.hide();
-            mReconnectNotification = null;
         }
 
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
@@ -584,20 +582,15 @@ public class MumlaService extends HumlaService implements
     }
 
     @Override
-    public void onReconnectNotificationDismissed() {
-        mErrorShown = true;
-    }
-
-    @Override
-    public void reconnect() {
-        connect();
+    public void onCancelReconnect() {
+        cancelReconnect();
     }
 
     @Override
     public void cancelReconnect() {
-        if (mReconnectNotification != null) {
-            mReconnectNotification.hide();
-            mReconnectNotification = null;
+        if (mNotification != null) {
+            mNotification.hide();
+            mNotification = null;
         }
         super.cancelReconnect();
     }
@@ -624,11 +617,6 @@ public class MumlaService extends HumlaService implements
     @Override
     public void markErrorShown() {
         mErrorShown = true;
-        // Dismiss the reconnection prompt if a reconnection isn't in progress.
-        if (mReconnectNotification != null && !isReconnecting()) {
-            mReconnectNotification.hide();
-            mReconnectNotification = null;
-        }
     }
 
     @Override

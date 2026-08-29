@@ -666,7 +666,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(MumlaActivity.this);
                     builder.setTitle(getString(R.string.connectionRefused));
                     HumlaException error = getService().getConnectionError();
-                    if (error != null && mService.isReconnecting()) {
+                    if (error != null && service.isReconnecting()) {
                         builder.setMessage(error.getMessage() + "\n\n"
                                 + getString(R.string.attempting_reconnect,
                                 error.getCause() != null ? error.getCause().getMessage() : "unknown"));
