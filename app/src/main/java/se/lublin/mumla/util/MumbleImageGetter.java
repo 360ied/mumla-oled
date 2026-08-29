@@ -23,7 +23,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
-import android.os.Build;
+import android.annotation.SuppressLint;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Html;
@@ -362,6 +362,11 @@ public class MumbleImageGetter implements Html.ImageGetter {
         return sb.toString();
     }
 
+    // java.util.Base64 requires API 26; on older devices the reference would
+    // raise NoClassDefFoundError, which the catch (Throwable) blocks handle
+    // deliberately. Local unit tests also exercise this path on the desktop
+    // JVM, where android.util.Base64 is stubbed out — so no SDK_INT gate.
+    @SuppressLint("NewApi")
     public static byte[] decodeBase64Bytes(String base64) throws IllegalArgumentException {
         if (base64 == null || base64.isEmpty()) {
             return null;
@@ -370,7 +375,7 @@ public class MumbleImageGetter implements Html.ImageGetter {
         byte[] src;
         try {
             src = Base64.decode(decodedBase64, Base64.DEFAULT);
-            if (src == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (src == null) {
                 try {
                     src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
                 } catch (Throwable ignored) {
@@ -378,14 +383,9 @@ public class MumbleImageGetter implements Html.ImageGetter {
                 }
             }
         } catch (Throwable t) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                try {
-                    src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
-                } catch (Throwable ignored) {
-                    return null;
-                }
-            } else {
-                // No MIME decoder available before API 26.
+            try {
+                src = java.util.Base64.getMimeDecoder().decode(decodedBase64);
+            } catch (Throwable ignored) {
                 return null;
             }
         }
