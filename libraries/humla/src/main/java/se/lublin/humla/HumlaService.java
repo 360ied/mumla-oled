@@ -305,6 +305,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mVoiceTargetId = 0;
             mWhisperTargetList.clear();
 
+            if (mWakeLock != null) {
+                if (mWakeLock.isHeld()) {
+                    mWakeLock.release();
+                }
+                mWakeLock.acquire(15000);
+            }
+
             mConnection = new HumlaConnection(this);
             mConnection.setForceTCP(mForceTcp);
             mConnection.setKeys(mCertificate, mCertificatePassword);
@@ -427,15 +434,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             setReconnecting(false);
         }
 
-        if (reconnect) {
-            int delay = getReconnectDelay();
-            if (mWakeLock != null) {
-                if (mWakeLock.isHeld()) {
-                    mWakeLock.release();
-                }
-                mWakeLock.acquire(delay + 10000);
-            }
-        } else {
+        if (!reconnect) {
             if (mWakeLock != null && mWakeLock.isHeld()) {
                 mWakeLock.release();
             }
@@ -560,6 +559,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             registerNetworkCallback();
             int delay = getReconnectDelay();
             Log.v(TAG, "Scheduling reconnect in " + delay + " ms (attempt " + mReconnectAttempts + ")");
+            if (mWakeLock != null) {
+                if (mWakeLock.isHeld()) {
+                    mWakeLock.release();
+                }
+                mWakeLock.acquire(delay + 15000);
+            }
             if (mReconnectRunnable != null) {
                 mHandler.removeCallbacks(mReconnectRunnable);
             }

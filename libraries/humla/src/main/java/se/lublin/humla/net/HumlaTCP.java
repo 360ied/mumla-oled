@@ -55,6 +55,8 @@ import se.lublin.humla.util.HumlaException;
  */
 public class HumlaTCP extends HumlaNetworkThread {
     private static final String TAG = HumlaTCP.class.getName();
+    public static final int CONNECT_TIMEOUT = 10000;
+
     private final HumlaSSLSocketFactory mSocketFactory;
     private String mHost;
     private int mPort;
@@ -142,7 +144,7 @@ public class HumlaTCP extends HumlaNetworkThread {
 
             Log.i(TAG, "Connecting to " + mHost + ":" + mPort);
 
-            mTCPSocket = mSocketFactory.createSocket(mHost, mPort);
+            mTCPSocket = mSocketFactory.createSocket(mHost, mPort, CONNECT_TIMEOUT);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) { // SNI support requires at least API 17
                 SSLCertificateSocketFactory scsf = (SSLCertificateSocketFactory) SSLCertificateSocketFactory.getDefault(0);
@@ -150,12 +152,15 @@ public class HumlaTCP extends HumlaNetworkThread {
             }
 
             mTCPSocket.setKeepAlive(true);
+            mTCPSocket.setSoTimeout(CONNECT_TIMEOUT);
             mTCPSocket.startHandshake();
 
             Log.v(TAG, "Started handshake");
 
             mDataInput = new DataInputStream(mTCPSocket.getInputStream());
             mDataOutput = new DataOutputStream(mTCPSocket.getOutputStream());
+
+            mTCPSocket.setSoTimeout(0);
 
             Log.v(TAG, "Now listening");
             mConnected = true;

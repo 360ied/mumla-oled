@@ -22,6 +22,8 @@ import android.util.Log;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
@@ -68,7 +70,16 @@ public class HumlaSSLSocketFactory {
     }
 
     public SSLSocket createSocket(String host, int port) throws IOException {
-        return (SSLSocket) mContext.getSocketFactory().createSocket(InetAddress.getByName(host), port);
+        return createSocket(host, port, 0);
+    }
+
+    public SSLSocket createSocket(String host, int port, int timeoutMs) throws IOException {
+        if (timeoutMs <= 0) {
+            return (SSLSocket) mContext.getSocketFactory().createSocket(InetAddress.getByName(host), port);
+        }
+        Socket plainSocket = new Socket();
+        plainSocket.connect(new InetSocketAddress(host, port), timeoutMs);
+        return (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
     }
 
     /**
