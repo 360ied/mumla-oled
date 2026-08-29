@@ -95,9 +95,6 @@ public class Settings {
     public static final String PREF_SHORT_TTS_MESSAGES = "shortTtsMessages";
     public static final boolean DEFAULT_SHORT_TTS_MESSAGES = false;
 
-    public static final String PREF_AUTO_RECONNECT = "autoReconnect";
-    public static final Boolean DEFAULT_AUTO_RECONNECT = true;
-
     public static final String PREF_THEME = "theme";
     public static final String PREF_LANGUAGE = "language";
 
@@ -324,10 +321,6 @@ public class Settings {
             preferences.edit().remove(PREF_TTS_ENGINE).apply();
         else
             preferences.edit().putString(PREF_TTS_ENGINE, pkg).apply();
-    }
-
-    public boolean isAutoReconnectEnabled() {
-        return preferences.getBoolean(PREF_AUTO_RECONNECT, DEFAULT_AUTO_RECONNECT);
     }
 
     public boolean isTcpForced() {

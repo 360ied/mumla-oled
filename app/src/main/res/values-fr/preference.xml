@@ -52,8 +52,6 @@
     <string name="useTtsSum">Lire le message entrant à haute voix en utilisant la synthèse vocale.</string>
     <string name="togglePtt">Bouton Appuyer pour parler épinglé</string>
     <string name="togglePttSum">Le bouton Appuyer-pour-parler permet d\'activer ou de désactiver la transmission. Il n\'est pas nécessaire de le tenir.</string>
-    <string name="autoReconnect">Reconnexion automatique</string>
-    <string name="autoReconnectSum">Rétablit la connexion au serveur en cas de perte.</string>
     <string name="inputQuality">Qualité de l\'entrée du microphone</string>
     <string name="inputQualitySum">Fréquence préférée de données transmises (en bits par seconde).</string>
     <string name="pressKey">Appuyer sur une touche physique à lier à « Appuyer pour parler ».</string>
