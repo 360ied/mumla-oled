@@ -50,7 +50,6 @@
     <string name="server_port">Port</string>
     <string name="server_host">Adresse</string>
     <string name="server_label">Libellé</string>
-    <string name="connecting">Connexion</string>
     <string name="connecting_to_server">Connexion à %s…</string>
     <string name="ptt">Appuyer pour parler</string>
     <string name="mute">Muet</string>
@@ -85,7 +84,6 @@
     <string name="offline">Hors ligne</string>
     <string name="clearChat">Effacer la discussion</string>
     <string name="connected">Connecté</string>
-    <string name="mumlaConnected">Mumla connecté</string>
     <string name="mumlaConnecting">Mumla en connexion…</string>
     <string name="mumlaDisconnected">Mumla déconnecté</string>
     <string name="channel">Salon</string>
@@ -179,7 +177,6 @@
     <string name="invalid_certificate">Un certificat invalide n\'a pas pu être chargé.</string>
     <string name="password">Mot de passe</string>
     <string name="decrypt_certificate">Déchiffrer le certificat</string>
-    <string name="certificates">Certificats</string>
     <string name="no_certificate">Aucun certificat</string>
     <string name="change_requires_reconnect">Reconnectez-vous pour utiliser les nouveaux paramètres.</string>
     <string name="chat_message_tts_short_link">(Lien vers %1$s)</string>

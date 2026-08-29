@@ -51,7 +51,6 @@
     <string name="server_port">端口</string>
     <string name="server_host">地址</string>
     <string name="server_label">名称</string>
-    <string name="connecting">正在连接</string>
     <string name="connecting_to_server">正在连接至 %s…</string>
     <string name="ptt">按键发言</string>
     <string name="mute">开关麦克风</string>
@@ -86,7 +85,6 @@
     <string name="offline">离线</string>
     <string name="clearChat">清除聊天记录</string>
     <string name="connected">已连接</string>
-    <string name="mumlaConnected">Mumla 已连接</string>
     <string name="mumlaConnecting">Mumla 正在连接…</string>
     <string name="mumlaDisconnected">Mumla 已断开连接</string>
     <string name="channel">频道</string>
@@ -134,7 +132,6 @@
     <string name="attempting_reconnect">错误：%s。\n\n正在重新连接…</string>
     <string name="change_requires_reconnect">重新连接以使用新设置。</string>
     <string name="no_certificate">无证书</string>
-    <string name="certificates">证书</string>
     <string name="decrypt_certificate">解密证书</string>
     <string name="password">密码</string>
     <string name="invalid_certificate">无法加载无效的证书。</string>

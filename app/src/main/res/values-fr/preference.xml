@@ -30,14 +30,11 @@
     <string name="hotCornerSum">Appuyez sur un coin de l\'écran pour transmettre le son dans tout Android.</string>
     <string name="general">Général</string>
     <string name="appearance">Apparence</string>
-    <string name="themeSum">Changer l\'apparence de l\'application.</string>
     <string name="theme">Thème</string>
     <string name="advancedAudio">Avancé</string>
     <string name="forceTcp">Uniquement TCP</string>
     <string name="forceTcpSum">Désactive le protocole UDP pour la communication.</string>
     <string name="audio">Audio</string>
-    <string name="audioSampleRate">Taux d\'échantillonnage en entrée</string>
-    <string name="audioSampleRateSum">Fréquence d\'échantillonnage audio préférée. Certains appareils prennent en charge moins de fréquences.</string>
     <string name="chatNotifications">Notifications du chat</string>
     <string name="chatNotificationsSum">S\'affiche pour les nouveaux messages.</string>
     <string name="defaultUsername">Nom d\'utilisateur par défaut</string>
