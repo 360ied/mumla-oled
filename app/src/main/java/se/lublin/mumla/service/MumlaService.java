@@ -150,6 +150,16 @@ public class MumlaService extends HumlaService implements
         public void onHotCornerUp() {
             onTalkKeyUp();
         }
+
+        @Override
+        public void onHotCornerCancel() {
+            if (isConnectionEstablished()
+                    && Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod())) {
+                if (!mSettings.isPushToTalkToggle() && isTalking()) {
+                    setTalkingState(false);
+                }
+            }
+        }
     };
 
     private BroadcastReceiver mTalkReceiver;
@@ -375,13 +385,20 @@ public class MumlaService extends HumlaService implements
                 Log.d(TAG, "exception in onUserTalkStateUpdated: " + e);
             }
 
-            if (isConnectionEstablished() &&
-                    user.getSession() == selfSession &&
-                    getTransmitMode() == Constants.TRANSMIT_PUSH_TO_TALK &&
-                    user.getTalkState() == TalkState.TALKING &&
-                    mPTTSoundEnabled) {
-                AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-                audioManager.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, -1);
+            if (user != null && user.getSession() == selfSession) {
+                if (mHotCorner != null) {
+                    TalkState ts = user.getTalkState();
+                    boolean isTalking = (ts == TalkState.TALKING || ts == TalkState.SHOUTING || ts == TalkState.WHISPERING);
+                    mHotCorner.updateTalkState(isTalking);
+                }
+
+                if (isConnectionEstablished() &&
+                        getTransmitMode() == Constants.TRANSMIT_PUSH_TO_TALK &&
+                        user.getTalkState() == TalkState.TALKING &&
+                        mPTTSoundEnabled) {
+                    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+                    audioManager.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, -1);
+                }
             }
         }
     };
@@ -425,6 +442,10 @@ public class MumlaService extends HumlaService implements
         if (mNotification != null) {
             mNotification.hide();
             mNotification = null;
+        }
+
+        if (mHotCorner != null) {
+            mHotCorner.setShown(false);
         }
 
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
