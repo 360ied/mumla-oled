@@ -76,7 +76,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import info.guardianproject.netcipher.proxy.OrbotHelper;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.Server;
@@ -584,17 +583,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return;
         }
 
-        if (mSettings.isTorEnabled()) {
-            if (!OrbotHelper.isOrbotInstalled(this)) {
-                mSettings.disableTor();
-                new MaterialAlertDialogBuilder(MumlaActivity.this)
-                        .setMessage(R.string.orbot_not_installed)
-                        .setPositiveButton(android.R.string.ok, null)
-                        .show();
-                return;
-            }
-        }
-
         ServerConnectTask connectTask = new ServerConnectTask(this, mDatabase);
         connectTask.execute(server);
     }
@@ -662,7 +650,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 // SRV lookup is done later, so we no longer show the port in the connection
                 // progress dialog (and only the configured hostname)
                 mConnectingDialog = new MaterialAlertDialogBuilder(this)
-                        .setTitle(getString(R.string.connecting_to_server, server.getHost()) + (mSettings.isTorEnabled() ? " (Tor)" : ""))
+                        .setTitle(getString(R.string.connecting_to_server, server.getHost()))
                         .setView(R.layout.dialog_progress)
                         .setCancelable(true)
                         .setOnCancelListener(dialog -> {
@@ -681,7 +669,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         break;
                     }
                     MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(MumlaActivity.this);
-                    builder.setTitle(getString(R.string.connectionRefused) + (mSettings.isTorEnabled() ? " (Tor)" : ""));
+                    builder.setTitle(getString(R.string.connectionRefused));
                     HumlaException error = getService().getConnectionError();
                     if (error != null && mService.isReconnecting()) {
                         builder.setMessage(error.getMessage() + "\n\n"

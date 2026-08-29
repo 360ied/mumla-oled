@@ -116,9 +116,6 @@ public class Settings {
     public static final String PREF_FORCE_TCP = "forceTcp";
     public static final Boolean DEFAULT_FORCE_TCP = false;
 
-    public static final String PREF_USE_TOR = "useTor";
-    public static final Boolean DEFAULT_USE_TOR = false;
-
     public static final String PREF_DISABLE_OPUS = "disableOpus";
     public static final Boolean DEFAULT_DISABLE_OPUS = false;
 
@@ -336,13 +333,6 @@ public class Settings {
 
     public boolean isOpusDisabled() {
         return preferences.getBoolean(PREF_DISABLE_OPUS, DEFAULT_DISABLE_OPUS);
-    }
-
-    public boolean isTorEnabled() {
-        return preferences.getBoolean(PREF_USE_TOR, DEFAULT_USE_TOR);
-    }
-    public void disableTor() {
-        preferences.edit().putBoolean(PREF_USE_TOR, false).apply();
     }
 
     public boolean isMuted() {
