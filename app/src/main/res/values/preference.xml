@@ -126,4 +126,6 @@
     <string name="pref_show_user_count_summary">Shows the number of users in channel subtrees.</string>
     <string name="pref_start_up_in_pinned_mode">Pinned channels mode</string>
     <string name="pref_start_upIn_pinned_mode_sum">Enables \"Pinned channels\" mode after connecting (hides channels that are not pinned).</string>
+    <string name="pref_overlay">Channel overlay</string>
+    <string name="pref_overlay_summary">Display a floating voice HUD showing active channel members.</string>
 </resources>
