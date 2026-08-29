@@ -22,6 +22,7 @@ import static android.app.PendingIntent.FLAG_CANCEL_CURRENT;
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.content.Context.RECEIVER_NOT_EXPORTED;
 
+import android.Manifest;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -29,6 +30,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
@@ -130,7 +132,11 @@ public class MumlaReconnectNotification {
         }
 
         NotificationManagerCompat nmc = NotificationManagerCompat.from(mContext);
-        nmc.notify(NOTIFICATION_ID, builder.build());
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(mContext,
+                        Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            nmc.notify(NOTIFICATION_ID, builder.build());
+        }
     }
 
     public void hide() {
