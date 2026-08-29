@@ -70,7 +70,7 @@ public class AdaptiveLeveler {
     }
 
     /**
-     * Ingests and processes a 10ms frame in-place.
+     * Ingests and processes a 10ms frame in-place with nominal unity amplitude boost.
      *
      * @param pcm Array of 16-bit PCM samples.
      * @param offset Offset into buffer.
@@ -78,6 +78,19 @@ public class AdaptiveLeveler {
      * @param speechProb Neural speech probability from RNNoise (0.0 - 1.0, or < 0 if unavailable).
      */
     public void process(short[] pcm, int offset, int length, float speechProb) {
+        process(pcm, offset, length, speechProb, 1.0f);
+    }
+
+    /**
+     * Ingests and processes a 10ms frame in-place with single-pass amplitude boost and soft saturation.
+     *
+     * @param pcm Array of 16-bit PCM samples.
+     * @param offset Offset into buffer.
+     * @param length Number of samples in the frame.
+     * @param speechProb Neural speech probability from RNNoise (0.0 - 1.0, or < 0 if unavailable).
+     * @param amplitudeBoost Static user amplitude boost multiplier.
+     */
+    public void process(short[] pcm, int offset, int length, float speechProb, float amplitudeBoost) {
         if (!mEnabled || pcm == null || length <= 0) {
             return;
         }
@@ -110,8 +123,9 @@ public class AdaptiveLeveler {
             mCurrentGain = Math.max(mCurrentGain - MAX_GAIN_SLEW_PER_FRAME, mTargetGain);
         }
 
-        // 4. In-frame linear gain interpolation with SoftLimiter saturation protection
-        if (prevGain == 1.0f && mCurrentGain == 1.0f) {
+        // 4. Unified single-pass sample scaling & SoftLimiter saturation
+        float boost = (amplitudeBoost > 0.0f) ? amplitudeBoost : 1.0f;
+        if (prevGain == 1.0f && mCurrentGain == 1.0f && boost == 1.0f) {
             return;
         }
 
@@ -119,7 +133,8 @@ public class AdaptiveLeveler {
         float gain = prevGain;
 
         for (int i = offset; i < offset + length; i++) {
-            pcm[i] = SoftLimiter.processSample(pcm[i], gain);
+            float effectiveGain = gain * boost;
+            pcm[i] = SoftLimiter.processSample(pcm[i], effectiveGain);
             gain += gainStep;
         }
     }

@@ -76,13 +76,10 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         // 2. Neural Denoising (RNNoise)
         float speechProb = m_rnnoise.process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
 
-        // 3. Speech-Gated Adaptive RMS Voice Leveling
+        // 3. Speech-Gated Adaptive RMS Voice Leveling & Amplitude Boost (Unified Single-Pass Saturation)
         if (m_leveler.isEnabled()) {
-            m_leveler.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb);
-        }
-
-        // 4. Amplitude boost with Soft-Knee Limiter
-        if (m_amplitudeBoost != 1.0f) {
+            m_leveler.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, m_amplitudeBoost);
+        } else if (m_amplitudeBoost != 1.0f) {
             SoftLimiter::processBuffer(m_processedFrame.data(), SAMPLES_PER_10MS, m_amplitudeBoost);
         }
 

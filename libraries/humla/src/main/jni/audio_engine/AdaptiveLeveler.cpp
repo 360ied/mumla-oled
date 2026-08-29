@@ -30,7 +30,7 @@ AdaptiveLeveler::AdaptiveLeveler(bool enabled, float targetRms)
       m_currentGain(1.0f),
       m_targetGain(1.0f) {}
 
-void AdaptiveLeveler::process(int16_t* pcm, size_t sampleCount, float speechProb) {
+void AdaptiveLeveler::process(int16_t* pcm, size_t sampleCount, float speechProb, float amplitudeBoost) {
     if (!m_enabled || pcm == nullptr || sampleCount == 0) {
         return;
     }
@@ -63,8 +63,9 @@ void AdaptiveLeveler::process(int16_t* pcm, size_t sampleCount, float speechProb
         m_currentGain = std::max(m_currentGain - MAX_GAIN_SLEW_PER_FRAME, m_targetGain);
     }
 
-    // 4. In-frame linear gain interpolation with SoftLimiter saturation protection
-    if (prevGain == 1.0f && m_currentGain == 1.0f) {
+    // 4. Unified single-pass sample scaling & SoftLimiter saturation
+    float boost = (amplitudeBoost > 0.0f) ? amplitudeBoost : 1.0f;
+    if (prevGain == 1.0f && m_currentGain == 1.0f && boost == 1.0f) {
         return;
     }
 
@@ -72,7 +73,8 @@ void AdaptiveLeveler::process(int16_t* pcm, size_t sampleCount, float speechProb
     float gain = prevGain;
 
     for (size_t i = 0; i < sampleCount; ++i) {
-        pcm[i] = SoftLimiter::processSample(pcm[i], gain);
+        float effectiveGain = gain * boost;
+        pcm[i] = SoftLimiter::processSample(pcm[i], effectiveGain);
         gain += gainStep;
     }
 }
