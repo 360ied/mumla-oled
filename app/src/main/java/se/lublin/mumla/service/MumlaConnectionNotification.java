@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service;
 
+import androidx.core.content.ContextCompat;
 import static android.app.PendingIntent.FLAG_CANCEL_CURRENT;
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.content.Context.RECEIVER_NOT_EXPORTED;
@@ -105,11 +106,8 @@ public class MumlaConnectionNotification {
         filter.addAction(BROADCAST_MUTE);
         filter.addAction(BROADCAST_OVERLAY);
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                mService.registerReceiver(mNotificationReceiver, filter, RECEIVER_NOT_EXPORTED);
-            } else {
-                mService.registerReceiver(mNotificationReceiver, filter);
-            }
+            ContextCompat.registerReceiver(mService, mNotificationReceiver, filter,
+                    ContextCompat.RECEIVER_NOT_EXPORTED);
         } catch (IllegalArgumentException e) {
             // Thrown if receiver is already registered.
             e.printStackTrace();
