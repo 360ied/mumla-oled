@@ -40,6 +40,12 @@
         android:title="@string/useTts"
         app:iconSpaceReserved="false" />
 
+    <ListPreference
+        android:key="ttsEngine"
+        android:summary="@string/ttsEngineSum"
+        android:title="@string/ttsEngine"
+        app:iconSpaceReserved="false" />
+
     <CheckBoxPreference
         android:defaultValue="false"
         android:key="shortTtsMessages"

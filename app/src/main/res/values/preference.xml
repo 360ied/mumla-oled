@@ -82,6 +82,11 @@
     <string name="hidePttSum">Only useful if you use Push-to-talk corner or physical key.</string>
     <string name="useTts">Text-to-speech</string>
     <string name="useTtsSum">Read incoming message aloud using speech synthesis.</string>
+    <string name="ttsEngine">Text-to-speech engine</string>
+    <string name="ttsEngineSum">Engine used to read messages aloud: %s</string>
+    <string name="ttsEngineSystemDefault">System default</string>
+    <string name="ttsEngineNoneAvailable">No alternative engines installed. Install a text-to-speech engine such as RHVoice to choose it here.</string>
+    <string name="ttsEngineDefaultSuffix">(default)</string>
     <string name="shortTtsMessages">Shortened text-to-speech messages</string>
     <string name="shortTtsMessagesSum">Shorten the messages by only reading the domain names of links.</string>
     <string name="togglePtt">Sticky Push-to-talk button</string>
