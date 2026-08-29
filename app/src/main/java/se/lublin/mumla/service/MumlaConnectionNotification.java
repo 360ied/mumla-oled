@@ -56,6 +56,7 @@ public class MumlaConnectionNotification {
     private String mCustomContentText;
     private boolean mActionsShown;
     private boolean mReconnectingShown;
+    private boolean mReceiverRegistered;
 
     private BroadcastReceiver mNotificationReceiver = new BroadcastReceiver() {
         @Override
@@ -89,6 +90,8 @@ public class MumlaConnectionNotification {
         mListener = listener;
         mCustomContentText = contentText;
         mActionsShown = false;
+        mReconnectingShown = false;
+        mReceiverRegistered = false;
     }
 
     public void setCustomContentText(String text) {
@@ -116,17 +119,20 @@ public class MumlaConnectionNotification {
     public void show() {
         createNotification();
 
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(BROADCAST_DEAFEN);
-        filter.addAction(BROADCAST_MUTE);
-        filter.addAction(BROADCAST_OVERLAY);
-        filter.addAction(BROADCAST_CANCEL_RECONNECT);
-        try {
-            ContextCompat.registerReceiver(mService, mNotificationReceiver, filter,
-                    ContextCompat.RECEIVER_NOT_EXPORTED);
-        } catch (IllegalArgumentException e) {
-            // Thrown if receiver is already registered.
-            e.printStackTrace();
+        if (!mReceiverRegistered) {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(BROADCAST_DEAFEN);
+            filter.addAction(BROADCAST_MUTE);
+            filter.addAction(BROADCAST_OVERLAY);
+            filter.addAction(BROADCAST_CANCEL_RECONNECT);
+            try {
+                ContextCompat.registerReceiver(mService, mNotificationReceiver, filter,
+                        ContextCompat.RECEIVER_NOT_EXPORTED);
+                mReceiverRegistered = true;
+            } catch (IllegalArgumentException e) {
+                // Thrown if receiver is already registered.
+                e.printStackTrace();
+            }
         }
     }
 
@@ -134,11 +140,14 @@ public class MumlaConnectionNotification {
      * Hides the notification and unregisters the action receiver.
      */
     public void hide() {
-        try {
-            mService.unregisterReceiver(mNotificationReceiver);
-        } catch (IllegalArgumentException e) {
-            // Thrown if receiver is not registered.
-            e.printStackTrace();
+        if (mReceiverRegistered) {
+            try {
+                mService.unregisterReceiver(mNotificationReceiver);
+            } catch (IllegalArgumentException e) {
+                // Thrown if receiver is not registered.
+                e.printStackTrace();
+            }
+            mReceiverRegistered = false;
         }
         mService.stopForeground(true);
     }
@@ -174,7 +183,7 @@ public class MumlaConnectionNotification {
             Intent cancelIntent = new Intent(BROADCAST_CANCEL_RECONNECT);
             cancelIntent.setPackage(mService.getPackageName());
             builder.addAction(R.drawable.ic_action_delete_dark,
-                    mService.getString(R.string.cancel_reconnect), PendingIntent.getBroadcast(mService, 3,
+                    mService.getString(R.string.cancel_reconnect), PendingIntent.getBroadcast(mService, 4,
                             cancelIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
         } else if (mActionsShown) {
             // Add notification triggers
@@ -189,10 +198,10 @@ public class MumlaConnectionNotification {
                     mService.getString(R.string.mute), PendingIntent.getBroadcast(mService, 1,
                             muteIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
             builder.addAction(R.drawable.ic_action_audio,
-                    mService.getString(R.string.deafen), PendingIntent.getBroadcast(mService, 1,
+                    mService.getString(R.string.deafen), PendingIntent.getBroadcast(mService, 2,
                             deafenIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
             builder.addAction(R.drawable.ic_action_channels,
-                    mService.getString(R.string.overlay), PendingIntent.getBroadcast(mService, 2,
+                    mService.getString(R.string.overlay), PendingIntent.getBroadcast(mService, 3,
                             overlayIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
         }
 
