@@ -84,8 +84,11 @@
     <string name="offline">Hors ligne</string>
     <string name="clearChat">Effacer la discussion</string>
     <string name="connected">Connecté</string>
+    <string name="reconnected">Reconnecté</string>
     <string name="mumlaConnecting">Mumla en connexion…</string>
     <string name="mumlaDisconnected">Mumla déconnecté</string>
+    <string name="disconnected">Déconnecté</string>
+    <string name="tts_disconnected_reason">Déconnecté : %s</string>
     <string name="channel">Salon</string>
     <string name="user">Utilisateur</string>
     <string name="unknown">Inconnu</string>

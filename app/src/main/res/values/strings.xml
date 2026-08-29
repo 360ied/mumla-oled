@@ -110,8 +110,11 @@
     <string name="offline">Offline</string>
     <string name="clearChat">Clear Chat</string>
     <string name="connected">Connected</string>
+    <string name="reconnected">Reconnected</string>
     <string name="mumlaConnecting">Mumla connecting…</string>
     <string name="mumlaDisconnected">Mumla disconnected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="tts_disconnected_reason">Disconnected: %s</string>
     <string name="channel">Channel</string>
     <string name="user">User</string>
     <string name="unknown">Unknown</string>
