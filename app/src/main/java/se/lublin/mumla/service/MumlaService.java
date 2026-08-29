@@ -23,6 +23,7 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.media.AudioManager;
 import android.net.Uri;
+import android.annotation.SuppressLint;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -530,11 +531,15 @@ public class MumlaService extends HumlaService implements
     }
 
     @Override
+    @SuppressLint("MissingPermission")
     public void onOverlayToggled() {
         // Ditch notification shade/panel to make overlay presence/permission request visible.
         // But on Android 12 that's no longer allowed.
+        // BROADCAST_CLOSE_SYSTEM_DIALOGS is only held by system apps on S+, and the
+        // send below only runs pre-S where the permission is not required — lint
+        // cannot model that, so suppress its (incorrect) MissingPermission finding.
+        Intent close = new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            Intent close = new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
             getApplicationContext().sendBroadcast(close);
         }
 
