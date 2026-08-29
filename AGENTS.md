@@ -25,8 +25,15 @@
     - **Edge Cases & Impact**: Handled boundary conditions, defensive checks, or protocol parity considerations.
 - **Forward-Only History**: Never rewrite, rebase, squash, or force-push existing git history.
 
+## Verification
+- **Pre-Completion Check**: Run `./scripts/check.sh` before completing any task.
+- **Fast Unit Tests**: FOSS debug unit tests via `nix develop --command ./gradlew testFossDebugUnitTest` (~4s).
+- **Full Test Suite** (when required): `nix develop --command ./gradlew test` (~24s).
+
 ## Build & Deployment
-- **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor (e.g., `./gradlew assembleFossDebug`).
+- **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor. Build with the Nix dev shell:
+  - Debug APK: `nix develop --command ./gradlew assembleFossDebug`
+  - Release APK: `nix develop --command ./gradlew assembleFossRelease` (output: `app/build/outputs/apk/foss/release/mumla-foss-release.apk`)
 - **ADB Launch**: Application ID is `se.lublin.mumla.oled15` (Java namespace is `se.lublin.mumla`). Launch with:
   ```bash
   adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
