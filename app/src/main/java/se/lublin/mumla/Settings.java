@@ -158,6 +158,12 @@ public class Settings {
     public static final String PREF_START_UP_IN_PINNED_MODE = "startUpInPinnedMode";
     public static final boolean DEFAULT_START_UP_IN_PINNED_MODE = false;
 
+    public static final String PREF_OVERLAY_SHOWN = "overlay_shown";
+    public static final boolean DEFAULT_OVERLAY_SHOWN = false;
+
+    public static final String PREF_OVERLAY_POS_X = "overlay_hud_pos_x";
+    public static final String PREF_OVERLAY_POS_Y = "overlay_hud_pos_y";
+
     public static final String PREF_NEWS_SHOWN_VERSIONS = "newsShownVersions";
 
     static {
@@ -175,6 +181,10 @@ public class Settings {
 
     private Settings(Context ctx) {
         preferences = PreferenceManager.getDefaultSharedPreferences(ctx);
+    }
+
+    Settings(SharedPreferences prefs) {
+        preferences = prefs;
     }
 
     public String getInputMethod() {
@@ -408,6 +418,14 @@ public class Settings {
 
     public boolean shouldStartUpInPinnedMode() {
         return preferences.getBoolean(PREF_START_UP_IN_PINNED_MODE, DEFAULT_START_UP_IN_PINNED_MODE);
+    }
+
+    public boolean isOverlayShown() {
+        return preferences.getBoolean(PREF_OVERLAY_SHOWN, DEFAULT_OVERLAY_SHOWN);
+    }
+
+    public void setOverlayShown(boolean shown) {
+        preferences.edit().putBoolean(PREF_OVERLAY_SHOWN, shown).apply();
     }
 
     public Set<String> getNewsShownVersions() {

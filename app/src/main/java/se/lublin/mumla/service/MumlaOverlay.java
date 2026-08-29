@@ -38,6 +38,7 @@ import se.lublin.humla.model.IUser;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 import se.lublin.mumla.channel.ChannelAdapter;
 
 /**
@@ -45,9 +46,6 @@ import se.lublin.mumla.channel.ChannelAdapter;
  */
 public class MumlaOverlay {
     private static final String TAG = MumlaOverlay.class.getName();
-
-    private static final String PREF_OVERLAY_POS_X = "overlay_hud_pos_x";
-    private static final String PREF_OVERLAY_POS_Y = "overlay_hud_pos_y";
 
     private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
@@ -242,8 +240,8 @@ public class MumlaOverlay {
         int defaultY = (int) (80 * dm.density);
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
-        int savedX = prefs.getInt(PREF_OVERLAY_POS_X, defaultX);
-        int savedY = prefs.getInt(PREF_OVERLAY_POS_Y, defaultY);
+        int savedX = prefs.getInt(Settings.PREF_OVERLAY_POS_X, defaultX);
+        int savedY = prefs.getInt(Settings.PREF_OVERLAY_POS_Y, defaultY);
 
         int maxX = Math.max(0, dm.widthPixels - (int) (120 * dm.density));
         int maxY = Math.max(0, dm.heightPixels - (int) (60 * dm.density));
@@ -255,8 +253,8 @@ public class MumlaOverlay {
     private void savePosition() {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
         prefs.edit()
-                .putInt(PREF_OVERLAY_POS_X, mOverlayParams.x)
-                .putInt(PREF_OVERLAY_POS_Y, mOverlayParams.y)
+                .putInt(Settings.PREF_OVERLAY_POS_X, mOverlayParams.x)
+                .putInt(Settings.PREF_OVERLAY_POS_Y, mOverlayParams.y)
                 .apply();
     }
 

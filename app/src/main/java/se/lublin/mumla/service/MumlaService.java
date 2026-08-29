@@ -448,6 +448,10 @@ public class MumlaService extends HumlaService implements
             mHotCorner.setShown(false);
         }
 
+        if (mChannelOverlay != null && mChannelOverlay.isShown()) {
+            mChannelOverlay.hide();
+        }
+
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.unregisterOnSharedPreferenceChangeListener(this);
         try {
@@ -488,6 +492,16 @@ public class MumlaService extends HumlaService implements
         // Restore mute/deafen state
         if(mSettings.isMuted() || mSettings.isDeafened()) {
             setSelfMuteDeafState(mSettings.isMuted(), mSettings.isDeafened());
+        }
+
+        // Restore overlay state
+        if (mSettings.isOverlayShown()) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                    android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+                if (!mChannelOverlay.isShown()) {
+                    mChannelOverlay.show();
+                }
+            }
         }
 
         ContextCompat.registerReceiver(this, mTalkReceiver,
@@ -563,6 +577,9 @@ public class MumlaService extends HumlaService implements
                 break;
             case Settings.PREF_THEME:
                 MumlaApplication.applyTheme(this);
+                break;
+            case Settings.PREF_OVERLAY_SHOWN:
+                setOverlayShown(mSettings.isOverlayShown());
                 break;
             case Settings.PREF_AMPLITUDE_BOOST:
                 changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
@@ -678,8 +695,11 @@ public class MumlaService extends HumlaService implements
 
     @Override
     public void setOverlayShown(boolean showOverlay) {
+        if (mSettings.isOverlayShown() != showOverlay) {
+            mSettings.setOverlayShown(showOverlay);
+        }
         if (showOverlay) {
-            if (!mChannelOverlay.isShown()) {
+            if (isConnectionEstablished() && !mChannelOverlay.isShown()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     if (!android.provider.Settings.canDrawOverlays(getApplicationContext())) {
                         Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
