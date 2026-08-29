@@ -13,6 +13,8 @@ import unittest
 from unittest.mock import patch, MagicMock
 from scripts.commit import (
     format_commit_message,
+    is_git_merge_in_progress,
+    is_merge_commit,
     main,
     validate_tripartite_body,
     MAX_SUBJECT,
@@ -163,6 +165,50 @@ class TestCommitFormatter(unittest.TestCase):
         formatted, err = format_commit_message(raw)
         self.assertIsNotNone(err)
         self.assertIn("exceeds 50 characters", err)
+
+    def test_merge_commit_subject_over_50_chars_allowed(self):
+        subjects = [
+            "chore: merge branch 'feature/adaptive-voice-leveler-and-noise-suppression'",
+            "Merge branch 'bugfix/rnnoise-model-free-fclose' into master",
+            "Merge remote-tracking branch 'origin/feature/adaptive-voice-leveler'",
+            "merge: branch 'feature/adaptive-voice-leveler-and-noise-suppression'",
+            "chore(merge): branch 'feature/adaptive-voice-leveler-and-noise-suppression'",
+        ]
+        for subject in subjects:
+            raw = f"{subject}\n\n{COMPLIANT_BODY}"
+            formatted, err = format_commit_message(raw)
+            self.assertIsNone(err, f"Expected no error for merge subject: {subject}")
+            self.assertTrue(formatted.startswith(subject))
+
+    def test_non_merge_commit_subject_over_50_chars_rejected(self):
+        long_subjects = [
+            "docs: this subject line is way longer than fifty characters limit in git rule",
+            "audio: merge two audio streams in mixer and handle buffer underruns",
+            "feat: implement a brand new feature that has a really long commit subject",
+        ]
+        for subject in long_subjects:
+            raw = f"{subject}\n\n{COMPLIANT_BODY}"
+            formatted, err = format_commit_message(raw)
+            self.assertIsNotNone(err, f"Expected error for non-merge subject: {subject}")
+            self.assertIn("exceeds 50 characters", err)
+
+    def test_explicit_is_merge_override(self):
+        # Force is_merge=True on non-merge prefix
+        raw = "app: very long subject line that exceeds fifty characters limit\n\n" + COMPLIANT_BODY
+        formatted, err = format_commit_message(raw, is_merge=True)
+        self.assertIsNone(err)
+
+        # Force is_merge=False on merge prefix
+        raw_merge = "chore: merge branch 'feature/very-long-branch-name-exceeding-fifty-chars'\n\n" + COMPLIANT_BODY
+        formatted, err = format_commit_message(raw_merge, is_merge=False)
+        self.assertIsNotNone(err)
+        self.assertIn("exceeds 50 characters", err)
+
+    @patch("scripts.commit.is_git_merge_in_progress", return_value=True)
+    def test_git_merge_in_progress_allows_long_subject(self, mock_is_git_merge):
+        raw = "app: ongoing merge with extra long subject line that exceeds fifty characters\n\n" + COMPLIANT_BODY
+        formatted, err = format_commit_message(raw)
+        self.assertIsNone(err)
 
     def test_paragraph_wrapping_at_72(self):
         raw = """docs: update installation notes
@@ -338,6 +384,27 @@ class TestCLIIntegration(unittest.TestCase):
         proc = self.run_cli(["--check", "--no-body-check", "-m", "docs: valid subject"])
         self.assertEqual(proc.returncode, 0)
         self.assertIn("OK:", proc.stdout)
+
+    def test_cli_check_merge_commit_long_subject_with_tripartite_body(self):
+        raw = (
+            "chore: merge branch 'feature/long-branch-name-exceeding-fifty-chars'\n\n"
+            + COMPLIANT_BODY
+        )
+        proc = self.run_cli(["--check", "-m", raw])
+        self.assertEqual(proc.returncode, 0, f"stderr: {proc.stderr}")
+        self.assertIn("OK:", proc.stdout)
+
+    def test_cli_check_bare_merge_commit_long_subject(self):
+        raw = "Merge branch 'feature/long-branch-name-exceeding-fifty-chars' into master"
+        proc = self.run_cli(["--check", "-m", raw])
+        self.assertEqual(proc.returncode, 0, f"stderr: {proc.stderr}")
+        self.assertIn("OK:", proc.stdout)
+
+    def test_cli_check_merge_commit_missing_body_fails(self):
+        raw = "chore: merge branch 'feature/long-branch-name-exceeding-fifty-chars'"
+        proc = self.run_cli(["--check", "-m", raw])
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("[body-missing]", proc.stderr)
 
     @patch("subprocess.run")
     def test_cli_stdin(self, mock_run):
