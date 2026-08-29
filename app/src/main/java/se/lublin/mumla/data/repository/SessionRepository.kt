@@ -34,12 +34,13 @@ import se.lublin.mumla.data.model.ConnectionStatus
 import se.lublin.mumla.data.model.SessionUiState
 import se.lublin.mumla.data.model.TreeItem
 import se.lublin.mumla.service.IMumlaService
+import java.util.concurrent.ConcurrentHashMap
 
 class SessionRepository(
     private val scope: CoroutineScope
 ) {
     private var service: IMumlaService? = null
-    private val expandedChannels = mutableMapOf<Int, Boolean>()
+    private val expandedChannels = ConcurrentHashMap<Int, Boolean>()
 
     private val _sessionState = MutableStateFlow(SessionUiState())
     val sessionState: StateFlow<SessionUiState> = _sessionState.asStateFlow()
@@ -143,10 +144,11 @@ class SessionRepository(
         val session = service?.HumlaSession() ?: return
         val user = session.sessionUser ?: return
         val newDeaf = !user.isSelfDeafened
-        session.setSelfMuteDeafState(if (newDeaf) true else user.isSelfMuted, newDeaf)
+        val newMute = if (newDeaf) true else false // Undeafening also clears forced mute
+        session.setSelfMuteDeafState(newMute, newDeaf)
         _sessionState.value = _sessionState.value.copy(
             isSelfDeafened = newDeaf,
-            isSelfMuted = if (newDeaf) true else _sessionState.value.isSelfMuted
+            isSelfMuted = newMute
         )
     }
 

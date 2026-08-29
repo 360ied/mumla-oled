@@ -39,8 +39,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -66,19 +66,15 @@ fun UserAvatar(
     val talkColor = if (talkState == TalkState.WHISPERING) voiceColors.talkingWhisper else voiceColors.talking
 
     val infiniteTransition = rememberInfiniteTransition(label = "TalkHaloPulse")
-    val pulseScale by if (isTalking) {
-        infiniteTransition.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.15f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 650),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "pulseScale"
-        )
-    } else {
-        androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(1.0f) }
-    }
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 650),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
 
     Box(
         modifier = modifier.size(size + 8.dp),
@@ -89,7 +85,10 @@ fun UserAvatar(
             Box(
                 modifier = Modifier
                     .size(size + 6.dp)
-                    .scale(pulseScale)
+                    .graphicsLayer {
+                        scaleX = pulseScale
+                        scaleY = pulseScale
+                    }
                     .clip(CircleShape)
                     .border(2.5.dp, talkColor.copy(alpha = 0.7f), CircleShape)
             )

@@ -66,11 +66,11 @@ fun ServerEditSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var name by remember { mutableStateOf(server?.name ?: "") }
-    var host by remember { mutableStateOf(server?.host ?: "") }
-    var portText by remember { mutableStateOf(if ((server?.port ?: 0) > 0) server!!.port.toString() else "64738") }
-    var username by remember { mutableStateOf(server?.username ?: "") }
-    var password by remember { mutableStateOf(server?.password ?: "") }
+    var name by remember(server?.id) { mutableStateOf(server?.name ?: "") }
+    var host by remember(server?.id) { mutableStateOf(server?.host ?: "") }
+    var portText by remember(server?.id) { mutableStateOf(if ((server?.port ?: 0) > 0) server!!.port.toString() else "64738") }
+    var username by remember(server?.id) { mutableStateOf(server?.username ?: "") }
+    var password by remember(server?.id) { mutableStateOf(server?.password ?: "") }
 
     var hostError by remember { mutableStateOf(false) }
     var usernameError by remember { mutableStateOf(false) }
@@ -195,7 +195,7 @@ fun ServerEditSheet(
                             return@Button
                         }
 
-                        val parsedPort = portText.toIntOrNull() ?: 64738
+                        val parsedPort = (portText.toIntOrNull() ?: 64738).coerceIn(1, 65535)
                         val finalName = if (name.isBlank()) host else name
                         val targetServer = if (server != null) {
                             server.name = finalName

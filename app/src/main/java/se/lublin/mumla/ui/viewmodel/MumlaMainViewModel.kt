@@ -44,19 +44,10 @@ class MumlaMainViewModel(
     val chatRepository = ChatRepository(viewModelScope)
 
     val servers: StateFlow<List<ServerCardUiState>> = serverRepository.servers
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     val sessionState: StateFlow<SessionUiState> = sessionRepository.sessionState
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SessionUiState())
-
     val treeItems: StateFlow<List<TreeItem>> = sessionRepository.treeItems
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     val messages: StateFlow<List<ChatMessageUiState>> = chatRepository.messages
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     val chatTarget: StateFlow<ChatTargetUiState> = chatRepository.chatTarget
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatTargetUiState())
 
     init {
         viewModelScope.launch {
@@ -75,6 +66,12 @@ class MumlaMainViewModel(
     }
 
     fun onServiceUnbound() {
+        sessionRepository.detachService()
+        chatRepository.detachService()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
         sessionRepository.detachService()
         chatRepository.detachService()
     }

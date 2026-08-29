@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.ui.navigation
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -121,6 +122,14 @@ fun MumlaAppScaffold(
         if (sessionState.status == ConnectionStatus.SYNCHRONIZED) {
             currentScreen = ScreenDestination.VOICE_CHAT
         }
+    }
+
+    // Handle back button for closing drawer or returning to server list
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+    BackHandler(enabled = !drawerState.isOpen && currentScreen != ScreenDestination.SERVERS) {
+        currentScreen = ScreenDestination.SERVERS
     }
 
     ModalNavigationDrawer(

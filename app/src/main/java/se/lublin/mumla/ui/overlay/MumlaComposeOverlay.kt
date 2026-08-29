@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -66,6 +67,7 @@ fun MumlaFloatingOverlay(
     Box(
         modifier = modifier
             .width(220.dp)
+            .heightIn(max = 280.dp)
             .clip(shape)
             .background(Color(0xE6000000))
             .border(1.dp, OledBorder, shape)

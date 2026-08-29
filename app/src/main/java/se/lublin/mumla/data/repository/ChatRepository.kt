@@ -102,10 +102,15 @@ class ChatRepository(
         _chatTarget.value = target
     }
 
-    fun sendMessage(textHtml: String) {
-        if (textHtml.isBlank()) return
+    companion object {
+        private const val MAX_MESSAGES = 500
+    }
+
+    fun sendMessage(text: String) {
+        if (text.isBlank()) return
         val svc = service ?: return
         val session = svc.HumlaSession() ?: return
+        val encodedHtml = android.text.TextUtils.htmlEncode(text.trim())
 
         scope.launch(Dispatchers.IO) {
             try {
@@ -114,18 +119,18 @@ class ChatRepository(
                     ChatTargetMode.CURRENT_CHANNEL -> {
                         val currentChan = session.sessionUser?.channel
                         if (currentChan != null) {
-                            session.sendChannelTextMessage(currentChan.id, textHtml, false)
+                            session.sendChannelTextMessage(currentChan.id, encodedHtml, false)
                         }
                     }
                     ChatTargetMode.SUBCHANNEL_TREE -> {
                         val currentChan = session.sessionUser?.channel
                         if (currentChan != null) {
-                            session.sendChannelTextMessage(currentChan.id, textHtml, true)
+                            session.sendChannelTextMessage(currentChan.id, encodedHtml, true)
                         }
                     }
                     ChatTargetMode.PRIVATE_USER -> {
                         if (target.targetId >= 0) {
-                            session.sendUserTextMessage(target.targetId, textHtml)
+                            session.sendUserTextMessage(target.targetId, encodedHtml)
                         }
                     }
                 }
@@ -142,7 +147,11 @@ class ChatRepository(
     private fun addMessage(message: ChatMessageUiState) {
         val current = _messages.value.toMutableList()
         current.add(0, message) // Prepend so latest is index 0 for reverseLayout LazyColumn
-        _messages.value = current
+        if (current.size > MAX_MESSAGES) {
+            _messages.value = current.take(MAX_MESSAGES)
+        } else {
+            _messages.value = current
+        }
     }
 
     private fun addSystemLog(logText: String, type: LogMessageType) {

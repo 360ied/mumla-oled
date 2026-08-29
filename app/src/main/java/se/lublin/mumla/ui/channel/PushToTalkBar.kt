@@ -134,13 +134,16 @@ fun PushToTalkBar(
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onPress = {
-                            isPressed = true
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
-                            onTalkKeyDown()
-                            tryAwaitRelease()
-                            isPressed = false
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_RELEASE)
-                            onTalkKeyUp()
+                            try {
+                                isPressed = true
+                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_PRESS)
+                                onTalkKeyDown()
+                                tryAwaitRelease()
+                            } finally {
+                                isPressed = false
+                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_RELEASE)
+                                onTalkKeyUp()
+                            }
                         }
                     )
                 },

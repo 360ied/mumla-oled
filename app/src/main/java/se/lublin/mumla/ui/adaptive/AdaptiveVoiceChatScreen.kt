@@ -80,8 +80,8 @@ fun AdaptiveVoiceChatScreen(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val screenWidthDp = configuration.screenWidthDp
 
-    // Wide screen / Dual-pane trigger: Tablets or Landscape with width >= 600dp
-    val isWideScreen = screenWidthDp >= 600 || isLandscape
+    // Wide screen / Dual-pane trigger: Tablets and Large Foldables with width >= 600dp
+    val isWideScreen = screenWidthDp >= 600
 
     if (isWideScreen) {
         // Dual-Pane Layout: Channels on Left, Chat on Right

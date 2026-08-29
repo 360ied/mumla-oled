@@ -48,7 +48,7 @@ fun VuMeter(
     modifier: Modifier = Modifier
 ) {
     val voiceColors = LocalVoiceColors.current
-    val animatedLevel by animateFloatAsState(
+    val animatedLevelState = animateFloatAsState(
         targetValue = currentLevel.coerceIn(0f, 1f),
         animationSpec = tween(durationMillis = 60),
         label = "vuLevel"
@@ -65,14 +65,15 @@ fun VuMeter(
             .border(1.dp, Color(0xFF262626), shape)
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
+            val level = animatedLevelState.value
             val width = size.width
             val height = size.height
 
-            val levelWidth = width * animatedLevel
+            val levelWidth = width * level
             val thresholdX = width * threshold.coerceIn(0f, 1f)
 
             // Draw level bar
-            val isAboveThreshold = animatedLevel >= threshold
+            val isAboveThreshold = level >= threshold
             val barColor = if (isAboveThreshold) voiceColors.talking else Color(0xFF555555)
 
             drawRect(

@@ -44,6 +44,7 @@ private val OledDarkColorScheme = darkColorScheme(
     surfaceContainerLowest = OledBlack,
     surfaceContainerHigh = Color(0xFF0F0F0F),
     surfaceContainerHighest = Color(0xFF1A1A1A),
+    surfaceTint = Color.Transparent,
     outline = OledBorder,
     outlineVariant = OledBorderSubtle
 )
