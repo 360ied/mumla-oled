@@ -35,6 +35,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
 import se.lublin.mumla.R;
 import se.lublin.mumla.channel.ChannelAdapter;
@@ -51,15 +52,31 @@ public class MumlaOverlay {
     private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onUserTalkStateUpdated(IUser user) {
-            if (mChannelAdapter != null) {
+            if (mChannelAdapter != null && user != null && user.getChannel() != null
+                    && user.getChannel().equals(mService.getSessionChannel())) {
                 mChannelAdapter.notifyDataSetChanged();
             }
         }
 
         @Override
         public void onUserStateUpdated(IUser user) {
-            if (mChannelAdapter != null && user.getChannel() != null
+            if (mChannelAdapter != null && user != null && user.getChannel() != null
                     && user.getChannel().equals(mService.getSessionChannel())) {
+                mChannelAdapter.notifyDataSetChanged();
+            }
+        }
+
+        @Override
+        public void onUserConnected(IUser user) {
+            if (mChannelAdapter != null && user != null && user.getChannel() != null
+                    && user.getChannel().equals(mService.getSessionChannel())) {
+                mChannelAdapter.notifyDataSetChanged();
+            }
+        }
+
+        @Override
+        public void onUserRemoved(IUser user, String reason) {
+            if (mChannelAdapter != null) {
                 mChannelAdapter.notifyDataSetChanged();
             }
         }
@@ -84,6 +101,20 @@ public class MumlaOverlay {
                 }
             }
         }
+
+        @Override
+        public void onConnected() {
+            if (mChannelAdapter != null) {
+                mChannelAdapter.setChannel(mService.getSessionChannel());
+            }
+        }
+
+        @Override
+        public void onDisconnected(HumlaException e) {
+            if (mChannelAdapter != null) {
+                mChannelAdapter.setChannel(null);
+            }
+        }
     };
 
     private final MumlaService mService;
@@ -106,6 +137,34 @@ public class MumlaOverlay {
         mOverlayView = View.inflate(service, R.layout.overlay, null);
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list);
         mOverlayList.setLayoutManager(new LinearLayoutManager(service));
+
+        mOverlayView.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                if (!mShown) {
+                    return;
+                }
+                DisplayMetrics dm = mService.getResources().getDisplayMetrics();
+                int viewWidth = mOverlayView.getWidth();
+                int viewHeight = mOverlayView.getHeight();
+                if (viewWidth > 0 && viewHeight > 0) {
+                    int maxX = Math.max(0, dm.widthPixels - viewWidth);
+                    int maxY = Math.max(0, dm.heightPixels - viewHeight);
+                    int clampedX = Math.max(0, Math.min(mOverlayParams.x, maxX));
+                    int clampedY = Math.max(0, Math.min(mOverlayParams.y, maxY));
+                    if (clampedX != mOverlayParams.x || clampedY != mOverlayParams.y) {
+                        mOverlayParams.x = clampedX;
+                        mOverlayParams.y = clampedY;
+                        try {
+                            mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
+                        } catch (IllegalArgumentException e) {
+                            Log.d(TAG, "exception updating overlay layout on layout change: " + e);
+                        }
+                    }
+                }
+            }
+        });
 
         OverlayLayout overlayLayout = (OverlayLayout) mOverlayView;
         final int touchSlop = ViewConfiguration.get(service).getScaledTouchSlop();
@@ -213,8 +272,16 @@ public class MumlaOverlay {
         mChannelAdapter = new ChannelAdapter(mService, mService.getSessionChannel());
         mOverlayList.setAdapter(mChannelAdapter);
         mService.registerObserver(mObserver);
-        mWindowManager.addView(mOverlayView, mOverlayParams);
-        mShown = true;
+        try {
+            mWindowManager.addView(mOverlayView, mOverlayParams);
+            mShown = true;
+        } catch (Exception e) {
+            Log.e(TAG, "exception showing overlay: " + e);
+            mService.unregisterObserver(mObserver);
+            mOverlayList.setAdapter(null);
+            mChannelAdapter = null;
+            mShown = false;
+        }
     }
 
     public void hide() {
@@ -224,6 +291,7 @@ public class MumlaOverlay {
         mShown = false;
         mService.unregisterObserver(mObserver);
         mOverlayList.setAdapter(null);
+        mChannelAdapter = null;
         try {
             mWindowManager.removeView(mOverlayView);
         } catch (IllegalArgumentException e) {
