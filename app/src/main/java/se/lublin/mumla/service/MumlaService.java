@@ -185,6 +185,15 @@ public class MumlaService extends HumlaService implements
         @Override
         public void onDisconnected(HumlaException e) {
             if (isReconnecting()) {
+                if (!mWasReconnecting) {
+                    String ttsMsg;
+                    if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
+                        ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
+                    } else {
+                        ttsMsg = getString(R.string.disconnected);
+                    }
+                    speakTts(ttsMsg);
+                }
                 mWasReconnecting = true;
                 String errorMsg = e != null ? e.getMessage() : getString(R.string.mumlaDisconnected);
                 if (mNotification == null) {
@@ -199,14 +208,14 @@ public class MumlaService extends HumlaService implements
                     mNotification.hide();
                     mNotification = null;
                 }
+                String ttsMsg;
+                if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
+                    ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
+                } else {
+                    ttsMsg = getString(R.string.disconnected);
+                }
+                speakTts(ttsMsg);
             }
-            String ttsMsg;
-            if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
-                ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
-            } else {
-                ttsMsg = getString(R.string.disconnected);
-            }
-            speakTts(ttsMsg);
         }
 
         @Override
