@@ -69,6 +69,16 @@ public interface IHumlaService {
     boolean isReconnecting();
 
     /**
+     * Returns the current number of reconnection attempts made so far.
+     */
+    int getReconnectAttempts();
+
+    /**
+     * Returns the backoff delay (in milliseconds) for the current reconnection attempt.
+     */
+    int getReconnectDelay();
+
+    /**
      * Cancels any future reconnection attempts. Does nothing if reconnection is not in progress.
      */
     void cancelReconnect();

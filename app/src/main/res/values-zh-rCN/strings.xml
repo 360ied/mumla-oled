@@ -85,8 +85,11 @@
     <string name="offline">离线</string>
     <string name="clearChat">清除聊天记录</string>
     <string name="connected">已连接</string>
+    <string name="reconnected">已重新连接</string>
     <string name="mumlaConnecting">Mumla 正在连接…</string>
     <string name="mumlaDisconnected">Mumla 已断开连接</string>
+    <string name="disconnected">已断开连接</string>
+    <string name="tts_disconnected_reason">已断开连接：%s</string>
     <string name="channel">频道</string>
     <string name="user">用户</string>
     <string name="unknown">未知</string>
@@ -96,6 +99,12 @@
     <string name="shareMessage">用 Mumla 加入这个 Mumble 服务器。%s</string>
     <string name="status_notify_muted_and_deafened">已关闭麦克风和扬声器。</string>
     <string name="status_notify_muted">已关闭麦克风。</string>
+    <string name="status_notify_deafened">已关闭扬声器。</string>
+    <string name="notification_reconnecting_title">正在重新连接到 %s…</string>
+    <string name="notification_reconnect_attempt">尝试第 %d 次</string>
+    <string name="notification_reconnect_attempt_delay">尝试第 %1$d 次（%2$d 秒）</string>
+    <string name="notification_reconnect_expanded">错误：%1$s\n尝试：第 %2$d 次（%3$d 秒后重试）\n服务器：%4$s</string>
+    <string name="notification_connected_expanded">频道：%1$s\n状态：%2$s\n服务器：%3$s</string>
     <string name="close">关闭</string>
     <string name="information">信息</string>
     <string name="overlay">浮窗</string>

@@ -110,8 +110,11 @@
     <string name="offline">Offline</string>
     <string name="clearChat">Clear Chat</string>
     <string name="connected">Connected</string>
+    <string name="reconnected">Reconnected</string>
     <string name="mumlaConnecting">Mumla connecting…</string>
     <string name="mumlaDisconnected">Mumla disconnected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="tts_disconnected_reason">Disconnected: %s</string>
     <string name="channel">Channel</string>
     <string name="user">User</string>
     <string name="unknown">Unknown</string>
@@ -121,6 +124,12 @@
     <string name="shareMessage">Join this Mumble server with Mumla. %s</string>
     <string name="status_notify_muted_and_deafened">Muted and deafened.</string>
     <string name="status_notify_muted">Muted.</string>
+    <string name="status_notify_deafened">Deafened.</string>
+    <string name="notification_reconnecting_title">Reconnecting to %s…</string>
+    <string name="notification_reconnect_attempt">Attempt %d</string>
+    <string name="notification_reconnect_attempt_delay">Attempt %1$d (%2$ds)</string>
+    <string name="notification_reconnect_expanded">Error: %1$s\nAttempt: %2$d (Next retry in %3$ds)\nServer: %4$s</string>
+    <string name="notification_connected_expanded">Channel: %1$s\nStatus: %2$s\nServer: %3$s</string>
     <string name="close">Close</string>
     <string name="information">Information</string>
     <string name="overlay">Overlay</string>

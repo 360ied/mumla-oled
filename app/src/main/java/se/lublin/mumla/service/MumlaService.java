@@ -50,9 +50,12 @@ import java.util.List;
 import se.lublin.humla.Constants;
 import se.lublin.humla.HumlaService;
 import se.lublin.humla.exception.AudioException;
+import se.lublin.humla.model.Channel;
+import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.model.Message;
+import se.lublin.humla.model.Server;
 import se.lublin.humla.model.TalkState;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
@@ -67,19 +70,16 @@ import se.lublin.mumla.util.HtmlUtils;
  */
 public class MumlaService extends HumlaService implements
         SharedPreferences.OnSharedPreferenceChangeListener,
-        MumlaConnectionNotification.OnActionListener,
-        MumlaReconnectNotification.OnActionListener, IMumlaService {
+        MumlaConnectionNotification.OnActionListener, IMumlaService {
     private static final String TAG = MumlaService.class.getName();
 
     /** Undocumented constant that permits a proximity-sensing wake lock. */
     public static final int PROXIMITY_SCREEN_OFF_WAKE_LOCK = 32;
     public static final int TTS_THRESHOLD = 250; // Maximum number of characters to read
-    public static final int RECONNECT_DELAY = 10000;
 
     private Settings mSettings;
     private MumlaConnectionNotification mNotification;
     private MumlaMessageNotification mMessageNotification;
-    private MumlaReconnectNotification mReconnectNotification;
     /** Channel view overlay. */
     private MumlaOverlay mChannelOverlay;
     /** Proximity lock for handset mode. */
@@ -95,8 +95,18 @@ public class MumlaService extends HumlaService implements
     private boolean mErrorShown;
     private List<IChatMessage> mMessageLog;
     private boolean mSuppressNotifications;
+    private boolean mWasReconnecting;
 
     private TextToSpeech mTTS;
+
+    /**
+     * Helper to speak a text message using TextToSpeech with QUEUE_ADD queuing.
+     */
+    private void speakTts(String message) {
+        if (mSettings.isTextToSpeechEnabled() && mTTS != null && message != null && !message.isEmpty()) {
+            mTTS.speak(message, TextToSpeech.QUEUE_ADD, null, null);
+        }
+    }
 
     /**
      * (Re)bind the text-to-speech engine: shuts down any existing
@@ -144,43 +154,103 @@ public class MumlaService extends HumlaService implements
 
     private BroadcastReceiver mTalkReceiver;
 
+    private void updateConnectedNotification() {
+        Server server = getTargetServer();
+        String serverName = (server != null && server.getName() != null && !server.getName().isEmpty())
+                ? server.getName()
+                : (server != null && server.getHost() != null ? server.getHost() : getString(R.string.app_name));
+        String hostInfo = (server != null && server.getHost() != null)
+                ? (server.getHost() + ":" + (server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT))
+                : null;
+
+        IChannel channel = null;
+        try {
+            channel = getSessionChannel();
+        } catch (IllegalStateException ignored) {
+        }
+        String channelName = channel != null ? channel.getName() : null;
+
+        IUser user = null;
+        try {
+            user = getSessionUser();
+        } catch (IllegalStateException ignored) {
+        }
+        boolean muted = user != null && user.isSelfMuted();
+        boolean deafened = user != null && user.isSelfDeafened();
+
+        if (mNotification == null) {
+            mNotification = MumlaConnectionNotification.create(MumlaService.this, MumlaService.this);
+        }
+        mNotification.showConnected(serverName, channelName, muted, deafened, hostInfo);
+    }
+
     private HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onConnecting() {
-            // Remove old notification left from reconnect,
-            if (mReconnectNotification != null) {
-                mReconnectNotification.hide();
-                mReconnectNotification = null;
+            Server server = getTargetServer();
+            String serverName = (server != null && server.getName() != null && !server.getName().isEmpty())
+                    ? server.getName()
+                    : (server != null && server.getHost() != null ? server.getHost() : getString(R.string.app_name));
+            String host = (server != null && server.getHost() != null) ? server.getHost() : "";
+            int port = (server != null && server.getPort() > 0) ? server.getPort() : Constants.DEFAULT_PORT;
+
+            if (mNotification == null) {
+                mNotification = MumlaConnectionNotification.create(MumlaService.this, MumlaService.this);
             }
-
-            mNotification = MumlaConnectionNotification.create(MumlaService.this,
-                    getString(R.string.mumlaConnecting),
-                    MumlaService.this);
-            mNotification.show();
-
+            mNotification.showConnecting(serverName, host, port);
             mErrorShown = false;
         }
 
         @Override
         public void onConnected() {
-            if (mNotification != null) {
-                mNotification.setCustomContentText(getString(R.string.connected));
-                mNotification.setActionsShown(true);
-                mNotification.show();
+            updateConnectedNotification();
+            if (mWasReconnecting) {
+                speakTts(getString(R.string.reconnected));
+                mWasReconnecting = false;
             }
         }
 
         @Override
         public void onDisconnected(HumlaException e) {
-            if (mNotification != null) {
-                mNotification.hide();
-                mNotification = null;
-            }
-            if (e != null && !mSuppressNotifications) {
-                mReconnectNotification =
-                        MumlaReconnectNotification.show(MumlaService.this,
-                                e.getMessage(),
-                                isReconnecting(), MumlaService.this);
+            if (isReconnecting()) {
+                if (!mWasReconnecting) {
+                    String ttsMsg;
+                    if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
+                        ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
+                    } else {
+                        ttsMsg = getString(R.string.disconnected);
+                    }
+                    speakTts(ttsMsg);
+                }
+                mWasReconnecting = true;
+                String errorMsg = e != null ? e.getMessage() : getString(R.string.mumlaDisconnected);
+                Server server = getTargetServer();
+                String serverName = (server != null && server.getName() != null && !server.getName().isEmpty())
+                        ? server.getName()
+                        : (server != null ? server.getHost() : null);
+                String hostInfo = (server != null && server.getHost() != null)
+                        ? (server.getHost() + ":" + (server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT))
+                        : null;
+                int attempt = getReconnectAttempts();
+                int delaySec = getReconnectDelay() / 1000;
+
+                if (mNotification == null) {
+                    mNotification = MumlaConnectionNotification.create(MumlaService.this, MumlaService.this);
+                }
+                mNotification.showReconnecting(serverName, errorMsg, attempt, delaySec, hostInfo);
+            } else {
+                mWasReconnecting = false;
+                if (mNotification != null) {
+                    mNotification.hide();
+                    mNotification = null;
+                }
+                String ttsMsg;
+                if (e != null && e.getMessage() != null && !e.getMessage().trim().isEmpty()) {
+                    ttsMsg = getString(R.string.tts_disconnected_reason, e.getMessage().trim());
+                } else {
+                    ttsMsg = getString(R.string.disconnected);
+                }
+                speakTts(ttsMsg);
             }
         }
 
@@ -209,22 +279,24 @@ public class MumlaService extends HumlaService implements
 
             if (user.getSession() == selfSession) {
                 mSettings.setMutedAndDeafened(user.isSelfMuted(), user.isSelfDeafened()); // Update settings mute/deafen state
-                if(mNotification != null) {
-                    String contentText;
-                    if (user.isSelfMuted() && user.isSelfDeafened())
-                        contentText = getString(R.string.status_notify_muted_and_deafened);
-                    else if (user.isSelfMuted())
-                        contentText = getString(R.string.status_notify_muted);
-                    else
-                        contentText = getString(R.string.connected);
-                    mNotification.setCustomContentText(contentText);
-                    mNotification.show();
-                }
+                updateConnectedNotification();
             }
 
             if (user.getTextureHash() != null && user.getTexture() == null) {
                 // Update avatar data if available.
                 requestAvatar(user.getSession());
+            }
+        }
+
+        @Override
+        public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {
+            int selfSession = -1;
+            try {
+                selfSession = getSessionId();
+            } catch (IllegalStateException ignored) {
+            }
+            if (user != null && user.getSession() == selfSession) {
+                updateConnectedNotification();
             }
         }
 
@@ -256,12 +328,10 @@ public class MumlaService extends HumlaService implements
                     message.getActorName(), ttsMessage);
 
             // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened
-            if(mSettings.isTextToSpeechEnabled() &&
-                    mTTS != null &&
-                    formattedTtsMessage.length() <= TTS_THRESHOLD &&
+            if (formattedTtsMessage.length() <= TTS_THRESHOLD &&
                     getSessionUser() != null &&
                     !getSessionUser().isSelfDeafened()) {
-                mTTS.speak(formattedTtsMessage, TextToSpeech.QUEUE_ADD, null);
+                speakTts(formattedTtsMessage);
             }
 
             // TODO: create a customizable notification sieve
@@ -354,10 +424,6 @@ public class MumlaService extends HumlaService implements
             mNotification.hide();
             mNotification = null;
         }
-        if (mReconnectNotification != null) {
-            mReconnectNotification.hide();
-            mReconnectNotification = null;
-        }
 
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.unregisterOnSharedPreferenceChangeListener(this);
@@ -412,6 +478,8 @@ public class MumlaService extends HumlaService implements
         if (mSettings.isHandsetMode()) {
             setProximitySensorOn(true);
         }
+
+        updateConnectedNotification();
     }
 
     @Override
@@ -584,20 +652,16 @@ public class MumlaService extends HumlaService implements
     }
 
     @Override
-    public void onReconnectNotificationDismissed() {
-        mErrorShown = true;
-    }
-
-    @Override
-    public void reconnect() {
-        connect();
+    public void onCancelReconnect() {
+        cancelReconnect();
     }
 
     @Override
     public void cancelReconnect() {
-        if (mReconnectNotification != null) {
-            mReconnectNotification.hide();
-            mReconnectNotification = null;
+        mWasReconnecting = false;
+        if (mNotification != null) {
+            mNotification.hide();
+            mNotification = null;
         }
         super.cancelReconnect();
     }
@@ -624,11 +688,6 @@ public class MumlaService extends HumlaService implements
     @Override
     public void markErrorShown() {
         mErrorShown = true;
-        // Dismiss the reconnection prompt if a reconnection isn't in progress.
-        if (mReconnectNotification != null && !isReconnecting()) {
-            mReconnectNotification.hide();
-            mReconnectNotification = null;
-        }
     }
 
     @Override

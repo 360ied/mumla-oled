@@ -25,7 +25,10 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
+import android.net.NetworkRequest;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -91,7 +94,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     /** A {@link Server} specifying the server to connect to. */
     public static final String EXTRAS_SERVER = "server";
+    /** @deprecated Auto-reconnect is now unconditionally enabled. */
+    @Deprecated
     public static final String EXTRAS_AUTO_RECONNECT = "auto_reconnect";
+    /** @deprecated Auto-reconnect uses dynamic exponential backoff. */
+    @Deprecated
     public static final String EXTRAS_AUTO_RECONNECT_DELAY = "auto_reconnect_delay";
     public static final String EXTRAS_CERTIFICATE = "certificate";
     public static final String EXTRAS_CERTIFICATE_PASSWORD = "certificate_password";
@@ -124,8 +131,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     // Service settings
     private Server mServer;
-    private boolean mAutoReconnect;
-    private int mAutoReconnectDelay;
     private byte[] mCertificate;
     private String mCertificatePassword;
     private boolean mUseOpus;
@@ -158,30 +163,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private ContinuousInputMode mContinuousInputMode;
 
     private boolean mReconnecting;
-
-    /**
-     * Listen for connectivity changes in the reconnection state, and reconnect accordingly.
-     */
-    private final BroadcastReceiver mConnectivityReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if (!mReconnecting) {
-                try {
-                    unregisterReceiver(this);
-                } catch (IllegalArgumentException e) {
-                    Log.e(TAG, "Error unregistering connectivity receiver: " + e.getMessage());
-                }
-                return;
-            }
-
-            ConnectivityManager cm = (ConnectivityManager) context.getSystemService(CONNECTIVITY_SERVICE);
-            NetworkInfo info = cm.getActiveNetworkInfo();
-            if (info != null && info.isConnected()) {
-                Log.v(TAG, "Connectivity restored, attempting reconnect.");
-                connect();
-            }
-        }
-    };
+    private int mReconnectAttempts = 0;
+    private Runnable mReconnectRunnable;
+    private ConnectivityManager.NetworkCallback mNetworkCallback;
+    private boolean mNetworkCallbackRegistered = false;
 
     private final AudioHandler.AudioEncodeListener mAudioInputListener =
             new AudioHandler.AudioEncodeListener() {
@@ -275,6 +260,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         super.onCreate();
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
         mWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService");
+        mWakeLock.setReferenceCounted(false);
         mHandler = new Handler(getMainLooper());
         mCallbacks = new HumlaCallbacks();
         mAudioBuilder = new AudioHandler.Builder()
@@ -297,6 +283,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public void onDestroy() {
         super.onDestroy();
+        mReconnectAttempts = 0;
+        setReconnecting(false);
+        if (mWakeLock != null && mWakeLock.isHeld()) {
+            mWakeLock.release();
+        }
         try {
             unregisterReceiver(mBluetoothReceiver);
         } catch (IllegalArgumentException e) {
@@ -309,11 +300,23 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     protected void connect() {
-        try {
+        if (mServer == null) {
+            Log.w(TAG, "connect() called with null mServer, cancelling reconnect");
             setReconnecting(false);
+            return;
+        }
+
+        try {
             mConnectionState = ConnectionState.DISCONNECTED;
             mVoiceTargetId = 0;
             mWhisperTargetList.clear();
+
+            if (mWakeLock != null) {
+                if (mWakeLock.isHeld()) {
+                    mWakeLock.release();
+                }
+                mWakeLock.acquire(15000);
+            }
 
             mConnection = new HumlaConnection(this);
             mConnection.setForceTCP(mForceTcp);
@@ -331,11 +334,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mConnection.connect(mServer.getHost(), mServer.getPort());
         } catch (HumlaException e) {
             e.printStackTrace();
-            mCallbacks.onDisconnected(e);
+            onConnectionDisconnected(e);
         }
     }
 
     public void disconnect() {
+        mReconnectAttempts = 0;
+        setReconnecting(false);
+        if (mWakeLock != null && mWakeLock.isHeld()) {
+            mWakeLock.release();
+        }
         if (mConnection != null) {
             mConnection.disconnect();
         }
@@ -393,10 +401,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return;
         }
 
+        mReconnectAttempts = 0;
+        setReconnecting(false);
         mConnectionState = ConnectionState.CONNECTED;
 
         Log.v(TAG, "Connected");
-        mWakeLock.acquire();
+        if (mWakeLock != null) {
+            if (mWakeLock.isHeld()) {
+                mWakeLock.release();
+            }
+            mWakeLock.acquire();
+        }
 
         try {
             createAudioHandler();
@@ -415,19 +430,21 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void onConnectionDisconnected(HumlaException e) {
+        boolean reconnect = (e != null && e.getReason() == HumlaException.HumlaDisconnectReason.CONNECTION_ERROR);
         if (e != null) {
             Log.e(TAG, "Error: " + e.getMessage() + " (reason: " + e.getReason().name() + ")");
             mConnectionState = ConnectionState.CONNECTION_LOST;
-
-            setReconnecting(mAutoReconnect
-                    && e.getReason() == HumlaException.HumlaDisconnectReason.CONNECTION_ERROR);
+            setReconnecting(reconnect);
         } else {
             Log.v(TAG, "Disconnected");
             mConnectionState = ConnectionState.DISCONNECTED;
+            setReconnecting(false);
         }
 
-        if(mWakeLock.isHeld()) {
-            mWakeLock.release();
+        if (!reconnect) {
+            if (mWakeLock != null && mWakeLock.isHeld()) {
+                mWakeLock.release();
+            }
         }
 
         if (mAudioHandler != null) {
@@ -467,41 +484,114 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mCallbacks.onLogError(message);
     }
 
-    public void setReconnecting(boolean reconnecting) {
-        if (mReconnecting == reconnecting)
-            return;
+    public static final int RECONNECT_DELAY_INITIAL = 1000;
+    public static final int RECONNECT_DELAY_MAX = 25000;
 
-        mReconnecting = reconnecting;
-        if (reconnecting) {
+    @Override
+    public int getReconnectDelay() {
+        switch (mReconnectAttempts) {
+            case 0:
+                return RECONNECT_DELAY_INITIAL;
+            case 1:
+                return 3000;
+            case 2:
+                return 6000;
+            case 3:
+                return 12000;
+            default:
+                return RECONNECT_DELAY_MAX;
+        }
+    }
+
+    private void registerNetworkCallback() {
+        if (mNetworkCallbackRegistered) return;
+        try {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-            NetworkInfo info = cm.getActiveNetworkInfo();
-            if (info != null && info.isConnected()) {
-                Log.v(TAG, "Connection lost due to non-connectivity issue. Start reconnect polling.");
-                Handler mainHandler = new Handler();
-                mainHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mReconnecting) connect();
-                    }
-                }, mAutoReconnectDelay);
-            } else {
-                // In the event that we've lost connectivity, don't poll. Wait until network
-                // returns before we resume connection attempts.
-                Log.v(TAG, "Connection lost due to connectivity issue. Waiting until network returns.");
-                try {
-                    registerReceiver(mConnectivityReceiver,
-                            new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
-                } catch (IllegalArgumentException e) {
-                    Log.e(TAG, "Error registering connectivity receiver: " + e.getMessage());
+            if (cm != null) {
+                if (mNetworkCallback == null) {
+                    mNetworkCallback = new ConnectivityManager.NetworkCallback() {
+                        @Override
+                        public void onAvailable(Network network) {
+                            mHandler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    if (mReconnecting) {
+                                        Log.v(TAG, "Network available, triggering immediate reconnect.");
+                                        if (mReconnectRunnable != null) {
+                                            mHandler.removeCallbacks(mReconnectRunnable);
+                                            mReconnectRunnable = null;
+                                        }
+                                        mReconnectAttempts++;
+                                        connect();
+                                    }
+                                }
+                            });
+                        }
+                    };
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    cm.registerDefaultNetworkCallback(mNetworkCallback);
+                } else {
+                    NetworkRequest request = new NetworkRequest.Builder()
+                            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                            .build();
+                    cm.registerNetworkCallback(request, mNetworkCallback);
+                }
+                mNetworkCallbackRegistered = true;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error registering network callback: " + e.getMessage());
+        }
+    }
+
+    private void unregisterNetworkCallback() {
+        if (!mNetworkCallbackRegistered) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm != null && mNetworkCallback != null) {
+                cm.unregisterNetworkCallback(mNetworkCallback);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error unregistering network callback: " + e.getMessage());
+        } finally {
+            mNetworkCallbackRegistered = false;
+        }
+    }
+
+    public void setReconnecting(boolean reconnecting) {
+        if (!reconnecting) {
+            mReconnecting = false;
+            if (mReconnectRunnable != null) {
+                mHandler.removeCallbacks(mReconnectRunnable);
+                mReconnectRunnable = null;
+            }
+            unregisterNetworkCallback();
+            return;
+        }
+
+        mReconnecting = true;
+        registerNetworkCallback();
+        int delay = getReconnectDelay();
+        Log.v(TAG, "Scheduling reconnect in " + delay + " ms (attempt " + mReconnectAttempts + ")");
+        if (mWakeLock != null) {
+            if (mWakeLock.isHeld()) {
+                mWakeLock.release();
+            }
+            mWakeLock.acquire(delay + 15000);
+        }
+        if (mReconnectRunnable != null) {
+            mHandler.removeCallbacks(mReconnectRunnable);
+        }
+        mReconnectRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (mReconnecting) {
+                    mReconnectAttempts++;
+                    connect();
                 }
             }
-        } else {
-            try {
-                unregisterReceiver(mConnectivityReceiver);
-            } catch (IllegalArgumentException e) {
-                Log.e(TAG, "Error unregistering connectivity receiver: " + e.getMessage());
-            }
-        }
+        };
+        mHandler.postDelayed(mReconnectRunnable, delay);
     }
 
     /**
@@ -545,12 +635,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (extras.containsKey(EXTRAS_SERVER)) {
             mServer = extras.getParcelable(EXTRAS_SERVER);
             reconnectNeeded = true;
-        }
-        if (extras.containsKey(EXTRAS_AUTO_RECONNECT)) {
-            mAutoReconnect = extras.getBoolean(EXTRAS_AUTO_RECONNECT);
-        }
-        if (extras.containsKey(EXTRAS_AUTO_RECONNECT_DELAY)) {
-            mAutoReconnectDelay = extras.getInt(EXTRAS_AUTO_RECONNECT_DELAY);
         }
         if (extras.containsKey(EXTRAS_CERTIFICATE)) {
             mCertificate = extras.getByteArray(EXTRAS_CERTIFICATE);
@@ -749,8 +833,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
+    public int getReconnectAttempts() {
+        return mReconnectAttempts;
+    }
+
+    @Override
     public void cancelReconnect() {
+        mReconnectAttempts = 0;
         setReconnecting(false);
+        if (mWakeLock != null && mWakeLock.isHeld()) {
+            mWakeLock.release();
+        }
     }
 
     @Override
