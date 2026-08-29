@@ -46,4 +46,5 @@ __pycache__/
 libraries/humla/src/main/jni/rnnoise-build/generated/
 libraries/humla/src/main/assets/rnnoise_model.bin
 
-
+# for pi coding agent
+/plans/
