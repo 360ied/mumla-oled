@@ -54,8 +54,6 @@
     <string name="shortTtsMessagesSum">仅朗读链接的域名部分，以缩短消息。</string>
     <string name="togglePtt">发言状态开关</string>
     <string name="togglePttSum">点击按钮时切换发言状态，无需按住。</string>
-    <string name="autoReconnect">自动重连</string>
-    <string name="autoReconnectSum">失去连接时重新连接服务器。</string>
     <string name="inputQuality">麦克风输入质量</string>
     <string name="inputQualitySum">偏好的数据传输速率（单位为比特每秒）。</string>
     <string name="pttButtonHeight">按住发言按钮高度</string>

@@ -49,11 +49,17 @@ public class MumlaConnectionNotification {
     private static final String BROADCAST_MUTE = "b_mute";
     private static final String BROADCAST_DEAFEN = "b_deafen";
     private static final String BROADCAST_OVERLAY = "b_overlay";
+    private static final String BROADCAST_CANCEL_RECONNECT = "b_cancel_reconnect";
 
     private Service mService;
     private OnActionListener mListener;
-    private String mCustomContentText;
+    private String mContentTitle;
+    private String mContentText;
+    private String mSubText;
+    private String mBigText;
     private boolean mActionsShown;
+    private boolean mReconnectingShown;
+    private boolean mReceiverRegistered;
 
     private BroadcastReceiver mNotificationReceiver = new BroadcastReceiver() {
         @Override
@@ -64,6 +70,8 @@ public class MumlaConnectionNotification {
                 mListener.onDeafenToggled();
             } else if (BROADCAST_OVERLAY.equals(intent.getAction())) {
                 mListener.onOverlayToggled();
+            } else if (BROADCAST_CANCEL_RECONNECT.equals(intent.getAction())) {
+                mListener.onCancelReconnect();
             }
         }
     };
@@ -74,25 +82,99 @@ public class MumlaConnectionNotification {
      * @param listener An listener for notification actions.
      * @return A new MumlaNotification instance.
      */
-    public static MumlaConnectionNotification create(Service service, String contentText,
-                                                     OnActionListener listener) {
-        return new MumlaConnectionNotification(service, contentText, listener);
+    public static MumlaConnectionNotification create(Service service, OnActionListener listener) {
+        return new MumlaConnectionNotification(service, listener);
     }
 
-    private MumlaConnectionNotification(Service service, String contentText,
-                                        OnActionListener listener) {
+    private MumlaConnectionNotification(Service service, OnActionListener listener) {
         mService = service;
         mListener = listener;
-        mCustomContentText = contentText;
         mActionsShown = false;
+        mReconnectingShown = false;
+        mReceiverRegistered = false;
     }
 
-    public void setCustomContentText(String text) {
-        mCustomContentText = text;
+    public void setContentTitle(String title) {
+        mContentTitle = title;
+    }
+
+    public void setContentText(String text) {
+        mContentText = text;
+    }
+
+    public void setSubText(String subText) {
+        mSubText = subText;
+    }
+
+    public void setBigText(String bigText) {
+        mBigText = bigText;
     }
 
     public void setActionsShown(boolean actionsShown) {
         mActionsShown = actionsShown;
+    }
+
+    public void setReconnectingShown(boolean reconnectingShown) {
+        mReconnectingShown = reconnectingShown;
+    }
+
+    public void showConnecting(String serverName, String host, int port) {
+        mContentTitle = serverName;
+        mContentText = mService.getString(R.string.connecting_to_server, host);
+        mSubText = mService.getString(R.string.mumlaConnecting);
+        mBigText = mService.getString(R.string.connecting_to_server, host) + (port > 0 ? (":" + port) : "");
+        mActionsShown = false;
+        mReconnectingShown = false;
+        show();
+    }
+
+    public void showConnected(String serverName, String channelName, boolean muted, boolean deafened, String hostInfo) {
+        mContentTitle = serverName;
+        String statusText;
+        if (muted && deafened) {
+            statusText = mService.getString(R.string.status_notify_muted_and_deafened);
+        } else if (muted) {
+            statusText = mService.getString(R.string.status_notify_muted);
+        } else if (deafened) {
+            statusText = mService.getString(R.string.status_notify_deafened);
+        } else {
+            statusText = mService.getString(R.string.connected);
+        }
+
+        if (channelName != null && !channelName.isEmpty()) {
+            mContentText = statusText + " • " + channelName;
+        } else {
+            mContentText = statusText;
+        }
+
+        mSubText = mService.getString(R.string.connected);
+        String ch = channelName != null ? channelName : mService.getString(R.string.channel);
+        String srv = hostInfo != null ? hostInfo : (serverName != null ? serverName : "");
+        mBigText = mService.getString(R.string.notification_connected_expanded, ch, statusText, srv);
+        mActionsShown = true;
+        mReconnectingShown = false;
+        show();
+    }
+
+    public void showReconnecting(String serverName, String error, int attempt, int delaySec, String hostInfo) {
+        String srvTitle = serverName != null ? serverName : (hostInfo != null ? hostInfo : mService.getString(R.string.app_name));
+        mContentTitle = mService.getString(R.string.notification_reconnecting_title, srvTitle);
+        mContentText = error != null ? error : mService.getString(R.string.mumlaDisconnected);
+
+        if (attempt > 0 && delaySec > 0) {
+            mSubText = mService.getString(R.string.notification_reconnect_attempt_delay, attempt, delaySec);
+        } else if (attempt > 0) {
+            mSubText = mService.getString(R.string.notification_reconnect_attempt, attempt);
+        } else {
+            mSubText = mService.getString(R.string.reconnect);
+        }
+
+        String err = error != null ? error : mService.getString(R.string.mumlaDisconnected);
+        String srv = hostInfo != null ? hostInfo : srvTitle;
+        mBigText = mService.getString(R.string.notification_reconnect_expanded, err, Math.max(attempt, 1), Math.max(delaySec, 1), srv);
+        mActionsShown = false;
+        mReconnectingShown = true;
+        show();
     }
 
     /**
@@ -101,16 +183,20 @@ public class MumlaConnectionNotification {
     public void show() {
         createNotification();
 
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(BROADCAST_DEAFEN);
-        filter.addAction(BROADCAST_MUTE);
-        filter.addAction(BROADCAST_OVERLAY);
-        try {
-            ContextCompat.registerReceiver(mService, mNotificationReceiver, filter,
-                    ContextCompat.RECEIVER_NOT_EXPORTED);
-        } catch (IllegalArgumentException e) {
-            // Thrown if receiver is already registered.
-            e.printStackTrace();
+        if (!mReceiverRegistered) {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(BROADCAST_DEAFEN);
+            filter.addAction(BROADCAST_MUTE);
+            filter.addAction(BROADCAST_OVERLAY);
+            filter.addAction(BROADCAST_CANCEL_RECONNECT);
+            try {
+                ContextCompat.registerReceiver(mService, mNotificationReceiver, filter,
+                        ContextCompat.RECEIVER_NOT_EXPORTED);
+                mReceiverRegistered = true;
+            } catch (IllegalArgumentException e) {
+                // Thrown if receiver is already registered.
+                e.printStackTrace();
+            }
         }
     }
 
@@ -118,11 +204,14 @@ public class MumlaConnectionNotification {
      * Hides the notification and unregisters the action receiver.
      */
     public void hide() {
-        try {
-            mService.unregisterReceiver(mNotificationReceiver);
-        } catch (IllegalArgumentException e) {
-            // Thrown if receiver is not registered.
-            e.printStackTrace();
+        if (mReceiverRegistered) {
+            try {
+                mService.unregisterReceiver(mNotificationReceiver);
+            } catch (IllegalArgumentException e) {
+                // Thrown if receiver is not registered.
+                e.printStackTrace();
+            }
+            mReceiverRegistered = false;
         }
         mService.stopForeground(true);
     }
@@ -143,18 +232,37 @@ public class MumlaConnectionNotification {
         NotificationCompat.Builder builder =
                 new NotificationCompat.Builder(mService, channelId);
 
-        // app name is always displayed in notification on >= O
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+        if (mContentTitle != null && !mContentTitle.isEmpty()) {
+            builder.setContentTitle(mContentTitle);
+        } else {
             builder.setContentTitle(mService.getString(R.string.app_name));
         }
-        builder.setContentText(mCustomContentText);
+
+        if (mContentText != null && !mContentText.isEmpty()) {
+            builder.setContentText(mContentText);
+        }
+
+        if (mSubText != null && !mSubText.isEmpty()) {
+            builder.setSubText(mSubText);
+        }
+
+        if (mBigText != null && !mBigText.isEmpty()) {
+            builder.setStyle(new NotificationCompat.BigTextStyle().bigText(mBigText));
+        }
+
         builder.setSmallIcon(R.drawable.ic_stat_notify);
         builder.setPriority(NotificationCompat.PRIORITY_DEFAULT);
         builder.setCategory(NotificationCompat.CATEGORY_CALL);
         builder.setShowWhen(false);
         builder.setOngoing(true);
 
-        if (mActionsShown) {
+        if (mReconnectingShown) {
+            Intent cancelIntent = new Intent(BROADCAST_CANCEL_RECONNECT);
+            cancelIntent.setPackage(mService.getPackageName());
+            builder.addAction(R.drawable.ic_action_delete_dark,
+                    mService.getString(R.string.cancel_reconnect), PendingIntent.getBroadcast(mService, 4,
+                            cancelIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
+        } else if (mActionsShown) {
             // Add notification triggers
             Intent muteIntent = new Intent(BROADCAST_MUTE);
             muteIntent.setPackage(mService.getPackageName());
@@ -167,10 +275,10 @@ public class MumlaConnectionNotification {
                     mService.getString(R.string.mute), PendingIntent.getBroadcast(mService, 1,
                             muteIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
             builder.addAction(R.drawable.ic_action_audio,
-                    mService.getString(R.string.deafen), PendingIntent.getBroadcast(mService, 1,
+                    mService.getString(R.string.deafen), PendingIntent.getBroadcast(mService, 2,
                             deafenIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
             builder.addAction(R.drawable.ic_action_channels,
-                    mService.getString(R.string.overlay), PendingIntent.getBroadcast(mService, 2,
+                    mService.getString(R.string.overlay), PendingIntent.getBroadcast(mService, 3,
                             overlayIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE));
         }
 
@@ -194,5 +302,6 @@ public class MumlaConnectionNotification {
         void onMuteToggled();
         void onDeafenToggled();
         void onOverlayToggled();
+        void onCancelReconnect();
     }
 }
