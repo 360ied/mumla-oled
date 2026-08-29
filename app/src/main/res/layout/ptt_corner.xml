@@ -21,7 +21,7 @@
     android:id="@+id/hot_corner_root"
     android:layout_width="48dp"
     android:layout_height="48dp"
-    android:background="@drawable/hot_corner_background"
+    android:background="@drawable/hot_corner_background_selector"
     android:clickable="true"
     android:focusable="false"
     android:padding="8dp">

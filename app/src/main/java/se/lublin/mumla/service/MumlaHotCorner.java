@@ -63,13 +63,18 @@ public class MumlaHotCorner implements View.OnTouchListener {
         mListener = listener;
 
         mView.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            private int mLastWidth = 0;
+            private int mLastHeight = 0;
+
             @Override
             public void onLayoutChange(View v, int left, int top, int right, int bottom,
                                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     int width = right - left;
                     int height = bottom - top;
-                    if (width > 0 && height > 0) {
+                    if (width > 0 && height > 0 && (width != mLastWidth || height != mLastHeight)) {
+                        mLastWidth = width;
+                        mLastHeight = height;
                         mView.setSystemGestureExclusionRects(Collections.singletonList(new Rect(0, 0, width, height)));
                     }
                 }
@@ -82,8 +87,8 @@ public class MumlaHotCorner implements View.OnTouchListener {
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                         : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
         mParams.gravity = gravity;
     }
@@ -105,15 +110,24 @@ public class MumlaHotCorner implements View.OnTouchListener {
     public boolean onTouch(View v, MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
-                setVisualActive(true);
+                mView.setPressed(true);
+                if (mIconView != null) {
+                    mIconView.setAlpha(1.0f);
+                }
                 mListener.onHotCornerDown();
                 return true;
             case MotionEvent.ACTION_UP:
-                setVisualActive(false);
+                mView.setPressed(false);
+                if (mIconView != null) {
+                    mIconView.setAlpha(mView.isActivated() ? 1.0f : 0.85f);
+                }
                 mListener.onHotCornerUp();
                 return true;
             case MotionEvent.ACTION_CANCEL:
-                setVisualActive(false);
+                mView.setPressed(false);
+                if (mIconView != null) {
+                    mIconView.setAlpha(mView.isActivated() ? 1.0f : 0.85f);
+                }
                 mListener.onHotCornerCancel();
                 return true;
             default:
@@ -121,19 +135,13 @@ public class MumlaHotCorner implements View.OnTouchListener {
         }
     }
 
-    public void setVisualActive(boolean active) {
+    public void updateTalkState(boolean talking) {
         if (mView != null) {
-            mView.setBackgroundResource(active
-                    ? R.drawable.hot_corner_background_active
-                    : R.drawable.hot_corner_background);
+            mView.setActivated(talking);
         }
         if (mIconView != null) {
-            mIconView.setAlpha(active ? 1.0f : 0.85f);
+            mIconView.setAlpha((talking || (mView != null && mView.isPressed())) ? 1.0f : 0.85f);
         }
-    }
-
-    public void updateTalkState(boolean talking) {
-        setVisualActive(talking);
     }
 
     public void setShown(boolean shown) {
