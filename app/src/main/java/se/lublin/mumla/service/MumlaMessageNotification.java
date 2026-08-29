@@ -107,15 +107,11 @@ public class MumlaMessageNotification {
 
         final NotificationManagerCompat manager = NotificationManagerCompat.from(mContext);
         Notification notification = builder.build();
-        if (canNotify()) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(mContext,
+                        Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
             manager.notify(NOTIFICATION_ID, notification);
         }
-    }
-
-    private boolean canNotify() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                ContextCompat.checkSelfPermission(mContext,
-                        Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
     }
 
     /**
