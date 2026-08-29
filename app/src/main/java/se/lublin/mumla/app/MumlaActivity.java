@@ -95,6 +95,7 @@ import se.lublin.mumla.servers.FavouriteServerListFragment;
 import se.lublin.mumla.servers.ServerEditFragment;
 import se.lublin.mumla.service.IMumlaService;
 import se.lublin.mumla.service.MumlaService;
+import se.lublin.mumla.ui.viewmodel.MumlaMainViewModel;
 import se.lublin.mumla.util.HumlaServiceFragment;
 import se.lublin.mumla.util.HumlaServiceProvider;
 import se.lublin.mumla.util.MumlaTrustStore;
@@ -112,6 +113,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private IMumlaService mService;
     private MumlaDatabase mDatabase;
     private Settings mSettings;
+    private MumlaMainViewModel mViewModel;
 
     private ActionBarDrawerToggle mDrawerToggle;
     private DrawerLayout mDrawerLayout;
@@ -137,21 +139,26 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService.setSuppressNotifications(true);
             mService.registerObserver(mObserver);
             mService.clearChatNotifications(); // Clear chat notifications on resume.
-            mDrawerAdapter.notifyDataSetChanged();
+
+            if (mViewModel != null) {
+                mViewModel.onServiceBound(mService);
+            }
+
+            if (mDrawerAdapter != null) {
+                mDrawerAdapter.notifyDataSetChanged();
+            }
 
             for (HumlaServiceFragment fragment : mServiceFragments)
                 fragment.setServiceBound(true);
 
-            // Re-show server list if we're showing a fragment that depends on the service.
-            if (getSupportFragmentManager().findFragmentById(R.id.content_frame) instanceof HumlaServiceFragment &&
-                    !mService.isConnected()) {
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
-            }
             updateConnectionState(getService());
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
+            if (mViewModel != null) {
+                mViewModel.onServiceUnbound();
+            }
             mService = null;
         }
     };
@@ -254,30 +261,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         mSettings = Settings.getInstance(this);
 
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-
-        Toolbar toolbar = findViewById(R.id.toolbar);
-        setSupportActionBar(toolbar);
-
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override
-            public void handleOnBackPressed() {
-                if (mService != null && mService.isConnected()) {
-                    new MaterialAlertDialogBuilder(MumlaActivity.this)
-                            .setMessage(getString(R.string.disconnectSure, mService.getTargetServer().getName()))
-                            .setPositiveButton(R.string.confirm, (dialog, which) -> {
-                                mService.disconnect();
-                                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
-                            })
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show();
-                } else {
-                    setEnabled(false);
-                    getOnBackPressedDispatcher().onBackPressed();
-                    setEnabled(true);
-                }
-            }
-        });
 
         setStayAwake(mSettings.shouldStayAwake());
 
@@ -287,63 +270,28 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         mDatabase = new MumlaSQLiteDatabase(this); // TODO add support for cloud storage
         mDatabase.open();
 
-        mDrawerLayout = findViewById(R.id.drawer_layout);
-        ListView mDrawerList = findViewById(R.id.left_drawer);
+        mViewModel = new MumlaMainViewModel(mDatabase);
 
-        View headerView = getLayoutInflater().inflate(R.layout.list_drawer_headerlogo, mDrawerList, false);
-        mDrawerList.addHeaderView(headerView, null, false);
-
-        mDrawerList.setOnItemClickListener(this);
-        mDrawerAdapter = new DrawerAdapter(this, this);
-        mDrawerList.setAdapter(mDrawerAdapter);
-        mDrawerToggle = new ActionBarDrawerToggle(this, mDrawerLayout, toolbar, R.string.drawer_open, R.string.drawer_close) {
-            @Override
-            public void onDrawerClosed(View drawerView) {
-                supportInvalidateOptionsMenu();
-            }
-
-            @Override
-            public void onDrawerStateChanged(int newState) {
-                super.onDrawerStateChanged(newState);
-                // Prevent push to talk from getting stuck on when the drawer is opened.
-                if (getService() != null && getService().isConnected()) {
-                    IHumlaSession session = getService().HumlaSession();
-                    if (session.isTalking() && !mSettings.isPushToTalkToggle()) {
-                        session.setTalkingState(false);
+        View composeView = MumlaActivityBridge.setupComposeView(
+                this,
+                mViewModel,
+                this::connectToServer,
+                () -> {
+                    if (mService != null) {
+                        mService.disconnect();
                     }
-                }
-            }
+                },
+                BuildConfig.VERSION_NAME
+        );
+        setContentView(composeView);
 
-            @Override
-            public void onDrawerOpened(View drawerView) {
-                supportInvalidateOptionsMenu();
-            }
-        };
-
-        mDrawerLayout.setDrawerListener(mDrawerToggle);
-        getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-        getSupportActionBar().setHomeButtonEnabled(true);
-
-        if (savedInstanceState == null) {
-            if (getIntent() != null && getIntent().hasExtra(EXTRA_DRAWER_FRAGMENT)) {
-                loadDrawerFragment(getIntent().getIntExtra(EXTRA_DRAWER_FRAGMENT,
-                        DrawerAdapter.ITEM_FAVOURITES));
-            } else {
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
-            }
-        }
-
-        // If we're given a Mumble URL to show, open up a server edit fragment.
+        // If we're given a Mumble URL to show, connect to it
         if (getIntent() != null &&
                 Intent.ACTION_VIEW.equals(getIntent().getAction())) {
             String url = getIntent().getDataString();
             try {
                 Server server = MumbleURLParser.parseURL(url);
-
-                // Open a dialog prompting the user to connect to the Mumble server.
-                DialogFragment fragment = ServerEditFragment.createServerEditDialog(
-                        MumlaActivity.this, server, ServerEditFragment.Action.CONNECT_ACTION, true);
-                fragment.show(getSupportFragmentManager(), "url_edit");
+                connectToServer(server);
             } catch (MalformedURLException e) {
                 Toast.makeText(this, getString(R.string.mumble_url_parse_failed), Toast.LENGTH_LONG).show();
                 e.printStackTrace();
@@ -367,7 +315,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     @Override
     protected void onPostCreate(Bundle savedInstanceState) {
         super.onPostCreate(savedInstanceState);
-        mDrawerToggle.syncState();
+        if (mDrawerToggle != null) {
+            mDrawerToggle.syncState();
+        }
     }
 
     @Override
@@ -391,6 +341,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             }
             mService.unregisterObserver(mObserver);
             mService.setSuppressNotifications(false);
+        }
+        if (mViewModel != null) {
+            mViewModel.onServiceUnbound();
         }
         unbindService(mConnection);
     }
@@ -420,10 +373,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onOptionsItemSelected(@NotNull MenuItem item) {
-        if (mDrawerToggle.onOptionsItemSelected(item))
+        if (mDrawerToggle != null && mDrawerToggle.onOptionsItemSelected(item))
             return true;
         if (item.getItemId() == R.id.action_disconnect) {
-            getService().disconnect();
+            if (getService() != null) {
+                getService().disconnect();
+            }
             return true;
         }
         return false;
@@ -432,7 +387,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     @Override
     public void onConfigurationChanged(@NotNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        mDrawerToggle.onConfigurationChanged(newConfig);
+        if (mDrawerToggle != null) {
+            mDrawerToggle.onConfigurationChanged(newConfig);
+        }
     }
 
     @Override
@@ -455,7 +412,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-        mDrawerLayout.closeDrawers();
+        if (mDrawerLayout != null) {
+            mDrawerLayout.closeDrawers();
+        }
         loadDrawerFragment((int) id);
     }
 
