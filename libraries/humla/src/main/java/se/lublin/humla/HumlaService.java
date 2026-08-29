@@ -480,7 +480,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final int RECONNECT_DELAY_INITIAL = 1000;
     public static final int RECONNECT_DELAY_MAX = 25000;
 
-    private int getReconnectDelay() {
+    @Override
+    public int getReconnectDelay() {
         switch (mReconnectAttempts) {
             case 0:
                 return RECONNECT_DELAY_INITIAL;
@@ -823,6 +824,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public boolean isReconnecting() {
         return mReconnecting;
+    }
+
+    @Override
+    public int getReconnectAttempts() {
+        return mReconnectAttempts;
     }
 
     @Override

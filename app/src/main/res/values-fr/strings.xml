@@ -98,6 +98,12 @@
     <string name="shareMessage">Rejoindre ce serveur Mumble avec Mumla. %s</string>
     <string name="status_notify_muted_and_deafened">Muet et sourd.</string>
     <string name="status_notify_muted">Muet.</string>
+    <string name="status_notify_deafened">Sourd.</string>
+    <string name="notification_reconnecting_title">Reconnexion à %s…</string>
+    <string name="notification_reconnect_attempt">Tentative %d</string>
+    <string name="notification_reconnect_attempt_delay">Tentative %1$d (%2$ds)</string>
+    <string name="notification_reconnect_expanded">Erreur : %1$s\nTentative : %2$d (Prochaine dans %3$ds)\nServeur : %4$s</string>
+    <string name="notification_connected_expanded">Salon : %1$s\nStatut : %2$s\nServeur : %3$s</string>
     <string name="close">Fermer</string>
     <string name="information">Information</string>
     <string name="overlay">Superposition</string>
