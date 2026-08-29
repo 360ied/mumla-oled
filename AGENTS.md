@@ -27,8 +27,8 @@
 
 ## Verification
 - **Pre-Completion Check**: Run `./scripts/check.sh` before completing any task.
-- **Fast Unit Tests**: FOSS debug unit tests via `nix develop --command ./gradlew testFossDebugUnitTest` (~4s).
-- **Full Test Suite** (when required): `nix develop --command ./gradlew test` (~24s).
+- **Fast Unit Tests**: FOSS debug unit tests via `nix develop --command ./gradlew testFossDebugUnitTest`.
+- **Full Test Suite** (when required): `nix develop --command ./gradlew test`.
 
 ## Build & Deployment
 - **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor. Build with the Nix dev shell:
