@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-
 <!--
-  ~ Copyright (C) 2014 Andrew Comminos
+  ~ Copyright (C) 2026 Mumla OLED Contributors
   ~
   ~ This program is free software: you can redistribute it and/or modify
   ~ it under the terms of the GNU General Public License as published by
@@ -17,21 +16,9 @@
   ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   -->
 
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/hot_corner_root"
-    android:layout_width="48dp"
-    android:layout_height="48dp"
-    android:background="@drawable/hot_corner_background_selector"
-    android:clickable="true"
-    android:focusable="false"
-    android:padding="8dp">
-
-    <ImageView
-        android:id="@+id/hot_corner_icon"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_gravity="center"
-        android:src="@drawable/ic_action_microphone"
-        android:alpha="0.85"
-        android:contentDescription="@string/ptt" />
-</FrameLayout>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#D9000000"/>
+    <corners android:radius="12dp"/>
+    <stroke android:color="#33FFFFFF" android:width="1.5dp"/>
+</shape>
