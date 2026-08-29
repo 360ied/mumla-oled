@@ -69,7 +69,17 @@ public class NativeAudioInputEngine {
                                   boolean rnnoiseEnabled,
                                   int inputMode,
                                   AudioInputEngineListener listener) {
-        this(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, inputMode, sCachedRnnoiseModel, listener);
+        this(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, true, inputMode, sCachedRnnoiseModel, listener);
+    }
+
+    public NativeAudioInputEngine(int bitrate,
+                                  int framesPerPacket,
+                                  float amplitudeBoost,
+                                  boolean rnnoiseEnabled,
+                                  boolean adaptiveLevelerEnabled,
+                                  int inputMode,
+                                  AudioInputEngineListener listener) {
+        this(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, inputMode, sCachedRnnoiseModel, listener);
     }
 
     public NativeAudioInputEngine(int bitrate,
@@ -79,8 +89,19 @@ public class NativeAudioInputEngine {
                                   int inputMode,
                                   byte[] rnnoiseModel,
                                   AudioInputEngineListener listener) {
+        this(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, true, inputMode, rnnoiseModel, listener);
+    }
+
+    public NativeAudioInputEngine(int bitrate,
+                                  int framesPerPacket,
+                                  float amplitudeBoost,
+                                  boolean rnnoiseEnabled,
+                                  boolean adaptiveLevelerEnabled,
+                                  int inputMode,
+                                  byte[] rnnoiseModel,
+                                  AudioInputEngineListener listener) {
         mListener = listener;
-        mNativeHandle = nativeCreate(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, inputMode, rnnoiseModel, listener);
+        mNativeHandle = nativeCreate(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, inputMode, rnnoiseModel, listener);
     }
 
     public synchronized void processFrame(short[] pcm, int offset, int length) {
@@ -145,6 +166,19 @@ public class NativeAudioInputEngine {
         return false;
     }
 
+    public synchronized void setAdaptiveLevelerEnabled(boolean enabled) {
+        if (mNativeHandle != 0) {
+            nativeSetAdaptiveLevelerEnabled(mNativeHandle, enabled);
+        }
+    }
+
+    public synchronized boolean isAdaptiveLevelerEnabled() {
+        if (mNativeHandle != 0) {
+            return nativeIsAdaptiveLevelerEnabled(mNativeHandle);
+        }
+        return false;
+    }
+
     public synchronized void setRnnoiseModel(byte[] modelData) {
         if (mNativeHandle != 0) {
             nativeSetRnnoiseModel(mNativeHandle, modelData);
@@ -198,7 +232,7 @@ public class NativeAudioInputEngine {
     }
 
     // Native JNI Methods
-    private static native long nativeCreate(int bitrate, int framesPerPacket, float amplitudeBoost, boolean rnnoiseEnabled, int inputMode, byte[] rnnoiseModel, Object listener);
+    private static native long nativeCreate(int bitrate, int framesPerPacket, float amplitudeBoost, boolean rnnoiseEnabled, boolean adaptiveLevelerEnabled, int inputMode, byte[] rnnoiseModel, Object listener);
     private static native void nativeDestroy(long handle);
     private static native void nativeProcessFrame(long handle, short[] pcm, int offset, int length);
     private static native void nativeSetInputMode(long handle, int inputMode);
@@ -210,6 +244,8 @@ public class NativeAudioInputEngine {
     private static native void nativeSetAmplitudeBoost(long handle, float boost);
     private static native void nativeSetRnnoiseEnabled(long handle, boolean enabled);
     private static native boolean nativeIsRnnoiseEnabled(long handle);
+    private static native void nativeSetAdaptiveLevelerEnabled(long handle, boolean enabled);
+    private static native boolean nativeIsAdaptiveLevelerEnabled(long handle);
     private static native void nativeSetRnnoiseModel(long handle, byte[] modelData);
     private static native boolean nativeHasRnnoiseModel(long handle);
     private static native void nativeSetVadThresholds(long handle, float vadMax, float vadMin);
