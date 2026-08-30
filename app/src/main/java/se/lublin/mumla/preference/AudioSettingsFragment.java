@@ -18,7 +18,6 @@
 package se.lublin.mumla.preference;
 
 
-import static java.util.Objects.requireNonNull;
 import static se.lublin.mumla.Settings.DEFAULT_ECHO_CANCELLATION_METHOD;
 import static se.lublin.mumla.Settings.PREF_ECHO_CANCELLATION_METHOD;
 
@@ -26,26 +25,17 @@ import android.media.audiofx.AcousticEchoCanceler;
 import android.os.Bundle;
 
 import androidx.preference.ListPreference;
-import androidx.preference.PreferenceCategory;
-import androidx.preference.PreferenceScreen;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 import se.lublin.mumla.R;
-import se.lublin.mumla.Settings;
 
 public class AudioSettingsFragment extends MumlaPreferenceFragment {
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_audio, rootKey);
-
-        ListPreference inputPreference = getPreferenceScreen().findPreference(Settings.PREF_INPUT_METHOD);
-        requireNonNull(inputPreference).setOnPreferenceChangeListener((preference, newValue) -> {
-            updateAudioDependents(getPreferenceScreen(), (String) newValue);
-            return true;
-        });
 
         ListPreference echoCancellationPref = findPreference(PREF_ECHO_CANCELLATION_METHOD);
         if (echoCancellationPref != null) {
@@ -59,8 +49,6 @@ public class AudioSettingsFragment extends MumlaPreferenceFragment {
                 echoCancellationPref.setValue(DEFAULT_ECHO_CANCELLATION_METHOD);
             }
         }
-
-        updateAudioDependents(getPreferenceScreen(), inputPreference.getValue());
     }
 
     private void removeListEntry(ListPreference pref, String valueToRemove) {
@@ -74,12 +62,5 @@ public class AudioSettingsFragment extends MumlaPreferenceFragment {
         }
         pref.setEntries(entries.toArray(new CharSequence[0]));
         pref.setEntryValues(values.toArray(new CharSequence[0]));
-    }
-
-    private static void updateAudioDependents(PreferenceScreen screen, String inputMethod) {
-        PreferenceCategory pttCategory = screen.findPreference("ptt_settings");
-        PreferenceCategory vadCategory = screen.findPreference("vad_settings");
-        requireNonNull(pttCategory).setEnabled(Settings.ARRAY_INPUT_METHOD_PTT.equals(inputMethod));
-        requireNonNull(vadCategory).setEnabled(Settings.ARRAY_INPUT_METHOD_VOICE.equals(inputMethod));
     }
 }
