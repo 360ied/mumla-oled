@@ -17,15 +17,21 @@
 
 package se.lublin.humla.net;
 
-import org.spongycastle.asn1.x500.X500Name;
-import org.spongycastle.asn1.x509.SubjectPublicKeyInfo;
-import org.spongycastle.cert.X509CertificateHolder;
-import org.spongycastle.cert.X509v3CertificateBuilder;
-import org.spongycastle.cert.jcajce.JcaX509CertificateConverter;
-import org.spongycastle.jce.provider.BouncyCastleProvider;
-import org.spongycastle.operator.ContentSigner;
-import org.spongycastle.operator.OperatorCreationException;
-import org.spongycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
+import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.OperatorCreationException;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -47,14 +53,14 @@ public class HumlaCertificateGenerator {
     private static final Integer YEARS_VALID = 20;
 
     public static X509Certificate generateCertificate(OutputStream output) throws NoSuchAlgorithmException, OperatorCreationException, CertificateException, KeyStoreException, NoSuchProviderException, IOException {
-        BouncyCastleProvider provider = new BouncyCastleProvider(); // Use SpongyCastle provider, supports creating X509 certs
+        BouncyCastleProvider provider = new BouncyCastleProvider();
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
         generator.initialize(2048, new SecureRandom());
 
         KeyPair keyPair = generator.generateKeyPair();
 
         SubjectPublicKeyInfo publicKeyInfo = SubjectPublicKeyInfo.getInstance(keyPair.getPublic().getEncoded());
-        ContentSigner signer = new JcaContentSignerBuilder("SHA1withRSA").setProvider(provider).build(keyPair.getPrivate());
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").setProvider(provider).build(keyPair.getPrivate());
 
         Date startDate = new Date();
         Calendar calendar = Calendar.getInstance();
@@ -67,13 +73,19 @@ public class HumlaCertificateGenerator {
                 startDate, endDate, new X500Name(ISSUER),
                 publicKeyInfo);
 
+        // Standard Mumble client certificate extensions
+        certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+        certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+        certBuilder.addExtension(Extension.extendedKeyUsage, false, new ExtendedKeyUsage(KeyPurposeId.id_kp_clientAuth));
+        certBuilder.addExtension(Extension.subjectKeyIdentifier, false, new JcaX509ExtensionUtils().createSubjectKeyIdentifier(publicKeyInfo));
+
         X509CertificateHolder certificateHolder = certBuilder.build(signer);
 
         X509Certificate certificate = new JcaX509CertificateConverter().setProvider(provider).getCertificate(certificateHolder);
 
         KeyStore keyStore = KeyStore.getInstance("PKCS12", provider);
         keyStore.load(null, null);
-        keyStore.setKeyEntry("Humla Key", keyPair.getPrivate(), null, new X509Certificate[] { certificate });
+        keyStore.setKeyEntry("Mumble Identity", keyPair.getPrivate(), null, new X509Certificate[] { certificate });
 
         keyStore.store(output, "".toCharArray());
 

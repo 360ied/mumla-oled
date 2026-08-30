@@ -19,10 +19,10 @@
 -keep class se.lublin.humla.protobuf.Mumble** { *; }
 -keep class com.google.protobuf.** { *; }
 
-# Preserve SpongyCastle Security Providers and crypto engines
--keep class org.spongycastle.jce.provider.** { *; }
--keep class org.spongycastle.jcajce.provider.** { *; }
--dontwarn org.spongycastle.**
+# Preserve BouncyCastle Security Providers and crypto engines
+-keep class org.bouncycastle.jce.provider.** { *; }
+-keep class org.bouncycastle.jcajce.provider.** { *; }
+-dontwarn org.bouncycastle.**
 
 # MiniDNS & GuardianProject Netcipher
 -keep class org.minidns.** { *; }
