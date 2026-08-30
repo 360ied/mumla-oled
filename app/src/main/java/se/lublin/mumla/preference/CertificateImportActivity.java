@@ -26,14 +26,12 @@ import android.text.InputType;
 import android.widget.EditText;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AppCompatActivity;
-
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import org.spongycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.KeyStore;
@@ -72,18 +70,28 @@ public class CertificateImportActivity extends BaseActivity {
         if (requestCode != REQUEST_FILE)
             return;
 
-        if (resultCode == RESULT_CANCELED) {
+        if (resultCode == RESULT_CANCELED || data == null || data.getData() == null) {
             finish();
             return;
         }
 
         Uri uri = data.getData();
-        InputStream is;
-        try {
-            is = getContentResolver().openInputStream(uri);
-        } catch (FileNotFoundException e) {
+        byte[] certBytes;
+        try (InputStream is = getContentResolver().openInputStream(uri)) {
+            if (is == null) {
+                finish();
+                return;
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, read);
+            }
+            certBytes = baos.toByteArray();
+        } catch (IOException e) {
             e.printStackTrace();
-            // FIXME(acomminos)
+            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
             finish();
             return;
         }
@@ -98,18 +106,15 @@ public class CertificateImportActivity extends BaseActivity {
         if (cursor != null)
             cursor.close();
 
-        storeKeystore(new char[0], displayName, is);
+        storeKeystore(new char[0], displayName, certBytes);
     }
 
-    private void storeKeystore(final char[] password, final String fileName, final InputStream input) {
+    private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes) {
         KeyStore keyStore;
-        try {
+        try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
             keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
             keyStore.load(input, password);
         } catch (CertificateException e) {
-            // A problem occurred when reading the stream; interpret this as a password being
-            // required. Request a password from the user and reattempt decryption.
-            // FIXME(acomminos): examine p12 file's SafeBags to determine the presence of a password
             final EditText passwordField = new EditText(this);
             passwordField.setHint(R.string.password);
             passwordField.setInputType(InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -118,7 +123,7 @@ public class CertificateImportActivity extends BaseActivity {
                     .setView(passwordField)
                     .setOnCancelListener(dialog -> finish())
                     .setPositiveButton(android.R.string.ok, (dialog, which) ->
-                            storeKeystore(passwordField.getText().toString().toCharArray(), fileName, input))
+                            storeKeystore(passwordField.getText().toString().toCharArray(), fileName, certBytes))
                     .show();
             return;
         } catch (KeyStoreException|IOException|NoSuchAlgorithmException e) {
@@ -142,13 +147,15 @@ public class CertificateImportActivity extends BaseActivity {
         DatabaseCertificate certificate = database.addCertificate(fileName, output.toByteArray());
         database.close();
 
-        if (certificate != null) {
+        if (certificate != null && certificate.getId() >= 0) {
             Settings settings = Settings.getInstance(this);
             settings.setDefaultCertificateId(certificate.getId());
+            Toast.makeText(this, getString(R.string.certificate_import_success, fileName),
+                    Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
         }
 
-        Toast.makeText(this, getString(R.string.certificate_import_success, fileName),
-                       Toast.LENGTH_LONG).show();
         finish();
     }
 }
