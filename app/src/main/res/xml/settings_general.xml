@@ -28,7 +28,7 @@
 
     <CheckBoxPreference
         android:key="stay_awake"
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:title="@string/stay_awake"
         android:summary="@string/stay_awake_sum"
         app:iconSpaceReserved="false" />
@@ -47,14 +47,14 @@
         app:iconSpaceReserved="false" />
 
     <CheckBoxPreference
-        android:defaultValue="false"
+        android:defaultValue="true"
         android:key="shortTtsMessages"
         android:summary="@string/shortTtsMessagesSum"
         android:title="@string/shortTtsMessages"
         app:iconSpaceReserved="false" />
 
     <CheckBoxPreference
-        android:defaultValue="true"
+        android:defaultValue="false"
         android:key="load_images"
         android:summary="@string/loadImagesSum"
         android:title="@string/loadImages"
