@@ -112,7 +112,6 @@ android {
     }
     lint {
         abortOnError = true
-        // InvalidPackage is spongycastle-related
         disable 'InvalidPackage', 'MissingTranslation'
         explainIssues = true
         ignoreWarnings = false

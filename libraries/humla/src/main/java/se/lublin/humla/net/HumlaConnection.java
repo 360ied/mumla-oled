@@ -581,19 +581,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             throw new HumlaException("Could not read certificate", e,
                     HumlaException.HumlaDisconnectReason.OTHER_ERROR);
         } catch (NoSuchAlgorithmException e) {
-                /*
-                 * This will actually NEVER occur.
-                 * We use Spongy Castle to provide the algorithm and provider implementations.
-                 * There's no platform dependency.
-                 */
-            throw new RuntimeException("We use Spongy Castle- what? ", e);
+            throw new RuntimeException("Bouncy Castle algorithm missing", e);
         } catch (NoSuchProviderException e) {
-                /*
-                 * This will actually NEVER occur.
-                 * We use Spongy Castle to provide the algorithm and provider implementations.
-                 * There's no platform dependency.
-                 */
-            throw new RuntimeException("We use Spongy Castle- what? ", e);
+            throw new RuntimeException("Bouncy Castle provider missing", e);
         }
     }
 
