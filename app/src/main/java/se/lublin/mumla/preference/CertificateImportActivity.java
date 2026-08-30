@@ -43,6 +43,8 @@ import java.security.cert.CertificateException;
 import java.util.UUID;
 
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
+import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
 import se.lublin.mumla.app.BaseActivity;
@@ -137,8 +139,13 @@ public class CertificateImportActivity extends BaseActivity {
         }
 
         MumlaDatabase database = new MumlaSQLiteDatabase(this);
-        database.addCertificate(fileName, output.toByteArray());
+        DatabaseCertificate certificate = database.addCertificate(fileName, output.toByteArray());
         database.close();
+
+        if (certificate != null) {
+            Settings settings = Settings.getInstance(this);
+            settings.setDefaultCertificateId(certificate.getId());
+        }
 
         Toast.makeText(this, getString(R.string.certificate_import_success, fileName),
                        Toast.LENGTH_LONG).show();
