@@ -35,12 +35,8 @@ repositories {
 
 dependencies {
     api 'com.google.protobuf:protobuf-java:4.35.1'
-    api 'com.madgag.spongycastle:core:1.51.0.0'
-
-    // Custom PKCS12 keybag parse modifications to support Mumble unencrypted certificates
-    // Source: https://github.com/Morlunk/spongycastle/tree/pkcs12-keybag-fixes
-    api files('libs/humla-spongycastle/prov/build/libs/prov-1.51.0.0.jar',
-              'libs/humla-spongycastle/pkix/build/libs/pkix-1.51.0.0.jar')
+    api 'org.bouncycastle:bcprov-jdk18on:1.80'
+    api 'org.bouncycastle:bcpkix-jdk18on:1.80'
 
     implementation 'com.googlecode.javacpp:javacpp:0.7'
     implementation 'org.jetbrains:annotations:18.0.0'
@@ -88,17 +84,6 @@ android {
 //            cFlags "-I\$(LOCAL_PATH)/speex/include/ -I\$(LOCAL_PATH)/celt-0.11.0-src/include/ -I\$(LOCAL_PATH)/celt-0.7.0-src/include/ -I\$(LOCAL_PATH)/opus/include -D__EMX__ -DUSE_KISS_FFT -DFIXED_POINT -DEXPORT='' -DHAVE_CONFIG_H -fvisibility=hidden -DOPUS_BUILD -DVAR_ARRAYS -Wno-traditional -DFIXED_POINT"
 //        }
     }
-
-    // Build custom Spongy Castle JARs from submodule if needed
-    task buildSpongycastle(type: GradleBuild) {
-        def provJar = file('libs/humla-spongycastle/prov/build/libs/prov-1.51.0.0.jar')
-        def pkixJar = file('libs/humla-spongycastle/pkix/build/libs/pkix-1.51.0.0.jar')
-        onlyIf { !provJar.exists() || !pkixJar.exists() }
-        buildFile = file('libs/humla-spongycastle/build.gradle')
-        dir = file('libs/humla-spongycastle')
-        tasks = ['jar']
-    }
-    preBuild.dependsOn buildSpongycastle
 
     // Prepare RNNoise pre-trained model weights from official upstream model archive
     task prepareRnnoiseModel {
