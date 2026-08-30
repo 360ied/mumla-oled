@@ -93,7 +93,7 @@ public class Settings {
     public static final String TTS_ENGINE_SYSTEM_DEFAULT = "";
 
     public static final String PREF_SHORT_TTS_MESSAGES = "shortTtsMessages";
-    public static final boolean DEFAULT_SHORT_TTS_MESSAGES = false;
+    public static final boolean DEFAULT_SHORT_TTS_MESSAGES = true;
 
     public static final String PREF_THEME = "theme";
     public static final String PREF_LANGUAGE = "language";
@@ -126,7 +126,7 @@ public class Settings {
     public static final Boolean DEFAULT_FIRST_RUN = true;
 
     public static final String PREF_LOAD_IMAGES = "load_images";
-    public static final boolean DEFAULT_LOAD_IMAGES = true;
+    public static final boolean DEFAULT_LOAD_IMAGES = false;
 
     public static final String PREF_FRAMES_PER_PACKET = "audio_per_packet";
     public static final String DEFAULT_FRAMES_PER_PACKET = "2";
@@ -150,7 +150,7 @@ public class Settings {
     public static final String DEFAULT_ECHO_CANCELLATION_METHOD = "none";
 
     public static final String PREF_STAY_AWAKE = "stay_awake";
-    public static final boolean DEFAULT_STAY_AWAKE = false;
+    public static final boolean DEFAULT_STAY_AWAKE = true;
 
     public static final String PREF_SHOW_USER_COUNT = "show_user_count";
     public static final boolean DEFAULT_SHOW_USER_COUNT = false;
