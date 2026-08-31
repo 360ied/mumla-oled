@@ -22,11 +22,12 @@ EOF
 cat >>"$protof" "$mumblerepo/$protof"
 
 cat <<EOF >>"$protof"
+option optimize_for = LITE_RUNTIME;
 option java_package = "se.lublin.humla.protobuf";
 option java_outer_classname = "Mumble";
 option java_multiple_files = false;
 EOF
 
-protoc --java_out=src/main/java "$protof"
+protoc -Isrc/ --java_out=lite:src/main/java "$protof"
 
 git diff --stat src/main/java/ "$protof"

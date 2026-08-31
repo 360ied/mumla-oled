@@ -6,29 +6,14 @@
 package se.lublin.humla.protobuf;
 
 @com.google.protobuf.Generated
-public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
+public final class MumbleUDP {
   private MumbleUDP() {}
-  static {
-    com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
-      com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
-      /* major= */ 4,
-      /* minor= */ 35,
-      /* patch= */ 1,
-      /* suffix= */ "",
-      "MumbleUDP");
-  }
   public static void registerAllExtensions(
       com.google.protobuf.ExtensionRegistryLite registry) {
   }
-
-  public static void registerAllExtensions(
-      com.google.protobuf.ExtensionRegistry registry) {
-    registerAllExtensions(
-        (com.google.protobuf.ExtensionRegistryLite) registry);
-  }
   public interface AudioOrBuilder extends
       // @@protoc_insertion_point(interface_extends:MumbleUDP.Audio)
-      com.google.protobuf.MessageOrBuilder {
+      com.google.protobuf.MessageLiteOrBuilder {
 
     /**
      * <pre>
@@ -166,58 +151,24 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
      */
     boolean getIsTerminator();
 
-    se.lublin.humla.protobuf.MumbleUDP.Audio.HeaderCase getHeaderCase();
+    public se.lublin.humla.protobuf.MumbleUDP.Audio.HeaderCase getHeaderCase();
   }
   /**
    * Protobuf type {@code MumbleUDP.Audio}
    */
-  public static final class Audio extends
-      com.google.protobuf.GeneratedMessage implements
+  public  static final class Audio extends
+      com.google.protobuf.GeneratedMessageLite<
+          Audio, Audio.Builder> implements
       // @@protoc_insertion_point(message_implements:MumbleUDP.Audio)
       AudioOrBuilder {
-  private static final long serialVersionUID = 0L;
-    static {
-      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
-        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
-        /* major= */ 4,
-        /* minor= */ 35,
-        /* patch= */ 1,
-        /* suffix= */ "",
-        "Audio");
-    }
-    // Use Audio.newBuilder() to construct.
-    private Audio(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
-      super(builder);
-    }
     private Audio() {
       opusData_ = com.google.protobuf.ByteString.EMPTY;
       positionalData_ = emptyFloatList();
     }
-
-    public static final com.google.protobuf.Descriptors.Descriptor
-        getDescriptor() {
-      return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Audio_descriptor;
-    }
-
-    @java.lang.Override
-    public com.google.protobuf.Descriptors.Descriptor getDescriptorForType() {
-      return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Audio_descriptor;
-    }
-
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
-        internalGetFieldAccessorTable() {
-      return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Audio_fieldAccessorTable
-          .ensureFieldAccessorsInitialized(
-              se.lublin.humla.protobuf.MumbleUDP.Audio.class, se.lublin.humla.protobuf.MumbleUDP.Audio.Builder.class);
-    }
-
     private int headerCase_ = 0;
-    @SuppressWarnings("serial")
     private java.lang.Object header_;
     public enum HeaderCase
-        implements com.google.protobuf.Internal.EnumLite,
-            com.google.protobuf.AbstractMessage.InternalOneOfEnum {
+        implements com.google.protobuf.AbstractMessageLite.InternalOneOfEnum {
       TARGET(1),
       CONTEXT(2),
       HEADER_NOT_SET(0);
@@ -226,8 +177,6 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
         this.value = value;
       }
       /**
-       * @param value The number of the enum to look for.
-       * @return The enum associated with the given number.
        * @deprecated Use {@link #forNumber(int)} instead.
        */
       @java.lang.Deprecated
@@ -243,15 +192,21 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
           default: return null;
         }
       }
-      public int getNumber() {
+      @java.lang.Override public int getNumber() {
         return this.value;
       }
     };
 
+    @java.lang.Override
     public HeaderCase
     getHeaderCase() {
       return HeaderCase.forNumber(
           headerCase_);
+    }
+
+    private void clearHeader() {
+      headerCase_ = 0;
+      header_ = null;
     }
 
     public static final int TARGET_FIELD_NUMBER = 1;
@@ -287,6 +242,37 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
         return (java.lang.Integer) header_;
       }
       return 0;
+    }
+    /**
+     * <pre>
+     * When this audio is sent by the client to the server, this is set to the target of the audio data. This target
+     * is a number in the range [0, 2^{32} - 1], where 0 means "normal talking", 2^{5} - 1 means "server loopback"
+     * and all other targets are understood as shout/whisper targets that have previously been registered via a
+     * VoiceTarget message (via TCP).
+     * </pre>
+     *
+     * <code>uint32 target = 1;</code>
+     * @param value The target to set.
+     */
+    private void setTarget(int value) {
+      headerCase_ = 1;
+      header_ = value;
+    }
+    /**
+     * <pre>
+     * When this audio is sent by the client to the server, this is set to the target of the audio data. This target
+     * is a number in the range [0, 2^{32} - 1], where 0 means "normal talking", 2^{5} - 1 means "server loopback"
+     * and all other targets are understood as shout/whisper targets that have previously been registered via a
+     * VoiceTarget message (via TCP).
+     * </pre>
+     *
+     * <code>uint32 target = 1;</code>
+     */
+    private void clearTarget() {
+      if (headerCase_ == 1) {
+        headerCase_ = 0;
+        header_ = null;
+      }
     }
 
     public static final int CONTEXT_FIELD_NUMBER = 2;
@@ -325,9 +311,42 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
       }
       return 0;
     }
+    /**
+     * <pre>
+     * When this audio is sent by the server to the client, this indicates the context in which the audio has been sent.
+     * 0: Normal speech
+     * 1: Shout to channel
+     * 2: Whisper to user
+     * 3: Received via channel listener
+     * </pre>
+     *
+     * <code>uint32 context = 2;</code>
+     * @param value The context to set.
+     */
+    private void setContext(int value) {
+      headerCase_ = 2;
+      header_ = value;
+    }
+    /**
+     * <pre>
+     * When this audio is sent by the server to the client, this indicates the context in which the audio has been sent.
+     * 0: Normal speech
+     * 1: Shout to channel
+     * 2: Whisper to user
+     * 3: Received via channel listener
+     * </pre>
+     *
+     * <code>uint32 context = 2;</code>
+     */
+    private void clearContext() {
+      if (headerCase_ == 2) {
+        headerCase_ = 0;
+        header_ = null;
+      }
+    }
 
     public static final int SENDER_SESSION_FIELD_NUMBER = 3;
-    private int senderSession_ = 0;
+    private int senderSession_;
     /**
      * <pre>
      * The session of the client (sender) this audio was originally sent from. This field is not required when sending
@@ -341,9 +360,34 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public int getSenderSession() {
       return senderSession_;
     }
+    /**
+     * <pre>
+     * The session of the client (sender) this audio was originally sent from. This field is not required when sending
+     * audio to the server, but will always be set when receiving audio from the server.
+     * </pre>
+     *
+     * <code>uint32 sender_session = 3;</code>
+     * @param value The senderSession to set.
+     */
+    private void setSenderSession(int value) {
+      
+      senderSession_ = value;
+    }
+    /**
+     * <pre>
+     * The session of the client (sender) this audio was originally sent from. This field is not required when sending
+     * audio to the server, but will always be set when receiving audio from the server.
+     * </pre>
+     *
+     * <code>uint32 sender_session = 3;</code>
+     */
+    private void clearSenderSession() {
+
+      senderSession_ = 0;
+    }
 
     public static final int FRAME_NUMBER_FIELD_NUMBER = 4;
-    private long frameNumber_ = 0L;
+    private long frameNumber_;
     /**
      * <pre>
      * The number of the first contained audio frame (indicating the position of that frame in the overall audio stream)
@@ -356,9 +400,32 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public long getFrameNumber() {
       return frameNumber_;
     }
+    /**
+     * <pre>
+     * The number of the first contained audio frame (indicating the position of that frame in the overall audio stream)
+     * </pre>
+     *
+     * <code>uint64 frame_number = 4;</code>
+     * @param value The frameNumber to set.
+     */
+    private void setFrameNumber(long value) {
+      
+      frameNumber_ = value;
+    }
+    /**
+     * <pre>
+     * The number of the first contained audio frame (indicating the position of that frame in the overall audio stream)
+     * </pre>
+     *
+     * <code>uint64 frame_number = 4;</code>
+     */
+    private void clearFrameNumber() {
+
+      frameNumber_ = 0L;
+    }
 
     public static final int OPUS_DATA_FIELD_NUMBER = 5;
-    private com.google.protobuf.ByteString opusData_ = com.google.protobuf.ByteString.EMPTY;
+    private com.google.protobuf.ByteString opusData_;
     /**
      * <pre>
      * The actual voice data payload in the Opus format.
@@ -371,11 +438,33 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public com.google.protobuf.ByteString getOpusData() {
       return opusData_;
     }
+    /**
+     * <pre>
+     * The actual voice data payload in the Opus format.
+     * </pre>
+     *
+     * <code>bytes opus_data = 5;</code>
+     * @param value The opusData to set.
+     */
+    private void setOpusData(com.google.protobuf.ByteString value) {
+      java.lang.Class<?> valueClass = value.getClass();
+  
+      opusData_ = value;
+    }
+    /**
+     * <pre>
+     * The actual voice data payload in the Opus format.
+     * </pre>
+     *
+     * <code>bytes opus_data = 5;</code>
+     */
+    private void clearOpusData() {
+
+      opusData_ = getDefaultInstance().getOpusData();
+    }
 
     public static final int POSITIONAL_DATA_FIELD_NUMBER = 6;
-    @SuppressWarnings("serial")
-    private com.google.protobuf.Internal.FloatList positionalData_ =
-        emptyFloatList();
+    private com.google.protobuf.Internal.FloatList positionalData_;
     /**
      * <pre>
      * Optional positional data indicating the speaker's position in a virtual world (in meters). This "list" is really
@@ -399,6 +488,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
      * <code>repeated float positional_data = 6;</code>
      * @return The count of positionalData.
      */
+    @java.lang.Override
     public int getPositionalDataCount() {
       return positionalData_.size();
     }
@@ -412,13 +502,75 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
      * @param index The index of the element to return.
      * @return The positionalData at the given index.
      */
+    @java.lang.Override
     public float getPositionalData(int index) {
       return positionalData_.getFloat(index);
     }
     private int positionalDataMemoizedSerializedSize = -1;
+    private void ensurePositionalDataIsMutable() {
+      com.google.protobuf.Internal.FloatList tmp = positionalData_;
+      if (!tmp.isModifiable()) {
+        positionalData_ =
+            com.google.protobuf.GeneratedMessageLite.mutableCopy(tmp);
+       }
+    }
+    /**
+     * <pre>
+     * Optional positional data indicating the speaker's position in a virtual world (in meters). This "list" is really
+     * expected to be an array of size 3 containing the X, Y and Z coordinates of the position (in that order).
+     * </pre>
+     *
+     * <code>repeated float positional_data = 6;</code>
+     * @param index The index to set the value at.
+     * @param value The positionalData to set.
+     */
+    private void setPositionalData(
+        int index, float value) {
+      ensurePositionalDataIsMutable();
+      positionalData_.setFloat(index, value);
+    }
+    /**
+     * <pre>
+     * Optional positional data indicating the speaker's position in a virtual world (in meters). This "list" is really
+     * expected to be an array of size 3 containing the X, Y and Z coordinates of the position (in that order).
+     * </pre>
+     *
+     * <code>repeated float positional_data = 6;</code>
+     * @param value The positionalData to add.
+     */
+    private void addPositionalData(float value) {
+      ensurePositionalDataIsMutable();
+      positionalData_.addFloat(value);
+    }
+    /**
+     * <pre>
+     * Optional positional data indicating the speaker's position in a virtual world (in meters). This "list" is really
+     * expected to be an array of size 3 containing the X, Y and Z coordinates of the position (in that order).
+     * </pre>
+     *
+     * <code>repeated float positional_data = 6;</code>
+     * @param values The positionalData to add.
+     */
+    private void addAllPositionalData(
+        java.lang.Iterable<? extends java.lang.Float> values) {
+      ensurePositionalDataIsMutable();
+      com.google.protobuf.AbstractMessageLite.addAll(
+          values, positionalData_);
+    }
+    /**
+     * <pre>
+     * Optional positional data indicating the speaker's position in a virtual world (in meters). This "list" is really
+     * expected to be an array of size 3 containing the X, Y and Z coordinates of the position (in that order).
+     * </pre>
+     *
+     * <code>repeated float positional_data = 6;</code>
+     */
+    private void clearPositionalData() {
+      positionalData_ = emptyFloatList();
+    }
 
     public static final int VOLUME_ADJUSTMENT_FIELD_NUMBER = 7;
-    private float volumeAdjustment_ = 0F;
+    private float volumeAdjustment_;
     /**
      * <pre>
      * A volume adjustment determined by the server for this audio packet. It is up to the client to apply this adjustment to
@@ -432,9 +584,34 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public float getVolumeAdjustment() {
       return volumeAdjustment_;
     }
+    /**
+     * <pre>
+     * A volume adjustment determined by the server for this audio packet. It is up to the client to apply this adjustment to
+     * the resulting audio (or not). Note: A value of 0 means that this field is unset.
+     * </pre>
+     *
+     * <code>float volume_adjustment = 7;</code>
+     * @param value The volumeAdjustment to set.
+     */
+    private void setVolumeAdjustment(float value) {
+      
+      volumeAdjustment_ = value;
+    }
+    /**
+     * <pre>
+     * A volume adjustment determined by the server for this audio packet. It is up to the client to apply this adjustment to
+     * the resulting audio (or not). Note: A value of 0 means that this field is unset.
+     * </pre>
+     *
+     * <code>float volume_adjustment = 7;</code>
+     */
+    private void clearVolumeAdjustment() {
+
+      volumeAdjustment_ = 0F;
+    }
 
     public static final int IS_TERMINATOR_FIELD_NUMBER = 16;
-    private boolean isTerminator_ = false;
+    private boolean isTerminator_;
     /**
      * <pre>
      * A flag indicating whether this audio packet represents the end of transmission for the current audio stream
@@ -447,546 +624,138 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public boolean getIsTerminator() {
       return isTerminator_;
     }
-
-    private byte memoizedIsInitialized = -1;
-    @java.lang.Override
-    public final boolean isInitialized() {
-      byte isInitialized = memoizedIsInitialized;
-      if (isInitialized == 1) return true;
-      if (isInitialized == 0) return false;
-
-      memoizedIsInitialized = 1;
-      return true;
+    /**
+     * <pre>
+     * A flag indicating whether this audio packet represents the end of transmission for the current audio stream
+     * </pre>
+     *
+     * <code>bool is_terminator = 16;</code>
+     * @param value The isTerminator to set.
+     */
+    private void setIsTerminator(boolean value) {
+      
+      isTerminator_ = value;
     }
+    /**
+     * <pre>
+     * A flag indicating whether this audio packet represents the end of transmission for the current audio stream
+     * </pre>
+     *
+     * <code>bool is_terminator = 16;</code>
+     */
+    private void clearIsTerminator() {
 
-    @java.lang.Override
-    public void writeTo(com.google.protobuf.CodedOutputStream output)
-                        throws java.io.IOException {
-      getSerializedSize();
-      if (headerCase_ == 1) {
-        output.writeUInt32(
-            1, (int)((java.lang.Integer) header_));
-      }
-      if (headerCase_ == 2) {
-        output.writeUInt32(
-            2, (int)((java.lang.Integer) header_));
-      }
-      if (senderSession_ != 0) {
-        output.writeUInt32(3, senderSession_);
-      }
-      if (frameNumber_ != 0L) {
-        output.writeUInt64(4, frameNumber_);
-      }
-      if (!opusData_.isEmpty()) {
-        output.writeBytes(5, opusData_);
-      }
-      if (getPositionalDataList().size() > 0) {
-        output.writeUInt32NoTag(50);
-        output.writeUInt32NoTag(positionalDataMemoizedSerializedSize);
-      }
-      for (int i = 0; i < positionalData_.size(); i++) {
-        output.writeFloatNoTag(positionalData_.getFloat(i));
-      }
-      if (java.lang.Float.floatToRawIntBits(volumeAdjustment_) != 0) {
-        output.writeFloat(7, volumeAdjustment_);
-      }
-      if (isTerminator_ != false) {
-        output.writeBool(16, isTerminator_);
-      }
-      getUnknownFields().writeTo(output);
-    }
-    private int computeSerializedSize_0() {
-      int size = 0;
-      if (headerCase_ == 1) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(
-              1, (int)((java.lang.Integer) header_));
-      }
-      if (headerCase_ == 2) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(
-              2, (int)((java.lang.Integer) header_));
-      }
-      if (senderSession_ != 0) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(3, senderSession_);
-      }
-      if (frameNumber_ != 0L) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(4, frameNumber_);
-      }
-      if (!opusData_.isEmpty()) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeBytesSize(5, opusData_);
-      }
-      {
-        int dataSize = 0;
-        dataSize = 4 * getPositionalDataList().size();
-        size += dataSize;
-        if (!getPositionalDataList().isEmpty()) {
-          size += 1;
-          size += com.google.protobuf.CodedOutputStream
-              .computeInt32SizeNoTag(dataSize);
-        }
-        positionalDataMemoizedSerializedSize = dataSize;
-      }
-      if (java.lang.Float.floatToRawIntBits(volumeAdjustment_) != 0) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeFloatSize(7, volumeAdjustment_);
-      }
-      if (isTerminator_ != false) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeBoolSize(16, isTerminator_);
-      }
-      return size;
-    }
-    @java.lang.Override
-    public int getSerializedSize() {
-      int size = memoizedSize;
-      if (size != -1) return size;
-
-      size = 0;
-      size += computeSerializedSize_0();
-      size += getUnknownFields().getSerializedSize();
-      memoizedSize = size;
-      return size;
-    }
-
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
-      if (obj == this) {
-       return true;
-      }
-      if (!(obj instanceof se.lublin.humla.protobuf.MumbleUDP.Audio)) {
-        return super.equals(obj);
-      }
-      se.lublin.humla.protobuf.MumbleUDP.Audio other = (se.lublin.humla.protobuf.MumbleUDP.Audio) obj;
-
-      if (getSenderSession()
-          != other.getSenderSession()) return false;
-      if (getFrameNumber()
-          != other.getFrameNumber()) return false;
-      if (!getOpusData()
-          .equals(other.getOpusData())) return false;
-      if (!getPositionalDataList()
-          .equals(other.getPositionalDataList())) return false;
-      if (java.lang.Float.floatToIntBits(getVolumeAdjustment())
-          != java.lang.Float.floatToIntBits(
-              other.getVolumeAdjustment())) return false;
-      if (getIsTerminator()
-          != other.getIsTerminator()) return false;
-      if (!getHeaderCase().equals(other.getHeaderCase())) return false;
-      switch (headerCase_) {
-        case 1:
-          if (getTarget()
-              != other.getTarget()) return false;
-          break;
-        case 2:
-          if (getContext()
-              != other.getContext()) return false;
-          break;
-        case 0:
-        default:
-      }
-      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
-      return true;
-    }
-
-    @java.lang.Override
-    public int hashCode() {
-      if (memoizedHashCode != 0) {
-        return memoizedHashCode;
-      }
-      int hash = 41;
-      hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (37 * hash) + SENDER_SESSION_FIELD_NUMBER;
-      hash = (53 * hash) + getSenderSession();
-      hash = (37 * hash) + FRAME_NUMBER_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getFrameNumber());
-      hash = (37 * hash) + OPUS_DATA_FIELD_NUMBER;
-      hash = (53 * hash) + getOpusData().hashCode();
-      if (getPositionalDataCount() > 0) {
-        hash = (37 * hash) + POSITIONAL_DATA_FIELD_NUMBER;
-        hash = (53 * hash) + getPositionalDataList().hashCode();
-      }
-      hash = (37 * hash) + VOLUME_ADJUSTMENT_FIELD_NUMBER;
-      hash = (53 * hash) + java.lang.Float.floatToIntBits(
-          getVolumeAdjustment());
-      hash = (37 * hash) + IS_TERMINATOR_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
-          getIsTerminator());
-      switch (headerCase_) {
-        case 1:
-          hash = (37 * hash) + TARGET_FIELD_NUMBER;
-          hash = (53 * hash) + getTarget();
-          break;
-        case 2:
-          hash = (37 * hash) + CONTEXT_FIELD_NUMBER;
-          hash = (53 * hash) + getContext();
-          break;
-        case 0:
-        default:
-      }
-      hash = (29 * hash) + getUnknownFields().hashCode();
-      memoizedHashCode = hash;
-      return hash;
+      isTerminator_ = false;
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(java.io.InputStream input)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input, extensionRegistry);
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseDelimitedWithIOException(PARSER, input);
+      return parseDelimitedFrom(DEFAULT_INSTANCE, input);
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+      return parseDelimitedFrom(DEFAULT_INSTANCE, input, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Audio parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input, extensionRegistry);
     }
 
-    @java.lang.Override
-    public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
-      return DEFAULT_INSTANCE.toBuilder();
+      return (Builder) DEFAULT_INSTANCE.createBuilder();
     }
     public static Builder newBuilder(se.lublin.humla.protobuf.MumbleUDP.Audio prototype) {
-      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
-    }
-    @java.lang.Override
-    public Builder toBuilder() {
-      return this == DEFAULT_INSTANCE
-          ? new Builder() : new Builder().mergeFrom(this);
+      return DEFAULT_INSTANCE.createBuilder(prototype);
     }
 
-    @java.lang.Override
-    protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
-      Builder builder = new Builder(parent);
-      return builder;
-    }
     /**
      * Protobuf type {@code MumbleUDP.Audio}
      */
     public static final class Builder extends
-        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        com.google.protobuf.GeneratedMessageLite.Builder<
+          se.lublin.humla.protobuf.MumbleUDP.Audio, Builder> implements
         // @@protoc_insertion_point(builder_implements:MumbleUDP.Audio)
         se.lublin.humla.protobuf.MumbleUDP.AudioOrBuilder {
-      public static final com.google.protobuf.Descriptors.Descriptor
-          getDescriptor() {
-        return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Audio_descriptor;
-      }
-
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
-          internalGetFieldAccessorTable() {
-        return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Audio_fieldAccessorTable
-            .ensureFieldAccessorsInitialized(
-                se.lublin.humla.protobuf.MumbleUDP.Audio.class, se.lublin.humla.protobuf.MumbleUDP.Audio.Builder.class);
-      }
-
       // Construct using se.lublin.humla.protobuf.MumbleUDP.Audio.newBuilder()
       private Builder() {
-
-      }
-
-      private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
-        super(parent);
-
-      }
-      @java.lang.Override
-      public Builder clear() {
-        super.clear();
-        bitField0_ = 0;
-        senderSession_ = 0;
-        frameNumber_ = 0L;
-        opusData_ = com.google.protobuf.ByteString.EMPTY;
-        positionalData_ = emptyFloatList();
-        volumeAdjustment_ = 0F;
-        isTerminator_ = false;
-        headerCase_ = 0;
-        header_ = null;
-        return this;
+        super(DEFAULT_INSTANCE);
       }
 
       @java.lang.Override
-      public com.google.protobuf.Descriptors.Descriptor
-          getDescriptorForType() {
-        return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Audio_descriptor;
-      }
-
-      @java.lang.Override
-      public se.lublin.humla.protobuf.MumbleUDP.Audio getDefaultInstanceForType() {
-        return se.lublin.humla.protobuf.MumbleUDP.Audio.getDefaultInstance();
-      }
-
-      @java.lang.Override
-      public se.lublin.humla.protobuf.MumbleUDP.Audio build() {
-        se.lublin.humla.protobuf.MumbleUDP.Audio result = buildPartial();
-        if (!result.isInitialized()) {
-          throw newUninitializedMessageException(result);
-        }
-        return result;
-      }
-
-      @java.lang.Override
-      public se.lublin.humla.protobuf.MumbleUDP.Audio buildPartial() {
-        se.lublin.humla.protobuf.MumbleUDP.Audio result = new se.lublin.humla.protobuf.MumbleUDP.Audio(this);
-        if (bitField0_ != 0) { buildPartial0(result); }
-        buildPartialOneofs(result);
-        onBuilt();
-        return result;
-      }
-
-      private void buildPartial0(se.lublin.humla.protobuf.MumbleUDP.Audio result) {
-        int from_bitField0_ = bitField0_;
-        if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.senderSession_ = senderSession_;
-        }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
-          result.frameNumber_ = frameNumber_;
-        }
-        if (((from_bitField0_ & 0x00000010) != 0)) {
-          result.opusData_ = opusData_;
-        }
-        if (((from_bitField0_ & 0x00000020) != 0)) {
-          positionalData_.makeImmutable();
-          result.positionalData_ = positionalData_;
-        }
-        if (((from_bitField0_ & 0x00000040) != 0)) {
-          result.volumeAdjustment_ = volumeAdjustment_;
-        }
-        if (((from_bitField0_ & 0x00000080) != 0)) {
-          result.isTerminator_ = isTerminator_;
-        }
-      }
-
-      private void buildPartialOneofs(se.lublin.humla.protobuf.MumbleUDP.Audio result) {
-        result.headerCase_ = headerCase_;
-        result.header_ = this.header_;
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof se.lublin.humla.protobuf.MumbleUDP.Audio) {
-          return mergeFrom((se.lublin.humla.protobuf.MumbleUDP.Audio)other);
-        } else {
-          super.mergeFrom(other);
-          return this;
-        }
-      }
-
-      public Builder mergeFrom(se.lublin.humla.protobuf.MumbleUDP.Audio other) {
-        if (other == se.lublin.humla.protobuf.MumbleUDP.Audio.getDefaultInstance()) return this;
-        if (other.getSenderSession() != 0) {
-          setSenderSession(other.getSenderSession());
-        }
-        if (other.getFrameNumber() != 0L) {
-          setFrameNumber(other.getFrameNumber());
-        }
-        if (!other.getOpusData().isEmpty()) {
-          setOpusData(other.getOpusData());
-        }
-        if (!other.positionalData_.isEmpty()) {
-          if (positionalData_.isEmpty()) {
-            positionalData_ = other.positionalData_;
-            positionalData_.makeImmutable();
-            bitField0_ |= 0x00000020;
-          } else {
-            ensurePositionalDataIsMutable();
-            positionalData_.addAll(other.positionalData_);
-          }
-          onChanged();
-        }
-        if (java.lang.Float.floatToRawIntBits(other.getVolumeAdjustment()) != 0) {
-          setVolumeAdjustment(other.getVolumeAdjustment());
-        }
-        if (other.getIsTerminator() != false) {
-          setIsTerminator(other.getIsTerminator());
-        }
-        switch (other.getHeaderCase()) {
-          case TARGET: {
-            setTarget(other.getTarget());
-            break;
-          }
-          case CONTEXT: {
-            setContext(other.getContext());
-            break;
-          }
-          case HEADER_NOT_SET: {
-            break;
-          }
-        }
-        this.mergeUnknownFields(other.getUnknownFields());
-        onChanged();
-        return this;
-      }
-
-      @java.lang.Override
-      public final boolean isInitialized() {
-        return true;
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws java.io.IOException {
-        if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
-        }
-        try {
-          boolean done = false;
-          while (!done) {
-            int tag = input.readTag();
-            switch (tag) {
-              case 0:
-                done = true;
-                break;
-              case 8: {
-                header_ = input.readUInt32();
-                headerCase_ = 1;
-                break;
-              } // case 8
-              case 16: {
-                header_ = input.readUInt32();
-                headerCase_ = 2;
-                break;
-              } // case 16
-              case 24: {
-                senderSession_ = input.readUInt32();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 24
-              case 32: {
-                frameNumber_ = input.readUInt64();
-                bitField0_ |= 0x00000008;
-                break;
-              } // case 32
-              case 42: {
-                opusData_ = input.readBytes();
-                bitField0_ |= 0x00000010;
-                break;
-              } // case 42
-              case 53: {
-                float v = input.readFloat();
-                ensurePositionalDataIsMutable();
-                positionalData_.addFloat(v);
-                break;
-              } // case 53
-              case 50: {
-                int length = input.readRawVarint32();
-                int limit = input.pushLimit(length);
-                int alloc = length > 4096 ? 4096 : length;
-                ensurePositionalDataIsMutable(alloc / 4);
-                while (input.getBytesUntilLimit() > 0) {
-                  positionalData_.addFloat(input.readFloat());
-                }
-                input.popLimit(limit);
-                break;
-              } // case 50
-              case 61: {
-                volumeAdjustment_ = input.readFloat();
-                bitField0_ |= 0x00000040;
-                break;
-              } // case 61
-              case 128: {
-                isTerminator_ = input.readBool();
-                bitField0_ |= 0x00000080;
-                break;
-              } // case 128
-              default: {
-                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
-                  done = true; // was an endgroup tag
-                }
-                break;
-              } // default:
-            } // switch (tag)
-          } // while (!done)
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.unwrapIOException();
-        } finally {
-          onChanged();
-        } // finally
-        return this;
-      }
-      private int headerCase_ = 0;
-      private java.lang.Object header_;
       public HeaderCase
           getHeaderCase() {
-        return HeaderCase.forNumber(
-            headerCase_);
+        return instance.getHeaderCase();
       }
 
       public Builder clearHeader() {
-        headerCase_ = 0;
-        header_ = null;
-        onChanged();
+        copyOnWrite();
+        instance.clearHeader();
         return this;
       }
 
-      private int bitField0_;
 
       /**
        * <pre>
@@ -999,8 +768,9 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * <code>uint32 target = 1;</code>
        * @return Whether the target field is set.
        */
+      @java.lang.Override
       public boolean hasTarget() {
-        return headerCase_ == 1;
+        return instance.hasTarget();
       }
       /**
        * <pre>
@@ -1013,11 +783,9 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * <code>uint32 target = 1;</code>
        * @return The target.
        */
+      @java.lang.Override
       public int getTarget() {
-        if (headerCase_ == 1) {
-          return (java.lang.Integer) header_;
-        }
-        return 0;
+        return instance.getTarget();
       }
       /**
        * <pre>
@@ -1032,10 +800,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setTarget(int value) {
-
-        headerCase_ = 1;
-        header_ = value;
-        onChanged();
+        copyOnWrite();
+        instance.setTarget(value);
         return this;
       }
       /**
@@ -1050,11 +816,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearTarget() {
-        if (headerCase_ == 1) {
-          headerCase_ = 0;
-          header_ = null;
-          onChanged();
-        }
+        copyOnWrite();
+        instance.clearTarget();
         return this;
       }
 
@@ -1070,8 +833,9 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * <code>uint32 context = 2;</code>
        * @return Whether the context field is set.
        */
+      @java.lang.Override
       public boolean hasContext() {
-        return headerCase_ == 2;
+        return instance.hasContext();
       }
       /**
        * <pre>
@@ -1085,11 +849,9 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * <code>uint32 context = 2;</code>
        * @return The context.
        */
+      @java.lang.Override
       public int getContext() {
-        if (headerCase_ == 2) {
-          return (java.lang.Integer) header_;
-        }
-        return 0;
+        return instance.getContext();
       }
       /**
        * <pre>
@@ -1105,10 +867,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setContext(int value) {
-
-        headerCase_ = 2;
-        header_ = value;
-        onChanged();
+        copyOnWrite();
+        instance.setContext(value);
         return this;
       }
       /**
@@ -1124,15 +884,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearContext() {
-        if (headerCase_ == 2) {
-          headerCase_ = 0;
-          header_ = null;
-          onChanged();
-        }
+        copyOnWrite();
+        instance.clearContext();
         return this;
       }
 
-      private int senderSession_ ;
       /**
        * <pre>
        * The session of the client (sender) this audio was originally sent from. This field is not required when sending
@@ -1144,7 +900,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public int getSenderSession() {
-        return senderSession_;
+        return instance.getSenderSession();
       }
       /**
        * <pre>
@@ -1157,10 +913,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setSenderSession(int value) {
-
-        senderSession_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
+        copyOnWrite();
+        instance.setSenderSession(value);
         return this;
       }
       /**
@@ -1173,13 +927,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearSenderSession() {
-        bitField0_ = (bitField0_ & ~0x00000004);
-        senderSession_ = 0;
-        onChanged();
+        copyOnWrite();
+        instance.clearSenderSession();
         return this;
       }
 
-      private long frameNumber_ ;
       /**
        * <pre>
        * The number of the first contained audio frame (indicating the position of that frame in the overall audio stream)
@@ -1190,7 +942,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public long getFrameNumber() {
-        return frameNumber_;
+        return instance.getFrameNumber();
       }
       /**
        * <pre>
@@ -1202,10 +954,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setFrameNumber(long value) {
-
-        frameNumber_ = value;
-        bitField0_ |= 0x00000008;
-        onChanged();
+        copyOnWrite();
+        instance.setFrameNumber(value);
         return this;
       }
       /**
@@ -1217,13 +967,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearFrameNumber() {
-        bitField0_ = (bitField0_ & ~0x00000008);
-        frameNumber_ = 0L;
-        onChanged();
+        copyOnWrite();
+        instance.clearFrameNumber();
         return this;
       }
 
-      private com.google.protobuf.ByteString opusData_ = com.google.protobuf.ByteString.EMPTY;
       /**
        * <pre>
        * The actual voice data payload in the Opus format.
@@ -1234,7 +982,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public com.google.protobuf.ByteString getOpusData() {
-        return opusData_;
+        return instance.getOpusData();
       }
       /**
        * <pre>
@@ -1246,10 +994,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setOpusData(com.google.protobuf.ByteString value) {
-        if (value == null) { throw new NullPointerException(); }
-        opusData_ = value;
-        bitField0_ |= 0x00000010;
-        onChanged();
+        copyOnWrite();
+        instance.setOpusData(value);
         return this;
       }
       /**
@@ -1261,25 +1007,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearOpusData() {
-        bitField0_ = (bitField0_ & ~0x00000010);
-        opusData_ = getDefaultInstance().getOpusData();
-        onChanged();
+        copyOnWrite();
+        instance.clearOpusData();
         return this;
       }
 
-      private com.google.protobuf.Internal.FloatList positionalData_ = emptyFloatList();
-      private void ensurePositionalDataIsMutable() {
-        if (!positionalData_.isModifiable()) {
-          positionalData_ = makeMutableCopy(positionalData_);
-        }
-        bitField0_ |= 0x00000020;
-      }
-      private void ensurePositionalDataIsMutable(int capacity) {
-        if (!positionalData_.isModifiable()) {
-          positionalData_ = makeMutableCopy(positionalData_, capacity);
-        }
-        bitField0_ |= 0x00000020;
-      }
       /**
        * <pre>
        * Optional positional data indicating the speaker's position in a virtual world (in meters). This "list" is really
@@ -1289,10 +1021,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * <code>repeated float positional_data = 6;</code>
        * @return A list containing the positionalData.
        */
+      @java.lang.Override
       public java.util.List<java.lang.Float>
           getPositionalDataList() {
-        positionalData_.makeImmutable();
-        return positionalData_;
+        return java.util.Collections.unmodifiableList(
+            instance.getPositionalDataList());
       }
       /**
        * <pre>
@@ -1303,8 +1036,9 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * <code>repeated float positional_data = 6;</code>
        * @return The count of positionalData.
        */
+      @java.lang.Override
       public int getPositionalDataCount() {
-        return positionalData_.size();
+        return instance.getPositionalDataCount();
       }
       /**
        * <pre>
@@ -1316,8 +1050,9 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @param index The index of the element to return.
        * @return The positionalData at the given index.
        */
+      @java.lang.Override
       public float getPositionalData(int index) {
-        return positionalData_.getFloat(index);
+        return instance.getPositionalData(index);
       }
       /**
        * <pre>
@@ -1326,17 +1061,13 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * </pre>
        *
        * <code>repeated float positional_data = 6;</code>
-       * @param index The index to set the value at.
        * @param value The positionalData to set.
        * @return This builder for chaining.
        */
       public Builder setPositionalData(
           int index, float value) {
-
-        ensurePositionalDataIsMutable();
-        positionalData_.setFloat(index, value);
-        bitField0_ |= 0x00000020;
-        onChanged();
+        copyOnWrite();
+        instance.setPositionalData(index, value);
         return this;
       }
       /**
@@ -1350,11 +1081,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder addPositionalData(float value) {
-
-        ensurePositionalDataIsMutable();
-        positionalData_.addFloat(value);
-        bitField0_ |= 0x00000020;
-        onChanged();
+        copyOnWrite();
+        instance.addPositionalData(value);
         return this;
       }
       /**
@@ -1369,11 +1097,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       public Builder addAllPositionalData(
           java.lang.Iterable<? extends java.lang.Float> values) {
-        ensurePositionalDataIsMutable();
-        com.google.protobuf.AbstractMessageLite.Builder.addAll(
-            values, positionalData_);
-        bitField0_ |= 0x00000020;
-        onChanged();
+        copyOnWrite();
+        instance.addAllPositionalData(values);
         return this;
       }
       /**
@@ -1386,13 +1111,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearPositionalData() {
-        positionalData_ = emptyFloatList();
-        bitField0_ = (bitField0_ & ~0x00000020);
-        onChanged();
+        copyOnWrite();
+        instance.clearPositionalData();
         return this;
       }
 
-      private float volumeAdjustment_ ;
       /**
        * <pre>
        * A volume adjustment determined by the server for this audio packet. It is up to the client to apply this adjustment to
@@ -1404,7 +1127,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public float getVolumeAdjustment() {
-        return volumeAdjustment_;
+        return instance.getVolumeAdjustment();
       }
       /**
        * <pre>
@@ -1417,10 +1140,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setVolumeAdjustment(float value) {
-
-        volumeAdjustment_ = value;
-        bitField0_ |= 0x00000040;
-        onChanged();
+        copyOnWrite();
+        instance.setVolumeAdjustment(value);
         return this;
       }
       /**
@@ -1433,13 +1154,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearVolumeAdjustment() {
-        bitField0_ = (bitField0_ & ~0x00000040);
-        volumeAdjustment_ = 0F;
-        onChanged();
+        copyOnWrite();
+        instance.clearVolumeAdjustment();
         return this;
       }
 
-      private boolean isTerminator_ ;
       /**
        * <pre>
        * A flag indicating whether this audio packet represents the end of transmission for the current audio stream
@@ -1450,7 +1169,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public boolean getIsTerminator() {
-        return isTerminator_;
+        return instance.getIsTerminator();
       }
       /**
        * <pre>
@@ -1462,10 +1181,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setIsTerminator(boolean value) {
-
-        isTerminator_ = value;
-        bitField0_ |= 0x00000080;
-        onChanged();
+        copyOnWrite();
+        instance.setIsTerminator(value);
         return this;
       }
       /**
@@ -1477,66 +1194,96 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearIsTerminator() {
-        bitField0_ = (bitField0_ & ~0x00000080);
-        isTerminator_ = false;
-        onChanged();
+        copyOnWrite();
+        instance.clearIsTerminator();
         return this;
       }
 
       // @@protoc_insertion_point(builder_scope:MumbleUDP.Audio)
     }
+    @java.lang.Override
+    @java.lang.SuppressWarnings({"ThrowNull"})
+    protected final java.lang.Object dynamicMethod(
+        com.google.protobuf.GeneratedMessageLite.MethodToInvoke method,
+        java.lang.Object arg0, java.lang.Object arg1) {
+      switch (method) {
+        case NEW_MUTABLE_INSTANCE: {
+          return new se.lublin.humla.protobuf.MumbleUDP.Audio();
+        }
+        case NEW_BUILDER: {
+          return new Builder();
+        }
+        case BUILD_MESSAGE_INFO: {
+            java.lang.Object[] objects = new java.lang.Object[] {
+              "header_",
+              "headerCase_",
+              "senderSession_",
+              "frameNumber_",
+              "opusData_",
+              "positionalData_",
+              "volumeAdjustment_",
+              "isTerminator_",
+            };
+            java.lang.String info =
+                "\u0000\b\u0001\u0000\u0001\u0010\b\u0000\u0001\u0000\u0001>\u0000\u0002>\u0000\u0003" +
+                "\u000b\u0004\u0003\u0005\n\u0006$\u0007\u0001\u0010\u0007";
+            return newMessageInfo(DEFAULT_INSTANCE, info, objects);
+        }
+        case GET_DEFAULT_INSTANCE: {
+          return DEFAULT_INSTANCE;
+        }
+        case GET_PARSER: {
+          com.google.protobuf.Parser<se.lublin.humla.protobuf.MumbleUDP.Audio> parser = PARSER;
+          if (parser == null) {
+            synchronized (se.lublin.humla.protobuf.MumbleUDP.Audio.class) {
+              parser = PARSER;
+              if (parser == null) {
+                parser =
+                    new DefaultInstanceBasedParser<se.lublin.humla.protobuf.MumbleUDP.Audio>(
+                        DEFAULT_INSTANCE);
+                PARSER = parser;
+              }
+            }
+          }
+          return parser;
+        }
+        case GET_MEMOIZED_IS_INITIALIZED: {
+          return (byte) 1;
+        }
+        // SET_MEMOIZED_IS_INITIALIZED is never called for this message.
+        // So it can do anything. Combine with default case for smaller codegen.
+        case SET_MEMOIZED_IS_INITIALIZED:
+      }
+      // Should never happen. Generates tight code to throw an exception.
+      throw null;
+    }
+
 
     // @@protoc_insertion_point(class_scope:MumbleUDP.Audio)
     private static final se.lublin.humla.protobuf.MumbleUDP.Audio DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new se.lublin.humla.protobuf.MumbleUDP.Audio();
+      Audio defaultInstance = new Audio();
+      // New instances are implicitly immutable so no need to make
+      // immutable.
+      DEFAULT_INSTANCE = defaultInstance;
+      com.google.protobuf.GeneratedMessageLite.registerDefaultInstance(
+        Audio.class, defaultInstance);
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Audio getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
-    private static final com.google.protobuf.Parser<Audio>
-        PARSER = new com.google.protobuf.AbstractParser<Audio>() {
-      @java.lang.Override
-      public Audio parsePartialFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws com.google.protobuf.InvalidProtocolBufferException {
-        Builder builder = newBuilder();
-        try {
-          builder.mergeFrom(input, extensionRegistry);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.setUnfinishedMessage(builder.buildPartial());
-        } catch (com.google.protobuf.UninitializedMessageException e) {
-          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
-        } catch (java.io.IOException e) {
-          throw new com.google.protobuf.InvalidProtocolBufferException(e)
-              .setUnfinishedMessage(builder.buildPartial());
-        }
-        return builder.buildPartial();
-      }
-    };
+    private static volatile com.google.protobuf.Parser<Audio> PARSER;
 
     public static com.google.protobuf.Parser<Audio> parser() {
-      return PARSER;
+      return DEFAULT_INSTANCE.getParserForType();
     }
-
-    @java.lang.Override
-    public com.google.protobuf.Parser<Audio> getParserForType() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public se.lublin.humla.protobuf.MumbleUDP.Audio getDefaultInstanceForType() {
-      return DEFAULT_INSTANCE;
-    }
-
   }
 
   public interface PingOrBuilder extends
       // @@protoc_insertion_point(interface_extends:MumbleUDP.Ping)
-      com.google.protobuf.MessageOrBuilder {
+      com.google.protobuf.MessageLiteOrBuilder {
 
     /**
      * <pre>
@@ -1611,47 +1358,15 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
    *
    * Protobuf type {@code MumbleUDP.Ping}
    */
-  public static final class Ping extends
-      com.google.protobuf.GeneratedMessage implements
+  public  static final class Ping extends
+      com.google.protobuf.GeneratedMessageLite<
+          Ping, Ping.Builder> implements
       // @@protoc_insertion_point(message_implements:MumbleUDP.Ping)
       PingOrBuilder {
-  private static final long serialVersionUID = 0L;
-    static {
-      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
-        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
-        /* major= */ 4,
-        /* minor= */ 35,
-        /* patch= */ 1,
-        /* suffix= */ "",
-        "Ping");
-    }
-    // Use Ping.newBuilder() to construct.
-    private Ping(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
-      super(builder);
-    }
     private Ping() {
     }
-
-    public static final com.google.protobuf.Descriptors.Descriptor
-        getDescriptor() {
-      return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Ping_descriptor;
-    }
-
-    @java.lang.Override
-    public com.google.protobuf.Descriptors.Descriptor getDescriptorForType() {
-      return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Ping_descriptor;
-    }
-
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
-        internalGetFieldAccessorTable() {
-      return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Ping_fieldAccessorTable
-          .ensureFieldAccessorsInitialized(
-              se.lublin.humla.protobuf.MumbleUDP.Ping.class, se.lublin.humla.protobuf.MumbleUDP.Ping.Builder.class);
-    }
-
     public static final int TIMESTAMP_FIELD_NUMBER = 1;
-    private long timestamp_ = 0L;
+    private long timestamp_;
     /**
      * <pre>
      * Timestamp as encoded by the client. A server is not supposed to attempt to decode or modify this field. Therefore,
@@ -1665,9 +1380,34 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public long getTimestamp() {
       return timestamp_;
     }
+    /**
+     * <pre>
+     * Timestamp as encoded by the client. A server is not supposed to attempt to decode or modify this field. Therefore,
+     * clients may choose an arbitrary format for this timestamp (as long as it fits into a uint64 field).
+     * </pre>
+     *
+     * <code>uint64 timestamp = 1;</code>
+     * @param value The timestamp to set.
+     */
+    private void setTimestamp(long value) {
+      
+      timestamp_ = value;
+    }
+    /**
+     * <pre>
+     * Timestamp as encoded by the client. A server is not supposed to attempt to decode or modify this field. Therefore,
+     * clients may choose an arbitrary format for this timestamp (as long as it fits into a uint64 field).
+     * </pre>
+     *
+     * <code>uint64 timestamp = 1;</code>
+     */
+    private void clearTimestamp() {
+
+      timestamp_ = 0L;
+    }
 
     public static final int REQUEST_EXTENDED_INFORMATION_FIELD_NUMBER = 2;
-    private boolean requestExtendedInformation_ = false;
+    private boolean requestExtendedInformation_;
     /**
      * <pre>
      * A flag set by the sending client, if it wants to obtain additional information about the server.
@@ -1680,9 +1420,32 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public boolean getRequestExtendedInformation() {
       return requestExtendedInformation_;
     }
+    /**
+     * <pre>
+     * A flag set by the sending client, if it wants to obtain additional information about the server.
+     * </pre>
+     *
+     * <code>bool request_extended_information = 2;</code>
+     * @param value The requestExtendedInformation to set.
+     */
+    private void setRequestExtendedInformation(boolean value) {
+      
+      requestExtendedInformation_ = value;
+    }
+    /**
+     * <pre>
+     * A flag set by the sending client, if it wants to obtain additional information about the server.
+     * </pre>
+     *
+     * <code>bool request_extended_information = 2;</code>
+     */
+    private void clearRequestExtendedInformation() {
+
+      requestExtendedInformation_ = false;
+    }
 
     public static final int SERVER_VERSION_V2_FIELD_NUMBER = 3;
-    private long serverVersionV2_ = 0L;
+    private long serverVersionV2_;
     /**
      * <pre>
      * The version of the server in the new version format.
@@ -1698,9 +1461,38 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public long getServerVersionV2() {
       return serverVersionV2_;
     }
+    /**
+     * <pre>
+     * The version of the server in the new version format.
+     * The new protobuf Ping packet introduced with 1.5 drops support for the legacy version format
+     * since both server and client have to support this new format.
+     * (See https://github.com/mumble-voip/mumble/issues/5827)
+     * </pre>
+     *
+     * <code>uint64 server_version_v2 = 3;</code>
+     * @param value The serverVersionV2 to set.
+     */
+    private void setServerVersionV2(long value) {
+      
+      serverVersionV2_ = value;
+    }
+    /**
+     * <pre>
+     * The version of the server in the new version format.
+     * The new protobuf Ping packet introduced with 1.5 drops support for the legacy version format
+     * since both server and client have to support this new format.
+     * (See https://github.com/mumble-voip/mumble/issues/5827)
+     * </pre>
+     *
+     * <code>uint64 server_version_v2 = 3;</code>
+     */
+    private void clearServerVersionV2() {
+
+      serverVersionV2_ = 0L;
+    }
 
     public static final int USER_COUNT_FIELD_NUMBER = 4;
-    private int userCount_ = 0;
+    private int userCount_;
     /**
      * <pre>
      * The amount of users currently connected to the server
@@ -1713,9 +1505,32 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public int getUserCount() {
       return userCount_;
     }
+    /**
+     * <pre>
+     * The amount of users currently connected to the server
+     * </pre>
+     *
+     * <code>uint32 user_count = 4;</code>
+     * @param value The userCount to set.
+     */
+    private void setUserCount(int value) {
+      
+      userCount_ = value;
+    }
+    /**
+     * <pre>
+     * The amount of users currently connected to the server
+     * </pre>
+     *
+     * <code>uint32 user_count = 4;</code>
+     */
+    private void clearUserCount() {
+
+      userCount_ = 0;
+    }
 
     public static final int MAX_USER_COUNT_FIELD_NUMBER = 5;
-    private int maxUserCount_ = 0;
+    private int maxUserCount_;
     /**
      * <pre>
      * The maximum amount of users permitted on this server
@@ -1728,9 +1543,32 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public int getMaxUserCount() {
       return maxUserCount_;
     }
+    /**
+     * <pre>
+     * The maximum amount of users permitted on this server
+     * </pre>
+     *
+     * <code>uint32 max_user_count = 5;</code>
+     * @param value The maxUserCount to set.
+     */
+    private void setMaxUserCount(int value) {
+      
+      maxUserCount_ = value;
+    }
+    /**
+     * <pre>
+     * The maximum amount of users permitted on this server
+     * </pre>
+     *
+     * <code>uint32 max_user_count = 5;</code>
+     */
+    private void clearMaxUserCount() {
+
+      maxUserCount_ = 0;
+    }
 
     public static final int MAX_BANDWIDTH_PER_USER_FIELD_NUMBER = 6;
-    private int maxBandwidthPerUser_ = 0;
+    private int maxBandwidthPerUser_;
     /**
      * <pre>
      * The maximum bandwidth each user is allowed to use for sending audio to the server
@@ -1743,226 +1581,113 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
     public int getMaxBandwidthPerUser() {
       return maxBandwidthPerUser_;
     }
-
-    private byte memoizedIsInitialized = -1;
-    @java.lang.Override
-    public final boolean isInitialized() {
-      byte isInitialized = memoizedIsInitialized;
-      if (isInitialized == 1) return true;
-      if (isInitialized == 0) return false;
-
-      memoizedIsInitialized = 1;
-      return true;
+    /**
+     * <pre>
+     * The maximum bandwidth each user is allowed to use for sending audio to the server
+     * </pre>
+     *
+     * <code>uint32 max_bandwidth_per_user = 6;</code>
+     * @param value The maxBandwidthPerUser to set.
+     */
+    private void setMaxBandwidthPerUser(int value) {
+      
+      maxBandwidthPerUser_ = value;
     }
+    /**
+     * <pre>
+     * The maximum bandwidth each user is allowed to use for sending audio to the server
+     * </pre>
+     *
+     * <code>uint32 max_bandwidth_per_user = 6;</code>
+     */
+    private void clearMaxBandwidthPerUser() {
 
-    @java.lang.Override
-    public void writeTo(com.google.protobuf.CodedOutputStream output)
-                        throws java.io.IOException {
-      if (timestamp_ != 0L) {
-        output.writeUInt64(1, timestamp_);
-      }
-      if (requestExtendedInformation_ != false) {
-        output.writeBool(2, requestExtendedInformation_);
-      }
-      if (serverVersionV2_ != 0L) {
-        output.writeUInt64(3, serverVersionV2_);
-      }
-      if (userCount_ != 0) {
-        output.writeUInt32(4, userCount_);
-      }
-      if (maxUserCount_ != 0) {
-        output.writeUInt32(5, maxUserCount_);
-      }
-      if (maxBandwidthPerUser_ != 0) {
-        output.writeUInt32(6, maxBandwidthPerUser_);
-      }
-      getUnknownFields().writeTo(output);
-    }
-    private int computeSerializedSize_0() {
-      int size = 0;
-      if (timestamp_ != 0L) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(1, timestamp_);
-      }
-      if (requestExtendedInformation_ != false) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeBoolSize(2, requestExtendedInformation_);
-      }
-      if (serverVersionV2_ != 0L) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt64Size(3, serverVersionV2_);
-      }
-      if (userCount_ != 0) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(4, userCount_);
-      }
-      if (maxUserCount_ != 0) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(5, maxUserCount_);
-      }
-      if (maxBandwidthPerUser_ != 0) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(6, maxBandwidthPerUser_);
-      }
-      return size;
-    }
-    @java.lang.Override
-    public int getSerializedSize() {
-      int size = memoizedSize;
-      if (size != -1) return size;
-
-      size = 0;
-      size += computeSerializedSize_0();
-      size += getUnknownFields().getSerializedSize();
-      memoizedSize = size;
-      return size;
-    }
-
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
-      if (obj == this) {
-       return true;
-      }
-      if (!(obj instanceof se.lublin.humla.protobuf.MumbleUDP.Ping)) {
-        return super.equals(obj);
-      }
-      se.lublin.humla.protobuf.MumbleUDP.Ping other = (se.lublin.humla.protobuf.MumbleUDP.Ping) obj;
-
-      if (getTimestamp()
-          != other.getTimestamp()) return false;
-      if (getRequestExtendedInformation()
-          != other.getRequestExtendedInformation()) return false;
-      if (getServerVersionV2()
-          != other.getServerVersionV2()) return false;
-      if (getUserCount()
-          != other.getUserCount()) return false;
-      if (getMaxUserCount()
-          != other.getMaxUserCount()) return false;
-      if (getMaxBandwidthPerUser()
-          != other.getMaxBandwidthPerUser()) return false;
-      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
-      return true;
-    }
-
-    @java.lang.Override
-    public int hashCode() {
-      if (memoizedHashCode != 0) {
-        return memoizedHashCode;
-      }
-      int hash = 41;
-      hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (37 * hash) + TIMESTAMP_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getTimestamp());
-      hash = (37 * hash) + REQUEST_EXTENDED_INFORMATION_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
-          getRequestExtendedInformation());
-      hash = (37 * hash) + SERVER_VERSION_V2_FIELD_NUMBER;
-      hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-          getServerVersionV2());
-      hash = (37 * hash) + USER_COUNT_FIELD_NUMBER;
-      hash = (53 * hash) + getUserCount();
-      hash = (37 * hash) + MAX_USER_COUNT_FIELD_NUMBER;
-      hash = (53 * hash) + getMaxUserCount();
-      hash = (37 * hash) + MAX_BANDWIDTH_PER_USER_FIELD_NUMBER;
-      hash = (53 * hash) + getMaxBandwidthPerUser();
-      hash = (29 * hash) + getUnknownFields().hashCode();
-      memoizedHashCode = hash;
-      return hash;
+      maxBandwidthPerUser_ = 0;
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         java.nio.ByteBuffer data)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         java.nio.ByteBuffer data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         com.google.protobuf.ByteString data)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         com.google.protobuf.ByteString data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(byte[] data)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         byte[] data,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, data, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(java.io.InputStream input)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input, extensionRegistry);
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseDelimitedFrom(java.io.InputStream input)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseDelimitedWithIOException(PARSER, input);
+      return parseDelimitedFrom(DEFAULT_INSTANCE, input);
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseDelimitedFrom(
         java.io.InputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+      return parseDelimitedFrom(DEFAULT_INSTANCE, input, extensionRegistry);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         com.google.protobuf.CodedInputStream input)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input);
     }
     public static se.lublin.humla.protobuf.MumbleUDP.Ping parseFrom(
         com.google.protobuf.CodedInputStream input,
         com.google.protobuf.ExtensionRegistryLite extensionRegistry)
         throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessage
-          .parseWithIOException(PARSER, input, extensionRegistry);
+      return com.google.protobuf.GeneratedMessageLite.parseFrom(
+          DEFAULT_INSTANCE, input, extensionRegistry);
     }
 
-    @java.lang.Override
-    public Builder newBuilderForType() { return newBuilder(); }
     public static Builder newBuilder() {
-      return DEFAULT_INSTANCE.toBuilder();
+      return (Builder) DEFAULT_INSTANCE.createBuilder();
     }
     public static Builder newBuilder(se.lublin.humla.protobuf.MumbleUDP.Ping prototype) {
-      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
-    }
-    @java.lang.Override
-    public Builder toBuilder() {
-      return this == DEFAULT_INSTANCE
-          ? new Builder() : new Builder().mergeFrom(this);
+      return DEFAULT_INSTANCE.createBuilder(prototype);
     }
 
-    @java.lang.Override
-    protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
-      Builder builder = new Builder(parent);
-      return builder;
-    }
     /**
      * <pre>
      * *
@@ -1973,199 +1698,16 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
      * Protobuf type {@code MumbleUDP.Ping}
      */
     public static final class Builder extends
-        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        com.google.protobuf.GeneratedMessageLite.Builder<
+          se.lublin.humla.protobuf.MumbleUDP.Ping, Builder> implements
         // @@protoc_insertion_point(builder_implements:MumbleUDP.Ping)
         se.lublin.humla.protobuf.MumbleUDP.PingOrBuilder {
-      public static final com.google.protobuf.Descriptors.Descriptor
-          getDescriptor() {
-        return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Ping_descriptor;
-      }
-
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
-          internalGetFieldAccessorTable() {
-        return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Ping_fieldAccessorTable
-            .ensureFieldAccessorsInitialized(
-                se.lublin.humla.protobuf.MumbleUDP.Ping.class, se.lublin.humla.protobuf.MumbleUDP.Ping.Builder.class);
-      }
-
       // Construct using se.lublin.humla.protobuf.MumbleUDP.Ping.newBuilder()
       private Builder() {
-
+        super(DEFAULT_INSTANCE);
       }
 
-      private Builder(
-          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
-        super(parent);
 
-      }
-      @java.lang.Override
-      public Builder clear() {
-        super.clear();
-        bitField0_ = 0;
-        timestamp_ = 0L;
-        requestExtendedInformation_ = false;
-        serverVersionV2_ = 0L;
-        userCount_ = 0;
-        maxUserCount_ = 0;
-        maxBandwidthPerUser_ = 0;
-        return this;
-      }
-
-      @java.lang.Override
-      public com.google.protobuf.Descriptors.Descriptor
-          getDescriptorForType() {
-        return se.lublin.humla.protobuf.MumbleUDP.internal_static_MumbleUDP_Ping_descriptor;
-      }
-
-      @java.lang.Override
-      public se.lublin.humla.protobuf.MumbleUDP.Ping getDefaultInstanceForType() {
-        return se.lublin.humla.protobuf.MumbleUDP.Ping.getDefaultInstance();
-      }
-
-      @java.lang.Override
-      public se.lublin.humla.protobuf.MumbleUDP.Ping build() {
-        se.lublin.humla.protobuf.MumbleUDP.Ping result = buildPartial();
-        if (!result.isInitialized()) {
-          throw newUninitializedMessageException(result);
-        }
-        return result;
-      }
-
-      @java.lang.Override
-      public se.lublin.humla.protobuf.MumbleUDP.Ping buildPartial() {
-        se.lublin.humla.protobuf.MumbleUDP.Ping result = new se.lublin.humla.protobuf.MumbleUDP.Ping(this);
-        if (bitField0_ != 0) { buildPartial0(result); }
-        onBuilt();
-        return result;
-      }
-
-      private void buildPartial0(se.lublin.humla.protobuf.MumbleUDP.Ping result) {
-        int from_bitField0_ = bitField0_;
-        if (((from_bitField0_ & 0x00000001) != 0)) {
-          result.timestamp_ = timestamp_;
-        }
-        if (((from_bitField0_ & 0x00000002) != 0)) {
-          result.requestExtendedInformation_ = requestExtendedInformation_;
-        }
-        if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.serverVersionV2_ = serverVersionV2_;
-        }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
-          result.userCount_ = userCount_;
-        }
-        if (((from_bitField0_ & 0x00000010) != 0)) {
-          result.maxUserCount_ = maxUserCount_;
-        }
-        if (((from_bitField0_ & 0x00000020) != 0)) {
-          result.maxBandwidthPerUser_ = maxBandwidthPerUser_;
-        }
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof se.lublin.humla.protobuf.MumbleUDP.Ping) {
-          return mergeFrom((se.lublin.humla.protobuf.MumbleUDP.Ping)other);
-        } else {
-          super.mergeFrom(other);
-          return this;
-        }
-      }
-
-      public Builder mergeFrom(se.lublin.humla.protobuf.MumbleUDP.Ping other) {
-        if (other == se.lublin.humla.protobuf.MumbleUDP.Ping.getDefaultInstance()) return this;
-        if (other.getTimestamp() != 0L) {
-          setTimestamp(other.getTimestamp());
-        }
-        if (other.getRequestExtendedInformation() != false) {
-          setRequestExtendedInformation(other.getRequestExtendedInformation());
-        }
-        if (other.getServerVersionV2() != 0L) {
-          setServerVersionV2(other.getServerVersionV2());
-        }
-        if (other.getUserCount() != 0) {
-          setUserCount(other.getUserCount());
-        }
-        if (other.getMaxUserCount() != 0) {
-          setMaxUserCount(other.getMaxUserCount());
-        }
-        if (other.getMaxBandwidthPerUser() != 0) {
-          setMaxBandwidthPerUser(other.getMaxBandwidthPerUser());
-        }
-        this.mergeUnknownFields(other.getUnknownFields());
-        onChanged();
-        return this;
-      }
-
-      @java.lang.Override
-      public final boolean isInitialized() {
-        return true;
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws java.io.IOException {
-        if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
-        }
-        try {
-          boolean done = false;
-          while (!done) {
-            int tag = input.readTag();
-            switch (tag) {
-              case 0:
-                done = true;
-                break;
-              case 8: {
-                timestamp_ = input.readUInt64();
-                bitField0_ |= 0x00000001;
-                break;
-              } // case 8
-              case 16: {
-                requestExtendedInformation_ = input.readBool();
-                bitField0_ |= 0x00000002;
-                break;
-              } // case 16
-              case 24: {
-                serverVersionV2_ = input.readUInt64();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 24
-              case 32: {
-                userCount_ = input.readUInt32();
-                bitField0_ |= 0x00000008;
-                break;
-              } // case 32
-              case 40: {
-                maxUserCount_ = input.readUInt32();
-                bitField0_ |= 0x00000010;
-                break;
-              } // case 40
-              case 48: {
-                maxBandwidthPerUser_ = input.readUInt32();
-                bitField0_ |= 0x00000020;
-                break;
-              } // case 48
-              default: {
-                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
-                  done = true; // was an endgroup tag
-                }
-                break;
-              } // default:
-            } // switch (tag)
-          } // while (!done)
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.unwrapIOException();
-        } finally {
-          onChanged();
-        } // finally
-        return this;
-      }
-      private int bitField0_;
-
-      private long timestamp_ ;
       /**
        * <pre>
        * Timestamp as encoded by the client. A server is not supposed to attempt to decode or modify this field. Therefore,
@@ -2177,7 +1719,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public long getTimestamp() {
-        return timestamp_;
+        return instance.getTimestamp();
       }
       /**
        * <pre>
@@ -2190,10 +1732,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setTimestamp(long value) {
-
-        timestamp_ = value;
-        bitField0_ |= 0x00000001;
-        onChanged();
+        copyOnWrite();
+        instance.setTimestamp(value);
         return this;
       }
       /**
@@ -2206,13 +1746,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearTimestamp() {
-        bitField0_ = (bitField0_ & ~0x00000001);
-        timestamp_ = 0L;
-        onChanged();
+        copyOnWrite();
+        instance.clearTimestamp();
         return this;
       }
 
-      private boolean requestExtendedInformation_ ;
       /**
        * <pre>
        * A flag set by the sending client, if it wants to obtain additional information about the server.
@@ -2223,7 +1761,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public boolean getRequestExtendedInformation() {
-        return requestExtendedInformation_;
+        return instance.getRequestExtendedInformation();
       }
       /**
        * <pre>
@@ -2235,10 +1773,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setRequestExtendedInformation(boolean value) {
-
-        requestExtendedInformation_ = value;
-        bitField0_ |= 0x00000002;
-        onChanged();
+        copyOnWrite();
+        instance.setRequestExtendedInformation(value);
         return this;
       }
       /**
@@ -2250,13 +1786,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearRequestExtendedInformation() {
-        bitField0_ = (bitField0_ & ~0x00000002);
-        requestExtendedInformation_ = false;
-        onChanged();
+        copyOnWrite();
+        instance.clearRequestExtendedInformation();
         return this;
       }
 
-      private long serverVersionV2_ ;
       /**
        * <pre>
        * The version of the server in the new version format.
@@ -2270,7 +1804,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public long getServerVersionV2() {
-        return serverVersionV2_;
+        return instance.getServerVersionV2();
       }
       /**
        * <pre>
@@ -2285,10 +1819,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setServerVersionV2(long value) {
-
-        serverVersionV2_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
+        copyOnWrite();
+        instance.setServerVersionV2(value);
         return this;
       }
       /**
@@ -2303,13 +1835,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearServerVersionV2() {
-        bitField0_ = (bitField0_ & ~0x00000004);
-        serverVersionV2_ = 0L;
-        onChanged();
+        copyOnWrite();
+        instance.clearServerVersionV2();
         return this;
       }
 
-      private int userCount_ ;
       /**
        * <pre>
        * The amount of users currently connected to the server
@@ -2320,7 +1850,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public int getUserCount() {
-        return userCount_;
+        return instance.getUserCount();
       }
       /**
        * <pre>
@@ -2332,10 +1862,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setUserCount(int value) {
-
-        userCount_ = value;
-        bitField0_ |= 0x00000008;
-        onChanged();
+        copyOnWrite();
+        instance.setUserCount(value);
         return this;
       }
       /**
@@ -2347,13 +1875,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearUserCount() {
-        bitField0_ = (bitField0_ & ~0x00000008);
-        userCount_ = 0;
-        onChanged();
+        copyOnWrite();
+        instance.clearUserCount();
         return this;
       }
 
-      private int maxUserCount_ ;
       /**
        * <pre>
        * The maximum amount of users permitted on this server
@@ -2364,7 +1890,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public int getMaxUserCount() {
-        return maxUserCount_;
+        return instance.getMaxUserCount();
       }
       /**
        * <pre>
@@ -2376,10 +1902,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setMaxUserCount(int value) {
-
-        maxUserCount_ = value;
-        bitField0_ |= 0x00000010;
-        onChanged();
+        copyOnWrite();
+        instance.setMaxUserCount(value);
         return this;
       }
       /**
@@ -2391,13 +1915,11 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearMaxUserCount() {
-        bitField0_ = (bitField0_ & ~0x00000010);
-        maxUserCount_ = 0;
-        onChanged();
+        copyOnWrite();
+        instance.clearMaxUserCount();
         return this;
       }
 
-      private int maxBandwidthPerUser_ ;
       /**
        * <pre>
        * The maximum bandwidth each user is allowed to use for sending audio to the server
@@ -2408,7 +1930,7 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        */
       @java.lang.Override
       public int getMaxBandwidthPerUser() {
-        return maxBandwidthPerUser_;
+        return instance.getMaxBandwidthPerUser();
       }
       /**
        * <pre>
@@ -2420,10 +1942,8 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder setMaxBandwidthPerUser(int value) {
-
-        maxBandwidthPerUser_ = value;
-        bitField0_ |= 0x00000020;
-        onChanged();
+        copyOnWrite();
+        instance.setMaxBandwidthPerUser(value);
         return this;
       }
       /**
@@ -2435,112 +1955,93 @@ public final class MumbleUDP extends com.google.protobuf.GeneratedFile {
        * @return This builder for chaining.
        */
       public Builder clearMaxBandwidthPerUser() {
-        bitField0_ = (bitField0_ & ~0x00000020);
-        maxBandwidthPerUser_ = 0;
-        onChanged();
+        copyOnWrite();
+        instance.clearMaxBandwidthPerUser();
         return this;
       }
 
       // @@protoc_insertion_point(builder_scope:MumbleUDP.Ping)
     }
+    @java.lang.Override
+    @java.lang.SuppressWarnings({"ThrowNull"})
+    protected final java.lang.Object dynamicMethod(
+        com.google.protobuf.GeneratedMessageLite.MethodToInvoke method,
+        java.lang.Object arg0, java.lang.Object arg1) {
+      switch (method) {
+        case NEW_MUTABLE_INSTANCE: {
+          return new se.lublin.humla.protobuf.MumbleUDP.Ping();
+        }
+        case NEW_BUILDER: {
+          return new Builder();
+        }
+        case BUILD_MESSAGE_INFO: {
+            java.lang.Object[] objects = new java.lang.Object[] {
+              "timestamp_",
+              "requestExtendedInformation_",
+              "serverVersionV2_",
+              "userCount_",
+              "maxUserCount_",
+              "maxBandwidthPerUser_",
+            };
+            java.lang.String info =
+                "\u0000\u0006\u0000\u0000\u0001\u0006\u0006\u0000\u0000\u0000\u0001\u0003\u0002\u0007" +
+                "\u0003\u0003\u0004\u000b\u0005\u000b\u0006\u000b";
+            return newMessageInfo(DEFAULT_INSTANCE, info, objects);
+        }
+        case GET_DEFAULT_INSTANCE: {
+          return DEFAULT_INSTANCE;
+        }
+        case GET_PARSER: {
+          com.google.protobuf.Parser<se.lublin.humla.protobuf.MumbleUDP.Ping> parser = PARSER;
+          if (parser == null) {
+            synchronized (se.lublin.humla.protobuf.MumbleUDP.Ping.class) {
+              parser = PARSER;
+              if (parser == null) {
+                parser =
+                    new DefaultInstanceBasedParser<se.lublin.humla.protobuf.MumbleUDP.Ping>(
+                        DEFAULT_INSTANCE);
+                PARSER = parser;
+              }
+            }
+          }
+          return parser;
+        }
+        case GET_MEMOIZED_IS_INITIALIZED: {
+          return (byte) 1;
+        }
+        // SET_MEMOIZED_IS_INITIALIZED is never called for this message.
+        // So it can do anything. Combine with default case for smaller codegen.
+        case SET_MEMOIZED_IS_INITIALIZED:
+      }
+      // Should never happen. Generates tight code to throw an exception.
+      throw null;
+    }
+
 
     // @@protoc_insertion_point(class_scope:MumbleUDP.Ping)
     private static final se.lublin.humla.protobuf.MumbleUDP.Ping DEFAULT_INSTANCE;
     static {
-      DEFAULT_INSTANCE = new se.lublin.humla.protobuf.MumbleUDP.Ping();
+      Ping defaultInstance = new Ping();
+      // New instances are implicitly immutable so no need to make
+      // immutable.
+      DEFAULT_INSTANCE = defaultInstance;
+      com.google.protobuf.GeneratedMessageLite.registerDefaultInstance(
+        Ping.class, defaultInstance);
     }
 
     public static se.lublin.humla.protobuf.MumbleUDP.Ping getDefaultInstance() {
       return DEFAULT_INSTANCE;
     }
 
-    private static final com.google.protobuf.Parser<Ping>
-        PARSER = new com.google.protobuf.AbstractParser<Ping>() {
-      @java.lang.Override
-      public Ping parsePartialFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws com.google.protobuf.InvalidProtocolBufferException {
-        Builder builder = newBuilder();
-        try {
-          builder.mergeFrom(input, extensionRegistry);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.setUnfinishedMessage(builder.buildPartial());
-        } catch (com.google.protobuf.UninitializedMessageException e) {
-          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
-        } catch (java.io.IOException e) {
-          throw new com.google.protobuf.InvalidProtocolBufferException(e)
-              .setUnfinishedMessage(builder.buildPartial());
-        }
-        return builder.buildPartial();
-      }
-    };
+    private static volatile com.google.protobuf.Parser<Ping> PARSER;
 
     public static com.google.protobuf.Parser<Ping> parser() {
-      return PARSER;
+      return DEFAULT_INSTANCE.getParserForType();
     }
-
-    @java.lang.Override
-    public com.google.protobuf.Parser<Ping> getParserForType() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public se.lublin.humla.protobuf.MumbleUDP.Ping getDefaultInstanceForType() {
-      return DEFAULT_INSTANCE;
-    }
-
   }
 
-  private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_MumbleUDP_Audio_descriptor;
-  private static final 
-    com.google.protobuf.GeneratedMessage.FieldAccessorTable
-      internal_static_MumbleUDP_Audio_fieldAccessorTable;
-  private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_MumbleUDP_Ping_descriptor;
-  private static final 
-    com.google.protobuf.GeneratedMessage.FieldAccessorTable
-      internal_static_MumbleUDP_Ping_fieldAccessorTable;
 
-  public static com.google.protobuf.Descriptors.FileDescriptor
-      getDescriptor() {
-    return descriptor;
-  }
-  private static final com.google.protobuf.Descriptors.FileDescriptor
-      descriptor;
   static {
-    java.lang.String[] descriptorData = {
-      "\n\017MumbleUDP.proto\022\tMumbleUDP\"\302\001\n\005Audio\022\020" +
-      "\n\006target\030\001 \001(\rH\000\022\021\n\007context\030\002 \001(\rH\000\022\026\n\016s" +
-      "ender_session\030\003 \001(\r\022\024\n\014frame_number\030\004 \001(" +
-      "\004\022\021\n\topus_data\030\005 \001(\014\022\027\n\017positional_data\030" +
-      "\006 \003(\002\022\031\n\021volume_adjustment\030\007 \001(\002\022\025\n\ris_t" +
-      "erminator\030\020 \001(\010B\010\n\006Header\"\246\001\n\004Ping\022\021\n\tti" +
-      "mestamp\030\001 \001(\004\022$\n\034request_extended_inform" +
-      "ation\030\002 \001(\010\022\031\n\021server_version_v2\030\003 \001(\004\022\022" +
-      "\n\nuser_count\030\004 \001(\r\022\026\n\016max_user_count\030\005 \001" +
-      "(\r\022\036\n\026max_bandwidth_per_user\030\006 \001(\rB)\n\030se" +
-      ".lublin.humla.protobufB\tMumbleUDPH\001P\000b\006p" +
-      "roto3"
-    };
-    descriptor = com.google.protobuf.Descriptors.FileDescriptor
-      .internalBuildGeneratedFileFrom(descriptorData,
-        new com.google.protobuf.Descriptors.FileDescriptor[] {
-        });
-    internal_static_MumbleUDP_Audio_descriptor =
-      getDescriptor().getMessageType(0);
-    internal_static_MumbleUDP_Audio_fieldAccessorTable = new
-      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
-        internal_static_MumbleUDP_Audio_descriptor,
-        new java.lang.String[] { "Target", "Context", "SenderSession", "FrameNumber", "OpusData", "PositionalData", "VolumeAdjustment", "IsTerminator", "Header", });
-    internal_static_MumbleUDP_Ping_descriptor =
-      getDescriptor().getMessageType(1);
-    internal_static_MumbleUDP_Ping_fieldAccessorTable = new
-      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
-        internal_static_MumbleUDP_Ping_descriptor,
-        new java.lang.String[] { "Timestamp", "RequestExtendedInformation", "ServerVersionV2", "UserCount", "MaxUserCount", "MaxBandwidthPerUser", });
-    descriptor.resolveAllFeaturesImmutable();
   }
 
   // @@protoc_insertion_point(outer_class_scope)
