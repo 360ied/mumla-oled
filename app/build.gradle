@@ -121,6 +121,18 @@ android {
         variant.resValue "string", "search_suggest_authority", "${variant.applicationId}.channel.ChannelSearchProvider"
     }
 
+    packaging {
+        resources {
+            excludes += [
+                'org/bouncycastle/pqc/**',
+                'google/protobuf/**',
+                '**/*.proto',
+                'META-INF/CHANGES',
+                'META-INF/README.md'
+            ]
+        }
+    }
+
     testOptions {
         unitTests.returnDefaultValues = true
     }
