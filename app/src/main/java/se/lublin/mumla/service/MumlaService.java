@@ -664,25 +664,44 @@ public class MumlaService extends HumlaService implements
         }
     }
 
-    @Override
-    @SuppressLint("MissingPermission")
-    public void onOverlayToggled() {
-        // Ditch notification shade/panel to make overlay presence/permission request visible.
-        // But on Android 12 that's no longer allowed.
-        // BROADCAST_CLOSE_SYSTEM_DIALOGS is only held by system apps on S+, and the
-        // send below only runs pre-S where the permission is not required — lint
-        // cannot model that, so suppress its (incorrect) MissingPermission finding.
-        Intent close = new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS);
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            getApplicationContext().sendBroadcast(close);
-        }
+    public static final String ACTION_DISCONNECT = "se.lublin.mumla.action.DISCONNECT";
+    public static final String ACTION_MUTE = "se.lublin.mumla.action.MUTE";
+    public static final String ACTION_DEAFEN = "se.lublin.mumla.action.DEAFEN";
+    public static final String ACTION_CANCEL_RECONNECT = "se.lublin.mumla.action.CANCEL_RECONNECT";
 
-        setOverlayShown(!mChannelOverlay.isShown());
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && intent.getAction() != null) {
+            String action = intent.getAction();
+            if (ACTION_DISCONNECT.equals(action)) {
+                onDisconnect();
+                return START_NOT_STICKY;
+            } else if (ACTION_MUTE.equals(action)) {
+                onMuteToggled();
+                return START_NOT_STICKY;
+            } else if (ACTION_DEAFEN.equals(action)) {
+                onDeafenToggled();
+                return START_NOT_STICKY;
+            } else if (ACTION_CANCEL_RECONNECT.equals(action)) {
+                onCancelReconnect();
+                return START_NOT_STICKY;
+            }
+        }
+        return super.onStartCommand(intent, flags, startId);
     }
 
     @Override
     public void onCancelReconnect() {
         cancelReconnect();
+    }
+
+    @Override
+    public void onDisconnect() {
+        if (mNotification != null) {
+            mNotification.hide();
+            mNotification = null;
+        }
+        disconnect();
     }
 
     @Override
