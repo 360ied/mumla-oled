@@ -66,6 +66,8 @@ public class MumlaConnectionNotification {
     private String mBigText;
     private boolean mActionsShown;
     private boolean mReconnectingShown;
+    private boolean mMuted;
+    private boolean mDeafened;
 
     /**
      * Creates a foreground Mumla notification for the given service.
@@ -82,6 +84,16 @@ public class MumlaConnectionNotification {
         mListener = listener;
         mActionsShown = false;
         mReconnectingShown = false;
+        mMuted = false;
+        mDeafened = false;
+    }
+
+    public static int getMuteActionIcon(boolean muted) {
+        return muted ? R.drawable.ic_action_microphone_muted : R.drawable.ic_action_microphone;
+    }
+
+    public static int getDeafenActionIcon(boolean deafened) {
+        return deafened ? R.drawable.ic_action_audio_muted : R.drawable.ic_action_audio;
     }
 
     public void showConnecting(String serverName, String host, int port) {
@@ -91,6 +103,8 @@ public class MumlaConnectionNotification {
         mBigText = mService.getString(R.string.connecting_to_server, host) + (port > 0 ? (":" + port) : "");
         mActionsShown = false;
         mReconnectingShown = false;
+        mMuted = false;
+        mDeafened = false;
 
         if (mMediaSession != null) {
             mMediaSession.setActive(false);
@@ -101,6 +115,8 @@ public class MumlaConnectionNotification {
 
     public void showConnected(String serverName, String channelName, boolean muted, boolean deafened, String hostInfo) {
         mContentTitle = serverName;
+        mMuted = muted;
+        mDeafened = deafened;
         String statusText;
         if (muted && deafened) {
             statusText = mService.getString(R.string.status_notify_muted_and_deafened);
@@ -154,12 +170,12 @@ public class MumlaConnectionNotification {
         PlaybackStateCompat.CustomAction muteCustomAction = new PlaybackStateCompat.CustomAction.Builder(
                 MumlaService.ACTION_MUTE,
                 mService.getString(R.string.mute),
-                R.drawable.ic_action_microphone)
+                getMuteActionIcon(muted))
                 .build();
         PlaybackStateCompat.CustomAction deafenCustomAction = new PlaybackStateCompat.CustomAction.Builder(
                 MumlaService.ACTION_DEAFEN,
                 mService.getString(R.string.deafen),
-                R.drawable.ic_action_audio)
+                getDeafenActionIcon(deafened))
                 .build();
         PlaybackStateCompat.CustomAction disconnectCustomAction = new PlaybackStateCompat.CustomAction.Builder(
                 MumlaService.ACTION_DISCONNECT,
@@ -197,6 +213,8 @@ public class MumlaConnectionNotification {
         mBigText = mService.getString(R.string.notification_reconnect_expanded, err, Math.max(attempt, 1), Math.max(delaySec, 1), srv);
         mActionsShown = false;
         mReconnectingShown = true;
+        mMuted = false;
+        mDeafened = false;
 
         if (mMediaSession != null) {
             mMediaSession.setActive(false);
@@ -296,10 +314,10 @@ public class MumlaConnectionNotification {
                     mService.getString(R.string.cancel_reconnect),
                     createServicePendingIntent(MumlaService.ACTION_CANCEL_RECONNECT, REQUEST_CODE_CANCEL_RECONNECT));
         } else if (mActionsShown) {
-            builder.addAction(R.drawable.ic_action_microphone,
+            builder.addAction(getMuteActionIcon(mMuted),
                     mService.getString(R.string.mute),
                     createServicePendingIntent(MumlaService.ACTION_MUTE, REQUEST_CODE_MUTE));
-            builder.addAction(R.drawable.ic_action_audio,
+            builder.addAction(getDeafenActionIcon(mDeafened),
                     mService.getString(R.string.deafen),
                     createServicePendingIntent(MumlaService.ACTION_DEAFEN, REQUEST_CODE_DEAFEN));
             builder.addAction(R.drawable.ic_action_delete_dark,
