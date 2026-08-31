@@ -21,7 +21,7 @@ import android.net.SSLCertificateSocketFactory;
 import android.os.Build;
 import android.util.Log;
 import android.util.Patterns;
-import com.google.protobuf.Message;
+import com.google.protobuf.MessageLite;
 
 import org.minidns.hla.ResolverApi;
 import org.minidns.hla.SrvResolverResult;
@@ -238,7 +238,7 @@ public class HumlaTCP extends HumlaNetworkThread {
      * @param message The message to send.
      * @param messageType The type of the message to send.
      */
-    public void sendMessage(final Message message, final HumlaTCPMessageType messageType) {
+    public void sendMessage(final MessageLite message, final HumlaTCPMessageType messageType) {
         executeOnSendThread(new Runnable() {
             @Override
             public void run() {

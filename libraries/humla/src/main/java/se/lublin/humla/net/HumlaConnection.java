@@ -23,7 +23,7 @@ import android.util.Log;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
-import com.google.protobuf.Message;
+import com.google.protobuf.MessageLite;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
@@ -592,7 +592,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
      * @param message A built protobuf message.
      * @param messageType The corresponding protobuf message type.
      */
-    public void sendTCPMessage(Message message, HumlaTCPMessageType messageType) {
+    public void sendTCPMessage(MessageLite message, HumlaTCPMessageType messageType) {
         if(!mConnected || mTCP == null) return;
         mTCP.sendMessage(message, messageType);
     }
@@ -649,7 +649,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         }
 
         try {
-            Message message = getProtobufMessage(data, type);
+            MessageLite message = getProtobufMessage(data, type);
             for(HumlaTCPMessageListener handler : mTCPHandlers) {
                 broadcastTCPMessage(handler, message, type);
             }
@@ -772,7 +772,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
      * @return The parsed protobuf message.
      * @throws InvalidProtocolBufferException Called if the messageType does not match the data.
      */
-    public static Message getProtobufMessage(byte[] data, HumlaTCPMessageType messageType) throws InvalidProtocolBufferException {
+    public static MessageLite getProtobufMessage(byte[] data, HumlaTCPMessageType messageType) throws InvalidProtocolBufferException {
         switch (messageType) {
             case Authenticate:
                 return Mumble.Authenticate.parseFrom(data);
@@ -838,7 +838,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
      * @param msg Protobuf message.
      * @param messageType The type of the message.
      */
-    public final void broadcastTCPMessage(HumlaTCPMessageListener handler, Message msg, HumlaTCPMessageType messageType) {
+    public final void broadcastTCPMessage(HumlaTCPMessageListener handler, MessageLite msg, HumlaTCPMessageType messageType) {
         switch (messageType) {
             case Authenticate:
                 handler.messageAuthenticate((Mumble.Authenticate) msg);
