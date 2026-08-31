@@ -75,7 +75,6 @@ android {
         versionCode 3070300
         versionName gitDescribe
 
-        buildConfigField "long", "TIMESTAMP", System.currentTimeMillis() + "L"
         buildConfigField "String", "VERSIONTAG", "\"" + gitDescribe.split("-")[0] + "\""
 
         testInstrumentationRunner "android.test.InstrumentationTestRunner"
