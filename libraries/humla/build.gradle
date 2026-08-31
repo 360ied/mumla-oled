@@ -34,7 +34,7 @@ repositories {
 }
 
 dependencies {
-    api 'com.google.protobuf:protobuf-java:4.35.1'
+    api 'com.google.protobuf:protobuf-javalite:4.35.1'
     api 'org.bouncycastle:bcprov-jdk18on:1.80'
     api 'org.bouncycastle:bcpkix-jdk18on:1.80'
 

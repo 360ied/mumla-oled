@@ -76,8 +76,25 @@ public class HumlaException extends Exception implements Parcelable {
     private HumlaException(Parcel in) {
         super(in.readString(), (Throwable) in.readSerializable());
         mReason = HumlaDisconnectReason.values()[in.readInt()];
-        mReject = (Mumble.Reject) in.readSerializable();
-        mUserRemove = (Mumble.UserRemove) in.readSerializable();
+        Mumble.Reject reject = null;
+        if (in.readInt() == 1) {
+            try {
+                reject = Mumble.Reject.parseFrom(in.createByteArray());
+            } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+                // Ignore corrupted parcel
+            }
+        }
+        mReject = reject;
+
+        Mumble.UserRemove userRemove = null;
+        if (in.readInt() == 1) {
+            try {
+                userRemove = Mumble.UserRemove.parseFrom(in.createByteArray());
+            } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+                // Ignore corrupted parcel
+            }
+        }
+        mUserRemove = userRemove;
     }
 
     public HumlaDisconnectReason getReason() {
@@ -101,8 +118,18 @@ public class HumlaException extends Exception implements Parcelable {
         dest.writeString(getMessage());
         dest.writeSerializable(getCause());
         dest.writeInt(mReason.ordinal());
-        dest.writeSerializable(mReject);
-        dest.writeSerializable(mUserRemove);
+        if (mReject != null) {
+            dest.writeInt(1);
+            dest.writeByteArray(mReject.toByteArray());
+        } else {
+            dest.writeInt(0);
+        }
+        if (mUserRemove != null) {
+            dest.writeInt(1);
+            dest.writeByteArray(mUserRemove.toByteArray());
+        } else {
+            dest.writeInt(0);
+        }
     }
 
     public enum HumlaDisconnectReason {
