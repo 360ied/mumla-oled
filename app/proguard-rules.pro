@@ -19,19 +19,11 @@
 -keep class se.lublin.humla.protobuf.Mumble** { *; }
 -keep class com.google.protobuf.GeneratedMessageLite { *; }
 
-# Preserve BouncyCastle Security Provider and active Mumble algorithms (X.509, RSA, EC, PKCS#12)
--keep class org.bouncycastle.jce.provider.BouncyCastleProvider
--keep class org.bouncycastle.jcajce.provider.asymmetric.rsa.** { *; }
--keep class org.bouncycastle.jcajce.provider.asymmetric.ec.** { *; }
--keep class org.bouncycastle.jcajce.provider.asymmetric.x509.** { *; }
--keep class org.bouncycastle.jcajce.provider.asymmetric.util.** { *; }
--keep class org.bouncycastle.jcajce.provider.keystore.pkcs12.** { *; }
--keep class org.bouncycastle.jcajce.provider.symmetric.AES** { *; }
--keep class org.bouncycastle.jcajce.provider.symmetric.DESede** { *; }
--keep class org.bouncycastle.jcajce.provider.symmetric.PBE** { *; }
--keep class org.bouncycastle.jcajce.provider.symmetric.util.** { *; }
--keep class org.bouncycastle.jcajce.provider.digest.SHA** { *; }
--keep class org.bouncycastle.jcajce.provider.digest.MD5** { *; }
+# Preserve BouncyCastle Security Providers, certificate builders, and crypto engines
+-keep class org.bouncycastle.jce.provider.** { *; }
+-keep class org.bouncycastle.jcajce.provider.** { *; }
+-keep class org.bouncycastle.cert.** { *; }
+-keep class org.bouncycastle.operator.** { *; }
 -dontwarn org.bouncycastle.**
 
 # MiniDNS & GuardianProject Netcipher
