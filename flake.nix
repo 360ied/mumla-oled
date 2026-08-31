@@ -40,6 +40,7 @@
             pkgs.git
             pkgs.gnumake
             pkgs.python3
+            pkgs.ccache
             androidSdk
           ];
 
@@ -49,11 +50,13 @@
           ANDROID_NDK_ROOT = "${androidSdk}/libexec/android-sdk/ndk/25.1.8937393";
           ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/25.1.8937393";
           NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/25.1.8937393";
+          NDK_CCACHE = "${pkgs.ccache}/bin/ccache";
           GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/35.0.0/aapt2";
 
           shellHook = ''
             export GRADLE_USER_HOME="''${PWD}/.gradle-home"
             export ANDROID_USER_HOME="''${PWD}/.gradle-home/android"
+            export CCACHE_DIR="''${PWD}/.gradle-home/ccache"
             echo "Mumla OLED Development Environment Loaded"
             echo "Java Version: $(${jdk}/bin/java -version 2>&1 | head -n 1)"
             echo "ANDROID_HOME: $ANDROID_HOME"
