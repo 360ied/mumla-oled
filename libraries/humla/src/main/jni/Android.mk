@@ -17,6 +17,9 @@
 
 ROOT := $(call my-dir)
 
+COMMON_CFLAGS := -ffunction-sections -fdata-sections -fvisibility=hidden
+COMMON_LDFLAGS := -Wl,-z,max-page-size=16384 -Wl,--gc-sections -Wl,--exclude-libs,ALL
+
 include $(CLEAR_VARS)
 
 LOCAL_PATH          := $(ROOT)/speex/libspeex
@@ -33,10 +36,10 @@ LOCAL_SRC_FILES     := cb_search.c      exc_10_32_table.c   exc_8_128_table.c   
                        mdf.c            kiss_fft.c          kiss_fftr.c         fftwrap.c \
                        filterbank.c     scal.c \
                        $(ROOT)/jnispeex.cpp
-LOCAL_CFLAGS           := -D__EMX__ -DUSE_KISS_FFT -DFIXED_POINT -DEXPORT=''
-LOCAL_CPP_FEATURES := exceptions
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+LOCAL_CFLAGS        := -D__EMX__ -DUSE_KISS_FFT -DFIXED_POINT -DEXPORT='' $(COMMON_CFLAGS) -Os
+LOCAL_CPP_FEATURES  := exceptions
+LOCAL_LDLIBS        := -llog
+LOCAL_LDFLAGS       += $(COMMON_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -46,10 +49,10 @@ LOCAL_SRC_FILES     := bands.c celt.c cwrs.c entcode.c entdec.c entenc.c header.
                        laplace.c mathops.c mdct.c modes.c pitch.c plc.c quant_bands.c rate.c vq.c \
                        $(ROOT)/jnicelt11.cpp
 LOCAL_C_INCLUDES    := $(ROOT)/celt-0.11.0-src/libcelt/
-LOCAL_CFLAGS        := -I$(ROOT)/celt-0.11.0-build -DHAVE_CONFIG_H -fvisibility=hidden
-LOCAL_CPP_FEATURES := exceptions
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+LOCAL_CFLAGS        := -I$(ROOT)/celt-0.11.0-build -DHAVE_CONFIG_H $(COMMON_CFLAGS) -Os
+LOCAL_CPP_FEATURES  := exceptions
+LOCAL_LDLIBS        := -llog
+LOCAL_LDFLAGS       += $(COMMON_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -59,10 +62,10 @@ LOCAL_SRC_FILES     := bands.c celt.c cwrs.c entcode.c entdec.c entenc.c header.
                        kiss_fftr.c laplace.c mdct.c modes.c pitch.c psy.c quant_bands.c rangedec.c \
                        rangeenc.c rate.c vq.c $(ROOT)/jnicelt7.cpp
 LOCAL_C_INCLUDES    := $(ROOT)/celt-0.7.0-src/libcelt/
-LOCAL_CFLAGS        := -I$(ROOT)/celt-0.7.0-build -DHAVE_CONFIG_H -fvisibility=hidden
-LOCAL_CPP_FEATURES := exceptions
-LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+LOCAL_CFLAGS        := -I$(ROOT)/celt-0.7.0-build -DHAVE_CONFIG_H $(COMMON_CFLAGS) -Os
+LOCAL_CPP_FEATURES  := exceptions
+LOCAL_LDLIBS        := -llog
+LOCAL_LDFLAGS       += $(COMMON_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -86,10 +89,10 @@ OPUS_SOURCES += $(OPUS_SOURCES_FLOAT)
 LOCAL_C_INCLUDES    := $(LOCAL_PATH)/include $(LOCAL_PATH)/celt $(LOCAL_PATH)/silk \
                        $(LOCAL_PATH)/silk/float $(LOCAL_PATH)/silk/fixed
 LOCAL_SRC_FILES     := $(CELT_SOURCES) $(SILK_SOURCES) $(OPUS_SOURCES) $(ROOT)/jniopus.cpp
-LOCAL_CFLAGS        := -DOPUS_BUILD -DVAR_ARRAYS -DFIXED_POINT
+LOCAL_CFLAGS        := -DOPUS_BUILD -DVAR_ARRAYS -DFIXED_POINT $(COMMON_CFLAGS) -O3
 LOCAL_CPP_FEATURES  := exceptions
 LOCAL_LDLIBS        := -llog
-LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+LOCAL_LDFLAGS       += $(COMMON_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
 # Modern Audio Input Engine (Oboe/AAudio + RNNoise + Lookahead Ring Buffer + Hysteresis VAD + Soft Limiter + Opus CBR)
@@ -118,10 +121,10 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    audio_engine/OpusVoiceEncoder.cpp \
                    audio_engine/AudioInputEngine.cpp \
                    audio_engine/NativeAudioInputEngineJni.cpp
-LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 -fvisibility=hidden -ffunction-sections -fdata-sections -DVAR_ARRAYS
+LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 $(COMMON_CFLAGS) -DVAR_ARRAYS
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus
 LOCAL_LDLIBS := -llog
-LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384" "-Wl,--gc-sections"
+LOCAL_LDFLAGS += $(COMMON_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
