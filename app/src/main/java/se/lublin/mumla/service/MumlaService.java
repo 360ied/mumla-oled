@@ -45,7 +45,11 @@ import org.jsoup.nodes.Element;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 import se.lublin.humla.Constants;
 import se.lublin.humla.HumlaService;
@@ -93,9 +97,62 @@ public class MumlaService extends HumlaService implements
      * This should serve as a hint not to bother the user.
      */
     private boolean mErrorShown;
+    public static final int MAX_CHAT_LOG_SIZE = 500;
+    public static final int MAX_CACHED_SERVERS = 10;
+    private final Map<String, List<IChatMessage>> mServerChatLogs =
+            new LinkedHashMap<String, List<IChatMessage>>(MAX_CACHED_SERVERS + 1, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, List<IChatMessage>> eldest) {
+                    return size() > MAX_CACHED_SERVERS;
+                }
+            };
+    private String mActiveServerKey = "";
     private List<IChatMessage> mMessageLog;
     private boolean mSuppressNotifications;
     private boolean mWasReconnecting;
+
+    public static String getServerKey(Server server) {
+        if (server == null) {
+            return "";
+        }
+        if (server.isSaved()) {
+            return "id:" + server.getId();
+        }
+        String host = server.getHost() != null ? server.getHost().toLowerCase(Locale.ROOT) : "";
+        int port = server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT;
+        String user = server.getUsername() != null ? server.getUsername() : "";
+        return "endpoint:" + host + ":" + port + ":" + user;
+    }
+
+    synchronized void updateActiveServerLog() {
+        Server server = getTargetServer();
+        String key = getServerKey(server);
+        if (!key.isEmpty() && !key.equals(mActiveServerKey)) {
+            mActiveServerKey = key;
+            List<IChatMessage> cached = mServerChatLogs.get(mActiveServerKey);
+            if (cached != null) {
+                mMessageLog = cached;
+            } else {
+                mMessageLog = new ArrayList<>();
+            }
+        } else if (mMessageLog == null) {
+            mMessageLog = new ArrayList<>();
+        }
+    }
+
+    synchronized void addChatMessageToLog(IChatMessage message) {
+        updateActiveServerLog();
+        if (mMessageLog == null) {
+            mMessageLog = new ArrayList<>();
+        }
+        if (!mActiveServerKey.isEmpty()) {
+            mServerChatLogs.put(mActiveServerKey, mMessageLog);
+        }
+        if (mMessageLog.size() >= MAX_CHAT_LOG_SIZE) {
+            mMessageLog.remove(0);
+        }
+        mMessageLog.add(message);
+    }
 
     private TextToSpeech mTTS;
 
@@ -209,6 +266,7 @@ public class MumlaService extends HumlaService implements
             }
             mNotification.showConnecting(serverName, host, port);
             mErrorShown = false;
+            updateActiveServerLog();
         }
 
         @Override
@@ -216,6 +274,7 @@ public class MumlaService extends HumlaService implements
             updateConnectedNotification();
             if (mWasReconnecting) {
                 speakTts(getString(R.string.reconnected));
+                logInfo(getString(R.string.reconnected));
                 mWasReconnecting = false;
             }
         }
@@ -231,6 +290,7 @@ public class MumlaService extends HumlaService implements
                         ttsMsg = getString(R.string.disconnected);
                     }
                     speakTts(ttsMsg);
+                    logWarning(ttsMsg);
                 }
                 mWasReconnecting = true;
                 String errorMsg = e != null ? e.getMessage() : getString(R.string.mumlaDisconnected);
@@ -262,6 +322,7 @@ public class MumlaService extends HumlaService implements
                         ttsMsg = getString(R.string.disconnected);
                     }
                     speakTts(ttsMsg);
+                    logWarning(ttsMsg);
                 }
             }
         }
@@ -351,22 +412,22 @@ public class MumlaService extends HumlaService implements
                 mMessageNotification.show(message);
             }
 
-            mMessageLog.add(new IChatMessage.TextMessage(message));
+            addChatMessageToLog(new IChatMessage.TextMessage(message, false));
         }
 
         @Override
         public void onLogInfo(String message) {
-            mMessageLog.add(new IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.INFO, message));
+            addChatMessageToLog(new IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.INFO, message));
         }
 
         @Override
         public void onLogWarning(String message) {
-            mMessageLog.add(new IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.WARNING, message));
+            addChatMessageToLog(new IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.WARNING, message));
         }
 
         @Override
         public void onLogError(String message) {
-            mMessageLog.add(new IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.ERROR, message));
+            addChatMessageToLog(new IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.ERROR, message));
         }
 
         @Override
@@ -465,7 +526,11 @@ public class MumlaService extends HumlaService implements
             mTTS.shutdown();
             mTTS = null;
         }
-        mMessageLog = null;
+        synchronized (this) {
+            mMessageLog = null;
+            mServerChatLogs.clear();
+            mActiveServerKey = "";
+        }
         mMessageNotification.dismiss();
         super.onDestroy();
     }
@@ -524,7 +589,6 @@ public class MumlaService extends HumlaService implements
 
         setProximitySensorOn(false);
 
-        clearMessageLog();
         mMessageNotification.dismiss();
     }
 
@@ -811,15 +875,24 @@ public class MumlaService extends HumlaService implements
     }
 
     @Override
-    public List<IChatMessage> getMessageLog() {
-        return Collections.unmodifiableList(mMessageLog);
+    public synchronized List<IChatMessage> getMessageLog() {
+        updateActiveServerLog();
+        if (mMessageLog == null) {
+            return Collections.emptyList();
+        }
+        return Collections.unmodifiableList(new ArrayList<>(mMessageLog));
     }
 
     @Override
-    public void clearMessageLog() {
+    public synchronized void clearMessageLog() {
         if (mMessageLog != null) {
             mMessageLog.clear();
         }
+        if (mActiveServerKey != null && !mActiveServerKey.isEmpty()) {
+            mServerChatLogs.remove(mActiveServerKey);
+        }
+        mActiveServerKey = "";
+        mMessageLog = null;
     }
 
     /**
@@ -854,7 +927,7 @@ public class MumlaService extends HumlaService implements
     public Message sendUserTextMessage(int session, String message) {
         Message msg = super.sendUserTextMessage(session, message);
 
-        mMessageLog.add(new IChatMessage.TextMessage(msg));
+        addChatMessageToLog(new IChatMessage.TextMessage(msg, true));
         return msg;
     }
 
@@ -862,7 +935,7 @@ public class MumlaService extends HumlaService implements
     public Message sendChannelTextMessage(int channel, String message, boolean tree) {
         Message msg = super.sendChannelTextMessage(channel, message, tree);
 
-        mMessageLog.add(new IChatMessage.TextMessage(msg));
+        addChatMessageToLog(new IChatMessage.TextMessage(msg, true));
         return msg;
     }
 }
