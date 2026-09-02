@@ -141,11 +141,11 @@ public class PacketBuffer {
             final int tmp = (int) (v & 0xFC);
             switch (tmp) {
                 case 0xF0:
-                    i = next() << 24 | next() << 16 | next() << 8 | next();
+                    i = ((long) next() << 24) | ((long) next() << 16) | ((long) next() << 8) | next();
                     break;
                 case 0xF4:
-                    i = next() << 56 | next() << 48 | next() << 40 | next() << 32 |
-                            next() << 24 | next() << 16 | next() << 8 | next();
+                    i = ((long) next() << 56) | ((long) next() << 48) | ((long) next() << 40) | ((long) next() << 32) |
+                            ((long) next() << 24) | ((long) next() << 16) | ((long) next() << 8) | next();
                     break;
                 case 0xF8:
                     i = readLong();
@@ -159,9 +159,9 @@ public class PacketBuffer {
                     throw new BufferUnderflowException();
             }
         } else if ((v & 0xF0) == 0xE0) {
-            i = (v & 0x0F) << 24 | next() << 16 | next() << 8 | next();
+            i = ((v & 0x0F) << 24) | ((long) next() << 16) | ((long) next() << 8) | next();
         } else if ((v & 0xE0) == 0xC0) {
-            i = (v & 0x1F) << 16 | next() << 8 | next();
+            i = ((v & 0x1F) << 16) | ((long) next() << 8) | next();
         }
         return i;
     }
@@ -199,7 +199,7 @@ public class PacketBuffer {
     public void writeLong(long value) {
         long i = value;
 
-        if (((i & 0x8000000000000000L) > 0) && (~i < 0x100000000L)) {
+        if ((i < 0) && (~i < 0x100000000L)) {
             // Signed number.
             i = ~i;
             if (i <= 0x3) {
@@ -211,25 +211,25 @@ public class PacketBuffer {
             }
         }
 
-        if (i < 0x80) {
+        if (i >= 0 && i < 0x80) {
             // Need top bit clear
             append(i);
-        } else if (i < 0x4000) {
+        } else if (i >= 0 && i < 0x4000) {
             // Need top two bits clear
             append((i >> 8) | 0x80);
             append(i & 0xFF);
-        } else if (i < 0x200000) {
+        } else if (i >= 0 && i < 0x200000) {
             // Need top three bits clear
             append((i >> 16) | 0xC0);
             append((i >> 8) & 0xFF);
             append(i & 0xFF);
-        } else if (i < 0x10000000) {
+        } else if (i >= 0 && i < 0x10000000) {
             // Need top four bits clear
             append((i >> 24) | 0xE0);
             append((i >> 16) & 0xFF);
             append((i >> 8) & 0xFF);
             append(i & 0xFF);
-        } else if (i < 0x100000000L) {
+        } else if (i >= 0 && i < 0x100000000L) {
             // It's a full 32-bit integer.
             append(0xF0);
             append((i >> 24) & 0xFF);
