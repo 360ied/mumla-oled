@@ -17,8 +17,6 @@
 
 package se.lublin.mumla.service;
 
-import java.util.Date;
-
 import se.lublin.humla.model.IMessage;
 
 /**
@@ -48,9 +46,19 @@ public interface IChatMessage {
      */
     class TextMessage implements IChatMessage {
         private final IMessage mMessage;
+        private final boolean mSelfAuthored;
 
         public TextMessage(IMessage message) {
+            this(message, false);
+        }
+
+        public TextMessage(IMessage message, boolean selfAuthored) {
             mMessage = message;
+            mSelfAuthored = selfAuthored;
+        }
+
+        public boolean isSelfAuthored() {
+            return mSelfAuthored;
         }
 
         public IMessage getMessage() {
@@ -93,7 +101,7 @@ public interface IChatMessage {
         public InfoMessage(Type type, String message) {
             mType = type;
             mBody = message;
-            mReceivedTime = new Date().getTime();
+            mReceivedTime = System.currentTimeMillis();
         }
 
         public Type getType() {
