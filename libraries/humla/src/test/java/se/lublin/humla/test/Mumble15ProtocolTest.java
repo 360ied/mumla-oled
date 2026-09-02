@@ -180,4 +180,19 @@ public class Mumble15ProtocolTest extends TestCase {
         assertEquals(3, parsed.getOpusData().size());
         assertEquals(0x10, parsed.getOpusData().byteAt(0));
     }
+
+    public void testProtobufUDPConnectivityPingFormat() throws Exception {
+        long timestamp = 1234567890L;
+        MumbleUDP.Ping.Builder pb = MumbleUDP.Ping.newBuilder();
+        pb.setTimestamp(timestamp);
+        byte[] pingBytes = pb.build().toByteArray();
+        byte[] packet = new byte[1 + pingBytes.length];
+        packet[0] = 0x01; // Protobuf Ping type
+        System.arraycopy(pingBytes, 0, packet, 1, pingBytes.length);
+
+        assertEquals(0x01, packet[0]);
+        MumbleUDP.Ping parsed = MumbleUDP.Ping.parseFrom(ByteString.copyFrom(packet, 1, packet.length - 1));
+        assertEquals(timestamp, parsed.getTimestamp());
+        assertFalse(parsed.getRequestExtendedInformation());
+    }
 }
