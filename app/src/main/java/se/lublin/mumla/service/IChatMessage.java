@@ -48,9 +48,19 @@ public interface IChatMessage {
      */
     class TextMessage implements IChatMessage {
         private final IMessage mMessage;
+        private final boolean mSelfAuthored;
 
         public TextMessage(IMessage message) {
+            this(message, false);
+        }
+
+        public TextMessage(IMessage message, boolean selfAuthored) {
             mMessage = message;
+            mSelfAuthored = selfAuthored;
+        }
+
+        public boolean isSelfAuthored() {
+            return mSelfAuthored;
         }
 
         public IMessage getMessage() {
