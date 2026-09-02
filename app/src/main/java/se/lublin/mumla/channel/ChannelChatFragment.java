@@ -75,6 +75,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -567,9 +568,9 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                     if (!selfAuthored && mService != null && mService.isConnected()) {
                         try {
                             IHumlaSession session = mService.HumlaSession();
-                            selfAuthored = (textMessage.getActor() == session.getSessionId()) ||
-                                    (session.getSessionUser() != null &&
-                                     session.getSessionUser().getName().equals(textMessage.getActorName()));
+                            IUser sessionUser = session.getSessionUser();
+                            selfAuthored = sessionUser != null &&
+                                    Objects.equals(sessionUser.getName(), textMessage.getActorName());
                         } catch (HumlaDisconnectedException | IllegalStateException e) {
                             selfAuthored = false;
                         }

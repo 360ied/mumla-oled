@@ -17,8 +17,6 @@
 
 package se.lublin.mumla.service;
 
-import java.util.Date;
-
 import se.lublin.humla.model.IMessage;
 
 /**
@@ -103,7 +101,7 @@ public interface IChatMessage {
         public InfoMessage(Type type, String message) {
             mType = type;
             mBody = message;
-            mReceivedTime = new Date().getTime();
+            mReceivedTime = System.currentTimeMillis();
         }
 
         public Type getType() {
