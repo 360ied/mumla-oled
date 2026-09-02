@@ -261,15 +261,24 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         @Override
         public void messageUDPPing(byte[] data) {
 //            Log.v(TAG, "IN: UDP Ping");
-            byte[] timedata = new byte[8];
-            System.arraycopy(data, 1, timedata, 0, 8);
-            ByteBuffer buffer = ByteBuffer.allocate(8);
-            buffer.put(timedata);
-            buffer.flip();
-
-            long timestamp = buffer.getLong();
-            long now = getElapsed();
-            mLastUDPPing = now-timestamp;
+            try {
+                PacketBuffer pb = new PacketBuffer(data, data.length);
+                pb.skip(1);
+                long timestamp = pb.readLong();
+                long now = getElapsed();
+                mLastUDPPing = now - timestamp;
+            } catch (Exception e) {
+                if (data.length >= 9) {
+                    byte[] timedata = new byte[8];
+                    System.arraycopy(data, 1, timedata, 0, 8);
+                    ByteBuffer buffer = ByteBuffer.allocate(8);
+                    buffer.put(timedata);
+                    buffer.flip();
+                    long timestamp = buffer.getLong();
+                    long now = getElapsed();
+                    mLastUDPPing = now - timestamp;
+                }
+            }
             // TODO refresh UDP?
         }
 
@@ -298,19 +307,18 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
                 if (isProtobufUdpSupported()) {
                     MumbleUDP.Ping.Builder pb = MumbleUDP.Ping.newBuilder();
                     pb.setTimestamp(t);
-                    pb.setRequestExtendedInformation(true);
                     byte[] pingBytes = pb.build().toByteArray();
                     byte[] packet = new byte[1 + pingBytes.length];
                     packet[0] = 0x01; // Protobuf Ping type
                     System.arraycopy(pingBytes, 0, packet, 1, pingBytes.length);
                     sendUDPMessage(packet, packet.length, true);
                 } else {
-                    ByteBuffer buffer = ByteBuffer.allocate(16);
-                    buffer.put((byte) ((HumlaUDPMessageType.UDPPing.ordinal() << 5) & 0xFF));
-                    buffer.putLong(t);
-
-                    sendUDPMessage(buffer.array(), 16, true);
-//                  Log.v(TAG, "OUT: UDP Ping");
+                    byte[] pingBuffer = new byte[10];
+                    pingBuffer[0] = (byte) ((HumlaUDPMessageType.UDPPing.ordinal() << 5) & 0xFF);
+                    PacketBuffer pb = new PacketBuffer(pingBuffer, 10);
+                    pb.skip(1);
+                    pb.writeLong(t);
+                    sendUDPMessage(pingBuffer, pb.size(), true);
                 }
             }
 
