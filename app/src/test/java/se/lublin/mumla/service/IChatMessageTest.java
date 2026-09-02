@@ -91,4 +91,14 @@ public class IChatMessageTest extends TestCase {
 
         assertTrue("Visitor visit(InfoMessage) must be invoked", visited.get());
     }
+
+    public void testInfoMessageTimestamp() {
+        long before = System.currentTimeMillis();
+        IChatMessage.InfoMessage infoMsg = new IChatMessage.InfoMessage(
+                IChatMessage.InfoMessage.Type.INFO, "Timestamp check");
+        long after = System.currentTimeMillis();
+
+        assertTrue(infoMsg.getReceivedTime() >= before);
+        assertTrue(infoMsg.getReceivedTime() <= after);
+    }
 }
