@@ -199,7 +199,7 @@ public class PacketBuffer {
     public void writeLong(long value) {
         long i = value;
 
-        if (((i & 0x8000000000000000L) > 0) && (~i < 0x100000000L)) {
+        if ((i < 0) && (~i < 0x100000000L)) {
             // Signed number.
             i = ~i;
             if (i <= 0x3) {
@@ -211,25 +211,25 @@ public class PacketBuffer {
             }
         }
 
-        if (i < 0x80) {
+        if (i >= 0 && i < 0x80) {
             // Need top bit clear
             append(i);
-        } else if (i < 0x4000) {
+        } else if (i >= 0 && i < 0x4000) {
             // Need top two bits clear
             append((i >> 8) | 0x80);
             append(i & 0xFF);
-        } else if (i < 0x200000) {
+        } else if (i >= 0 && i < 0x200000) {
             // Need top three bits clear
             append((i >> 16) | 0xC0);
             append((i >> 8) & 0xFF);
             append(i & 0xFF);
-        } else if (i < 0x10000000) {
+        } else if (i >= 0 && i < 0x10000000) {
             // Need top four bits clear
             append((i >> 24) | 0xE0);
             append((i >> 16) & 0xFF);
             append((i >> 8) & 0xFF);
             append(i & 0xFF);
-        } else if (i < 0x100000000L) {
+        } else if (i >= 0 && i < 0x100000000L) {
             // It's a full 32-bit integer.
             append(0xF0);
             append((i >> 24) & 0xFF);
