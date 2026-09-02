@@ -141,11 +141,11 @@ public class PacketBuffer {
             final int tmp = (int) (v & 0xFC);
             switch (tmp) {
                 case 0xF0:
-                    i = next() << 24 | next() << 16 | next() << 8 | next();
+                    i = ((long) next() << 24) | ((long) next() << 16) | ((long) next() << 8) | next();
                     break;
                 case 0xF4:
-                    i = next() << 56 | next() << 48 | next() << 40 | next() << 32 |
-                            next() << 24 | next() << 16 | next() << 8 | next();
+                    i = ((long) next() << 56) | ((long) next() << 48) | ((long) next() << 40) | ((long) next() << 32) |
+                            ((long) next() << 24) | ((long) next() << 16) | ((long) next() << 8) | next();
                     break;
                 case 0xF8:
                     i = readLong();
@@ -159,9 +159,9 @@ public class PacketBuffer {
                     throw new BufferUnderflowException();
             }
         } else if ((v & 0xF0) == 0xE0) {
-            i = (v & 0x0F) << 24 | next() << 16 | next() << 8 | next();
+            i = ((v & 0x0F) << 24) | ((long) next() << 16) | ((long) next() << 8) | next();
         } else if ((v & 0xE0) == 0xC0) {
-            i = (v & 0x1F) << 16 | next() << 8 | next();
+            i = ((v & 0x1F) << 16) | ((long) next() << 8) | next();
         }
         return i;
     }
