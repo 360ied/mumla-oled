@@ -454,7 +454,7 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
             responseMessage = session.sendUserTextMessage(target.getUser().getSession(), formattedMessage);
         else if (target.getChannel() != null)
             responseMessage = session.sendChannelTextMessage(target.getChannel().getId(), formattedMessage, false);
-        addChatMessage(new IChatMessage.TextMessage(responseMessage), true);
+        addChatMessage(new IChatMessage.TextMessage(responseMessage, true), true);
     }
 
     /**
@@ -563,11 +563,16 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                 public void visit(IChatMessage.TextMessage message) {
                     IMessage textMessage = message.getMessage();
                     String targetMessage = getContext().getString(R.string.unknown);
-                    boolean selfAuthored;
-                    try {
-                        selfAuthored = textMessage.getActor() == mService.HumlaSession().getSessionId();
-                    } catch (HumlaDisconnectedException e) {
-                        selfAuthored = false;
+                    boolean selfAuthored = message.isSelfAuthored();
+                    if (!selfAuthored && mService != null && mService.isConnected()) {
+                        try {
+                            IHumlaSession session = mService.HumlaSession();
+                            selfAuthored = (textMessage.getActor() == session.getSessionId()) ||
+                                    (session.getSessionUser() != null &&
+                                     session.getSessionUser().getName().equals(textMessage.getActorName()));
+                        } catch (HumlaDisconnectedException | IllegalStateException e) {
+                            selfAuthored = false;
+                        }
                     }
 
                     if (textMessage.getTargetChannels() != null && !textMessage.getTargetChannels().isEmpty()) {
