@@ -164,6 +164,11 @@ public class AudioHandler extends HumlaNetworkListener
                 modelData,
                 this);
 
+        if (mInputMode instanceof ActivityInputMode) {
+            ActivityInputMode actMode = (ActivityInputMode) mInputMode;
+            mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
+        }
+
         mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod);
         mOutput = new AudioOutput(mOutputListener);
     }
@@ -474,6 +479,12 @@ public class AudioHandler extends HumlaNetworkListener
         }
         if (mNativeEngine != null) {
             mNativeEngine.setPttTalking(talking);
+        }
+    }
+
+    public void setVadThresholds(float vadMax, float vadMin) {
+        if (mNativeEngine != null) {
+            mNativeEngine.setVadThresholds(vadMax, vadMin);
         }
     }
 
