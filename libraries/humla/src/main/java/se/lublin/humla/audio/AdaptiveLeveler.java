@@ -37,7 +37,7 @@ public class AdaptiveLeveler {
     public static final float MAX_GAIN = 4.0f;
 
     // Neural speech probability gate threshold (from RNNoise).
-    public static final float SPEECH_PROB_THRESHOLD = 0.50f;
+    public static final float SPEECH_PROB_THRESHOLD = 0.30f;
 
     // Minimum frame RMS energy threshold to prevent adapting on faint ambient room noise.
     public static final float MIN_SPEECH_RMS = 150.0f;

@@ -63,7 +63,9 @@ bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neural
         // If neural probability is available, combine with energy level
         score = (0.7f * neuralSpeechProb) + (0.3f * m_peakEnergy);
     } else {
-        score = m_peakEnergy;
+        // Fallback when RNNoise neural probability is unavailable/disabled:
+        // Scale energy so that nominal -48 dBFS (m_peakEnergy = 0.50) aligns with DEFAULT_VAD_MAX (0.35)
+        score = m_peakEnergy * 0.70f;
     }
 
     // 3. Hysteresis decision
