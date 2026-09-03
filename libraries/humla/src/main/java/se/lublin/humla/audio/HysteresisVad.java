@@ -24,8 +24,8 @@ package se.lublin.humla.audio;
  * with a configurable hold hangover timer.
  */
 public class HysteresisVad {
-    public static final float DEFAULT_VAD_MAX = 0.50f;
-    public static final float DEFAULT_VAD_MIN = 0.35f;
+    public static final float DEFAULT_VAD_MAX = 0.35f;
+    public static final float DEFAULT_VAD_MIN = 0.25f;
     public static final int DEFAULT_HOLD_FRAMES = 25; // 250ms @ 10ms/frame
 
     private float mVadMax;
@@ -73,7 +73,9 @@ public class HysteresisVad {
         if (neuralSpeechProb >= 0.0f) {
             score = (0.7f * neuralSpeechProb) + (0.3f * mPeakEnergy);
         } else {
-            score = mPeakEnergy;
+            // Fallback when RNNoise neural probability is unavailable/disabled:
+            // Scale energy so that nominal -48 dBFS (mPeakEnergy = 0.50) aligns with DEFAULT_VAD_MAX (0.35)
+            score = mPeakEnergy * 0.70f;
         }
 
         // 3. Hysteresis state machine
@@ -127,5 +129,13 @@ public class HysteresisVad {
 
     public synchronized float getLastSpeechProb() {
         return mLastSpeechProb;
+    }
+
+    public synchronized float getVadMax() {
+        return mVadMax;
+    }
+
+    public synchronized float getVadMin() {
+        return mVadMin;
     }
 }

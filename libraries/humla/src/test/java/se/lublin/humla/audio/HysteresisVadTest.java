@@ -19,6 +19,7 @@ package se.lublin.humla.audio;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -83,5 +84,25 @@ public class HysteresisVadTest {
         // High neural speech probability (0.95) should trigger speech even on quiet consonants
         boolean speaking = vad.process(quiet, 0, quiet.length, 0.95f);
         assertTrue(speaking);
+    }
+
+    @Test
+    public void testDefaultThresholdsAndGetters() {
+        HysteresisVad vad = new HysteresisVad();
+        assertEquals(0.35f, vad.getVadMax(), 0.0001f);
+        assertEquals(0.25f, vad.getVadMin(), 0.0001f);
+    }
+
+    @Test
+    public void testSoftSpeechActivationWithCalibratedThreshold() {
+        HysteresisVad vad = new HysteresisVad(); // 0.35f / 0.25f
+        short[] softSpeech = new short[480];
+        for (int i = 0; i < 480; i++) softSpeech[i] = 400; // ~ -38 dBFS
+
+        // Neural prob = 0.40 (moderate confidence on soft speech)
+        // Score = 0.7 * 0.40 + 0.3 * ~0.60 = 0.28 + 0.18 = 0.46 >= 0.35
+        boolean speaking = vad.process(softSpeech, 0, softSpeech.length, 0.40f);
+        assertTrue(speaking);
+        assertTrue(vad.isSpeaking());
     }
 }

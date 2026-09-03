@@ -33,8 +33,8 @@ namespace audio {
  */
 class HysteresisVad {
 public:
-    static constexpr float DEFAULT_VAD_MAX = 0.50f;
-    static constexpr float DEFAULT_VAD_MIN = 0.35f;
+    static constexpr float DEFAULT_VAD_MAX = 0.35f;
+    static constexpr float DEFAULT_VAD_MIN = 0.25f;
     static constexpr uint32_t DEFAULT_HOLD_FRAMES = 25; // 250ms @ 10ms/frame
 
     explicit HysteresisVad(float vadMax = DEFAULT_VAD_MAX,
@@ -59,6 +59,8 @@ public:
     bool isSpeaking() const { return m_speaking; }
     float getPeakEnergy() const { return m_peakEnergy; }
     float getLastSpeechProb() const { return m_lastSpeechProb; }
+    float getVadMax() const { return m_vadMax; }
+    float getVadMin() const { return m_vadMin; }
 
 private:
     float m_vadMax;
