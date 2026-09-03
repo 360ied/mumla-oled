@@ -12,6 +12,7 @@ public class SeekBarDialogPreference extends DialogPreference {
     public final int mMax;
     public final int mMin;
     public final int mMultiplier;
+    public final int mDisplayDivider;
     public final String mSuffix;
     public final int mDefaultValue;
 
@@ -23,6 +24,7 @@ public class SeekBarDialogPreference extends DialogPreference {
             mMax = a.getInt(R.styleable.SeekBarDialogPreference_max, 100);
             mMin = a.getInt(R.styleable.SeekBarDialogPreference_min, 0);
             mMultiplier = a.getInt(R.styleable.SeekBarDialogPreference_multiplier, 1);
+            mDisplayDivider = a.getInt(R.styleable.SeekBarDialogPreference_displayDivider, 1);
             mSuffix = a.getString(R.styleable.SeekBarDialogPreference_android_text);
             mDefaultValue = a.getInt(R.styleable.SeekBarDialogPreference_android_defaultValue, 0);
         }
