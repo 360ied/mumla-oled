@@ -53,7 +53,7 @@
     <string name="togglePtt">Bouton Appuyer pour parler épinglé</string>
     <string name="togglePttSum">Le bouton Appuyer-pour-parler permet d\'activer ou de désactiver la transmission. Il n\'est pas nécessaire de le tenir.</string>
     <string name="inputQuality">Qualité de l\'entrée du microphone</string>
-    <string name="inputQualitySum">Fréquence préférée de données transmises (en bits par seconde).</string>
+    <string name="inputQualitySum">Fréquence préférée de données transmises (en kilobits par seconde).</string>
     <string name="pressKey">Appuyer sur une touche physique à lier à « Appuyer pour parler ».</string>
     <string name="pressKeyInfo">L\'application doit être ouverte pour pouvoir l\'utiliser (en raison des restrictions d\'Android).</string>
     <string name="loadImagesSum">Télécharge et affiche les photos dans la discussion.</string>

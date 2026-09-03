@@ -16,6 +16,7 @@ public class SeekBarPreferenceDialogFragment extends PreferenceDialogFragmentCom
 
     private TextView mValueView;
     private int mMultiplier;
+    private int mDisplayDivider;
     private int mMin;
     private int mCurrentValue;
     private String mSuffix;
@@ -38,6 +39,7 @@ public class SeekBarPreferenceDialogFragment extends PreferenceDialogFragmentCom
         SeekBarDialogPreference preference = (SeekBarDialogPreference) getPreference();
 
         mMultiplier = preference.mMultiplier;
+        mDisplayDivider = preference.mDisplayDivider;
         mMin = preference.mMin;
         mSuffix = preference.mSuffix;
         // The persisted value is always multiplied, but the default value in the XML is not (nor
@@ -70,9 +72,14 @@ public class SeekBarPreferenceDialogFragment extends PreferenceDialogFragmentCom
         });
     }
 
+    static String formatValue(int currentValue, int displayDivider, String suffix) {
+        int displayVal = displayDivider > 0 ? currentValue / displayDivider : currentValue;
+        String t = String.valueOf(displayVal);
+        return suffix == null ? t : t.concat(suffix);
+    }
+
     private void updateValueView() {
-        String t = String.valueOf(mCurrentValue);
-        mValueView.setText(mSuffix == null ? t : t.concat(mSuffix));
+        mValueView.setText(formatValue(mCurrentValue, mDisplayDivider, mSuffix));
     }
 
     @Override
