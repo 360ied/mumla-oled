@@ -31,6 +31,7 @@ import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
+import android.graphics.PorterDuff;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -238,6 +239,17 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
     @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         inflater.inflate(R.menu.fragment_chat, menu);
+    }
+
+    @Override
+    public void onPrepareOptionsMenu(Menu menu) {
+        super.onPrepareOptionsMenu(menu);
+        MenuItem clearItem = menu.findItem(R.id.menu_clear_chat);
+        if (clearItem != null && clearItem.getIcon() != null && getActivity() != null) {
+            int foregroundColor = getActivity().getTheme().obtainStyledAttributes(
+                    new int[]{android.R.attr.textColorPrimaryInverse}).getColor(0, -1);
+            clearItem.getIcon().mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY);
+        }
     }
 
     @Override
