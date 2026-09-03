@@ -53,4 +53,12 @@ public class ActivityInputMode implements IInputMode {
     public HysteresisVad getVad() {
         return mVad;
     }
+
+    public float getVadMax() {
+        return mVad.getVadMax();
+    }
+
+    public float getVadMin() {
+        return mVad.getVadMin();
+    }
 }
