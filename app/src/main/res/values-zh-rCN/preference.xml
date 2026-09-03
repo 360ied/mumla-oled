@@ -55,7 +55,7 @@
     <string name="togglePtt">发言状态开关</string>
     <string name="togglePttSum">点击按钮时切换发言状态，无需按住。</string>
     <string name="inputQuality">麦克风输入质量</string>
-    <string name="inputQualitySum">偏好的数据传输速率（单位为比特每秒）。</string>
+    <string name="inputQualitySum">偏好的数据传输速率（单位为千比特每秒）。</string>
     <string name="pttButtonHeight">按住发言按钮高度</string>
     <string name="pttButtonHeightSum">更改按住发言按钮的高度。</string>
     <string name="pressKey">按下一个物理按键，用作按住发言键。</string>

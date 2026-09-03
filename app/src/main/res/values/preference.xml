@@ -92,7 +92,7 @@
     <string name="togglePtt">Sticky Push-to-talk button</string>
     <string name="togglePttSum">Push-to-talk button toggles transmission on/off. No need to hold it.</string>
     <string name="inputQuality">Microphone input quality</string>
-    <string name="inputQualitySum">Preferred rate of data transmitted (in bits per second).</string>
+    <string name="inputQualitySum">Preferred rate of data transmitted (in kilobits per second).</string>
     <string name="pttButtonHeight">Push-to-talk button height</string>
     <string name="pttButtonHeightSum">Change the vertical length of the push-to-talk button.</string>
     <string name="pressKey">Press a physical key to use it for push-to-talk.</string>
