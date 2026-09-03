@@ -111,7 +111,7 @@
             android:summary="@string/inputQualitySum"
             app:multiplier="1000"
             app:displayDivider="1000"
-            app:max="96"
+            app:max="192"
             app:min="8"
             android:defaultValue="40"
             android:text=" kbps"
