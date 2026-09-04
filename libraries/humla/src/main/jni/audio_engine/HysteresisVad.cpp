@@ -28,14 +28,15 @@ static inline T clampVal(T val, T minVal, T maxVal) {
     return std::max(minVal, std::min(val, maxVal));
 }
 
-HysteresisVad::HysteresisVad(float vadMax, float vadMin, uint32_t holdFrames)
+HysteresisVad::HysteresisVad(float vadMax, float vadMin, uint32_t holdFrames, float squelchMinDb)
     : m_vadMax(vadMax),
       m_vadMin(vadMin),
       m_holdFrames(holdFrames),
       m_currentHold(0),
       m_speaking(false),
       m_peakEnergy(0.0f),
-      m_lastSpeechProb(0.0f) {}
+      m_lastSpeechProb(0.0f),
+      m_squelchMinDb(squelchMinDb) {}
 
 bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb) {
     if (pcm == nullptr || sampleCount == 0) {
@@ -57,8 +58,20 @@ bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neural
 
     m_lastSpeechProb = neuralSpeechProb;
 
-    // 2. Determine combined activation level
-    float score = (0.7f * neuralSpeechProb) + (0.3f * m_peakEnergy);
+    // 2. Determine activation score (Pure Neural Probability with Hard Squelch Gate)
+    float score = 0.0f;
+    if (peakDb >= m_squelchMinDb) {
+        // Signal exceeds hard squelch floor: evaluate neural probability directly
+        if (neuralSpeechProb >= 0.0f) {
+            score = neuralSpeechProb;
+        } else {
+            // Fallback when neural probability is unavailable/negative
+            score = m_peakEnergy;
+        }
+    } else {
+        // Squelched: signal is below the absolute silence/noise floor (-65 dBFS)
+        score = 0.0f;
+    }
 
     // 3. Hysteresis decision
     bool detected = false;
@@ -92,6 +105,10 @@ void HysteresisVad::setThresholds(float vadMax, float vadMin) {
 
 void HysteresisVad::setHoldFrames(uint32_t holdFrames) {
     m_holdFrames = holdFrames;
+}
+
+void HysteresisVad::setSquelchMinDb(float squelchMinDb) {
+    m_squelchMinDb = squelchMinDb;
 }
 
 void HysteresisVad::reset() {

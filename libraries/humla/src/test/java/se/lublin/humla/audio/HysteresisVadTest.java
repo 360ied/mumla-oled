@@ -92,18 +92,75 @@ public class HysteresisVadTest {
         HysteresisVad vad = new HysteresisVad();
         assertEquals(0.35f, vad.getVadMax(), 0.0001f);
         assertEquals(0.25f, vad.getVadMin(), 0.0001f);
+        assertEquals(-65.0f, vad.getSquelchMinDb(), 0.0001f);
     }
 
     @Test
     public void testSoftSpeechActivationWithCalibratedThreshold() {
         HysteresisVad vad = new HysteresisVad(); // 0.35f / 0.25f
         short[] softSpeech = new short[480];
-        for (int i = 0; i < 480; i++) softSpeech[i] = 400; // ~ -38 dBFS
+        for (int i = 0; i < 480; i++) softSpeech[i] = 400; // ~ -38 dBFS, above -65 dBFS squelch
 
-        // Neural prob = 0.40 (moderate confidence on soft speech)
-        // Score = 0.7 * 0.40 + 0.3 * ~0.60 = 0.28 + 0.18 = 0.46 >= 0.35
+        // Neural prob = 0.40 >= vadMax (0.35) activates directly without acoustic energy penalty
         boolean speaking = vad.process(softSpeech, 0, softSpeech.length, 0.40f);
         assertTrue(speaking);
         assertTrue(vad.isSpeaking());
+    }
+
+    @Test
+    public void testHighAmbientNoiseImmunity() {
+        HysteresisVad vad = new HysteresisVad(); // vadMax = 0.35
+        // Very loud ambient acoustic noise (~ -7 dBFS), but non-speech (neuralSpeechProb = 0.10)
+        short[] loudNoise = new short[480];
+        for (int i = 0; i < 480; i++) loudNoise[i] = 15000;
+
+        // Acoustic energy does not add to score; neural score (0.10) < vadMax (0.35)
+        boolean speaking = vad.process(loudNoise, 0, loudNoise.length, 0.10f);
+        assertFalse(speaking);
+        assertFalse(vad.isSpeaking());
+    }
+
+    @Test
+    public void testSquelchFloorSuppression() {
+        HysteresisVad vad = new HysteresisVad(); // squelch = -65 dBFS
+        // Sub-squelch signal (~ -76 dBFS, amplitude = 5)
+        short[] subSquelch = new short[480];
+        for (int i = 0; i < 480; i++) subSquelch[i] = 5;
+
+        // Even with high neural probability (0.90), sub-squelch signal is zeroed
+        boolean speaking = vad.process(subSquelch, 0, subSquelch.length, 0.90f);
+        assertFalse(speaking);
+        assertFalse(vad.isSpeaking());
+    }
+
+    @Test
+    public void testQuietWhisperSensitivityAboveSquelch() {
+        HysteresisVad vad = new HysteresisVad(); // vadMax = 0.35, squelch = -65 dBFS
+        // Quiet whisper (~ -44 dBFS, amplitude = 200, well above -65 dBFS)
+        short[] whisper = new short[480];
+        for (int i = 0; i < 480; i++) whisper[i] = 200;
+
+        // Neural probability (0.38 >= 0.35) cleanly activates without energy attenuation
+        boolean speaking = vad.process(whisper, 0, whisper.length, 0.38f);
+        assertTrue(speaking);
+        assertTrue(vad.isSpeaking());
+    }
+
+    @Test
+    public void testSquelchConfigurationAndGetters() {
+        HysteresisVad vad = new HysteresisVad(0.35f, 0.25f, 25, -50.0f);
+        assertEquals(-50.0f, vad.getSquelchMinDb(), 0.0001f);
+
+        // Amplitude 200 (~ -44 dBFS) is above -50 dBFS squelch
+        short[] signal44 = new short[480];
+        for (int i = 0; i < 480; i++) signal44[i] = 200;
+        assertTrue(vad.process(signal44, 0, signal44.length, 0.50f));
+
+        vad.reset();
+
+        // Amplitude 50 (~ -56 dBFS) is below -50 dBFS squelch
+        short[] signal56 = new short[480];
+        for (int i = 0; i < 480; i++) signal56[i] = 50;
+        assertFalse(vad.process(signal56, 0, signal56.length, 0.50f));
     }
 }

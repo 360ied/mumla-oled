@@ -27,6 +27,7 @@ public class HysteresisVad {
     public static final float DEFAULT_VAD_MAX = 0.35f;
     public static final float DEFAULT_VAD_MIN = 0.25f;
     public static final int DEFAULT_HOLD_FRAMES = 25; // 250ms @ 10ms/frame
+    public static final float DEFAULT_SQUELCH_MIN_DB = -65.0f; // Squelch noise floor in dBFS
 
     private float mVadMax;
     private float mVadMin;
@@ -35,12 +36,17 @@ public class HysteresisVad {
     private boolean mSpeaking;
     private float mPeakEnergy;
     private float mLastSpeechProb;
+    private float mSquelchMinDb;
 
     public HysteresisVad() {
-        this(DEFAULT_VAD_MAX, DEFAULT_VAD_MIN, DEFAULT_HOLD_FRAMES);
+        this(DEFAULT_VAD_MAX, DEFAULT_VAD_MIN, DEFAULT_HOLD_FRAMES, DEFAULT_SQUELCH_MIN_DB);
     }
 
     public HysteresisVad(float vadMax, float vadMin, int holdFrames) {
+        this(vadMax, vadMin, holdFrames, DEFAULT_SQUELCH_MIN_DB);
+    }
+
+    public HysteresisVad(float vadMax, float vadMin, int holdFrames, float squelchMinDb) {
         mVadMax = vadMax;
         mVadMin = vadMin;
         mHoldFrames = holdFrames;
@@ -48,6 +54,7 @@ public class HysteresisVad {
         mSpeaking = false;
         mPeakEnergy = 0.0f;
         mLastSpeechProb = 0.0f;
+        mSquelchMinDb = squelchMinDb;
     }
 
     public synchronized boolean process(short[] pcm, int offset, int length, float neuralSpeechProb) {
@@ -68,8 +75,17 @@ public class HysteresisVad {
 
         mLastSpeechProb = neuralSpeechProb;
 
-        // 2. Score calculation
-        float score = (0.7f * neuralSpeechProb) + (0.3f * mPeakEnergy);
+        // 2. Determine activation score (Pure Neural Probability with Hard Squelch Gate)
+        float score = 0.0f;
+        if (peakDb >= mSquelchMinDb) {
+            if (neuralSpeechProb >= 0.0f) {
+                score = neuralSpeechProb;
+            } else {
+                score = mPeakEnergy;
+            }
+        } else {
+            score = 0.0f;
+        }
 
         // 3. Hysteresis state machine
         boolean detected;
@@ -105,6 +121,10 @@ public class HysteresisVad {
         mHoldFrames = Math.max(0, holdFrames);
     }
 
+    public synchronized void setSquelchMinDb(float squelchMinDb) {
+        mSquelchMinDb = squelchMinDb;
+    }
+
     public synchronized void reset() {
         mSpeaking = false;
         mCurrentHold = 0;
@@ -130,5 +150,9 @@ public class HysteresisVad {
 
     public synchronized float getVadMin() {
         return mVadMin;
+    }
+
+    public synchronized float getSquelchMinDb() {
+        return mSquelchMinDb;
     }
 }
