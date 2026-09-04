@@ -127,13 +127,6 @@
             app:iconSpaceReserved="false"/>
 
         <CheckBoxPreference
-            android:key="preprocessor_enabled"
-            android:title="@string/preprocessor_enabled"
-            android:summary="@string/preprocessor_enabled_sum"
-            android:defaultValue="true"
-            app:iconSpaceReserved="false"/>
-
-        <CheckBoxPreference
             android:key="adaptive_leveler"
             android:title="@string/adaptive_leveler"
             android:summary="@string/adaptive_leveler_sum"

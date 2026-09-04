@@ -654,10 +654,6 @@ public class MumlaService extends HumlaService implements
             case Settings.PREF_HALF_DUPLEX:
                 changedExtras.putBoolean(EXTRAS_HALF_DUPLEX, mSettings.isHalfDuplex());
                 break;
-            case Settings.PREF_PREPROCESSOR_ENABLED:
-                changedExtras.putBoolean(EXTRAS_ENABLE_PREPROCESSOR,
-                        mSettings.isPreprocessorEnabled());
-                break;
             case Settings.PREF_ADAPTIVE_LEVELER_ENABLED:
                 changedExtras.putBoolean(EXTRAS_ADAPTIVE_LEVELER,
                         mSettings.isAdaptiveLevelerEnabled());

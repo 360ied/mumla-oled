@@ -382,7 +382,7 @@ public class Settings {
     }
 
     public boolean isPreprocessorEnabled() {
-        return preferences.getBoolean(PREF_PREPROCESSOR_ENABLED, DEFAULT_PREPROCESSOR_ENABLED);
+        return true;
     }
 
     public boolean isAdaptiveLevelerEnabled() {
