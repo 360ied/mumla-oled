@@ -47,7 +47,6 @@ import java.util.List;
 
 import se.lublin.humla.audio.AudioOutput;
 import se.lublin.humla.audio.BluetoothScoReceiver;
-import se.lublin.humla.audio.HysteresisVad;
 import se.lublin.humla.audio.inputmode.ActivityInputMode;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
 import se.lublin.humla.audio.inputmode.IInputMode;
@@ -273,7 +272,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mBluetoothReceiver = new BluetoothScoReceiver(this, this);
         registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED));
         mToggleInputMode = new ToggleInputMode();
-        mActivityInputMode = new ActivityInputMode(HysteresisVad.DEFAULT_VAD_MAX);
+        mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
         mContinuousInputMode = new ContinuousInputMode();
         mWhisperTargetList = new WhisperTargetList();
 

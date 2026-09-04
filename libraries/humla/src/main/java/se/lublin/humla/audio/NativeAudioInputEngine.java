@@ -32,6 +32,11 @@ public class NativeAudioInputEngine {
     public static final int SAMPLE_RATE = 48000;
     public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
 
+    public static final float DEFAULT_VAD_MAX = 0.35f;
+    public static final float DEFAULT_VAD_MIN = 0.25f;
+    public static final int DEFAULT_HOLD_FRAMES = 25; // 250ms @ 10ms/frame
+    public static final float DEFAULT_SQUELCH_MIN_DB = -65.0f; // Squelch noise floor in dBFS
+
     static {
         System.loadLibrary("jniopus");
         System.loadLibrary("humlaaudio");
@@ -214,7 +219,7 @@ public class NativeAudioInputEngine {
         if (mNativeHandle != 0) {
             return nativeGetVadSquelchFloor(mNativeHandle);
         }
-        return HysteresisVad.DEFAULT_SQUELCH_MIN_DB;
+        return DEFAULT_SQUELCH_MIN_DB;
     }
 
     public synchronized void reset() {
