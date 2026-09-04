@@ -229,12 +229,23 @@ bool AudioInputEngine::isPttTalking() const {
 }
 
 void AudioInputEngine::setMuted(bool muted) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_muted = muted;
-    if (muted) {
-        m_ringBuffer.clear();
-        m_accumulatedFrames = 0;
-        m_talking = false;
+    bool notifyTalking = false;
+    TalkingStateCallback talkingCb;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_muted = muted;
+        if (muted) {
+            m_ringBuffer.clear();
+            m_accumulatedFrames = 0;
+            if (m_talking) {
+                m_talking = false;
+                notifyTalking = true;
+                talkingCb = m_talkingCallback;
+            }
+        }
+    }
+    if (notifyTalking && talkingCb) {
+        talkingCb(false, 0.0f);
     }
 }
 
