@@ -171,6 +171,6 @@ task testNativeAudioEngine(type: Exec) {
     commandLine "${project.rootDir}/scripts/test_native_audio.sh"
 }
 
-tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+tasks.matching { it.name in ["testDebugUnitTest", "check"] }.configureEach {
     dependsOn testNativeAudioEngine
 }

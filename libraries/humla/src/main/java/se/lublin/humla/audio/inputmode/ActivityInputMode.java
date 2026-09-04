@@ -41,6 +41,10 @@ public class ActivityInputMode implements IInputMode {
         mVadMin = vadMin;
     }
 
+    /**
+     * Unused in the active pipeline. Voice activity detection and speech-gating
+     * are executed natively in C++ via {@link se.lublin.humla.audio.NativeAudioInputEngine}.
+     */
     @Override
     public boolean shouldTransmit(short[] pcm, int length) {
         return false;
