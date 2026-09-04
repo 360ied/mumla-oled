@@ -33,13 +33,15 @@ namespace audio {
  */
 class HysteresisVad {
 public:
-    static constexpr float DEFAULT_VAD_MAX = 0.50f;
-    static constexpr float DEFAULT_VAD_MIN = 0.35f;
+    static constexpr float DEFAULT_VAD_MAX = 0.35f;
+    static constexpr float DEFAULT_VAD_MIN = 0.25f;
     static constexpr uint32_t DEFAULT_HOLD_FRAMES = 25; // 250ms @ 10ms/frame
+    static constexpr float DEFAULT_SQUELCH_MIN_DB = -65.0f; // Squelch noise floor in dBFS
 
     explicit HysteresisVad(float vadMax = DEFAULT_VAD_MAX,
                            float vadMin = DEFAULT_VAD_MIN,
-                           uint32_t holdFrames = DEFAULT_HOLD_FRAMES);
+                           uint32_t holdFrames = DEFAULT_HOLD_FRAMES,
+                           float squelchMinDb = DEFAULT_SQUELCH_MIN_DB);
     ~HysteresisVad() = default;
 
     /**
@@ -54,11 +56,15 @@ public:
 
     void setThresholds(float vadMax, float vadMin);
     void setHoldFrames(uint32_t holdFrames);
+    void setSquelchMinDb(float squelchMinDb);
     void reset();
 
     bool isSpeaking() const { return m_speaking; }
     float getPeakEnergy() const { return m_peakEnergy; }
     float getLastSpeechProb() const { return m_lastSpeechProb; }
+    float getVadMax() const { return m_vadMax; }
+    float getVadMin() const { return m_vadMin; }
+    float getSquelchMinDb() const { return m_squelchMinDb; }
 
 private:
     float m_vadMax;
@@ -68,6 +74,7 @@ private:
     bool m_speaking;
     float m_peakEnergy;
     float m_lastSpeechProb;
+    float m_squelchMinDb;
 };
 
 } // namespace audio

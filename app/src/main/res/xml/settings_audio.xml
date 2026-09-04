@@ -50,7 +50,7 @@
         <!-- multiplier was previously 0.1, but never made sense, never worked -->
         <se.lublin.mumla.preference.SeekBarDialogPreference
             app:multiplier="1"
-            android:defaultValue="50"
+            android:defaultValue="35"
             android:key="vadThreshold"
             app:max="100"
             android:summary="@string/detectionThresholdSum"
@@ -124,13 +124,6 @@
             android:defaultValue="2"
             android:entries="@array/audio_per_packet_names"
             android:entryValues="@array/audio_per_packet_values"
-            app:iconSpaceReserved="false"/>
-
-        <CheckBoxPreference
-            android:key="preprocessor_enabled"
-            android:title="@string/preprocessor_enabled"
-            android:summary="@string/preprocessor_enabled_sum"
-            android:defaultValue="true"
             app:iconSpaceReserved="false"/>
 
         <CheckBoxPreference

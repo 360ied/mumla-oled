@@ -28,6 +28,7 @@ import com.google.protobuf.ByteString;
 import se.lublin.humla.R;
 import se.lublin.humla.audio.AudioInput;
 import se.lublin.humla.audio.AudioOutput;
+import se.lublin.humla.audio.HysteresisVad;
 import se.lublin.humla.audio.NativeAudioInputEngine;
 import se.lublin.humla.audio.inputmode.ActivityInputMode;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
@@ -163,6 +164,11 @@ public class AudioHandler extends HumlaNetworkListener
                 nativeMode,
                 modelData,
                 this);
+
+        if (mInputMode instanceof ActivityInputMode) {
+            ActivityInputMode actMode = (ActivityInputMode) mInputMode;
+            mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
+        }
 
         mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod);
         mOutput = new AudioOutput(mOutputListener);
@@ -475,6 +481,25 @@ public class AudioHandler extends HumlaNetworkListener
         if (mNativeEngine != null) {
             mNativeEngine.setPttTalking(talking);
         }
+    }
+
+    public void setVadThresholds(float vadMax, float vadMin) {
+        if (mNativeEngine != null) {
+            mNativeEngine.setVadThresholds(vadMax, vadMin);
+        }
+    }
+
+    public void setVadSquelchFloor(float minDb) {
+        if (mNativeEngine != null) {
+            mNativeEngine.setVadSquelchFloor(minDb);
+        }
+    }
+
+    public float getVadSquelchFloor() {
+        if (mNativeEngine != null) {
+            return mNativeEngine.getVadSquelchFloor();
+        }
+        return HysteresisVad.DEFAULT_SQUELCH_MIN_DB;
     }
 
     public interface AudioEncodeListener {

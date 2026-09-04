@@ -37,7 +37,7 @@ public class ActivityInputMode implements IInputMode {
 
     @Override
     public boolean shouldTransmit(short[] pcm, int length) {
-        return mVad.process(pcm, 0, length, -1.0f);
+        return mVad.process(pcm, 0, length, 0.0f);
     }
 
     @Override
@@ -52,5 +52,13 @@ public class ActivityInputMode implements IInputMode {
 
     public HysteresisVad getVad() {
         return mVad;
+    }
+
+    public float getVadMax() {
+        return mVad.getVadMax();
+    }
+
+    public float getVadMin() {
+        return mVad.getVadMin();
     }
 }

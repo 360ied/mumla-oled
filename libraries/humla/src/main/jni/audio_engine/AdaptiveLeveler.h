@@ -47,7 +47,7 @@ public:
     static constexpr float MAX_GAIN = 4.0f;
 
     // Neural speech probability gate threshold (from RNNoise).
-    static constexpr float SPEECH_PROB_THRESHOLD = 0.50f;
+    static constexpr float SPEECH_PROB_THRESHOLD = 0.30f;
 
     // Minimum frame RMS energy threshold to prevent adapting on faint ambient room noise.
     static constexpr float MIN_SPEECH_RMS = 150.0f;

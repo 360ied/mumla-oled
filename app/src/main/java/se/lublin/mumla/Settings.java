@@ -53,7 +53,7 @@ public class Settings {
     // up itself...
 
     public static final String PREF_THRESHOLD = "vadThreshold";
-    public static final int DEFAULT_THRESHOLD = 50;
+    public static final int DEFAULT_THRESHOLD = 35;
 
     public static final String PREF_PUSH_KEY = "talkKey";
     public static final Integer DEFAULT_PUSH_KEY = -1;
@@ -382,7 +382,7 @@ public class Settings {
     }
 
     public boolean isPreprocessorEnabled() {
-        return preferences.getBoolean(PREF_PREPROCESSOR_ENABLED, DEFAULT_PREPROCESSOR_ENABLED);
+        return true;
     }
 
     public boolean isAdaptiveLevelerEnabled() {
