@@ -15,6 +15,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "TestHarness.h"
+
 #include <iostream>
 
 void run_biquad_filter_tests();
@@ -44,7 +46,14 @@ int main() {
     std::cout << std::endl;
 
     std::cout << "========================================" << std::endl;
-    std::cout << " ALL NATIVE AUDIO ENGINE TESTS PASSED!" << std::endl;
-    std::cout << "========================================" << std::endl;
-    return 0;
+    if (g_testFailures == 0) {
+        std::cout << " ALL " << g_testCount << " NATIVE AUDIO ENGINE TESTS PASSED!" << std::endl;
+        std::cout << "========================================" << std::endl;
+        return 0;
+    } else {
+        std::cerr << " FAILURE: " << g_testFailures << " of " << g_testCount
+                  << " tests failed!" << std::endl;
+        std::cout << "========================================" << std::endl;
+        return 1;
+    }
 }

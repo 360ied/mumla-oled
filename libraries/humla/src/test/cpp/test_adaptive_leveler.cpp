@@ -16,8 +16,8 @@
  */
 
 #include "AdaptiveLeveler.h"
+#include "TestHarness.h"
 
-#include <cassert>
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -25,20 +25,22 @@
 namespace {
 
 void testDisabledLevelerPassesThroughUnchanged() {
+    g_testCount++;
     mumla::audio::AdaptiveLeveler leveler;
     leveler.setEnabled(false);
-    assert(!leveler.isEnabled());
+    TEST_ASSERT_FALSE(leveler.isEnabled());
 
     std::vector<int16_t> buffer = {100, 500, 1000, -2000, 3000};
     std::vector<int16_t> original = buffer;
 
     leveler.process(buffer.data(), buffer.size(), 0.9f);
 
-    assert(buffer == original);
+    TEST_ASSERT(buffer == original);
     std::cout << "  [PASS] testDisabledLevelerPassesThroughUnchanged" << std::endl;
 }
 
 void testSilenceFreezesGainAndDoesNotPump() {
+    g_testCount++;
     mumla::audio::AdaptiveLeveler leveler;
     // Feed silence / ambient noise with speechProb = 0.0f
     std::vector<int16_t> silenceBuffer(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS);
@@ -56,12 +58,13 @@ void testSilenceFreezesGainAndDoesNotPump() {
     }
 
     // Gain must remain frozen at initial gain (1.0) without upward pumping
-    assert(leveler.getCurrentGain() == initialGain);
-    assert(leveler.getSmoothedRms() == initialSmoothedRms);
+    TEST_ASSERT_EQ(leveler.getCurrentGain(), initialGain);
+    TEST_ASSERT_EQ(leveler.getSmoothedRms(), initialSmoothedRms);
     std::cout << "  [PASS] testSilenceFreezesGainAndDoesNotPump" << std::endl;
 }
 
 void testQuietSpeechIncreasesGainUpToMaxGain() {
+    g_testCount++;
     mumla::audio::AdaptiveLeveler leveler;
     std::vector<int16_t> quietSpeech(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS);
     for (size_t i = 0; i < quietSpeech.size(); i++) {
@@ -78,18 +81,19 @@ void testQuietSpeechIncreasesGainUpToMaxGain() {
 
         float currentGain = leveler.getCurrentGain();
         // Slew rate must never exceed MAX_GAIN_SLEW_PER_FRAME per 10ms frame
-        assert(currentGain - prevGain <= mumla::audio::AdaptiveLeveler::MAX_GAIN_SLEW_PER_FRAME + 1e-4f);
+        TEST_ASSERT(currentGain - prevGain <= mumla::audio::AdaptiveLeveler::MAX_GAIN_SLEW_PER_FRAME + 1e-4f);
         prevGain = currentGain;
     }
 
     // Gain must have increased towards MAX_GAIN (4.0) and be bounded
-    assert(leveler.getCurrentGain() > 1.0f);
-    assert(leveler.getCurrentGain() <= mumla::audio::AdaptiveLeveler::MAX_GAIN);
-    assert(leveler.getSmoothedRms() < mumla::audio::AdaptiveLeveler::DEFAULT_TARGET_RMS);
+    TEST_ASSERT(leveler.getCurrentGain() > 1.0f);
+    TEST_ASSERT(leveler.getCurrentGain() <= mumla::audio::AdaptiveLeveler::MAX_GAIN);
+    TEST_ASSERT(leveler.getSmoothedRms() < mumla::audio::AdaptiveLeveler::DEFAULT_TARGET_RMS);
     std::cout << "  [PASS] testQuietSpeechIncreasesGainUpToMaxGain (gain: " << leveler.getCurrentGain() << ")" << std::endl;
 }
 
 void testLoudSpeechDecreasesGainDownToMinGain() {
+    g_testCount++;
     mumla::audio::AdaptiveLeveler leveler;
     std::vector<int16_t> loudSpeech(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS);
     for (size_t i = 0; i < loudSpeech.size(); i++) {
@@ -106,18 +110,19 @@ void testLoudSpeechDecreasesGainDownToMinGain() {
 
         float currentGain = leveler.getCurrentGain();
         // Slew rate must never exceed MAX_GAIN_SLEW_PER_FRAME per 10ms frame
-        assert(prevGain - currentGain <= mumla::audio::AdaptiveLeveler::MAX_GAIN_SLEW_PER_FRAME + 1e-4f);
+        TEST_ASSERT(prevGain - currentGain <= mumla::audio::AdaptiveLeveler::MAX_GAIN_SLEW_PER_FRAME + 1e-4f);
         prevGain = currentGain;
     }
 
     // Gain must have attenuated towards MIN_GAIN (0.25) and be bounded
-    assert(leveler.getCurrentGain() < 1.0f);
-    assert(leveler.getCurrentGain() >= mumla::audio::AdaptiveLeveler::MIN_GAIN);
-    assert(leveler.getSmoothedRms() > mumla::audio::AdaptiveLeveler::DEFAULT_TARGET_RMS);
+    TEST_ASSERT(leveler.getCurrentGain() < 1.0f);
+    TEST_ASSERT(leveler.getCurrentGain() >= mumla::audio::AdaptiveLeveler::MIN_GAIN);
+    TEST_ASSERT(leveler.getSmoothedRms() > mumla::audio::AdaptiveLeveler::DEFAULT_TARGET_RMS);
     std::cout << "  [PASS] testLoudSpeechDecreasesGainDownToMinGain (gain: " << leveler.getCurrentGain() << ")" << std::endl;
 }
 
 void testSoftLimiterSaturationProtection() {
+    g_testCount++;
     mumla::audio::AdaptiveLeveler leveler(true, 10000.0f);
     std::vector<int16_t> frame(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS);
     for (size_t i = 0; i < frame.size(); i++) {
@@ -130,31 +135,74 @@ void testSoftLimiterSaturationProtection() {
         leveler.process(c.data(), c.size(), 0.9f);
     }
 
-    // Send sudden massive peak: +32000
-    std::vector<int16_t> peakFrame(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS, 32000);
+    // Send sudden massive positive and negative peaks
+    std::vector<int16_t> peakFrame(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS, 0);
+    peakFrame[0] = 25000;
+    peakFrame[1] = -25000;
+    peakFrame[2] = 32000;
+    peakFrame[3] = -32000;
+
     leveler.process(peakFrame.data(), peakFrame.size(), 0.9f);
 
-    // Verify saturation limiting: smooth saturation above knee
-    for (int16_t s : peakFrame) {
-        assert(s > 21844);
-    }
+    // Verify saturation limiting: smooth saturation above knee without wrapping
+    TEST_ASSERT(peakFrame[0] > 21844);
+    TEST_ASSERT(peakFrame[1] < -21844);
+    TEST_ASSERT(peakFrame[2] > 21844);
+    TEST_ASSERT(peakFrame[3] < -21844);
     std::cout << "  [PASS] testSoftLimiterSaturationProtection" << std::endl;
 }
 
 void testResetRestoresInitialGain() {
+    g_testCount++;
     mumla::audio::AdaptiveLeveler leveler;
     std::vector<int16_t> loudSpeech(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS, 15000);
     for (int i = 0; i < 50; i++) {
         std::vector<int16_t> c = loudSpeech;
         leveler.process(c.data(), c.size(), 0.9f);
     }
-    assert(leveler.getCurrentGain() < 1.0f);
+    TEST_ASSERT(leveler.getCurrentGain() < 1.0f);
 
     leveler.reset();
 
-    assert(leveler.getCurrentGain() == 1.0f);
-    assert(std::abs(leveler.getSmoothedRms() - mumla::audio::AdaptiveLeveler::DEFAULT_TARGET_RMS) < 0.0001f);
+    TEST_ASSERT_EQ(leveler.getCurrentGain(), 1.0f);
+    TEST_ASSERT_NEAR(leveler.getSmoothedRms(), mumla::audio::AdaptiveLeveler::DEFAULT_TARGET_RMS, 1e-4f);
     std::cout << "  [PASS] testResetRestoresInitialGain" << std::endl;
+}
+
+void testUnifiedAmplitudeBoostWithLeveler() {
+    g_testCount++;
+    mumla::audio::AdaptiveLeveler leveler;
+    std::vector<int16_t> frame(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS, 0);
+    frame[0] = 5000;
+    frame[1] = -5000;
+
+    // With initial gain = 1.0f and amplitudeBoost = 1.5f, effective gain is 1.5x (7500)
+    leveler.process(frame.data(), frame.size(), 0.0f, 1.5f);
+
+    TEST_ASSERT_EQ(frame[0], 7500);
+    TEST_ASSERT_EQ(frame[1], -7500);
+    std::cout << "  [PASS] testUnifiedAmplitudeBoostWithLeveler" << std::endl;
+}
+
+void testEnergyFallbackWhenNeuralProbUnavailable() {
+    g_testCount++;
+    mumla::audio::AdaptiveLeveler leveler;
+    std::vector<int16_t> loudSpeech(mumla::audio::AdaptiveLeveler::SAMPLES_PER_10MS);
+    for (size_t i = 0; i < loudSpeech.size(); i++) {
+        // 10000 amplitude sine wave (~7071 RMS > ENERGY_GATE_FALLBACK 400.0f)
+        loudSpeech[i] = static_cast<int16_t>(10000.0 * std::sin(2.0 * M_PI * 440.0 * i / 48000.0));
+    }
+
+    // Process 100 frames with neural speech prob unavailable (-1.0f)
+    for (int frame = 0; frame < 100; frame++) {
+        std::vector<int16_t> frameCopy = loudSpeech;
+        leveler.process(frameCopy.data(), frameCopy.size(), -1.0f);
+    }
+
+    // Must adapt downwards based on RMS energy fallback
+    TEST_ASSERT(leveler.getCurrentGain() < 1.0f);
+    TEST_ASSERT(leveler.getCurrentGain() >= mumla::audio::AdaptiveLeveler::MIN_GAIN);
+    std::cout << "  [PASS] testEnergyFallbackWhenNeuralProbUnavailable (gain: " << leveler.getCurrentGain() << ")" << std::endl;
 }
 
 } // namespace
@@ -167,4 +215,6 @@ void run_adaptive_leveler_tests() {
     testLoudSpeechDecreasesGainDownToMinGain();
     testSoftLimiterSaturationProtection();
     testResetRestoresInitialGain();
+    testUnifiedAmplitudeBoostWithLeveler();
+    testEnergyFallbackWhenNeuralProbUnavailable();
 }

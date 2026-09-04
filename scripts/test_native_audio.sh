@@ -10,8 +10,11 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build/test-native"
 mkdir -p "$BUILD_DIR"
 
-g++ -std=c++17 -O2 -Wall -Wextra -Werror \
+CXX="${CXX:-g++}"
+
+"$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -UNDEBUG \
     -I "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine" \
+    -I "$ROOT_DIR/libraries/humla/src/test/cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/SoftLimiter.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp" \

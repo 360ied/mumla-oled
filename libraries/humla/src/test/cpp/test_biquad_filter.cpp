@@ -16,8 +16,8 @@
  */
 
 #include "BiquadFilter.h"
+#include "TestHarness.h"
 
-#include <cassert>
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -25,17 +25,19 @@
 namespace {
 
 void testDcBlockAttenuatesConstantOffset() {
+    g_testCount++;
     mumla::audio::BiquadFilter filter;
     std::vector<int16_t> dcSignal(4800, 10000); // 100ms of DC offset
     filter.process(dcSignal.data(), dcSignal.size());
 
     // After 100ms, the constant DC offset must be decayed close to 0 (< 100)
     int tailSample = std::abs(dcSignal.back());
-    assert(tailSample < 100);
+    TEST_ASSERT(tailSample < 100);
     std::cout << "  [PASS] testDcBlockAttenuatesConstantOffset (decayed to " << tailSample << ")" << std::endl;
 }
 
 void testInfrasonicRumbleAttenuatedAt30Hz() {
+    g_testCount++;
     mumla::audio::BiquadFilter filter;
     const int sampleRate = 48000;
     const int freq = 30;
@@ -60,11 +62,12 @@ void testInfrasonicRumbleAttenuatedAt30Hz() {
     double attenuationDb = 20.0 * std::log10(rmsOut / rmsIn);
 
     // 2nd-order Butterworth at 30 Hz should have ~ -18 dB attenuation (< -15 dB)
-    assert(attenuationDb < -15.0);
+    TEST_ASSERT(attenuationDb < -15.0);
     std::cout << "  [PASS] testInfrasonicRumbleAttenuatedAt30Hz (attenuation: " << attenuationDb << " dB)" << std::endl;
 }
 
 void testVoiceBandPassedWithUnityGainAt1kHz() {
+    g_testCount++;
     mumla::audio::BiquadFilter filter;
     const int sampleRate = 48000;
     const int freq = 1000;
@@ -88,11 +91,12 @@ void testVoiceBandPassedWithUnityGainAt1kHz() {
     double gainDb = 20.0 * std::log10(rmsOut / rmsIn);
 
     // At 1 kHz, unity gain within +/- 0.1 dB
-    assert(std::abs(gainDb) < 0.1);
+    TEST_ASSERT(std::abs(gainDb) < 0.1);
     std::cout << "  [PASS] testVoiceBandPassedWithUnityGainAt1kHz (gain: " << gainDb << " dB)" << std::endl;
 }
 
 void testResetClearsInternalState() {
+    g_testCount++;
     mumla::audio::BiquadFilter filter;
     std::vector<int16_t> signal(480, 15000);
     filter.process(signal.data(), signal.size());
@@ -103,7 +107,7 @@ void testResetClearsInternalState() {
     filter.process(zeroSignal.data(), zeroSignal.size());
 
     for (int16_t s : zeroSignal) {
-        assert(s == 0);
+        TEST_ASSERT_EQ(s, 0);
     }
     std::cout << "  [PASS] testResetClearsInternalState" << std::endl;
 }

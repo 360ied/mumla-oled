@@ -16,14 +16,15 @@
  */
 
 #include "PreSpeechRingBuffer.h"
+#include "TestHarness.h"
 
-#include <cassert>
 #include <iostream>
 #include <vector>
 
 namespace {
 
 void testPushAndFlushInChronologicalOrder() {
+    g_testCount++;
     mumla::audio::PreSpeechRingBuffer buffer(4, 10);
 
     for (int frameIdx = 0; frameIdx < 3; frameIdx++) {
@@ -34,27 +35,28 @@ void testPushAndFlushInChronologicalOrder() {
         buffer.push(pcm.data(), 10);
     }
 
-    assert(buffer.getCount() == 3);
+    TEST_ASSERT_EQ(buffer.getCount(), 3);
 
     std::vector<std::vector<int16_t>> flushed;
     buffer.flush([&flushed](const int16_t* pcm, size_t len) {
         flushed.emplace_back(pcm, pcm + len);
     });
 
-    assert(flushed.size() == 3);
-    assert(buffer.getCount() == 0);
+    TEST_ASSERT_EQ(flushed.size(), 3);
+    TEST_ASSERT_EQ(buffer.getCount(), 0);
 
     for (int frameIdx = 0; frameIdx < 3; frameIdx++) {
         std::vector<int16_t> expected(10);
         for (int i = 0; i < 10; i++) {
             expected[i] = static_cast<int16_t>((frameIdx + 1) * 100 + i);
         }
-        assert(flushed[frameIdx] == expected);
+        TEST_ASSERT(flushed[frameIdx] == expected);
     }
     std::cout << "  [PASS] testPushAndFlushInChronologicalOrder" << std::endl;
 }
 
 void testOverflowOverwritesOldestFramesInFIFOOrder() {
+    g_testCount++;
     mumla::audio::PreSpeechRingBuffer buffer(3, 4);
 
     // Push 5 frames into capacity-3 buffer (frames 1, 2, 3, 4, 5)
@@ -63,7 +65,7 @@ void testOverflowOverwritesOldestFramesInFIFOOrder() {
         buffer.push(pcm.data(), 4);
     }
 
-    assert(buffer.getCount() == 3);
+    TEST_ASSERT_EQ(buffer.getCount(), 3);
 
     std::vector<std::vector<int16_t>> flushed;
     buffer.flush([&flushed](const int16_t* pcm, size_t len) {
@@ -71,33 +73,56 @@ void testOverflowOverwritesOldestFramesInFIFOOrder() {
     });
 
     // Must contain frames 3, 4, 5 in exact FIFO order
-    assert(flushed.size() == 3);
+    TEST_ASSERT_EQ(flushed.size(), 3);
     std::vector<int16_t> expected3(4, 3);
     std::vector<int16_t> expected4(4, 4);
     std::vector<int16_t> expected5(4, 5);
-    assert(flushed[0] == expected3);
-    assert(flushed[1] == expected4);
-    assert(flushed[2] == expected5);
+    TEST_ASSERT(flushed[0] == expected3);
+    TEST_ASSERT(flushed[1] == expected4);
+    TEST_ASSERT(flushed[2] == expected5);
 
     std::cout << "  [PASS] testOverflowOverwritesOldestFramesInFIFOOrder" << std::endl;
 }
 
 void testClearResetsCount() {
+    g_testCount++;
     mumla::audio::PreSpeechRingBuffer buffer(4, 10);
     std::vector<int16_t> pcm = {1, 2, 3};
     buffer.push(pcm.data(), pcm.size());
-    assert(buffer.getCount() == 1);
+    TEST_ASSERT_EQ(buffer.getCount(), 1);
 
     buffer.clear();
-    assert(buffer.getCount() == 0);
+    TEST_ASSERT_EQ(buffer.getCount(), 0);
 
     size_t flushedCount = 0;
     buffer.flush([&flushedCount](const int16_t*, size_t) {
         flushedCount++;
     });
-    assert(flushedCount == 0);
+    TEST_ASSERT_EQ(flushedCount, 0);
 
     std::cout << "  [PASS] testClearResetsCount" << std::endl;
+}
+
+void testPartialFramePushZeroPadsRemainder() {
+    g_testCount++;
+    mumla::audio::PreSpeechRingBuffer buffer(2, 8);
+    std::vector<int16_t> partial = {10, 20, 30};
+    buffer.push(partial.data(), partial.size());
+
+    TEST_ASSERT_EQ(buffer.getCount(), 1);
+    std::vector<int16_t> flushedFrame;
+    buffer.flush([&flushedFrame](const int16_t* pcm, size_t len) {
+        flushedFrame.assign(pcm, pcm + len);
+    });
+
+    TEST_ASSERT_EQ(flushedFrame.size(), 8);
+    TEST_ASSERT_EQ(flushedFrame[0], 10);
+    TEST_ASSERT_EQ(flushedFrame[1], 20);
+    TEST_ASSERT_EQ(flushedFrame[2], 30);
+    for (size_t i = 3; i < 8; i++) {
+        TEST_ASSERT_EQ(flushedFrame[i], 0);
+    }
+    std::cout << "  [PASS] testPartialFramePushZeroPadsRemainder" << std::endl;
 }
 
 } // namespace
@@ -107,4 +132,5 @@ void run_pre_speech_ring_buffer_tests() {
     testPushAndFlushInChronologicalOrder();
     testOverflowOverwritesOldestFramesInFIFOOrder();
     testClearResetsCount();
+    testPartialFramePushZeroPadsRemainder();
 }

@@ -16,54 +16,56 @@
  */
 
 #include "SoftLimiter.h"
+#include "TestHarness.h"
 
-#include <cassert>
 #include <iostream>
 #include <vector>
 
 namespace {
 
 void testUnityBoostPassesThrough() {
+    g_testCount++;
     int16_t sample = 15000;
-    assert(mumla::audio::SoftLimiter::processSample(sample, 1.0f) == 15000);
+    TEST_ASSERT_EQ(mumla::audio::SoftLimiter::processSample(sample, 1.0f), 15000);
     std::cout << "  [PASS] testUnityBoostPassesThrough" << std::endl;
 }
 
 void testLinearRegionBelowKnee() {
+    g_testCount++;
     // Knee is at 2/3 of 32767 = 21844
     int16_t sample = 10000;
     // 10000 * 1.5 = 15000 (< 21844) -> passes linearly
-    assert(mumla::audio::SoftLimiter::processSample(sample, 1.5f) == 15000);
+    TEST_ASSERT_EQ(mumla::audio::SoftLimiter::processSample(sample, 1.5f), 15000);
     std::cout << "  [PASS] testLinearRegionBelowKnee" << std::endl;
 }
 
 void testSmoothSaturationAboveKneeWithoutSquareClipping() {
+    g_testCount++;
     // High boost factor of 3.0x on 20000 (scaled = 60000, > 32767)
     int16_t sample = 20000;
     int16_t processed = mumla::audio::SoftLimiter::processSample(sample, 3.0f);
 
     // Must be smoothly saturated, strictly within [-32768, 32767]
-    assert(processed > 21844);
-    assert(processed <= 32767);
+    TEST_ASSERT(processed > 21844 && processed < 32767);
 
     // Negative sample test
     int16_t negSample = -20000;
     int16_t negProcessed = mumla::audio::SoftLimiter::processSample(negSample, 3.0f);
-    assert(negProcessed < -21844);
-    assert(negProcessed >= -32768);
+    TEST_ASSERT(negProcessed < -21844 && negProcessed > -32768);
 
     std::cout << "  [PASS] testSmoothSaturationAboveKneeWithoutSquareClipping (pos: "
               << processed << ", neg: " << negProcessed << ")" << std::endl;
 }
 
 void testProcessBufferInPlace() {
+    g_testCount++;
     std::vector<int16_t> buffer = {0, 1000, 15000, 30000};
     mumla::audio::SoftLimiter::processBuffer(buffer.data(), buffer.size(), 2.0f);
 
-    assert(buffer[0] == 0);
-    assert(buffer[1] == 2000);
-    assert(buffer[2] > 21844);
-    assert(buffer[3] > 21844);
+    TEST_ASSERT_EQ(buffer[0], 0);
+    TEST_ASSERT_EQ(buffer[1], 2000);
+    TEST_ASSERT(buffer[2] > 21844);
+    TEST_ASSERT(buffer[3] > 21844);
 
     std::cout << "  [PASS] testProcessBufferInPlace" << std::endl;
 }
