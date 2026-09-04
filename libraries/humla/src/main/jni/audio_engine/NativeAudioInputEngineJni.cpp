@@ -367,6 +367,30 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetVadHoldFrames(
 }
 
 JNIEXPORT void JNICALL
+Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetVadSquelchFloor(
+        JNIEnv* env,
+        jobject thiz,
+        jlong handle,
+        jfloat minDb) {
+    auto ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        ctx->engine->setVadSquelchFloor(minDb);
+    }
+}
+
+JNIEXPORT jfloat JNICALL
+Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeGetVadSquelchFloor(
+        JNIEnv* env,
+        jobject thiz,
+        jlong handle) {
+    auto ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        return ctx->engine->getVadSquelchFloor();
+    }
+    return -65.0f;
+}
+
+JNIEXPORT void JNICALL
 Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeReset(
         JNIEnv* env,
         jobject thiz,

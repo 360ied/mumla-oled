@@ -110,6 +110,8 @@ public:
 
     void setVadThresholds(float vadMax, float vadMin);
     void setVadHoldFrames(uint32_t holdFrames);
+    void setVadSquelchFloor(float minDb);
+    float getVadSquelchFloor() const;
 
     void reset();
 

@@ -321,6 +321,16 @@ void AudioInputEngine::setVadHoldFrames(uint32_t holdFrames) {
     m_vad.setHoldFrames(holdFrames);
 }
 
+void AudioInputEngine::setVadSquelchFloor(float minDb) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_vad.setSquelchMinDb(minDb);
+}
+
+float AudioInputEngine::getVadSquelchFloor() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_vad.getSquelchMinDb();
+}
+
 void AudioInputEngine::reset() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_hpf.reset();
