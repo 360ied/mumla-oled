@@ -29,6 +29,12 @@ python3 -m unittest discover -s scripts -p "test_*.py" -v
 
 echo ""
 echo "========================================"
+echo " 2b. Running Native C++ Audio Tests"
+echo "========================================"
+nix develop --command ./scripts/test_native_audio.sh
+
+echo ""
+echo "========================================"
 echo " 3. Running Gradle Tests"
 echo "========================================"
 if [ "$FULL_TEST" = true ]; then

@@ -18,7 +18,7 @@
 
 package se.lublin.humla.audio.inputmode;
 
-import se.lublin.humla.audio.HysteresisVad;
+import se.lublin.humla.audio.NativeAudioInputEngine;
 
 /**
  * Modern Voice Activity Detection (VAD) Input Mode.
@@ -27,17 +27,27 @@ import se.lublin.humla.audio.HysteresisVad;
  * with a 250ms hangover hold timer.
  */
 public class ActivityInputMode implements IInputMode {
-    private final HysteresisVad mVad;
+    public static final float DEFAULT_VAD_MAX = NativeAudioInputEngine.DEFAULT_VAD_MAX;
+    public static final float DEFAULT_VAD_MIN = NativeAudioInputEngine.DEFAULT_VAD_MIN;
+    public static final int DEFAULT_HOLD_FRAMES = NativeAudioInputEngine.DEFAULT_HOLD_FRAMES;
+
+    private float mVadMax;
+    private float mVadMin;
 
     public ActivityInputMode(float detectionThreshold) {
         float vadMax = Math.max(0.0f, Math.min(detectionThreshold, 1.0f));
         float vadMin = Math.max(0.0f, vadMax * 0.7f);
-        mVad = new HysteresisVad(vadMax, vadMin, HysteresisVad.DEFAULT_HOLD_FRAMES);
+        mVadMax = vadMax;
+        mVadMin = vadMin;
     }
 
+    /**
+     * Unused in the active pipeline. Voice activity detection and speech-gating
+     * are executed natively in C++ via {@link se.lublin.humla.audio.NativeAudioInputEngine}.
+     */
     @Override
     public boolean shouldTransmit(short[] pcm, int length) {
-        return mVad.process(pcm, 0, length, 0.0f);
+        return false;
     }
 
     @Override
@@ -45,20 +55,15 @@ public class ActivityInputMode implements IInputMode {
     }
 
     public void setThreshold(float threshold) {
-        float vadMax = Math.max(0.0f, Math.min(threshold, 1.0f));
-        float vadMin = Math.max(0.0f, vadMax * 0.7f);
-        mVad.setThresholds(vadMax, vadMin);
-    }
-
-    public HysteresisVad getVad() {
-        return mVad;
+        mVadMax = Math.max(0.0f, Math.min(threshold, 1.0f));
+        mVadMin = Math.max(0.0f, mVadMax * 0.7f);
     }
 
     public float getVadMax() {
-        return mVad.getVadMax();
+        return mVadMax;
     }
 
     public float getVadMin() {
-        return mVad.getVadMin();
+        return mVadMin;
     }
 }
