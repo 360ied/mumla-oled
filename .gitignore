@@ -17,6 +17,8 @@ local.properties
 
 # Java
 *.class
+hs_err_pid*.log
+replay_pid*.log
 
 # direnv
 .direnv/

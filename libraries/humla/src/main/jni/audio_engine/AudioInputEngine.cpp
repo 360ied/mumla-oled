@@ -42,7 +42,7 @@ AudioInputEngine::AudioInputEngine(int bitrate,
       m_rnnoiseModelData(rnnoiseModelData != nullptr && rnnoiseModelSize > 0 ? std::vector<uint8_t>(rnnoiseModelData, rnnoiseModelData + rnnoiseModelSize) : std::vector<uint8_t>()),
       m_rnnoise(rnnoiseEnabled, m_rnnoiseModelData.data(), m_rnnoiseModelData.size()),
       m_leveler(adaptiveLevelerEnabled),
-      m_vad(0.50f, 0.35f, 25),
+      m_vad(),
       m_opus(bitrate),
       m_processedFrame(SAMPLES_PER_10MS, 0),
       m_accumulatedPcm(6 * SAMPLES_PER_10MS, 0),
@@ -73,17 +73,13 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             std::memset(m_processedFrame.data() + count, 0, (SAMPLES_PER_10MS - count) * sizeof(int16_t));
         }
 
-        // 2. Neural Denoising (RNNoise)
+        // 2. Infrasonic High-Pass Filtering (<90Hz)
+        m_hpf.process(m_processedFrame.data(), SAMPLES_PER_10MS);
+
+        // 3. Neural Denoising (RNNoise)
         float speechProb = m_rnnoise.process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
 
-        // 3. Speech-Gated Adaptive RMS Voice Leveling & Amplitude Boost (Unified Single-Pass Saturation)
-        if (m_leveler.isEnabled()) {
-            m_leveler.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, m_amplitudeBoost);
-        } else if (m_amplitudeBoost != 1.0f) {
-            SoftLimiter::processBuffer(m_processedFrame.data(), SAMPLES_PER_10MS, m_amplitudeBoost);
-        }
-
-        // 4. Determine transmission state based on InputMode
+        // 4. Determine transmission state based on InputMode (Pre-Gain VAD evaluation)
         bool shouldTransmit = false;
         switch (m_inputMode) {
             case InputMode::CONTINUOUS:
@@ -104,7 +100,14 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             shouldTransmit = false;
         }
 
-        // 5. Handle talking state transitions
+        // 5. Speech-Gated Adaptive RMS Voice Leveling & Amplitude Boost (Unified Single-Pass Saturation)
+        if (m_leveler.isEnabled()) {
+            m_leveler.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, m_amplitudeBoost);
+        } else if (m_amplitudeBoost != 1.0f) {
+            SoftLimiter::processBuffer(m_processedFrame.data(), SAMPLES_PER_10MS, m_amplitudeBoost);
+        }
+
+        // 6. Handle talking state transitions
         if (shouldTransmit != m_talking) {
             notifyTalking = true;
             talkingState = shouldTransmit;
@@ -140,8 +143,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             if (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
                 flushAccumulatorLocked(false, packetsToDispatch);
             }
-        } else {
-            // Silence: store into lookahead ring buffer
+        } else if (!m_muted) {
+            // Silence: store into lookahead ring buffer (only when not muted)
             m_ringBuffer.push(m_processedFrame.data(), SAMPLES_PER_10MS);
         }
 
@@ -226,8 +229,24 @@ bool AudioInputEngine::isPttTalking() const {
 }
 
 void AudioInputEngine::setMuted(bool muted) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_muted = muted;
+    bool notifyTalking = false;
+    TalkingStateCallback talkingCb;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_muted = muted;
+        if (muted) {
+            m_ringBuffer.clear();
+            m_accumulatedFrames = 0;
+            if (m_talking) {
+                m_talking = false;
+                notifyTalking = true;
+                talkingCb = m_talkingCallback;
+            }
+        }
+    }
+    if (notifyTalking && talkingCb) {
+        talkingCb(false, 0.0f);
+    }
 }
 
 bool AudioInputEngine::isMuted() const {
@@ -313,8 +332,19 @@ void AudioInputEngine::setVadHoldFrames(uint32_t holdFrames) {
     m_vad.setHoldFrames(holdFrames);
 }
 
+void AudioInputEngine::setVadSquelchFloor(float minDb) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_vad.setSquelchMinDb(minDb);
+}
+
+float AudioInputEngine::getVadSquelchFloor() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_vad.getSquelchMinDb();
+}
+
 void AudioInputEngine::reset() {
     std::lock_guard<std::mutex> lock(m_mutex);
+    m_hpf.reset();
     m_ringBuffer.clear();
     m_rnnoise.reset();
     m_leveler.reset();

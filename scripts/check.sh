@@ -36,7 +36,7 @@ if [ "$FULL_TEST" = true ]; then
   nix develop --command ./gradlew test
 else
   echo "Running fast FOSS debug unit tests..."
-  nix develop --command ./gradlew testFossDebugUnitTest
+  nix develop --command ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest
 fi
 
 echo ""

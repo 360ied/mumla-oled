@@ -204,6 +204,19 @@ public class NativeAudioInputEngine {
         }
     }
 
+    public synchronized void setVadSquelchFloor(float minDb) {
+        if (mNativeHandle != 0) {
+            nativeSetVadSquelchFloor(mNativeHandle, minDb);
+        }
+    }
+
+    public synchronized float getVadSquelchFloor() {
+        if (mNativeHandle != 0) {
+            return nativeGetVadSquelchFloor(mNativeHandle);
+        }
+        return HysteresisVad.DEFAULT_SQUELCH_MIN_DB;
+    }
+
     public synchronized void reset() {
         if (mNativeHandle != 0) {
             nativeReset(mNativeHandle);
@@ -250,5 +263,7 @@ public class NativeAudioInputEngine {
     private static native boolean nativeHasRnnoiseModel(long handle);
     private static native void nativeSetVadThresholds(long handle, float vadMax, float vadMin);
     private static native void nativeSetVadHoldFrames(long handle, int holdFrames);
+    private static native void nativeSetVadSquelchFloor(long handle, float minDb);
+    private static native float nativeGetVadSquelchFloor(long handle);
     private static native void nativeReset(long handle);
 }

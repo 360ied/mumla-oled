@@ -19,6 +19,7 @@
 #define MUMLA_AUDIO_INPUT_ENGINE_H_
 
 #include "AdaptiveLeveler.h"
+#include "BiquadFilter.h"
 #include "HysteresisVad.h"
 #include "OpusVoiceEncoder.h"
 #include "PreSpeechRingBuffer.h"
@@ -109,6 +110,8 @@ public:
 
     void setVadThresholds(float vadMax, float vadMin);
     void setVadHoldFrames(uint32_t holdFrames);
+    void setVadSquelchFloor(float minDb);
+    float getVadSquelchFloor() const;
 
     void reset();
 
@@ -126,6 +129,7 @@ private:
     uint64_t m_frameCounter;
 
     // Submodules
+    BiquadFilter m_hpf;
     PreSpeechRingBuffer m_ringBuffer;
     std::vector<uint8_t> m_rnnoiseModelData;
     RnnoiseProcessor m_rnnoise;

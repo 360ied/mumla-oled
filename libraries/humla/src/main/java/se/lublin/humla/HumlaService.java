@@ -47,6 +47,7 @@ import java.util.List;
 
 import se.lublin.humla.audio.AudioOutput;
 import se.lublin.humla.audio.BluetoothScoReceiver;
+import se.lublin.humla.audio.HysteresisVad;
 import se.lublin.humla.audio.inputmode.ActivityInputMode;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
 import se.lublin.humla.audio.inputmode.IInputMode;
@@ -272,7 +273,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mBluetoothReceiver = new BluetoothScoReceiver(this, this);
         registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED));
         mToggleInputMode = new ToggleInputMode();
-        mActivityInputMode = new ActivityInputMode(0); // FIXME: reasonable default
+        mActivityInputMode = new ActivityInputMode(HysteresisVad.DEFAULT_VAD_MAX);
         mContinuousInputMode = new ContinuousInputMode();
         mWhisperTargetList = new WhisperTargetList();
 
@@ -646,6 +647,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (extras.containsKey(EXTRAS_DETECTION_THRESHOLD)) {
             mActivityInputMode.setThreshold(extras.getFloat(EXTRAS_DETECTION_THRESHOLD));
+            if (mAudioHandler != null) {
+                mAudioHandler.setVadThresholds(mActivityInputMode.getVadMax(),
+                                               mActivityInputMode.getVadMin());
+            }
         }
         if (extras.containsKey(EXTRAS_AMPLITUDE_BOOST)) {
             mAudioBuilder.setAmplitudeBoost(extras.getFloat(EXTRAS_AMPLITUDE_BOOST));
