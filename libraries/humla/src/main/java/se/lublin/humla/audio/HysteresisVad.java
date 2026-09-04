@@ -69,14 +69,7 @@ public class HysteresisVad {
         mLastSpeechProb = neuralSpeechProb;
 
         // 2. Score calculation
-        float score;
-        if (neuralSpeechProb >= 0.0f) {
-            score = (0.7f * neuralSpeechProb) + (0.3f * mPeakEnergy);
-        } else {
-            // Fallback when RNNoise neural probability is unavailable/disabled:
-            // Scale energy so that nominal -48 dBFS (mPeakEnergy = 0.50) aligns with DEFAULT_VAD_MAX (0.35)
-            score = mPeakEnergy * 0.70f;
-        }
+        float score = (0.7f * neuralSpeechProb) + (0.3f * mPeakEnergy);
 
         // 3. Hysteresis state machine
         boolean detected;

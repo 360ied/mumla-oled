@@ -143,8 +143,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             if (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
                 flushAccumulatorLocked(false, packetsToDispatch);
             }
-        } else {
-            // Silence: store into lookahead ring buffer
+        } else if (!m_muted) {
+            // Silence: store into lookahead ring buffer (only when not muted)
             m_ringBuffer.push(m_processedFrame.data(), SAMPLES_PER_10MS);
         }
 
@@ -231,6 +231,11 @@ bool AudioInputEngine::isPttTalking() const {
 void AudioInputEngine::setMuted(bool muted) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_muted = muted;
+    if (muted) {
+        m_ringBuffer.clear();
+        m_accumulatedFrames = 0;
+        m_talking = false;
+    }
 }
 
 bool AudioInputEngine::isMuted() const {
