@@ -30,7 +30,7 @@ public class HysteresisVadTest {
         HysteresisVad vad = new HysteresisVad(0.50f, 0.35f, 5);
         short[] silence = new short[480]; // all zeroes
 
-        boolean speaking = vad.process(silence, 0, silence.length, -1.0f);
+        boolean speaking = vad.process(silence, 0, silence.length, 0.0f);
         assertFalse(speaking);
         assertFalse(vad.isSpeaking());
     }
@@ -45,7 +45,8 @@ public class HysteresisVadTest {
             loud[i] = 10000;
         }
 
-        boolean speaking = vad.process(loud, 0, loud.length, -1.0f);
+        // Combined neural prob (0.80) and loud acoustic energy exceeds vadMax (0.50)
+        boolean speaking = vad.process(loud, 0, loud.length, 0.80f);
         assertTrue(speaking);
         assertTrue(vad.isSpeaking());
     }

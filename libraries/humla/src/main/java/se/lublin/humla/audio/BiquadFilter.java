@@ -45,6 +45,10 @@ public final class BiquadFilter {
         configureHighPass(sampleRate, cutoffFreq, q);
     }
 
+    public final void configureHighPass(float sampleRate, float cutoffFreq) {
+        configureHighPass(sampleRate, cutoffFreq, DEFAULT_Q);
+    }
+
     public final void configureHighPass(float sampleRate, float cutoffFreq, float q) {
         if (sampleRate <= 0.0f || cutoffFreq <= 0.0f || q <= 0.0f) {
             setPassThrough();
