@@ -163,3 +163,14 @@ android {
         quiet = false
     }
 }
+
+task testNativeAudioEngine(type: Exec) {
+    description = 'Compiles and runs native C++ audio engine unit tests on the host'
+    group = 'verification'
+    workingDir "${project.rootDir}"
+    commandLine "${project.rootDir}/scripts/test_native_audio.sh"
+}
+
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn testNativeAudioEngine
+}
