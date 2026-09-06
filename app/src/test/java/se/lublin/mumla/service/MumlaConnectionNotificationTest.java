@@ -58,4 +58,21 @@ public class MumlaConnectionNotificationTest extends TestCase {
                 "se.lublin.mumla.action.TOGGLE_OVERLAY",
                 MumlaService.ACTION_TOGGLE_OVERLAY);
     }
+
+    public void testActionConstantsUniqueness() {
+        String[] actions = {
+                MumlaService.ACTION_DISCONNECT,
+                MumlaService.ACTION_MUTE,
+                MumlaService.ACTION_DEAFEN,
+                MumlaService.ACTION_TOGGLE_OVERLAY,
+                MumlaService.ACTION_CANCEL_RECONNECT
+        };
+        for (int i = 0; i < actions.length; i++) {
+            assertNotNull(actions[i]);
+            for (int j = i + 1; j < actions.length; j++) {
+                assertFalse("Action constants must be distinct: " + actions[i] + " vs " + actions[j],
+                        actions[i].equals(actions[j]));
+            }
+        }
+    }
 }
