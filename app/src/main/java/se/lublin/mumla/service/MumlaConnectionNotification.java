@@ -54,6 +54,7 @@ public class MumlaConnectionNotification {
     private static final int REQUEST_CODE_ACTIVITY = 0;
     private static final int REQUEST_CODE_MUTE = 1;
     private static final int REQUEST_CODE_DEAFEN = 2;
+    private static final int REQUEST_CODE_OVERLAY = 3;
     private static final int REQUEST_CODE_CANCEL_RECONNECT = 4;
     private static final int REQUEST_CODE_DISCONNECT = 5;
 
@@ -68,6 +69,7 @@ public class MumlaConnectionNotification {
     private boolean mReconnectingShown;
     private boolean mMuted;
     private boolean mDeafened;
+    private boolean mOverlayShown;
 
     /**
      * Creates a foreground Mumla notification for the given service.
@@ -86,6 +88,7 @@ public class MumlaConnectionNotification {
         mReconnectingShown = false;
         mMuted = false;
         mDeafened = false;
+        mOverlayShown = false;
     }
 
     public static int getMuteActionIcon(boolean muted) {
@@ -94,6 +97,10 @@ public class MumlaConnectionNotification {
 
     public static int getDeafenActionIcon(boolean deafened) {
         return deafened ? R.drawable.ic_action_audio_muted : R.drawable.ic_action_audio;
+    }
+
+    public static int getOverlayActionIcon(boolean overlayShown) {
+        return overlayShown ? R.drawable.ic_action_overlay_on : R.drawable.ic_action_overlay_off;
     }
 
     public void showConnecting(String serverName, String host, int port) {
@@ -105,6 +112,7 @@ public class MumlaConnectionNotification {
         mReconnectingShown = false;
         mMuted = false;
         mDeafened = false;
+        mOverlayShown = false;
 
         if (mMediaSession != null) {
             mMediaSession.setActive(false);
@@ -114,9 +122,14 @@ public class MumlaConnectionNotification {
     }
 
     public void showConnected(String serverName, String channelName, boolean muted, boolean deafened, String hostInfo) {
+        showConnected(serverName, channelName, muted, deafened, false, hostInfo);
+    }
+
+    public void showConnected(String serverName, String channelName, boolean muted, boolean deafened, boolean overlayShown, String hostInfo) {
         mContentTitle = serverName;
         mMuted = muted;
         mDeafened = deafened;
+        mOverlayShown = overlayShown;
         String statusText;
         if (muted && deafened) {
             statusText = mService.getString(R.string.status_notify_muted_and_deafened);
@@ -156,6 +169,8 @@ public class MumlaConnectionNotification {
                         mListener.onMuteToggled();
                     } else if (MumlaService.ACTION_DEAFEN.equals(action)) {
                         mListener.onDeafenToggled();
+                    } else if (MumlaService.ACTION_TOGGLE_OVERLAY.equals(action)) {
+                        mListener.onOverlayToggled();
                     }
                 }
             });
@@ -177,6 +192,11 @@ public class MumlaConnectionNotification {
                 mService.getString(R.string.deafen),
                 getDeafenActionIcon(deafened))
                 .build();
+        PlaybackStateCompat.CustomAction overlayCustomAction = new PlaybackStateCompat.CustomAction.Builder(
+                MumlaService.ACTION_TOGGLE_OVERLAY,
+                mService.getString(R.string.overlay),
+                getOverlayActionIcon(overlayShown))
+                .build();
         PlaybackStateCompat.CustomAction disconnectCustomAction = new PlaybackStateCompat.CustomAction.Builder(
                 MumlaService.ACTION_DISCONNECT,
                 mService.getString(R.string.disconnect),
@@ -186,6 +206,7 @@ public class MumlaConnectionNotification {
         PlaybackStateCompat state = new PlaybackStateCompat.Builder()
                 .addCustomAction(muteCustomAction)
                 .addCustomAction(deafenCustomAction)
+                .addCustomAction(overlayCustomAction)
                 .addCustomAction(disconnectCustomAction)
                 .setState(muted ? PlaybackStateCompat.STATE_PAUSED : PlaybackStateCompat.STATE_PLAYING, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1.0f)
                 .build();
@@ -320,6 +341,9 @@ public class MumlaConnectionNotification {
             builder.addAction(getDeafenActionIcon(mDeafened),
                     mService.getString(R.string.deafen),
                     createServicePendingIntent(MumlaService.ACTION_DEAFEN, REQUEST_CODE_DEAFEN));
+            builder.addAction(getOverlayActionIcon(mOverlayShown),
+                    mService.getString(R.string.overlay),
+                    createServicePendingIntent(MumlaService.ACTION_TOGGLE_OVERLAY, REQUEST_CODE_OVERLAY));
             builder.addAction(R.drawable.ic_action_delete_dark,
                     mService.getString(R.string.disconnect),
                     createServicePendingIntent(MumlaService.ACTION_DISCONNECT, REQUEST_CODE_DISCONNECT));
@@ -337,6 +361,7 @@ public class MumlaConnectionNotification {
     public interface OnActionListener {
         void onMuteToggled();
         void onDeafenToggled();
+        void onOverlayToggled();
         void onCancelReconnect();
         void onDisconnect();
     }
