@@ -21,36 +21,38 @@
     android:height="32dp"
     android:viewportWidth="32"
     android:viewportHeight="32">
-    <!-- Screen outline (top-left segment) -->
+    <!-- Screen outline (carved around HUD tile and diagonal slash) -->
     <path
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="2"
         android:strokeAlpha="0.5"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M 5,21.5 L 5,10 A 2,2 0 0 1 7,8 L 20.5,8" />
-    <!-- Floating HUD tile (top and bottom segments cut by slash) -->
+        android:pathData="M 5,21.5 L 5,10 A 2,2 0 0 1 7,8 L 12,8" />
+    <!-- Floating HUD tile with authentic cutout gaps along X + Y = 32 -->
+    <!-- Top-left segment of HUD tile -->
     <path
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="2"
         android:strokeAlpha="0.8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M 13,17.5 L 13,13.5 A 1.5,1.5 0 0 1 14.5,12 L 24.5,12 A 1.5,1.5 0 0 1 26,13.5 L 26,17.5" />
+        android:pathData="M 13,17.5 L 13,13.5 A 1.5,1.5 0 0 1 14.5,12 L 18.5,12" />
+    <!-- Remaining HUD tile perimeter (top-right, right, bottom, bottom-left) -->
     <path
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="2"
         android:strokeAlpha="0.8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M 17.5,23 L 24.5,23 A 1.5,1.5 0 0 0 26,21.5 L 26,21" />
-    <!-- Channel indicator line -->
+        android:pathData="M 21.5,12 L 24.5,12 A 1.5,1.5 0 0 1 26,13.5 L 26,21.5 A 1.5,1.5 0 0 1 24.5,23 L 14.5,23 A 1.5,1.5 0 0 1 13,21.5 L 13,20.5" />
+    <!-- Channel indicator line with cutout gap past slash intersection -->
     <path
         android:strokeColor="#FFFFFFFF"
         android:strokeWidth="1.5"
         android:strokeAlpha="0.8"
         android:strokeLineCap="round"
-        android:pathData="M 16,16 L 23,16" />
+        android:pathData="M 18.5,16 L 23,16" />
     <!-- Signature Holo diagonal slash matching mic and audio muted icons -->
     <path
         android:strokeColor="#FFFFFFFF"
