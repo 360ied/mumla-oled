@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright (C) 2026 Mumla OLED Contributors
+  ~
+  ~ This program is free software: you can redistribute it and/or modify
+  ~ it under the terms of the GNU General Public License as published by
+  ~ the Free Software Foundation, either version 3 of the License, or
+  ~ (at your option) any later version.
+  ~
+  ~ This program is distributed in the hope that it will be useful,
+  ~ but WITHOUT ANY WARRANTY; without even the implied warranty of
+  ~ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  ~ GNU General Public License for more details.
+  ~
+  ~ You should have received a copy of the GNU General Public License
+  ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  -->
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <!-- Main screen window outline (carved around HUD tile to ensure pure transparency) -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.5"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 12,8 L 7,8 A 2,2 0 0 0 5,10 L 5,22 A 2,2 0 0 0 7,24 L 12,24 M 27,10 A 2,2 0 0 0 25,8 L 22,8 M 27,10 L 27,11" />
+    <!-- Floating HUD overlay tile (pure stroke, transparent fill for notification alpha tinting) -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.8"
+        android:strokeLineJoin="round"
+        android:pathData="M 14.5,12 L 24.5,12 A 1.5,1.5 0 0 1 26,13.5 L 26,21.5 A 1.5,1.5 0 0 1 24.5,23 L 14.5,23 A 1.5,1.5 0 0 1 13,21.5 L 13,13.5 A 1.5,1.5 0 0 1 14.5,12 Z" />
+    <!-- Channel indicator lines inside HUD card -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round"
+        android:pathData="M 16,16 L 23,16 M 16,19.5 L 20,19.5" />
+</vector>
