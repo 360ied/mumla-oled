@@ -17,11 +17,45 @@
   -->
 
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <!-- Screen outline (top-left segment) -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M19.81,14.99l1.19,-0.92 -1.43,-1.43 -1.19,0.92 1.43,1.43zM19.36,10.27L21,9l-9,-7 -2.91,2.27 7.87,7.88 2.4,-1.88zM3.27,1L2,2.27l4.22,4.22L3,9l1.63,1.27L12,16l2.1,-1.63 1.43,1.43L12,18.54l-7.37,-5.73L3,14.07l9,7 4.95,-3.85L20.73,21 22,19.73 3.27,1z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 5,21.5 L 5,10 A 2,2 0 0 1 7,8 L 20.5,8" />
+    <!-- Floating HUD tile (top and bottom segments cut by slash) -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 13,17.5 L 13,13.5 A 1.5,1.5 0 0 1 14.5,12 L 24.5,12 A 1.5,1.5 0 0 1 26,13.5 L 26,17.5" />
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 17.5,23 L 24.5,23 A 1.5,1.5 0 0 0 26,21.5 L 26,21" />
+    <!-- Channel indicator line -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round"
+        android:pathData="M 16,16 L 23,16" />
+    <!-- Signature Holo diagonal slash matching mic and audio muted icons -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round"
+        android:pathData="M 5.5,26.5 L 26.5,5.5" />
 </vector>

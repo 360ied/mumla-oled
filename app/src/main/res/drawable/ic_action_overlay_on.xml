@@ -17,11 +17,30 @@
   -->
 
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <!-- Main screen window outline (Holo 2dp stroke) -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M11.99,18.54l-7.37,-5.73L3,14.07l9,7 9,-7 -1.63,-1.27 -7.38,5.74zM12,16l7.36,-5.73L21,9l-9,-7 -9,7 1.63,1.27L12,16z" />
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.5"
+        android:strokeLineJoin="round"
+        android:pathData="M 7,8 L 25,8 A 2,2 0 0 1 27,10 L 27,22 A 2,2 0 0 1 25,24 L 7,24 A 2,2 0 0 1 5,22 L 5,10 A 2,2 0 0 1 7,8 Z" />
+    <!-- Floating HUD overlay tile -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.8"
+        android:fillColor="#FF202124"
+        android:strokeLineJoin="round"
+        android:pathData="M 14.5,12 L 24.5,12 A 1.5,1.5 0 0 1 26,13.5 L 26,21.5 A 1.5,1.5 0 0 1 24.5,23 L 14.5,23 A 1.5,1.5 0 0 1 13,21.5 L 13,13.5 A 1.5,1.5 0 0 1 14.5,12 Z" />
+    <!-- Channel indicator lines inside HUD card -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round"
+        android:pathData="M 16,16 L 23,16 M 16,19.5 L 20,19.5" />
 </vector>
