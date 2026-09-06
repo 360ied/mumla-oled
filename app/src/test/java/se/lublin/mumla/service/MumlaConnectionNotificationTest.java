@@ -42,4 +42,20 @@ public class MumlaConnectionNotificationTest extends TestCase {
                 R.drawable.ic_action_audio_muted,
                 MumlaConnectionNotification.getDeafenActionIcon(true));
     }
+
+    public void testOverlayActionIconResolution() {
+        assertEquals("Overlay hidden state must resolve to ic_action_overlay_off",
+                R.drawable.ic_action_overlay_off,
+                MumlaConnectionNotification.getOverlayActionIcon(false));
+
+        assertEquals("Overlay shown state must resolve to ic_action_overlay_on",
+                R.drawable.ic_action_overlay_on,
+                MumlaConnectionNotification.getOverlayActionIcon(true));
+    }
+
+    public void testOverlayActionConstants() {
+        assertEquals("Action constant must match expected intent filter action",
+                "se.lublin.mumla.action.TOGGLE_OVERLAY",
+                MumlaService.ACTION_TOGGLE_OVERLAY);
+    }
 }
