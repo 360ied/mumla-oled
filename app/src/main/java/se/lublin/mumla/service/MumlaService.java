@@ -584,7 +584,9 @@ public class MumlaService extends HumlaService implements
         }
 
         // Remove overlay if present.
-        mChannelOverlay.hide();
+        if (mChannelOverlay != null) {
+            mChannelOverlay.hide();
+        }
 
         mHotCorner.setShown(false);
 
@@ -636,19 +638,7 @@ public class MumlaService extends HumlaService implements
                 MumlaApplication.applyTheme(this);
                 break;
             case Settings.PREF_OVERLAY_SHOWN:
-                if (mSettings.isOverlayShown() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                        && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
-                    try {
-                        Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + getPackageName()));
-                        showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(showSetting);
-                        Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Failed to open overlay permission settings: " + e);
-                    }
-                    mSettings.setOverlayShown(false);
-                    updateConnectedNotification();
+                if (mSettings.isOverlayShown() && !checkAndRequestOverlayPermission()) {
                     return;
                 }
                 updateOverlayVisibility();
@@ -790,28 +780,36 @@ public class MumlaService extends HumlaService implements
         super.cancelReconnect();
     }
 
+    private boolean checkAndRequestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+            try {
+                Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(showSetting);
+                Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to open overlay permission settings: " + e);
+            }
+            mSettings.setOverlayShown(false);
+            updateConnectedNotification();
+            return false;
+        }
+        return true;
+    }
+
     @Override
     public void setOverlayShown(boolean showOverlay) {
-        if (showOverlay) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                    && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
-                try {
-                    Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName()));
-                    showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(showSetting);
-                    Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
-                } catch (Exception e) {
-                    Log.e(TAG, "Failed to open overlay permission settings: " + e);
-                }
-                mSettings.setOverlayShown(false);
-                updateConnectedNotification();
-                return;
-            }
+        if (showOverlay && !checkAndRequestOverlayPermission()) {
+            return;
         }
-        mSettings.setOverlayShown(showOverlay);
-        updateOverlayVisibility();
-        updateConnectedNotification();
+        if (mSettings.isOverlayShown() != showOverlay) {
+            mSettings.setOverlayShown(showOverlay);
+        } else {
+            updateOverlayVisibility();
+            updateConnectedNotification();
+        }
     }
 
     @Override
