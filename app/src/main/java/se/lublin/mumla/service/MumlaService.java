@@ -21,6 +21,7 @@ import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.annotation.SuppressLint;
@@ -537,6 +538,14 @@ public class MumlaService extends HumlaService implements
     }
 
     @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (mChannelOverlay != null && mChannelOverlay.isShown()) {
+            mChannelOverlay.updatePosition();
+        }
+    }
+
+    @Override
     public void onConnectionSynchronized() {
         // TODO? We seem to be getting a RuntimeException here, from the call
         //  to the superclass function (in HumlaService). In there,
@@ -643,6 +652,11 @@ public class MumlaService extends HumlaService implements
                 }
                 updateOverlayVisibility();
                 updateConnectedNotification();
+                break;
+            case Settings.PREF_OVERLAY_PLACEMENT:
+                if (mChannelOverlay != null && mChannelOverlay.isShown()) {
+                    mChannelOverlay.updatePosition();
+                }
                 break;
             case Settings.PREF_AMPLITUDE_BOOST:
                 changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
