@@ -644,6 +644,11 @@ public class MumlaService extends HumlaService implements
                 updateOverlayVisibility();
                 updateConnectedNotification();
                 break;
+            case Settings.PREF_OVERLAY_PLACEMENT:
+                if (mChannelOverlay != null && mChannelOverlay.isShown()) {
+                    mChannelOverlay.updatePosition();
+                }
+                break;
             case Settings.PREF_AMPLITUDE_BOOST:
                 changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
                         mSettings.getAmplitudeBoostMultiplier());

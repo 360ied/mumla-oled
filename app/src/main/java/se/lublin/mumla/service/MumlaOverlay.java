@@ -116,6 +116,7 @@ public class MumlaOverlay {
     };
 
     private final MumlaService mService;
+    private final Settings mSettings;
     private final WindowManager mWindowManager;
     private final View mOverlayView;
     private final RecyclerView mOverlayList;
@@ -131,6 +132,7 @@ public class MumlaOverlay {
 
     public MumlaOverlay(MumlaService service) {
         mService = service;
+        mSettings = Settings.getInstance(service);
         mWindowManager = (WindowManager) mService.getSystemService(Context.WINDOW_SERVICE);
         mOverlayView = View.inflate(service, R.layout.overlay, null);
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list);
@@ -141,7 +143,7 @@ public class MumlaOverlay {
             @Override
             public void onLayoutChange(View v, int left, int top, int right, int bottom,
                                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                if (!mShown) {
+                if (!mShown || mSettings.isOverlayPinned()) {
                     return;
                 }
                 DisplayMetrics dm = mService.getResources().getDisplayMetrics();
@@ -173,6 +175,9 @@ public class MumlaOverlay {
 
             @Override
             public boolean onDispatchTouchEvent(MotionEvent event) {
+                if (mSettings.isOverlayPinned()) {
+                    return false;
+                }
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         mInitialParamX = mOverlayParams.x;
@@ -231,8 +236,42 @@ public class MumlaOverlay {
                         | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
-        mOverlayParams.gravity = Gravity.TOP | Gravity.START;
         mOverlayParams.windowAnimations = 0;
+        applyLayoutParameters();
+    }
+
+    private void applyLayoutParameters() {
+        DisplayMetrics dm = mService.getResources().getDisplayMetrics();
+        if (mSettings.isOverlayPinned()) {
+            mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            mOverlayParams.gravity = mSettings.getOverlayGravity();
+            int marginX = (int) (16 * dm.density);
+            String placement = mSettings.getOverlayPlacement();
+            boolean isTop = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
+                    || Settings.OVERLAY_PLACEMENT_TOP_RIGHT.equals(placement);
+            int marginY = isTop ? getTopMargin(dm) : (int) (40 * dm.density);
+            mOverlayParams.x = marginX;
+            mOverlayParams.y = marginY;
+        } else {
+            mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+            mOverlayParams.gravity = Gravity.TOP | Gravity.START;
+            restorePosition();
+        }
+    }
+
+    private int getTopMargin(DisplayMetrics dm) {
+        int statusBarHeight = 0;
+        int resourceId = mService.getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (resourceId > 0) {
+            statusBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
+        }
+        if (statusBarHeight > 0) {
+            return statusBarHeight + (int) (8 * dm.density);
+        }
+        return (int) (40 * dm.density);
     }
 
     private void restorePosition() {
@@ -252,6 +291,9 @@ public class MumlaOverlay {
     }
 
     private void savePosition() {
+        if (mSettings.isOverlayPinned()) {
+            return;
+        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
         prefs.edit()
                 .putInt(Settings.PREF_OVERLAY_POS_X, mOverlayParams.x)
@@ -263,11 +305,22 @@ public class MumlaOverlay {
         return mShown;
     }
 
+    public void updatePosition() {
+        applyLayoutParameters();
+        if (mShown) {
+            try {
+                mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
+            } catch (IllegalArgumentException e) {
+                Log.d(TAG, "exception updating overlay layout: " + e);
+            }
+        }
+    }
+
     public void show() {
         if (mShown) {
             return;
         }
-        restorePosition();
+        applyLayoutParameters();
         mChannelAdapter = new ChannelAdapter(mService, mService.getSessionChannel());
         mOverlayList.setAdapter(mChannelAdapter);
         mService.registerObserver(mObserver);

@@ -18,6 +18,7 @@
 package se.lublin.mumla;
 
 import android.content.SharedPreferences;
+import android.view.Gravity;
 
 import junit.framework.TestCase;
 
@@ -222,5 +223,82 @@ public class SettingsOverlayTest extends TestCase {
             settings.setOverlayShown(false);
             assertFalse(settings.isOverlayShown());
         }
+    }
+
+    public void testOverlayPlacementConstants() {
+        assertEquals("overlay_placement", Settings.PREF_OVERLAY_PLACEMENT);
+        assertEquals("floating", Settings.DEFAULT_OVERLAY_PLACEMENT);
+        assertEquals("floating", Settings.OVERLAY_PLACEMENT_FLOATING);
+        assertEquals("topLeft", Settings.OVERLAY_PLACEMENT_TOP_LEFT);
+        assertEquals("topRight", Settings.OVERLAY_PLACEMENT_TOP_RIGHT);
+        assertEquals("bottomLeft", Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT);
+        assertEquals("bottomRight", Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT);
+    }
+
+    public void testOverlayPlacementDefault() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        assertEquals(Settings.OVERLAY_PLACEMENT_FLOATING, settings.getOverlayPlacement());
+        assertFalse("Overlay should not be pinned by default", settings.isOverlayPinned());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
+    }
+
+    public void testOverlayPlacementTopLeft() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_LEFT);
+        assertEquals(Settings.OVERLAY_PLACEMENT_TOP_LEFT, settings.getOverlayPlacement());
+        assertTrue(settings.isOverlayPinned());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
+        assertEquals("topLeft", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
+    }
+
+    public void testOverlayPlacementTopRight() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_RIGHT);
+        assertEquals(Settings.OVERLAY_PLACEMENT_TOP_RIGHT, settings.getOverlayPlacement());
+        assertTrue(settings.isOverlayPinned());
+        assertEquals(Gravity.TOP | Gravity.END, settings.getOverlayGravity());
+        assertEquals("topRight", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
+    }
+
+    public void testOverlayPlacementBottomLeft() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT);
+        assertEquals(Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT, settings.getOverlayPlacement());
+        assertTrue(settings.isOverlayPinned());
+        assertEquals(Gravity.BOTTOM | Gravity.START, settings.getOverlayGravity());
+        assertEquals("bottomLeft", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
+    }
+
+    public void testOverlayPlacementBottomRight() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT);
+        assertEquals(Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT, settings.getOverlayPlacement());
+        assertTrue(settings.isOverlayPinned());
+        assertEquals(Gravity.BOTTOM | Gravity.END, settings.getOverlayGravity());
+        assertEquals("bottomRight", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
+    }
+
+    public void testOverlayPlacementResetToFloating() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = new Settings(prefs);
+
+        settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_RIGHT);
+        assertTrue(settings.isOverlayPinned());
+
+        settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_FLOATING);
+        assertEquals(Settings.OVERLAY_PLACEMENT_FLOATING, settings.getOverlayPlacement());
+        assertFalse(settings.isOverlayPinned());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
+        assertEquals("floating", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
     }
 }

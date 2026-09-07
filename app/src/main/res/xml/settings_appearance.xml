@@ -49,6 +49,16 @@
         android:summary="@string/pref_overlay_summary"
         app:iconSpaceReserved="false" />
 
+    <ListPreference
+        android:key="overlay_placement"
+        android:defaultValue="floating"
+        android:title="@string/pref_overlay_placement"
+        android:entries="@array/overlayPlacementNames"
+        android:entryValues="@array/overlayPlacementValues"
+        android:dependency="overlay_shown"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
     <se.lublin.mumla.preference.SeekBarDialogPreference
         android:key="pttButtonHeight"
         android:title="@string/pttButtonHeight"
