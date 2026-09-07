@@ -209,6 +209,130 @@ class TestWorktreeLifecycle(unittest.TestCase):
         self.assertFalse(os.path.isdir(wt_path))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_dir, ".worktrees")))
 
+    def test_add_worktree_copies_rnnoise_model(self):
+        # Create mock RNNoise model files in root repo
+        gen_dir = os.path.join(self.repo_dir, "libraries", "humla", "src", "main", "jni", "rnnoise-build", "generated")
+        assets_dir = os.path.join(self.repo_dir, "libraries", "humla", "src", "main", "assets")
+        cache_dir = os.path.join(self.repo_dir, "libraries", "humla", "build", "model_cache")
+        os.makedirs(gen_dir, exist_ok=True)
+        os.makedirs(assets_dir, exist_ok=True)
+        os.makedirs(cache_dir, exist_ok=True)
+
+        with open(os.path.join(gen_dir, "rnnoise_data.c"), "w") as f:
+            f.write("/* c weights */")
+        with open(os.path.join(gen_dir, "rnnoise_data.h"), "w") as f:
+            f.write("/* h weights */")
+        with open(os.path.join(assets_dir, "rnnoise_model.bin"), "wb") as f:
+            f.write(b"mock_bin_weights")
+        with open(os.path.join(cache_dir, "rnnoise_data-5e78411.tar.gz"), "wb") as f:
+            f.write(b"mock_tar_gz")
+
+        # Add to .gitignore so they are ignored, exactly as in the main repo
+        gitignore_path = os.path.join(self.repo_dir, ".gitignore")
+        with open(gitignore_path, "a") as f:
+            f.write("\nlibraries/humla/src/main/jni/rnnoise-build/generated/\n")
+            f.write("libraries/humla/src/main/assets/rnnoise_model.bin\n")
+            f.write("build/\n")
+        subprocess.run(["git", "-C", self.repo_dir, "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "ignore rnnoise files"], check=True, stdout=subprocess.DEVNULL)
+
+        # Add worktree
+        proc_add = subprocess.run(
+            [SCRIPT_PATH, "add", "feature/rnnoise-test"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
+        self.assertIn("Copying existing RNNoise model weights from root repository...", proc_add.stdout)
+        self.assertIn("RNNoise model files copied successfully.", proc_add.stdout)
+
+        wt_path = os.path.join(self.repo_dir, ".worktrees", "feature", "rnnoise-test")
+        wt_c = os.path.join(wt_path, "libraries", "humla", "src", "main", "jni", "rnnoise-build", "generated", "rnnoise_data.c")
+        wt_h = os.path.join(wt_path, "libraries", "humla", "src", "main", "jni", "rnnoise-build", "generated", "rnnoise_data.h")
+        wt_bin = os.path.join(wt_path, "libraries", "humla", "src", "main", "assets", "rnnoise_model.bin")
+        wt_cache = os.path.join(wt_path, "libraries", "humla", "build", "model_cache", "rnnoise_data-5e78411.tar.gz")
+
+        self.assertTrue(os.path.isfile(wt_c))
+        self.assertTrue(os.path.isfile(wt_h))
+        self.assertTrue(os.path.isfile(wt_bin))
+        self.assertTrue(os.path.isfile(wt_cache))
+
+        with open(wt_c, "r") as f:
+            self.assertEqual(f.read(), "/* c weights */")
+        with open(wt_bin, "rb") as f:
+            self.assertEqual(f.read(), b"mock_bin_weights")
+        with open(wt_cache, "rb") as f:
+            self.assertEqual(f.read(), b"mock_tar_gz")
+
+        # Verify removal succeeds cleanly (copied ignored files don't block clean worktree removal)
+        proc_rm = subprocess.run(
+            [SCRIPT_PATH, "remove", "feature/rnnoise-test"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc_rm.returncode, 0, msg=proc_rm.stderr)
+        self.assertFalse(os.path.isdir(wt_path))
+
+    def test_add_worktree_skips_when_rnnoise_missing(self):
+        proc_add = subprocess.run(
+            [SCRIPT_PATH, "add", "feature/no-rnnoise-test"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
+        self.assertIn("No existing RNNoise model found in root repository", proc_add.stdout)
+
+    def test_add_worktree_skips_on_version_mismatch(self):
+        # Create version file on master
+        ver_dir = os.path.join(self.repo_dir, "libraries", "humla", "src", "main", "jni", "rnnoise")
+        os.makedirs(ver_dir, exist_ok=True)
+        ver_file = os.path.join(ver_dir, "model_version")
+        with open(ver_file, "w") as f:
+            f.write("hash_v1\n")
+        subprocess.run(["git", "-C", self.repo_dir, "add", "."], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "add v1 model_version"], check=True, stdout=subprocess.DEVNULL)
+
+        # Create mock model files in root repo
+        gen_dir = os.path.join(self.repo_dir, "libraries", "humla", "src", "main", "jni", "rnnoise-build", "generated")
+        assets_dir = os.path.join(self.repo_dir, "libraries", "humla", "src", "main", "assets")
+        os.makedirs(gen_dir, exist_ok=True)
+        os.makedirs(assets_dir, exist_ok=True)
+        with open(os.path.join(gen_dir, "rnnoise_data.c"), "w") as f:
+            f.write("/* c weights v1 */")
+        with open(os.path.join(gen_dir, "rnnoise_data.h"), "w") as f:
+            f.write("/* h weights v1 */")
+        with open(os.path.join(assets_dir, "rnnoise_model.bin"), "wb") as f:
+            f.write(b"weights_v1")
+
+        # Create branch with different model version
+        subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", "feature/version-bump"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(ver_file, "w") as f:
+            f.write("hash_v2\n")
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-am", "bump model to v2"], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", self.repo_dir, "checkout", "master"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Add worktree tracking feature/version-bump
+        proc_add = subprocess.run(
+            [SCRIPT_PATH, "add", "feature/version-bump"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
+        self.assertIn("Notice: RNNoise model version mismatch (hash_v1 vs hash_v2). Skipping model copy.", proc_add.stdout)
+
+        # Verify files were NOT copied
+        wt_c = os.path.join(self.repo_dir, ".worktrees", "feature", "version-bump", "libraries", "humla", "src", "main", "jni", "rnnoise-build", "generated", "rnnoise_data.c")
+        self.assertFalse(os.path.exists(wt_c))
+
 
 if __name__ == "__main__":
     unittest.main()
+

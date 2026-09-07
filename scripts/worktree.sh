@@ -42,6 +42,58 @@ get_repo_root() {
     sed -E 's#/\.git(/.*)?$##' <<< "$common_dir"
 }
 
+# Copy existing RNNoise pre-trained model weights from root repo if available
+copy_rnnoise_model() {
+    local repo_root="$1"
+    local wt_path="$2"
+
+    local src_gen_dir="$repo_root/libraries/humla/src/main/jni/rnnoise-build/generated"
+    local src_asset="$repo_root/libraries/humla/src/main/assets/rnnoise_model.bin"
+    local src_cache_dir="$repo_root/libraries/humla/build/model_cache"
+
+    local dst_gen_dir="$wt_path/libraries/humla/src/main/jni/rnnoise-build/generated"
+    local dst_asset_dir="$wt_path/libraries/humla/src/main/assets"
+    local dst_cache_dir="$wt_path/libraries/humla/build/model_cache"
+
+    local root_ver_file="$repo_root/libraries/humla/src/main/jni/rnnoise/model_version"
+    local wt_ver_file="$wt_path/libraries/humla/src/main/jni/rnnoise/model_version"
+
+    if [ -f "$root_ver_file" ] && [ -f "$wt_ver_file" ]; then
+        local root_ver wt_ver
+        root_ver="$(tr -d '[:space:]' < "$root_ver_file")"
+        wt_ver="$(tr -d '[:space:]' < "$wt_ver_file")"
+        if [ -n "$root_ver" ] && [ -n "$wt_ver" ] && [ "$root_ver" != "$wt_ver" ]; then
+            echo "Notice: RNNoise model version mismatch ($root_ver vs $wt_ver). Skipping model copy."
+            return 0
+        fi
+    fi
+
+    local copied=false
+    if [ -f "$src_gen_dir/rnnoise_data.c" ] && [ -f "$src_gen_dir/rnnoise_data.h" ] && [ -f "$src_asset" ]; then
+        echo "Copying existing RNNoise model weights from root repository..."
+        mkdir -p "$dst_gen_dir" "$dst_asset_dir"
+        cp -p "$src_gen_dir/rnnoise_data.c" "$dst_gen_dir/"
+        cp -p "$src_gen_dir/rnnoise_data.h" "$dst_gen_dir/"
+        cp -p "$src_asset" "$dst_asset_dir/"
+        copied=true
+    fi
+
+    shopt -s nullglob
+    local tarballs=("$src_cache_dir"/rnnoise_data-*.tar.gz)
+    shopt -u nullglob
+    if [ ${#tarballs[@]} -gt 0 ]; then
+        mkdir -p "$dst_cache_dir"
+        cp -p "${tarballs[@]}" "$dst_cache_dir/"
+        copied=true
+    fi
+
+    if [ "$copied" = true ]; then
+        echo "RNNoise model files copied successfully."
+    else
+        echo "No existing RNNoise model found in root repository (will download on first build)."
+    fi
+}
+
 cmd_add() {
     local branch=""
     local base_ref=""
@@ -127,6 +179,12 @@ cmd_add() {
     echo "========================================"
     # Uses local .git/modules objects without re-cloning over network
     git -C "$wt_path" submodule update --init --recursive
+
+    echo ""
+    echo "========================================"
+    echo " 3. Copying Pre-trained RNNoise Model"
+    echo "========================================"
+    copy_rnnoise_model "$repo_root" "$wt_path"
 
     # Allow direnv if direnv is installed
     if command -v direnv >/dev/null 2>&1; then
