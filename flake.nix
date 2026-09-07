@@ -17,16 +17,26 @@
           };
         };
 
-        androidComposition = pkgs.androidenv.composeAndroidPackages {
-          buildToolsVersions = [ "34.0.0" "35.0.0" ];
-          platformVersions = [ "34" "35" "36" ];
+        # Centralized Android SDK and NDK configuration
+        androidConfig = {
+          buildToolsVersion = "35.0.0";
+          platformVersions = [ "36" ];
           abiVersions = [ "x86_64" "arm64-v8a" ];
+          ndkVersion = "25.1.8937393"; # Must match ndkVersion in libraries/humla/build.gradle
+        };
+
+        androidComposition = pkgs.androidenv.composeAndroidPackages {
+          buildToolsVersions = [ androidConfig.buildToolsVersion ];
+          inherit (androidConfig) platformVersions abiVersions;
           includeNDK = true;
-          ndkVersions = [ "25.1.8937393" ];
+          ndkVersions = [ androidConfig.ndkVersion ];
           useGoogleAPIs = false;
         };
 
         androidSdk = androidComposition.androidsdk;
+        androidSdkRoot = "${androidSdk}/libexec/android-sdk";
+        ndkRoot = "${androidSdkRoot}/ndk/${androidConfig.ndkVersion}";
+        aapt2Path = "${androidSdkRoot}/build-tools/${androidConfig.buildToolsVersion}/aapt2";
         jdk = pkgs.jdk21;
       in
       {
@@ -49,13 +59,13 @@
           ];
 
           JAVA_HOME = "${jdk.home}";
-          ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
-          ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
-          ANDROID_NDK_ROOT = "${androidSdk}/libexec/android-sdk/ndk/25.1.8937393";
-          ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/25.1.8937393";
-          NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/25.1.8937393";
+          ANDROID_HOME = androidSdkRoot;
+          ANDROID_SDK_ROOT = androidSdkRoot;
+          ANDROID_NDK_ROOT = ndkRoot;
+          ANDROID_NDK_HOME = ndkRoot;
+          NDK_HOME = ndkRoot;
           NDK_CCACHE = "${pkgs.ccache}/bin/ccache";
-          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/35.0.0/aapt2";
+          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${aapt2Path}";
 
           shellHook = ''
             REPO_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed -E 's#/\.git(/.*)?$##')"
