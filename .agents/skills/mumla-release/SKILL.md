@@ -2,7 +2,7 @@
 name: mumla-release
 description: >-
   End-to-end release process for the Mumla OLED Android client: bump the
-  semver version via git tag, write user-centric GitHub release notes,
+  semver version via git tag, write dry, user-centric GitHub release notes,
   build the signed FOSS release APK, and publish the release with the
   APK attached. Use when the user asks to cut, create, or publish a release.
 ---
@@ -47,30 +47,37 @@ git push origin master <version>
 Write notes to `plans/release-<version>.md` (the `plans/` directory is
 gitignored).
 
-### Core Principle: Non-Technical End-User Focus
+### Core Principles
 
-The release notes are read by non-technical end users downloading the APK to
-their Android device. Notes must explain **what the user experiences** (what
-they see, hear, or can do differently), NOT how it was implemented in code.
+1. **Non-Technical End-User Focus**:
+   Release notes are read by end users downloading the APK to their Android
+   device. Notes must describe **what the user experiences** (what they see,
+   hear, or can do differently), NOT how it was implemented in code.
+   - Lead with the practical result from the user's viewpoint.
+   - Never include implementation jargon: no math equations, filter topologies,
+     class/variable names, Android resource IDs (e.g. `ic_action_*`), internal
+     thread/buffer structures, or architectural patterns.
 
-- **Lead with user benefits**: Describe the problem solved or feature added
-  from the user's viewpoint.
-- **No implementation jargon**: Never include math equations, filter topologies,
-  class/variable names, Android resource IDs (e.g. `ic_action_*`), internal
-  thread/buffer structures, or architectural patterns.
-- **Translate technical mechanisms into user benefits**:
-  - *Don't*: "Implemented 90 Hz 2nd-order Butterworth biquad high-pass filter."
-  - *Do*: "Rumble & Wind Noise Filter: Added filtering to cut low-frequency
-    microphone rumble, wind buffeting, and handling noise before transmission."
-  - *Don't*: "Decoupled VAD from AdaptiveLeveler AGC and SoftLimiter saturation."
-  - *Do*: "Speech Detection Consistency: Voice activation threshold no longer
-    drifts or gets stuck when microphone volume boosts."
-  - *Don't*: "Mute lookahead FIFO ring buffer zeroed on mute transition."
-  - *Do*: "Strict Instant Mute: Muting now cuts transmission immediately,
-    preventing any cut-off words from leaking out."
-  - *Don't*: "Prevented concurrent modification exceptions in message snapshot list."
-  - *Do*: "Chat Stability: Fixed crashes that could occur when receiving rapid
-    chat messages."
+2. **Strictly Dry and Factual Tone**:
+   Prose must be plain, factual, and understated. Never write marketing copy,
+   promotional fluff, or exaggerated claims that upplay changes.
+   - **Banned marketing buzzwords and puffery**: Avoid words like *seamlessly*,
+     *pure*, *dramatically*, *flawlessly*, *essential*, *modernized*,
+     *maximum fidelity*, *hardened*, *streamlined*, *take full advantage of*,
+     *overhaul*, or *delightful*.
+   - **Factual, neutral statements**: State what was added, changed, or fixed
+     plainly without editorializing or self-congratulation.
+
+### Phrasing: Do vs. Don't
+
+| Don't (Jargon or Marketing Puffery) | Do (Dry, User-Centric, Factual) |
+| --- | --- |
+| "Implemented 90 Hz 2nd-order Butterworth biquad high-pass filter ($f_c = 90$ Hz, $Q = 0.7071$)..." *(technical jargon)* | **Rumble Filter**: Added low-frequency filtering to reduce microphone rumble, wind noise, and handling thuds. |
+| "Users on high-bandwidth networks can now take full advantage of bitrates up to 192 kbps for maximum voice fidelity..." *(marketing spin)* | **Microphone Bitrate**: Changed display unit from bps to kbps and increased the slider maximum from 96 kbps to 192 kbps. |
+| "Chat messages now persist seamlessly across automatic reconnection attempts..." *(marketing puffery)* | **Chat History**: Chat messages are now retained across connection drops and reconnects to the same server. |
+| "Mute lookahead FIFO ring buffer zeroed on mute transition." *(implementation detail)* | **Microphone Mute**: Pending audio is now cleared immediately on mute so no words leak through. |
+| "Pure Neural Speech Probability: Ambient noise can no longer inflate baseline scores into false speech triggers." *(marketing/technical)* | **Voice Activation**: Speech detection now evaluates neural probability directly, reducing false triggers from background noise. |
+| "Prevented concurrent modification exceptions in message snapshot list." *(developer jargon)* | **Chat Stability**: Fixed an intermittent crash when receiving rapid messages. |
 
 ### What to Include vs. Exclude in Highlights
 
