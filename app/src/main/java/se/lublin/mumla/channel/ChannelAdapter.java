@@ -59,7 +59,6 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
     public ChannelAdapter(Context context, IChannel channel) {
         mContext = context;
         mChannel = channel;
-        setHasStableIds(true);
     }
 
     @NonNull
@@ -100,6 +99,9 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
     }
 
     private Drawable getTalkStateDrawable(IUser user) {
+        if (mContext == null) {
+            return null;
+        }
         if (user.isSelfDeafened()) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_deafened);
         } else if (user.isDeafened()) {
@@ -130,6 +132,38 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         notifyDataSetChanged();
     }
 
+    /**
+     * Immediately updates a user's display name and talk state icon on the visible view holder,
+     * bypassing RecyclerView rebind cycles and eliminating animation delays.
+     */
+    public void updateUserState(IUser user, RecyclerView view) {
+        if (mChannel == null || mChannel.getUsers() == null || user == null) {
+            return;
+        }
+        int index = mChannel.getUsers().indexOf(user);
+        if (index < 0) {
+            return;
+        }
+        if (view != null) {
+            ViewHolder vh = (ViewHolder) view.findViewHolderForAdapterPosition(index);
+            if (vh != null) {
+                if (vh.userName != null && user.getName() != null && !user.getName().contentEquals(vh.userName.getText())) {
+                    vh.userName.setText(user.getName());
+                }
+                if (vh.stateIcon != null) {
+                    Drawable newState = getTalkStateDrawable(user);
+                    Drawable currentDrawable = vh.stateIcon.getDrawable();
+                    if (newState != null && (currentDrawable == null || currentDrawable.getConstantState() == null
+                            || !currentDrawable.getConstantState().equals(newState.getConstantState()))) {
+                        vh.stateIcon.setImageDrawable(newState);
+                    }
+                }
+                return;
+            }
+        }
+        notifyItemChanged(index);
+    }
+
     public void notifyUserChanged(IUser user) {
         if (mChannel == null || mChannel.getUsers() == null || user == null) {
             return;
@@ -137,8 +171,6 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         int index = mChannel.getUsers().indexOf(user);
         if (index >= 0) {
             notifyItemChanged(index);
-        } else {
-            notifyDataSetChanged();
         }
     }
 
