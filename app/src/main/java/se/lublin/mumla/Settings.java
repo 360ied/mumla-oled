@@ -164,6 +164,14 @@ public class Settings {
     public static final String PREF_OVERLAY_POS_X = "overlay_hud_pos_x";
     public static final String PREF_OVERLAY_POS_Y = "overlay_hud_pos_y";
 
+    public static final String PREF_OVERLAY_PLACEMENT = "overlay_placement";
+    public static final String OVERLAY_PLACEMENT_FLOATING = "floating";
+    public static final String OVERLAY_PLACEMENT_TOP_LEFT = "topLeft";
+    public static final String OVERLAY_PLACEMENT_TOP_RIGHT = "topRight";
+    public static final String OVERLAY_PLACEMENT_BOTTOM_LEFT = "bottomLeft";
+    public static final String OVERLAY_PLACEMENT_BOTTOM_RIGHT = "bottomRight";
+    public static final String DEFAULT_OVERLAY_PLACEMENT = OVERLAY_PLACEMENT_FLOATING;
+
     public static final String PREF_NEWS_SHOWN_VERSIONS = "newsShownVersions";
 
     static {
@@ -426,6 +434,32 @@ public class Settings {
 
     public void setOverlayShown(boolean shown) {
         preferences.edit().putBoolean(PREF_OVERLAY_SHOWN, shown).apply();
+    }
+
+    public String getOverlayPlacement() {
+        return preferences.getString(PREF_OVERLAY_PLACEMENT, DEFAULT_OVERLAY_PLACEMENT);
+    }
+
+    public void setOverlayPlacement(String placement) {
+        preferences.edit().putString(PREF_OVERLAY_PLACEMENT, placement).apply();
+    }
+
+    public boolean isOverlayPinned() {
+        return !OVERLAY_PLACEMENT_FLOATING.equals(getOverlayPlacement());
+    }
+
+    public int getOverlayGravity() {
+        String placement = getOverlayPlacement();
+        if (OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)) {
+            return Gravity.TOP | Gravity.START;
+        } else if (OVERLAY_PLACEMENT_TOP_RIGHT.equals(placement)) {
+            return Gravity.TOP | Gravity.END;
+        } else if (OVERLAY_PLACEMENT_BOTTOM_LEFT.equals(placement)) {
+            return Gravity.BOTTOM | Gravity.START;
+        } else if (OVERLAY_PLACEMENT_BOTTOM_RIGHT.equals(placement)) {
+            return Gravity.BOTTOM | Gravity.END;
+        }
+        return Gravity.TOP | Gravity.START;
     }
 
     public Set<String> getNewsShownVersions() {

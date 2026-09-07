@@ -62,6 +62,22 @@
         <item>bottomRight</item>
     </string-array>
 
+    <string-array name="overlayPlacementNames">
+        <item>@string/overlay_placement_floating</item>
+        <item>@string/overlay_placement_top_left</item>
+        <item>@string/overlay_placement_top_right</item>
+        <item>@string/overlay_placement_bottom_left</item>
+        <item>@string/overlay_placement_bottom_right</item>
+    </string-array>
+
+    <string-array name="overlayPlacementValues">
+        <item>floating</item>
+        <item>topLeft</item>
+        <item>topRight</item>
+        <item>bottomLeft</item>
+        <item>bottomRight</item>
+    </string-array>
+
     <string-array name="audio_per_packet_names">
         <item>10ms</item>
         <item>20ms</item>

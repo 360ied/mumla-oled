@@ -87,4 +87,10 @@
     <string name="pref_start_up_in_pinned_mode">Mode canaux épinglés</string>
     <string name="pref_overlay">Superposition de salon</string>
     <string name="pref_overlay_summary">Afficher un HUD vocal flottant montrant les membres actifs du salon.</string>
+    <string name="pref_overlay_placement">Disposition de la superposition</string>
+    <string name="overlay_placement_floating">Flottant (déplaçable)</string>
+    <string name="overlay_placement_top_left">↖ En haut à gauche (épinglé, tactile transparent)</string>
+    <string name="overlay_placement_top_right">En haut à droite ↗ (épinglé, tactile transparent)</string>
+    <string name="overlay_placement_bottom_left">↙ En bas à gauche (épinglé, tactile transparent)</string>
+    <string name="overlay_placement_bottom_right">En bas à droite ↘ (épinglé, tactile transparent)</string>
 </resources>

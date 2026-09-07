@@ -126,4 +126,10 @@
     <string name="pref_start_upIn_pinned_mode_sum">Enables \"Pinned channels\" mode after connecting (hides channels that are not pinned).</string>
     <string name="pref_overlay">Channel overlay</string>
     <string name="pref_overlay_summary">Display a floating voice HUD showing active channel members.</string>
+    <string name="pref_overlay_placement">Overlay placement</string>
+    <string name="overlay_placement_floating">Floating (draggable)</string>
+    <string name="overlay_placement_top_left">↖ Top left (pinned, touch-through)</string>
+    <string name="overlay_placement_top_right">Top right ↗ (pinned, touch-through)</string>
+    <string name="overlay_placement_bottom_left">↙ Bottom left (pinned, touch-through)</string>
+    <string name="overlay_placement_bottom_right">Bottom right ↘ (pinned, touch-through)</string>
 </resources>
