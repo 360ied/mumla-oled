@@ -28,6 +28,12 @@ import subprocess
 import sys
 from typing import List, Optional, TextIO
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
 
 def print_usage(stream: TextIO) -> None:
     prog = "./scripts/worktree.sh"
@@ -139,6 +145,7 @@ def find_worktree_path(repo_root: Path, target: str) -> Optional[Path]:
 
     proc = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
+        cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -148,7 +155,9 @@ def find_worktree_path(repo_root: Path, target: str) -> Optional[Path]:
         current_wt = None
         for line in proc.stdout.splitlines():
             line = line.strip()
-            if line.startswith("worktree "):
+            if not line:
+                current_wt = None
+            elif line.startswith("worktree "):
                 current_wt = line.split(" ", 1)[1].strip()
             elif line.startswith("branch "):
                 ref = line.split(" ", 1)[1].strip()
@@ -218,28 +227,34 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
     try:
         res_local = subprocess.run(
             ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=repo_root,
             check=False,
         )
         if res_local.returncode == 0:
             print(f"Branch '{branch}' already exists locally. Checking out in worktree...")
-            subprocess.run(["git", "worktree", "add", str(wt_path), branch], check=True)
+            sys.stdout.flush()
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch], cwd=repo_root, check=True)
         else:
             res_remote = subprocess.run(
                 ["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+                cwd=repo_root,
                 check=False,
             )
             if res_remote.returncode == 0:
                 print(f"Branch '{branch}' exists on origin. Tracking in new worktree...")
-                subprocess.run(["git", "worktree", "add", "-b", branch, str(wt_path), f"origin/{branch}"], check=True)
+                sys.stdout.flush()
+                subprocess.run(["git", "worktree", "add", "-b", branch, str(wt_path), f"origin/{branch}"], cwd=repo_root, check=True)
             else:
                 start_point = base_ref if base_ref else "master"
                 print(f"Creating new branch '{branch}' from '{start_point}'...")
-                subprocess.run(["git", "worktree", "add", "-b", branch, str(wt_path), start_point], check=True)
+                sys.stdout.flush()
+                subprocess.run(["git", "worktree", "add", "-b", branch, str(wt_path), start_point], cwd=repo_root, check=True)
 
         print("")
         print("========================================")
         print(" 2. Initializing Git Submodules")
         print("========================================")
+        sys.stdout.flush()
         subprocess.run(["git", "-C", str(wt_path), "submodule", "update", "--init", "--recursive"], check=True)
 
         print("")
@@ -273,11 +288,14 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
         return e.returncode
 
 
-def cmd_list() -> int:
+def cmd_list(repo_root: Optional[Path] = None) -> int:
+    if repo_root is None:
+        repo_root = get_repo_root()
     print("========================================")
     print(" Active Git Worktrees")
     print("========================================")
-    proc = subprocess.run(["git", "worktree", "list"])
+    sys.stdout.flush()
+    proc = subprocess.run(["git", "worktree", "list"], cwd=repo_root)
     return proc.returncode
 
 
@@ -344,11 +362,12 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
     branch_name = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
 
     print(f"Removing worktree at '{wt_path}'...")
+    sys.stdout.flush()
     # Always pass --force to git worktree remove because Git forbids removing
     # worktrees with submodules otherwise. The status check above guarantees safety.
     try:
-        subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)], check=True)
-        subprocess.run(["git", "worktree", "prune"], check=True)
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)], cwd=repo_root, check=True)
+        subprocess.run(["git", "worktree", "prune"], cwd=repo_root, check=True)
 
         # Clean up empty parent directories inside .worktrees/ if applicable
         worktrees_dir = (repo_root / ".worktrees").resolve()
@@ -398,7 +417,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         repo_root = get_repo_root()
         return cmd_add(rest, repo_root)
     elif subcmd in ("list", "ls"):
-        return cmd_list()
+        repo_root = get_repo_root()
+        return cmd_list(repo_root)
     elif subcmd in ("remove", "rm"):
         repo_root = get_repo_root()
         return cmd_remove(rest, repo_root)
