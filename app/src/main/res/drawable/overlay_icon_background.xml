@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-
 <!--
-  ~ Copyright (C) 2014 Andrew Comminos
+  ~ Copyright (C) 2026 Mumla OLED Contributors
   ~
   ~ This program is free software: you can redistribute it and/or modify
   ~ it under the terms of the GNU General Public License as published by
@@ -17,19 +16,7 @@
   ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   -->
 
-<se.lublin.mumla.service.OverlayLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/overlay_root"
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:padding="0dp">
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/overlay_list"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:nestedScrollingEnabled="false"
-        android:overScrollMode="never"
-        tools:listitem="@layout/overlay_user_row" />
-
-</se.lublin.mumla.service.OverlayLayout>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/overlay_pill_background" />
+</shape>
