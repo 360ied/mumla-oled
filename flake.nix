@@ -41,10 +41,7 @@
             pkgs.gnumake
             pkgs.python3
             pkgs.ccache
-            pkgs.markdownlint-cli
-            pkgs.cmark
             pkgs.cmark-gfm
-            pkgs.prettier
             androidSdk
           ];
 
