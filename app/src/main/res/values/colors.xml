@@ -17,4 +17,5 @@
     <color name="ripple_talk_state_suppressed">#ff669900</color>
     <color name="ripple_talk_state_server_muted">#ff0099cc</color>
     <color name="ripple_talk_state_server_deafened">#ff0099cc</color>
+    <color name="overlay_pill_background">#d9000000</color>
 </resources>
