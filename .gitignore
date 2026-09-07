@@ -50,3 +50,6 @@ libraries/humla/src/main/assets/rnnoise_model.bin
 
 # for pi coding agent
 /plans/
+
+# Git worktrees
+/.worktrees/
