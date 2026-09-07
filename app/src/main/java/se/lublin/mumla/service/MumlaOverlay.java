@@ -18,7 +18,6 @@
 package se.lublin.mumla.service;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.util.DisplayMetrics;
@@ -29,7 +28,6 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 
-import androidx.preference.PreferenceManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -250,14 +248,14 @@ public class MumlaOverlay {
             String placement = mSettings.getOverlayPlacement();
             boolean isTop = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
                     || Settings.OVERLAY_PLACEMENT_TOP_RIGHT.equals(placement);
-            int marginY = isTop ? getTopMargin(dm) : (int) (40 * dm.density);
+            int marginY = isTop ? getTopMargin(dm) : getBottomMargin(dm);
             mOverlayParams.x = marginX;
             mOverlayParams.y = marginY;
         } else {
             mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
-            mOverlayParams.gravity = Gravity.TOP | Gravity.START;
+            mOverlayParams.gravity = Gravity.TOP | Gravity.LEFT;
             restorePosition();
         }
     }
@@ -274,14 +272,25 @@ public class MumlaOverlay {
         return (int) (40 * dm.density);
     }
 
+    private int getBottomMargin(DisplayMetrics dm) {
+        int navBarHeight = 0;
+        int resourceId = mService.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+        if (resourceId > 0) {
+            navBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
+        }
+        if (navBarHeight > 0) {
+            return navBarHeight + (int) (8 * dm.density);
+        }
+        return (int) (56 * dm.density);
+    }
+
     private void restorePosition() {
         DisplayMetrics dm = mService.getResources().getDisplayMetrics();
         int defaultX = (int) (24 * dm.density);
         int defaultY = (int) (80 * dm.density);
 
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
-        int savedX = prefs.getInt(Settings.PREF_OVERLAY_POS_X, defaultX);
-        int savedY = prefs.getInt(Settings.PREF_OVERLAY_POS_Y, defaultY);
+        int savedX = mSettings.getOverlayPosX(defaultX);
+        int savedY = mSettings.getOverlayPosY(defaultY);
 
         int maxX = Math.max(0, dm.widthPixels - (int) (120 * dm.density));
         int maxY = Math.max(0, dm.heightPixels - (int) (60 * dm.density));
@@ -294,11 +303,7 @@ public class MumlaOverlay {
         if (mSettings.isOverlayPinned()) {
             return;
         }
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mService);
-        prefs.edit()
-                .putInt(Settings.PREF_OVERLAY_POS_X, mOverlayParams.x)
-                .putInt(Settings.PREF_OVERLAY_POS_Y, mOverlayParams.y)
-                .apply();
+        mSettings.setOverlayPosition(mOverlayParams.x, mOverlayParams.y);
     }
 
     public boolean isShown() {
@@ -310,7 +315,7 @@ public class MumlaOverlay {
         if (mShown) {
             try {
                 mWindowManager.updateViewLayout(mOverlayView, mOverlayParams);
-            } catch (IllegalArgumentException e) {
+            } catch (Exception e) {
                 Log.d(TAG, "exception updating overlay layout: " + e);
             }
         }
@@ -346,7 +351,7 @@ public class MumlaOverlay {
         mChannelAdapter = null;
         try {
             mWindowManager.removeView(mOverlayView);
-        } catch (IllegalArgumentException e) {
+        } catch (Exception e) {
             Log.d(TAG, "exception removing overlay view: " + e);
         }
     }
