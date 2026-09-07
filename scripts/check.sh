@@ -31,7 +31,7 @@ UNINITIALIZED_SUBMODULES=$(git submodule status 2>/dev/null | grep '^-' || true)
 if [ -n "$UNINITIALIZED_SUBMODULES" ]; then
   echo "ERROR: Uninitialized git submodules detected:"
   echo "$UNINITIALIZED_SUBMODULES"
-  echo "Run 'git submodule update --init --recursive' or './scripts/worktree.sh add' to initialize them."
+  echo "Run 'git submodule update --init --recursive' or './scripts/worktree.py add' to initialize them."
   exit 1
 fi
 

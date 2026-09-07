@@ -45,7 +45,7 @@ print = functools.partial(print, flush=True)
 
 
 def print_usage(stream: TextIO) -> None:
-    prog = "./scripts/worktree.sh"
+    prog = "./scripts/worktree.py"
     print(f"""Usage:
   {prog} add <branch-name> [base-ref] [-p <custom-path>]
   {prog} list
@@ -210,7 +210,7 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
 
     if not branch:
         sys.stderr.write("Error: Branch name is required.\n")
-        sys.stderr.write("Usage: ./scripts/worktree.sh add <branch-name> [base-ref] [-p <path>]\n")
+        sys.stderr.write("Usage: ./scripts/worktree.py add <branch-name> [base-ref] [-p <path>]\n")
         return 1
 
     if branch == "master":
@@ -285,7 +285,7 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
         print(f"  cd \"{wt_path}\" && ./scripts/check.sh")
         print("")
         print("To remove when finished:")
-        print(f"  ./scripts/worktree.sh remove \"{branch}\"")
+        print(f"  ./scripts/worktree.py remove \"{branch}\"")
         print("========================================")
         return 0
     except subprocess.CalledProcessError as e:
@@ -328,7 +328,7 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
 
     if not target:
         sys.stderr.write("Error: Worktree branch or path is required.\n")
-        sys.stderr.write("Usage: ./scripts/worktree.sh remove <branch-name-or-path> [--force]\n")
+        sys.stderr.write("Usage: ./scripts/worktree.py remove <branch-name-or-path> [--force]\n")
         return 1
 
     wt_path = find_worktree_path(repo_root, target)
