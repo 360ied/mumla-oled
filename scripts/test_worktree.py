@@ -148,6 +148,10 @@ class TestWorktreeLifecycle(unittest.TestCase):
         )
         self.assertEqual(proc_list.returncode, 0)
         self.assertIn("feature/deep/nested-test", proc_list.stdout)
+        header_pos = proc_list.stdout.find("Active Git Worktrees")
+        entry_pos = proc_list.stdout.find("feature/deep/nested-test")
+        self.assertGreater(header_pos, -1, "Header 'Active Git Worktrees' not found in stdout")
+        self.assertGreater(entry_pos, header_pos, "Header must appear before worktree entries")
 
         # 3. Refuse removal when dirty without force
         dirty_file = os.path.join(expected_wt, "dirty.txt")
@@ -388,6 +392,41 @@ class TestWorktreeUnit(unittest.TestCase):
         self.assertIsNone(
             worktree.find_worktree_path(self.repo_dir, "nonexistent-branch")
         )
+
+    def test_find_worktree_path_repo_isolation(self):
+        other_repo = Path(self.temp_dir.name) / "other_repo"
+        other_repo.mkdir()
+        subprocess.run(["git", "init", "-b", "isolated-branch", str(other_repo)], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", str(other_repo), "config", "user.name", "Test Agent"], check=True)
+        subprocess.run(["git", "-C", str(other_repo), "config", "user.email", "agent@example.com"], check=True)
+        (other_repo / "file.txt").write_text("isolated\n")
+        subprocess.run(["git", "-C", str(other_repo), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(other_repo), "commit", "-m", "isolated commit"], check=True, stdout=subprocess.DEVNULL)
+
+        # Calling find_worktree_path for self.repo_dir looking for 'isolated-branch'
+        # must return None even when the current process working directory is other_repo
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(other_repo))
+            self.assertIsNone(worktree.find_worktree_path(self.repo_dir, "isolated-branch"))
+        finally:
+            os.chdir(old_cwd)
+
+    def test_cmd_list_piped_order(self):
+        for script in SCRIPT_PATHS:
+            with self.subTest(script=script):
+                proc = subprocess.run(
+                    [script, "list"],
+                    cwd=str(self.repo_dir),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                self.assertEqual(proc.returncode, 0)
+                header_pos = proc.stdout.find("Active Git Worktrees")
+                master_pos = proc.stdout.find("master")
+                self.assertGreater(header_pos, -1, "Header 'Active Git Worktrees' not found")
+                self.assertGreater(master_pos, header_pos, "Header must precede worktree entries")
 
 
 if __name__ == "__main__":
