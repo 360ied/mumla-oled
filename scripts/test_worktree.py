@@ -100,9 +100,9 @@ class TestWorktreeLifecycle(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_add_list_remove_worktree(self):
-        # 1. Add a worktree
+        # 1. Add a worktree with nested path
         proc_add = subprocess.run(
-            [SCRIPT_PATH, "add", "feature/vad-test"],
+            [SCRIPT_PATH, "add", "feature/deep/nested-test"],
             cwd=self.repo_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -111,7 +111,7 @@ class TestWorktreeLifecycle(unittest.TestCase):
         self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
         self.assertIn("WORKTREE READY!", proc_add.stdout)
 
-        expected_wt = os.path.join(self.repo_dir, ".worktrees", "feature", "vad-test")
+        expected_wt = os.path.join(self.repo_dir, ".worktrees", "feature", "deep", "nested-test")
         self.assertTrue(os.path.isdir(expected_wt))
         self.assertTrue(os.path.isfile(os.path.join(expected_wt, ".git")))
 
@@ -124,7 +124,7 @@ class TestWorktreeLifecycle(unittest.TestCase):
             text=True,
         )
         self.assertEqual(proc_list.returncode, 0)
-        self.assertIn("feature/vad-test", proc_list.stdout)
+        self.assertIn("feature/deep/nested-test", proc_list.stdout)
 
         # 3. Refuse removal when dirty without force
         dirty_file = os.path.join(expected_wt, "dirty.txt")
@@ -132,7 +132,7 @@ class TestWorktreeLifecycle(unittest.TestCase):
             f.write("untracked work\n")
 
         proc_rm_fail = subprocess.run(
-            [SCRIPT_PATH, "remove", "feature/vad-test"],
+            [SCRIPT_PATH, "remove", "feature/deep/nested-test"],
             cwd=self.repo_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -142,24 +142,72 @@ class TestWorktreeLifecycle(unittest.TestCase):
         self.assertIn("contains uncommitted changes", proc_rm_fail.stderr)
         self.assertTrue(os.path.isdir(expected_wt))
 
-        # 4. Remove with --force
-        proc_rm_force = subprocess.run(
-            [SCRIPT_PATH, "remove", "feature/vad-test", "--force"],
+        # 4. Remove dirty file and test clean removal WITHOUT --force
+        os.remove(dirty_file)
+        proc_rm_clean = subprocess.run(
+            [SCRIPT_PATH, "remove", "feature/deep/nested-test"],
             cwd=self.repo_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        self.assertEqual(proc_rm_force.returncode, 0, msg=proc_rm_force.stderr)
+        self.assertEqual(proc_rm_clean.returncode, 0, msg=proc_rm_clean.stderr)
         self.assertFalse(os.path.isdir(expected_wt))
+        self.assertFalse(os.path.isdir(os.path.join(self.repo_dir, ".worktrees")))
 
         # 5. Verify branch was NOT deleted
         branch_check = subprocess.run(
-            ["git", "-C", self.repo_dir, "show-ref", "--verify", "refs/heads/feature/vad-test"],
+            ["git", "-C", self.repo_dir, "show-ref", "--verify", "refs/heads/feature/deep/nested-test"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         self.assertEqual(branch_check.returncode, 0, "Branch should be preserved")
+
+    def test_worktree_with_submodule_removal(self):
+        # Create a mock submodule repository
+        sub_repo = os.path.join(self.temp_dir.name, "sub_repo")
+        os.makedirs(sub_repo)
+        subprocess.run(["git", "init", "-b", "master", sub_repo], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", sub_repo, "config", "user.name", "Test Agent"], check=True)
+        subprocess.run(["git", "-C", sub_repo, "config", "user.email", "agent@example.com"], check=True)
+        with open(os.path.join(sub_repo, "sub.txt"), "w") as f:
+            f.write("submodule\n")
+        subprocess.run(["git", "-C", sub_repo, "add", "."], check=True)
+        subprocess.run(["git", "-C", sub_repo, "commit", "-m", "sub init"], check=True, stdout=subprocess.DEVNULL)
+
+        # Add submodule to main repo
+        subprocess.run(
+            ["git", "-C", self.repo_dir, "-c", "protocol.file.allow=always", "submodule", "add", sub_repo, "mysub"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "add submodule"], check=True, stdout=subprocess.DEVNULL)
+
+        # Add worktree with submodule
+        proc_add = subprocess.run(
+            [SCRIPT_PATH, "add", "feature/sub-test"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=dict(os.environ, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow", GIT_CONFIG_VALUE_0="always"),
+        )
+        self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
+        wt_path = os.path.join(self.repo_dir, ".worktrees", "feature", "sub-test")
+        self.assertTrue(os.path.isdir(wt_path))
+        self.assertTrue(os.path.isfile(os.path.join(wt_path, "mysub", "sub.txt")))
+
+        # Test normal clean removal of worktree containing submodule WITHOUT --force
+        proc_rm = subprocess.run(
+            [SCRIPT_PATH, "remove", "feature/sub-test"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc_rm.returncode, 0, msg=proc_rm.stderr)
+        self.assertFalse(os.path.isdir(wt_path))
+        self.assertFalse(os.path.isdir(os.path.join(self.repo_dir, ".worktrees")))
 
 
 if __name__ == "__main__":
