@@ -4,12 +4,15 @@ description: >-
   Merge a feature/bugfix branch into master for the Mumla OLED client:
   pre-merge verification with scripts/check.sh, a fast-forward for
   single-commit branches, otherwise a non-fast-forward merge commit
-  formatted via commit.py, and a post-merge status report. Use when the
-  user asks to merge a branch into master, land a branch, or integrate
-  work into master.
+  formatted via commit.py, and a post-merge status report. CRITICAL: ONLY
+  use when the user EXPLICITLY asks to merge a branch into master. NEVER
+  invoke this skill autonomously or as part of task completion.
 ---
 
 # Mumla OLED: Merge a Branch into Master
+
+> [!CAUTION]
+> **DO NOT RUN AUTONOMOUSLY.** Merging into `master` must be **explicitly requested by the user** (e.g., "merge this branch", "land into master"). Agents must NEVER autonomously merge into `master` upon completing a feature, bugfix, or test suite. Task completion ends when commits and verification are done inside the dedicated worktree.
 
 Most merges into `master` are **non-fast-forward merge commits** created
 with plain `git merge --no-ff` — never squash, never rebase, never
