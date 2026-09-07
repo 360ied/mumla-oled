@@ -20,6 +20,7 @@ Worktrees allow developing on dedicated feature/bugfix branches without
 modifying the main working tree (which remains permanently on 'master').
 """
 
+import functools
 import os
 from pathlib import Path
 import re
@@ -28,16 +29,24 @@ import subprocess
 import sys
 from typing import List, Optional, TextIO
 
+# Configure unbuffered/line-buffered I/O so CLI output and child process
+# output maintain strict ordering even when piped or redirected.
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+print = functools.partial(print, flush=True)
 
 
 def print_usage(stream: TextIO) -> None:
     prog = "./scripts/worktree.sh"
-    stream.write(f"""Usage:
+    print(f"""Usage:
   {prog} add <branch-name> [base-ref] [-p <custom-path>]
   {prog} list
   {prog} remove <branch-name-or-path> [--force]
@@ -54,8 +63,7 @@ Examples:
   {prog} add feature/vad-tuning
   {prog} add bugfix/opus-resampler master
   {prog} list
-  {prog} remove feature/vad-tuning
-""")
+  {prog} remove feature/vad-tuning""", file=stream)
 
 
 def get_repo_root(cwd: Optional[Path] = None) -> Path:
@@ -232,7 +240,6 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
         )
         if res_local.returncode == 0:
             print(f"Branch '{branch}' already exists locally. Checking out in worktree...")
-            sys.stdout.flush()
             subprocess.run(["git", "worktree", "add", str(wt_path), branch], cwd=repo_root, check=True)
         else:
             res_remote = subprocess.run(
@@ -242,19 +249,16 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
             )
             if res_remote.returncode == 0:
                 print(f"Branch '{branch}' exists on origin. Tracking in new worktree...")
-                sys.stdout.flush()
                 subprocess.run(["git", "worktree", "add", "-b", branch, str(wt_path), f"origin/{branch}"], cwd=repo_root, check=True)
             else:
                 start_point = base_ref if base_ref else "master"
                 print(f"Creating new branch '{branch}' from '{start_point}'...")
-                sys.stdout.flush()
                 subprocess.run(["git", "worktree", "add", "-b", branch, str(wt_path), start_point], cwd=repo_root, check=True)
 
         print("")
         print("========================================")
         print(" 2. Initializing Git Submodules")
         print("========================================")
-        sys.stdout.flush()
         subprocess.run(["git", "-C", str(wt_path), "submodule", "update", "--init", "--recursive"], check=True)
 
         print("")
@@ -294,7 +298,6 @@ def cmd_list(repo_root: Optional[Path] = None) -> int:
     print("========================================")
     print(" Active Git Worktrees")
     print("========================================")
-    sys.stdout.flush()
     proc = subprocess.run(["git", "worktree", "list"], cwd=repo_root)
     return proc.returncode
 
@@ -362,7 +365,6 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
     branch_name = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
 
     print(f"Removing worktree at '{wt_path}'...")
-    sys.stdout.flush()
     # Always pass --force to git worktree remove because Git forbids removing
     # worktrees with submodules otherwise. The status check above guarantees safety.
     try:
