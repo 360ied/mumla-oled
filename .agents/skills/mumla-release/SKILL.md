@@ -98,14 +98,14 @@ gitignored).
 - **`## Highlights`**:
   - Group by feature or theme using `### Plain-English Feature Title`.
   - Under each heading, use bullet points formatted as:
-    `* **Feature/Benefit Summary**: 1–2 plain-language sentences explaining
-    what changed and why it helps the user.`
+    `* **Feature/Benefit Summary**: 1–2 plain-language sentences explaining what changed and why it helps the user.`
   - Order by importance (primary feature/fix first, secondary items after).
 - **`## Commits`**:
-  - Bullet list of `- `commit subject`` for user-facing changes only.
+  - Bullet list of `` - `commit subject` `` for user-facing changes only.
   - Omit developer tooling, test-only, build, and CI commits (e.g. `check:`,
     `build:`, `nix:`, internal test refactors).
 - **Universal APK Trailer** (must be the exact concluding paragraph):
+
   ```markdown
   Universal release APK includes native support for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64` architectures.
   ```
