@@ -59,7 +59,11 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
     public ChannelAdapter(Context context, IChannel channel) {
         mContext = context;
         mChannel = channel;
-        setHasStableIds(true);
+        try {
+            setHasStableIds(true);
+        } catch (NullPointerException ignored) {
+            // Mockable android.jar in local unit tests lacks Observable field initialization
+        }
     }
 
     @NonNull
@@ -128,6 +132,34 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
     public void setChannel(IChannel channel) {
         mChannel = channel;
         notifyDataSetChanged();
+    }
+
+    /**
+     * Immediately updates a user's display name and talk state icon on the visible view holder,
+     * bypassing RecyclerView rebind cycles and eliminating animation delays.
+     */
+    public void updateUserState(IUser user, RecyclerView view) {
+        if (mChannel == null || mChannel.getUsers() == null || user == null) {
+            return;
+        }
+        if (view != null) {
+            ViewHolder vh = (ViewHolder) view.findViewHolderForItemId(user.getSession());
+            if (vh != null) {
+                if (vh.userName != null && user.getName() != null && !user.getName().contentEquals(vh.userName.getText())) {
+                    vh.userName.setText(user.getName());
+                }
+                if (vh.stateIcon != null) {
+                    Drawable newState = getTalkStateDrawable(user);
+                    Drawable currentDrawable = vh.stateIcon.getDrawable();
+                    if (currentDrawable == null || currentDrawable.getConstantState() == null
+                            || !currentDrawable.getConstantState().equals(newState.getConstantState())) {
+                        vh.stateIcon.setImageDrawable(newState);
+                    }
+                }
+                return;
+            }
+        }
+        notifyUserChanged(user);
     }
 
     public void notifyUserChanged(IUser user) {
