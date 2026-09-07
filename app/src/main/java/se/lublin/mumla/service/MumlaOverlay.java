@@ -52,7 +52,7 @@ public class MumlaOverlay {
         public void onUserTalkStateUpdated(IUser user) {
             if (mChannelAdapter != null && user != null && user.getChannel() != null
                     && user.getChannel().equals(mService.getSessionChannel())) {
-                mChannelAdapter.notifyUserChanged(user);
+                mChannelAdapter.updateUserState(user, mOverlayList);
             }
         }
 
@@ -60,7 +60,7 @@ public class MumlaOverlay {
         public void onUserStateUpdated(IUser user) {
             if (mChannelAdapter != null && user != null && user.getChannel() != null
                     && user.getChannel().equals(mService.getSessionChannel())) {
-                mChannelAdapter.notifyUserChanged(user);
+                mChannelAdapter.updateUserState(user, mOverlayList);
             }
         }
 
@@ -135,6 +135,7 @@ public class MumlaOverlay {
         mOverlayView = View.inflate(service, R.layout.overlay, null);
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list);
         mOverlayList.setLayoutManager(new LinearLayoutManager(service));
+        mOverlayList.setItemAnimator(null);
 
         mOverlayView.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
@@ -231,7 +232,7 @@ public class MumlaOverlay {
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         mOverlayParams.gravity = Gravity.TOP | Gravity.START;
-        mOverlayParams.windowAnimations = android.R.style.Animation_Dialog;
+        mOverlayParams.windowAnimations = 0;
     }
 
     private void restorePosition() {
