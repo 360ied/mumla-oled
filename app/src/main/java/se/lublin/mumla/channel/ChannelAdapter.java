@@ -59,11 +59,6 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
     public ChannelAdapter(Context context, IChannel channel) {
         mContext = context;
         mChannel = channel;
-        try {
-            setHasStableIds(true);
-        } catch (NullPointerException ignored) {
-            // Mockable android.jar in local unit tests lacks Observable field initialization
-        }
     }
 
     @NonNull
@@ -104,6 +99,9 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
     }
 
     private Drawable getTalkStateDrawable(IUser user) {
+        if (mContext == null) {
+            return null;
+        }
         if (user.isSelfDeafened()) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_deafened);
         } else if (user.isDeafened()) {
@@ -142,8 +140,12 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         if (mChannel == null || mChannel.getUsers() == null || user == null) {
             return;
         }
+        int index = mChannel.getUsers().indexOf(user);
+        if (index < 0) {
+            return;
+        }
         if (view != null) {
-            ViewHolder vh = (ViewHolder) view.findViewHolderForItemId(user.getSession());
+            ViewHolder vh = (ViewHolder) view.findViewHolderForAdapterPosition(index);
             if (vh != null) {
                 if (vh.userName != null && user.getName() != null && !user.getName().contentEquals(vh.userName.getText())) {
                     vh.userName.setText(user.getName());
@@ -151,15 +153,15 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
                 if (vh.stateIcon != null) {
                     Drawable newState = getTalkStateDrawable(user);
                     Drawable currentDrawable = vh.stateIcon.getDrawable();
-                    if (currentDrawable == null || currentDrawable.getConstantState() == null
-                            || !currentDrawable.getConstantState().equals(newState.getConstantState())) {
+                    if (newState != null && (currentDrawable == null || currentDrawable.getConstantState() == null
+                            || !currentDrawable.getConstantState().equals(newState.getConstantState()))) {
                         vh.stateIcon.setImageDrawable(newState);
                     }
                 }
                 return;
             }
         }
-        notifyUserChanged(user);
+        notifyItemChanged(index);
     }
 
     public void notifyUserChanged(IUser user) {
@@ -169,8 +171,6 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         int index = mChannel.getUsers().indexOf(user);
         if (index >= 0) {
             notifyItemChanged(index);
-        } else {
-            notifyDataSetChanged();
         }
     }
 
