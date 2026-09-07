@@ -10,11 +10,11 @@
 
 ## Branching & Worktree Strategy
 - **Mandatory Worktrees**: All feature, bugfix, and experimental development MUST be conducted in dedicated Git worktrees; never develop directly on `master`, and avoid switching branches in the root repository. The root repository remains permanently checked out on `master`.
-- **Worktree Creation**: Create dedicated worktrees via `./scripts/worktree.sh add <branch-name> [base-ref]`. This automatically sets up the working directory under `.worktrees/<branch-name>`, initializes all native Git submodules (`opus`, `celt`, `speex`, `rnnoise`) from the local cache, and copies over any existing pre-trained RNNoise model weights from the root repository.
+- **Worktree Creation**: Create dedicated worktrees via `./scripts/worktree.py add <branch-name> [base-ref]`. This automatically sets up the working directory under `.worktrees/<branch-name>`, initializes all native Git submodules (`opus`, `celt`, `speex`, `rnnoise`) from the local cache, and copies over any existing pre-trained RNNoise model weights from the root repository.
 - **Development & Verification**: Perform all code modifications, Gradle builds, and pre-completion verification (`./scripts/check.sh`) inside the dedicated worktree directory (`cd .worktrees/<branch-name>`).
 - **Exception**: Direct modifications to `AGENTS.md` itself may be made directly on the current branch.
 - **Merging into Master**: From the root repository (`master`), merge the feature branch following the Merging rules below. If the branch contains exactly one commit and `master` can fast-forward, merge with `git merge --ff-only <branch>` and no merge commit. Otherwise always use a non-fast-forward merge commit (`git merge --no-ff <branch>`); never squash, rebase, or force-push branches into `master`. The merge commit message follows the Commit Strategy rules below (subject like `chore: merge branch '<branch>'` plus the tripartite body), created via `scripts/commit.py`. See the `mumla-merge` skill (`.agents/skills/mumla-merge/SKILL.md`) for the full procedure.
-- **Worktree Teardown**: Remove the worktree post-merge via `./scripts/worktree.sh remove <branch-name>`. Worktree removal never automatically deletes the underlying branch.
+- **Worktree Teardown**: Remove the worktree post-merge via `./scripts/worktree.py remove <branch-name>`. Worktree removal never automatically deletes the underlying branch.
 
 ## Commit Strategy
 - **Atomic Commits**: Single logical unit per commit. Separate automated code generation (e.g., `protoc`) from manual edits when feasible.

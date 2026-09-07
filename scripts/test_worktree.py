@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for scripts/worktree.sh.
+Unit tests for scripts/worktree.py.
 """
 
 import os
@@ -14,91 +14,74 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 import worktree
 
-SCRIPT_PATH_SH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "worktree.sh")
-)
-SCRIPT_PATH_PY = os.path.abspath(
+SCRIPT_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "worktree.py")
 )
-SCRIPT_PATHS = [SCRIPT_PATH_SH, SCRIPT_PATH_PY]
-SCRIPT_PATH = SCRIPT_PATH_SH
 
 
 class TestWorktreeCLI(unittest.TestCase):
     def test_help_exits_zero(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                for flag in ["-h", "--help"]:
-                    proc = subprocess.run(
-                        [script, flag],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                    )
-                    self.assertEqual(proc.returncode, 0)
-                    self.assertIn("Usage:", proc.stdout)
-                    self.assertIn("add", proc.stdout)
-                    self.assertIn("remove", proc.stdout)
+        for flag in ["-h", "--help"]:
+            proc = subprocess.run(
+                [SCRIPT_PATH, flag],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("Usage:", proc.stdout)
+            self.assertIn("add", proc.stdout)
+            self.assertIn("remove", proc.stdout)
 
     def test_no_args_exits_one(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                proc = subprocess.run(
-                    [script],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                self.assertEqual(proc.returncode, 1)
-                self.assertIn("Usage:", proc.stderr)
+        proc = subprocess.run(
+            [SCRIPT_PATH],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Usage:", proc.stderr)
 
     def test_unknown_command_exits_one(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                proc = subprocess.run(
-                    [script, "foobar"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                self.assertEqual(proc.returncode, 1)
-                self.assertIn("Unknown command 'foobar'", proc.stderr)
+        proc = subprocess.run(
+            [SCRIPT_PATH, "foobar"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Unknown command 'foobar'", proc.stderr)
 
     def test_add_missing_branch(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                proc = subprocess.run(
-                    [script, "add"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                self.assertEqual(proc.returncode, 1)
-                self.assertIn("Branch name is required", proc.stderr)
+        proc = subprocess.run(
+            [SCRIPT_PATH, "add"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Branch name is required", proc.stderr)
 
     def test_add_master_disallowed(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                proc = subprocess.run(
-                    [script, "add", "master"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                self.assertEqual(proc.returncode, 1)
-                self.assertIn("Cannot create a worktree for 'master'", proc.stderr)
+        proc = subprocess.run(
+            [SCRIPT_PATH, "add", "master"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Cannot create a worktree for 'master'", proc.stderr)
 
     def test_remove_missing_target(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                proc = subprocess.run(
-                    [script, "remove"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                self.assertEqual(proc.returncode, 1)
-                self.assertIn("Worktree branch or path is required", proc.stderr)
+        proc = subprocess.run(
+            [SCRIPT_PATH, "remove"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Worktree branch or path is required", proc.stderr)
 
 
 class TestWorktreeLifecycle(unittest.TestCase):
@@ -413,20 +396,18 @@ class TestWorktreeUnit(unittest.TestCase):
             os.chdir(old_cwd)
 
     def test_cmd_list_piped_order(self):
-        for script in SCRIPT_PATHS:
-            with self.subTest(script=script):
-                proc = subprocess.run(
-                    [script, "list"],
-                    cwd=str(self.repo_dir),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                self.assertEqual(proc.returncode, 0)
-                header_pos = proc.stdout.find("Active Git Worktrees")
-                master_pos = proc.stdout.find("master")
-                self.assertGreater(header_pos, -1, "Header 'Active Git Worktrees' not found")
-                self.assertGreater(master_pos, header_pos, "Header must precede worktree entries")
+        proc = subprocess.run(
+            [SCRIPT_PATH, "list"],
+            cwd=str(self.repo_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0)
+        header_pos = proc.stdout.find("Active Git Worktrees")
+        master_pos = proc.stdout.find("master")
+        self.assertGreater(header_pos, -1, "Header 'Active Git Worktrees' not found")
+        self.assertGreater(master_pos, header_pos, "Header must precede worktree entries")
 
 
 if __name__ == "__main__":

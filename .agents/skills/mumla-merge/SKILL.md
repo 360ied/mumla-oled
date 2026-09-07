@@ -119,7 +119,7 @@ Do **not** push or delete branches on your own. Instead, report success and
 offer the commands for the user to run (or ask before running them):
 
 ```bash
-./scripts/worktree.sh remove <branch>  # remove worktree if one was used
+./scripts/worktree.py remove <branch>  # remove worktree if one was used
 git push origin master
 git branch -d <branch>                 # local cleanup
 git push origin --delete <branch>      # remote cleanup, if pushed
