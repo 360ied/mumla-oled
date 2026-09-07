@@ -58,7 +58,7 @@
           GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/35.0.0/aapt2";
 
           shellHook = ''
-            REPO_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's#/\.git$##')"
+            REPO_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed -E 's#/\.git(/.*)?$##')"
             if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT" ]; then
               REPO_ROOT="''${PWD}"
             fi

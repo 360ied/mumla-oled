@@ -38,8 +38,8 @@ get_repo_root() {
         echo "Error: Not inside a git repository." >&2
         exit 1
     fi
-    # If common_dir is /path/to/repo/.git, strip /.git
-    sed 's#/\.git$##' <<< "$common_dir"
+    # Strip /.git and any trailing submodule/worktree path components
+    sed -E 's#/\.git(/.*)?$##' <<< "$common_dir"
 }
 
 cmd_add() {
@@ -203,7 +203,7 @@ cmd_remove() {
         local matched_path
         matched_path="$(git worktree list --porcelain | awk -v tgt="$target" '
             $1 == "worktree" { wt=$2 }
-            $1 == "branch" && $2 ~ "refs/heads/" tgt "$" { print wt }
+            $1 == "branch" && $2 == ("refs/heads/" tgt) { print wt }
         ')"
         if [ -n "$matched_path" ] && [ -d "$matched_path" ]; then
             wt_path="$matched_path"
@@ -236,20 +236,19 @@ cmd_remove() {
     branch_name="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 
     echo "Removing worktree at '$wt_path'..."
-    if [ "$force" = true ]; then
-        git worktree remove --force "$wt_path"
-    else
-        git worktree remove "$wt_path"
-    fi
+    # Always pass --force to git worktree remove because Git forbids removing
+    # worktrees with submodules otherwise. The status check above guarantees safety.
+    git worktree remove --force "$wt_path"
     git worktree prune
 
     # Clean up empty parent directories inside .worktrees/ if applicable
     if [[ "$wt_path" == "$repo_root/.worktrees/"* ]]; then
-        local parent_dir
-        parent_dir="$(dirname "$wt_path")"
-        if [ "$parent_dir" != "$repo_root/.worktrees" ] && [ -d "$parent_dir" ]; then
-            rmdir "$parent_dir" 2>/dev/null || true
-        fi
+        local current_dir
+        current_dir="$(dirname "$wt_path")"
+        while [ "$current_dir" != "$repo_root/.worktrees" ] && [ "$current_dir" != "$repo_root" ] && [ -d "$current_dir" ]; do
+            rmdir "$current_dir" 2>/dev/null || break
+            current_dir="$(dirname "$current_dir")"
+        done
         rmdir "$repo_root/.worktrees" 2>/dev/null || true
     fi
 

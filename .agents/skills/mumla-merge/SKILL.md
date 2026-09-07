@@ -34,9 +34,7 @@ the tripartite body convention.
 Run the pre-completion check **inside the dedicated worktree** before merging:
 
 ```bash
-cd .worktrees/<branch>
-./scripts/check.sh
-cd ../.. # return to repository root
+(cd ".worktrees/<branch>" && ./scripts/check.sh)
 ```
 
 If it fails, stop. The branch must pass before it lands on `master`.
