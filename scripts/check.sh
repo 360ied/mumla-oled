@@ -12,13 +12,27 @@ for arg in "$@"; do
 done
 
 echo "========================================"
-echo " 1. Checking Git Branch"
+echo " 1. Checking Git Branch & Submodules"
 echo "========================================"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" == "master" ]; then
-  echo "WARNING: Currently on 'master' branch! AGENTS.md mandates dedicated branches."
+GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || true)
+GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
+
+if [ "$GIT_DIR" != "$GIT_COMMON_DIR" ] && [ -n "$GIT_COMMON_DIR" ]; then
+  echo "OK: Running inside Git worktree for branch '$CURRENT_BRANCH'."
+elif [ "$CURRENT_BRANCH" == "master" ]; then
+  echo "WARNING: Currently on 'master' branch! AGENTS.md mandates dedicated worktrees."
 else
-  echo "OK: On dedicated branch '$CURRENT_BRANCH'."
+  echo "OK: On branch '$CURRENT_BRANCH'."
+fi
+
+# Verify git submodules are initialized
+UNINITIALIZED_SUBMODULES=$(git submodule status 2>/dev/null | grep '^-' || true)
+if [ -n "$UNINITIALIZED_SUBMODULES" ]; then
+  echo "ERROR: Uninitialized git submodules detected:"
+  echo "$UNINITIALIZED_SUBMODULES"
+  echo "Run 'git submodule update --init --recursive' or './scripts/worktree.sh add' to initialize them."
+  exit 1
 fi
 
 echo ""

@@ -21,20 +21,22 @@ the tripartite body convention.
 
 ## 1. Pre-flight
 
-- Identify the branch: current `git branch --show-current`, or the branch
-  named by the user. It must not be `master`.
-- Confirm the working tree is clean: `git status --porcelain`. Refuse to
-  merge with uncommitted changes (or stash only if the user asks).
+- Identify the branch: either the current worktree's branch (`git branch --show-current`),
+  or the branch named by the user. It must not be `master`.
+- Confirm the worktree is clean: `git status --porcelain`. Refuse to merge
+  with uncommitted changes (or stash only if the user asks).
 - Review what is being merged: `git log master..<branch> --oneline`. If the
   log contains anything beyond what the user described, flag it before
   proceeding.
 
 ## 2. Verify the feature branch
 
-Run the pre-completion check **on the feature branch** before merging:
+Run the pre-completion check **inside the dedicated worktree** before merging:
 
 ```bash
+cd .worktrees/<branch>
 ./scripts/check.sh
+cd ../.. # return to repository root
 ```
 
 If it fails, stop. The branch must pass before it lands on `master`.
@@ -43,12 +45,14 @@ the tree working.)
 
 ## 3. Update master
 
+In the root repository (which stays checked out on `master`):
+
 ```bash
-git checkout master
 git fetch origin
 git merge --ff-only origin/master
 ```
 
+If the root repository is not on master, check it out first (`git checkout master`).
 `--ff-only` guarantees master is only fast-forwarded to origin — no local
 merge commits, no rebases.
 
@@ -117,9 +121,10 @@ Do **not** push or delete branches on your own. Instead, report success and
 offer the commands for the user to run (or ask before running them):
 
 ```bash
+./scripts/worktree.sh remove <branch>  # remove worktree if one was used
 git push origin master
-git branch -d <branch>            # local cleanup
-git push origin --delete <branch> # remote cleanup, if pushed
+git branch -d <branch>                 # local cleanup
+git push origin --delete <branch>      # remote cleanup, if pushed
 ```
 
 ## Notes

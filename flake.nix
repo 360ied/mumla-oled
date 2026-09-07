@@ -58,12 +58,17 @@
           GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/35.0.0/aapt2";
 
           shellHook = ''
-            export GRADLE_USER_HOME="''${PWD}/.gradle-home"
-            export ANDROID_USER_HOME="''${PWD}/.gradle-home/android"
-            export CCACHE_DIR="''${PWD}/.gradle-home/ccache"
+            REPO_ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's#/\.git$##')"
+            if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT" ]; then
+              REPO_ROOT="''${PWD}"
+            fi
+            export GRADLE_USER_HOME="''${REPO_ROOT}/.gradle-home"
+            export ANDROID_USER_HOME="''${REPO_ROOT}/.gradle-home/android"
+            export CCACHE_DIR="''${REPO_ROOT}/.gradle-home/ccache"
             echo "Mumla OLED Development Environment Loaded"
             echo "Java Version: $(${jdk}/bin/java -version 2>&1 | head -n 1)"
             echo "ANDROID_HOME: $ANDROID_HOME"
+            echo "GRADLE_USER_HOME: $GRADLE_USER_HOME"
           '';
         };
       }
