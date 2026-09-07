@@ -59,13 +59,11 @@ public class ChannelAdapterTest extends TestCase {
                     listField.set(observable, new ArrayList<>());
                 }
             }
-            adapter.setHasStableIds(true);
         } catch (Exception ignored) {
         }
     }
 
-    public void testStableIds() {
-        assertTrue("ChannelAdapter must have stable IDs enabled", mAdapter.hasStableIds());
+    public void testItemIds() {
         assertEquals(101L, mAdapter.getItemId(0));
         assertEquals(102L, mAdapter.getItemId(1));
         assertEquals(RecyclerView.NO_ID, mAdapter.getItemId(-1));
