@@ -59,6 +59,8 @@ public interface IHumlaObserver {
 
     void onVoiceTargetChanged(VoiceTargetMode mode);
 
+    void onBluetoothRouteChanged(boolean connected);
+
     void onLogInfo(String message);
 
     void onLogWarning(String message);

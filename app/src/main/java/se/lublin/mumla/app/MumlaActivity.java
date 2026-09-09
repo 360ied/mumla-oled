@@ -119,8 +119,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 1;
     private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS = 2;
+    private static final int PERMISSIONS_REQUEST_BLUETOOTH_CONNECT = 3;
     private Server mServerPendingPerm = null;
     private boolean mPermPostNotificationsAsked = false;
+    private Runnable mBluetoothPermCallback = null;
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
@@ -185,7 +187,16 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
 
+            setVolumeControlStream(mSettings.isHandsetMode() ?
+                    AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+
             updateConnectionState(getService());
+        }
+
+        @Override
+        public void onBluetoothRouteChanged(boolean connected) {
+            setVolumeControlStream(connected || mSettings.isHandsetMode() ?
+                    AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
         }
 
         @Override
@@ -613,6 +624,33 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 }
                 connectToServerWithPerm();
                 break;
+            case PERMISSIONS_REQUEST_BLUETOOTH_CONNECT:
+                if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    if (mBluetoothPermCallback != null) {
+                        mBluetoothPermCallback.run();
+                    }
+                } else {
+                    Toast.makeText(MumlaActivity.this,
+                            getString(R.string.grant_perm_bluetooth), Toast.LENGTH_LONG).show();
+                }
+                mBluetoothPermCallback = null;
+                break;
+        }
+    }
+
+    public void ensureBluetoothPermission(Runnable onGranted) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED) {
+                mBluetoothPermCallback = onGranted;
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                        PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
+                return;
+            }
+        }
+        if (onGranted != null) {
+            onGranted.run();
         }
     }
 

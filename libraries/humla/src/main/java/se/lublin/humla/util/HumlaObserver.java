@@ -109,6 +109,11 @@ public class HumlaObserver implements IHumlaObserver {
     }
 
     @Override
+    public void onBluetoothRouteChanged(boolean connected) {
+
+    }
+
+    @Override
     public void onLogInfo(String message) {
 
     }

@@ -188,6 +188,8 @@
     <string name="grant_perm_notifications">Please grant permission to send notifications.</string>
     <string name="grant_perm_storage">Please grant external storage permission.</string>
     <string name="grant_perm_draw_over_apps">Please grant permission to display over other apps.</string>
+    <string name="grant_perm_bluetooth">Please grant Bluetooth permission to connect a headset.</string>
+    <string name="bluetooth_no_device">No Bluetooth headset available.</string>
     <string name="default_">Default</string>
     <string name="image_confirm_send">Send this image?</string>
     <string name="image_too_large">Image is too large to send to server.</string>

@@ -52,18 +52,28 @@ public class AudioInput implements Runnable {
     private Thread mRecordThread;
     private volatile boolean mRecording;
 
+    private final boolean mBluetoothActive;
+
     public AudioInput(AudioInputListener listener, int audioSource, String echoCancellationMethod)
+            throws AudioInitializationException {
+        this(listener, audioSource, echoCancellationMethod, false);
+    }
+
+    public AudioInput(AudioInputListener listener, int audioSource, String echoCancellationMethod, boolean bluetoothActive)
             throws AudioInitializationException {
         mListener = listener;
         mEchoCancellationMethod = echoCancellationMethod != null ? echoCancellationMethod : "none";
+        mBluetoothActive = bluetoothActive;
 
         mAudioRecord = setupAudioRecord(audioSource);
-        enableAudioEffects();
+        if (!mBluetoothActive) {
+            enableAudioEffects();
+        }
     }
 
     public AudioInput(AudioInputListener listener, int audioSource, int sampleRate, String echoCancellationMethod)
             throws AudioInitializationException {
-        this(listener, audioSource, echoCancellationMethod);
+        this(listener, audioSource, echoCancellationMethod, false);
     }
 
     private AudioRecord setupAudioRecord(int audioSource) throws AudioInitializationException {

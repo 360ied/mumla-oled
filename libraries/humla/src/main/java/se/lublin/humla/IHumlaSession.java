@@ -111,6 +111,8 @@ public interface IHumlaSession {
 
     boolean usingBluetoothSco();
 
+    boolean isBluetoothAvailable();
+
     void enableBluetoothSco();
 
     void disableBluetoothSco();

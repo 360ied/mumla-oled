@@ -45,8 +45,8 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
+import se.lublin.humla.audio.AudioDeviceManager;
 import se.lublin.humla.audio.AudioOutput;
-import se.lublin.humla.audio.BluetoothScoReceiver;
 import se.lublin.humla.audio.inputmode.ActivityInputMode;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
 import se.lublin.humla.audio.inputmode.IInputMode;
@@ -78,7 +78,7 @@ import se.lublin.humla.util.HumlaLogger;
 import se.lublin.humla.util.IHumlaObserver;
 import se.lublin.humla.util.VoiceTargetMode;
 
-public class HumlaService extends Service implements IHumlaService, IHumlaSession, HumlaConnection.HumlaConnectionListener, HumlaLogger, BluetoothScoReceiver.Listener {
+public class HumlaService extends Service implements IHumlaService, IHumlaSession, HumlaConnection.HumlaConnectionListener, HumlaLogger, AudioDeviceManager.Listener {
     private static final String TAG = HumlaService.class.getName();
 
     static {
@@ -128,6 +128,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_ENABLE_PREPROCESSOR = "enable_preprocessor";
     public static final String EXTRAS_ADAPTIVE_LEVELER = "adaptive_leveler";
     public static final String EXTRAS_ECHO_CANCELLATION_METHOD = "echo_cancellation_method";
+    public static final String EXTRAS_HANDSET_MODE = "handset_mode";
 
     // Service settings
     private Server mServer;
@@ -156,7 +157,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private ConnectionState mConnectionState;
     private ModelHandler mModelHandler;
     private AudioHandler mAudioHandler;
-    private BluetoothScoReceiver mBluetoothReceiver;
+    private AudioDeviceManager mAudioDeviceManager;
 
     private ActivityInputMode mActivityInputMode;
     private ToggleInputMode mToggleInputMode;
@@ -269,8 +270,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 .setEncodeListener(mAudioInputListener)
                 .setTalkingListener(mAudioOutputListener);
         mConnectionState = ConnectionState.DISCONNECTED;
-        mBluetoothReceiver = new BluetoothScoReceiver(this, this);
-        registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED));
+        mAudioDeviceManager = new AudioDeviceManager(this, this);
         mToggleInputMode = new ToggleInputMode();
         mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
         mContinuousInputMode = new ContinuousInputMode();
@@ -288,10 +288,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
-        try {
-            unregisterReceiver(mBluetoothReceiver);
-        } catch (IllegalArgumentException e) {
-            Log.e(TAG, "Error unregistering bluetooth receiver: " + e.getMessage());
+        if (mAudioDeviceManager != null) {
+            mAudioDeviceManager.shutdown();
         }
     }
 
@@ -413,6 +411,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mWakeLock.acquire();
         }
 
+        if (mAudioDeviceManager != null) {
+            mAudioDeviceManager.setCommunicationMode(true);
+        }
+
         try {
             createAudioHandler();
         } catch (AudioException e) {
@@ -456,8 +458,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mVoiceTargetId = 0;
         mWhisperTargetList.clear();
 
-        // Halt SCO connection on shutdown.
-        mBluetoothReceiver.stopBluetoothSco();
+        // Halt SCO and communication mode on shutdown.
+        if (mAudioDeviceManager != null) {
+            mAudioDeviceManager.setCommunicationMode(false);
+        }
 
         mCallbacks.onDisconnected(e);
     }
@@ -739,6 +743,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (extras.containsKey(EXTRAS_ECHO_CANCELLATION_METHOD)) {
             mAudioBuilder.setEchoCancellationMethod(extras.getString(EXTRAS_ECHO_CANCELLATION_METHOD));
         }
+        if (extras.containsKey(EXTRAS_HANDSET_MODE)) {
+            if (mAudioDeviceManager != null) {
+                mAudioDeviceManager.setHandsetModeEnabled(extras.getBoolean(EXTRAS_HANDSET_MODE));
+            }
+        }
 
         // Reload audio subsystem if initialized
         if (mAudioHandler != null && mAudioHandler.isInitialized()) {
@@ -752,7 +761,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public void onBluetoothScoConnected() {
         // After an SCO connection is established, audio is rerouted to be compatible with SCO.
         mAudioBuilder.setBluetoothEnabled(true);
-        if (mAudioHandler != null) {
+        if (mAudioHandler != null && mConnectionState == ConnectionState.CONNECTED) {
             try {
                 createAudioHandler();
             } catch (AudioException e) {
@@ -765,13 +774,18 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public void onBluetoothScoDisconnected() {
         // Restore audio settings after disconnection.
         mAudioBuilder.setBluetoothEnabled(false);
-        if (mAudioHandler != null) {
+        if (mAudioHandler != null && mConnectionState == ConnectionState.CONNECTED) {
             try {
                 createAudioHandler();
             } catch (AudioException e) {
                 e.printStackTrace();
             }
         }
+    }
+
+    @Override
+    public void onBluetoothRouteChanged(boolean active) {
+        mCallbacks.onBluetoothRouteChanged(active);
     }
 
     /**
@@ -811,13 +825,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Returns the bluetooth service provider, established after synchronization.
-     * @return The {@link BluetoothScoReceiver} attached to this service.
+     * Returns the audio device manager, managing audio routing and Bluetooth.
+     * @return The {@link AudioDeviceManager} attached to this service.
      */
-    private BluetoothScoReceiver getBluetoothReceiver() throws NotSynchronizedException {
-        if (!isSynchronized())
-            throw new NotSynchronizedException();
-        return mBluetoothReceiver;
+    public AudioDeviceManager getAudioDeviceManager() {
+        return mAudioDeviceManager;
     }
 
     @Override
@@ -1018,28 +1030,25 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public boolean usingBluetoothSco() {
-        try {
-            return getBluetoothReceiver().isBluetoothScoOn();
-        } catch (NotSynchronizedException e) {
-            throw new IllegalStateException(e);
-        }
+        return mAudioDeviceManager != null && mAudioDeviceManager.isBluetoothConnected();
+    }
+
+    @Override
+    public boolean isBluetoothAvailable() {
+        return mAudioDeviceManager != null && mAudioDeviceManager.isBluetoothAvailable();
     }
 
     @Override
     public void enableBluetoothSco() {
-        try {
-            getBluetoothReceiver().startBluetoothSco();
-        } catch (NotSynchronizedException e) {
-            throw new IllegalStateException(e);
+        if (mAudioDeviceManager != null) {
+            mAudioDeviceManager.setBluetoothRoutingEnabled(true);
         }
     }
 
     @Override
     public void disableBluetoothSco() {
-        try {
-            getBluetoothReceiver().stopBluetoothSco();
-        } catch (NotSynchronizedException e) {
-            throw new IllegalStateException(e);
+        if (mAudioDeviceManager != null) {
+            mAudioDeviceManager.setBluetoothRoutingEnabled(false);
         }
     }
 

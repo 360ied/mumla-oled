@@ -135,7 +135,7 @@ public class AudioHandler extends HumlaNetworkListener
         mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
 
         int actualSource = audioSource;
-        if ("system".equalsIgnoreCase(mEchoCancellationMethod)) {
+        if (mBluetoothOn || "system".equalsIgnoreCase(mEchoCancellationMethod)) {
             mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
             actualSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
         }
@@ -169,7 +169,7 @@ public class AudioHandler extends HumlaNetworkListener
             mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
         }
 
-        mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod);
+        mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod, mBluetoothOn);
         mOutput = new AudioOutput(mOutputListener);
     }
 

@@ -17,14 +17,9 @@
 
 package se.lublin.mumla.channel;
 
-import static android.content.Context.RECEIVER_NOT_EXPORTED;
-
 import android.app.Activity;
 import android.app.SearchManager;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.database.CursorWrapper;
 import android.graphics.PorterDuff;
@@ -39,9 +34,12 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+
+import se.lublin.mumla.app.MumlaActivity;
 import androidx.appcompat.view.ActionMode;
 import androidx.appcompat.widget.SearchView;
 import androidx.core.view.MenuItemCompat;
@@ -139,13 +137,12 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         public void onUserTalkStateUpdated(IUser user) {
             mChannelListAdapter.updateUserStates(user, mChannelView);
         }
-    };
 
-    private BroadcastReceiver mBluetoothReceiver = new BroadcastReceiver() {
         @Override
-        public void onReceive(Context context, Intent intent) {
-            if(getActivity() != null)
-                getActivity().supportInvalidateOptionsMenu(); // Update bluetooth menu item
+        public void onBluetoothRouteChanged(boolean connected) {
+            if (getActivity() != null) {
+                getActivity().supportInvalidateOptionsMenu();
+            }
         }
     };
 
@@ -194,16 +191,10 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
         registerForContextMenu(mChannelView);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            getActivity().registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED), RECEIVER_NOT_EXPORTED);
-        } else {
-            getActivity().registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED));
-        }
     }
 
     @Override
     public void onDetach() {
-        getActivity().unregisterReceiver(mBluetoothReceiver);
         super.onDetach();
     }
 
@@ -330,11 +321,37 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         } else if (itemId == R.id.menu_search) {
             return false;
         } else if (itemId == R.id.menu_bluetooth) {
-            item.setChecked(!item.isChecked());
-            if (item.isChecked()) {
-                session.enableBluetoothSco();
+            if (!session.usingBluetoothSco()) {
+                if (getActivity() instanceof MumlaActivity) {
+                    ((MumlaActivity) getActivity()).ensureBluetoothPermission(() -> {
+                        if (session.isBluetoothAvailable()) {
+                            session.enableBluetoothSco();
+                        } else {
+                            if (getContext() != null) {
+                                Toast.makeText(getContext(), R.string.bluetooth_no_device, Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                        if (getActivity() != null) {
+                            getActivity().supportInvalidateOptionsMenu();
+                        }
+                    });
+                } else {
+                    if (session.isBluetoothAvailable()) {
+                        session.enableBluetoothSco();
+                    } else {
+                        if (getContext() != null) {
+                            Toast.makeText(getContext(), R.string.bluetooth_no_device, Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    if (getActivity() != null) {
+                        getActivity().supportInvalidateOptionsMenu();
+                    }
+                }
             } else {
                 session.disableBluetoothSco();
+                if (getActivity() != null) {
+                    getActivity().supportInvalidateOptionsMenu();
+                }
             }
             return true;
         }

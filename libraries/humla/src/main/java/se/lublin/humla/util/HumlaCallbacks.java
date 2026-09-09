@@ -158,6 +158,13 @@ public class HumlaCallbacks implements IHumlaObserver {
     }
 
     @Override
+    public void onBluetoothRouteChanged(boolean connected) {
+        for (IHumlaObserver observer : mCallbacks) {
+            observer.onBluetoothRouteChanged(connected);
+        }
+    }
+
+    @Override
     public void onLogInfo(String message) {
         for (IHumlaObserver observer : mCallbacks) {
             observer.onLogInfo(message);
