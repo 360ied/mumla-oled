@@ -14,8 +14,8 @@
 - **Development & Verification**: Perform all code modifications, Gradle builds, and pre-completion verification (`./scripts/check.sh`) inside the dedicated worktree directory (`cd .worktrees/<branch-name>`).
 - **Task Completion Boundary (NO AUTONOMOUS MERGING)**: An agent's task is COMPLETE once changes are committed and verified (`./scripts/check.sh`) inside the dedicated worktree. Agents must **NEVER autonomously merge into `master`** or delete worktrees upon completing a task. Always leave the branch and worktree intact, report completion to the user, and wait for review.
 - **Merging into Master (Explicit User Request Only)**: Merging a branch into `master` is a separate, user-initiated action that must be **explicitly requested by the user** (e.g., "merge into master", "land this branch"). Agents must never merge autonomously. When explicitly requested, follow the `mumla-merge` skill (`.agents/skills/mumla-merge/SKILL.md`).
-- **Worktree Teardown**: Remove the worktree via `./scripts/worktree.py remove <branch-name>` only after the branch has been merged upon explicit user request, or when explicitly commanded by the user. Worktree removal never automatically deletes the underlying branch.
-- **Exception**: Direct modifications to `AGENTS.md` itself may be made directly on the current branch.
+- **Worktree Teardown**: Remove the worktree via `./scripts/worktree.py remove <branch-name>` only after the branch has been merged upon explicit user request, or when explicitly commanded by the user. Worktree removal never automatically deletes the underlying branch. When cleaning up worktrees, follow the `mumla-worktree-cleanup` skill (`.agents/skills/mumla-worktree-cleanup/SKILL.md`).
+- **Documentation Exception**: Simple agent documentation changes (such as editing `AGENTS.md`, adding or updating agent skills under `.agents/skills/`, or editing agent guidelines) do not need the worktree process and should be made directly on `master`.
 
 ## Commit Strategy
 - **Atomic Commits**: Single logical unit per commit. Separate automated code generation (e.g., `protoc`) from manual edits when feasible.
