@@ -5,8 +5,9 @@ description: >-
   inventory active worktrees, inspect uncommitted changes and branch merge status,
   solicit explicit clarification via ask_question before discarding any unmerged
   or uncommitted work, execute worktree teardown via scripts/worktree.py, prune
-  stale metadata, and remove leftover directories. Use when the user asks to
-  clean up, remove, or prune worktrees.
+  stale metadata, and remove leftover directories. CRITICAL: ONLY use when the
+  user EXPLICITLY asks to clean up or remove worktrees. NEVER invoke this skill
+  autonomously or as part of task completion.
 ---
 
 # Mumla OLED: Worktree Cleanup
@@ -15,10 +16,7 @@ This skill guides safe teardown and cleanup of Git worktrees in the Mumla OLED
 repository.
 
 > [!CAUTION]
-> **PREVENT UNINTENDED DATA LOSS.**
-> Never autonomously force-remove worktrees containing uncommitted modifications,
-> untracked changes, or unmerged branch commits. Always inspect the status of each
-> worktree first and prompt the user for clarification before discarding work.
+> **DO NOT RUN AUTONOMOUSLY.** Worktree teardown must be **explicitly requested by the user** (e.g., "clean up worktrees", "remove the worktree for branch X"). Agents must NEVER autonomously delete worktrees upon completing a feature, bugfix, or test suite. Task completion ends when commits and verification (`./scripts/check.sh`) are done inside the dedicated worktree; always leave the branch and worktree intact, report completion, and wait for review. Furthermore, never force-remove worktrees containing uncommitted modifications, untracked changes, or unmerged branch commits without explicit user confirmation via `ask_question`.
 
 Worktrees allow isolated development on dedicated branches without touching
 the primary repository tree (which stays permanently checked out on `master`).
