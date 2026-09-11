@@ -5,7 +5,6 @@ Alguns dos recursos:
 * Geração de certificado, importação e exportação
 * Navegação em servidores públicos
 * Transmissão por atividade de voz (padrão) ou diferente botões de Pressione-para-falar
-* Suporte a headsets Bluetooth
 * Autoregistro em servidor
 * Tokens de acesso
 * Suporte a codecs Opus, CELT e Speex

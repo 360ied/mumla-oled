@@ -5,7 +5,6 @@ Algunes de les característiques:
 * Generació, importació i exportació de certificats
 * Navegació per servidors públics
 * Transmissió activada per veu (predeterminada), o amb un botó Premeu per a parlar
-* Compatible amb els cascs Bluetooth
 * Registre automàtic al servidor
 * Claus d'accés
 * Compatible amb els còdecs d'Opus, CELT i Speex

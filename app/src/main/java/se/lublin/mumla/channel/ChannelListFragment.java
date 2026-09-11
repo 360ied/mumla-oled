@@ -17,19 +17,12 @@
 
 package se.lublin.mumla.channel;
 
-import static android.content.Context.RECEIVER_NOT_EXPORTED;
-
 import android.app.Activity;
 import android.app.SearchManager;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.database.CursorWrapper;
 import android.graphics.PorterDuff;
-import android.media.AudioManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.RemoteException;
 import android.util.Log;
@@ -141,13 +134,6 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         }
     };
 
-    private BroadcastReceiver mBluetoothReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            if(getActivity() != null)
-                getActivity().supportInvalidateOptionsMenu(); // Update bluetooth menu item
-        }
-    };
 
     private RecyclerView mChannelView;
     private ChannelListAdapter mChannelListAdapter;
@@ -191,20 +177,9 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     }
 
     @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
+    public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
         registerForContextMenu(mChannelView);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            getActivity().registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED), RECEIVER_NOT_EXPORTED);
-        } else {
-            getActivity().registerReceiver(mBluetoothReceiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_CHANGED));
-        }
-    }
-
-    @Override
-    public void onDetach() {
-        getActivity().unregisterReceiver(mBluetoothReceiver);
-        super.onDetach();
     }
 
     @Override
@@ -253,8 +228,6 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
                 deafenItem.getIcon().mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY);
             }
 
-            MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth);
-            bluetoothItem.setChecked(session.usingBluetoothSco());
         }
     }
 
@@ -329,14 +302,6 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
             return true;
         } else if (itemId == R.id.menu_search) {
             return false;
-        } else if (itemId == R.id.menu_bluetooth) {
-            item.setChecked(!item.isChecked());
-            if (item.isChecked()) {
-                session.enableBluetoothSco();
-            } else {
-                session.disableBluetoothSco();
-            }
-            return true;
         }
 
         return super.onOptionsItemSelected(item);

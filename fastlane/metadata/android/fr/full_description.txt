@@ -5,7 +5,6 @@ Certaines des fonctionnalités :
 * Génération, importation et exportation de certificats
 * Parcourir les serveurs publics
 * Transmission activée par la voix (par défaut), ou différents boutons Push-to-talk
-* Prise en charge du casque Bluetooth
 * Auto-inscription sur le serveur
 * Jetons d'accès
 * Prise en charge des codecs Opus, CELT et Speex

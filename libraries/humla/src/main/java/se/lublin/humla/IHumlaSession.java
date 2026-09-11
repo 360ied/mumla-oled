@@ -109,11 +109,6 @@ public interface IHumlaSession {
 
     HumlaUDPMessageType getCodec();
 
-    boolean usingBluetoothSco();
-
-    void enableBluetoothSco();
-
-    void disableBluetoothSco();
 
     boolean isTalking();
 

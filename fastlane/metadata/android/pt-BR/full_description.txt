@@ -5,7 +5,6 @@ Alguns recursos:
 * Geração de certificados, importação e exportação
 * Navegar por servidores públicos
 * Transmissão ativa por voz (padrão), ou diferentes botões "Aperte para falar" 
-* Suporte para fones de ouvido Bluetooth
 * Registro automático de servidores
 * Chaves de acesso
 * Suporte para codecs Opus, CELT e Speex
