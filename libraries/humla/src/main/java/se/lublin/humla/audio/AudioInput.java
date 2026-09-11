@@ -20,7 +20,6 @@ package se.lublin.humla.audio;
 
 import android.media.AudioFormat;
 import android.media.AudioRecord;
-import android.media.MediaRecorder;
 import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
 import android.os.Build;
@@ -55,11 +54,6 @@ public class AudioInput implements Runnable {
 
         mAudioRecord = setupAudioRecord(audioSource);
         enableAudioEffects();
-    }
-
-    public AudioInput(AudioInputListener listener, int audioSource, int sampleRate)
-            throws AudioInitializationException {
-        this(listener, audioSource);
     }
 
     private AudioRecord setupAudioRecord(int audioSource) throws AudioInitializationException {
