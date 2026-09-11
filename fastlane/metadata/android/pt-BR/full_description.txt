@@ -13,7 +13,7 @@ Alguns recursos:
 * Conversão de texto em fala para mensagens (ativo por padrão)
 * Tema escuro e claro
 
-Atualmente a função de transmissão ativa por voz funciona melhor com um fone de ouvido. Cancelamento de eco e redução de barulho ainda precisam de aprimoramento.
+Atualmente a função de transmissão ativa por voz funciona melhor com um fone de ouvido.
 Alterar o limiar de detecção nas configurações pode ajudar.
 
 Mumla é um software livre e copyleft. Saiba mais em: https://mumla-app.gitlab.io/

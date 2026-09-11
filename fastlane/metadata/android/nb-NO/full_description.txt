@@ -15,6 +15,7 @@ Noen av funksjonene:
 * Tekst-til-tale for meldinger (skrudd på som forvalg)
 * Lys og mørk drakt
 
-Stemmeaktivert forsendelse fungerer best med hodesett. Ekkokansellering og støyreduksjon trenger litt jobb. Justering av «Oppdagelsesterskel» i innstillingene hjelper.
+Stemmeaktivert forsendelse fungerer best med hodesett.
+Justering av «Oppdagelsesterskel» i innstillingene hjelper.
 
 Mumla er gemenhetslig fri programvare: Finn ut mer på: https://mumla-app.gitlab.io/

@@ -13,7 +13,7 @@ Algunas de las características:
 * Texto-a-voz para los mensajes (encendido por defecto)
 * Temas claro y oscuro
 
-Las transmisiones activadas por voz actualmente funcionan mejor con auriculares. La cancelación de eco y reducción de ruido necesitan trabajo.
+Las transmisiones activadas por voz actualmente funcionan mejor con auriculares.
 Modificar el umbral de Detección en los ajustes ayuda.
 
 Mumla es software libre "copylefted". Aprende más en: https://mumla-app.gitlab.io/

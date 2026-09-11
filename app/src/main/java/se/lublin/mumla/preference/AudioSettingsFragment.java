@@ -16,6 +16,7 @@
  */
 
 package se.lublin.mumla.preference;
+
 import android.os.Bundle;
 
 import se.lublin.mumla.R;
