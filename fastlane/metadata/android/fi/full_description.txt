@@ -13,7 +13,7 @@ Ominaisuuksia:
 *Teksti-puheeksi viesteille (päällä oletuksena)
 *Vaalea ja tumma teema
 
-Puheaktivoitu lähetys toimii tällä hetkellä parhaiten käytettäessä headsettiä. Kaiunpoisto ja melun vaimennus kaipaavat vielä työtä.
+Puheaktivoitu lähetys toimii tällä hetkellä parhaiten käytettäessä headsettiä.
 Muokkaamalla puheentunnistamisen arvoja asetuksissa auttaa.
 
 Mumla on copylefted libre ohjelmisto. Lisätietoa osoitteesta: https://mumla-app.gitlab.io/ (Englanniksi)

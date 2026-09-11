@@ -20,8 +20,6 @@ package se.lublin.humla.audio;
 
 import android.media.AudioFormat;
 import android.media.AudioRecord;
-import android.media.MediaRecorder;
-import android.media.audiofx.AcousticEchoCanceler;
 import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
 import android.os.Build;
@@ -44,26 +42,18 @@ public class AudioInput implements Runnable {
 
     private final AudioInputListener mListener;
     private AudioRecord mAudioRecord;
-    private final String mEchoCancellationMethod;
-    private AcousticEchoCanceler mAec;
     private NoiseSuppressor mNs;
     private AutomaticGainControl mAgc;
 
     private Thread mRecordThread;
     private volatile boolean mRecording;
 
-    public AudioInput(AudioInputListener listener, int audioSource, String echoCancellationMethod)
+    public AudioInput(AudioInputListener listener, int audioSource)
             throws AudioInitializationException {
         mListener = listener;
-        mEchoCancellationMethod = echoCancellationMethod != null ? echoCancellationMethod : "none";
 
         mAudioRecord = setupAudioRecord(audioSource);
         enableAudioEffects();
-    }
-
-    public AudioInput(AudioInputListener listener, int audioSource, int sampleRate, String echoCancellationMethod)
-            throws AudioInitializationException {
-        this(listener, audioSource, echoCancellationMethod);
     }
 
     private AudioRecord setupAudioRecord(int audioSource) throws AudioInitializationException {
@@ -111,22 +101,6 @@ public class AudioInput implements Runnable {
     private void enableAudioEffects() {
         if (mAudioRecord == null) return;
         int sessionId = mAudioRecord.getAudioSessionId();
-
-        if ("system".equalsIgnoreCase(mEchoCancellationMethod)) {
-            if (AcousticEchoCanceler.isAvailable()) {
-                try {
-                    mAec = AcousticEchoCanceler.create(sessionId);
-                    if (mAec != null) {
-                        mAec.setEnabled(true);
-                        Log.i(TAG, "Hardware Acoustic Echo Cancellation enabled");
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "Failed to enable hardware AEC: " + e.getMessage());
-                }
-            } else {
-                Log.w(TAG, "Hardware AEC requested but not available on this device");
-            }
-        }
 
         if (NoiseSuppressor.isAvailable()) {
             try {
@@ -189,10 +163,6 @@ public class AudioInput implements Runnable {
     }
 
     private void releaseEffects() {
-        if (mAec != null) {
-            mAec.release();
-            mAec = null;
-        }
         if (mNs != null) {
             mNs.release();
             mNs = null;

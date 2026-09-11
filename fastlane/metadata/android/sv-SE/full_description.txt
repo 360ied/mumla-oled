@@ -13,7 +13,7 @@ Några av särdragen
 * Text-till-tal för meddelanden (påslaget som standard)
 * Ljust och mörkt tema
 
-Röstaktiverad överföring fungerar för närvarande bäst vid användning av headset. Ekoutsläckning och brusreducering behöver förbättras.
+Röstaktiverad överföring fungerar för närvarande bäst vid användning av headset.
 Justering av Detection threshold under intällningarna hjälper.
 
 Mumla är copyleft libre-mjukvara. Läs med på https://mumla-app.gitlab.io/

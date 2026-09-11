@@ -669,10 +669,6 @@ public class MumlaService extends HumlaService implements
                 changedExtras.putBoolean(EXTRAS_ADAPTIVE_LEVELER,
                         mSettings.isAdaptiveLevelerEnabled());
                 break;
-            case Settings.PREF_ECHO_CANCELLATION_METHOD:
-                changedExtras.putString(EXTRAS_ECHO_CANCELLATION_METHOD,
-                        mSettings.getEchoCancellationMethod());
-                break;
             case Settings.PREF_PTT_SOUND:
                 mPTTSoundEnabled = mSettings.isPttSoundEnabled();
                 break;

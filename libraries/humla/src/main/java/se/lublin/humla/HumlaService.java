@@ -123,7 +123,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_LOCAL_IGNORE_HISTORY = "local_ignore_history";
     public static final String EXTRAS_ENABLE_PREPROCESSOR = "enable_preprocessor";
     public static final String EXTRAS_ADAPTIVE_LEVELER = "adaptive_leveler";
-    public static final String EXTRAS_ECHO_CANCELLATION_METHOD = "echo_cancellation_method";
 
     // Service settings
     private Server mServer;
@@ -715,9 +714,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (extras.containsKey(EXTRAS_ADAPTIVE_LEVELER)) {
             mAudioBuilder.setAdaptiveLevelerEnabled(extras.getBoolean(EXTRAS_ADAPTIVE_LEVELER));
-        }
-        if (extras.containsKey(EXTRAS_ECHO_CANCELLATION_METHOD)) {
-            mAudioBuilder.setEchoCancellationMethod(extras.getString(EXTRAS_ECHO_CANCELLATION_METHOD));
         }
 
         // Reload audio subsystem if initialized

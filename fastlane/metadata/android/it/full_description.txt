@@ -13,7 +13,7 @@ Alcune caratteristiche:
 * Sintesi vocale (TTS) per i messaggi (attivata per impostazione predefinita)
 * Temi chiaro e scuro
 
-Al momento la trasmissione ad attivazione vocale funziona meglio quando si utilizzano le cuffie. La cancellazione dell'eco e la riduzione del rumore devono funzionare.
+Al momento la trasmissione ad attivazione vocale funziona meglio quando si utilizzano le cuffie.
 Potrebbe essere utile regolare la soglia di rilevamento nelle impostazioni.
 
 Mumla è un software libero con licenza copyleft. Ulteriori informazioni su https://mumla-app.gitlab.io/

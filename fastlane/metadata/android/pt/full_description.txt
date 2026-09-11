@@ -13,7 +13,7 @@ Alguns dos recursos:
 * Texto-para-voz para mensagens (ativado por padrão)
 * Temas claro e escuro
 
-Transmissão por atividade de voz atualmente funciona melhor quando usando um headset. Cancelamento de eco e redução de ruído requer melhoria.
+Transmissão por atividade de voz atualmente funciona melhor quando usando um headset.
 Configurar o limite de detecção nas opções ajuda.
 
 Mumla é software livre copleft. Saiba mais em: https://mumla-app.gitlab.io/

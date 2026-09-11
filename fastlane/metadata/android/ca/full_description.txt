@@ -13,7 +13,7 @@ Algunes de les característiques:
 * Síntesi de veu dels missatges (activada per omisió)
 * Temes clar i fosc
 
-La transmissió activada per la veu funciona millor amb auriculars. Encara hem de millorar la supressió de l'eco i la reducció del soroll.
+La transmissió activada per la veu funciona millor amb auriculars.
 Pot ser útil ajustar el llindar de detecció a la configuració.
 
 El Mumla és un programari lliure amb copyleft. Podeu trobar més informació a: https://mumla-app.gitlab.io/

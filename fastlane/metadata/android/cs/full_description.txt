@@ -13,7 +13,7 @@ Některé z funkcí:
 * Převod textu na řeč pro zprávy (ve výchozím nastavení zapnuto)
 * Světlé a tmavé téma
 
-Hlasem aktivovaný přenos v současné době funguje nejlépe při použití headsetu či sluchátek. Na potlačení ozvěny a redukci šumu je třeba zapracovat.
+Hlasem aktivovaný přenos v současné době funguje nejlépe při použití headsetu či sluchátek.
 Úprava prahu detekce v nastavení může pomoci.
 
 Mumla je svobodný software chráněný copyleftem. Více informací najdete na adrese: https://mumla-app.gitlab.io/
