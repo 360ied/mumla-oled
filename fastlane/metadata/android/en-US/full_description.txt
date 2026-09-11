@@ -13,7 +13,7 @@ Some of the features:
 * Text-to-speech for messages (turned on by default)
 * Light and dark theme
 
-Voice activated transmission currently works best when using a headset. Echo cancellation and noise reduction needs work.
+Voice activated transmission currently works best when using a headset.
 Tweaking the Detection threshold in the settings helps.
 
 Mumla is copylefted libre software. Find out more at: https://mumla-app.gitlab.io/

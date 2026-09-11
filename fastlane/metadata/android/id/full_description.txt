@@ -13,7 +13,7 @@ Berbagai macam fitur yang tersedia:
 * Text-to-speech untuk pesan (nyala secara default)
 * Tema terang dan gelap
 
-Transmisi otomatis melalui aktivasi suara bekerja secara optimal ketika menggunakan headset. Echo cancellation dan noise reduction membutuhkan pengerjaan lebih lanjut.
+Transmisi otomatis melalui aktivasi suara bekerja secara optimal ketika menggunakan headset.
 Mengatur batas bawah deteksi pada pengaturan akan membantu performa.
 
 Mumla adalah sebuah copylefted libre software. Cari tahu lebih lanjut di: https://mumla-app.gitlab.io/

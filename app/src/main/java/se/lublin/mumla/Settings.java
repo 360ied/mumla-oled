@@ -146,9 +146,6 @@ public class Settings {
     public static final String PREF_ADAPTIVE_LEVELER_ENABLED = "adaptive_leveler";
     public static final boolean DEFAULT_ADAPTIVE_LEVELER_ENABLED = true;
 
-    public static final String PREF_ECHO_CANCELLATION_METHOD = "echo_cancellation_method";
-    public static final String DEFAULT_ECHO_CANCELLATION_METHOD = "none";
-
     public static final String PREF_STAY_AWAKE = "stay_awake";
     public static final boolean DEFAULT_STAY_AWAKE = true;
 
@@ -395,10 +392,6 @@ public class Settings {
 
     public boolean isAdaptiveLevelerEnabled() {
         return preferences.getBoolean(PREF_ADAPTIVE_LEVELER_ENABLED, DEFAULT_ADAPTIVE_LEVELER_ENABLED);
-    }
-
-    public String getEchoCancellationMethod() {
-        return preferences.getString(PREF_ECHO_CANCELLATION_METHOD, DEFAULT_ECHO_CANCELLATION_METHOD);
     }
 
     public boolean shouldStayAwake() {
