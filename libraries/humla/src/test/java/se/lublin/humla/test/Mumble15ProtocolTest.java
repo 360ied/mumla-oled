@@ -24,6 +24,7 @@ import se.lublin.humla.Constants;
 import se.lublin.humla.model.Channel;
 import se.lublin.humla.model.User;
 import se.lublin.humla.net.Permissions;
+import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.protobuf.MumbleUDP;
 
 /**
@@ -194,5 +195,16 @@ public class Mumble15ProtocolTest extends TestCase {
         MumbleUDP.Ping parsed = MumbleUDP.Ping.parseFrom(ByteString.copyFrom(packet, 1, packet.length - 1));
         assertEquals(timestamp, parsed.getTimestamp());
         assertFalse(parsed.getRequestExtendedInformation());
+    }
+
+    public void testVersionMessageOmitsOsInformation() {
+        Mumble.Version version = Constants.createVersionMessage("Mumla 0.17.0").build();
+        assertEquals("Mumla 0.17.0", version.getRelease());
+        assertEquals(Constants.PROTOCOL_VERSION, version.getVersionV1());
+        assertEquals(Constants.PROTOCOL_VERSION_V2, version.getVersionV2());
+        assertFalse("Client must not broadcast OS", version.hasOs());
+        assertFalse("Client must not broadcast OS version", version.hasOsVersion());
+        assertEquals("", version.getOs());
+        assertEquals("", version.getOsVersion());
     }
 }
