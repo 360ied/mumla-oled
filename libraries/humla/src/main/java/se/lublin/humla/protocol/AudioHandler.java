@@ -20,7 +20,6 @@ package se.lublin.humla.protocol;
 
 import android.content.Context;
 import android.media.AudioManager;
-import android.media.MediaRecorder;
 import android.util.Log;
 
 import com.google.protobuf.ByteString;
