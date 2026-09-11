@@ -83,7 +83,6 @@ public class AudioHandler extends HumlaNetworkListener
     private boolean mHalfDuplex;
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
-    private String mEchoCancellationMethod;
     private boolean mTalking;
 
     private byte mTargetId;
@@ -98,12 +97,12 @@ public class AudioHandler extends HumlaNetworkListener
                         int sampleRate, int targetBitrate, int targetFramesPerPacket,
                         IInputMode inputMode, byte targetId, float amplitudeBoost,
                         boolean halfDuplexEnabled,
-                        boolean preprocessorEnabled, String echoCancellationMethod,
+                        boolean preprocessorEnabled,
                         AudioEncodeListener encodeListener,
                         AudioOutput.AudioOutputListener outputListener) throws AudioInitializationException {
         this(context, logger, audioStream, audioSource, sampleRate, targetBitrate, targetFramesPerPacket,
                 inputMode, targetId, amplitudeBoost, halfDuplexEnabled,
-                preprocessorEnabled, true, echoCancellationMethod, encodeListener, outputListener);
+                preprocessorEnabled, true, encodeListener, outputListener);
     }
 
     public AudioHandler(Context context, HumlaLogger logger, int audioStream, int audioSource,
@@ -111,7 +110,6 @@ public class AudioHandler extends HumlaNetworkListener
                         IInputMode inputMode, byte targetId, float amplitudeBoost,
                         boolean halfDuplexEnabled,
                         boolean preprocessorEnabled, boolean adaptiveLevelerEnabled,
-                        String echoCancellationMethod,
                         AudioEncodeListener encodeListener,
                         AudioOutput.AudioOutputListener outputListener) throws AudioInitializationException {
         mContext = context;
@@ -124,20 +122,13 @@ public class AudioHandler extends HumlaNetworkListener
         mHalfDuplex = halfDuplexEnabled;
         mPreprocessorEnabled = preprocessorEnabled;
         mAdaptiveLevelerEnabled = adaptiveLevelerEnabled;
-        mEchoCancellationMethod = echoCancellationMethod != null ? echoCancellationMethod : "none";
         mEncodeListener = encodeListener;
         mOutputListener = outputListener;
         mTalking = false;
         mTargetId = targetId;
 
         mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-
-        int actualSource = audioSource;
-        if ("system".equalsIgnoreCase(mEchoCancellationMethod)) {
-            mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-            actualSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
-        }
-        mAudioSource = actualSource;
+        mAudioSource = audioSource;
 
         int nativeMode = NativeAudioInputEngine.INPUT_MODE_VOICE_ACTIVITY;
         if (mInputMode instanceof ToggleInputMode) {
@@ -167,7 +158,7 @@ public class AudioHandler extends HumlaNetworkListener
             mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
         }
 
-        mInput = new AudioInput(this, mAudioSource, mEchoCancellationMethod);
+        mInput = new AudioInput(this, mAudioSource);
         mOutput = new AudioOutput(mOutputListener);
     }
 
@@ -518,7 +509,6 @@ public class AudioHandler extends HumlaNetworkListener
         private boolean mHalfDuplexEnabled;
         private boolean mPreprocessorEnabled;
         private boolean mAdaptiveLevelerEnabled = true;
-        private String mEchoCancellationMethod;
         private IInputMode mInputMode;
         private AudioEncodeListener mEncodeListener;
         private AudioOutput.AudioOutputListener mTalkingListener;
@@ -578,11 +568,6 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
-        public Builder setEchoCancellationMethod(String echoCancellationMethod) {
-            mEchoCancellationMethod = echoCancellationMethod;
-            return this;
-        }
-
         public Builder setEncodeListener(AudioEncodeListener encodeListener) {
             mEncodeListener = encodeListener;
             return this;
@@ -603,7 +588,7 @@ public class AudioHandler extends HumlaNetworkListener
             AudioHandler handler = new AudioHandler(mContext, mLogger, mAudioStream, mAudioSource,
                     mInputSampleRate, mTargetBitrate, mTargetFramesPerPacket, mInputMode, targetId,
                     mAmplitudeBoost, mHalfDuplexEnabled,
-                    mPreprocessorEnabled, mAdaptiveLevelerEnabled, mEchoCancellationMethod,
+                    mPreprocessorEnabled, mAdaptiveLevelerEnabled,
                     mEncodeListener, mTalkingListener);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
