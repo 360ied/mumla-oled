@@ -356,12 +356,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
 
         // Send version information and authenticate.
-        final Mumble.Version.Builder version = Mumble.Version.newBuilder();
-        version.setRelease(mClientName);
-        version.setVersionV1(Constants.PROTOCOL_VERSION);
-        version.setVersionV2(Constants.PROTOCOL_VERSION_V2);
-        version.setOs("Android");
-        version.setOsVersion(Build.VERSION.RELEASE);
+        final Mumble.Version.Builder version = Constants.createVersionMessage(mClientName);
 
         final Mumble.Authenticate.Builder auth = Mumble.Authenticate.newBuilder();
         auth.setUsername(mServer.getUsername());

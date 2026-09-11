@@ -17,6 +17,8 @@
 
 package se.lublin.humla;
 
+import se.lublin.humla.protobuf.Mumble;
+
 public class Constants {
     public static final int PROTOCOL_MAJOR = 1;
     public static final int PROTOCOL_MINOR = 5;
@@ -76,5 +78,23 @@ public class Constants {
             return versionV1 >= PROTOBUF_INTRODUCTION_VERSION_V1;
         }
         return false;
+    }
+
+    /**
+     * Creates a Mumble Version message builder with protocol versions and release name.
+     * OS name and OS version fields are intentionally omitted to protect user privacy
+     * and prevent device fingerprinting.
+     *
+     * @param release Client release name (e.g. "Mumla 0.17.0")
+     * @return Version message builder ready to be sent or augmented
+     */
+    public static Mumble.Version.Builder createVersionMessage(String release) {
+        final Mumble.Version.Builder version = Mumble.Version.newBuilder();
+        if (release != null) {
+            version.setRelease(release);
+        }
+        version.setVersionV1(PROTOCOL_VERSION);
+        version.setVersionV2(PROTOCOL_VERSION_V2);
+        return version;
     }
 }
