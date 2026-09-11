@@ -177,8 +177,8 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     }
 
     @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
+    public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
         registerForContextMenu(mChannelView);
     }
 
