@@ -197,7 +197,7 @@ public class Mumble15ProtocolTest extends TestCase {
         assertFalse(parsed.getRequestExtendedInformation());
     }
 
-    public void testVersionMessageOmitsOsInformation() {
+    public void testVersionMessageOmitsOsInformation() throws Exception {
         Mumble.Version version = Constants.createVersionMessage("Mumla 0.17.0").build();
         assertEquals("Mumla 0.17.0", version.getRelease());
         assertEquals(Constants.PROTOCOL_VERSION, version.getVersionV1());
@@ -206,5 +206,34 @@ public class Mumble15ProtocolTest extends TestCase {
         assertFalse("Client must not broadcast OS version", version.hasOsVersion());
         assertEquals("", version.getOs());
         assertEquals("", version.getOsVersion());
+
+        // Verify wire serialization and deserialization roundtrip
+        Mumble.Version parsed = Mumble.Version.parseFrom(version.toByteArray());
+        assertEquals("Mumla 0.17.0", parsed.getRelease());
+        assertEquals(Constants.PROTOCOL_VERSION, parsed.getVersionV1());
+        assertEquals(Constants.PROTOCOL_VERSION_V2, parsed.getVersionV2());
+        assertFalse("Wire payload must omit OS", parsed.hasOs());
+        assertFalse("Wire payload must omit OS version", parsed.hasOsVersion());
+        assertEquals("", parsed.getOs());
+        assertEquals("", parsed.getOsVersion());
+    }
+
+    public void testVersionMessageWithNullRelease() throws Exception {
+        Mumble.Version version = Constants.createVersionMessage(null).build();
+        assertFalse("Null release must be omitted", version.hasRelease());
+        assertEquals("", version.getRelease());
+        assertEquals(Constants.PROTOCOL_VERSION, version.getVersionV1());
+        assertEquals(Constants.PROTOCOL_VERSION_V2, version.getVersionV2());
+        assertFalse("Client must not broadcast OS", version.hasOs());
+        assertFalse("Client must not broadcast OS version", version.hasOsVersion());
+
+        // Verify wire roundtrip with null release
+        Mumble.Version parsed = Mumble.Version.parseFrom(version.toByteArray());
+        assertFalse("Wire payload must omit null release", parsed.hasRelease());
+        assertEquals("", parsed.getRelease());
+        assertEquals(Constants.PROTOCOL_VERSION, parsed.getVersionV1());
+        assertEquals(Constants.PROTOCOL_VERSION_V2, parsed.getVersionV2());
+        assertFalse("Wire payload must omit OS", parsed.hasOs());
+        assertFalse("Wire payload must omit OS version", parsed.hasOsVersion());
     }
 }
