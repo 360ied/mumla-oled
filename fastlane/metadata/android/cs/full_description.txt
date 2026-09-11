@@ -5,7 +5,6 @@ Některé z funkcí:
 * Generování, import a export certifikátů
 * Procházení veřejných serverů
 * Přenos aktivovaný hlasem (výchozí nastavení) nebo různá nastavení mluvení při stisku tlačítka.
-* Podpora Bluetooth headsetů
 * Samoobslužná registrace na serveru
 * Přístupové tokeny
 * Podpora kodeků Opus, CELT a Speex

@@ -98,7 +98,6 @@
     <string name="generateCertProgress">Generating certificate…</string>
     <string name="search">Search</string>
     <string name="searchHint">Search channels and users</string>
-    <string name="bluetooth">Bluetooth</string>
     <string name="quickConnect">Quick Connect</string>
     <string name="connect">Connect</string>
     <string name="edit">Edit</string>

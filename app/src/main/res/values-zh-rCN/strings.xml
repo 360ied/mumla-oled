@@ -73,7 +73,6 @@
     <string name="generateCertProgress">正在生成证书…</string>
     <string name="search">搜索</string>
     <string name="searchHint">搜索频道与用户</string>
-    <string name="bluetooth">蓝牙</string>
     <string name="quickConnect">快速连接</string>
     <string name="connect">连接</string>
     <string name="edit">编辑</string>

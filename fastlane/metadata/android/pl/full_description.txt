@@ -5,7 +5,6 @@ Niektóre funkcje:
 * Generowanie, importowanie i eksportowanie certyfikatów
 * Przeglądanie serwerów publicznych
 * Transmisja aktywowana głosem (ustawienie domyślne) lub różne przyciski Naciśnij i mów
-* Obsługa zestawu słuchawkowego Bluetooth
 * Samodzielna rejestracja na serwerze
 * Tokeny dostępu
 * Obsługa kodeków Opus, CELT i Speex

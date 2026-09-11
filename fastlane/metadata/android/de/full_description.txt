@@ -5,7 +5,6 @@ Einige der Funktionen:
 * Zertifikatserstellung, Import und Export
 * Durchsuchen Sie öffentliche Server
 * Sprachaktivierte Übertragung (Standardeinstellung) oder verschiedene "Zum Sprechen drücken" (Push-to-Talk) Tasten
-* Unterstützung für Bluetooth-Headsets
 * Selbstregistrierung auf dem Server
 * Zugriffstoken
 * Unterstützung für Opus-, CELT- und Speex-Codecs
