@@ -5,7 +5,6 @@ Ominaisuuksia:
 *Tuo, vie ja tee omia sertifikaatteja.
 *Selaa julkisia palvelimia
 *Käytä puheaktivoitua lähetystä (oletus) tai erillistä puhepikanäppäintä (Push-to-talk).
-*Bluetooth headset tuki.
 *Itse-rekisteröinti palvelimella.
 *Pääsyavaimet.
 *OPUS,CELT ja Speex koodekki tuki.

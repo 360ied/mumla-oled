@@ -5,7 +5,6 @@ Some of the features:
 * Certificate generation, import and export
 * Browse public servers
 * Voice activated transmission (the default), or different Push-to-talk buttons
-* Bluetooth headset support
 * Self-registration on server
 * Access tokens
 * Opus, CELT, and Speex codec support

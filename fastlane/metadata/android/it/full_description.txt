@@ -5,7 +5,6 @@ Alcune caratteristiche:
 * Generazione, importazione ed esportazione certificati
 * Sfoglia server pubblici
 * Trasmissione ad attivazione vocale (predefinita) o modalità push-to-talk
-* Supporto cuffie Bluetooth
 * Auto-registrazione sui server
 * Token d'accesso
 * Supporto codec Opus, CELT e Speex

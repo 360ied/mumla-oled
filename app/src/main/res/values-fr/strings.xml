@@ -72,7 +72,6 @@
     <string name="generateCertProgress">Génération d\'un certificat…</string>
     <string name="search">Rechercher</string>
     <string name="searchHint">Rechercher des salons et des utilisateurs</string>
-    <string name="bluetooth">Bluetooth</string>
     <string name="quickConnect">Connexion rapide</string>
     <string name="connect">Connexion</string>
     <string name="edit">Modifier</string>

@@ -5,7 +5,6 @@ Några av särdragen
 * Certifikatsgenerering, -import och -export
 * Bläddra mellan publika servrar
 * Röstaktiverad överföring (förvalt), eller olika Push-to-talk-knappar
-* Stöd för Bluetooth-headset
 * Självregistering på servern
 * Access tokens
 * Opus-, CELT- och Speex-codekstöd

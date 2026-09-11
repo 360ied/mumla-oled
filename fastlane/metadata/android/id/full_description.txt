@@ -5,7 +5,6 @@ Berbagai macam fitur yang tersedia:
 * Pembuatan, impor, dan ekspor sertifikat keamanan
 * Jelajahi server publik
 * Transmisi suara aktif secara otomatis, atau gunakan berbagai macam tombol push-to-talk
-* Dukungan untuk headset Bluetooth
 * Registrasi mandiri pada server
 * Token akses
 * Dukungan kodek Opus, CELT, dan Speex
