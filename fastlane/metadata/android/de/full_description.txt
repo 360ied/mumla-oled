@@ -13,7 +13,7 @@ Einige der Funktionen:
 * Sprachsynthese für Nachrichten (standardmäßig aktiviert)
 * Helles und dunkles Thema
 
-Die sprachaktivierte Übertragung funktioniert derzeit am besten, wenn Sie ein Headset verwenden. Echokompensation und Rauschunterdrückung erfordern Arbeit.
+Die sprachaktivierte Übertragung funktioniert derzeit am besten, wenn Sie ein Headset verwenden.
 Das Ändern des Erkennungsschwellenwerts in den Einstellungen hilft.
 
 Mumla ist eine freie Software mit Copyleft. Weitere Informationen finden Sie unter: https://mumla-app.gitlab.io/

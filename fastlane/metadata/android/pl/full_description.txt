@@ -13,7 +13,7 @@ Niektóre funkcje:
 * Tekst na mowę dla wiadomości (domyślnie włączona)
 * Jasny i ciemny motyw
 
-Transmisja aktywowana głosem działa obecnie najlepiej w przypadku korzystania z zestawu słuchawkowego. Usuwanie echa i redukcja szumów wymagają pracy.
+Transmisja aktywowana głosem działa obecnie najlepiej w przypadku korzystania z zestawu słuchawkowego.
 Dostrajanie progu wykrywania w ustawieniach pomaga.
 
 Mumla jest wolnym oprogramowaniem objętym licencją typu copyleft. Dowiedz się więcej na: https://mumla-app.gitlab.io/
