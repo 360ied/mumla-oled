@@ -13,7 +13,7 @@ Mumble sesli sohbet sistemi için bir istemci. Barındırdığınız veya toplul
 * Mesajlar için metinden konuşmaya dönüşüm (öntanımlı olarak etkindir)
 * Açık ve koyu tema
 
-Sesle etkinleştirilen iletim şu anda en iyi kulaklık kullanırken çalışır. Yankı giderme ve gürültü azaltma üzerinde çalışılması gerekiyor.
+Sesle etkinleştirilen iletim şu anda en iyi kulaklık kullanırken çalışır.
 Ayarlarda tespit eşiğini ayarlamak yardımcı olur.
 
 Mumla, copyleft lisanslı özgür yazılımdır. Daha fazla bilgi için: https://mumla-app.gitlab.io/
