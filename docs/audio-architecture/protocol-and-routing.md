@@ -69,7 +69,7 @@ For older servers or when Protobuf UDP is not negotiated, Mumla uses Mumble's le
 2. **Sequence / Frame Counter (Varint):**
    Variable-length integer containing the monotonically increasing frame number.
 3. **Payload Header (Varint):**
-   - Bits `[0..12]`: Opus payload byte size ($< 8192\text{ bytes}$).
+   - Bits `[0..12]`: Opus payload byte size (< 8192 bytes).
    - Bit `13` (`1 << 13`): Terminator flag (`isTerminator = true`).
 4. **Opus Encoded Bytes:**
    Raw compressed audio bitstream.
@@ -81,16 +81,16 @@ Implemented in [`PacketBuffer.java`](file:///home/bualy/files/devel/mumla_dev/mu
 
 Mumble utilizes a custom variable-length integer encoding optimized for 64-bit quantities:
 
-| Lead Byte Bits | Value Range | Encoded Size | Extraction Bitmask / Formula |
+| Lead Byte Bits | Value Range | Encoded Size | Extraction Bitmask / Bitwise Logic |
 |---|---|---|---|
-| `0xxxxxxx` | $0 \dots 127$ | 1 byte | $v \ \& \ 0x7F$ |
-| `10xxxxxx` | $128 \dots 16383$ | 2 bytes | $((v \ \& \ 0x3F) \ll 8) \mid \text{byte}_1$ |
-| `110xxxxx` | $16384 \dots 2097151$ | 3 bytes | $((v \ \& \ 0x1F) \ll 16) \mid (\text{byte}_1 \ll 8) \mid \text{byte}_2$ |
-| `1110xxxx` | $2097152 \dots 268435455$ | 4 bytes | $((v \ \& \ 0x0F) \ll 24) \mid \dots \mid \text{byte}_3$ |
+| `0xxxxxxx` | $0 \dots 127$ | 1 byte | `v & 0x7F` |
+| `10xxxxxx` | $128 \dots 16383$ | 2 bytes | `((v & 0x3F) << 8) \| byte1` |
+| `110xxxxx` | $16384 \dots 2097151$ | 3 bytes | `((v & 0x1F) << 16) \| (byte1 << 8) \| byte2` |
+| `1110xxxx` | $2097152 \dots 268435455$ | 4 bytes | `((v & 0x0F) << 24) \| (byte1 << 16) \| ... \| byte3` |
 | `11110000` | $0 \dots 2^{32}-1$ | 5 bytes | 32-bit big-endian integer following lead byte `0xF0` |
 | `11110100` | $0 \dots 2^{64}-1$ | 9 bytes | 64-bit big-endian integer following lead byte `0xF4` |
-| `11111000` | Negative integer | Recursive | Recursive `readLong()`, bitwise inverted ($\sim i$) |
-| `111111xx` | Negative $-1 \dots -4$ | 1 byte | Inverted two lower bits: $\sim(v \ \& \ 0x03)$ |
+| `11111000` | Negative integer | Recursive | Recursive `readLong()`, bitwise inverted (`~i`) |
+| `111111xx` | Negative $-1 \dots -4$ | 1 byte | Inverted two lower bits: `~(v & 0x03)` |
 
 ---
 
@@ -128,10 +128,12 @@ Implemented in [`AudioHandler.setMaxBandwidth()`](file:///home/bualy/files/devel
 Mumble servers enforce maximum allowed client bandwidth in the `ServerSync` protocol message (`max_bandwidth` in bits per second).
 
 ### Bandwidth Calculation Formula
-Total transmission bandwidth includes codec payload and network overhead:
-$$\text{packetsPerSecond} = \frac{100}{\text{framesPerPacket}}$$
-$$\text{overheadBps} = \text{packetsPerSecond} \times 8 \times (\text{IP\_UDP\_OVERHEAD} + \text{MUMBLE\_HEADER\_OVERHEAD})$$
-$$\text{totalBandwidth} = \text{codecBitrate} + \text{overheadBps}$$
+Total transmission bandwidth includes codec payload and network transport overhead. Let $F$ denote `framesPerPacket`:
+$$R_{\text{packet}} = \frac{100}{F} \text{ packets/s}$$
+Assuming IP/UDP overhead $H_{\text{net}} = 28\text{ bytes}$ and Mumble encryption/framing overhead $H_{\text{mumble}} \approx 4\text{ bytes}$:
+$$B_{\text{overhead}} = R_{\text{packet}} \times 8 \times (H_{\text{net}} + H_{\text{mumble}}) \text{ bps}$$
+The effective total audio bandwidth is:
+$$B_{\text{total}} = B_{\text{codec}} + B_{\text{overhead}}$$
 
 ### Adaptation Algorithm
 When the calculated bandwidth exceeds `maxBandwidth`:
