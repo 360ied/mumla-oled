@@ -126,8 +126,11 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
             new MaterialAlertDialogBuilder(mContext)
                     .setTitle(titleRes)
                     .setView(reasonField)
-                    .setPositiveButton(titleRes, (dialog, which) ->
-                            mService.kickBanUser(mUser.getSession(), reasonField.getText().toString(), isBan))
+                    .setPositiveButton(titleRes, (dialog, which) -> {
+                        if (mService != null && mService.isConnected()) {
+                            mService.kickBanUser(mUser.getSession(), reasonField.getText().toString(), isBan);
+                        }
+                    })
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
         } else if (itemId == R.id.context_mute) {

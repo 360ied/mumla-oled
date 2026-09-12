@@ -63,7 +63,6 @@
     <string name="perm_denied">权限被拒绝。</string>
     <string name="connectionRefused">连接被拒绝</string>
     <string name="confirm_delete_server">您确定要删除此服务器吗？</string>
-    <string name="confirm_delete_channel">您确定要删除此频道吗？</string>
     <string name="reset_key">重置按键</string>
     <string name="externalStorageUnavailable">外部存储不可用，无法加载证书</string>
     <string name="accessAdd">添加访问令牌</string>
@@ -113,10 +112,6 @@
     <string name="reconnect_dialog_message">您已连接到其他服务器。改为连接此服务器吗？</string>
     <string name="confirm_reset_comment">您确定要重置 %s 的简介吗？</string>
     <string name="confirm">确认</string>
-    <string name="temporary">临时</string>
-    <string name="position">位置</string>
-    <string name="channel_edit">编辑频道</string>
-    <string name="channel_add">添加频道</string>
     <string name="tts_failed">无法启用文字转语音</string>
     <string name="mumble_url_parse_failed">Mumble URL 无效。</string>
     <string name="first_run_generate_certificate_title">欢迎使用 Mumla</string>
