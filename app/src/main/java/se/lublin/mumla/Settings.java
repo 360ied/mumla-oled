@@ -197,6 +197,10 @@ public class Settings {
         preferences = prefs;
     }
 
+    public static Settings createForTesting(SharedPreferences prefs) {
+        return new Settings(prefs);
+    }
+
     public String getInputMethod() {
         String method = preferences.getString(PREF_INPUT_METHOD, ARRAY_INPUT_METHOD_VOICE);
         if(!ARRAY_INPUT_METHODS.contains(method)) {

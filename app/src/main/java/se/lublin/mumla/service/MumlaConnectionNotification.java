@@ -122,6 +122,20 @@ public class MumlaConnectionNotification {
         return overlayShown ? R.drawable.ic_action_overlay_on : R.drawable.ic_action_overlay_off;
     }
 
+    public static String cleanStatusText(String statusText) {
+        if (statusText != null && (statusText.endsWith(".") || statusText.endsWith("。"))) {
+            return statusText.substring(0, statusText.length() - 1);
+        }
+        return statusText;
+    }
+
+    public static String formatChannelName(String channelName, String defaultChannelName) {
+        if (channelName != null && !channelName.isEmpty()) {
+            return channelName;
+        }
+        return defaultChannelName;
+    }
+
     public void showConnecting(String serverName, String host, int port) {
         mContentTitle = serverName;
         mContentText = mService.getString(R.string.connecting_to_server, host);
@@ -160,9 +174,7 @@ public class MumlaConnectionNotification {
             statusText = mService.getString(R.string.connected);
         }
 
-        if (statusText.endsWith(".") || statusText.endsWith("。")) {
-            statusText = statusText.substring(0, statusText.length() - 1);
-        }
+        statusText = cleanStatusText(statusText);
 
         if (channelName != null && !channelName.isEmpty()) {
             mContentText = statusText + " • " + channelName;
@@ -171,7 +183,7 @@ public class MumlaConnectionNotification {
         }
 
         mSubText = mService.getString(R.string.connected);
-        String ch = channelName != null ? channelName : mService.getString(R.string.channel);
+        String ch = formatChannelName(channelName, mService.getString(R.string.channel));
         String srv = hostInfo != null ? hostInfo : (serverName != null ? serverName : "");
         mBigText = mService.getString(R.string.notification_connected_expanded, ch, statusText, srv);
         mActionsShown = true;
@@ -321,6 +333,11 @@ public class MumlaConnectionNotification {
                 new NotificationCompat.Builder(mService, CHANNEL_ID);
 
         boolean useBigText = mSettings.isNotificationStyleBigText();
+        if (useBigText && mMediaSession != null) {
+            mMediaSession.setActive(false);
+            mMediaSession.release();
+            mMediaSession = null;
+        }
 
         if (mContentTitle != null && !mContentTitle.isEmpty()) {
             builder.setContentTitle(mContentTitle);

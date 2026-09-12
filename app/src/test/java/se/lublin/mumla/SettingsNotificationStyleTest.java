@@ -98,10 +98,10 @@ public class SettingsNotificationStyleTest extends TestCase {
         }
     }
 
-    private static class FakeSharedPreferences implements SharedPreferences {
+    public static class FakeSharedPreferences implements SharedPreferences {
         private final Map<String, Object> mValues;
 
-        FakeSharedPreferences(Map<String, Object> values) {
+        public FakeSharedPreferences(Map<String, Object> values) {
             mValues = values;
         }
 
@@ -219,5 +219,32 @@ public class SettingsNotificationStyleTest extends TestCase {
         } catch (IllegalArgumentException expected) {
             // expected
         }
+    }
+
+    public void testSetNotificationStyleNullThrows() {
+        try {
+            mSettings.setNotificationStyle(null);
+            fail("setNotificationStyle should throw IllegalArgumentException for null");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
+    public void testEmptyNotificationStyleFallback() {
+        mPrefsMap.put(Settings.PREF_NOTIFICATION_STYLE, "");
+        assertEquals("Empty notification style preference must fall back to default bigtext",
+                Settings.DEFAULT_NOTIFICATION_STYLE,
+                mSettings.getNotificationStyle());
+        assertTrue("Empty notification style must be treated as bigtext",
+                mSettings.isNotificationStyleBigText());
+    }
+
+    public void testNullNotificationStyleFallback() {
+        mPrefsMap.put(Settings.PREF_NOTIFICATION_STYLE, null);
+        assertEquals("Null notification style preference must fall back to default bigtext",
+                Settings.DEFAULT_NOTIFICATION_STYLE,
+                mSettings.getNotificationStyle());
+        assertTrue("Null notification style must be treated as bigtext",
+                mSettings.isNotificationStyleBigText());
     }
 }
