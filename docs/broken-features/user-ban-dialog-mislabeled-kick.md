@@ -1,6 +1,6 @@
 # Bug: User Context Menu Ban Dialog Mislabeled as "Kick"
 
-**Status:** confirmed UI bug / misleading action  
+**Status:** resolved  
 **Severity:** medium (user performs permanent ban thinking it is a temporary kick)  
 **Component:** `app` UI / Context Menu  
 **Files Affected:**
@@ -53,3 +53,9 @@ new MaterialAlertDialogBuilder(mContext)
         .setNegativeButton(android.R.string.cancel, null)
         .show();
 ```
+
+---
+
+## 4. Resolution
+
+Resolved in [`UserMenu.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/UserMenu.java) by evaluating `isBan = menuItem.getItemId() == R.id.context_ban` and setting the dialog title and positive button text to `R.string.user_menu_ban` when banning and `R.string.user_menu_kick` when kicking.
