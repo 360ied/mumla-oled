@@ -4,7 +4,7 @@
 **Severity:** high (silent data loss & unhandled crash)  
 **Component:** `app` UI / Channel Management  
 **Files Affected:**
-- [`ChannelEditFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelEditFragment.java)
+- [`ChannelEditFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelEditFragment.java) (deleted)
 - [`ChannelMenu.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelMenu.java)
 
 ---
