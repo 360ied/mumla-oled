@@ -1,0 +1,21 @@
+# Inventory of Broken Features & Deficiencies
+
+This directory contains individual analysis and remediation plans for features in the Mumla OLED codebase that are definitely broken, unimplemented stubs, or suffering from critical bugs.
+
+---
+
+## Issue Index
+
+| # | Issue / Plan | Severity | Component | Summary |
+|---|---|---|---|---|
+| 1 | [Channel Editing Discards Changes & Empty Position Crashes](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/channel-editing-unimplemented.md) | High | `app` | Saving an edited channel executes `else { // TODO }`, silently dropping all user input. Clearing the position field causes an unhandled `NumberFormatException` crash. |
+| 2 | [Password-Protected Certificate Import Fails Immediately](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/password-protected-cert-import-failure.md) | High | `app` | BouncyCastle throws `IOException` on empty password load, but `storeKeystore()` only catches `CertificateException` to show the password dialog. Password-protected certificates can never be imported. |
+| 3 | [Channel Search Provider Unregistered and Prone to Deadlock](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/search-provider-orphaned-and-deadlock.md) | Med-High | `app` | `ChannelSearchProvider` is missing from `AndroidManifest.xml`, `query()` synchronously blocks the main thread for 5 seconds waiting for IPC, and `ACTION_SEARCH` is unhandled. |
+| 4 | [DatagramSocket File Descriptor Leak During Server Pings](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/favourite-server-ping-socket-leak.md) | High | `app` | `ServerInfoTask` never calls `socket.close()`, leaking a Linux socket descriptor on every server ping until the process exhausts file descriptors (`EMFILE`). |
+| 5 | [Certificate Export Error Dialog Dismissed Instantly by Activity Finish](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/certificate-export-dialog-lifecycle.md) | Medium | `app` | `finish()` is invoked unconditionally immediately after attempting export, destroying the error dialog window before it can render when export fails. |
+| 6 | [Whisper Target to Individual Users Throws UnsupportedOperationException](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/whisper-target-users-unimplemented.md) | Medium | `libraries/humla` | `WhisperTargetUsers` unconditionally throws `UnsupportedOperationException` on all methods. Incoming whisper voice packets are not differentiated. |
+| 7 | [Server Ban and User List Administration APIs Throw UnsupportedOperationException](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/server-ban-and-user-lists-unimplemented.md) | Medium | `libraries/humla` | `requestBanList()` and `requestUserList()` are empty stubs that throw `UnsupportedOperationException`. No administration UI exists. |
+| 8 | [CELT 0.11.0 Codec Disabled Due to "Robot Voices"](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/celt-11-robot-voices-disabled.md) | Medium | `libraries/humla` | Despite having the full C submodule bundled and compiled, CELT 11 negotiation is commented out during authentication due to unaddressed robotic distortion. |
+| 9 | [Priority Speaker Audio Ducking Not Implemented](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/priority-speaker-ducking-unimplemented.md) | Low-Med | `libraries/humla` | Marked as `// TODO: add priority speaker support.`, priority speakers do not duck or attenuate non-priority audio streams during playback. |
+| 10 | [User Context Menu Ban Dialog Mislabeled as "Kick"](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/user-ban-dialog-mislabeled-kick.md) | Medium | `app` | The user context menu Ban dialog hardcodes the title and positive button to "Kick", misleading admins into thinking they are issuing a temporary kick when banning. |
+| 11 | [Channel Description Editing Is an Unimplemented Stub](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/channel-description-editing-stub.md) | Low-Med | `app` | `ChannelDescriptionFragment.editComment()` is an empty `// TODO` method. |
