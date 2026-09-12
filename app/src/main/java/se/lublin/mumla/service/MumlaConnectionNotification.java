@@ -38,6 +38,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 import se.lublin.mumla.app.DrawerAdapter;
 import se.lublin.mumla.app.MumlaActivity;
 
@@ -60,6 +61,7 @@ public class MumlaConnectionNotification {
 
     private final Service mService;
     private final OnActionListener mListener;
+    private final Settings mSettings;
     private MediaSessionCompat mMediaSession;
     private String mContentTitle;
     private String mContentText;
@@ -81,14 +83,31 @@ public class MumlaConnectionNotification {
         return new MumlaConnectionNotification(service, listener);
     }
 
+    public static MumlaConnectionNotification create(Service service, OnActionListener listener, Settings settings) {
+        return new MumlaConnectionNotification(service, listener, settings);
+    }
+
     private MumlaConnectionNotification(Service service, OnActionListener listener) {
+        this(service, listener, Settings.getInstance(service));
+    }
+
+    MumlaConnectionNotification(Service service, OnActionListener listener, Settings settings) {
         mService = service;
         mListener = listener;
+        mSettings = settings != null ? settings : Settings.getInstance(service);
         mActionsShown = false;
         mReconnectingShown = false;
         mMuted = false;
         mDeafened = false;
         mOverlayShown = false;
+    }
+
+    boolean isMediaSessionActive() {
+        return mMediaSession != null && mMediaSession.isActive();
+    }
+
+    Settings getSettings() {
+        return mSettings;
     }
 
     public static int getMuteActionIcon(boolean muted) {
@@ -158,60 +177,69 @@ public class MumlaConnectionNotification {
         mActionsShown = true;
         mReconnectingShown = false;
 
-        if (mMediaSession == null) {
-            mMediaSession = new MediaSessionCompat(mService, "MumlaMediaSession");
-            mMediaSession.setCallback(new MediaSessionCompat.Callback() {
-                @Override
-                public void onCustomAction(String action, android.os.Bundle extras) {
-                    if (MumlaService.ACTION_DISCONNECT.equals(action)) {
-                        mListener.onDisconnect();
-                    } else if (MumlaService.ACTION_MUTE.equals(action)) {
-                        mListener.onMuteToggled();
-                    } else if (MumlaService.ACTION_DEAFEN.equals(action)) {
-                        mListener.onDeafenToggled();
-                    } else if (MumlaService.ACTION_TOGGLE_OVERLAY.equals(action)) {
-                        mListener.onOverlayToggled();
+        boolean useBigText = mSettings.isNotificationStyleBigText();
+        if (useBigText) {
+            if (mMediaSession != null) {
+                mMediaSession.setActive(false);
+                mMediaSession.release();
+                mMediaSession = null;
+            }
+        } else {
+            if (mMediaSession == null) {
+                mMediaSession = new MediaSessionCompat(mService, "MumlaMediaSession");
+                mMediaSession.setCallback(new MediaSessionCompat.Callback() {
+                    @Override
+                    public void onCustomAction(String action, android.os.Bundle extras) {
+                        if (MumlaService.ACTION_DISCONNECT.equals(action)) {
+                            mListener.onDisconnect();
+                        } else if (MumlaService.ACTION_MUTE.equals(action)) {
+                            mListener.onMuteToggled();
+                        } else if (MumlaService.ACTION_DEAFEN.equals(action)) {
+                            mListener.onDeafenToggled();
+                        } else if (MumlaService.ACTION_TOGGLE_OVERLAY.equals(action)) {
+                            mListener.onOverlayToggled();
+                        }
                     }
-                }
-            });
+                });
+            }
+            MediaMetadataCompat metadata = new MediaMetadataCompat.Builder()
+                    .putString(MediaMetadataCompat.METADATA_KEY_TITLE, serverName != null ? serverName : mService.getString(R.string.app_name))
+                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, mContentText)
+                    .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, ch)
+                    .build();
+            mMediaSession.setMetadata(metadata);
+
+            PlaybackStateCompat.CustomAction muteCustomAction = new PlaybackStateCompat.CustomAction.Builder(
+                    MumlaService.ACTION_MUTE,
+                    mService.getString(R.string.mute),
+                    getMuteActionIcon(muted))
+                    .build();
+            PlaybackStateCompat.CustomAction deafenCustomAction = new PlaybackStateCompat.CustomAction.Builder(
+                    MumlaService.ACTION_DEAFEN,
+                    mService.getString(R.string.deafen),
+                    getDeafenActionIcon(deafened))
+                    .build();
+            PlaybackStateCompat.CustomAction overlayCustomAction = new PlaybackStateCompat.CustomAction.Builder(
+                    MumlaService.ACTION_TOGGLE_OVERLAY,
+                    mService.getString(R.string.overlay),
+                    getOverlayActionIcon(overlayShown))
+                    .build();
+            PlaybackStateCompat.CustomAction disconnectCustomAction = new PlaybackStateCompat.CustomAction.Builder(
+                    MumlaService.ACTION_DISCONNECT,
+                    mService.getString(R.string.disconnect),
+                    R.drawable.ic_action_delete_dark)
+                    .build();
+
+            PlaybackStateCompat state = new PlaybackStateCompat.Builder()
+                    .addCustomAction(muteCustomAction)
+                    .addCustomAction(deafenCustomAction)
+                    .addCustomAction(overlayCustomAction)
+                    .addCustomAction(disconnectCustomAction)
+                    .setState(muted ? PlaybackStateCompat.STATE_PAUSED : PlaybackStateCompat.STATE_PLAYING, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1.0f)
+                    .build();
+            mMediaSession.setPlaybackState(state);
+            mMediaSession.setActive(true);
         }
-        MediaMetadataCompat metadata = new MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, serverName != null ? serverName : mService.getString(R.string.app_name))
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, mContentText)
-                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, ch)
-                .build();
-        mMediaSession.setMetadata(metadata);
-
-        PlaybackStateCompat.CustomAction muteCustomAction = new PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_MUTE,
-                mService.getString(R.string.mute),
-                getMuteActionIcon(muted))
-                .build();
-        PlaybackStateCompat.CustomAction deafenCustomAction = new PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_DEAFEN,
-                mService.getString(R.string.deafen),
-                getDeafenActionIcon(deafened))
-                .build();
-        PlaybackStateCompat.CustomAction overlayCustomAction = new PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_TOGGLE_OVERLAY,
-                mService.getString(R.string.overlay),
-                getOverlayActionIcon(overlayShown))
-                .build();
-        PlaybackStateCompat.CustomAction disconnectCustomAction = new PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_DISCONNECT,
-                mService.getString(R.string.disconnect),
-                R.drawable.ic_action_delete_dark)
-                .build();
-
-        PlaybackStateCompat state = new PlaybackStateCompat.Builder()
-                .addCustomAction(muteCustomAction)
-                .addCustomAction(deafenCustomAction)
-                .addCustomAction(overlayCustomAction)
-                .addCustomAction(disconnectCustomAction)
-                .setState(muted ? PlaybackStateCompat.STATE_PAUSED : PlaybackStateCompat.STATE_PLAYING, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1.0f)
-                .build();
-        mMediaSession.setPlaybackState(state);
-        mMediaSession.setActive(true);
 
         show();
     }
@@ -292,13 +320,20 @@ public class MumlaConnectionNotification {
         NotificationCompat.Builder builder =
                 new NotificationCompat.Builder(mService, CHANNEL_ID);
 
+        boolean useBigText = mSettings.isNotificationStyleBigText();
+
         if (mContentTitle != null && !mContentTitle.isEmpty()) {
             builder.setContentTitle(mContentTitle);
         } else {
             builder.setContentTitle(mService.getString(R.string.app_name));
         }
 
-        String text = (mBigText != null && !mBigText.isEmpty()) ? mBigText : mContentText;
+        String text;
+        if (useBigText) {
+            text = (mContentText != null && !mContentText.isEmpty()) ? mContentText : mBigText;
+        } else {
+            text = (mBigText != null && !mBigText.isEmpty()) ? mBigText : mContentText;
+        }
         if (text != null && !text.isEmpty()) {
             builder.setContentText(text);
         }
@@ -307,7 +342,7 @@ public class MumlaConnectionNotification {
             builder.setSubText(mSubText);
         }
 
-        if (mActionsShown && mMediaSession != null) {
+        if (!useBigText && mActionsShown && mMediaSession != null) {
             MediaStyle mediaStyle = new MediaStyle()
                     .setMediaSession(mMediaSession.getSessionToken())
                     .setShowActionsInCompactView(0, 1, 2);
@@ -319,7 +354,7 @@ public class MumlaConnectionNotification {
         builder.setSmallIcon(R.drawable.ic_stat_notify);
         builder.setPriority(NotificationCompat.PRIORITY_DEFAULT);
         builder.setVisibility(NotificationCompat.VISIBILITY_PUBLIC);
-        builder.setCategory(NotificationCompat.CATEGORY_TRANSPORT);
+        builder.setCategory(useBigText ? NotificationCompat.CATEGORY_SERVICE : NotificationCompat.CATEGORY_TRANSPORT);
         builder.setOnlyAlertOnce(true);
         builder.setShowWhen(false);
 

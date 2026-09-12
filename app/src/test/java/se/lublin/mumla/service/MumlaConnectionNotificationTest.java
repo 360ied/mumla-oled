@@ -75,4 +75,21 @@ public class MumlaConnectionNotificationTest extends TestCase {
             }
         }
     }
+
+    public void testNotificationStyleConstants() {
+        assertEquals("Preference key must be notification_style",
+                "notification_style",
+                se.lublin.mumla.Settings.PREF_NOTIFICATION_STYLE);
+        assertEquals("BigText style constant must match bigtext",
+                "bigtext",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_BIGTEXT);
+        assertEquals("Media style constant must match media",
+                "media",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_MEDIA);
+        assertEquals("Default style must be bigtext",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_BIGTEXT,
+                se.lublin.mumla.Settings.DEFAULT_NOTIFICATION_STYLE);
+        assertFalse("Style constants must be distinct",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_BIGTEXT.equals(se.lublin.mumla.Settings.NOTIFICATION_STYLE_MEDIA));
+    }
 }
