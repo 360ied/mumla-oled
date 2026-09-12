@@ -107,10 +107,6 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
                 (perms & ((self ? Permissions.SelfRegister : Permissions.Register) | Permissions.Write)) > 0);
         menu.findItem(R.id.context_local_mute).setVisible(!self);
         menu.findItem(R.id.context_ignore_messages).setVisible(!self);
-
-        // TODO info
-//            informationItem.enabled = (((perms & (Permissions.Write | Permissions.Register))) > 0 || (channelPermissions & (Permissions.Write | Permissions.Enter)) > 0 || (mUser.getSessionId() == mService.getSessionId()));
-
         // Highlight toggles
         menu.findItem(R.id.context_mute).setChecked(mUser.isMuted() || mUser.isSuppressed());
         menu.findItem(R.id.context_deafen).setChecked(mUser.isDeafened());
@@ -123,13 +119,15 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
     public boolean onMenuItemClick(final MenuItem menuItem) {
         int itemId = menuItem.getItemId();
         if (itemId == R.id.context_ban || itemId == R.id.context_kick) {
+            final boolean isBan = itemId == R.id.context_ban;
+            final int titleRes = isBan ? R.string.user_menu_ban : R.string.user_menu_kick;
             final EditText reasonField = new EditText(mContext);
             reasonField.setHint(R.string.hint_reason);
             new MaterialAlertDialogBuilder(mContext)
-                    .setTitle(R.string.user_menu_kick)
+                    .setTitle(titleRes)
                     .setView(reasonField)
-                    .setPositiveButton(R.string.user_menu_kick, (dialog, which) ->
-                            mService.kickBanUser(mUser.getSession(), reasonField.getText().toString(), menuItem.getItemId() == R.id.context_ban))
+                    .setPositiveButton(titleRes, (dialog, which) ->
+                            mService.kickBanUser(mUser.getSession(), reasonField.getText().toString(), isBan))
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
         } else if (itemId == R.id.context_mute) {
@@ -157,7 +155,6 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
                             mService.setUserComment(mUser.getSession(), ""))
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
-//        } else if (itemId == R.id.context_info) {
         } else if (itemId == R.id.context_register) {
             mService.registerUser(mUser.getSession());
         } else {
