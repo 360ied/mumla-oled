@@ -105,15 +105,15 @@ b_0 &= \frac{1 + \cos(\omega_0)}{2}, & b_1 &= -(1 + \cos(\omega_0)), & b_2 &= \f
 a_0 &= 1 + \alpha, & a_1 &= -2\cos(\omega_0), & a_2 &= 1 - \alpha
 \end{aligned}$$
 
-Coefficients are normalized by $a_0$:
-$$m\_b0 = \frac{b_0}{a_0}, \quad m\_b1 = \frac{b_1}{a_0}, \quad m\_b2 = \frac{b_2}{a_0}, \quad m\_a1 = \frac{a_1}{a_0}, \quad m\_a2 = \frac{a_2}{a_0}$$
+The normalized filter coefficients stored in C++ member variables (`m_b0`, `m_b1`, etc.) are:
+$$b_0' = \frac{b_0}{a_0}, \quad b_1' = \frac{b_1}{a_0}, \quad b_2' = \frac{b_2}{a_0}, \quad a_1' = \frac{a_1}{a_0}, \quad a_2' = \frac{a_2}{a_0}$$
 
 ### Direct Form II Transposed Difference Equations
 For each sample $x[n]$:
 $$\begin{aligned}
-y[n] &= m\_b0 \cdot x[n] + z_1[n-1] \\
-z_1[n] &= m\_b1 \cdot x[n] - m\_a1 \cdot y[n] + z_2[n-1] \\
-z_2[n] &= m\_b2 \cdot x[n] - m\_a2 \cdot y[n]
+y[n] &= b_0' \cdot x[n] + z_1[n-1] \\
+z_1[n] &= b_1' \cdot x[n] - a_1' \cdot y[n] + z_2[n-1] \\
+z_2[n] &= b_2' \cdot x[n] - a_2' \cdot y[n]
 \end{aligned}$$
 
 The output $y[n]$ is clamped to $[-32768, 32767]$ and written back in place to the frame buffer.
@@ -165,23 +165,23 @@ Standard single-threshold voice activation causes rapid flickering (chatter) at 
 
 ### Acoustic Energy & Squelch Gate
 1. **RMS Energy Calculation:**
-   $$\text{micLevel} = \sqrt{\frac{1}{N}\sum_{i=0}^{N-1} x[i]^2}$$
-   $$\text{peakDb} = 20 \log_{10}\left(\frac{\text{micLevel}}{32768.0}\right)$$
+   $$x_{\text{rms}} = \sqrt{\frac{1}{N}\sum_{i=0}^{N-1} x[i]^2}$$
+   $$E_{\text{dBFS}} = 20 \log_{10}\left(\frac{x_{\text{rms}}}{32768.0}\right)$$
 2. **Hard Squelch Floor (`squelchMinDb`, default -65.0 dBFS):**
-   - If $\text{peakDb} < -65.0\text{ dBFS}$, the signal is deemed absolute silence/ambient room noise, and $\text{score} = 0.0$.
-   - If $\text{peakDb} \ge -65.0\text{ dBFS}$, the score is taken directly from RNNoise's neural speech probability $P_{\text{speech}}$:
+   - If $E_{\text{dBFS}} < -65.0\text{ dBFS}$, the signal is deemed absolute silence/ambient room noise, and $\text{score} = 0.0$.
+   - If $E_{\text{dBFS}} \ge -65.0\text{ dBFS}$, the score is taken directly from RNNoise's neural speech probability $P_{\text{speech}}$:
      $$\text{score} = P_{\text{speech}}$$
-     *(If RNNoise is disabled, score falls back to normalized logarithmic peak energy: $1.0 + \frac{\text{peakDb}}{96.0}$)*.
+     *(If RNNoise is disabled, score falls back to normalized logarithmic peak energy: $1.0 + \frac{E_{\text{dBFS}}}{96.0}$)*.
 
 ### Hysteresis State Machine
 
 | Current State | Condition | Next State | Hangover Counter Action |
 |---|---|---|---|
-| **Passive** | $\text{score} \ge \text{vadMax}$ ($0.35$) | **Speaking** | Set `currentHold = holdFrames` ($25$) |
-| **Passive** | $\text{score} < \text{vadMax}$ ($0.35$) | **Passive** | `currentHold = 0` |
-| **Speaking** | $\text{score} \ge \text{vadMin}$ ($0.25$) | **Speaking** | Reset `currentHold = holdFrames` ($25$) |
-| **Speaking** | $\text{score} < \text{vadMin}$ AND $\text{currentHold} > 0$ | **Speaking** | Decrement `currentHold--` |
-| **Speaking** | $\text{score} < \text{vadMin}$ AND $\text{currentHold} == 0$ | **Passive** | `currentHold = 0` |
+| **Passive** | `score` $\ge$ `vadMax` ($0.35$) | **Speaking** | Set `currentHold = holdFrames` ($25$) |
+| **Passive** | `score` < `vadMax` ($0.35$) | **Passive** | `currentHold = 0` |
+| **Speaking** | `score` $\ge$ `vadMin` ($0.25$) | **Speaking** | Reset `currentHold = holdFrames` ($25$) |
+| **Speaking** | `score` < `vadMin` and `currentHold` > 0 | **Speaking** | Decrement `currentHold--` |
+| **Speaking** | `score` < `vadMin` and `currentHold` == 0 | **Passive** | `currentHold = 0` |
 
 - **`vadMax` (default 0.35):** Upper threshold required to trigger voice transmission from silence.
 - **`vadMin` (default 0.25):** Lower threshold required to sustain voice transmission once speaking.
@@ -201,20 +201,20 @@ The adaptive leveler automatically normalizes conversational loudness so users w
 - **Speech Gate:** Only adapts when $P_{\text{speech}} \ge 0.30$ (or fallback RMS $\ge 400.0$) **AND** frame RMS $\ge 150.0$. This prevents the leveler from boosting background noise during pauses.
 
 ### Exponential Moving Average (EMA)
-When speech is detected:
-$$\text{smoothedRms} = (1 - \alpha) \cdot \text{smoothedRms} + \alpha \cdot \text{frameRms}$$
+When speech is detected, the long-term speech loudness $R_{\text{smoothed}}$ is updated via EMA:
+$$R_{\text{smoothed}} = (1 - \alpha) \cdot R_{\text{smoothed}} + \alpha \cdot R_{\text{frame}}$$
 Where $\alpha = 0.004$ corresponds to a $\sim 2.5$-second time constant over 100 frames/second.
 
-The raw target gain is:
-$$\text{rawTarget} = \frac{\text{targetRms}}{\text{smoothedRms}}$$
-$$\text{targetGain} = \text{clamp}(\text{rawTarget}, 0.25, 4.0)$$
+The raw target gain $G_{\text{raw}}$ and bounded target gain $G_{\text{target}}$ are calculated as:
+$$G_{\text{raw}} = \frac{R_{\text{target}}}{R_{\text{smoothed}}}$$
+$$G_{\text{target}} = \text{clamp}(G_{\text{raw}}, 0.25, 4.0)$$
 
 ### Slew Rate Limiter & Sample Interpolation
 To avoid sudden gain jumps that cause audible clicks or breathing artifacts:
 - **Maximum Gain Slew:** $\pm 0.006$ per 10ms frame ($\approx 0.05\text{ dB/frame}$ or $\approx 5\text{ dB/second}$).
-- **Linear Sample Interpolation:** Across the 480 samples of a frame, gain transitions linearly:
-  $$\text{gainStep} = \frac{\text{currentGain} - \text{prevGain}}{479}$$
-  $$\text{effectiveGain}[i] = (\text{prevGain} + i \cdot \text{gainStep}) \times \text{amplitudeBoost}$$
+- **Linear Sample Interpolation:** Across the 480 samples ($N = 480$) of a frame, gain transitions linearly:
+  $$\Delta G = \frac{G_{\text{current}} - G_{\text{prev}}}{N - 1}$$
+  $$G[i] = (G_{\text{prev}} + i \cdot \Delta G) \times \text{amplitudeBoost}$$
 
 ---
 
