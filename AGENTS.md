@@ -55,6 +55,14 @@
 - **Semantic Versioning**: Uses `0.X.X`. `versionName` is resolved dynamically via `git describe --tags --match "[0-9]*.[0-9]*.[0-9]*" --always`.
 - **Release Tagging**: Tag releases using annotated Git tags: `git tag -a <version> -m "Release <version>"`.
 
+## Documentation & Markdown Standards
+- **GitHub Flavored Markdown (GFM)**: All documentation (`docs/`, `README.md`, skills, guidelines) must target GFM as rendered by GitHub's web interface (KaTeX math engine).
+- **Math Block Delimiters**: Use GitHub's fenced ```` ```math ```` code block syntax for display equations; avoid ambiguous `$$ ... $$` delimiters.
+- **Blank Line Isolation**: Always isolate math blocks with blank lines before and after. Never place math blocks directly adjacent to text paragraphs or within lists without blank line separation (CommonMark paragraph rules will fold them into inline text, unescaping LaTeX `\\` newlines into `\` and corrupting KaTeX parsing).
+- **Inline Math**: Use `$ ... $` with no internal padding whitespace (e.g., `$x$` rather than `$ x $`).
+- **List Compatibility**: Use inline math expressions inside bullet points or numbered lists, or place math blocks at the top level between list items to prevent list enumeration splitting.
+
 ## Licensing
 - **Project License**: GNU General Public License v3.0 or later (`GPL-3.0-or-later`).
 - **File Headers**: New source files must include the standard GPL-3.0-or-later header; do not use Apache, MIT, or other permissive/incompatible licenses.
+
