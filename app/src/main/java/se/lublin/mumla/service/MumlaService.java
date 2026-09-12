@@ -653,6 +653,11 @@ public class MumlaService extends HumlaService implements
                 updateOverlayVisibility();
                 updateConnectedNotification();
                 break;
+            case Settings.PREF_NOTIFICATION_STYLE:
+                if (isConnectionEstablished()) {
+                    updateConnectedNotification();
+                }
+                break;
             case Settings.PREF_OVERLAY_PLACEMENT:
                 if (mChannelOverlay != null && mChannelOverlay.isShown()) {
                     mChannelOverlay.updatePosition();

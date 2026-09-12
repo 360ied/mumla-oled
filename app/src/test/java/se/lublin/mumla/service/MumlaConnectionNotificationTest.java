@@ -20,6 +20,7 @@ package se.lublin.mumla.service;
 import junit.framework.TestCase;
 
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 
 public class MumlaConnectionNotificationTest extends TestCase {
 
@@ -74,5 +75,12 @@ public class MumlaConnectionNotificationTest extends TestCase {
                         actions[i].equals(actions[j]));
             }
         }
+    }
+
+    public void testNotificationStyleConstants() {
+        assertEquals("standard", Settings.NOTIFICATION_STYLE_STANDARD);
+        assertEquals("media", Settings.NOTIFICATION_STYLE_MEDIA);
+        assertEquals("notification_style", Settings.PREF_NOTIFICATION_STYLE);
+        assertEquals(Settings.NOTIFICATION_STYLE_STANDARD, Settings.DEFAULT_NOTIFICATION_STYLE);
     }
 }
