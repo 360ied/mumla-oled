@@ -329,15 +329,7 @@ public class AudioHandler extends HumlaNetworkListener
     public void messageCodecVersion(Mumble.CodecVersion msg) {
         if (!mInitialized) return;
 
-        HumlaUDPMessageType codec;
-        if (msg.hasOpus() && msg.getOpus()) {
-            codec = HumlaUDPMessageType.UDPVoiceOpus;
-        } else if (msg.hasBeta() && !msg.getPreferAlpha()) {
-            codec = HumlaUDPMessageType.UDPVoiceCELTBeta;
-        } else {
-            codec = HumlaUDPMessageType.UDPVoiceCELTAlpha;
-        }
-
+        HumlaUDPMessageType codec = HumlaUDPMessageType.UDPVoiceOpus;
         if (codec != mCodec) {
             setCodec(codec);
         }
@@ -398,7 +390,7 @@ public class AudioHandler extends HumlaNetworkListener
             return;
         }
 
-        if (mProtobufUdp && (mCodec == null || mCodec == HumlaUDPMessageType.UDPVoiceOpus)) {
+        if (mProtobufUdp) {
             MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
             if (mTargetId != 0) {
                 audioBuilder.setTarget(mTargetId & 0xFF);
@@ -418,8 +410,7 @@ public class AudioHandler extends HumlaNetworkListener
             }
         } else {
             int flags = 0;
-            HumlaUDPMessageType msgType = (mCodec != null) ? mCodec : HumlaUDPMessageType.UDPVoiceOpus;
-            flags |= msgType.ordinal() << 5;
+            flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
             flags |= mTargetId & 0x1F;
 
             mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);

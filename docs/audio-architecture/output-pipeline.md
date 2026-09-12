@@ -15,7 +15,7 @@ flowchart TD
 
     subgraph PerUser ["Per-Talker Session Pipeline (AudioOutputSpeech)"]
         AO -->|"Session Lookup / Create"| AOS["AudioOutputSpeech (Session N)"]
-        AOS -->|"Put Packet"| JITTER["Speex JitterBuffer (10-Frame Margin)"]
+        AOS -->|"Put Packet"| JITTER["Adaptive JitterBuffer (10-Frame Margin)"]
         JITTER -->|"Packet Availability Tracking"| TWANG["Twang Prevention (Underrun Delay)"]
         TWANG --> FRAME_Q["mFrames (ConcurrentLinkedQueue)"]
     end
@@ -23,7 +23,7 @@ flowchart TD
     subgraph Threading_And_Mixing ["Parallel Decoding & Playback Engine"]
         AO_THREAD["AudioOutput Playback Thread (URGENT_AUDIO)"] -->|"fetchAudio()"| POOL["mDecodeExecutorService (Fixed Thread Pool)"]
         POOL -->|"invokeAll(mAudioOutputs.values())"| WORKERS["Concurrent Workers"]
-        WORKERS -->|"Opus / CELT / Speex Decode"| DEC["Decoders (Native via JavaCPP)"]
+        WORKERS -->|"Opus Decode"| DEC["OpusDecoder (libopus via JavaCPP)"]
         DEC -->|"Packet Loss Concealment (PLC)"| FADE["Sine Fade-in / Fade-out"]
         FADE -->|"AudioOutputSpeech.Result"| MIXER["BasicClippingShortMixer"]
         MIXER -->|"Sum & Clip to [-1.0, 1.0]"| TRACK["AudioTrack (MODE_STREAM @ 48kHz)"]
@@ -73,16 +73,14 @@ Audio packets arrive asynchronously over the network via two ingestion endpoints
 
 Implemented in [`AudioOutputSpeech.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java).
 
-Each active talker owns an independent instance of Speex's native jitter buffer (`Speex.JitterBuffer`).
+Each active talker owns an independent instance of the native adaptive jitter buffer ([`JitterBuffer.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/JitterBuffer.java)).
 
 ### Buffer Initialization & Margin
 - **Frame Granularity:** 480 samples (10ms).
 - **Margin Configuration:**
   ```java
-  mJitterBuffer = new Speex.JitterBuffer(AudioHandler.FRAME_SIZE);
-  IntPointer margin = new IntPointer(1);
-  margin.put(10 * AudioHandler.FRAME_SIZE); // 100ms margin
-  mJitterBuffer.control(Speex.JitterBuffer.JITTER_BUFFER_SET_MARGIN, margin);
+  mJitterBuffer = new JitterBuffer(AudioHandler.FRAME_SIZE);
+  mJitterBuffer.setMargin(10 * AudioHandler.FRAME_SIZE); // 100ms margin
   ```
 
 ### Underrun Mitigation ("Twang" Prevention)
@@ -109,23 +107,23 @@ To eliminate this:
 
 ---
 
-## 4. Multi-Codec Decoding & Loss Concealment
+## 4. Modern Opus Decoding & Loss Concealment
 
-Each [`AudioOutputSpeech`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java) instantiates a decoder conforming to [`IDecoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/IDecoder.java):
+Each [`AudioOutputSpeech`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java) instantiates an [`Opus.OpusDecoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/javacpp/Opus.java):
 
 | Codec Message Type | Native Implementation | JavaCPP Wrapper Class | Typical Frame Sizes |
 |---|---|---|---|
 | `UDPVoiceOpus` | `libopus` (`jniopus`) | [`Opus.OpusDecoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/javacpp/Opus.java) | 10ms, 20ms, 40ms, 60ms @ 48kHz |
-| `UDPVoiceCELTBeta` | `libcelt` 0.11.0 (`jnicelt11`) | [`CELT11.CELT11Decoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/javacpp/CELT11.java) | 10ms (480 samples) @ 48kHz |
-| `UDPVoiceCELTAlpha` | `libcelt` 0.7.0 (`jnicelt7`) | [`CELT7.CELT7Decoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/javacpp/CELT7.java) | 10ms (480 samples) @ 48kHz |
-| `UDPVoiceSpeex` | `libspeex` (`jnispeex`) | [`Speex.SpeexDecoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/javacpp/Speex.java) | Narrowband / Wideband |
+
+> [!NOTE]
+> Obsolete legacy codecs (`CELT 0.7.0`, `CELT 0.11.0`, and `Speex`) were dropped in modern Mumla OLED to match upstream Mumble 1.5+ desktop parity, reduce attack surface, and eliminate ~2.1 MB of unused native shared libraries. Legacy incoming voice packets are dropped at connection ingress ([`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java)).
 
 ### Packet Loss Concealment (PLC)
 When the jitter buffer cannot supply a packet for the current tick (`mFrames.isEmpty()`), the pipeline invokes the decoder with a null buffer:
 ```java
 decodedSamples = mDecoder.decodeFloat(null, 0, mOut, AudioHandler.FRAME_SIZE);
 ```
-Both Opus and CELT utilize native PLC algorithms (interpolating pitch periods and extrapolating spectral envelopes) to smoothly fill packet loss gaps without audible clicks.
+Opus utilizes native PLC algorithms (interpolating pitch periods and extrapolating spectral envelopes) to smoothly fill packet loss gaps without audible clicks.
 
 ### Windowed Smooth Transitions (Fade-In / Fade-Out)
 To prevent step-function DC pops when speech streams start or stop, decoded samples are windowed using quarter-sine curves across the 10ms frame (where $N = 480$ is `AudioHandler.FRAME_SIZE`):

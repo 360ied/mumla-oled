@@ -107,13 +107,13 @@ public class ServerInfoFragment extends HumlaServiceFragment {
                     codecName = "Opus";
                     break;
                 case UDPVoiceCELTBeta:
-                    codecName = "CELT 0.11.0";
+                    codecName = "CELT 0.11.0 (Unsupported)";
                     break;
                 case UDPVoiceCELTAlpha:
-                    codecName = "CELT 0.7.0";
+                    codecName = "CELT 0.7.0 (Unsupported)";
                     break;
                 case UDPVoiceSpeex:
-                    codecName = "Speex";
+                    codecName = "Speex (Unsupported)";
                     break;
                 default:
                     codecName = "???";
