@@ -45,7 +45,7 @@ public class ChannelDescriptionFragment extends AbstractCommentFragment {
 
     @Override
     public void editComment(IHumlaService service, String comment) {
-        // TODO
+        throw new UnsupportedOperationException("Channel description editing is not supported");
     }
 
     private int getChannelId() {
