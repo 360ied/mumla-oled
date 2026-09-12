@@ -658,6 +658,13 @@ public class MumlaService extends HumlaService implements
                     mChannelOverlay.updatePosition();
                 }
                 break;
+            case Settings.PREF_NOTIFICATION_STYLE:
+                if (isConnectionEstablished()) {
+                    updateConnectedNotification();
+                } else if (mNotification != null) {
+                    mNotification.show();
+                }
+                break;
             case Settings.PREF_AMPLITUDE_BOOST:
                 changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
                         mSettings.getAmplitudeBoostMultiplier());
