@@ -118,13 +118,7 @@ public interface IHumlaSession {
 
     void moveUserToChannel(int session, int channel);
 
-    void createChannel(int parent, String name, String description, int position, boolean temporary);
-
     void sendAccessTokens(List<String> tokens);
-
-    void requestBanList();
-
-    void requestUserList();
 
     void requestPermissions(int channel);
 
@@ -145,8 +139,6 @@ public interface IHumlaSession {
     void setUserComment(int session, String comment);
 
     void setPrioritySpeaker(int session, boolean priority);
-
-    void removeChannel(int channel);
 
     void setMuteDeafState(int session, boolean mute, boolean deaf);
 

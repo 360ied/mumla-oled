@@ -986,29 +986,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
-    public void createChannel(int parent, String name, String description, int position, boolean temporary) {
-        Mumble.ChannelState.Builder csb = Mumble.ChannelState.newBuilder();
-        csb.setParent(parent);
-        csb.setName(name);
-        csb.setDescription(description);
-        csb.setPosition(position);
-        csb.setTemporary(temporary);
-        getConnection().sendTCPMessage(csb.build(), HumlaTCPMessageType.ChannelState);
-    }
-
-    @Override
     public void sendAccessTokens(final List<String> tokens) {
         getConnection().sendAccessTokens(tokens);
-    }
-
-    @Override
-    public void requestBanList() {
-        throw new UnsupportedOperationException("Not yet implemented"); // TODO
-    }
-
-    @Override
-    public void requestUserList() {
-        throw new UnsupportedOperationException("Not yet implemented"); // TODO
     }
 
     @Override
@@ -1113,13 +1092,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         usb.setSession(session);
         usb.setPrioritySpeaker(priority);
         getConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState);
-    }
-
-    @Override
-    public void removeChannel(int channel) {
-        Mumble.ChannelRemove.Builder crb = Mumble.ChannelRemove.newBuilder();
-        crb.setChannelId(channel);
-        getConnection().sendTCPMessage(crb.build(), HumlaTCPMessageType.ChannelRemove);
     }
 
     @Override

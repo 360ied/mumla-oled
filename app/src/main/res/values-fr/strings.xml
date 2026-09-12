@@ -62,7 +62,6 @@
     <string name="perm_denied">Permission refusée.</string>
     <string name="connectionRefused">Connexion refusée</string>
     <string name="confirm_delete_server">Êtes-vous sûr(e) vouloir supprimer ce serveur \?</string>
-    <string name="confirm_delete_channel">Êtes-vous sûr·e de vouloir supprimer ce salon \?</string>
     <string name="reset_key">Réinitialiser la touche</string>
     <string name="externalStorageUnavailable">Stockage externe indisponible, impossible de charger le certificat</string>
     <string name="accessAdd">Ajouter un jeton d\'accès</string>
@@ -112,10 +111,6 @@
     <string name="reconnect_dialog_message">Vous êtes déjà connecté·e à un serveur. Se connecter à ce serveur à la place \?</string>
     <string name="confirm_reset_comment">Êtes-vous sûr·e de vouloir remettre à zéro le commentaire de l\'utilisateur %s \?</string>
     <string name="confirm">Confirmer</string>
-    <string name="temporary">Temporaire</string>
-    <string name="position">Position</string>
-    <string name="channel_edit">Éditer le salon</string>
-    <string name="channel_add">Ajouter un salon</string>
     <string name="tts_failed">Erreur de l\'initialisation de TTS</string>
     <string name="mumble_url_parse_failed">L\'URL Mumble n\'est pas valide.</string>
     <string name="first_run_generate_certificate_title">Bienvenue dans Mumla</string>

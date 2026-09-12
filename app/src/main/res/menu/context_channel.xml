@@ -24,18 +24,6 @@
         android:icon="@drawable/ic_action_move"
         app:showAsAction="ifRoom"
         />
-    <item android:id="@+id/context_channel_add"
-        android:title="@string/add"
-        app:showAsAction="never"
-        />
-    <item android:id="@+id/context_channel_edit"
-        android:title="@string/edit"
-        app:showAsAction="never"
-        />
-    <item android:id="@+id/context_channel_remove"
-        android:title="@string/remove"
-        app:showAsAction="never"
-        />
     <item android:id="@+id/context_channel_link"
           android:title="@string/context_channel_link"
           android:checkable="true"
