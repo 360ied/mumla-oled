@@ -1,6 +1,6 @@
 # Broken Feature: Channel Description Editing Is an Unimplemented Stub
 
-**Status:** confirmed unimplemented stub  
+**Status:** closed (out of scope / feature removed)  
 **Severity:** low-medium  
 **Component:** `app` Channel Management  
 **Files Affected:**
@@ -50,3 +50,9 @@ public void editComment(IHumlaService service, String comment) {
     service.HumlaSession().getConnection().sendTCPMessage(csb.build(), HumlaTCPMessageType.ChannelState);
 }
 ```
+
+---
+
+## 4. Resolution
+
+Server administration and channel modification have been designated out of scope for the Mumla mobile client. `ChannelDescriptionFragment` is strictly a read-only viewer (`editing = false`) for reading channel descriptions and rules, and its `editComment()` stub now throws `UnsupportedOperationException("Channel description editing is not supported")` to prevent silent no-op execution if ever invoked.

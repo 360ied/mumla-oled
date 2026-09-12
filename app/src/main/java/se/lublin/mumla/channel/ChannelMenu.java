@@ -39,7 +39,6 @@ import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.Server;
 import se.lublin.humla.model.WhisperTargetChannel;
-import se.lublin.humla.net.Permissions;
 import se.lublin.humla.util.VoiceTargetMode;
 import se.lublin.mumla.R;
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment;
@@ -68,11 +67,6 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
 
     @Override
     public void onMenuPrepare(Menu menu, int permissions) {
-        // TODO This breaks uMurmur ACL. Put in a fix based on server version perhaps?
-        //menu.getMenu().findItem(R.id.menu_channel_add)
-        // .setVisible((permissions & (Permissions.MakeChannel | Permissions.MakeTempChannel)) > 0);
-        menu.findItem(R.id.context_channel_edit).setVisible((permissions & Permissions.Write) > 0);
-        menu.findItem(R.id.context_channel_remove).setVisible((permissions & Permissions.Write) > 0);
         menu.findItem(R.id.context_channel_view_description)
                 .setVisible(mChannel.getDescription() != null ||
                         mChannel.getDescriptionHash() != null);
@@ -108,29 +102,6 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
         int itemId = item.getItemId();
         if (itemId == R.id.context_channel_join) {
             mService.HumlaSession().joinChannel(mChannel.getId());
-        } else if (itemId == R.id.context_channel_add || itemId == R.id.context_channel_edit) {
-            Bundle args = new Bundle();
-            if (itemId == R.id.context_channel_add) {
-                args.putInt("parent", mChannel.getId());
-                args.putBoolean("adding", true);
-            } else {
-                args.putInt("channel", mChannel.getId());
-                args.putBoolean("adding", false);
-            }
-            ChannelEditFragment addFragment = new ChannelEditFragment();
-            addFragment.setArguments(args);
-            addFragment.show(mFragmentManager, "ChannelAdd");
-        } else if (itemId == R.id.context_channel_remove) {
-            new MaterialAlertDialogBuilder(mContext)
-                    .setTitle(R.string.confirm)
-                    .setMessage(R.string.confirm_delete_channel)
-                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        if (mService.isConnected()) {
-                            mService.HumlaSession().removeChannel(mChannel.getId());
-                        }
-                    })
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show();
         } else if (itemId == R.id.context_channel_view_description) {
             Bundle commentArgs = new Bundle();
             commentArgs.putInt("channel", mChannel.getId());

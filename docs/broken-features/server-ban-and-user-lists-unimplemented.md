@@ -1,6 +1,6 @@
 # Broken Feature: Server Ban and User List Administration APIs Throw UnsupportedOperationException
 
-**Status:** confirmed unimplemented stubs  
+**Status:** closed (out of scope / removed)  
 **Severity:** medium  
 **Component:** `libraries/humla` Protocol / Server Administration  
 **Files Affected:**
@@ -47,3 +47,9 @@ These methods were declared during the initial architecture of the `humla` libra
    - Build UI fragments in `app` to display and manipulate the ban list and user list.
 2. **If Server Administration UI Is Out of Scope:**
    - Remove these dead methods from `IHumlaSession` and `HumlaService` to prevent unexpected runtime crashes, or safely no-op them with appropriate logging.
+
+---
+
+## 4. Resolution
+
+Full server administration has been formally designated as out of scope for the Mumla mobile client. The unused, crashing stubs `requestBanList()` and `requestUserList()` have been completely deleted from [`IHumlaSession`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java) and [`HumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), eliminating dead APIs and potential crash vectors.

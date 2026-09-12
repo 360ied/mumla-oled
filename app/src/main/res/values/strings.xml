@@ -87,7 +87,6 @@
     <string name="perm_denied">Permission denied.</string>
     <string name="connectionRefused">Connection refused</string>
     <string name="confirm_delete_server">Are you sure you want to delete this server?</string>
-    <string name="confirm_delete_channel">Are you sure you want to delete this channel?</string>
     <string name="no_ptt_key">No Key</string>
     <string name="reset_key">Reset Key</string>
     <string name="externalStorageUnavailable">External storage unavailable, cannot load certificate</string>
@@ -138,10 +137,6 @@
     <string name="reconnect_dialog_message">You are already connected to a server. Connect to this server instead?</string>
     <string name="confirm_reset_comment">Are you sure you want to reset the comment of user %s?</string>
     <string name="confirm">Confirm</string>
-    <string name="temporary">Temporary</string>
-    <string name="position">Position</string>
-    <string name="channel_edit">Edit Channel</string>
-    <string name="channel_add">Add Channel</string>
     <string name="tts_failed">Could not start TTS</string>
     <string name="tts_failed_engine">Could not start TTS engine: %s</string>
     <string name="mumble_url_parse_failed">Mumble URL is not valid.</string>
