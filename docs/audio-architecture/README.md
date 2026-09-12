@@ -6,7 +6,7 @@ This directory provides comprehensive documentation of the audio architecture in
 
 ## 1. Executive Summary & Topology
 
-The Mumla audio subsystem is an asynchronous, multi-threaded, low-latency voice pipeline designed for real-time interactive communication over the Mumble protocol. It handles full-duplex VoIP at 48,000 Hz, with 10ms frame quantization (480 samples), deep neural noise suppression (RNNoise), pre-speech lookahead buffering, dual-threshold hysteresis voice activity detection (VAD), speech-gated adaptive leveling, soft-knee saturation limiting, mandatory constant bitrate (CBR) Opus encoding, Speex jitter buffering, parallelized multi-user decoding, and audio track mixing.
+The Mumla audio subsystem is an asynchronous, multi-threaded, low-latency voice pipeline designed for real-time interactive communication over the Mumble protocol. It handles full-duplex VoIP at 48,000 Hz, with 10ms frame quantization (480 samples), deep neural noise suppression (RNNoise), pre-speech lookahead buffering, dual-threshold hysteresis voice activity detection (VAD), speech-gated adaptive leveling, soft-knee saturation limiting, mandatory constant bitrate (CBR) Opus encoding, adaptive jitter buffering, parallelized multi-user decoding, and audio track mixing.
 
 ```mermaid
 flowchart TB
@@ -42,9 +42,9 @@ flowchart TB
     subgraph OutputPath ["Decoding, Mixing & Playback Pipeline"]
         AO["AudioOutput (Dispatcher & Mixer Thread)"]
         AOS["AudioOutputSpeech (Per-User Session)"]
-        JITTER["Speex JitterBuffer (10-Frame Margin)"]
+        JITTER["Adaptive JitterBuffer (10-Frame Margin)"]
         POOL["ExecutorService (Parallel Worker Threads)"]
-        DEC["Decoders (Opus, CELT 0.7, CELT 0.11, Speex)"]
+        DEC["OpusDecoder (libopus via JavaCPP)"]
         MIX["BasicClippingShortMixer"]
         AT["AudioTrack (MODE_STREAM @ 48kHz)"]
     end
@@ -98,7 +98,7 @@ flowchart TB
 | **Opus Encoder** | [`OpusVoiceEncoder.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.h)<br>[`OpusVoiceEncoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp) | Mandatory Hard Constant Bitrate (CBR, `VBR=0`, `VBR_CONSTRAINT=0`) Opus voice encoder (VOIP mode, fullband, complexity 10, in-band FEC, 10% loss adaptation, `DTX=0`) eliminating side-channel packet-length leakage. |
 | **Protocol Audio Handler** | [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) | Mediates between network packet listeners and local input/output engines. Manages dynamic bandwidth capping, talk-state broadcast, half-duplex stream muting, and packet serialization (MumbleUDP Protobuf vs legacy UDP). |
 | **Playback & Dispatcher** | [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) | Maintains user speech streams in `Map<Integer, AudioOutputSpeech>`. Runs dedicated playback thread feeding Android `AudioTrack`, dispatching parallel decode tasks across available CPU cores. |
-| **User Stream & Jitter** | [`AudioOutputSpeech.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java) | Manages Speex `JitterBuffer` for a single talker session. Handles average packet availability tracking (underrun prevention), packet loss concealment (PLC), sine-window fade-in/out, and codec decoding. |
+| **User Stream & Jitter** | [`AudioOutputSpeech.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java)<br>[`JitterBuffer.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/JitterBuffer.java) | Manages native adaptive `JitterBuffer` for a single talker session. Handles average packet availability tracking (underrun prevention), packet loss concealment (PLC), sine-window fade-in/out, and Opus decoding. |
 | **Software Mixer** | [`BasicClippingShortMixer.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/BasicClippingShortMixer.java)<br>[`IAudioMixer.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/IAudioMixer.java) | Sums float PCM sources from concurrent talkers into 16-bit short output buffer with clipping to [-1.0, 1.0]. |
 | **Network Framing & Varints** | [`PacketBuffer.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/PacketBuffer.java)<br>[`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java) | Handles variable-length 64-bit integer packing/unpacking, Protobuf UDP tunnel encapsulation, and UDP-to-TCP fallback. |
 | **Audio Routing & Settings** | [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)<br>[`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java)<br>[`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java) | Controls handset vs loudspeaker routing (`STREAM_VOICE_CALL` vs `STREAM_MUSIC`), proximity sensor wake locks, Bluetooth SCO state, PTT hot corners, and user audio preferences. |
@@ -120,7 +120,7 @@ For deep technical analysis, mathematical formulas, state machine tables, and pr
    - Mandatory Hard Constant Bitrate (CBR) Opus voice encoding
 2. **[Output Pipeline, Jitter & Mixing Architecture](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/audio-architecture/output-pipeline.md)**
    - Inbound packet demuxing and per-session routing
-   - Speex Jitter Buffer configuration and margin control
+   - Adaptive Jitter Buffer configuration and margin control
    - Buffer underrun prevention and robotic "twang" suppression
    - Multi-threaded parallel decoding pool (`ExecutorService`)
    - Packet Loss Concealment (PLC) and sine fade-in/fade-out
@@ -130,4 +130,4 @@ For deep technical analysis, mathematical formulas, state machine tables, and pr
    - Dynamic bandwidth capping and frame-per-packet throttling
    - Audio routing (Handset Mode vs Loudspeaker Mode, Proximity Sensor)
    - Half-duplex stream muting and acoustic loop prevention
-   - Codec support matrix (Opus, CELT 0.7, CELT 0.11 status, Speex)
+   - Codec support matrix (Opus-only modern pipeline, legacy codec deprecation)

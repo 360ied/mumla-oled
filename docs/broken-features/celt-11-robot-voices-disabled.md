@@ -1,50 +1,34 @@
-# Broken Feature: CELT 0.11.0 Codec Disabled Due to "Robot Voices"
+# Legacy Feature: CELT and Speex Codecs Dropped
 
-**Status:** confirmed disabled codec / bug in native decoding  
-**Severity:** medium (codec incompatibility with older CELT 11 servers)  
+**Status:** Closed (Deprecated / Dropped)  
+**Severity:** Low (Obsolescence / Technical Debt)  
 **Component:** `libraries/humla` Audio Engine / Codecs  
 **Files Affected:**
 - [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
 - [`AudioOutputSpeech.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java)
-- [`libraries/humla/src/main/jni/celt-0.11.0-src/`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/celt-0.11.0-src/)
+- [`libraries/humla/src/main/jni/Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
+- [`.gitmodules`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/.gitmodules)
 
 ---
 
 ## 1. Problem Description
 
-Mumble historically used two distinct versions of the experimental CELT codec before Opus was adopted:
+Mumble historically used two distinct versions of the experimental CELT codec before Opus was standardized in 2012 (RFC 6716) and adopted in Mumble 1.2.4 (2013):
 - CELT 0.7.0 (`CELTAlpha`, bitstream `0x8000000b`)
 - CELT 0.11.0 (`CELTBeta`, bitstream `0x80000010`)
+- Speex (`UDPVoiceSpeex`, narrowband / wideband legacy codec)
 
-The Mumla repository includes the full native source submodule for CELT 0.11.0 under `libraries/humla/src/main/jni/celt-0.11.0-src`, builds it as part of `libjnicelt11.so`, and contains decoding plumbing in `CELT11.java` and `AudioOutputSpeech.java`.
+In earlier Mumla builds, CELT 0.11.0 decoding produced severe robotic audio distortion ("robot voices") and was commented out from client authentication. Furthermore, Mumla's native microphone engine only implements Opus encoding, meaning transmission on legacy CELT servers was non-functional.
 
-However, in `HumlaService.java` (lines 360–371), CELT 0.11.0 is explicitly disabled during server authentication:
-
-```java
-final Mumble.Authenticate.Builder auth = Mumble.Authenticate.newBuilder();
-auth.setUsername(mServer.getUsername());
-auth.setPassword(mServer.getPassword());
-auth.addCeltVersions(CELT7.getBitstreamVersion());
-// FIXME: resolve issues with CELT 11 robot voices.
-// auth.addCeltVersions(Constants.CELT_11_VERSION);
-auth.setOpus(mUseOpus);
-```
-
-Because `auth.addCeltVersions(Constants.CELT_11_VERSION)` is commented out, Mumble servers will never negotiate CELT 0.11.0 with Mumla.
+Upstream Mumble dropped all legacy codecs (CELT and Speex) entirely in Mumble 1.5.0 (commit `4d05018c2`, PR #4538) because Opus has been universally supported across all Mumble servers and clients for over a decade.
 
 ---
 
-## 2. Technical Root Cause
+## 2. Architectural Resolution
 
-During earlier development, decoding CELT 0.11.0 streams on Android produced severe audio degradation described in the codebase as "robot voices". Rather than resolving the sample rate, frame sizing (e.g. 480 vs 960 samples), or JNI buffer alignment issues in `AudioOutputSpeech`, the codec was commented out from client authentication.
+Rather than expending maintenance effort on obsolete pre-2013 codecs:
+1. **Dropped CELT & Speex Codecs:** Completely removed `celt-0.7.0-src`, `celt-0.11.0-src`, and `speex` git submodules, along with `libjnicelt7.so`, `libjnicelt11.so`, and `libjnispeex.so`.
+2. **In-Tree Adaptive Jitter Buffer:** Replaced the JavaCPP `Speex.JitterBuffer` with an in-tree native implementation compiled directly into `libhumlaaudio.so` (`audio_engine/jitter/`), decoupling jitter buffering from the Speex codebase while eliminating per-frame allocations in Java.
+3. **Upstream Protocol Parity:** Authentication sends no CELT versions (`auth.addCeltVersions`), and incoming voice traffic is strictly Opus, matching upstream desktop Mumble 1.5+ behavior.
+4. **Binary Footprint Reduction:** Stripped ~2.1 MB of dead native libraries from universal APK builds across all 4 target ABIs.
 
----
-
-## 3. Remediation Plan
-
-1. **Investigate Frame Size & Buffer Alignment in `AudioOutputSpeech`:**
-   Inspect how `AudioOutputSpeech.java` handles `UDPVoiceCELTBeta`. Ensure that the frame size passed to `CELT11.celt_decode_float()` matches the server's negotiated frame size and sample rate (48kHz).
-2. **Test With Reference C++ Implementation:**
-   Compare the decoding pipeline with upstream `../mumble/src/mumble/AudioOutputSpeech.cpp` to verify exact bitstream version negotiation and packet loss concealment behavior.
-3. **Re-enable CELT 11 Authentication:**
-   Uncomment `auth.addCeltVersions(Constants.CELT_11_VERSION)` once audio rendering is validated without distortion.

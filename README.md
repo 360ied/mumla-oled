@@ -43,7 +43,7 @@ flowchart LR
 
 Mumla OLED connects your Android device directly to self-hosted or public Mumble voice servers:
 
-- **Low-Latency Voice Communication**: Communicate in real-time with full support for Opus (as well as legacy Speex and CELT codecs for backwards compatibility with older servers).
+- **Low-Latency Voice Communication**: Communicate in real-time with high-performance Opus audio encoding and decoding (obsolete legacy CELT and Speex codecs have been purged for security and binary efficiency).
 - **Flexible Transmission Modes**:
   - **Voice Activity Detection (VAD)**: Dual-threshold hysteresis VAD with adaptive voice leveling and pre-speech ring buffering.
   - **Push-to-Talk (PTT)**: Ultra-responsive on-screen button, volume key triggers, or a persistent hot corner overlay.
@@ -115,12 +115,9 @@ mumla-oled/
 ├── libraries/humla/                  # Core protocol & audio library (:libraries:humla)
 │   ├── src/main/java/se/lublin/humla/ # Mumble protocol, Netty/TCP/UDP, service state
 │   ├── src/main/jni/                 # Native C/C++ audio subsystem
-│   │   ├── audio_engine/             # RNNoise wrapper, Adaptive Leveler, Biquad filter, VAD
+│   │   ├── audio_engine/             # RNNoise wrapper, Adaptive Leveler, Biquad filter, VAD, JitterBuffer
 │   │   ├── opus/                     # Submodule: Xiph.Org Opus codec
-│   │   ├── rnnoise/                  # Submodule: Mozilla RNNoise neural network
-│   │   ├── celt-0.7.0-src/           # Submodule: CELT 0.7.0 legacy codec
-│   │   ├── celt-0.11.0-src/          # Submodule: CELT 0.11.0 legacy codec
-│   │   └── speex/                    # Submodule: Speex legacy codec & resampler
+│   │   └── rnnoise/                  # Submodule: Mozilla RNNoise neural network
 │   └── src/test/cpp/                 # Native C++ DSP unit test harness
 ├── scripts/                          # Automated development & verification tooling
 │   ├── worktree.py                   # Isolated Git worktree manager
@@ -141,7 +138,7 @@ Mumla OLED is built exclusively as a **100% FOSS** client without proprietary Go
 - **JDK**: Java 21 (OpenJDK recommended)
 - **Android SDK**: Compile SDK 36, Min SDK 21
 - **Android NDK**: Version `25.1.8937393`
-- **Submodules**: Git submodules must be checked out for native codecs (`opus`, `rnnoise`, `celt`, `speex`).
+- **Submodules**: Git submodules must be checked out for native libraries (`opus`, `rnnoise`).
 
 ### Option A: Hermetic Build with Nix (Recommended)
 
