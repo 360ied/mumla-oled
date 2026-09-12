@@ -46,6 +46,16 @@
         <item>forceBlack</item>
     </string-array>
 
+    <string-array name="notificationStyleNames">
+        <item>@string/notification_style_bigtext</item>
+        <item>@string/notification_style_media</item>
+    </string-array>
+
+    <string-array name="notificationStyleValues">
+        <item>bigtext</item>
+        <item>media</item>
+    </string-array>
+
     <string-array name="hotCornerNames">
         <item>@string/hot_corner_none</item>
         <item>@string/hot_corner_top_left</item>

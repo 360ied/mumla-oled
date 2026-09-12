@@ -65,6 +65,9 @@
     <string name="audio">Audio</string>
     <string name="chatNotifications">Chat notifications</string>
     <string name="chatNotificationsSum">Shown for new chat messages.</string>
+    <string name="pref_notification_style">Persistent notification style</string>
+    <string name="notification_style_bigtext">BigText style (standard)</string>
+    <string name="notification_style_media">Media style (media controls)</string>
     <string name="defaultUsername">Default username</string>
     <string name="defaultUsernameSum">Prefilled name used when adding a server.</string>
     <string name="defaultUsernameDefault">Mumla_User</string>

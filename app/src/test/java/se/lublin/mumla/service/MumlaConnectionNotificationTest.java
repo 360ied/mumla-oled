@@ -75,4 +75,46 @@ public class MumlaConnectionNotificationTest extends TestCase {
             }
         }
     }
+
+    public void testNotificationStyleConstants() {
+        assertEquals("Preference key must be notification_style",
+                "notification_style",
+                se.lublin.mumla.Settings.PREF_NOTIFICATION_STYLE);
+        assertEquals("BigText style constant must match bigtext",
+                "bigtext",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_BIGTEXT);
+        assertEquals("Media style constant must match media",
+                "media",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_MEDIA);
+        assertEquals("Default style must be bigtext",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_BIGTEXT,
+                se.lublin.mumla.Settings.DEFAULT_NOTIFICATION_STYLE);
+        assertFalse("Style constants must be distinct",
+                se.lublin.mumla.Settings.NOTIFICATION_STYLE_BIGTEXT.equals(se.lublin.mumla.Settings.NOTIFICATION_STYLE_MEDIA));
+    }
+
+    public void testCleanStatusText() {
+        assertEquals("Connected", MumlaConnectionNotification.cleanStatusText("Connected."));
+        assertEquals("已连接", MumlaConnectionNotification.cleanStatusText("已连接。"));
+        assertEquals("Muted", MumlaConnectionNotification.cleanStatusText("Muted"));
+        assertNull(MumlaConnectionNotification.cleanStatusText(null));
+    }
+
+    public void testFormatChannelName() {
+        assertEquals("Lobby", MumlaConnectionNotification.formatChannelName("Lobby", "Channel"));
+        assertEquals("Channel", MumlaConnectionNotification.formatChannelName("", "Channel"));
+        assertEquals("Channel", MumlaConnectionNotification.formatChannelName(null, "Channel"));
+    }
+
+    public void testNotificationInstanceHooks() {
+        se.lublin.mumla.Settings settings = se.lublin.mumla.Settings.createForTesting(
+                new se.lublin.mumla.SettingsNotificationStyleTest.FakeSharedPreferences(new java.util.HashMap<>()));
+        MumlaConnectionNotification notification = new MumlaConnectionNotification(null, null, settings);
+        assertSame(settings, notification.getSettings());
+        assertFalse(notification.isMediaSessionActive());
+
+        MumlaConnectionNotification created = MumlaConnectionNotification.create(null, null, settings);
+        assertSame(settings, created.getSettings());
+        assertFalse(created.isMediaSessionActive());
+    }
 }

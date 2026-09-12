@@ -37,6 +37,9 @@
     <string name="audio">Audio</string>
     <string name="chatNotifications">Notifications du chat</string>
     <string name="chatNotificationsSum">S\'affiche pour les nouveaux messages.</string>
+    <string name="pref_notification_style">Style de notification persistante</string>
+    <string name="notification_style_bigtext">Style BigText (standard)</string>
+    <string name="notification_style_media">Style multimédia (contrôles média)</string>
     <string name="defaultUsername">Nom d\'utilisateur par défaut</string>
     <string name="defaultUsernameSum">Nom prérempli utilisé lors de l\'ajout d\'un serveur ou de la connexion à un serveur public.</string>
     <string name="defaultUsernameDefault">Utilisateur_Mumla</string>
