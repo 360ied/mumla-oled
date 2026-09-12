@@ -250,7 +250,7 @@ public class AudioOutput implements Runnable, AudioOutputSpeech.TalkStateListene
         if (!mRunning)
             return;
 
-        int session = (int) audioMsg.getSenderSession();
+        int session = audioMsg.getSenderSession();
         User user = mListener.getUser(session);
         if (user != null && !user.isLocalMuted()) {
             mPacketLock.lock();

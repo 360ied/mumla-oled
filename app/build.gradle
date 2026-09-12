@@ -37,7 +37,7 @@ if (signingFile.exists()) apply from: signingFile
 allprojects {
     tasks.withType(JavaCompile) {
         // TODO include deprecations at some point, but currently they are *many*
-        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann"
+        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
     }
 }
 
@@ -92,8 +92,8 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled true
-            shrinkResources true
+            minifyEnabled = true
+            shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             applicationIdSuffix ".oled15"
             resValue "string", "app_name", "Mumla OLED"

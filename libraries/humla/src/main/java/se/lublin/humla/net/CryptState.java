@@ -362,9 +362,9 @@ public class CryptState {
         public static void S3(final byte[] block) {
             final int carry = (block[0] >> SHIFTBITS) & 0x1;
             for (int i = 0; i < AES_BLOCK_SIZE - 1; i++) {
-                block[i] ^= (block[i] << 1) | ((block[i + 1] >> SHIFTBITS) & 0x1);
+                block[i] = (byte) (block[i] ^ ((block[i] << 1) | ((block[i + 1] >> SHIFTBITS) & 0x1)));
             }
-            block[AES_BLOCK_SIZE - 1] ^= ((block[AES_BLOCK_SIZE - 1] << 1) ^ (carry * 0x87));
+            block[AES_BLOCK_SIZE - 1] = (byte) (block[AES_BLOCK_SIZE - 1] ^ ((block[AES_BLOCK_SIZE - 1] << 1) ^ (carry * 0x87)));
         }
 
         public static void ZERO(final byte[] block) {

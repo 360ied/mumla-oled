@@ -48,7 +48,7 @@ dependencies {
 allprojects {
     tasks.withType(JavaCompile) {
         // TODO include deprecations at some point, but currently they are *many*
-        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann"
+        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
     }
 }
 
