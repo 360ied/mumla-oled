@@ -4,9 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    buildprof.url = "github:360ied/buildprof/nix-flake";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, buildprof }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -55,6 +56,7 @@
             pkgs.cmark
             pkgs.cmark-gfm
             pkgs.prettier
+            buildprof.packages.${system}.default
             androidSdk
           ];
 
