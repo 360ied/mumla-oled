@@ -37,6 +37,9 @@
     <string name="audio">音频</string>
     <string name="chatNotifications">聊天提醒</string>
     <string name="chatNotificationsSum">显示新文字消息提醒。</string>
+    <string name="pref_notification_style">常驻通知样式</string>
+    <string name="notification_style_bigtext">BigText 样式（标准）</string>
+    <string name="notification_style_media">媒体样式（播放控件）</string>
     <string name="defaultUsername">默认用户名</string>
     <string name="defaultUsernameSum">添加新服务器或连接到公共服务器时使用的默认用户名。</string>
     <string name="defaultUsernameDefault">Mumla_User</string>

@@ -84,6 +84,11 @@ public class Settings {
     public static final String PREF_CHAT_NOTIFY = "chatNotify";
     public static final Boolean DEFAULT_CHAT_NOTIFY = true;
 
+    public static final String PREF_NOTIFICATION_STYLE = "notification_style";
+    public static final String NOTIFICATION_STYLE_BIGTEXT = "bigtext";
+    public static final String NOTIFICATION_STYLE_MEDIA = "media";
+    public static final String DEFAULT_NOTIFICATION_STYLE = NOTIFICATION_STYLE_BIGTEXT;
+
     public static final String PREF_USE_TTS = "useTts";
     public static final Boolean DEFAULT_USE_TTS = true;
 
@@ -190,6 +195,10 @@ public class Settings {
 
     Settings(SharedPreferences prefs) {
         preferences = prefs;
+    }
+
+    public static Settings createForTesting(SharedPreferences prefs) {
+        return new Settings(prefs);
     }
 
     public String getInputMethod() {
@@ -306,6 +315,26 @@ public class Settings {
 
     public boolean isChatNotifyEnabled() {
         return preferences.getBoolean(PREF_CHAT_NOTIFY, DEFAULT_CHAT_NOTIFY);
+    }
+
+    public String getNotificationStyle() {
+        String style = preferences.getString(PREF_NOTIFICATION_STYLE, DEFAULT_NOTIFICATION_STYLE);
+        if (!NOTIFICATION_STYLE_MEDIA.equals(style) && !NOTIFICATION_STYLE_BIGTEXT.equals(style)) {
+            return DEFAULT_NOTIFICATION_STYLE;
+        }
+        return style;
+    }
+
+    public boolean isNotificationStyleBigText() {
+        return NOTIFICATION_STYLE_BIGTEXT.equals(getNotificationStyle());
+    }
+
+    public void setNotificationStyle(String style) {
+        if (NOTIFICATION_STYLE_BIGTEXT.equals(style) || NOTIFICATION_STYLE_MEDIA.equals(style)) {
+            preferences.edit().putString(PREF_NOTIFICATION_STYLE, style).apply();
+        } else {
+            throw new IllegalArgumentException("Invalid notification style: " + style);
+        }
     }
 
     public boolean isTextToSpeechEnabled() {

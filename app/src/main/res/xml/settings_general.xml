@@ -26,6 +26,15 @@
         android:title="@string/chatNotifications"
         app:iconSpaceReserved="false" />
 
+    <ListPreference
+        android:key="notification_style"
+        android:defaultValue="bigtext"
+        android:title="@string/pref_notification_style"
+        android:entries="@array/notificationStyleNames"
+        android:entryValues="@array/notificationStyleValues"
+        app:useSimpleSummaryProvider="true"
+        app:iconSpaceReserved="false" />
+
     <CheckBoxPreference
         android:key="stay_awake"
         android:defaultValue="true"
