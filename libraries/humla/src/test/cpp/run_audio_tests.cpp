@@ -24,6 +24,7 @@ void run_soft_limiter_tests();
 void run_pre_speech_ring_buffer_tests();
 void run_adaptive_leveler_tests();
 void run_hysteresis_vad_tests();
+void run_jitter_buffer_tests();
 
 int main() {
     std::cout << "========================================" << std::endl;
@@ -43,6 +44,9 @@ int main() {
     std::cout << std::endl;
 
     run_hysteresis_vad_tests();
+    std::cout << std::endl;
+
+    run_jitter_buffer_tests();
     std::cout << std::endl;
 
     std::cout << "========================================" << std::endl;

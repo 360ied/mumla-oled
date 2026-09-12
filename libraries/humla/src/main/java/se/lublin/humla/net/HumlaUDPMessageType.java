@@ -18,9 +18,12 @@
 package se.lublin.humla.net;
 
 public enum HumlaUDPMessageType {
+    @Deprecated
     UDPVoiceCELTAlpha,
     UDPPing,
+    @Deprecated
     UDPVoiceSpeex,
+    @Deprecated
     UDPVoiceCELTBeta,
     UDPVoiceOpus
 }

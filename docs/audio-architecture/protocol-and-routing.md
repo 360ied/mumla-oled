@@ -185,7 +185,7 @@ Whenever the user presses the PTT button to transmit, incoming playback audio is
 
 | Codec | Bitstream Identifier | Encoding Support | Decoding Support | Operational Status & Notes |
 |---|---|---|---|---|
-| **Opus** | `UDPVoiceOpus` (`0x04`) | **Yes** (Native C++ Hard CBR) | **Yes** (Native via JavaCPP) | **Primary production codec.** Mandatory for all modern servers. |
-| **CELT 0.7.0** | `UDPVoiceCELTAlpha` (`0x02`) | No (Deprecated) | **Yes** (Native via JavaCPP) | Backward compatibility for legacy Mumble 1.2.x servers. |
-| **CELT 0.11.0** | `UDPVoiceCELTBeta` (`0x03`) | No (Deprecated) | Disabled in auth | Submodule built (`libjnicelt11.so`), but commented out in `HumlaService` auth due to historical "robot voice" decoding bug (see [`broken-features/celt-11-robot-voices-disabled.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/broken-features/celt-11-robot-voices-disabled.md)). |
-| **Speex** | `UDPVoiceSpeex` (`0x00`) | No (Deprecated) | **Yes** (Native via JavaCPP) | Legacy fallback. `libspeex` also provides the native `JitterBuffer` implementation used across all incoming audio streams. |
+| **Opus** | `UDPVoiceOpus` (`0x04`) | **Yes** (Native C++ Hard CBR) | **Yes** (Native via JavaCPP) | **Sole production codec.** Mandatory for all modern Mumble servers. |
+| **CELT 0.7.0** | `UDPVoiceCELTAlpha` (`0x02`) | No (Removed) | No (Dropped) | Dropped (upstream Mumble 1.5+ desktop parity). Inbound packets dropped at connection ingress. |
+| **CELT 0.11.0** | `UDPVoiceCELTBeta` (`0x03`) | No (Removed) | No (Dropped) | Dropped (upstream Mumble 1.5+ desktop parity). Historically broken ("robot voices", Issue #8). Inbound packets dropped. |
+| **Speex** | `UDPVoiceSpeex` (`0x00`) | No (Removed) | No (Dropped) | Dropped (upstream Mumble 1.5+ desktop parity). Adaptive `JitterBuffer` decoupled and maintained in-tree. |

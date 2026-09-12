@@ -47,7 +47,6 @@ import se.lublin.humla.audio.inputmode.ActivityInputMode;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
 import se.lublin.humla.audio.inputmode.IInputMode;
 import se.lublin.humla.audio.inputmode.ToggleInputMode;
-import se.lublin.humla.audio.javacpp.CELT7;
 import se.lublin.humla.exception.AudioException;
 import se.lublin.humla.exception.NotConnectedException;
 import se.lublin.humla.exception.NotSynchronizedException;
@@ -360,9 +359,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         final Mumble.Authenticate.Builder auth = Mumble.Authenticate.newBuilder();
         auth.setUsername(mServer.getUsername());
         auth.setPassword(mServer.getPassword());
-        auth.addCeltVersions(CELT7.getBitstreamVersion());
-        // FIXME: resolve issues with CELT 11 robot voices.
-//            auth.addCeltVersions(Constants.CELT_11_VERSION);
         auth.setOpus(mUseOpus);
         auth.addAllTokens(mAccessTokens);
 
