@@ -62,7 +62,7 @@ TODO:
 #define speex_alloc(size) calloc(1, (size))
 #define speex_free(ptr) free(ptr)
 #define speex_assert(cond) assert(cond)
-#define SPEEX_MOVE(dst, src, n) memmove((dst), (src), (n))
+#define SPEEX_MOVE(dst, src, n) memmove((dst), (src), (n)*sizeof(*(dst)))
 #define ABS(x) ((x) < 0 ? (-(x)) : (x))
 #define MAX32(a, b) ((a) > (b) ? (a) : (b))
 #define EXPORT

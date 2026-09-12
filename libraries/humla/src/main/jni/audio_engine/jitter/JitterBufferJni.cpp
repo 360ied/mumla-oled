@@ -82,6 +82,11 @@ Java_se_lublin_humla_audio_JitterBuffer_nativePut(JNIEnv* env, jclass /*clazz*/,
         return;
     }
 
+    jsize dataLen = env->GetArrayLength(data);
+    if (length > dataLen) {
+        length = dataLen;
+    }
+
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     if (bytes == nullptr) {
         return;
@@ -105,6 +110,10 @@ Java_se_lublin_humla_audio_JitterBuffer_nativeGet(JNIEnv* env, jclass /*clazz*/,
                                                   jobject directBuffer, jint desiredSpan, jintArray outInfo) {
     auto* jb = reinterpret_cast<JitterBuffer*>(handle);
     if (jb == nullptr || directBuffer == nullptr || outInfo == nullptr) {
+        return JITTER_BUFFER_BAD_ARGUMENT;
+    }
+
+    if (env->GetArrayLength(outInfo) < 3) {
         return JITTER_BUFFER_BAD_ARGUMENT;
     }
 

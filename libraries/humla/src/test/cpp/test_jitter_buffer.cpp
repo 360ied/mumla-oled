@@ -170,6 +170,46 @@ void testJitterBufferMarginAndTick() {
     std::cout << "  [PASS] testJitterBufferMarginAndTick" << std::endl;
 }
 
+void testJitterBufferAdaptiveTimingHistogram() {
+    g_testCount++;
+    JitterBuffer* jb = jitter_buffer_init(480);
+    TEST_ASSERT(jb != nullptr);
+
+    int margin = 4800; // 100ms
+    jitter_buffer_ctl(jb, JITTER_BUFFER_SET_MARGIN, &margin);
+
+    // Simulate 50 packets with varying jitter and arrival delays to exercise tb_add
+    // and the SPEEX_MOVE macro that shifts elements in the timing buffer.
+    char dummyPayload[] = "test_payload_for_timing_histogram";
+    for (int i = 0; i < 50; i++) {
+        JitterBufferPacket pkt;
+        pkt.data = dummyPayload;
+        pkt.len = sizeof(dummyPayload);
+        pkt.timestamp = i * 480;
+        pkt.span = 480;
+        pkt.sequence = static_cast<spx_uint16_t>(i);
+        pkt.user_data = i;
+
+        jitter_buffer_put(jb, &pkt);
+
+        char outBuf[128];
+        JitterBufferPacket getPkt;
+        getPkt.data = outBuf;
+        getPkt.len = sizeof(outBuf);
+        spx_int32_t startOffset = 0;
+        int res = jitter_buffer_get(jb, &getPkt, 480, &startOffset);
+        if (res == JITTER_BUFFER_OK) {
+            TEST_ASSERT(getPkt.len > 0);
+        }
+
+        jitter_buffer_update_delay(jb, &getPkt, &startOffset);
+        jitter_buffer_tick(jb);
+    }
+
+    jitter_buffer_destroy(jb);
+    std::cout << "  [PASS] testJitterBufferAdaptiveTimingHistogram" << std::endl;
+}
+
 } // namespace
 
 void run_jitter_buffer_tests() {
@@ -178,4 +218,5 @@ void run_jitter_buffer_tests() {
     testJitterBufferPutAndGet();
     testJitterBufferOutOfOrderPackets();
     testJitterBufferMarginAndTick();
+    testJitterBufferAdaptiveTimingHistogram();
 }
