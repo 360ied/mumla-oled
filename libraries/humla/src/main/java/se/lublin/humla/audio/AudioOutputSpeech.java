@@ -21,10 +21,10 @@ package se.lublin.humla.audio;
 import java.nio.BufferOverflowException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Queue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import se.lublin.humla.audio.javacpp.Opus;
 import se.lublin.humla.exception.NativeAudioException;
@@ -58,7 +58,7 @@ public class AudioOutputSpeech implements Callable<AudioOutputSpeech.Result> {
     private float[] mOut;
     private final float[] mFadeOut;
     private final float[] mFadeIn;
-    private final Queue<ByteBuffer> mFrames = new ConcurrentLinkedQueue<>();
+    private final Queue<ByteBuffer> mFrames = new ArrayDeque<>();
     private int mMissCount = 0;
     private boolean mHasTerminator = false;
     private boolean mLastAlive = true;
