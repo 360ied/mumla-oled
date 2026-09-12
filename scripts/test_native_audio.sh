@@ -14,7 +14,9 @@ CXX="${CXX:-g++}"
 
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -UNDEBUG \
     -I "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine" \
+    -I "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/jitter" \
     -I "$ROOT_DIR/libraries/humla/src/test/cpp" \
+    "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/SoftLimiter.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp" \
@@ -24,6 +26,7 @@ CXX="${CXX:-g++}"
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_pre_speech_ring_buffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_adaptive_leveler.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_hysteresis_vad.cpp" \
+    "$ROOT_DIR/libraries/humla/src/test/cpp/test_jitter_buffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/run_audio_tests.cpp" \
     -o "$BUILD_DIR/test_audio_engine"
 

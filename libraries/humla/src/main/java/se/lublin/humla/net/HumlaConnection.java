@@ -941,11 +941,13 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             case UDPPing:
                 handler.messageUDPPing(data);
                 break;
+            case UDPVoiceOpus:
+                handler.messageVoiceData(data, messageType);
+                break;
             case UDPVoiceCELTAlpha:
             case UDPVoiceSpeex:
             case UDPVoiceCELTBeta:
-            case UDPVoiceOpus:
-                handler.messageVoiceData(data, messageType);
+                // Silently drop unsupported legacy codec packets (parity with upstream Mumble 1.5+)
                 break;
         }
     }
