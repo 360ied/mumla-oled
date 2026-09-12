@@ -129,10 +129,13 @@ Both Opus and CELT utilize native PLC algorithms (interpolating pitch periods an
 
 ### Windowed Smooth Transitions (Fade-In / Fade-Out)
 To prevent step-function DC pops when speech streams start or stop, decoded samples are windowed using quarter-sine curves across the 10ms frame (where $N = 480$ is `AudioHandler.FRAME_SIZE`):
-- **Fade-In:** Applied to the first decoded frame of an utterance (`ts == 0`):
-  $$w_{\text{in}}[i] = \sin\left(\frac{i \pi}{2 N}\right), \quad 0 \le i < N$$
-- **Fade-Out:** Applied to the final terminating frame (`!nextAlive`):
-  $$w_{\text{out}}[i] = \sin\left(\frac{(N - 1 - i) \pi}{2 N}\right), \quad 0 \le i < N$$
+
+```math
+\begin{aligned}
+\text{Fade-In } (ts = 0): \quad & w_{\text{in}}[i] = \sin\left(\frac{i \pi}{2 N}\right), \quad 0 \le i < N \\
+\text{Fade-Out } (!\text{nextAlive}): \quad & w_{\text{out}}[i] = \sin\left(\frac{(N - 1 - i) \pi}{2 N}\right), \quad 0 \le i < N
+\end{aligned}
+```
 
 In the code, these curves are precomputed into `mFadeIn` and `mFadeOut` arrays during initialization.
 

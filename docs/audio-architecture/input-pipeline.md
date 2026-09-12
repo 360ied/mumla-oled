@@ -100,21 +100,29 @@ Mobile device microphones frequently pick up infrasonic energy from wind buffeti
 ### Coefficient Equations
 Given $\omega_0 = 2\pi \frac{f_c}{f_s}$ and $\alpha = \frac{\sin(\omega_0)}{2Q}$:
 
-$$\begin{aligned}
+```math
+\begin{aligned}
 b_0 &= \frac{1 + \cos(\omega_0)}{2}, & b_1 &= -(1 + \cos(\omega_0)), & b_2 &= \frac{1 + \cos(\omega_0)}{2} \\
 a_0 &= 1 + \alpha, & a_1 &= -2\cos(\omega_0), & a_2 &= 1 - \alpha
-\end{aligned}$$
+\end{aligned}
+```
 
 The normalized filter coefficients stored in C++ member variables (`m_b0`, `m_b1`, etc.) are:
-$$b_0' = \frac{b_0}{a_0}, \quad b_1' = \frac{b_1}{a_0}, \quad b_2' = \frac{b_2}{a_0}, \quad a_1' = \frac{a_1}{a_0}, \quad a_2' = \frac{a_2}{a_0}$$
+
+```math
+b_0' = \frac{b_0}{a_0}, \quad b_1' = \frac{b_1}{a_0}, \quad b_2' = \frac{b_2}{a_0}, \quad a_1' = \frac{a_1}{a_0}, \quad a_2' = \frac{a_2}{a_0}
+```
 
 ### Direct Form II Transposed Difference Equations
 For each sample $x[n]$:
-$$\begin{aligned}
+
+```math
+\begin{aligned}
 y[n] &= b_0' \cdot x[n] + z_1[n-1] \\
 z_1[n] &= b_1' \cdot x[n] - a_1' \cdot y[n] + z_2[n-1] \\
 z_2[n] &= b_2' \cdot x[n] - a_2' \cdot y[n]
-\end{aligned}$$
+\end{aligned}
+```
 
 The output $y[n]$ is clamped to $[-32768, 32767]$ and written back in place to the frame buffer.
 
@@ -151,8 +159,7 @@ static RNNModel *ModelFromBuffer(const uint8_t *data, size_t size) {
 ### Processing & Speech Probability
 1. 16-bit PCM samples are converted to `float` in `m_floatIn`.
 2. `rnnoise_process_frame(m_state, m_floatOut.data(), m_floatIn.data())` processes the frame in place.
-3. The function returns a scalar neural speech probability:
-   $$P_{\text{speech}} \in [0.0, 1.0]$$
+3. The function returns a scalar neural speech probability: $P_{\text{speech}} \in [0.0, 1.0]$.
 4. Output float samples are clamped and converted back to 16-bit PCM in `outPcm`.
 
 ---
@@ -165,13 +172,18 @@ Standard single-threshold voice activation causes rapid flickering (chatter) at 
 
 ### Acoustic Energy & Squelch Gate
 1. **RMS Energy Calculation:**
-   $$x_{\text{rms}} = \sqrt{\frac{1}{N}\sum_{i=0}^{N-1} x[i]^2}$$
-   $$E_{\text{dBFS}} = 20 \log_{10}\left(\frac{x_{\text{rms}}}{32768.0}\right)$$
+
+```math
+\begin{aligned}
+x_{\text{rms}} &= \sqrt{\frac{1}{N}\sum_{i=0}^{N-1} x[i]^2} \\
+E_{\text{dBFS}} &= 20 \log_{10}\left(\frac{x_{\text{rms}}}{32768.0}\right)
+\end{aligned}
+```
+
 2. **Hard Squelch Floor (`squelchMinDb`, default -65.0 dBFS):**
    - If $E_{\text{dBFS}} < -65.0\text{ dBFS}$, the signal is deemed absolute silence/ambient room noise, and $\text{score} = 0.0$.
-   - If $E_{\text{dBFS}} \ge -65.0\text{ dBFS}$, the score is taken directly from RNNoise's neural speech probability $P_{\text{speech}}$:
-     $$\text{score} = P_{\text{speech}}$$
-     *(If RNNoise is disabled, score falls back to normalized logarithmic peak energy: $1.0 + \frac{E_{\text{dBFS}}}{96.0}$)*.
+   - If $E_{\text{dBFS}} \ge -65.0\text{ dBFS}$, the score is taken directly from RNNoise's neural speech probability: $\text{score} = P_{\text{speech}}$.
+   - *(If RNNoise is disabled, score falls back to normalized logarithmic peak energy: $1.0 + \frac{E_{\text{dBFS}}}{96.0}$)*.
 
 ### Hysteresis State Machine
 
@@ -202,19 +214,33 @@ The adaptive leveler automatically normalizes conversational loudness so users w
 
 ### Exponential Moving Average (EMA)
 When speech is detected, the long-term speech loudness $R_{\text{smoothed}}$ is updated via EMA:
-$$R_{\text{smoothed}} = (1 - \alpha) \cdot R_{\text{smoothed}} + \alpha \cdot R_{\text{frame}}$$
+
+```math
+R_{\text{smoothed}} = (1 - \alpha) \cdot R_{\text{smoothed}} + \alpha \cdot R_{\text{frame}}
+```
+
 Where $\alpha = 0.004$ corresponds to a $\sim 2.5$-second time constant over 100 frames/second.
 
 The raw target gain $G_{\text{raw}}$ and bounded target gain $G_{\text{target}}$ are calculated as:
-$$G_{\text{raw}} = \frac{R_{\text{target}}}{R_{\text{smoothed}}}$$
-$$G_{\text{target}} = \text{clamp}(G_{\text{raw}}, 0.25, 4.0)$$
+
+```math
+\begin{aligned}
+G_{\text{raw}} &= \frac{R_{\text{target}}}{R_{\text{smoothed}}} \\
+G_{\text{target}} &= \text{clamp}(G_{\text{raw}}, 0.25, 4.0)
+\end{aligned}
+```
 
 ### Slew Rate Limiter & Sample Interpolation
 To avoid sudden gain jumps that cause audible clicks or breathing artifacts:
 - **Maximum Gain Slew:** $\pm 0.006$ per 10ms frame ($\approx 0.05\text{ dB/frame}$ or $\approx 5\text{ dB/second}$).
 - **Linear Sample Interpolation:** Across the 480 samples ($N = 480$) of a frame, gain transitions linearly:
-  $$\Delta G = \frac{G_{\text{current}} - G_{\text{prev}}}{N - 1}$$
-  $$G[i] = (G_{\text{prev}} + i \cdot \Delta G) \times \text{amplitudeBoost}$$
+
+```math
+\begin{aligned}
+\Delta G &= \frac{G_{\text{current}} - G_{\text{prev}}}{N - 1} \\
+G[i] &= (G_{\text{prev}} + i \cdot \Delta G) \times \text{amplitudeBoost}
+\end{aligned}
+```
 
 ---
 
@@ -230,10 +256,13 @@ When user amplitude boost ($>100\%$) or adaptive leveling pushes samples beyond 
 - **Headroom ($H$):** $M - K \approx 10922.33$
 
 For amplified sample $v = x \times \text{boostMultiplier}$:
-$$\text{out}(v) = \begin{cases}
+
+```math
+\text{out}(v) = \begin{cases}
 v & \text{if } |v| \le K \\
 \text{sign}(v) \cdot \left(K + H \cdot \tanh\left(\frac{|v| - K}{H}\right)\right) & \text{if } |v| > K
-\end{cases}$$
+\end{cases}
+```
 
 At $|v| = K$, the function value is $K$ and its first derivative is $1.0$, guaranteeing smooth transition without slope discontinuity.
 

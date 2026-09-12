@@ -128,12 +128,15 @@ Implemented in [`AudioHandler.setMaxBandwidth()`](file:///home/bualy/files/devel
 Mumble servers enforce maximum allowed client bandwidth in the `ServerSync` protocol message (`max_bandwidth` in bits per second).
 
 ### Bandwidth Calculation Formula
-Total transmission bandwidth includes codec payload and network transport overhead. Let $F$ denote `framesPerPacket`:
-$$R_{\text{packet}} = \frac{100}{F} \text{ packets/s}$$
-Assuming IP/UDP overhead $H_{\text{net}} = 28\text{ bytes}$ and Mumble encryption/framing overhead $H_{\text{mumble}} \approx 4\text{ bytes}$:
-$$B_{\text{overhead}} = R_{\text{packet}} \times 8 \times (H_{\text{net}} + H_{\text{mumble}}) \text{ bps}$$
-The effective total audio bandwidth is:
-$$B_{\text{total}} = B_{\text{codec}} + B_{\text{overhead}}$$
+Total transmission bandwidth includes codec payload and network transport overhead. Let $F$ denote `framesPerPacket`, $H_{\text{net}} = 28\text{ bytes}$ (IP/UDP header overhead), and $H_{\text{mumble}} \approx 4\text{ bytes}$ (Mumble framing/encryption overhead):
+
+```math
+\begin{aligned}
+R_{\text{packet}} &= \frac{100}{F} \text{ packets/s} \\
+B_{\text{overhead}} &= R_{\text{packet}} \times 8 \times (H_{\text{net}} + H_{\text{mumble}}) \text{ bps} \\
+B_{\text{total}} &= B_{\text{codec}} + B_{\text{overhead}}
+\end{aligned}
+```
 
 ### Adaptation Algorithm
 When the calculated bandwidth exceeds `maxBandwidth`:
