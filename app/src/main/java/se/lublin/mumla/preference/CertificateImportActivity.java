@@ -29,6 +29,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
+import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -84,6 +85,8 @@ public class CertificateImportActivity extends BaseActivity {
     private String mPendingPreviousPassword;
     private boolean mWaitingForPassword;
     private AlertDialog mPasswordDialog;
+    private TextInputLayout mPasswordLayout;
+    private TextInputEditText mPasswordField;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -117,7 +120,11 @@ public class CertificateImportActivity extends BaseActivity {
             outState.putByteArray(STATE_CERT_BYTES, mPendingCertBytes);
             outState.putString(STATE_FILE_NAME, mPendingFileName);
             outState.putBoolean(STATE_IS_RETRY, mPendingIsRetry);
-            outState.putString(STATE_PREVIOUS_PASSWORD, mPendingPreviousPassword);
+            if (mPasswordField != null && mPasswordField.getText() != null) {
+                outState.putString(STATE_PREVIOUS_PASSWORD, mPasswordField.getText().toString());
+            } else {
+                outState.putString(STATE_PREVIOUS_PASSWORD, mPendingPreviousPassword);
+            }
         }
     }
 
@@ -128,6 +135,8 @@ public class CertificateImportActivity extends BaseActivity {
             mPasswordDialog.dismiss();
             mPasswordDialog = null;
         }
+        mPasswordLayout = null;
+        mPasswordField = null;
     }
 
     @Override
@@ -202,6 +211,12 @@ public class CertificateImportActivity extends BaseActivity {
                 showPasswordDialog(fileName, certBytes, isRetry, previousPassword);
             } else {
                 e.printStackTrace();
+                if (mPasswordDialog != null) {
+                    mPasswordDialog.dismiss();
+                    mPasswordDialog = null;
+                }
+                mPasswordLayout = null;
+                mPasswordField = null;
                 Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
                 mWaitingForPassword = false;
                 finish();
@@ -210,6 +225,12 @@ public class CertificateImportActivity extends BaseActivity {
         }
 
         mWaitingForPassword = false;
+        if (mPasswordDialog != null) {
+            mPasswordDialog.dismiss();
+            mPasswordDialog = null;
+        }
+        mPasswordLayout = null;
+        mPasswordField = null;
         String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
         MumlaDatabase database = new MumlaSQLiteDatabase(this);
         DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
@@ -229,37 +250,51 @@ public class CertificateImportActivity extends BaseActivity {
 
     private void showPasswordDialog(final String fileName, final byte[] certBytes,
                                     final boolean isRetry, final String previousPassword) {
-        if (mPasswordDialog != null && mPasswordDialog.isShowing()) {
-            mPasswordDialog.dismiss();
-        }
-
         mWaitingForPassword = true;
         mPendingFileName = fileName;
         mPendingCertBytes = certBytes;
         mPendingIsRetry = isRetry;
         mPendingPreviousPassword = previousPassword;
 
+        if (mPasswordDialog != null && mPasswordDialog.isShowing() && mPasswordLayout != null && mPasswordField != null) {
+            if (isRetry) {
+                if (previousPassword != null) {
+                    mPasswordField.setText(previousPassword);
+                    mPasswordField.selectAll();
+                }
+                mPasswordLayout.setError(getString(R.string.invalid_password));
+                mPasswordField.requestFocus();
+            }
+            return;
+        }
+
+        if (mPasswordDialog != null && mPasswordDialog.isShowing()) {
+            mPasswordDialog.dismiss();
+        }
+
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this);
         LayoutInflater inflater = LayoutInflater.from(builder.getContext());
         View dialogView = inflater.inflate(R.layout.dialog_certificate_password, null);
-        TextInputLayout passwordLayout = dialogView.findViewById(R.id.certificate_password_layout);
-        TextInputEditText passwordField = dialogView.findViewById(R.id.certificate_password_field);
+        mPasswordLayout = dialogView.findViewById(R.id.certificate_password_layout);
+        mPasswordField = dialogView.findViewById(R.id.certificate_password_field);
 
         if (isRetry) {
             if (previousPassword != null) {
-                passwordField.setText(previousPassword);
-                passwordField.selectAll();
+                mPasswordField.setText(previousPassword);
+                mPasswordField.selectAll();
             }
-            passwordLayout.setError(getString(R.string.invalid_password));
+            mPasswordLayout.setError(getString(R.string.invalid_password));
         }
 
-        passwordField.addTextChangedListener(new TextWatcher() {
+        mPasswordField.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
             @Override
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                passwordLayout.setError(null);
+                if (mPasswordLayout != null && mPasswordLayout.getError() != null) {
+                    mPasswordLayout.setError(null);
+                }
             }
 
             @Override
@@ -267,18 +302,17 @@ public class CertificateImportActivity extends BaseActivity {
         });
 
         Runnable submitAction = () -> {
-            if (mPasswordDialog != null) {
-                mPasswordDialog.dismiss();
-                mPasswordDialog = null;
+            if (mPasswordField == null) {
+                return;
             }
-            Editable text = passwordField.getText();
+            Editable text = mPasswordField.getText();
             String entered = text != null ? text.toString() : "";
             char[] passChars = entered.toCharArray();
             storeKeystore(passChars, fileName, certBytes, true, entered);
             Arrays.fill(passChars, '\0');
         };
 
-        passwordField.setOnEditorActionListener((v, actionId, event) -> {
+        mPasswordField.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE ||
                     (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
                 submitAction.run();
@@ -298,15 +332,22 @@ public class CertificateImportActivity extends BaseActivity {
                     mWaitingForPassword = false;
                     finish();
                 })
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> submitAction.run())
+                .setPositiveButton(android.R.string.ok, null)
                 .create();
+
+        mPasswordDialog.setOnShowListener(dialog -> {
+            Button positiveButton = mPasswordDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (positiveButton != null) {
+                positiveButton.setOnClickListener(v -> submitAction.run());
+            }
+        });
 
         if (mPasswordDialog.getWindow() != null) {
             mPasswordDialog.getWindow().setSoftInputMode(
                     WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
         }
         mPasswordDialog.show();
-        passwordField.requestFocus();
+        mPasswordField.requestFocus();
     }
 
     static boolean isPasswordFailure(Throwable t) {
