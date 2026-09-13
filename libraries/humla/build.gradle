@@ -78,6 +78,9 @@ android {
         minSdkVersion 21
         targetSdk 36
 
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+        }
     }
 
     // Prepare RNNoise pre-trained model weights from official upstream model archive
@@ -149,6 +152,12 @@ android {
     tasks.withType(JavaCompile) {
         compileTask -> compileTask.dependsOn ndkBuild
     }
+
+    task cleanNative(type: Delete) {
+        delete file('src/main/libs')
+        delete file('src/main/obj')
+    }
+    clean.dependsOn cleanNative
 
     lint {
         abortOnError = true
