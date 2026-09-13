@@ -153,12 +153,6 @@ android {
         compileTask -> compileTask.dependsOn ndkBuild
     }
 
-    task cleanNative(type: Delete) {
-        delete file('src/main/libs')
-        delete file('src/main/obj')
-    }
-    clean.dependsOn cleanNative
-
     lint {
         abortOnError = true
         disable 'InvalidPackage', 'MissingTranslation'
@@ -177,4 +171,9 @@ task testNativeAudioEngine(type: Exec) {
 
 tasks.matching { it.name in ["testDebugUnitTest", "check"] }.configureEach {
     dependsOn testNativeAudioEngine
+}
+
+tasks.named('clean', Delete) {
+    delete layout.projectDirectory.dir('src/main/libs')
+    delete layout.projectDirectory.dir('src/main/obj')
 }
