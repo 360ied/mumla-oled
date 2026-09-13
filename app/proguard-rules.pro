@@ -19,13 +19,6 @@
 -keep class se.lublin.humla.protobuf.Mumble** { *; }
 -keep class com.google.protobuf.GeneratedMessageLite { *; }
 
-# Preserve BouncyCastle Security Providers, certificate builders, and crypto engines
--keep class org.bouncycastle.jce.provider.** { *; }
--keep class org.bouncycastle.jcajce.provider.** { *; }
--keep class org.bouncycastle.cert.** { *; }
--keep class org.bouncycastle.operator.** { *; }
--dontwarn org.bouncycastle.**
-
 # MiniDNS & GuardianProject Netcipher
 -keep class org.minidns.** { *; }
 -dontwarn info.guardianproject.netcipher.**

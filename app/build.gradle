@@ -127,7 +127,7 @@ android {
     packaging {
         resources {
             excludes += [
-                'org/bouncycastle/pqc/**',
+                'com/googlecode/javacpp/properties/**',
                 'google/protobuf/**',
                 '**/*.proto',
                 'META-INF/CHANGES',

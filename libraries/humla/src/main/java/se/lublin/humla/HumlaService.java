@@ -37,7 +37,6 @@ import android.util.Log;
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties;
 import org.minidns.hla.ResolverApi;
 
-import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
@@ -75,11 +74,6 @@ import se.lublin.humla.util.VoiceTargetMode;
 
 public class HumlaService extends Service implements IHumlaService, IHumlaSession, HumlaConnection.HumlaConnectionListener, HumlaLogger {
     private static final String TAG = HumlaService.class.getName();
-
-    static {
-        // Use Bouncy Castle for crypto implementation so we can create and manage PKCS #12 (.p12) certificates.
-        Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
-    }
 
     /**
      * An action to immediately connect to a given Mumble server.
