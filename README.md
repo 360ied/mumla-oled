@@ -97,7 +97,7 @@ Upstream Mumla relied on legacy Java-side audio preprocessing and Speex DSP rout
 - **Wakeful Auto-Reconnect Engine**: Exponential backoff reconnect manager with active network callbacks (`ConnectivityManager.NetworkCallback`), socket connect timeouts, and leak-free wake lock management that survives airplane mode and Wi-Fi/cellular handovers.
 - **Lockscreen & Media Notifications**: Modern Android foreground notification with synchronized mute, deafen, and overlay action buttons that stay in lockstep with the audio service.
 - **Configurable TTS Engine**: Choose your preferred Text-To-Speech engine in settings; automatically suppresses annoying TTS speech floods on manual disconnects.
-- **Modern Cryptography**: Migrated from outdated, unmaintained SpongyCastle to standard BouncyCastle (`bcprov-jdk18on`) with tuned R8 ProGuard rules and PKCS#12 stream error handling.
+- **Standard Platform Cryptography**: Eliminated heavy BouncyCastle / SpongyCastle dependencies in favor of standard platform cryptography (Conscrypt / Java SE) and a lightweight in-tree X.509 v3 DER encoder, saving over 1 MB of compressed DEX bloat and 3,000 classes.
 - **Protobuf JavaLite & APK Shrinking**: Migrated from full Java Protobuf to `protobuf-javalite`, stripped post-quantum cryptographic tables, dropped obsolete 32-bit x86 native binaries, and enabled aggressive R8 minification and resource shrinking for a compact, lightweight APK.
 - **Target Android 16 (API 36)**: Fully compliant with modern Android requirements: Android 13+ runtime notification permissions (`POST_NOTIFICATIONS`), explicit `RECEIVER_NOT_EXPORTED` broadcast flags, and modern Storage Access Framework file handling.
 
