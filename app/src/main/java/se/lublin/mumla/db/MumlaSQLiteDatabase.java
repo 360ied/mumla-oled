@@ -102,10 +102,12 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
     public static final String COLUMN_CERTIFICATES_ID = "_id";
     public static final String COLUMN_CERTIFICATES_DATA = "data";
     public static final String COLUMN_CERTIFICATES_NAME = "name";
+    public static final String COLUMN_CERTIFICATES_PASSWORD = "password";
     public static final String TABLE_CERTIFICATES_CREATE_SQL = "CREATE TABLE IF NOT EXISTS " + TABLE_CERTIFICATES + " ("
             + "`" + COLUMN_CERTIFICATES_ID + "` INTEGER PRIMARY KEY AUTOINCREMENT,"
             + "`" + COLUMN_CERTIFICATES_DATA + "` BLOB NOT NULL,"
-            + "`" + COLUMN_CERTIFICATES_NAME + "` TEXT NOT NULL"
+            + "`" + COLUMN_CERTIFICATES_NAME + "` TEXT NOT NULL,"
+            + "`" + COLUMN_CERTIFICATES_PASSWORD + "` TEXT"
             + ");";
 
     public static final Integer PRE_FAVOURITES_DB_VERSION = 2;
@@ -114,7 +116,8 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
     public static final Integer PRE_LOCAL_MUTE_DB_VERSION = 5;
     public static final Integer PRE_LOCAL_IGNORE_DB_VERSION = 6;
     public static final Integer PRE_CERTIFICATES_DB_VERSION = 7;
-    public static final Integer CURRENT_DB_VERSION = 8;
+    public static final Integer PRE_CERTIFICATE_PASSWORD_DB_VERSION = 8;
+    public static final Integer CURRENT_DB_VERSION = 9;
 
     public MumlaSQLiteDatabase(Context context) {
         super(context, DATABASE_NAME, null, CURRENT_DB_VERSION);
@@ -163,6 +166,10 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
 
         if (oldVersion <= PRE_CERTIFICATES_DB_VERSION) {
             db.execSQL(TABLE_CERTIFICATES_CREATE_SQL);
+        }
+
+        if (oldVersion <= PRE_CERTIFICATE_PASSWORD_DB_VERSION) {
+            db.execSQL("ALTER TABLE " + TABLE_CERTIFICATES + " ADD COLUMN " + COLUMN_CERTIFICATES_PASSWORD + " TEXT;");
         }
     }
 
@@ -383,12 +390,18 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
     }
 
     @Override
-    public DatabaseCertificate addCertificate(String name, byte[] certificate) {
+    public DatabaseCertificate addCertificate(String name, byte[] certificate, String password) {
         ContentValues values = new ContentValues();
         values.put(COLUMN_CERTIFICATES_NAME, name);
         values.put(COLUMN_CERTIFICATES_DATA, certificate);
+        values.put(COLUMN_CERTIFICATES_PASSWORD, password);
         long id = getWritableDatabase().insert(TABLE_CERTIFICATES, null, values);
         return new DatabaseCertificate(id, name);
+    }
+
+    @Override
+    public DatabaseCertificate addCertificate(String name, byte[] certificate) {
+        return addCertificate(name, certificate, null);
     }
 
     @Override
@@ -417,6 +430,21 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
         byte[] data = cursor.getBlob(0);
         cursor.close();
         return data;
+    }
+
+    @Override
+    public String getCertificatePassword(long id) {
+        Cursor cursor = getReadableDatabase().query(TABLE_CERTIFICATES,
+                new String[] { COLUMN_CERTIFICATES_PASSWORD },
+                COLUMN_CERTIFICATES_ID + "=?",
+                new String[] { String.valueOf(id) }, null, null, null);
+        if (!cursor.moveToFirst()) {
+            cursor.close();
+            return null;
+        }
+        String password = cursor.getString(0);
+        cursor.close();
+        return password;
     }
 
     @Override

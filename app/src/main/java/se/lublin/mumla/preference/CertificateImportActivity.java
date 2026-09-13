@@ -23,7 +23,9 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.util.TypedValue;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -32,10 +34,12 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.GeneralSecurityException;
+import java.security.Key;
 import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateException;
+import java.security.UnrecoverableKeyException;
+import java.util.Enumeration;
+import java.util.Locale;
 import java.util.UUID;
 
 import se.lublin.mumla.R;
@@ -104,45 +108,39 @@ public class CertificateImportActivity extends BaseActivity {
         if (cursor != null)
             cursor.close();
 
-        storeKeystore(new char[0], displayName, certBytes);
+        storeKeystore(new char[0], displayName, certBytes, false, null);
     }
 
-    private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes) {
+    private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes,
+                               final boolean isRetry, final String previousPassword) {
         KeyStore keyStore;
         try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
             keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(input, password);
-        } catch (CertificateException e) {
-            final EditText passwordField = new EditText(this);
-            passwordField.setHint(R.string.password);
-            passwordField.setInputType(InputType.TYPE_TEXT_VARIATION_PASSWORD);
-            new MaterialAlertDialogBuilder(this)
-                    .setTitle(R.string.decrypt_certificate)
-                    .setView(passwordField)
-                    .setOnCancelListener(dialog -> finish())
-                    .setPositiveButton(android.R.string.ok, (dialog, which) ->
-                            storeKeystore(passwordField.getText().toString().toCharArray(), fileName, certBytes))
-                    .show();
-            return;
-        } catch (KeyStoreException|IOException|NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
-
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try {
-            keyStore.store(output, new char[0]);
-        } catch (KeyStoreException|IOException|NoSuchAlgorithmException|CertificateException e) {
-            e.printStackTrace();
-            Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
-            finish();
+            Enumeration<String> aliases = keyStore.aliases();
+            while (aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                if (keyStore.isKeyEntry(alias)) {
+                    Key key = keyStore.getKey(alias, password);
+                    if (key == null) {
+                        throw new UnrecoverableKeyException("Key could not be recovered for alias " + alias);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            if (isPasswordFailure(e)) {
+                showPasswordDialog(fileName, certBytes, isRetry, previousPassword);
+            } else {
+                e.printStackTrace();
+                Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                finish();
+            }
             return;
         }
 
+        String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
         MumlaDatabase database = new MumlaSQLiteDatabase(this);
-        DatabaseCertificate certificate = database.addCertificate(fileName, output.toByteArray());
+        DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
         database.close();
 
         if (certificate != null && certificate.getId() >= 0) {
@@ -155,5 +153,68 @@ public class CertificateImportActivity extends BaseActivity {
         }
 
         finish();
+    }
+
+    private void showPasswordDialog(final String fileName, final byte[] certBytes,
+                                    final boolean isRetry, final String previousPassword) {
+        final FrameLayout container = new FrameLayout(this);
+        final EditText passwordField = new EditText(this);
+        passwordField.setHint(R.string.password);
+        passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+        int horizontalPadding = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 24, getResources().getDisplayMetrics());
+        int verticalPadding = (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 16, getResources().getDisplayMetrics());
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        params.leftMargin = horizontalPadding;
+        params.rightMargin = horizontalPadding;
+        params.topMargin = verticalPadding;
+        params.bottomMargin = verticalPadding;
+        passwordField.setLayoutParams(params);
+        container.addView(passwordField);
+
+        if (isRetry) {
+            if (previousPassword != null) {
+                passwordField.setText(previousPassword);
+                passwordField.selectAll();
+            }
+            passwordField.setError(getString(R.string.invalid_password));
+        }
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.decrypt_certificate)
+                .setView(container)
+                .setOnCancelListener(dialog -> finish())
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> finish())
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    String entered = passwordField.getText().toString();
+                    storeKeystore(entered.toCharArray(), fileName, certBytes, true, entered);
+                })
+                .show();
+    }
+
+    static boolean isPasswordFailure(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof UnrecoverableKeyException ||
+                cur instanceof GeneralSecurityException) {
+                return true;
+            }
+            String msg = cur.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase(Locale.ROOT);
+                if (lower.contains("password") ||
+                    lower.contains("mac") ||
+                    lower.contains("decrypt") ||
+                    lower.contains("padding") ||
+                    lower.contains("bad key")) {
+                    return true;
+                }
+            }
+            cur = cur.getCause();
+        }
+        return false;
     }
 }
