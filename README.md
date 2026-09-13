@@ -98,7 +98,7 @@ Upstream Mumla relied on legacy Java-side audio preprocessing and Speex DSP rout
 - **Lockscreen & Media Notifications**: Modern Android foreground notification with synchronized mute, deafen, and overlay action buttons that stay in lockstep with the audio service.
 - **Configurable TTS Engine**: Choose your preferred Text-To-Speech engine in settings; automatically suppresses annoying TTS speech floods on manual disconnects.
 - **Modern Cryptography**: Migrated from outdated, unmaintained SpongyCastle to standard BouncyCastle (`bcprov-jdk18on`) with tuned R8 ProGuard rules and PKCS#12 stream error handling.
-- **Protobuf JavaLite & APK Shrinking**: Migrated from full Java Protobuf to `protobuf-javalite`, stripped post-quantum cryptographic tables, and enabled aggressive R8 minification and resource shrinking for a compact, lightweight APK.
+- **Protobuf JavaLite & APK Shrinking**: Migrated from full Java Protobuf to `protobuf-javalite`, stripped post-quantum cryptographic tables, dropped obsolete 32-bit x86 native binaries, and enabled aggressive R8 minification and resource shrinking for a compact, lightweight APK.
 - **Target Android 16 (API 36)**: Fully compliant with modern Android requirements: Android 13+ runtime notification permissions (`POST_NOTIFICATIONS`), explicit `RECEIVER_NOT_EXPORTED` broadcast flags, and modern Storage Access Framework file handling.
 
 ---
@@ -138,6 +138,7 @@ Mumla OLED is built exclusively as a **100% FOSS** client without proprietary Go
 - **JDK**: Java 21 (OpenJDK recommended)
 - **Android SDK**: Compile SDK 36, Min SDK 21
 - **Android NDK**: Version `25.1.8937393`
+- **Supported ABIs**: `arm64-v8a`, `armeabi-v7a`, `x86_64` (obsolete 32-bit `x86` is no longer built or packaged)
 - **Submodules**: Git submodules must be checked out for native libraries (`opus`, `rnnoise`).
 
 ### Option A: Hermetic Build with Nix (Recommended)

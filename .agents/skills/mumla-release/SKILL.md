@@ -107,7 +107,7 @@ gitignored).
 - **Universal APK Trailer** (must be the exact concluding paragraph):
 
   ```markdown
-  Universal release APK includes native support for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64` architectures.
+  Universal release APK includes native support for `arm64-v8a`, `armeabi-v7a`, and `x86_64` architectures.
   ```
 
 ## 5. Build the release APK
