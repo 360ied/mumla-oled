@@ -22,19 +22,21 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
-import android.text.InputType;
-import android.util.TypedValue;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.KeyEvent;
+import android.view.LayoutInflater;
+import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
-import android.widget.EditText;
-import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -237,39 +239,40 @@ public class CertificateImportActivity extends BaseActivity {
         mPendingIsRetry = isRetry;
         mPendingPreviousPassword = previousPassword;
 
-        final FrameLayout container = new FrameLayout(this);
-        final EditText passwordField = new EditText(this);
-        passwordField.setHint(R.string.password);
-        passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        passwordField.setImeOptions(EditorInfo.IME_ACTION_DONE);
-
-        int horizontalPadding = (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, 24, getResources().getDisplayMetrics());
-        int verticalPadding = (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, 16, getResources().getDisplayMetrics());
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        params.leftMargin = horizontalPadding;
-        params.rightMargin = horizontalPadding;
-        params.topMargin = verticalPadding;
-        params.bottomMargin = verticalPadding;
-        passwordField.setLayoutParams(params);
-        container.addView(passwordField);
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this);
+        LayoutInflater inflater = LayoutInflater.from(builder.getContext());
+        View dialogView = inflater.inflate(R.layout.dialog_certificate_password, null);
+        TextInputLayout passwordLayout = dialogView.findViewById(R.id.certificate_password_layout);
+        TextInputEditText passwordField = dialogView.findViewById(R.id.certificate_password_field);
 
         if (isRetry) {
             if (previousPassword != null) {
                 passwordField.setText(previousPassword);
                 passwordField.selectAll();
             }
-            passwordField.setError(getString(R.string.invalid_password));
+            passwordLayout.setError(getString(R.string.invalid_password));
         }
+
+        passwordField.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                passwordLayout.setError(null);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
 
         Runnable submitAction = () -> {
             if (mPasswordDialog != null) {
                 mPasswordDialog.dismiss();
                 mPasswordDialog = null;
             }
-            String entered = passwordField.getText().toString();
+            Editable text = passwordField.getText();
+            String entered = text != null ? text.toString() : "";
             char[] passChars = entered.toCharArray();
             storeKeystore(passChars, fileName, certBytes, true, entered);
             Arrays.fill(passChars, '\0');
@@ -284,9 +287,9 @@ public class CertificateImportActivity extends BaseActivity {
             return false;
         });
 
-        mPasswordDialog = new MaterialAlertDialogBuilder(this)
+        mPasswordDialog = builder
                 .setTitle(R.string.decrypt_certificate)
-                .setView(container)
+                .setView(dialogView)
                 .setOnCancelListener(dialog -> {
                     mWaitingForPassword = false;
                     finish();
