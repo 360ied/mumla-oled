@@ -80,6 +80,10 @@ android {
         testInstrumentationRunner "android.test.InstrumentationTestRunner"
 
         resourceConfigurations += ["en", "fr", "zh-rCN"]
+
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+        }
     }
 
     flavorDimensions "release"
