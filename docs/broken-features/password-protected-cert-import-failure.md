@@ -18,13 +18,13 @@ As a consequence, **no password-encrypted certificate can be imported into Mumla
 
 ## 2. Technical Root Cause
 
-In `CertificateImportActivity.java` (lines 112–135), `storeKeystore()` attempts to open the keystore with an empty password (`new char[0]`):
+In `CertificateImportActivity.java` (lines 110–133), `storeKeystore()` attempts to open the keystore with an empty password (`new char[0]`):
 
 ```java
 private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes) {
     KeyStore keyStore;
     try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
-        keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        keyStore = KeyStore.getInstance("PKCS12");
         keyStore.load(input, password);
     } catch (CertificateException e) {
         final EditText passwordField = new EditText(this);
@@ -47,8 +47,9 @@ private void storeKeystore(final char[] password, final String fileName, final b
 ```
 
 1. **Incorrect Exception Expected for Password Failures:**
-   In Java / BouncyCastle (`PKCS12KeyStoreSpi`), when a PKCS#12 keystore requires a password or when the supplied password fails MAC verification, `keyStore.load()` throws `java.io.IOException: PKCS12 key store mac invalid - wrong password or corrupted file`.
-   `CertificateException` is only thrown if individual X.509 certificates inside the keystore fail ASN.1 decoding.
+   In standard Java / Android JCA (`sun.security.pkcs12.PKCS12KeyStore` or Conscrypt / AndroidOpenSSL), when a PKCS#12 keystore requires a password or when the supplied password fails MAC verification or SafeContents decryption, `keyStore.load()` throws `java.io.IOException: keystore password was incorrect` with cause `java.security.UnrecoverableKeyException` (wrapping `javax.crypto.BadPaddingException`).
+   *(Historically prior to 0.18.5, BouncyCastle's `PKCS12KeyStoreSpi` likewise threw `java.io.IOException: PKCS12 key store mac invalid - wrong password or corrupted file`.)*
+   Across all standard PKCS#12 provider implementations, `CertificateException` is strictly reserved for individual X.509 certificate decoding/parsing errors, and is **never** thrown for missing or incorrect passwords.
 2. **Falling into the Generic Abort Catch Block:**
    Because `keyStore.load()` throws an `IOException`, execution never enters `catch (CertificateException e)`. Instead, it falls into `catch (KeyStoreException|IOException|NoSuchAlgorithmException e)`, which toasts `R.string.invalid_certificate` and immediately finishes the activity.
 3. **Plaintext Password Input Masking Glitch:**
@@ -59,8 +60,11 @@ private void storeKeystore(final char[] password, final String fileName, final b
 ## 3. Remediation Plan
 
 1. **Distinguish Password Failures from Corrupted Files:**
-   In `storeKeystore()`, catch `IOException` and inspect the exception message/cause (or check if `password.length == 0` on first load). If password decryption failed, trigger the password prompt dialog.
+   In `storeKeystore()`, catch `IOException` and check whether decryption failed due to a missing or wrong password:
+   - On initial load (`password.length == 0`): trigger the password prompt dialog.
+   - On retry with a user-provided password: check if the failure is cryptographic (e.g. `e.getCause() instanceof UnrecoverableKeyException`, `e.getCause() instanceof GeneralSecurityException`, or exception message indicating wrong password / MAC failure). If so, inform the user that the entered password was incorrect and reprompt rather than immediately aborting.
+   - If the file is unparseable or corrupted (e.g., malformed DER tags, invalid stream header), toast `R.string.invalid_certificate` and finish.
 2. **Proper Input Masking:**
    Set `passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD)`.
 3. **Password Retry Feedback:**
-   If a user submits an incorrect password in the prompt dialog, distinguish between initial load and subsequent bad password attempts so the user can be informed that the entered password was incorrect.
+   If a user submits an incorrect password in the prompt dialog, distinguish between initial load and subsequent bad password attempts so the user can be informed that the entered password was incorrect (e.g., showing helper/error text on the dialog).
