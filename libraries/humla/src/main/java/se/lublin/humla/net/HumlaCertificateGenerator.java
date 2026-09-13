@@ -49,6 +49,7 @@ import java.util.TimeZone;
 public class HumlaCertificateGenerator {
     private static final String ISSUER_CN = "Humla Client";
     private static final int YEARS_VALID = 20;
+    private static final long CLOCK_SKEW_LEEWAY_MS = 10 * 60 * 1000L; // 10 minutes leeway for clock skew
 
     public static X509Certificate generateCertificate(OutputStream output)
             throws NoSuchAlgorithmException, CertificateException, KeyStoreException, IOException {
@@ -91,18 +92,16 @@ public class HumlaCertificateGenerator {
         byte[] atav = sequence(tlv(0x06, new byte[] { 0x55, 0x04, 0x03 }), cnValue);
         byte[] name = sequence(tlv(0x31, atav));
 
-        // 5. Validity -> SEQUENCE { notBefore UTCTime, notAfter UTCTime }
-        SimpleDateFormat sdf = new SimpleDateFormat("yyMMddHHmmss'Z'", Locale.US);
-        sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
-        Date startDate = new Date();
-        Calendar calendar = Calendar.getInstance();
+        // 5. Validity -> SEQUENCE { notBefore, notAfter } (RFC 5280 §4.1.2.5: UTCTime < 2050, GeneralizedTime >= 2050)
+        Date startDate = new Date(System.currentTimeMillis() - CLOCK_SKEW_LEEWAY_MS);
+        Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
         calendar.setTime(startDate);
         calendar.add(Calendar.YEAR, YEARS_VALID);
         Date endDate = calendar.getTime();
 
         byte[] validity = sequence(
-                tlv(0x17, sdf.format(startDate).getBytes(StandardCharsets.US_ASCII)),
-                tlv(0x17, sdf.format(endDate).getBytes(StandardCharsets.US_ASCII))
+                encodeTime(startDate),
+                encodeTime(endDate)
         );
 
         // 6. SubjectPublicKeyInfo (from Java RSA public key encoded DER)
@@ -177,32 +176,89 @@ public class HumlaCertificateGenerator {
         return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(certDer));
     }
 
-    private static byte[] computeSubjectKeyIdentifier(byte[] spki) throws NoSuchAlgorithmException {
-        // Find public key BIT STRING (tag 0x03) in SubjectPublicKeyInfo
-        // SPKI format: SEQUENCE { algorithm AlgorithmIdentifier, subjectPublicKey BIT STRING }
-        int bitStringOffset = -1;
-        for (int i = 0; i < spki.length - 2; i++) {
-            if (spki[i] == 0x03) {
-                int skip = 1;
-                if ((spki[i + 1] & 0x80) != 0) {
-                    skip += 1 + (spki[i + 1] & 0x7f);
-                } else {
-                    skip += 1;
-                }
-                bitStringOffset = i + skip + 1;
-                break;
-            }
+    static byte[] encodeTime(Date date) {
+        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+        cal.setTime(date);
+        int year = cal.get(Calendar.YEAR);
+        if (year < 2050) {
+            SimpleDateFormat sdf = new SimpleDateFormat("yyMMddHHmmss'Z'", Locale.US);
+            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return tlv(0x17, sdf.format(date).getBytes(StandardCharsets.US_ASCII));
+        } else {
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMddHHmmss'Z'", Locale.US);
+            sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return tlv(0x18, sdf.format(date).getBytes(StandardCharsets.US_ASCII));
         }
-        if (bitStringOffset < 0 || bitStringOffset >= spki.length) {
-            throw new IllegalArgumentException("Invalid SubjectPublicKeyInfo structure");
+    }
+
+    static byte[] computeSubjectKeyIdentifier(byte[] spki) throws NoSuchAlgorithmException {
+        // SPKI format (RFC 5280 §4.1):
+        // SubjectPublicKeyInfo ::= SEQUENCE {
+        //     algorithm AlgorithmIdentifier,
+        //     subjectPublicKey BIT STRING
+        // }
+        int[] offset = new int[] { 0 };
+        if (spki.length < 2 || spki[offset[0]++] != 0x30) {
+            throw new IllegalArgumentException("SPKI must start with SEQUENCE");
+        }
+        readLength(spki, offset); // Skip outer SEQUENCE length
+
+        // 1. Skip AlgorithmIdentifier SEQUENCE
+        if (offset[0] >= spki.length || spki[offset[0]++] != 0x30) {
+            throw new IllegalArgumentException("Expected AlgorithmIdentifier SEQUENCE");
+        }
+        int algIdLen = readLength(spki, offset);
+        offset[0] += algIdLen;
+
+        // 2. Locate subjectPublicKey BIT STRING
+        if (offset[0] >= spki.length || spki[offset[0]++] != 0x03) {
+            throw new IllegalArgumentException("Expected subjectPublicKey BIT STRING");
+        }
+        int bitStringLen = readLength(spki, offset);
+        if (offset[0] >= spki.length || bitStringLen <= 1) {
+            throw new IllegalArgumentException("Truncated or invalid BIT STRING");
         }
 
+        // Skip unused bits indicator byte (0x00)
+        offset[0]++;
+        int keyLength = bitStringLen - 1;
+        if (offset[0] + keyLength > spki.length) {
+            throw new IllegalArgumentException("BIT STRING length exceeds buffer");
+        }
+
+        // RFC 5280 §4.2.1.2 Method 1: SHA-1 of the BIT STRING subjectPublicKey
+        // (excluding tag, length, and unused-bits indicator)
         MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
-        sha1.update(spki, bitStringOffset, spki.length - bitStringOffset);
+        sha1.update(spki, offset[0], keyLength);
         return sha1.digest();
     }
 
+    private static int readLength(byte[] data, int[] offset) {
+        if (offset[0] >= data.length) {
+            throw new IllegalArgumentException("Unexpected EOF reading DER length");
+        }
+        int b = data[offset[0]++] & 0xff;
+        if ((b & 0x80) == 0) {
+            return b;
+        }
+        int count = b & 0x7f;
+        if (count == 0 || count > 4 || offset[0] + count > data.length) {
+            throw new IllegalArgumentException("Invalid DER length encoding");
+        }
+        int len = 0;
+        for (int i = 0; i < count; i++) {
+            len = (len << 8) | (data[offset[0]++] & 0xff);
+        }
+        if (len < 0) {
+            throw new IllegalArgumentException("Negative DER length");
+        }
+        return len;
+    }
+
     private static byte[] tlv(int tag, byte[] value) {
+        if (value.length > 65535) {
+            throw new IllegalArgumentException("DER value length exceeds 65535 bytes");
+        }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         baos.write(tag);
         int len = value.length;
