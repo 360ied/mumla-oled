@@ -90,8 +90,13 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         if (mSettings.isUsingCertificate()) {
             long certificateId = mSettings.getDefaultCertificate();
             byte[] certificate = mDatabase.getCertificateData(certificateId);
-            if (certificate != null)
+            String certificatePassword = mDatabase.getCertificatePassword(certificateId);
+            if (certificate != null) {
                 connectIntent.putExtra(HumlaService.EXTRAS_CERTIFICATE, certificate);
+                if (certificatePassword != null) {
+                    connectIntent.putExtra(HumlaService.EXTRAS_CERTIFICATE_PASSWORD, certificatePassword);
+                }
+            }
             // TODO(acomminos): handle the case where a certificate's data is unavailable.
         }
 
