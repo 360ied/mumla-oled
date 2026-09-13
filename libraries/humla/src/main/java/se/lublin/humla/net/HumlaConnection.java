@@ -25,8 +25,6 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageLite;
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.ConnectException;
@@ -559,7 +557,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         try {
             KeyStore keyStore = null;
             if(mCertificate != null) {
-                keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+                keyStore = KeyStore.getInstance("PKCS12");
                 ByteArrayInputStream inputStream = new ByteArrayInputStream(mCertificate);
                 keyStore.load(inputStream, mCertificatePassword != null ?
                         mCertificatePassword.toCharArray() : new char[0]);

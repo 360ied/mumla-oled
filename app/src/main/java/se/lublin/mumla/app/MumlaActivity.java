@@ -61,7 +61,6 @@ import androidx.preference.PreferenceManager;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.jetbrains.annotations.NotNull;
-import org.bouncycastle.util.encoders.Hex;
 
 import java.net.MalformedURLException;
 import java.security.KeyStore;
@@ -201,9 +200,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 try {
                     MessageDigest digest1 = MessageDigest.getInstance("SHA-1");
                     MessageDigest digest2 = MessageDigest.getInstance("SHA-256");
-                    String hexDigest1 = new String(Hex.encode(digest1.digest(x509.getEncoded())))
+                    String hexDigest1 = bytesToHex(digest1.digest(x509.getEncoded()))
                             .replaceAll("(..)", "$1:");
-                    String hexDigest2 = new String(Hex.encode(digest2.digest(x509.getEncoded())))
+                    String hexDigest2 = bytesToHex(digest2.digest(x509.getEncoded()))
                             .replaceAll("(..)", "$1:");
 
                     textView.setText(getString(R.string.certificate_info,
@@ -795,5 +794,17 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 connectToServer(server);
                 break;
         }
+    }
+
+    private static final char[] HEX_ARRAY = "0123456789abcdef".toCharArray();
+
+    private static String bytesToHex(byte[] bytes) {
+        char[] hexChars = new char[bytes.length * 2];
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
+        }
+        return new String(hexChars);
     }
 }
