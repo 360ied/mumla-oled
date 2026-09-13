@@ -67,7 +67,6 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         connectIntent.putExtra(HumlaService.EXTRAS_TRANSMIT_MODE, inputMethod);
         connectIntent.putExtra(HumlaService.EXTRAS_DETECTION_THRESHOLD, mSettings.getDetectionThreshold());
         connectIntent.putExtra(HumlaService.EXTRAS_AMPLITUDE_BOOST, mSettings.getAmplitudeBoostMultiplier());
-        connectIntent.putExtra(HumlaService.EXTRAS_USE_OPUS, !mSettings.isOpusDisabled());
         connectIntent.putExtra(HumlaService.EXTRAS_INPUT_RATE, mSettings.getInputSampleRate());
         connectIntent.putExtra(HumlaService.EXTRAS_INPUT_QUALITY, mSettings.getInputQuality());
         connectIntent.putExtra(HumlaService.EXTRAS_FORCE_TCP, mSettings.isTcpForced());

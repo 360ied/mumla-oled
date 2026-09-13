@@ -690,7 +690,6 @@ public class MumlaService extends HumlaService implements
                 break;
             case Settings.PREF_CERT_ID:
             case Settings.PREF_FORCE_TCP:
-            case Settings.PREF_DISABLE_OPUS:
                 // These are settings we flag as 'requiring reconnect'.
                 requiresReconnect = true;
                 break;

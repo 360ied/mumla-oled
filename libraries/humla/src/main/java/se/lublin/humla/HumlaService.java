@@ -102,6 +102,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_TRANSMIT_MODE = "transmit_mode";
     public static final String EXTRAS_INPUT_RATE = "input_frequency";
     public static final String EXTRAS_INPUT_QUALITY = "input_quality";
+    /** @deprecated Obsolete since 0.18.2; Opus is mandatory and legacy codecs are dropped. */
+    @Deprecated
     public static final String EXTRAS_USE_OPUS = "use_opus";
     public static final String EXTRAS_FORCE_TCP = "force_tcp";
     public static final String EXTRAS_CLIENT_NAME = "client_name";
@@ -127,7 +129,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private Server mServer;
     private byte[] mCertificate;
     private String mCertificatePassword;
-    private boolean mUseOpus;
     private boolean mForceTcp;
     private String mClientName;
     private List<String> mAccessTokens;
@@ -359,7 +360,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         final Mumble.Authenticate.Builder auth = Mumble.Authenticate.newBuilder();
         auth.setUsername(mServer.getUsername());
         auth.setPassword(mServer.getPassword());
-        auth.setOpus(mUseOpus);
+        auth.setOpus(true);
         auth.addAllTokens(mAccessTokens);
 
         mConnection.sendTCPMessage(version.build(), HumlaTCPMessageType.Version);
@@ -652,10 +653,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (extras.containsKey(EXTRAS_INPUT_QUALITY)) {
             mAudioBuilder.setTargetBitrate(extras.getInt(EXTRAS_INPUT_QUALITY));
-        }
-        if (extras.containsKey(EXTRAS_USE_OPUS)) {
-            mUseOpus = extras.getBoolean(EXTRAS_USE_OPUS);
-            reconnectNeeded = true;
         }
         if (extras.containsKey(EXTRAS_FORCE_TCP)) {
             mForceTcp |= extras.getBoolean(EXTRAS_FORCE_TCP);

@@ -6,6 +6,8 @@
 **Files Affected:**
 - [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
 - [`AudioOutputSpeech.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java)
+- [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java)
+- [`settings_audio.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_audio.xml)
 - [`libraries/humla/src/main/jni/Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
 - [`.gitmodules`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/.gitmodules)
 
@@ -31,4 +33,5 @@ Rather than expending maintenance effort on obsolete pre-2013 codecs:
 2. **In-Tree Adaptive Jitter Buffer:** Replaced the JavaCPP `Speex.JitterBuffer` with an in-tree native implementation compiled directly into `libhumlaaudio.so` (`audio_engine/jitter/`), decoupling jitter buffering from the Speex codebase while eliminating per-frame allocations in Java.
 3. **Upstream Protocol Parity:** Authentication sends no CELT versions (`auth.addCeltVersions`), and incoming voice traffic is strictly Opus, matching upstream desktop Mumble 1.5+ behavior.
 4. **Binary Footprint Reduction:** Stripped ~2.1 MB of dead native libraries from universal APK builds across all 4 target ABIs.
+5. **Purged Orphaned Preference:** Removed the legacy "Avoid Opus codec" (`disableOpus`) toggle from audio settings, which was originally intended for Mumble 1.2.4 servers with broken Opus support and became completely orphaned after legacy codec removal.
 
