@@ -21,9 +21,12 @@ import junit.framework.TestCase;
 
 import java.io.EOFException;
 import java.io.IOException;
-import java.security.GeneralSecurityException;
 import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import javax.crypto.AEADBadTagException;
 import javax.crypto.BadPaddingException;
 
 public class CertificateImportTest extends TestCase {
@@ -33,8 +36,13 @@ public class CertificateImportTest extends TestCase {
         assertTrue(CertificateImportActivity.isPasswordFailure(e));
     }
 
-    public void testIsPasswordFailureWithGeneralSecurityException() {
-        Exception e = new GeneralSecurityException("crypto failure");
+    public void testIsPasswordFailureWithBadPaddingException() {
+        Exception e = new BadPaddingException("Given final block not properly padded");
+        assertTrue(CertificateImportActivity.isPasswordFailure(e));
+    }
+
+    public void testIsPasswordFailureWithAEADBadTagException() {
+        Exception e = new AEADBadTagException("Tag mismatch");
         assertTrue(CertificateImportActivity.isPasswordFailure(e));
     }
 
@@ -73,5 +81,15 @@ public class CertificateImportTest extends TestCase {
 
         // Generic I/O error
         assertFalse(CertificateImportActivity.isPasswordFailure(new IOException("Read failed")));
+
+        // Word boundary: "machine" should not match "\bmac\b"
+        assertFalse(CertificateImportActivity.isPasswordFailure(new IOException("Error reading file from machine storage")));
+
+        // Corrupted certificate payload must fail fast without prompting for password
+        assertFalse(CertificateImportActivity.isPasswordFailure(new CertificateException("Could not parse certificate")));
+        assertFalse(CertificateImportActivity.isPasswordFailure(new CertificateEncodingException("Invalid encoding")));
+
+        // Unsupported cipher algorithm must fail fast without prompting for password
+        assertFalse(CertificateImportActivity.isPasswordFailure(new NoSuchAlgorithmException("Unsupported algorithm")));
     }
 }
