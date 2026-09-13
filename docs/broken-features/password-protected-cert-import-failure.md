@@ -1,10 +1,13 @@
 # Broken Feature: Password-Protected Certificate Import Fails Immediately
 
-**Status:** confirmed bug  
+**Status:** resolved  
 **Severity:** high (breaks core authentication feature)  
 **Component:** `app` Security / Certificate Management  
 **Files Affected:**
 - [`CertificateImportActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java)
+- [`MumlaDatabase.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/db/MumlaDatabase.java)
+- [`MumlaSQLiteDatabase.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java)
+- [`ServerConnectTask.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java)
 
 ---
 
@@ -68,3 +71,18 @@ private void storeKeystore(final char[] password, final String fileName, final b
    Set `passwordField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD)`.
 3. **Password Retry Feedback:**
    If a user submits an incorrect password in the prompt dialog, distinguish between initial load and subsequent bad password attempts so the user can be informed that the entered password was incorrect (e.g., showing helper/error text on the dialog).
+
+---
+
+## 4. Resolution
+
+1. **Cryptographic Error Discrimination:**
+   Added package-private `CertificateImportActivity.isPasswordFailure(Throwable t)` which checks for `UnrecoverableKeyException`, `GeneralSecurityException`, or message strings indicating password/MAC/bad-decrypt failure across JVM and Android JCA providers. Corrupted files or non-certificate formats fail fast with `R.string.invalid_certificate`.
+2. **Decryption Dialog & Masking:**
+   Set input type to `InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD` with appropriate dialog margin padding. On bad password retries, the dialog reprompts with inline error feedback (`passwordField.setError(...)`).
+3. **Bit-Identical Round-Trips & Database Schema:**
+   Bumped SQLite database version from 8 to 9 (`CURRENT_DB_VERSION = 9`), adding an optional `password TEXT` column to `certificates`. Raw imported `.p12` bytes are stored verbatim without re-encoding, preserving exact cryptographic attributes and guaranteeing bit-identical certificate export round-trips.
+4. **Service & Connection Integration:**
+   `ServerConnectTask` fetches the certificate password from `MumlaDatabase` and passes `HumlaService.EXTRAS_CERTIFICATE_PASSWORD` to `HumlaService`, which forwards it to `HumlaConnection` and `HumlaSSLSocketFactory` during TLS handshakes.
+5. **Unit Tests:**
+   Added unit test suites in `CertificateImportTest.java` (testing password failure detection against standard JVM/Android exception types) and `MumlaDatabaseTest.java` (verifying database certificate and password handling).

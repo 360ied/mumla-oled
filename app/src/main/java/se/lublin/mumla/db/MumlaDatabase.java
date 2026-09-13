@@ -55,12 +55,18 @@ public interface MumlaDatabase {
     public void removeLocalIgnoredUser(long serverId, int userId);
 
     /**
-     * Adds the given certificate binary blob to the database.
+     * Adds the given certificate binary blob to the database with an optional passphrase.
      * @param name The user-readable certificate name.
      * @param certificate A PKCS12 binary blob.
-     * @return A handle for the newly craeted certificate.
+     * @param password The PKCS12 decryption passphrase, or null if unencrypted.
+     * @return A handle for the newly created certificate.
      */
-    DatabaseCertificate addCertificate(String name, byte[] certificate);
+    DatabaseCertificate addCertificate(String name, byte[] certificate, String password);
+
+    default DatabaseCertificate addCertificate(String name, byte[] certificate) {
+        return addCertificate(name, certificate, null);
+    }
+
     List<DatabaseCertificate> getCertificates();
 
     /**
@@ -69,6 +75,13 @@ public interface MumlaDatabase {
      * @return A binary representation of a PKCS12 certificate.
      */
     byte[] getCertificateData(long id);
+
+    /**
+     * Obtains the certificate passphrase associated with the given certificate ID.
+     * @param id The certificate ID to fetch the passphrase of.
+     * @return The PKCS12 decryption passphrase, or null if unencrypted.
+     */
+    String getCertificatePassword(long id);
 
     /**
      * Removes the certificate with the given ID.
