@@ -1,6 +1,9 @@
-# Mumla OLED Release APK Size Analysis & Binary Footprint Report
+# Mumla OLED Release APK Size Analysis & Binary Footprint Report (0.18.4 — Outdated)
 
-This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED** ([`mumla-foss-release.apk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build/outputs/apk/foss/release/mumla-foss-release.apk)).
+> [!WARNING]
+> **Outdated Analysis**: This report reflects the binary footprint of **Mumla OLED 0.18.4** and is currently outdated. Package compositions, bytecode retention, native library sizes, and asset payloads may differ in subsequent releases.
+
+This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED 0.18.4** ([`mumla-foss-release.apk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build/outputs/apk/foss/release/mumla-foss-release.apk)).
 
 ---
 
@@ -10,7 +13,7 @@ The production release artifact is built under the `foss` flavor with ProGuard/R
 
 ```mermaid
 flowchart TD
-    APK["mumla-foss-release.apk (6.97 MB / 7,311,002 bytes)"]
+    APK["mumla-foss-release.apk (v0.18.4) (6.97 MB / 7,311,002 bytes)"]
     APK --> ASSETS["assets/ — 2.65 MB (38.0%)"]
     APK --> DEX["classes.dex — 2.11 MB (30.2%)"]
     APK --> LIB["lib/ (3 ABIs) — 1.11 MB (15.9%)"]
@@ -30,6 +33,7 @@ flowchart TD
 
 | Metric | Measured Value | Human Readable | Notes |
 | :--- | :--- | :--- | :--- |
+| **Analyzed Version** | `0.18.4` (outdated) | — | Version analyzed in this report |
 | **Download / On-Disk Size (Compressed)** | `7,311,002 bytes` | **6.97 MiB** (~7.1 MB) | Exact byte count of the signed release APK |
 | **Installed / Unpacked Size (Uncompressed)** | `12,723,793 bytes` | **12.13 MiB** (~12.7 MB) | Sum of all internal uncompressed payload streams |
 | **Overall Compression Ratio** | `57.46%` | — | Ratio of compressed to uncompressed contents |
@@ -321,7 +325,7 @@ Based on this empirical investigation, the following architectural and build con
 
 ## 8. Summary Conclusion
 
-The Mumla OLED release package size of **7.1 MB** is remarkably lean for a full-duplex VoIP communication client with an embedded deep neural network and multi-architecture native assembly. The binary footprint is dominated by two specialized components:
+The Mumla OLED 0.18.4 release package size of **7.1 MB** is remarkably lean for a full-duplex VoIP communication client with an embedded deep neural network and multi-architecture native assembly. The binary footprint is dominated by two specialized components:
 
 ```math
 \text{Dominant Payloads} = \underbrace{38.0\%}_{\text{RNNoise Weights}} + \underbrace{30.2\%}_{\text{Dalvik Bytecode (57.8\% BouncyCastle)}} + \underbrace{15.9\%}_{\text{3x Native ABIs}} = 84.1\% \text{ of Total APK}
