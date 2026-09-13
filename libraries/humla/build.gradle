@@ -78,6 +78,9 @@ android {
         minSdkVersion 21
         targetSdk 36
 
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+        }
     }
 
     // Prepare RNNoise pre-trained model weights from official upstream model archive
@@ -168,4 +171,9 @@ task testNativeAudioEngine(type: Exec) {
 
 tasks.matching { it.name in ["testDebugUnitTest", "check"] }.configureEach {
     dependsOn testNativeAudioEngine
+}
+
+tasks.named('clean', Delete) {
+    delete layout.projectDirectory.dir('src/main/libs')
+    delete layout.projectDirectory.dir('src/main/obj')
 }
