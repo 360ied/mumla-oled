@@ -28,8 +28,6 @@ import android.widget.Toast;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -112,7 +110,7 @@ public class CertificateImportActivity extends BaseActivity {
     private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes) {
         KeyStore keyStore;
         try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
-            keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+            keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(input, password);
         } catch (CertificateException e) {
             final EditText passwordField = new EditText(this);

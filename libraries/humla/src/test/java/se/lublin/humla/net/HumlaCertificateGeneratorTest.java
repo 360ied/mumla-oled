@@ -19,8 +19,6 @@ package se.lublin.humla.net;
 
 import junit.framework.TestCase;
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.security.Key;
@@ -47,6 +45,9 @@ public class HumlaCertificateGeneratorTest extends TestCase {
         RSAPublicKey rsaPub = (RSAPublicKey) cert.getPublicKey();
         assertEquals(2048, rsaPub.getModulus().bitLength());
 
+        // Verify signature integrity
+        cert.verify(cert.getPublicKey());
+
         // Verify BasicConstraints (must not be a CA)
         assertEquals(-1, cert.getBasicConstraints());
 
@@ -55,20 +56,21 @@ public class HumlaCertificateGeneratorTest extends TestCase {
         assertNotNull("Extended key usage must be present", extendedKeyUsage);
         assertTrue("Must have clientAuth usage", extendedKeyUsage.contains("1.3.6.1.5.5.7.3.2"));
 
-        // Verify PKCS#12 KeyStore loading
+        // Verify PKCS#12 KeyStore loading using standard platform KeyStore
         byte[] p12Bytes = baos.toByteArray();
         assertTrue("PKCS#12 bytes must not be empty", p12Bytes.length > 0);
 
-        KeyStore keyStore = KeyStore.getInstance("PKCS12", new BouncyCastleProvider());
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
         keyStore.load(new ByteArrayInputStream(p12Bytes), "".toCharArray());
 
         Enumeration<String> aliases = keyStore.aliases();
         assertTrue("KeyStore must have at least one alias", aliases.hasMoreElements());
         String alias = aliases.nextElement();
-        assertEquals("Mumble Identity", alias);
+        assertTrue("Alias must match Mumble Identity", "Mumble Identity".equalsIgnoreCase(alias));
 
         Key key = keyStore.getKey(alias, "".toCharArray());
         assertNotNull("Private key must be recoverable", key);
+        assertEquals("RSA", key.getAlgorithm());
 
         Certificate[] chain = keyStore.getCertificateChain(alias);
         assertNotNull("Certificate chain must be present", chain);
