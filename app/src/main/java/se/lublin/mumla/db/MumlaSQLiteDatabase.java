@@ -166,9 +166,7 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
 
         if (oldVersion <= PRE_CERTIFICATES_DB_VERSION) {
             db.execSQL(TABLE_CERTIFICATES_CREATE_SQL);
-        }
-
-        if (oldVersion <= PRE_CERTIFICATE_PASSWORD_DB_VERSION) {
+        } else if (oldVersion <= PRE_CERTIFICATE_PASSWORD_DB_VERSION) {
             db.execSQL("ALTER TABLE " + TABLE_CERTIFICATES + " ADD COLUMN " + COLUMN_CERTIFICATES_PASSWORD + " TEXT;");
         }
     }
@@ -421,30 +419,28 @@ public class MumlaSQLiteDatabase extends SQLiteOpenHelper implements MumlaDataba
 
     @Override
     public byte[] getCertificateData(long id) {
-        Cursor cursor = getReadableDatabase().query(TABLE_CERTIFICATES,
+        try (Cursor cursor = getReadableDatabase().query(TABLE_CERTIFICATES,
                 new String[] { COLUMN_CERTIFICATES_DATA },
                 COLUMN_CERTIFICATES_ID + "=?",
-                new String[] { String.valueOf(id) }, null, null, null);
-        if (!cursor.moveToFirst())
-            return null;
-        byte[] data = cursor.getBlob(0);
-        cursor.close();
-        return data;
+                new String[] { String.valueOf(id) }, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getBlob(0);
+            }
+        }
+        return null;
     }
 
     @Override
     public String getCertificatePassword(long id) {
-        Cursor cursor = getReadableDatabase().query(TABLE_CERTIFICATES,
+        try (Cursor cursor = getReadableDatabase().query(TABLE_CERTIFICATES,
                 new String[] { COLUMN_CERTIFICATES_PASSWORD },
                 COLUMN_CERTIFICATES_ID + "=?",
-                new String[] { String.valueOf(id) }, null, null, null);
-        if (!cursor.moveToFirst()) {
-            cursor.close();
-            return null;
+                new String[] { String.valueOf(id) }, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                return cursor.getString(0);
+            }
         }
-        String password = cursor.getString(0);
-        cursor.close();
-        return password;
+        return null;
     }
 
     @Override
