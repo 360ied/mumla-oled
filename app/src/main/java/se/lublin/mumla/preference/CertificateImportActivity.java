@@ -22,21 +22,40 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
-import android.text.InputType;
-import android.widget.EditText;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.KeyEvent;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.widget.Button;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
+
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.textfield.TextInputLayout;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.Key;
 import java.security.KeyStore;
-import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Pattern;
+
+import javax.crypto.AEADBadTagException;
+import javax.crypto.BadPaddingException;
 
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
@@ -51,14 +70,73 @@ import se.lublin.mumla.app.BaseActivity;
 public class CertificateImportActivity extends BaseActivity {
     public static final int REQUEST_FILE = 0;
 
+    private static final String STATE_CERT_BYTES = "state_cert_bytes";
+    private static final String STATE_FILE_NAME = "state_file_name";
+    private static final String STATE_IS_RETRY = "state_is_retry";
+    private static final String STATE_PREVIOUS_PASSWORD = "state_previous_password";
+    private static final String STATE_WAITING_PASSWORD = "state_waiting_password";
+    private static final int MAX_CERT_SIZE = 5 * 1024 * 1024; // 5 MB
+
+    private static final Pattern MAC_PATTERN = Pattern.compile("\\bmac\\b", Pattern.CASE_INSENSITIVE);
+
+    private byte[] mPendingCertBytes;
+    private String mPendingFileName;
+    private boolean mPendingIsRetry;
+    private String mPendingPreviousPassword;
+    private boolean mWaitingForPassword;
+    private AlertDialog mPasswordDialog;
+    private TextInputLayout mPasswordLayout;
+    private TextInputEditText mPasswordField;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        if (savedInstanceState != null) {
+            mWaitingForPassword = savedInstanceState.getBoolean(STATE_WAITING_PASSWORD);
+            if (mWaitingForPassword) {
+                mPendingCertBytes = savedInstanceState.getByteArray(STATE_CERT_BYTES);
+                mPendingFileName = savedInstanceState.getString(STATE_FILE_NAME);
+                mPendingIsRetry = savedInstanceState.getBoolean(STATE_IS_RETRY);
+                mPendingPreviousPassword = savedInstanceState.getString(STATE_PREVIOUS_PASSWORD);
+                if (mPendingCertBytes != null && mPendingFileName != null) {
+                    showPasswordDialog(mPendingFileName, mPendingCertBytes, mPendingIsRetry, mPendingPreviousPassword);
+                    return;
+                }
+            }
+        }
 
         Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
         fileIntent.setType("*/*");
         fileIntent.addCategory(Intent.CATEGORY_OPENABLE);
         startActivityForResult(fileIntent, REQUEST_FILE);
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean(STATE_WAITING_PASSWORD, mWaitingForPassword);
+        if (mWaitingForPassword) {
+            outState.putByteArray(STATE_CERT_BYTES, mPendingCertBytes);
+            outState.putString(STATE_FILE_NAME, mPendingFileName);
+            outState.putBoolean(STATE_IS_RETRY, mPendingIsRetry);
+            if (mPasswordField != null && mPasswordField.getText() != null) {
+                outState.putString(STATE_PREVIOUS_PASSWORD, mPasswordField.getText().toString());
+            } else {
+                outState.putString(STATE_PREVIOUS_PASSWORD, mPendingPreviousPassword);
+            }
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (mPasswordDialog != null && mPasswordDialog.isShowing()) {
+            mPasswordDialog.dismiss();
+            mPasswordDialog = null;
+        }
+        mPasswordLayout = null;
+        mPasswordField = null;
     }
 
     @Override
@@ -83,7 +161,12 @@ public class CertificateImportActivity extends BaseActivity {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
             int read;
+            int totalBytes = 0;
             while ((read = is.read(buffer)) != -1) {
+                totalBytes += read;
+                if (totalBytes > MAX_CERT_SIZE) {
+                    throw new IOException("Certificate file exceeds maximum allowed size");
+                }
                 baos.write(buffer, 0, read);
             }
             certBytes = baos.toByteArray();
@@ -104,45 +187,53 @@ public class CertificateImportActivity extends BaseActivity {
         if (cursor != null)
             cursor.close();
 
-        storeKeystore(new char[0], displayName, certBytes);
+        storeKeystore(new char[0], displayName, certBytes, false, null);
     }
 
-    private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes) {
+    private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes,
+                               final boolean isRetry, final String previousPassword) {
         KeyStore keyStore;
         try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
             keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(input, password);
-        } catch (CertificateException e) {
-            final EditText passwordField = new EditText(this);
-            passwordField.setHint(R.string.password);
-            passwordField.setInputType(InputType.TYPE_TEXT_VARIATION_PASSWORD);
-            new MaterialAlertDialogBuilder(this)
-                    .setTitle(R.string.decrypt_certificate)
-                    .setView(passwordField)
-                    .setOnCancelListener(dialog -> finish())
-                    .setPositiveButton(android.R.string.ok, (dialog, which) ->
-                            storeKeystore(passwordField.getText().toString().toCharArray(), fileName, certBytes))
-                    .show();
-            return;
-        } catch (KeyStoreException|IOException|NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-            finish();
+            Enumeration<String> aliases = keyStore.aliases();
+            while (aliases.hasMoreElements()) {
+                String alias = aliases.nextElement();
+                if (keyStore.isKeyEntry(alias)) {
+                    Key key = keyStore.getKey(alias, password);
+                    if (key == null) {
+                        throw new UnrecoverableKeyException("Key could not be recovered for alias " + alias);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            if (isPasswordFailure(e)) {
+                showPasswordDialog(fileName, certBytes, isRetry, previousPassword);
+            } else {
+                e.printStackTrace();
+                if (mPasswordDialog != null) {
+                    mPasswordDialog.dismiss();
+                    mPasswordDialog = null;
+                }
+                mPasswordLayout = null;
+                mPasswordField = null;
+                Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                mWaitingForPassword = false;
+                finish();
+            }
             return;
         }
 
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try {
-            keyStore.store(output, new char[0]);
-        } catch (KeyStoreException|IOException|NoSuchAlgorithmException|CertificateException e) {
-            e.printStackTrace();
-            Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
-            finish();
-            return;
+        mWaitingForPassword = false;
+        if (mPasswordDialog != null) {
+            mPasswordDialog.dismiss();
+            mPasswordDialog = null;
         }
-
+        mPasswordLayout = null;
+        mPasswordField = null;
+        String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
         MumlaDatabase database = new MumlaSQLiteDatabase(this);
-        DatabaseCertificate certificate = database.addCertificate(fileName, output.toByteArray());
+        DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
         database.close();
 
         if (certificate != null && certificate.getId() >= 0) {
@@ -155,5 +246,136 @@ public class CertificateImportActivity extends BaseActivity {
         }
 
         finish();
+    }
+
+    private void showPasswordDialog(final String fileName, final byte[] certBytes,
+                                    final boolean isRetry, final String previousPassword) {
+        mWaitingForPassword = true;
+        mPendingFileName = fileName;
+        mPendingCertBytes = certBytes;
+        mPendingIsRetry = isRetry;
+        mPendingPreviousPassword = previousPassword;
+
+        if (mPasswordDialog != null && mPasswordDialog.isShowing() && mPasswordLayout != null && mPasswordField != null) {
+            if (isRetry) {
+                if (previousPassword != null) {
+                    mPasswordField.setText(previousPassword);
+                    mPasswordField.selectAll();
+                }
+                mPasswordLayout.setError(getString(R.string.invalid_password));
+                mPasswordField.requestFocus();
+            }
+            return;
+        }
+
+        if (mPasswordDialog != null && mPasswordDialog.isShowing()) {
+            mPasswordDialog.dismiss();
+        }
+
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this);
+        LayoutInflater inflater = LayoutInflater.from(builder.getContext());
+        View dialogView = inflater.inflate(R.layout.dialog_certificate_password, null);
+        mPasswordLayout = dialogView.findViewById(R.id.certificate_password_layout);
+        mPasswordField = dialogView.findViewById(R.id.certificate_password_field);
+
+        if (isRetry) {
+            if (previousPassword != null) {
+                mPasswordField.setText(previousPassword);
+                mPasswordField.selectAll();
+            }
+            mPasswordLayout.setError(getString(R.string.invalid_password));
+        }
+
+        mPasswordField.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (mPasswordLayout != null && mPasswordLayout.getError() != null) {
+                    mPasswordLayout.setError(null);
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
+        });
+
+        Runnable submitAction = () -> {
+            if (mPasswordField == null) {
+                return;
+            }
+            Editable text = mPasswordField.getText();
+            String entered = text != null ? text.toString() : "";
+            char[] passChars = entered.toCharArray();
+            storeKeystore(passChars, fileName, certBytes, true, entered);
+            Arrays.fill(passChars, '\0');
+        };
+
+        mPasswordField.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE ||
+                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
+                submitAction.run();
+                return true;
+            }
+            return false;
+        });
+
+        mPasswordDialog = builder
+                .setTitle(R.string.decrypt_certificate)
+                .setView(dialogView)
+                .setOnCancelListener(dialog -> {
+                    mWaitingForPassword = false;
+                    finish();
+                })
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                    mWaitingForPassword = false;
+                    finish();
+                })
+                .setPositiveButton(android.R.string.ok, null)
+                .create();
+
+        mPasswordDialog.setOnShowListener(dialog -> {
+            Button positiveButton = mPasswordDialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (positiveButton != null) {
+                positiveButton.setOnClickListener(v -> submitAction.run());
+            }
+        });
+
+        if (mPasswordDialog.getWindow() != null) {
+            mPasswordDialog.getWindow().setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        }
+        mPasswordDialog.show();
+        mPasswordField.requestFocus();
+    }
+
+    static boolean isPasswordFailure(Throwable t) {
+        Throwable cur = t;
+        while (cur != null) {
+            if (cur instanceof CertificateException ||
+                cur instanceof NoSuchAlgorithmException) {
+                return false;
+            }
+            if (cur instanceof UnrecoverableKeyException ||
+                cur instanceof BadPaddingException ||
+                cur instanceof AEADBadTagException) {
+                return true;
+            }
+            String msg = cur.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase(Locale.ROOT);
+                if (lower.contains("password") ||
+                    MAC_PATTERN.matcher(msg).find() ||
+                    lower.contains("decrypt") ||
+                    lower.contains("padding") ||
+                    lower.contains("bad key") ||
+                    lower.contains("key failed")) {
+                    return true;
+                }
+            }
+            cur = cur.getCause();
+        }
+        return false;
     }
 }
