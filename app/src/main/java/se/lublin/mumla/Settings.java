@@ -118,9 +118,6 @@ public class Settings {
     public static final String PREF_FORCE_TCP = "forceTcp";
     public static final Boolean DEFAULT_FORCE_TCP = false;
 
-    public static final String PREF_DISABLE_OPUS = "disableOpus";
-    public static final Boolean DEFAULT_DISABLE_OPUS = false;
-
     public static final String PREF_MUTED = "muted";
     public static final Boolean DEFAULT_MUTED = false;
 
@@ -369,10 +366,6 @@ public class Settings {
 
     public boolean isTcpForced() {
         return preferences.getBoolean(PREF_FORCE_TCP, DEFAULT_FORCE_TCP);
-    }
-
-    public boolean isOpusDisabled() {
-        return preferences.getBoolean(PREF_DISABLE_OPUS, DEFAULT_DISABLE_OPUS);
     }
 
     public boolean isMuted() {

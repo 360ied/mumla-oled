@@ -236,4 +236,17 @@ public class Mumble15ProtocolTest extends TestCase {
         assertFalse("Wire payload must omit OS", parsed.hasOs());
         assertFalse("Wire payload must omit OS version", parsed.hasOsVersion());
     }
+
+    public void testAuthenticateMessageOpusOnly() throws Exception {
+        Mumble.Authenticate auth = Mumble.Authenticate.newBuilder()
+                .setUsername("Alice")
+                .setPassword("secret")
+                .setOpus(true)
+                .build();
+
+        Mumble.Authenticate parsed = Mumble.Authenticate.parseFrom(auth.toByteArray());
+        assertTrue("Opus support must be advertised", parsed.hasOpus());
+        assertTrue("Opus support must be enabled", parsed.getOpus());
+        assertEquals("CELT bitstream versions must not be advertised", 0, parsed.getCeltVersionsCount());
+    }
 }
