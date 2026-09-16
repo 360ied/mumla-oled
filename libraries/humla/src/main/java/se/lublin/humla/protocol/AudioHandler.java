@@ -351,6 +351,13 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     @Override
+    public void messageUserRemove(Mumble.UserRemove msg) {
+        super.messageUserRemove(msg);
+        synchronized (mOutput) {
+            mOutput.removeUser(msg.getSession());
+        }
+    }
+
     public void messageVoiceData(byte[] data, HumlaUDPMessageType messageType) {
         synchronized (mOutput) {
             mOutput.queueVoiceData(data, messageType);

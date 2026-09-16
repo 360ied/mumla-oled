@@ -50,14 +50,16 @@ public class NativeAudioOutputEngine {
     public synchronized void queuePacket(int session, byte[] data, int length,
                                          int sequence, int flags,
                                          boolean isTerminator) {
-        if (mNativeHandle != 0 && data != null && length > 0) {
+        if (mNativeHandle != 0 && data != null && length > 0
+                && length <= data.length) {
             nativeQueuePacket(mNativeHandle, session, data, length, sequence,
                     flags, isTerminator);
         }
     }
 
     public synchronized int render(short[] out, int offset, int length) {
-        if (mNativeHandle != 0 && out != null && length > 0) {
+        if (mNativeHandle != 0 && out != null && offset >= 0 && length > 0
+                && offset <= out.length && length <= out.length - offset) {
             return nativeRender(mNativeHandle, out, offset, length);
         }
         return 0;
@@ -76,20 +78,19 @@ public class NativeAudioOutputEngine {
     }
 
     public synchronized void destroy() {
-        if (mNativeHandle != 0) {
-            nativeDestroy(mNativeHandle);
-            mNativeHandle = 0;
+        long handle = mNativeHandle;
+        mNativeHandle = 0;
+        if (handle != 0) {
+            nativeDestroy(handle);
         }
     }
 
-    @Override
-    protected void finalize() throws Throwable {
-        try {
-            destroy();
-        } finally {
-            super.finalize();
+    public synchronized void setJitterMarginFrames(int frames) {
+        if (mNativeHandle != 0) {
+            nativeSetJitterMarginFrames(mNativeHandle, frames);
         }
     }
+
 
     public interface AudioOutputEngineListener {
         void onTalkStateChanged(int session, int talkStateOrdinal);
@@ -104,4 +105,5 @@ public class NativeAudioOutputEngine {
             int length);
     private static native void nativeRemoveUser(long handle, int session);
     private static native void nativeReset(long handle);
+    private static native void nativeSetJitterMarginFrames(long handle, int frames);
 }

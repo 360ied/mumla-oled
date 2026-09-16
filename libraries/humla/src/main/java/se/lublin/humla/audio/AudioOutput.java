@@ -20,6 +20,7 @@ package se.lublin.humla.audio;
 
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.os.Build;
 import android.os.Handler;
@@ -79,14 +80,21 @@ public class AudioOutput implements Runnable,
         if (minBytes <= 0) {
             minBytes = quantumBytes;
         }
-        final int trackBytes = Math.max(minBytes, quantumBytes * 4);
+        // Floor of two render quanta (~120 ms) bounds output latency while
+        // still satisfying the hardware minimum buffer requirement.
+        final int trackBytes = Math.max(minBytes, quantumBytes * 2);
         Log.v(TAG, "Render quantum " + RENDER_SAMPLES + " samples, track "
                 + trackBytes + " bytes (system min " + minBytes + ")");
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // Legacy stream types are superseded by AudioAttributes on
+                // API 23+; map voice-call routing explicitly, media otherwise.
+                final int usage = (audioStream == AudioManager.STREAM_VOICE_CALL)
+                        ? AudioAttributes.USAGE_VOICE_COMMUNICATION
+                        : AudioAttributes.USAGE_MEDIA;
                 AudioAttributes attributes = new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setUsage(usage)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build();
                 AudioFormat format = new AudioFormat.Builder()
@@ -121,28 +129,52 @@ public class AudioOutput implements Runnable,
             throw new AudioInitializationException("AudioTrack init failed");
         }
 
-        mEngine = new NativeAudioOutputEngine(this);
+        try {
+            mEngine = new NativeAudioOutputEngine(this);
+        } catch (UnsatisfiedLinkError | RuntimeException e) {
+            mAudioTrack.release();
+            mAudioTrack = null;
+            throw new AudioInitializationException(e);
+        }
+        mRunning = true;
         mThread = new Thread(this);
         mThread.start();
         return mThread;
     }
 
     public void stopPlaying() {
+        final Thread thread;
         synchronized (this) {
             if (!mRunning && mThread == null) {
                 return;
             }
             mRunning = false;
+            thread = mThread;
         }
         synchronized (mInactiveLock) {
             mInactiveLock.notify();
         }
-        try {
-            mThread.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (thread != null && thread != Thread.currentThread()) {
+            boolean interrupted = false;
+            while (thread.isAlive()) {
+                try {
+                    thread.join();
+                    break;
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
         synchronized (this) {
+            // Release native resources only once the render thread is dead;
+            // a stop requested from the render thread itself defers cleanup
+            // to the next call after run() has exited.
+            if (mThread != null && mThread.isAlive()) {
+                return;
+            }
             mThread = null;
             if (mAudioTrack != null) {
                 try {
@@ -168,7 +200,11 @@ public class AudioOutput implements Runnable,
         Log.v(TAG, "Started thread.");
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
         synchronized (this) {
-            mRunning = true;
+            // Never revive a stopped pipeline: startPlaying already set
+            // mRunning before starting the thread.
+            if (Thread.currentThread() != mThread || !mRunning) {
+                return;
+            }
         }
         mAudioTrack.play();
 
@@ -188,7 +224,16 @@ public class AudioOutput implements Runnable,
                 rendered = engine.render(mix, 0, RENDER_SAMPLES);
             }
             if (rendered > 0) {
-                mAudioTrack.write(mix, 0, rendered);
+                int written = mAudioTrack.write(mix, 0, rendered);
+                if (written < 0) {
+                    Log.e(TAG, "AudioTrack.write failed: " + written);
+                    try {
+                        Thread.sleep(10);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             } else {
                 // Nobody is speaking. Keep the track playing so resume is
                 // gapless, and idle until the next packet arrives.
@@ -220,6 +265,9 @@ public class AudioOutput implements Runnable,
         if (messageType != HumlaUDPMessageType.UDPVoiceOpus) {
             return;
         }
+        if (data == null || data.length == 0) {
+            return;
+        }
         try {
             byte msgFlags = (byte) (data[0] & 0x1f);
             PacketBuffer pds = new PacketBuffer(data, data.length);
@@ -230,17 +278,26 @@ public class AudioOutput implements Runnable,
                 return;
             }
             int seq = (int) pds.readLong();
-            long header = pds.readLong();
-            int size = (int) (header & ((1 << 13) - 1));
-            boolean isTerminator = (header & (1 << 13)) != 0;
-            if (size <= 0 || size > pds.left()) {
-                return;
+            // Bundled datagrams chain header+payload pairs; each frame
+            // consumes sequence seq+i in UDP/protobuf 10 ms frame units.
+            int queued = 0;
+            while (pds.left() > 0) {
+                long header = pds.readLong();
+                int size = (int) (header & ((1 << 13) - 1));
+                boolean isTerminator = (header & (1 << 13)) != 0;
+                if (size <= 0 || size > pds.left()) {
+                    break;
+                }
+                byte[] opus = pds.dataBlock(size);
+                engine.queuePacket(session, opus, opus.length, seq + queued,
+                        msgFlags, isTerminator);
+                queued++;
             }
-            byte[] opus = pds.dataBlock(size);
-            engine.queuePacket(session, opus, opus.length, seq, msgFlags,
-                    isTerminator);
-            signalData();
-        } catch (BufferUnderflowException | IllegalArgumentException e) {
+            if (queued > 0) {
+                signalData();
+            }
+        } catch (BufferUnderflowException | IllegalArgumentException
+                | ArrayIndexOutOfBoundsException e) {
             Log.v(TAG, "Dropping malformed voice packet", e);
         }
     }
@@ -279,6 +336,9 @@ public class AudioOutput implements Runnable,
     public void onTalkStateChanged(final int session, final int talkStateOrdinal) {
         final TalkState state;
         switch (talkStateOrdinal) {
+            case NativeAudioOutputEngine.TALK_TALKING:
+                state = TalkState.TALKING;
+                break;
             case NativeAudioOutputEngine.TALK_SHOUTING:
                 state = TalkState.SHOUTING;
                 break;
@@ -288,8 +348,8 @@ public class AudioOutput implements Runnable,
             case NativeAudioOutputEngine.TALK_WHISPERING:
                 state = TalkState.WHISPERING;
                 break;
-            case NativeAudioOutputEngine.TALK_TALKING:
             default:
+                Log.w(TAG, "Unknown talk state ordinal: " + talkStateOrdinal);
                 state = TalkState.TALKING;
                 break;
         }
@@ -303,6 +363,16 @@ public class AudioOutput implements Runnable,
                 }
             }
         });
+    }
+
+    public void removeUser(int session) {
+        final NativeAudioOutputEngine engine;
+        synchronized (this) {
+            engine = mEngine;
+        }
+        if (engine != null) {
+            engine.removeUser(session);
+        }
     }
 
     public interface AudioOutputListener {
