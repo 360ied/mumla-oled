@@ -637,6 +637,29 @@ void testFecFailureFallsBackToConcealment() {
     std::cout << "  [PASS] testFecFailureFallsBackToConcealment" << std::endl;
 }
 
+void testBurstLossQuarantinesStaleDebt() {
+    g_testCount++;
+    // Two consecutive gaps: the first miss's debt is two frames behind once
+    // the successor arrives, beyond LBRR range, so it must be concealed while
+    // only the second gap recovers via FEC. A stale-debt bug would play FEC
+    // audio into the first gap and PLC into the second — slot-exact levels
+    // here discriminate the two.
+    std::vector<TalkEvent> events;
+    int fecAttempts = 0;
+    auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
+                                &events);
+    queueOne(*engine, 106, 0);
+    queueOne(*engine, 106, 3);
+    std::vector<int16_t> out(4 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(4 * kFrame));
+    TEST_ASSERT_EQ(fecAttempts, 1);
+    TEST_ASSERT_EQ(out[3 * kFrame / 2], 0); // first gap: settled PLC
+    TEST_ASSERT_EQ(out[5 * kFrame / 2], 9830); // second gap: FEC recovery
+    TEST_ASSERT_EQ(out[7 * kFrame / 2], 6553); // successor intact
+    std::cout << "  [PASS] testBurstLossQuarantinesStaleDebt" << std::endl;
+}
+
 void testUnrecoverableLossConcealsSilently() {
     g_testCount++;
     // No successor packet means no FEC attempt at all: the gap is pure
@@ -721,6 +744,7 @@ void run_audio_output_engine_tests() {
     testEvictsNewestVoiceWhenFull();
     testFecRecoveryFillsSingleLoss();
     testFecFailureFallsBackToConcealment();
+    testBurstLossQuarantinesStaleDebt();
     testUnrecoverableLossConcealsSilently();
     testLossBoundaryCrossfadeSmoothsStep();
     testLosslessMixHasNoCrossfade();
