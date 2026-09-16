@@ -95,7 +95,9 @@ the formatted message; `MERGE_HEAD` present makes it a merge commit):
 python3 scripts/commit.py -m "<subject>
 
 Context & Motivation: <why this branch is landing on master>
+
 Technical Approach: <summary of the branch's commits and how they fit together>
+
 Edge Cases & Impact: <how it was verified, e.g. check.sh, unit tests, manual device test>"
 ```
 
