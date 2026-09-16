@@ -89,7 +89,10 @@ public:
     // Largest single renderMix quantum the scratch buffers cover without
     // regrowing: 60 ms. Larger quanta still work via a slow-path resize.
     static constexpr size_t MAX_QUANTUM_SAMPLES = FRAME_SIZE * 6;
-    static constexpr int STARTUP_QUIET_FRAMES = 20;
+    // Two pre-roll frames (20 ms): just enough to avoid blurting on a truly
+    // empty buffer. Buffered packets play immediately with no gating, and the
+    // jitter margin below does the real startup buffering.
+    static constexpr int STARTUP_QUIET_FRAMES = 2;
     static constexpr int DEAD_MISS_FRAMES = 10;
     static constexpr int MAX_VOICES = 32;
     static constexpr int MAX_CONSECUTIVE_DECODE_ERRORS = 5;
@@ -117,8 +120,10 @@ public:
     void setTalkCallback(OutputTalkCallback callback);
 
     /**
-     * Sets the jitter buffer margin in 10 ms frames. Defaults to 10 frames
-     * (100 ms); applied to voices created after the call.
+     * Sets the jitter buffer margin in 10 ms frames. Defaults to 4 frames
+     * (40 ms); applied to voices created after the call. The margin is a
+     * floor: Speex still grows effective buffering via adaptation when the
+     * link needs it.
      */
     void setJitterMarginFrames(int frames);
 
@@ -179,7 +184,7 @@ private:
     std::map<int32_t, std::unique_ptr<Voice>> m_voices;
     DecoderFactory m_decoderFactory;
     OutputTalkCallback m_talkCallback;
-    int m_jitterMarginFrames = 10;
+    int m_jitterMarginFrames = 4;
 
     std::vector<float> m_mix;
     std::vector<float> m_voiceScratch;
