@@ -71,6 +71,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
+import se.lublin.humla.HumlaService;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.Server;
@@ -576,6 +577,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     .show();
             return;
         }
+        // Ignore rapid taps while a connection attempt is already in progress;
+        // each tap would otherwise spawn a parallel connection attempt.
+        if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
+            Toast.makeText(this, R.string.mumlaConnecting, Toast.LENGTH_SHORT).show();
+            return;
+        }
+
 
         ServerConnectTask connectTask = new ServerConnectTask(this, mDatabase);
         connectTask.execute(server);

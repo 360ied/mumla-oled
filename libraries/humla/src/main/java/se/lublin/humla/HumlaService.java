@@ -210,7 +210,20 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
+            boolean isConnect = ACTION_CONNECT.equals(intent.getAction());
             Bundle extras = intent.getExtras();
+            if (isConnect && (extras == null || !extras.containsKey(EXTRAS_SERVER))) {
+                // Ensure that we have been provided all required attributes.```
+                throw new RuntimeException(ACTION_CONNECT + " requires a server provided in extras.");
+            }
+            if (isConnect && mConnectionState == ConnectionState.CONNECTING) {
+                // Ignore duplicate connect requests while a connection attempt is already
+                // in progress; each would otherwise spawn a parallel connection. Guarded
+                // here (before configureExtras) so the in-flight attempt's target server
+                // isn't overwritten by the duplicate request.
+                Log.i(TAG, "Ignoring duplicate connect request while already connecting");
+                return START_NOT_STICKY;
+            }
             if (extras != null) {
                 try {
                     configureExtras(extras);
@@ -219,11 +232,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 }
             }
 
-            if (ACTION_CONNECT.equals(intent.getAction())) {
-                if (extras == null || !extras.containsKey(EXTRAS_SERVER)) {
-                    // Ensure that we have been provided all required attributes.```
-                    throw new RuntimeException(ACTION_CONNECT + " requires a server provided in extras.");
-                }
+            if (isConnect) {
                 connect();
             }
         }
