@@ -73,10 +73,11 @@ Was ~300 ms of stacked fixed delays; now ~100–165 ms typical:
 | Track buffer floor | ~120 ms | ~40 ms plus the hardware minimum |
 
 Remaining risk: the leaner margin trades robustness for latency on jittery
-links. Needs real-network listening on bad links, not just localhost, plus
-per-voice queue-to-playout delay logging before tuning further. A user-facing
-margin setting (`setJitterMarginFrames` exists with no callers) is the
-follow-up if one size does not fit all.
+links. Per-voice queue-to-playout delay is now logged on device
+(`AudioOutputEngine` verbose tag, `first audio … ms after queue`), so tune
+against those readings plus bad-link listening — not localhost. A
+user-facing margin setting (`setJitterMarginFrames` exists with no callers)
+is the follow-up if one size does not fit all.
 
 ## 7. Int16, fixed-48 kHz sink
 
