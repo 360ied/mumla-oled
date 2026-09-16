@@ -3,7 +3,7 @@ name: mumla-worktree-cleanup
 description: >-
   Safely clean up and teardown Git worktrees for the Mumla OLED repository:
   inventory active worktrees, inspect uncommitted changes and branch merge status,
-  solicit explicit clarification via ask_question before discarding any unmerged
+  solicit explicit clarification via the `ask` tool before discarding any unmerged
   or uncommitted work, execute worktree teardown via scripts/worktree.py, prune
   stale metadata, and remove leftover directories. CRITICAL: ONLY use when the
   user EXPLICITLY asks to clean up or remove worktrees. NEVER invoke this skill
@@ -16,7 +16,7 @@ This skill guides safe teardown and cleanup of Git worktrees in the Mumla OLED
 repository.
 
 > [!CAUTION]
-> **DO NOT RUN AUTONOMOUSLY.** Worktree teardown must be **explicitly requested by the user** (e.g., "clean up worktrees", "remove the worktree for branch X"). Agents must NEVER autonomously delete worktrees upon completing a feature, bugfix, or test suite. Task completion ends when commits and verification (`./scripts/check.sh`) are done inside the dedicated worktree; always leave the branch and worktree intact, report completion, and wait for review. Furthermore, never force-remove worktrees containing uncommitted modifications, untracked changes, or unmerged branch commits without explicit user confirmation via `ask_question`.
+> **DO NOT RUN AUTONOMOUSLY.** Worktree teardown must be **explicitly requested by the user** (e.g., "clean up worktrees", "remove the worktree for branch X"). Agents must NEVER autonomously delete worktrees upon completing a feature, bugfix, or test suite. Task completion ends when commits and verification (`./scripts/check.sh`) are done inside the dedicated worktree; always leave the branch and worktree intact, report completion, and wait for review. Furthermore, never force-remove worktrees containing uncommitted modifications, untracked changes, or unmerged branch commits without explicit user confirmation via the `ask` tool.
 
 Worktrees allow isolated development on dedicated branches without touching
 the primary repository tree (which stays permanently checked out on `master`).
@@ -92,7 +92,7 @@ Classify each secondary worktree into one of three states:
 
 - **If ANY worktree is Unmerged or Dirty**:
   **STOP.** Do NOT run `./scripts/worktree.py remove --force` autonomously.
-  Call the `ask_question` tool to solicit explicit guidance from the user:
+  Call the `ask` tool to solicit explicit guidance from the user:
   - Mention specific worktree branches and link modified files using Markdown links (e.g. `[AudioDeviceManager.java](file:///path/to/...)`).
   - Outline which worktrees are merged vs. unmerged.
   - Provide distinct user response options formatted from the user's perspective, such as:

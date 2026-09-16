@@ -26,15 +26,16 @@ the tripartite body convention.
 
 - Identify the branch: either the current worktree's branch (`git branch --show-current`),
   or the branch named by the user. It must not be `master`.
-- Confirm the worktree is clean: `git status --porcelain`. Refuse to merge
-  with uncommitted changes (or stash only if the user asks).
+- Confirm the root repository is clean — the merge runs there, so run
+  `git status --porcelain` in the root repository, not the feature worktree.
+  Refuse to merge with uncommitted changes (or stash only if the user asks).
 - Review what is being merged: `git log master..<branch> --oneline`. If the
   log contains anything beyond what the user described, flag it before
   proceeding.
 
 ## 2. Verify the feature branch
 
-Run the pre-completion check **inside the dedicated worktree** before merging:
+Run the pre-completion check **inside the dedicated worktree** before merging (from the repository root):
 
 ```bash
 (cd ".worktrees/<branch>" && ./scripts/check.sh)
@@ -84,7 +85,7 @@ wrapper:
 git merge --no-ff --no-commit <branch>
 ```
 
-If conflicts appear, resolve them, `git add` the results, and continue.
+If conflicts appear, resolve them, `git add` the results, and proceed to the wrapper commit below — never `git merge --continue`, which would commit with the default message and bypass the wrapper.
 If the user wants out instead: `git merge --abort`.
 
 Then create the merge commit via the wrapper (this runs `git commit` with
