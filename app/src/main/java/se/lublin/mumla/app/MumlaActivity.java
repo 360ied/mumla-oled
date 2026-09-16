@@ -164,6 +164,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             } else {
                 loadDrawerFragment(DrawerAdapter.ITEM_SERVER);
             }
+            // Swap screens synchronously: commit() alone leaves the server list visible
+            // and tappable until the next traversal, while updateConnectionState() below
+            // dismisses the modal connecting dialog first. Safe from state loss: this
+            // observer is unregistered in onPause, so state can't be saved here.
+            getSupportFragmentManager().executePendingTransactions();
 
             mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
@@ -560,6 +565,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
         // Check if we're already connected to a server; if so, inform user.
         if (mService != null && mService.isConnected()) {
+            // Tapping the server we're already on is a no-op: reconnecting to it
+            // would pointlessly tear down the live session.
+            if (isSameServer(mService.getTargetServer(), server)) {
+                Toast.makeText(this, R.string.already_connected, Toast.LENGTH_SHORT).show();
+                return;
+            }
             new MaterialAlertDialogBuilder(this)
                     .setMessage(R.string.reconnect_dialog_message)
                     .setPositiveButton(R.string.connect, (dialog, which) -> {
@@ -595,6 +606,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private static boolean isSameServer(Server a, Server b) {
         if (a == null || b == null) {
             return a == b;
+        }
+        // Saved rows carry stable IDs: two entries can share host/port with
+        // different credentials, so IDs decide whenever both sides have them.
+        if (a.isSaved() && b.isSaved()) {
+            return a.getId() == b.getId();
         }
         String hostA = a.getHost() != null ? a.getHost() : "";
         String hostB = b.getHost() != null ? b.getHost() : "";
