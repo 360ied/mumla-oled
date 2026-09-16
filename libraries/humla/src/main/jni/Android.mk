@@ -56,11 +56,10 @@ include $(BUILD_SHARED_LIBRARY)
 # by AudioOutputEngine, so no JitterBufferJni source belongs in this list.
 # Modern Audio Input/Output Engines & Jitter Buffer
 # (RNNoise + Lookahead Ring Buffer + Hysteresis VAD + Soft Limiter + Opus CBR + Adaptive Jitter Buffer + Native Output Mix)
+include $(CLEAR_VARS)
+LOCAL_PATH := $(ROOT)
+LOCAL_MODULE := humlaaudio
 LOCAL_C_INCLUDES := $(ROOT)/opus/include $(ROOT)/opus/celt $(ROOT)/opus/silk \
-                    $(ROOT)/rnnoise/include $(ROOT)/rnnoise/src \
-                    $(ROOT)/rnnoise-build $(ROOT)/rnnoise-build/generated \
-                    $(ROOT)/audio_engine \
-                    $(ROOT)/audio_engine/jitter
 LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    rnnoise/src/rnnoise_tables.c \
                    rnnoise/src/rnn.c \
