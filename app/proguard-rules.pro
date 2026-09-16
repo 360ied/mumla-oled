@@ -10,6 +10,11 @@
     public void onAudioPacketEncoded(byte[], int, int, boolean, long);
     public void onTalkingStateChanged(boolean, float);
 }
+-keep class se.lublin.humla.audio.NativeAudioOutputEngine { *; }
+-keep class se.lublin.humla.audio.NativeAudioOutputEngine$* { *; }
+-keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
+    public void onTalkStateChanged(int, int);
+}
 -keep class se.lublin.humla.audio.javacpp.** { *; }
 -keep class com.googlecode.javacpp.** { *; }
 -dontwarn com.googlecode.javacpp.BuildMojo
