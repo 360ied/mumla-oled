@@ -80,7 +80,12 @@ public:
         : m_span(spanSamples), m_level(level) {}
 
     int decodeFloat(const uint8_t* /*data*/, size_t /*len*/, float* out,
-                    int maxSamples, int /*decodeFec*/) override {
+                    int maxSamples, int decodeFec) override {
+        if (decodeFec != 0) {
+            // No LBRR payload exists in this fake: FEC is unavailable, so the
+            // engine must fall back to concealment for the debt slot.
+            return -1;
+        }
         const int n = std::min(m_span, maxSamples);
         for (int i = 0; i < n; ++i) {
             out[i] = m_level;
@@ -108,6 +113,68 @@ private:
     float m_level;
 };
 
+/**
+ * FEC-aware fake decoder: real decodes, FEC recoveries, and concealment each
+ * produce a distinct constant level, so tests can tell which path filled a
+ * gap slot. fecFails simulates a packet without LBRR data. Every packet
+ * spans exactly one 10 ms frame.
+ */
+class FecAwareDecoder : public IOutputDecoder {
+public:
+    FecAwareDecoder(float real, float fec, float plc, bool fecFails,
+                    int* fecAttempts)
+        : m_real(real),
+          m_fec(fec),
+          m_plc(plc),
+          m_fecFails(fecFails),
+          m_fecAttempts(fecAttempts) {}
+
+    int decodeFloat(const uint8_t* /*data*/, size_t /*len*/, float* out,
+                    int maxSamples, int decodeFec) override {
+        if (decodeFec != 0) {
+            if (m_fecAttempts != nullptr) {
+                ++(*m_fecAttempts);
+            }
+            if (m_fecFails) {
+                return -1;
+            }
+            const int n = std::min<int>(kFrame, maxSamples);
+            for (int i = 0; i < n; ++i) {
+                out[i] = m_fec;
+            }
+            return n;
+        }
+        const int n = std::min<int>(kFrame, maxSamples);
+        for (int i = 0; i < n; ++i) {
+            out[i] = m_real;
+        }
+        return n;
+    }
+
+    int decodeConcealment(float* out, int frameSize) override {
+        for (int i = 0; i < frameSize; ++i) {
+            out[i] = m_plc;
+        }
+        return frameSize;
+    }
+
+    int packetSampleCount(const uint8_t* /*data*/, size_t /*len*/) const override {
+        return kFrame;
+    }
+
+    bool isValid() const override { return true; }
+
+    void reset() override {}
+
+private:
+    float m_real;
+    float m_fec;
+    float m_plc;
+    bool m_fecFails;
+    int* m_fecAttempts;
+};
+
+
 struct TalkEvent {
     int32_t session;
     int state;
@@ -131,6 +198,24 @@ std::unique_ptr<AudioOutputEngine> makeSpanEngine(int spanSamples, float level,
     auto engine = std::make_unique<AudioOutputEngine>(
         [spanSamples, level] {
             return std::make_unique<VariableSpanDecoder>(spanSamples, level);
+        });
+    engine->setTalkCallback(
+        [events](int32_t session, int state) {
+            if (events != nullptr) {
+                events->push_back({session, state});
+            }
+        });
+    return engine;
+}
+
+std::unique_ptr<AudioOutputEngine> makeFecEngine(float real, float fec,
+                                                float plc, bool fecFails,
+                                                int* fecAttempts,
+                                                std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<AudioOutputEngine>(
+        [real, fec, plc, fecFails, fecAttempts] {
+            return std::make_unique<FecAwareDecoder>(real, fec, plc, fecFails,
+                                                     fecAttempts);
         });
     engine->setTalkCallback(
         [events](int32_t session, int state) {
@@ -437,7 +522,19 @@ void testDecodeCappedAt120ms() {
                        static_cast<size_t>(kFrame));
         TEST_ASSERT(peakAbs(out) > 8000);
     }
-    for (int i = 0; i < 4; ++i) {
+    // The first silent quantum still carries the 2 ms loss-boundary blend
+    // from the last loud tail into the silence head; past the blend window
+    // it is exactly silent, and later quanta are fully silent.
+    {
+        std::vector<int16_t> out(kFrame, 0x1234);
+        engine->renderMix(out.data(), out.size());
+        constexpr int kXf = AudioOutputEngine::XFADE_SAMPLES;
+        TEST_ASSERT(peakAbs(out) > 0); // blend head present
+        for (int i = kXf; i < kFrame; ++i) {
+            TEST_ASSERT_EQ(out[i], 0);
+        }
+    }
+    for (int i = 0; i < 3; ++i) {
         std::vector<int16_t> out(kFrame, 0x1234);
         engine->renderMix(out.data(), out.size());
         TEST_ASSERT_EQ(peakAbs(out), 0);
@@ -494,6 +591,114 @@ void testEvictsNewestVoiceWhenFull() {
     std::cout << "  [PASS] testEvictsNewestVoiceWhenFull" << std::endl;
 }
 
+void testFecRecoveryFillsSingleLoss() {
+    g_testCount++;
+    // Gap at seq 1 with seq 2 already buffered: the engine defers
+    // concealment one frame and reconstructs the gap from seq 2's in-band
+    // FEC data instead of playing PLC. Levels below the saturation knee are
+    // linear, so real 0.2 -> 6553 and FEC 0.3 -> 9830 exactly.
+    std::vector<TalkEvent> events;
+    int fecAttempts = 0;
+    auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
+                                &events);
+    queueOne(*engine, 101, 0);
+    queueOne(*engine, 101, 2);
+    std::vector<int16_t> out(3 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(3 * kFrame));
+    TEST_ASSERT_EQ(fecAttempts, 1);
+    // Gap slot carries FEC audio, uniformly: outside the onset fade and with
+    // real audio on both sides there is no fade and no crossfade to disturb
+    // it (FEC recovery counts as real).
+    for (int i = kFrame; i < 2 * kFrame; ++i) {
+        TEST_ASSERT_EQ(out[i], 9830);
+    }
+    // The successor packet still decodes normally after serving its FEC.
+    TEST_ASSERT_EQ(out[5 * kFrame / 2], 6553);
+    std::cout << "  [PASS] testFecRecoveryFillsSingleLoss" << std::endl;
+}
+
+void testFecFailureFallsBackToConcealment() {
+    g_testCount++;
+    // Same gap, but the successor carries no LBRR data: the debt slot falls
+    // back to concealment while the successor itself still plays normally.
+    std::vector<TalkEvent> events;
+    int fecAttempts = 0;
+    auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, true, &fecAttempts,
+                                &events);
+    queueOne(*engine, 102, 0);
+    queueOne(*engine, 102, 2);
+    std::vector<int16_t> out(3 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(3 * kFrame));
+    TEST_ASSERT_EQ(fecAttempts, 1);
+    TEST_ASSERT_EQ(out[3 * kFrame / 2], 0); // gap middle stays PLC silence
+    TEST_ASSERT_EQ(out[5 * kFrame / 2], 6553); // successor intact
+    std::cout << "  [PASS] testFecFailureFallsBackToConcealment" << std::endl;
+}
+
+void testUnrecoverableLossConcealsSilently() {
+    g_testCount++;
+    // No successor packet means no FEC attempt at all: the gap is pure
+    // concealment, settled at quantum end.
+    std::vector<TalkEvent> events;
+    int fecAttempts = 0;
+    auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
+                                &events);
+    queueOne(*engine, 103, 0);
+    std::vector<int16_t> out(2 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT_EQ(fecAttempts, 0);
+    TEST_ASSERT_EQ(out[3 * kFrame / 2], 0);
+    std::cout << "  [PASS] testUnrecoverableLossConcealsSilently" << std::endl;
+}
+
+void testLossBoundaryCrossfadeSmoothsStep() {
+    g_testCount++;
+    // Real 0.4 stepping straight to silent concealment would jump ~13100
+    // counts unblended; the 2 ms equal-power blend keeps every adjacent step
+    // around the joint two orders of magnitude below that.
+    std::vector<TalkEvent> events;
+    int fecAttempts = 0;
+    auto engine = makeFecEngine(0.4f, 0.0f, 0.0f, false, &fecAttempts,
+                                &events);
+    queueOne(*engine, 104, 0);
+    std::vector<int16_t> out(2 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT(peakAbs(out) > 8000); // still loud overall
+    int maxStep = 0;
+    for (size_t i = kFrame - 128; i < kFrame + 128; ++i) {
+        maxStep = std::max(maxStep,
+                           std::abs(out[i + 1] - out[i]));
+    }
+    TEST_ASSERT(maxStep < 1500);
+    std::cout << "  [PASS] testLossBoundaryCrossfadeSmoothsStep (maxStep: "
+              << maxStep << ")" << std::endl;
+}
+
+void testLosslessMixHasNoCrossfade() {
+    g_testCount++;
+    // No loss means no chunk-type transitions: steady-state samples stay
+    // bit-exact, proving the crossfade never fires on clean audio.
+    std::vector<TalkEvent> events;
+    int fecAttempts = 0;
+    auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
+                                &events);
+    queueOne(*engine, 105, 0);
+    queueOne(*engine, 105, 1);
+    queueOne(*engine, 105, 2);
+    std::vector<int16_t> out(3 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(3 * kFrame));
+    TEST_ASSERT_EQ(fecAttempts, 0);
+    for (int i = kFrame; i < 2 * kFrame; ++i) {
+        TEST_ASSERT_EQ(out[i], 6553);
+    }
+    std::cout << "  [PASS] testLosslessMixHasNoCrossfade" << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -514,4 +719,9 @@ void run_audio_output_engine_tests() {
     testDecodeCappedAt120ms();
     testEmptyTerminatorDrainsVoice();
     testEvictsNewestVoiceWhenFull();
+    testFecRecoveryFillsSingleLoss();
+    testFecFailureFallsBackToConcealment();
+    testUnrecoverableLossConcealsSilently();
+    testLossBoundaryCrossfadeSmoothsStep();
+    testLosslessMixHasNoCrossfade();
 }

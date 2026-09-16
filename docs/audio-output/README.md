@@ -10,7 +10,7 @@ UDP datagram / protobuf Audio
   → AudioOutput.queueVoiceData / queueProtobufVoiceData   (Java, transport parse)
   → NativeAudioOutputEngine.queuePacket                   (JNI)
   → AudioOutputEngine::queuePacket                        (per-user Speex jitter buffer)
-  → AudioOutputEngine::renderMix                          (decode → PLC → fade → mix → saturate)
+  → AudioOutputEngine::renderMix                          (decode → FEC/PLC → xfade → fade → mix → saturate)
   → AudioTrack.write (mono 16-bit PCM 48 kHz)             (single render thread)
 ```
 
@@ -38,6 +38,7 @@ UDP datagram / protobuf Audio
 | `MAX_VOICES` | 32 | Evicts highest session id on join flood |
 | `MAX_DECODE_SAMPLES` | 5760 samples | Caps 120 ms Opus bundles |
 | Saturation knee | 0.5 (−6 dB) | Linear below, `1 − 0.5·exp(−2(|m| − 0.5))` above, asymptote 1.0, C1-smooth |
+| `XFADE_SAMPLES` | 96 samples | 2 ms equal-power crossfade at real ↔ concealment joints |
 
 ## Threading and lifecycle
 
