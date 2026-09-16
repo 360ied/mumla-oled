@@ -56,9 +56,9 @@ OpusVoiceDecoder::OpusVoiceDecoder()
         m_decoder = nullptr;
         return;
     }
-    // The output path is mono (and feeds mono downmixes): phase inversion
-    // buys no stereo image here, so disable it for deterministic output.
-    opus_decoder_ctl(m_decoder, OPUS_SET_PHASE_INVERSION_DISABLED(1));
+    // Mono output: default decoder phase handling is fine. (The bundled
+    // opus predates OPUS_SET_PHASE_INVERSION_DISABLED; do not re-add
+    // without bumping the in-tree codec.)
 }
 
 OpusVoiceDecoder::~OpusVoiceDecoder() {
