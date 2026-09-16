@@ -32,6 +32,7 @@ public:
     int decodeConcealment(float* out, int frameSize) override {
         return m_decoder.decodeConcealment(out, frameSize);
     }
+    void reset() override { m_decoder.reset(); }
     int packetSampleCount(const uint8_t* data, size_t len) const override {
         return OpusVoiceDecoder::packetSampleCount(data, len);
     }
@@ -53,7 +54,11 @@ OpusVoiceDecoder::OpusVoiceDecoder()
     m_decoder = opus_decoder_create(SAMPLE_RATE, CHANNELS, &error);
     if (error != OPUS_OK || m_decoder == nullptr) {
         m_decoder = nullptr;
+        return;
     }
+    // The output path is mono (and feeds mono downmixes): phase inversion
+    // buys no stereo image here, so disable it for deterministic output.
+    opus_decoder_ctl(m_decoder, OPUS_SET_PHASE_INVERSION_DISABLED(1));
 }
 
 OpusVoiceDecoder::~OpusVoiceDecoder() {

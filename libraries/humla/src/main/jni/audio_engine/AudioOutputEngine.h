@@ -24,6 +24,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 // Speex jitter buffer (C API, global scope to match speex_jitter.h).
@@ -59,6 +60,7 @@ public:
     virtual int decodeConcealment(float* out, int frameSize) = 0;
     virtual int packetSampleCount(const uint8_t* data, size_t len) const = 0;
     virtual bool isValid() const = 0;
+    virtual void reset() = 0;
 };
 
 /**
@@ -72,16 +74,25 @@ public:
  * Threading: queuePacket may be called from network threads while renderMix
  * runs on the audio thread. A single mutex guards all voice state. Decode of
  * a handful of mono streams is cheap enough to run inline in renderMix, which
- * keeps the callback free of cross-thread handoff latency.
+ * keeps the callback free of cross-thread handoff latency. Talk callbacks are
+ * never invoked while holding the mutex; they are collected under the lock
+ * and emitted from a copied list after unlock.
  */
 class AudioOutputEngine {
 public:
     static constexpr int SAMPLE_RATE = 48000;
     static constexpr int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples, 10 ms
     static constexpr size_t MAX_PACKET_BYTES = 2048;
-    static constexpr int MAX_DECODE_SAMPLES = FRAME_SIZE * 6; // 60 ms bundle
+    // Largest Opus bundle the engine accepts: 120 ms = 12 x 10 ms frames.
+    static constexpr int MAX_DECODE_SAMPLES = FRAME_SIZE * 12; // 5760 samples
+    // Largest single renderMix quantum the scratch buffers cover without
+    // regrowing: 60 ms. Larger quanta still work via a slow-path resize.
+    static constexpr size_t MAX_QUANTUM_SAMPLES = FRAME_SIZE * 6;
     static constexpr int STARTUP_QUIET_FRAMES = 20;
     static constexpr int DEAD_MISS_FRAMES = 10;
+    static constexpr int MAX_VOICES = 32;
+    static constexpr int MAX_CONSECUTIVE_DECODE_ERRORS = 5;
+    static constexpr double kPi = 3.14159265358979323846;
 
     using DecoderFactory =
         std::function<std::unique_ptr<IOutputDecoder>()>;
@@ -102,8 +113,16 @@ public:
     void setTalkCallback(OutputTalkCallback callback);
 
     /**
+     * Sets the jitter buffer margin in 10 ms frames. Defaults to 10 frames
+     * (100 ms); applied to voices created after the call.
+     */
+    void setJitterMarginFrames(int frames);
+
+    /**
      * Enqueues one Opus payload for a user. The jitter buffer copies packet
-     * bytes, so the caller retains ownership of data.
+     * bytes, so the caller retains ownership of data. Packets whose sample
+     * count cannot be determined are dropped rather than given a fabricated
+     * span, since a wrong span corrupts jitter timing for the whole voice.
      */
     void queuePacket(int32_t session, const uint8_t* data, size_t len,
                      uint32_t sequence, int flags, bool isTerminator);
@@ -125,19 +144,33 @@ private:
     struct Voice;
 
     static OutputTalkState talkStateForFlags(int flags);
-    void emitTalkLocked(int32_t session, OutputTalkCallback& callback,
-                        OutputTalkState state);
+    // Records a talk transition into pendingEvents (deduped against the last
+    // reported state) instead of invoking the callback inline, so the caller
+    // can emit events after releasing the lock.
+    static void recordTalkLocked(
+        Voice* voice, int32_t session, OutputTalkState state,
+        std::vector<std::pair<int32_t, int>>* pendingEvents);
+    // Copies decoded/concealed samples into the voice scratch area, stashing
+    // any overflow in the voice carryover buffer; filled is advanced.
+    static void appendVoiceSamples(Voice* voice, const float* src, int count,
+                                   float* scratch, size_t numSamples,
+                                   size_t& filled);
+    // Soft-knee bus saturation, documented in the .cpp.
+    static float saturateSample(float m);
+    int jitterBufferedCount(JitterBuffer* jitter) const;
 
     mutable std::mutex m_mutex;
     std::map<int32_t, std::unique_ptr<Voice>> m_voices;
     DecoderFactory m_decoderFactory;
     OutputTalkCallback m_talkCallback;
+    int m_jitterMarginFrames = 10;
 
     std::vector<float> m_mix;
     std::vector<float> m_voiceScratch;
     std::vector<float> m_frameScratch;
     std::vector<float> m_fadeIn;
     std::vector<float> m_fadeOut;
+    std::vector<int32_t> m_deadSessions;
 };
 
 } // namespace audio
