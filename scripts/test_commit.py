@@ -343,44 +343,46 @@ class TestCLIIntegration(unittest.TestCase):
 
     @patch("subprocess.run")
     def test_cli_execution_with_message_flag(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_run.return_value = mock_proc
+        diff_proc = MagicMock()
+        diff_proc.returncode = 1  # `git diff --cached --quiet`: staged changes present
+        commit_proc = MagicMock()
+        commit_proc.returncode = 0
+        mock_run.side_effect = [diff_proc, commit_proc]
 
         with patch("sys.argv", ["commit.py", "-m", "docs: test subject\n\n" + COMPLIANT_BODY]):
             ret = main()
             self.assertEqual(ret, 0)
-            mock_run.assert_called_once()
+            self.assertEqual(mock_run.call_count, 2)
             cmd_args = mock_run.call_args[0][0]
-            self.assertEqual(cmd_args[0], "git")
-            self.assertEqual(cmd_args[1], "commit")
-            self.assertEqual(cmd_args[2], "-m")
-            self.assertIn("docs: test subject", cmd_args[3])
 
     @patch("subprocess.run")
     def test_cli_multiple_message_flags(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_run.return_value = mock_proc
+        diff_proc = MagicMock()
+        diff_proc.returncode = 1  # `git diff --cached --quiet`: staged changes present
+        commit_proc = MagicMock()
+        commit_proc.returncode = 0
+        mock_run.side_effect = [diff_proc, commit_proc]
 
         with patch("sys.argv", ["commit.py", "-m", "docs: multi message", "-m", COMPLIANT_BODY]):
             ret = main()
             self.assertEqual(ret, 0)
-            mock_run.assert_called_once()
+            self.assertEqual(mock_run.call_count, 2)
             cmd_args = mock_run.call_args[0][0]
             expected, _ = format_commit_message("docs: multi message\n\n" + COMPLIANT_BODY)
             self.assertEqual(cmd_args[3], expected)
 
     @patch("subprocess.run")
     def test_cli_subject_and_body_flags(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_run.return_value = mock_proc
+        diff_proc = MagicMock()
+        diff_proc.returncode = 1  # `git diff --cached --quiet`: staged changes present
+        commit_proc = MagicMock()
+        commit_proc.returncode = 0
+        mock_run.side_effect = [diff_proc, commit_proc]
 
         with patch("sys.argv", ["commit.py", "-s", "docs: test flags", "-b", COMPLIANT_BODY]):
             ret = main()
             self.assertEqual(ret, 0)
-            mock_run.assert_called_once()
+            self.assertEqual(mock_run.call_count, 2)
             cmd_args = mock_run.call_args[0][0]
             expected, _ = format_commit_message("docs: test flags\n\n" + COMPLIANT_BODY)
             self.assertEqual(cmd_args[3], expected)
@@ -429,9 +431,11 @@ class TestCLIIntegration(unittest.TestCase):
 
     @patch("subprocess.run")
     def test_cli_stdin(self, mock_run):
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_run.return_value = mock_proc
+        diff_proc = MagicMock()
+        diff_proc.returncode = 1  # `git diff --cached --quiet`: staged changes present
+        commit_proc = MagicMock()
+        commit_proc.returncode = 0
+        mock_run.side_effect = [diff_proc, commit_proc]
 
         raw = "docs: from stdin\n\n" + COMPLIANT_BODY
         with patch("sys.argv", ["commit.py"]):
@@ -439,10 +443,25 @@ class TestCLIIntegration(unittest.TestCase):
                 with patch("sys.stdin.read", return_value=raw):
                     ret = main()
                     self.assertEqual(ret, 0)
-                    mock_run.assert_called_once()
+                    self.assertEqual(mock_run.call_count, 2)
                     cmd_args = mock_run.call_args[0][0]
                     expected, _ = format_commit_message(raw)
                     self.assertEqual(cmd_args[3], expected)
+
+    @patch("subprocess.run")
+    def test_cli_no_staged_changes_aborts_before_commit(self, mock_run):
+        diff_proc = MagicMock()
+        diff_proc.returncode = 0  # `git diff --cached --quiet`: nothing staged
+        mock_run.return_value = diff_proc
+
+        with patch("sys.argv", ["commit.py", "-m", "docs: test subject\n\n" + COMPLIANT_BODY]):
+            with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                ret = main()
+                self.assertEqual(ret, 1)
+                self.assertIn("[nothing-staged]", stderr.getvalue())
+                mock_run.assert_called_once()
+                diff_args = mock_run.call_args[0][0]
+                self.assertEqual(diff_args[:3], ["git", "diff", "--cached"])
 
 
 if __name__ == "__main__":
