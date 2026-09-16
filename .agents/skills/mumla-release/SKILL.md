@@ -93,8 +93,11 @@ gitignored).
 
 ### Release Notes Structure
 
-- **Title**: `Mumla OLED <version>` (matches existing release list; do NOT use
-  bare version).
+- **Title**: passed via `gh release create --title "Mumla OLED <version>"`
+  (matches existing release list; do NOT use bare version). Do NOT include an
+  `# Mumla OLED <version>` H1 heading in the notes file — GitHub renders
+  `--title` above the body, so an H1 duplicates it. The notes file MUST start
+  at `## Highlights`.
 - **`## Highlights`**:
   - Group by feature or theme using `### Plain-English Feature Title`.
   - Under each heading, use bullet points formatted as:
@@ -131,7 +134,8 @@ gh release create <version> app/build/outputs/apk/foss/release/mumla-foss-releas
 ## 7. Verify
 
 - `gh release view <version> --json assets,body` — APK attached, title
-  correct, universal-APK note present at the end of the body, and notes free
-  of developer jargon or test-only sections.
+  correct, body starts at `## Highlights` (no `# Mumla OLED` H1 — that would
+  duplicate `--title`), universal-APK note present at the end of the body,
+  and notes free of developer jargon or test-only sections.
 - Check the release list (`gh release list`) so the new entry matches the
   naming of previous releases.
