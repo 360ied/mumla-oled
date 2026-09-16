@@ -166,8 +166,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             }
             // Swap screens synchronously: commit() alone leaves the server list visible
             // and tappable until the next traversal, while updateConnectionState() below
-            // dismisses the modal connecting dialog first. Safe from state loss: this
-            // observer is unregistered in onPause, so state can't be saved here.
+            // dismisses the modal connecting dialog first. commit() is the state-loss
+            // check, and this observer is unregistered in onPause before
+            // onSaveInstanceState on the same Looper, so this adds no new exposure.
+            // Drains the whole pending queue in FIFO order, which is benign.
             getSupportFragmentManager().executePendingTransactions();
 
             mDrawerAdapter.notifyDataSetChanged();
@@ -186,6 +188,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             // Re-show server list if we're showing a fragment that depends on the service.
             if (getSupportFragmentManager().findFragmentById(R.id.content_frame) instanceof HumlaServiceFragment) {
                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
+                // Same synchronous swap as onConnected: the dialog below shows
+                // immediately, so don't leave stale channel UI up for a traversal.
+                getSupportFragmentManager().executePendingTransactions();
             }
             mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
@@ -563,7 +568,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         Server server = mServerPendingPerm;
         mServerPendingPerm = null;
 
-        // Check if we're already connected to a server; if so, inform user.
+        // Already connected: tapping the current server is a no-op, tapping
+        // another server offers a switch via the reconnect dialog.
         if (mService != null && mService.isConnected()) {
             // Tapping the server we're already on is a no-op: reconnecting to it
             // would pointlessly tear down the live session.
@@ -603,18 +609,15 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         connectTask.execute(server);
     }
 
-    private static boolean isSameServer(Server a, Server b) {
+    static boolean isSameServer(Server a, Server b) {
         if (a == null || b == null) {
             return a == b;
         }
-        // Saved rows carry stable IDs: two entries can share host/port with
-        // different credentials, so IDs decide whenever both sides have them.
         if (a.isSaved() && b.isSaved()) {
             return a.getId() == b.getId();
         }
-        String hostA = a.getHost() != null ? a.getHost() : "";
-        String hostB = b.getHost() != null ? b.getHost() : "";
-        return hostA.equalsIgnoreCase(hostB) && a.getPort() == b.getPort();
+        // Fall back to the chat-log identity convention (normalized endpoint + username).
+        return MumlaService.getServerKey(a).equals(MumlaService.getServerKey(b));
     }
 
     @Override
