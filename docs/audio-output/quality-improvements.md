@@ -11,16 +11,20 @@ when the next packet starts exactly at the pointer it is decoded with
 `decodeFec=1` into the slot; anything else (jitter jump, no LBRR) falls back
 to concealment, and unrecovered debt is PLC-filled at quantum end so decoder
 state advances exactly as before. Debt is quantum-local, never carried over.
-Our encoder always sends LBRR (`OPUS_SET_INBAND_FEC(1)`), so Mumla-to-Mumla
-streams recover single losses near-perfectly.
+A miss arriving with debt outstanding settles the old slot via concealment
+first (its frame is beyond LBRR range) and starts a fresh debt, so burst
+loss chains correctly instead of playing the wrong frame's audio in a stale
+slot. Our encoder always sends LBRR (`OPUS_SET_INBAND_FEC(1)`), so
+Mumla-to-Mumla streams recover single losses near-perfectly.
 
 ## 2. Clicks at loss boundaries — IMPLEMENTED
 
 Status: done on branch `audio-output-fec-xfade-hpf`. Real ↔ concealment chunk
 boundaries (FEC recovery counts as real) blend over a 96-sample (2 ms)
 equal-power crossfade (`XFADE_SAMPLES`, precomputed `m_xfadeIn/m_xfadeOut`
-tables): two-sided within a quantum, one-sided from a per-voice tail snapshot
-across quanta. Measured joint step 215 counts vs ~13100 unblended.
+tables): two-sided within a quantum, one-sided from the tail snapshot's last
+value across quanta (keeps the joint C0). Measured joint step 215 counts vs
+~13100 unblended.
 
 ## 3. Per-source gain dropped on the floor
 
