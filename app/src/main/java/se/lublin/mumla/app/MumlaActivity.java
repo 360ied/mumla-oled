@@ -71,6 +71,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
+import se.lublin.humla.HumlaService;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.Server;
@@ -163,6 +164,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             } else {
                 loadDrawerFragment(DrawerAdapter.ITEM_SERVER);
             }
+            // Swap screens synchronously: commit() alone leaves the server list visible
+            // and tappable until the next traversal, while updateConnectionState() below
+            // dismisses the modal connecting dialog first. commit() is the state-loss
+            // check, and this observer is unregistered in onPause before
+            // onSaveInstanceState on the same Looper, so this adds no new exposure.
+            // Drains the whole pending queue in FIFO order, which is benign.
+            getSupportFragmentManager().executePendingTransactions();
 
             mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
@@ -180,6 +188,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             // Re-show server list if we're showing a fragment that depends on the service.
             if (getSupportFragmentManager().findFragmentById(R.id.content_frame) instanceof HumlaServiceFragment) {
                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
+                // Same synchronous swap as onConnected: the dialog below shows
+                // immediately, so don't leave stale channel UI up for a traversal.
+                getSupportFragmentManager().executePendingTransactions();
             }
             mDrawerAdapter.notifyDataSetChanged();
             supportInvalidateOptionsMenu();
@@ -557,8 +568,15 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         Server server = mServerPendingPerm;
         mServerPendingPerm = null;
 
-        // Check if we're already connected to a server; if so, inform user.
+        // Already connected: tapping the current server is a no-op, tapping
+        // another server offers a switch via the reconnect dialog.
         if (mService != null && mService.isConnected()) {
+            // Tapping the server we're already on is a no-op: reconnecting to it
+            // would pointlessly tear down the live session.
+            if (isSameServer(mService.getTargetServer(), server)) {
+                Toast.makeText(this, R.string.already_connected, Toast.LENGTH_SHORT).show();
+                return;
+            }
             new MaterialAlertDialogBuilder(this)
                     .setMessage(R.string.reconnect_dialog_message)
                     .setPositiveButton(R.string.connect, (dialog, which) -> {
@@ -576,11 +594,31 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     .show();
             return;
         }
+        // Ignore rapid taps while a connection attempt is already in progress;
+        // each tap would otherwise spawn a parallel connection attempt.
+        if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
+            if (isSameServer(mService.getTargetServer(), server)) {
+                Toast.makeText(this, R.string.mumlaConnecting, Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, R.string.already_connecting, Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
 
         ServerConnectTask connectTask = new ServerConnectTask(this, mDatabase);
         connectTask.execute(server);
     }
 
+    static boolean isSameServer(Server a, Server b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        if (a.isSaved() && b.isSaved()) {
+            return a.getId() == b.getId();
+        }
+        // Fall back to the chat-log identity convention (normalized endpoint + username).
+        return MumlaService.getServerKey(a).equals(MumlaService.getServerKey(b));
+    }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
@@ -700,7 +738,20 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                             if (server1.isSaved()) {
                                 mDatabase.updateServer(server1);
                             }
-                            connectToServer(server1);
+                            if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
+                                // Serialize the retry behind the in-flight attempt, mirroring
+                                // the already-connected flow: reconnect once it tears down.
+                                mService.registerObserver(new HumlaObserver() {
+                                    @Override
+                                    public void onDisconnected(HumlaException e) {
+                                        connectToServer(server1);
+                                        mService.unregisterObserver(this);
+                                    }
+                                });
+                                mService.disconnect();
+                            } else {
+                                connectToServer(server1);
+                            }
                         });
                         builder.setNegativeButton(android.R.string.cancel, (dialog, which) -> {
                             if (getService() != null) {
