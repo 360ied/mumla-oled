@@ -46,8 +46,16 @@ LOCAL_LDLIBS        := -llog
 LOCAL_LDFLAGS       += $(COMMON_LDFLAGS)
 include $(BUILD_SHARED_LIBRARY)
 
-# Modern Audio Input Engine & Jitter Buffer
-# (Oboe/AAudio + RNNoise + Lookahead Ring Buffer + Hysteresis VAD + Soft Limiter + Opus CBR + Adaptive Jitter Buffer)
+# NOTE: JNI load order is pinned: NativeAudioOutputEngine's static init loads
+# "jniopus" before "humlaaudio" (see NativeAudioOutputEngine.java). Keep that
+# order here too: humlaaudio links against the prebuilt opus codec in jniopus
+# (LOCAL_SHARED_LIBRARIES below) and must never bundle its own opus copy.
+# The native output mix (OpusVoiceDecoder + AudioOutputEngine + its JNI
+# bridge) lives in humlaaudio. There is no separate JitterBuffer JNI bridge:
+# the Speex jitter buffer (audio_engine/jitter/jitter.c) is used internally
+# by AudioOutputEngine, so no JitterBufferJni source belongs in this list.
+# Modern Audio Input/Output Engines & Jitter Buffer
+# (RNNoise + Lookahead Ring Buffer + Hysteresis VAD + Soft Limiter + Opus CBR + Adaptive Jitter Buffer + Native Output Mix)
 include $(CLEAR_VARS)
 LOCAL_PATH := $(ROOT)
 LOCAL_MODULE := humlaaudio
@@ -74,8 +82,10 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    audio_engine/OpusVoiceEncoder.cpp \
                    audio_engine/AudioInputEngine.cpp \
                    audio_engine/NativeAudioInputEngineJni.cpp \
-                   audio_engine/jitter/jitter.c \
-                   audio_engine/jitter/JitterBufferJni.cpp
+                   audio_engine/OpusVoiceDecoder.cpp \
+                   audio_engine/AudioOutputEngine.cpp \
+                   audio_engine/NativeAudioOutputEngineJni.cpp \
+                   audio_engine/jitter/jitter.c
 LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 $(COMMON_CFLAGS) -DVAR_ARRAYS -Wno-\#warnings
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus
