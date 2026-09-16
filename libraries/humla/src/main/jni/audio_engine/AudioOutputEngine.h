@@ -68,8 +68,9 @@ public:
  *
  * Replaces the legacy Java decode thread pool, per-user speech objects, and
  * hard-clipping mixer. Java parses transport headers and forwards clean Opus
- * payloads; everything from jitter buffering through decode, loss
- * concealment, fading, mixing, and soft saturation lives here.
+ * payloads; everything from jitter buffering through decode, in-band FEC
+ * recovery, loss concealment, loss-boundary crossfading, fading, mixing,
+ * and soft saturation lives here.
  *
  * Threading: queuePacket may be called from network threads while renderMix
  * runs on the audio thread. A single mutex guards all voice state. Decode of
@@ -92,6 +93,9 @@ public:
     static constexpr int DEAD_MISS_FRAMES = 10;
     static constexpr int MAX_VOICES = 32;
     static constexpr int MAX_CONSECUTIVE_DECODE_ERRORS = 5;
+    // Equal-power crossfade applied at real<->concealment boundaries so loss
+    // gaps do not click: 96 samples = 2 ms at 48 kHz.
+    static constexpr int XFADE_SAMPLES = 96;
     static constexpr double kPi = 3.14159265358979323846;
 
     using DecoderFactory =
@@ -150,11 +154,23 @@ private:
     static void recordTalkLocked(
         Voice* voice, int32_t session, OutputTalkState state,
         std::vector<std::pair<int32_t, int>>* pendingEvents);
-    // Copies decoded/concealed samples into the voice scratch area, stashing
-    // any overflow in the voice carryover buffer; filled is advanced.
-    static void appendVoiceSamples(Voice* voice, const float* src, int count,
-                                   float* scratch, size_t numSamples,
-                                   size_t& filled);
+    // Appends one decoded/concealed chunk into the voice scratch area,
+    // stashing any overflow in the voice carryover buffer; filled advances.
+    // When the chunk type (concealed vs real, FEC recovery counts as real)
+    // differs from the previously appended chunk, the boundary is blended
+    // with the precomputed equal-power crossfade instead of stepping.
+    static void appendVoiceChunk(Voice* voice, const float* src, int count,
+                                 float* scratch, size_t numSamples,
+                                 size_t& filled, bool concealed,
+                                 const float* xfadeIn, const float* xfadeOut);
+    // Overwrites a previously reserved FEC-debt slot (see renderMix) with a
+    // recovered or concealed chunk, blending the boundary as above. The slot
+    // always holds exactly FRAME_SIZE samples; filled is unchanged.
+    static void writeChunkAt(Voice* voice, float* scratch, size_t pos,
+                             const float* src, int count, bool concealed,
+                             const float* xfadeIn, const float* xfadeOut);
+    // Snapshots the last emitted voice samples for cross-quantum blending.
+    static void snapshotTail(Voice* voice, const float* scratch, size_t filled);
     // Soft-knee bus saturation, documented in the .cpp.
     static float saturateSample(float m);
     int jitterBufferedCount(JitterBuffer* jitter) const;
@@ -170,6 +186,8 @@ private:
     std::vector<float> m_frameScratch;
     std::vector<float> m_fadeIn;
     std::vector<float> m_fadeOut;
+    std::vector<float> m_xfadeIn;
+    std::vector<float> m_xfadeOut;
     std::vector<int32_t> m_deadSessions;
     // Reused across renderMix calls so the audio thread never allocates per
     // quantum. Only touched by renderMix (single-render-thread discipline).

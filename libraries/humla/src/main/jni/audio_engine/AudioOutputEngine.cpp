@@ -36,6 +36,7 @@ constexpr float kSaturationKnee = 0.5f;
 } // namespace
 
 struct AudioOutputEngine::Voice {
+    static constexpr size_t kNoDebt = static_cast<size_t>(-1);
     int32_t session = 0;
     std::unique_ptr<IOutputDecoder> decoder;
     JitterBuffer* jitter = nullptr;
@@ -50,6 +51,24 @@ struct AudioOutputEngine::Voice {
     // it was already consumed. Served before touching the jitter buffer.
     std::vector<float> carry;
     size_t carryPos = 0;
+    // Whether the carried-over tail is concealment (vs real decode); served
+    // chunks blend at real<->concealment boundaries like any other chunk.
+    bool carryConcealed = false;
+    // Chunk-type tracker for loss-boundary crossfades. FEC-recovered audio
+    // counts as real; the silent FEC-debt placeholder never touches this.
+    bool hasPrevChunk = false;
+    bool prevChunkConcealed = false;
+    // Last emitted samples for cross-quantum blending when a quantum starts
+    // mid-transition (scratch is zeroed per quantum, so without this the
+    // first chunk could not blend against the previous quantum's tail).
+    float xfadeTail[XFADE_SAMPLES] = {};
+    bool hasXfadeTail = false;
+    // Scratch index of a reserved silent slot for a missing frame, or kNoDebt.
+    // Concealment is deferred one frame so the next buffered packet — which
+    // on lossy-but-alive links is usually already in the jitter buffer — can
+    // reconstruct it via Opus in-band FEC. Quantum-local: always resolved or
+    // PLC-filled before the quantum ends, never carried across quanta.
+    size_t fecDebtPos = kNoDebt;
 };
 
 AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
@@ -69,6 +88,15 @@ AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
         const float v = std::sin(static_cast<float>(i) * mul);
         m_fadeIn[i] = v;
         m_fadeOut[FRAME_SIZE - i - 1] = v;
+    }
+    // Equal-power crossfade: cos^2 + sin^2 == 1 holds perceived loudness
+    // flat across the blend, unlike a linear crossfade which dips mid-way.
+    const float xmul = static_cast<float>(kPi) / (2.0f * XFADE_SAMPLES);
+    m_xfadeIn.resize(XFADE_SAMPLES);
+    m_xfadeOut.resize(XFADE_SAMPLES);
+    for (int i = 0; i < XFADE_SAMPLES; ++i) {
+        m_xfadeIn[i] = std::sin(static_cast<float>(i) * xmul);
+        m_xfadeOut[i] = std::cos(static_cast<float>(i) * xmul);
     }
 }
 
@@ -146,9 +174,43 @@ float AudioOutputEngine::saturateSample(float m) {
            (1.0f - kSaturationKnee * std::exp(-2.0f * (abs - kSaturationKnee)));
 }
 
-void AudioOutputEngine::appendVoiceSamples(Voice* voice, const float* src,
-                                           int count, float* scratch,
-                                           size_t numSamples, size_t& filled) {
+// Blends a chunk head into its destination when the chunk type flips between
+// real and concealment (FEC recovery counts as real). Two-sided when the
+// destination already holds a full window: the emitted-side tail is rewoven
+// with the new head in place. One-sided from the voice tail snapshot when
+// the chunk opens a fresh quantum (the previous tail is already emitted and
+// immutable, so only the new side moves, starting from the tail's last
+// value to keep the joint C0). Short chunks (< XFADE_SAMPLES) skip blending;
+// they only occur on partial-room appends and carry splits.
+static void blendHead(float* base, size_t basePos, const float* src,
+                      const float* tail, bool hasTail, bool transition,
+                      const float* xfadeIn, const float* xfadeOut) {
+    constexpr size_t kXf =
+        static_cast<size_t>(AudioOutputEngine::XFADE_SAMPLES);
+    if (!transition) {
+        return;
+    }
+    if (basePos >= kXf) {
+        for (size_t i = 0; i < kXf; ++i) {
+            base[basePos - kXf + i] =
+                base[basePos - kXf + i] * xfadeOut[i] + src[i] * xfadeIn[i];
+        }
+    } else if (basePos == 0 && hasTail) {
+        // The tail is already emitted and immutable: the new side starts
+        // from the tail's last value so the joint stays C0, then ramps to
+        // the new chunk. (Pointwise tail[i] would step back 2 ms in time.)
+        const float last = tail[kXf - 1];
+        for (size_t i = 0; i < kXf; ++i) {
+            base[i] = last * xfadeOut[i] + src[i] * xfadeIn[i];
+        }
+    }
+}
+
+void AudioOutputEngine::appendVoiceChunk(Voice* voice, const float* src,
+                                         int count, float* scratch,
+                                         size_t numSamples, size_t& filled,
+                                         bool concealed, const float* xfadeIn,
+                                         const float* xfadeOut) {
     if (count <= 0 || src == nullptr) {
         return;
     }
@@ -156,7 +218,16 @@ void AudioOutputEngine::appendVoiceSamples(Voice* voice, const float* src,
     const size_t copy = std::min<size_t>(static_cast<size_t>(count), room);
     if (copy > 0) {
         std::memcpy(scratch + filled, src, copy * sizeof(float));
+        if (static_cast<int>(copy) >= XFADE_SAMPLES) {
+            blendHead(scratch, filled, src, voice->xfadeTail,
+                      voice->hasXfadeTail,
+                      voice->hasPrevChunk &&
+                          (concealed != voice->prevChunkConcealed),
+                      xfadeIn, xfadeOut);
+        }
         filled += copy;
+        voice->hasPrevChunk = true;
+        voice->prevChunkConcealed = concealed;
     }
     if (static_cast<size_t>(count) > copy) {
         // Retain the unconsumed tail for the next quantum. Carry is always
@@ -165,6 +236,51 @@ void AudioOutputEngine::appendVoiceSamples(Voice* voice, const float* src,
         const size_t tail = static_cast<size_t>(count) - copy;
         voice->carry.assign(src + copy, src + copy + tail);
         voice->carryPos = 0;
+        voice->carryConcealed = concealed;
+    }
+}
+
+void AudioOutputEngine::writeChunkAt(Voice* voice, float* scratch, size_t pos,
+                                     const float* src, int count,
+                                     bool concealed, const float* xfadeIn,
+                                     const float* xfadeOut) {
+    if (src == nullptr || count <= 0) {
+        return;
+    }
+    std::memcpy(scratch + pos, src, count * sizeof(float));
+    if (count >= XFADE_SAMPLES) {
+        blendHead(scratch, pos, src, voice->xfadeTail, voice->hasXfadeTail,
+                  voice->hasPrevChunk &&
+                      (concealed != voice->prevChunkConcealed),
+                  xfadeIn, xfadeOut);
+    }
+    voice->hasPrevChunk = true;
+    voice->prevChunkConcealed = concealed;
+}
+
+void AudioOutputEngine::snapshotTail(Voice* voice, const float* scratch,
+                                     size_t filled) {
+    constexpr size_t kXf =
+        static_cast<size_t>(AudioOutputEngine::XFADE_SAMPLES);
+    if (filled >= kXf) {
+        std::memcpy(voice->xfadeTail, scratch + filled - kXf,
+                    kXf * sizeof(float));
+        voice->hasXfadeTail = true;
+    } else if (filled > 0) {
+        if (voice->hasXfadeTail) {
+            const size_t keep = kXf - filled;
+            std::memmove(voice->xfadeTail, voice->xfadeTail + filled,
+                         keep * sizeof(float));
+            std::memcpy(voice->xfadeTail + keep, scratch,
+                        filled * sizeof(float));
+        } else {
+            // No history yet: oldest samples are zeros, newest is the scratch
+            // head at the window end.
+            std::memset(voice->xfadeTail, 0, kXf * sizeof(float));
+            std::memcpy(voice->xfadeTail + kXf - filled, scratch,
+                        filled * sizeof(float));
+        }
+        voice->hasXfadeTail = true;
     }
 }
 
@@ -286,15 +402,17 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             if (voice->carryPos < voice->carry.size()) {
                 const size_t avail = voice->carry.size() - voice->carryPos;
                 const size_t count = std::min(avail, numSamples - filled);
-                std::memcpy(m_voiceScratch.data() + filled,
-                            voice->carry.data() + voice->carryPos,
-                            count * sizeof(float));
+                appendVoiceChunk(voice, voice->carry.data() + voice->carryPos,
+                                 static_cast<int>(count),
+                                 m_voiceScratch.data(), numSamples, filled,
+                                 voice->carryConcealed, m_xfadeIn.data(),
+                                 m_xfadeOut.data());
                 voice->carryPos += count;
-                filled += count;
                 producedAudio = true;
                 if (voice->carryPos >= voice->carry.size()) {
                     voice->carry.clear();
                     voice->carryPos = 0;
+                    voice->carryConcealed = false;
                 }
                 continue;
             }
@@ -306,7 +424,6 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             int32_t startOffset = 0;
             const int result =
                 jitter_buffer_get(voice->jitter, &packet, FRAME_SIZE, &startOffset);
-
             if (result == JITTER_BUFFER_OK) {
                 voice->missCount = 0;
                 voice->quietFrames = 0;
@@ -316,6 +433,39 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 }
                 voice->started = true;
                 producedAudio = true;
+                // A deferred miss may be recoverable: when this packet starts
+                // exactly at the pointer (the common single-loss case) its
+                // in-band FEC data reconstructs the missing frame — our
+                // encoder always sends LBRR, as do modern desktop clients.
+                // Anything else (jitter jump, FEC miss) falls back to
+                // concealment for the debt slot below.
+                if (voice->fecDebtPos != Voice::kNoDebt) {
+                    const size_t debtPos = voice->fecDebtPos;
+                    voice->fecDebtPos = Voice::kNoDebt;
+                    bool recovered = false;
+                    if (startOffset == 0) {
+                        const int fec = voice->decoder->decodeFloat(
+                            reinterpret_cast<uint8_t*>(packet.data),
+                            packet.len, m_frameScratch.data(), FRAME_SIZE, 1);
+                        if (fec == FRAME_SIZE) {
+                            writeChunkAt(voice, m_voiceScratch.data(), debtPos,
+                                         m_frameScratch.data(), fec, false,
+                                         m_xfadeIn.data(), m_xfadeOut.data());
+                            recovered = true;
+                        }
+                    }
+                    if (!recovered) {
+                        const int debtPlc = voice->decoder->decodeConcealment(
+                            m_frameScratch.data(), FRAME_SIZE);
+                        if (debtPlc > 0) {
+                            writeChunkAt(voice, m_voiceScratch.data(), debtPos,
+                                         m_frameScratch.data(), debtPlc, true,
+                                         m_xfadeIn.data(), m_xfadeOut.data());
+                        }
+                        // debtPlc <= 0: wedged decoder; the slot stays the
+                        // reserved silence and expiry advances regardless.
+                    }
+                }
                 const int decoded = voice->decoder->decodeFloat(
                     reinterpret_cast<uint8_t*>(packet.data), packet.len,
                     m_frameScratch.data(), MAX_DECODE_SAMPLES, 0);
@@ -329,9 +479,10 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                         jitter_buffer_update_delay(voice->jitter, nullptr,
                                                    nullptr);
                     }
-                    appendVoiceSamples(voice, m_frameScratch.data(), decoded,
-                                       m_voiceScratch.data(), numSamples,
-                                       filled);
+                    appendVoiceChunk(voice, m_frameScratch.data(), decoded,
+                                     m_voiceScratch.data(), numSamples, filled,
+                                     false, m_xfadeIn.data(),
+                                     m_xfadeOut.data());
                     // Round ticks up: a bundle covering a partial frame still
                     // advances past the whole frame.
                     const int ticks = (decoded + FRAME_SIZE - 1) / FRAME_SIZE;
@@ -351,9 +502,10 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                     jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
                     jitter_buffer_tick(voice->jitter);
                     if (concealed > 0) {
-                        appendVoiceSamples(voice, m_frameScratch.data(),
-                                           concealed, m_voiceScratch.data(),
-                                           numSamples, filled);
+                        appendVoiceChunk(voice, m_frameScratch.data(),
+                                         concealed, m_voiceScratch.data(),
+                                         numSamples, filled, true,
+                                         m_xfadeIn.data(), m_xfadeOut.data());
                     }
                     // concealed <= 0: wedged decoder; this slot stays scratch
                     // silence and expiry still advances via the tick above.
@@ -374,14 +526,50 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 }
                 continue;
             }
-
+            // A miss reserves a silent slot and defers concealment one frame:
+            // the next packet is usually already jitter-buffered on a
+            // lossy-but-alive link, and the OK path above reconstructs this
+            // slot from its in-band FEC data. A nearly-full quantum with no
+            // room for a whole slot conceals immediately instead.
+            // A miss arriving with debt outstanding settles the old slot
+            // first: it is now two frames behind the pointer, beyond what the
+            // next packet's FEC can cover (LBRR reconstructs only the
+            // immediately previous frame), so the old debt is concealed now
+            // and the current miss starts a fresh debt below. Burst loss thus
+            // chains correctly instead of playing the wrong frame's audio in
+            // a stale slot.
+            if (voice->fecDebtPos != Voice::kNoDebt) {
+                const size_t debtPos = voice->fecDebtPos;
+                voice->fecDebtPos = Voice::kNoDebt;
+                const int debtPlc = voice->decoder->decodeConcealment(
+                    m_frameScratch.data(), FRAME_SIZE);
+                if (debtPlc > 0) {
+                    writeChunkAt(voice, m_voiceScratch.data(), debtPos,
+                                 m_frameScratch.data(), debtPlc, true,
+                                 m_xfadeIn.data(), m_xfadeOut.data());
+                }
+            }
+            if (filled + FRAME_SIZE <= numSamples) {
+                // Scratch is zeroed beyond filled, so the slot starts silent
+                // without a fill; a failed recovery keeps it that way.
+                voice->fecDebtPos = filled;
+                filled += FRAME_SIZE;
+                jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
+                jitter_buffer_tick(voice->jitter);
+                producedAudio = true;
+                if (++voice->missCount > DEAD_MISS_FRAMES) {
+                    break;
+                }
+                continue;
+            }
             const int concealed = voice->decoder->decodeConcealment(
                 m_frameScratch.data(), FRAME_SIZE);
             jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
             jitter_buffer_tick(voice->jitter);
             if (concealed > 0) {
-                appendVoiceSamples(voice, m_frameScratch.data(), concealed,
-                                   m_voiceScratch.data(), numSamples, filled);
+                appendVoiceChunk(voice, m_frameScratch.data(), concealed,
+                                 m_voiceScratch.data(), numSamples, filled,
+                                 true, m_xfadeIn.data(), m_xfadeOut.data());
             }
             // concealed <= 0: keep this slot silent; missCount below still
             // expires the voice so a wedged decoder cannot spin forever.
@@ -391,6 +579,20 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             }
         }
 
+        // FEC debt never crosses quanta: an unrecovered slot is concealed now
+        // so the decoder's PLC state advances exactly as if concealment had
+        // run inline, and the next quantum starts from a clean tracker.
+        if (voice->fecDebtPos != Voice::kNoDebt) {
+            const size_t debtPos = voice->fecDebtPos;
+            voice->fecDebtPos = Voice::kNoDebt;
+            const int debtPlc = voice->decoder->decodeConcealment(
+                m_frameScratch.data(), FRAME_SIZE);
+            if (debtPlc > 0) {
+                writeChunkAt(voice, m_voiceScratch.data(), debtPos,
+                             m_frameScratch.data(), debtPlc, true,
+                             m_xfadeIn.data(), m_xfadeOut.data());
+            }
+        }
         // A terminator drains instead of cutting: the voice lives until its
         // buffered packets (peeked via the available count) and any decoded
         // carryover are played out. Only then does this quantum carry the
@@ -418,6 +620,9 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             for (size_t i = 0; i < filled; ++i) {
                 m_mix[i] += m_voiceScratch[i];
             }
+            // Snapshot the emitted (post-fade) tail so the next quantum can
+            // blend a boundary chunk against it.
+            snapshotTail(voice, m_voiceScratch.data(), filled);
             recordTalkLocked(voice, voice->session,
                              talkStateForFlags(voice->lastFlags), &m_pendingTalks);
             anyMixed = true;
