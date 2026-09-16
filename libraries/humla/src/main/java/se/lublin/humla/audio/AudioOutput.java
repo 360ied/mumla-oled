@@ -51,8 +51,8 @@ public class AudioOutput implements Runnable,
         NativeAudioOutputEngine.AudioOutputEngineListener {
     private static final String TAG = AudioOutput.class.getName();
 
-    /** 60 ms render quantum at 48 kHz. */
-    private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 6;
+    /** 20 ms render quantum at 48 kHz: bounds batching delay on first audio. */
+    private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 2;
 
     private final Object mInactiveLock = new Object();
     private final Handler mMainHandler;
@@ -80,7 +80,7 @@ public class AudioOutput implements Runnable,
         if (minBytes <= 0) {
             minBytes = quantumBytes;
         }
-        // Floor of two render quanta (~120 ms) bounds output latency while
+        // Floor of two render quanta (~40 ms) bounds output latency while
         // still satisfying the hardware minimum buffer requirement.
         final int trackBytes = Math.max(minBytes, quantumBytes * 2);
         Log.v(TAG, "Render quantum " + RENDER_SAMPLES + " samples, track "
@@ -263,7 +263,7 @@ public class AudioOutput implements Runnable,
                 // packet would never play out and dead voices never expire.
                 synchronized (mInactiveLock) {
                     try {
-                        mInactiveLock.wait(60);
+                        mInactiveLock.wait(20);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;

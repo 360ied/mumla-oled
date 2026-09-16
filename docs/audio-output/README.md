@@ -30,10 +30,10 @@ UDP datagram / protobuf Audio
 | Symbol | Value | Meaning |
 |---|---|---|
 | `SAMPLE_RATE` / `FRAME_SIZE` | 48000 Hz / 480 samples | Mono fullband, 10 ms frames |
-| `RENDER_SAMPLES` | 2880 samples | 60 ms render quantum pulled per loop |
-| Track buffer | `max(minBytes, 2 quanta)` | Floor of ~120 ms output latency |
-| `m_jitterMarginFrames` | 10 frames | 100 ms jitter margin, fixed (see below) |
-| `STARTUP_QUIET_FRAMES` | 20 frames | ~200 ms pre-roll silence before first playout |
+| `RENDER_SAMPLES` | 960 samples | 20 ms render quantum pulled per loop |
+| Track buffer | `max(minBytes, 2 quanta)` | Floor of ~40 ms plus the hardware minimum |
+| `m_jitterMarginFrames` | 4 frames | 40 ms jitter margin floor; Speex adapts upward on bad links |
+| `STARTUP_QUIET_FRAMES` | 2 frames | ~20 ms pre-roll; buffered packets play with no gating |
 | `DEAD_MISS_FRAMES` | 10 frames | Voice expiry after 100 ms of consecutive misses |
 | `MAX_VOICES` | 32 | Evicts highest session id on join flood |
 | `MAX_DECODE_SAMPLES` | 5760 samples | Caps 120 ms Opus bundles |
@@ -42,8 +42,8 @@ UDP datagram / protobuf Audio
 
 ## Threading and lifecycle
 
-- One render thread (`THREAD_PRIORITY_URGENT_AUDIO`), 60 ms quanta. `renderMix`
-  returns 0 when silent so the thread idles on a timed 60 ms wait instead of
+- One render thread (`THREAD_PRIORITY_URGENT_AUDIO`), 20 ms quanta. `renderMix`
+  returns 0 when silent so the thread idles on a timed 20 ms wait instead of
   spinning zeros; the wait must stay timed because jitter startup/expiry timing
   advances per `renderMix` call.
 - `queuePacket` runs on network threads; a single mutex guards all voice state.
@@ -57,7 +57,6 @@ UDP datagram / protobuf Audio
 
 ## Known quality gaps
 
-Tracked in [quality-improvements.md](quality-improvements.md): unused Opus
-in-band FEC, clicks at loss boundaries, dropped per-source gain
-(`volume_adjustment`, listening volume), no output leveling or HPF, ~300 ms
-first-utterance latency stack, int16/fixed-rate sink, mono-only output.
+Tracked in [quality-improvements.md](quality-improvements.md): dropped
+per-source gain (`volume_adjustment`, listening volume), no output leveling,
+int16/fixed-rate sink, mono-only output.
