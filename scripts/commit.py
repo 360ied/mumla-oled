@@ -20,10 +20,10 @@ Wraps `git commit` by automatically formatting and validating commit messages:
 Errors are instructions: on failure, stderr names the exact problem, prints the
 required template, and points to AGENTS.md. Fix the message and retry.
 
-Exit codes: 0 = committed/passed, 1 = fixable message error (rewrite body and
+Exit codes: 0 = committed/passed, 1 = fixable error (correct the problem and
 retry), 2 = usage/environment error (do not retry, report).
 
-Usage:
+Usage (stage first with `git add` — the wrapper commits only staged changes):
   python3 scripts/commit.py -m "docs: update readme\n\nDetailed explanation..."
   python3 scripts/commit.py -s "docs: update readme" -b "Detailed explanation..."
   python3 scripts/commit.py -m "docs: update readme" -m "Body paragraph 1..." -m "Body paragraph 2..."
@@ -496,6 +496,29 @@ def main() -> int:
     if check_only:
         print("OK: Commit message complies with the 50/72 rule and the AGENTS.md body format.")
         return 0
+
+    # Pre-flight: plain `git commit` only records staged changes. Fail early
+    # with instructions instead of passing git's raw "nothing to commit" through.
+    # Skipped when the commit is fed by other means (a forwarded pathspec, which
+    # `git commit <path>` records directly, or auto-staging flags).
+    auto_fed = {"--amend", "-a", "--all"}
+    if not any(
+        a in auto_fed or not a.startswith("-") for a in forwarded_git_args
+    ):
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if staged.returncode == 0:
+            print(
+                "Error: [nothing-staged] No staged changes to commit. "
+                "The wrapper runs plain `git commit`, which only records "
+                "what is staged. Stage your changes (`git add <paths>`, "
+                "including new files), then retry the same command.",
+                file=sys.stderr,
+            )
+            return 1
 
     # Execute git commit
     git_cmd = ["git", "commit", "-m", formatted_msg] + forwarded_git_args
