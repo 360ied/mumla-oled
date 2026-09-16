@@ -20,6 +20,7 @@ CXX="${CXX:-g++}"
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/SoftLimiter.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp" \
+    "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_biquad_filter.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_soft_limiter.cpp" \
@@ -27,6 +28,7 @@ CXX="${CXX:-g++}"
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_adaptive_leveler.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_hysteresis_vad.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_jitter_buffer.cpp" \
+    "$ROOT_DIR/libraries/humla/src/test/cpp/test_audio_output_engine.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/run_audio_tests.cpp" \
     -o "$BUILD_DIR/test_audio_engine"
 

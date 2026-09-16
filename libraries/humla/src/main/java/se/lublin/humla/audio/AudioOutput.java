@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2026 Mumla Developers
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,27 +18,18 @@
 
 package se.lublin.humla.audio;
 
+import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTrack;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.util.Log;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.nio.BufferUnderflowException;
 
 import se.lublin.humla.exception.AudioInitializationException;
-import se.lublin.humla.exception.NativeAudioException;
 import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.User;
 import se.lublin.humla.net.HumlaUDPMessageType;
@@ -46,265 +38,266 @@ import se.lublin.humla.protobuf.MumbleUDP;
 import se.lublin.humla.protocol.AudioHandler;
 
 /**
- * Created by andrew on 16/07/13.
+ * Audio output pipeline.
+ *
+ * <p>Java owns transport parsing and the {@link AudioTrack} lifecycle.
+ * All DSP (jitter buffering, Opus decode, loss concealment, mixing, bus
+ * saturation) runs in {@link NativeAudioOutputEngine}. A single render
+ * thread pulls mixed PCM and writes it; there is no decode pool, no Java
+ * mixer, and the track is never flushed on underrun so gaps do not click.
  */
-public class AudioOutput implements Runnable, AudioOutputSpeech.TalkStateListener {
+public class AudioOutput implements Runnable,
+        NativeAudioOutputEngine.AudioOutputEngineListener {
     private static final String TAG = AudioOutput.class.getName();
 
-    private Map<Integer, AudioOutputSpeech> mAudioOutputs = new HashMap<>();
+    /** 60 ms render quantum at 48 kHz. */
+    private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 6;
+
+    private final Object mInactiveLock = new Object();
+    private final Handler mMainHandler;
+    private final AudioOutputListener mListener;
+
+    private NativeAudioOutputEngine mEngine;
     private AudioTrack mAudioTrack;
-    private int mBufferSize;
     private Thread mThread;
-    private final Object mInactiveLock = new Object(); // Lock that the audio thread waits on when there's no audio to play. Wake when we get a frame.
-    private final Lock mPacketLock;
     private boolean mRunning = false;
-    private Handler mMainHandler;
-    private AudioOutputListener mListener;
-    private final IAudioMixer<float[], short[]> mMixer;
-    private ExecutorService mDecodeExecutorService;
 
     public AudioOutput(AudioOutputListener listener) {
         mListener = listener;
         mMainHandler = new Handler(Looper.getMainLooper());
-        mDecodeExecutorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-        mPacketLock = new ReentrantLock();
-        mMixer = new BasicClippingShortMixer();
     }
 
-    public Thread startPlaying(int audioStream) throws AudioInitializationException {
-        if (mThread != null || mRunning)
+    public synchronized Thread startPlaying(int audioStream)
+            throws AudioInitializationException {
+        if (mThread != null || mRunning) {
             return null;
-
-        int minBufferSize = AudioTrack.getMinBufferSize(AudioHandler.SAMPLE_RATE,
-                AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        mBufferSize = Math.min(minBufferSize, AudioHandler.FRAME_SIZE * 12);
-        Log.v(TAG, "Using buffer size " + mBufferSize + ", system's min buffer size: " + minBufferSize);
-
-        try {
-            mAudioTrack = new AudioTrack(audioStream,
-                    AudioHandler.SAMPLE_RATE,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    mBufferSize,
-                    AudioTrack.MODE_STREAM);
-        } catch (IllegalArgumentException e) {
-            throw new AudioInitializationException(e);
         }
 
+        final int quantumBytes = RENDER_SAMPLES * 2;
+        int minBytes = AudioTrack.getMinBufferSize(AudioHandler.SAMPLE_RATE,
+                AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        if (minBytes <= 0) {
+            minBytes = quantumBytes;
+        }
+        final int trackBytes = Math.max(minBytes, quantumBytes * 4);
+        Log.v(TAG, "Render quantum " + RENDER_SAMPLES + " samples, track "
+                + trackBytes + " bytes (system min " + minBytes + ")");
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                AudioAttributes attributes = new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build();
+                AudioFormat format = new AudioFormat.Builder()
+                        .setSampleRate(AudioHandler.SAMPLE_RATE)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build();
+                AudioTrack.Builder builder = new AudioTrack.Builder()
+                        .setAudioAttributes(attributes)
+                        .setAudioFormat(format)
+                        .setBufferSizeInBytes(trackBytes)
+                        .setTransferMode(AudioTrack.MODE_STREAM);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    builder.setPerformanceMode(
+                            AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
+                }
+                mAudioTrack = builder.build();
+            } else {
+                mAudioTrack = new AudioTrack(audioStream,
+                        AudioHandler.SAMPLE_RATE,
+                        AudioFormat.CHANNEL_OUT_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        trackBytes,
+                        AudioTrack.MODE_STREAM);
+            }
+        } catch (IllegalArgumentException | UnsupportedOperationException e) {
+            throw new AudioInitializationException(e);
+        }
+        if (mAudioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
+            mAudioTrack.release();
+            mAudioTrack = null;
+            throw new AudioInitializationException("AudioTrack init failed");
+        }
+
+        mEngine = new NativeAudioOutputEngine(this);
         mThread = new Thread(this);
         mThread.start();
         return mThread;
     }
 
     public void stopPlaying() {
-        if(!mRunning)
-            return;
-
-        mRunning = false;
+        synchronized (this) {
+            if (!mRunning && mThread == null) {
+                return;
+            }
+            mRunning = false;
+        }
         synchronized (mInactiveLock) {
-            mInactiveLock.notify(); // Wake inactive lock if active
+            mInactiveLock.notify();
         }
         try {
             mThread.join();
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            Thread.currentThread().interrupt();
         }
-        mThread = null;
-
-        mPacketLock.lock();
-        for(AudioOutputSpeech speech : mAudioOutputs.values()) {
-            speech.destroy();
+        synchronized (this) {
+            mThread = null;
+            if (mAudioTrack != null) {
+                try {
+                    mAudioTrack.stop();
+                } catch (IllegalStateException ignored) {
+                }
+                mAudioTrack.release();
+                mAudioTrack = null;
+            }
+            if (mEngine != null) {
+                mEngine.destroy();
+                mEngine = null;
+            }
         }
-        mPacketLock.unlock();
-
-        mAudioOutputs.clear();
-        mAudioTrack.release();
-        mAudioTrack = null;
     }
 
-    public boolean isPlaying() {
+    public synchronized boolean isPlaying() {
         return mRunning;
     }
 
     @Override
     public void run() {
         Log.v(TAG, "Started thread.");
-        android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
-        mRunning = true;
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        synchronized (this) {
+            mRunning = true;
+        }
         mAudioTrack.play();
 
-        final short[] mix = new short[mBufferSize];
-
-        while(mRunning) {
-            if(fetchAudio(mix, 0, mBufferSize)) {
-                mAudioTrack.write(mix, 0, mBufferSize);
+        final short[] mix = new short[RENDER_SAMPLES];
+        while (true) {
+            synchronized (this) {
+                if (!mRunning) {
+                    break;
+                }
+            }
+            int rendered = 0;
+            NativeAudioOutputEngine engine;
+            synchronized (this) {
+                engine = mEngine;
+            }
+            if (engine != null) {
+                rendered = engine.render(mix, 0, RENDER_SAMPLES);
+            }
+            if (rendered > 0) {
+                mAudioTrack.write(mix, 0, rendered);
             } else {
-                Log.v(TAG, "Pausing thread.");
+                // Nobody is speaking. Keep the track playing so resume is
+                // gapless, and idle until the next packet arrives.
                 synchronized (mInactiveLock) {
-                    mAudioTrack.flush();
-                    mAudioTrack.pause();
-
                     try {
                         mInactiveLock.wait();
                     } catch (InterruptedException e) {
-                        e.printStackTrace();
+                        Thread.currentThread().interrupt();
+                        break;
                     }
-
-                    mAudioTrack.play();
                 }
-                Log.v(TAG, "Resuming thread.");
             }
         }
 
-        mAudioTrack.flush();
-        mAudioTrack.stop();
-    }
-
-    /**
-     * Fetches audio data from registered audio output users and mixes them into the given buffer.
-     * TODO: add priority speaker support.
-     * @param buffer The buffer to mix output data into.
-     * @param bufferOffset The offset of the
-     * @param bufferSize The size of the buffer.
-     * @return true if the buffer contains audio data.
-     */
-    private boolean fetchAudio(short[] buffer, int bufferOffset, int bufferSize) {
-        Arrays.fill(buffer, bufferOffset, bufferOffset + bufferSize, (short) 0);
-        final List<IAudioMixerSource<float[]>> sources = new ArrayList<>();
         try {
-            mPacketLock.lock();
-            // Parallelize decoding using a fixed thread pool equal to the number of cores
-            List<Future<AudioOutputSpeech.Result>> futureResults =
-                    mDecodeExecutorService.invokeAll(mAudioOutputs.values());
-            for(Future<AudioOutputSpeech.Result> future : futureResults) {
-                AudioOutputSpeech.Result result = future.get();
-                if (result.isAlive()) {
-                    sources.add(result);
-                } else {
-                    AudioOutputSpeech speech = result.getSpeechOutput();
-                    Log.v(TAG, "Deleted audio user " + speech.getUser().getName());
-                    mAudioOutputs.remove(speech.getSession());
-                    speech.destroy();
-                }
-            }
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-            return false;
-        } catch (ExecutionException e) {
-            e.printStackTrace();
-            return false;
-        } finally {
-            mPacketLock.unlock();
+            mAudioTrack.stop();
+        } catch (IllegalStateException ignored) {
         }
-
-        if (sources.size() == 0)
-            return false;
-
-        mMixer.mix(sources, buffer, bufferOffset, bufferSize);
-        return true;
     }
 
     public void queueVoiceData(byte[] data, HumlaUDPMessageType messageType) {
-        if(!mRunning)
+        NativeAudioOutputEngine engine;
+        synchronized (this) {
+            if (!mRunning || mEngine == null) {
+                return;
+            }
+            engine = mEngine;
+        }
+        if (messageType != HumlaUDPMessageType.UDPVoiceOpus) {
             return;
-
-        byte msgFlags = (byte) (data[0] & 0x1f);
-        PacketBuffer pds = new PacketBuffer(data, data.length);
-        pds.skip(1);
-        int session = (int) pds.readLong();
-        User user = mListener.getUser(session);
-        if(user != null && !user.isLocalMuted()) {
-            // TODO check for whispers here
+        }
+        try {
+            byte msgFlags = (byte) (data[0] & 0x1f);
+            PacketBuffer pds = new PacketBuffer(data, data.length);
+            pds.skip(1);
+            int session = (int) pds.readLong();
+            User user = mListener.getUser(session);
+            if (user == null || user.isLocalMuted()) {
+                return;
+            }
             int seq = (int) pds.readLong();
-
-            // Synchronize so we don't destroy an output while we add a buffer to it.
-            mPacketLock.lock();
-            AudioOutputSpeech aop = mAudioOutputs.get(session);
-            if(aop != null && aop.getCodec() != messageType) {
-                aop.destroy();
-                aop = null;
+            long header = pds.readLong();
+            int size = (int) (header & ((1 << 13) - 1));
+            boolean isTerminator = (header & (1 << 13)) != 0;
+            if (size <= 0 || size > pds.left()) {
+                return;
             }
-            if(aop == null) {
-                try {
-                    aop = new AudioOutputSpeech(user, messageType, mBufferSize, this);
-                } catch (NativeAudioException e) {
-                    Log.v(TAG, "Failed to create audio user " + user.getName());
-                    e.printStackTrace();
-                    return;
-                }
-                Log.v(TAG, "Created audio user " + user.getName());
-                mAudioOutputs.put(session, aop);
-            }
-            mPacketLock.unlock();
-
-            PacketBuffer dataBuffer = new PacketBuffer(pds.bufferBlock(pds.left()));
-            aop.addFrameToBuffer(dataBuffer, msgFlags, seq);
-
-            synchronized (mInactiveLock) {
-                mInactiveLock.notify();
-            }
+            byte[] opus = pds.dataBlock(size);
+            engine.queuePacket(session, opus, opus.length, seq, msgFlags,
+                    isTerminator);
+            signalData();
+        } catch (BufferUnderflowException | IllegalArgumentException e) {
+            Log.v(TAG, "Dropping malformed voice packet", e);
         }
     }
 
     public void queueProtobufVoiceData(MumbleUDP.Audio audioMsg) {
-        if (!mRunning)
-            return;
-
+        NativeAudioOutputEngine engine;
+        synchronized (this) {
+            if (!mRunning || mEngine == null) {
+                return;
+            }
+            engine = mEngine;
+        }
         int session = audioMsg.getSenderSession();
         User user = mListener.getUser(session);
-        if (user != null && !user.isLocalMuted()) {
-            mPacketLock.lock();
-            AudioOutputSpeech aop = mAudioOutputs.get(session);
-            if (aop != null && aop.getCodec() != HumlaUDPMessageType.UDPVoiceOpus) {
-                aop.destroy();
-                aop = null;
-            }
-            if (aop == null) {
-                try {
-                    aop = new AudioOutputSpeech(user, HumlaUDPMessageType.UDPVoiceOpus, mBufferSize, this);
-                } catch (NativeAudioException e) {
-                    Log.v(TAG, "Failed to create audio user " + user.getName());
-                    e.printStackTrace();
-                    mPacketLock.unlock();
-                    return;
-                }
-                Log.v(TAG, "Created audio user " + user.getName());
-                mAudioOutputs.put(session, aop);
-            }
-            mPacketLock.unlock();
+        if (user == null || user.isLocalMuted()) {
+            return;
+        }
+        byte[] opus = audioMsg.getOpusData().toByteArray();
+        if (opus.length == 0) {
+            return;
+        }
+        int seq = (int) audioMsg.getFrameNumber();
+        byte flags = (byte) (audioMsg.hasContext() ? audioMsg.getContext() : 0);
+        engine.queuePacket(session, opus, opus.length, seq, flags,
+                audioMsg.getIsTerminator());
+        signalData();
+    }
 
-            byte[] opusBytes = audioMsg.getOpusData().toByteArray();
-            int size = opusBytes.length;
-            if (size == 0) return;
-
-            boolean isTerminator = audioMsg.getIsTerminator();
-            int seq = (int) audioMsg.getFrameNumber();
-            byte msgFlags = (byte) (audioMsg.hasContext() ? audioMsg.getContext() : 0);
-
-            PacketBuffer dataBuffer = new PacketBuffer(new byte[size + 16], size + 16);
-            long header = size;
-            if (isTerminator) {
-                header |= (1 << 13);
-            }
-            dataBuffer.writeLong(header);
-            dataBuffer.append(opusBytes, size);
-            dataBuffer.rewind();
-
-            aop.addFrameToBuffer(dataBuffer, msgFlags, seq);
-
-            synchronized (mInactiveLock) {
-                mInactiveLock.notify();
-            }
+    private void signalData() {
+        synchronized (mInactiveLock) {
+            mInactiveLock.notify();
         }
     }
 
     @Override
-    public void onTalkStateUpdated(final int session, final TalkState state) {
+    public void onTalkStateChanged(final int session, final int talkStateOrdinal) {
+        final TalkState state;
+        switch (talkStateOrdinal) {
+            case NativeAudioOutputEngine.TALK_SHOUTING:
+                state = TalkState.SHOUTING;
+                break;
+            case NativeAudioOutputEngine.TALK_PASSIVE:
+                state = TalkState.PASSIVE;
+                break;
+            case NativeAudioOutputEngine.TALK_WHISPERING:
+                state = TalkState.WHISPERING;
+                break;
+            case NativeAudioOutputEngine.TALK_TALKING:
+            default:
+                state = TalkState.TALKING;
+                break;
+        }
         mMainHandler.post(new Runnable() {
             @Override
             public void run() {
                 final User user = mListener.getUser(session);
-                if(user != null && user.getTalkState() != state) {
+                if (user != null && user.getTalkState() != state) {
                     user.setTalkState(state);
                     mListener.onUserTalkStateUpdated(user);
                 }
@@ -312,17 +305,17 @@ public class AudioOutput implements Runnable, AudioOutputSpeech.TalkStateListene
         });
     }
 
-    public static interface AudioOutputListener {
+    public interface AudioOutputListener {
         /**
          * Called when a user's talking state is changed.
          * @param user The user whose talking state has been modified.
          */
-        public void onUserTalkStateUpdated(User user);
+        void onUserTalkStateUpdated(User user);
 
         /**
          * Used to set audio-related user data.
          * @return The user for the associated session.
          */
-        public User getUser(int session);
+        User getUser(int session);
     }
 }

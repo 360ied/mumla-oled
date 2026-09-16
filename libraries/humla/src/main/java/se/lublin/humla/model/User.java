@@ -54,9 +54,6 @@ public class User implements IUser, Comparable<User> {
     private boolean mLocalMuted;
     private boolean mLocalIgnored;
 
-    /** The number of samples normally available from the user. */
-    private float mAverageAvailable;
-
     public User() {
 
     }
@@ -241,14 +238,6 @@ public class User implements IUser, Comparable<User> {
 
     public void setTalkState(TalkState mTalkState) {
         this.mTalkState = mTalkState;
-    }
-
-    public float getAverageAvailable() {
-        return mAverageAvailable;
-    }
-
-    public void setAverageAvailable(float averageAvailable) {
-        mAverageAvailable = averageAvailable;
     }
 
     @Override
