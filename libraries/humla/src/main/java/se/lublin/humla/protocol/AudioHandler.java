@@ -312,9 +312,11 @@ public class AudioHandler extends HumlaNetworkListener
         synchronized (mInput) {
             mInput.shutdown();
         }
-        synchronized (mOutput) {
-            mOutput.stopPlaying();
-        }
+        // Never hold mOutput across stopPlaying: it joins the render thread,
+        // which needs the AudioOutput monitor each loop to observe shutdown
+        // and exit. Holding it here deadlocks disconnect (main in join,
+        // render blocked on the monitor). stopPlaying self-synchronizes.
+        mOutput.stopPlaying();
         if (mNativeEngine != null) {
             mNativeEngine.destroy();
         }
@@ -347,6 +349,14 @@ public class AudioHandler extends HumlaNetworkListener
         if (msg.hasSession() && msg.getSession() == mSession &&
                 (msg.hasMute() || msg.hasSelfMute() || msg.hasSuppress())) {
             setServerMuted(msg.getMute() || msg.getSelfMute() || msg.getSuppress());
+        }
+    }
+
+    @Override
+    public void messageUserRemove(Mumble.UserRemove msg) {
+        super.messageUserRemove(msg);
+        synchronized (mOutput) {
+            mOutput.removeUser(msg.getSession());
         }
     }
 
