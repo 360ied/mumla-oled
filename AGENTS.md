@@ -34,7 +34,7 @@
     - **Context & Motivation**: Why the change is needed and what problem it solves.
     - **Technical Approach**: Architectural decisions, algorithmic details, and notable changes across components.
     - **Edge Cases & Impact**: Handled boundary conditions, defensive checks, or protocol parity considerations.
-- **Forward-Only History**: Never rewrite, rebase, squash, or force-push history already pushed to origin.
+- **Forward-Only History**: Never rewrite, rebase, squash, amend, or force-push commits — pushed or not. Fix mistakes with a new commit.
 
 ## Verification
 - **Pre-Completion Check**: Run `./scripts/check.sh` inside the dedicated worktree before completing any task. Passing verification signifies that the branch is ready for user review—it does NOT trigger or authorize merging into `master`.
