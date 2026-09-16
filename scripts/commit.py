@@ -44,7 +44,7 @@ MAX_BODY = 72
 # Descriptions"). The body must contain the three labeled sections, labels
 # exact, in this order, as plain line starts (no Markdown decoration).
 BODY_LABELS = ("Context & Motivation", "Technical Approach", "Edge Cases & Impact")
-BODY_TEMPLATE = "\n".join(
+BODY_TEMPLATE = "\n\n".join(
     [
         "Context & Motivation: <why this change is needed>",
         "Technical Approach: <how it is implemented>",
@@ -364,13 +364,28 @@ def validate_tripartite_body(subject: str, body: Optional[str]) -> Optional[str]
                 duplicated.append(label)
 
     missing = [label for label in BODY_LABELS if label not in first_idx]
+    # A label whose text occurs mid-line was written but folded into the
+    # previous paragraph (sections not separated by a blank line). That is
+    # a layout problem, not an absent section: say so precisely.
+    folded = [
+        label
+        for label in missing
+        if any((label + ":") in line for line in lines)
+    ]
+    missing = [label for label in missing if label not in folded]
     present_order = [first_idx[label] for label in BODY_LABELS if label in first_idx]
     out_of_order = present_order != sorted(present_order)
 
-    if not missing and not duplicated and not out_of_order:
+    if not missing and not folded and not duplicated and not out_of_order:
         return None
 
     problems = []
+    if folded:
+        problems.append(
+            "section(s) run together with the previous paragraph "
+            "(separate sections with a blank line): "
+            + ", ".join(f'"{label}:"' for label in folded)
+        )
     if missing:
         problems.append(
             "missing label(s): " + ", ".join(f'"{label}:"' for label in missing)
