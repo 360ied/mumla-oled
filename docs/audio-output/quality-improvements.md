@@ -1,27 +1,26 @@
 # Audio Output: Quality Improvement Notes
 
 Prioritized gaps in the playback path (`AudioOutputEngine.cpp`, `AudioOutput.java`).
-Highest value first. Items 1–2 and 5 form the tight low-risk batch.
+Highest value first.
 
-## 1. In-band FEC never used
+## 1. In-band FEC never used — IMPLEMENTED
 
-`renderMix` always calls `decodeFloat(..., decodeFec=0)`; any non-`JITTER_BUFFER_OK`
-result falls straight to `decodeConcealment`. On lossy/mobile networks a missing
-frame is concealed even when the following packet carries Opus in-band FEC that
-could reconstruct it.
+Status: done on branch `audio-output-fec-xfade-hpf`. `renderMix` now reserves
+the missing frame as a silent FEC-debt slot and defers concealment one frame:
+when the next packet starts exactly at the pointer it is decoded with
+`decodeFec=1` into the slot; anything else (jitter jump, no LBRR) falls back
+to concealment, and unrecovered debt is PLC-filled at quantum end so decoder
+state advances exactly as before. Debt is quantum-local, never carried over.
+Our encoder always sends LBRR (`OPUS_SET_INBAND_FEC(1)`), so Mumla-to-Mumla
+streams recover single losses near-perfectly.
 
-- Fix: on `MISSING`/`LOST`, peek the next buffered packet and retry the missing
-  frame with `decodeFec=1`.
-- Risk: low. Purely additive on the loss path; the no-loss path is untouched.
+## 2. Clicks at loss boundaries — IMPLEMENTED
 
-## 2. Clicks at loss boundaries
-
-Fade in/out (one `FRAME_SIZE`) applies only at voice start and at terminator/miss
-expiry. Real ↔ concealed frame transitions mid-utterance have no crossfade, the
-most audible artifact left in the pipeline.
-
-- Fix: 2–5 ms equal-power crossfade around concealed frames.
-- Risk: low. Local to the per-voice scratch assembly in `renderMix`.
+Status: done on branch `audio-output-fec-xfade-hpf`. Real ↔ concealment chunk
+boundaries (FEC recovery counts as real) blend over a 96-sample (2 ms)
+equal-power crossfade (`XFADE_SAMPLES`, precomputed `m_xfadeIn/m_xfadeOut`
+tables): two-sided within a quantum, one-sided from a per-voice tail snapshot
+across quanta. Measured joint step 215 counts vs ~13100 unblended.
 
 ## 3. Per-source gain dropped on the floor
 
@@ -48,15 +47,15 @@ single quiet talker stays quiet while overlapping talkers get compressed.
 - Risk: medium-high. Leveling taste varies and pumping artifacts are easy to
   add; do item 3 first, then evaluate whether AGC is still needed.
 
-## 5. No output high-pass
+## 5. No output high-pass — REJECTED
 
-Input runs a 90 Hz `BiquadFilter` HPF before denoise/VAD; output decodes
-straight to the mix. DC offset and rumble waste headroom, mostly on phone
-speakers.
-
-- Fix: float HPF around 80 Hz on the mix bus (or per voice); `BiquadFilter`
-  needs a float overload first.
-- Risk: low. Linear, stateless across voices if placed on the bus.
+Status: evaluated on branch `audio-output-fec-xfade-hpf`, not implemented.
+Decoded Opus speech is already AC-coupled (unlike mic input, which needs its
+90 Hz HPF against wind/handling noise), upstream Mumble does not filter
+output, and any HPF attenuates the constant-DC levels the native suite pins
+(e.g. the overlap-compression peak assertion collapses from ~31000 to
+~6000). Marginal benefit for pathological streams only; the saturation knee
+already bounds headroom. Revisit only with an AC-signal test corpus.
 
 ## 6. First-utterance latency stack (~300 ms)
 
