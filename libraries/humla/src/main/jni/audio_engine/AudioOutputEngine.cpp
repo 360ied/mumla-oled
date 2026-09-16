@@ -61,6 +61,7 @@ AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
     m_voiceScratch.assign(MAX_QUANTUM_SAMPLES, 0.0f);
     m_frameScratch.assign(MAX_DECODE_SAMPLES, 0.0f);
     m_deadSessions.reserve(MAX_VOICES);
+    m_pendingTalks.reserve(MAX_VOICES);
     const float mul = static_cast<float>(kPi) / (2.0f * FRAME_SIZE);
     m_fadeIn.resize(FRAME_SIZE);
     m_fadeOut.resize(FRAME_SIZE);
@@ -111,7 +112,9 @@ OutputTalkState AudioOutputEngine::talkStateForFlags(int flags) {
         case 0xFF:
             return OutputTalkState::PASSIVE; // INVALID
         default:
-            return OutputTalkState::WHISPERING;
+            // Unknown target/context: show talking (fail-loud) rather than
+            // whispering, which would mislabel normal speech.
+            return OutputTalkState::TALKING;
     }
 }
 
@@ -174,7 +177,21 @@ int AudioOutputEngine::jitterBufferedCount(JitterBuffer* jitter) const {
 void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
                                     size_t len, uint32_t sequence, int flags,
                                     bool isTerminator) {
-    if (data == nullptr || len == 0 || len > MAX_PACKET_BYTES) {
+    if (len > MAX_PACKET_BYTES) {
+        return;
+    }
+    if (data == nullptr || len == 0) {
+        // Empty end-of-speech marker (terminator with no Opus payload): no
+        // bytes to buffer, just flag the voice so renderMix drains instead
+        // of running the miss-expiry. Unknown sessions have nothing to end.
+        if (!isTerminator) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto found = m_voices.find(session);
+        if (found != m_voices.end()) {
+            found->second->hasTerminator = true;
+        }
         return;
     }
     if (!m_decoderFactory) {
@@ -185,10 +202,12 @@ void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
     if (it == m_voices.end()) {
         if (m_voices.size() >= static_cast<size_t>(MAX_VOICES)) {
             // No insertion-order tracking on the session map, so evict the
-            // lowest session id as the oldest-voice approximation.
-            auto oldest = m_voices.begin();
-            jitter_buffer_destroy(oldest->second->jitter);
-            m_voices.erase(oldest);
+            // highest session id as the newest-voice approximation: long-
+            // connected speakers keep their jitter history, and a join flood
+            // cannot push out the whole channel.
+            auto newest = std::prev(m_voices.end());
+            jitter_buffer_destroy(newest->second->jitter);
+            m_voices.erase(newest);
         }
         auto voice = std::make_unique<Voice>();
         voice->session = session;
@@ -251,7 +270,8 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
     }
 
     m_deadSessions.clear();
-    std::vector<std::pair<int32_t, int>> pendingTalks;
+    m_pendingTalks.clear();
+    bool anyMixed = false;
 
     for (auto& entry : m_voices) {
         Voice* voice = entry.second.get();
@@ -330,9 +350,13 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                         m_frameScratch.data(), FRAME_SIZE);
                     jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
                     jitter_buffer_tick(voice->jitter);
-                    appendVoiceSamples(voice, m_frameScratch.data(), concealed,
-                                       m_voiceScratch.data(), numSamples,
-                                       filled);
+                    if (concealed > 0) {
+                        appendVoiceSamples(voice, m_frameScratch.data(),
+                                           concealed, m_voiceScratch.data(),
+                                           numSamples, filled);
+                    }
+                    // concealed <= 0: wedged decoder; this slot stays scratch
+                    // silence and expiry still advances via the tick above.
                 }
                 continue;
             }
@@ -355,8 +379,12 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 m_frameScratch.data(), FRAME_SIZE);
             jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
             jitter_buffer_tick(voice->jitter);
-            appendVoiceSamples(voice, m_frameScratch.data(), concealed,
-                               m_voiceScratch.data(), numSamples, filled);
+            if (concealed > 0) {
+                appendVoiceSamples(voice, m_frameScratch.data(), concealed,
+                                   m_voiceScratch.data(), numSamples, filled);
+            }
+            // concealed <= 0: keep this slot silent; missCount below still
+            // expires the voice so a wedged decoder cannot spin forever.
             producedAudio = true;
             if (++voice->missCount > DEAD_MISS_FRAMES) {
                 break;
@@ -391,7 +419,8 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 m_mix[i] += m_voiceScratch[i];
             }
             recordTalkLocked(voice, voice->session,
-                             talkStateForFlags(voice->lastFlags), &pendingTalks);
+                             talkStateForFlags(voice->lastFlags), &m_pendingTalks);
+            anyMixed = true;
         }
 
         if (finishing) {
@@ -403,7 +432,7 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
         auto it = m_voices.find(session);
         if (it != m_voices.end()) {
             recordTalkLocked(it->second.get(), session,
-                             OutputTalkState::PASSIVE, &pendingTalks);
+                             OutputTalkState::PASSIVE, &m_pendingTalks);
             jitter_buffer_destroy(it->second->jitter);
             m_voices.erase(it);
         }
@@ -423,12 +452,18 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
 
     OutputTalkCallback callback = m_talkCallback;
     std::vector<std::pair<int32_t, int>> events;
-    events.swap(pendingTalks);
+    events.swap(m_pendingTalks);
     lock.unlock();
     if (callback) {
         for (const auto& event : events) {
             callback(event.first, event.second);
         }
+    }
+    if (!anyMixed) {
+        // Nothing audible this quantum (pre-roll gating before the jitter
+        // buffer releases its first packet): report silence so Java idles
+        // instead of writing zeros.
+        return 0;
     }
     return numSamples;
 }

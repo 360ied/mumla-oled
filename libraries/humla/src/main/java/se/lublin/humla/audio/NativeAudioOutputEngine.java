@@ -34,33 +34,63 @@ public class NativeAudioOutputEngine {
     public static final int TALK_PASSIVE = 2;
     public static final int TALK_WHISPERING = 3;
 
-    static {
-        System.loadLibrary("jniopus");
-        System.loadLibrary("humlaaudio");
-    }
-
     private long mNativeHandle;
     private final AudioOutputEngineListener mListener;
 
+    private static final Throwable sLoadError;
+    static {
+        Throwable error = null;
+        try {
+            System.loadLibrary("jniopus");
+            System.loadLibrary("humlaaudio");
+        } catch (Throwable t) {
+            error = t;
+        }
+        sLoadError = error;
+    }
+    private static void ensureLoaded() {
+        if (sLoadError != null) {
+            throw new IllegalStateException("Native audio libraries failed to load",
+                    sLoadError);
+        }
+    }
     public NativeAudioOutputEngine(AudioOutputEngineListener listener) {
+        ensureLoaded();
         mListener = listener;
         mNativeHandle = nativeCreate(listener);
+        if (mNativeHandle == 0) {
+            // JNI reports failure with a zero handle and no pending exception
+            // (see NativeAudioOutputEngineJni); fail loudly instead of a
+            // silently dead engine whose render no-ops forever.
+            throw new IllegalStateException("Native output engine creation failed");
+        }
     }
 
     public synchronized void queuePacket(int session, byte[] data, int length,
                                          int sequence, int flags,
                                          boolean isTerminator) {
-        if (mNativeHandle != 0 && data != null && length > 0
-                && length <= data.length) {
+        if (mNativeHandle != 0 && data != null && length >= 0
+                && length <= data.length && (length > 0 || isTerminator)) {
             nativeQueuePacket(mNativeHandle, session, data, length, sequence,
                     flags, isTerminator);
         }
     }
-
-    public synchronized int render(short[] out, int offset, int length) {
-        if (mNativeHandle != 0 && out != null && offset >= 0 && length > 0
+    /**
+     * Renders mixed PCM. Only the handle copy is guarded; the native call
+     * runs unsynchronized so network-thread queuePacket never blocks behind
+     * a 60 ms decode+mix quantum. Thread safety below comes from the native
+     * engine mutex plus the single-render-thread discipline. destroy() must only
+     * run after the render thread is joined (AudioOutput.stopPlaying guarantees
+     * this); it stays synchronized against queuePacket/removeUser.
+     */
+    public int render(short[] out, int offset, int length) {
+        final long handle;
+        synchronized (this) {
+            handle = mNativeHandle;
+        }
+        if (handle != 0 && out != null && offset >= 0 && length > 0
                 && offset <= out.length && length <= out.length - offset) {
-            return nativeRender(mNativeHandle, out, offset, length);
+            return nativeRender(handle, out, offset, length);
         }
         return 0;
     }

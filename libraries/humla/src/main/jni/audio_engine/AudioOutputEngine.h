@@ -171,6 +171,9 @@ private:
     std::vector<float> m_fadeIn;
     std::vector<float> m_fadeOut;
     std::vector<int32_t> m_deadSessions;
+    // Reused across renderMix calls so the audio thread never allocates per
+    // quantum. Only touched by renderMix (single-render-thread discipline).
+    std::vector<std::pair<int32_t, int>> m_pendingTalks;
 };
 
 } // namespace audio

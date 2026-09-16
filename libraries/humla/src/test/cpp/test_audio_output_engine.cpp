@@ -332,13 +332,14 @@ void testFlagsMapToTalkStates() {
     // AudioContext ordinals from the Mumble protocol: NORMAL=0, SHOUT=1,
     // WHISPER=2, LISTEN=3, INVALID=0xFF. Each maps onto the TalkState order
     // TALKING=0, SHOUTING=1, PASSIVE=2, WHISPERING=3. Anything unrecognized
-    // renders as WHISPERING; an explicitly invalid context ends the talk as
-    // PASSIVE.
+    // renders as TALKING (fail-loud); an explicitly invalid context ends the
+    // talk as PASSIVE.
     const int cases[][2] = {
         {0x00, 0}, // NORMAL -> TALKING
         {0x01, 1}, // SHOUT -> SHOUTING
         {0x02, 3}, // WHISPER -> WHISPERING
         {0x03, 0}, // LISTEN -> TALKING
+        {0x04, 0}, // unknown -> TALKING
         {0xFF, 2}, // INVALID -> PASSIVE
     };
     for (const auto& c : cases) {
@@ -444,6 +445,55 @@ void testDecodeCappedAt120ms() {
     std::cout << "  [PASS] testDecodeCappedAt120ms" << std::endl;
 }
 
+void testEmptyTerminatorDrainsVoice() {
+    g_testCount++;
+    // End-of-speech with no Opus payload (empty protobuf/UDP terminator)
+    // must still end the voice as PASSIVE instead of lingering to the
+    // miss-expiry: queue speech, flag the empty terminator, then render
+    // until the voice drains.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 91, 0);
+    engine->queuePacket(91, nullptr, 0, 1, 0, true);
+    std::vector<int16_t> out(kFrame, 0);
+    bool drained = false;
+    for (int i = 0; i < 60; ++i) {
+        engine->renderMix(out.data(), out.size());
+        if (engine->activeUserCount() == 0) {
+            drained = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(drained);
+    TEST_ASSERT_EQ(events.back().session, 91);
+    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
+    std::cout << "  [PASS] testEmptyTerminatorDrainsVoice" << std::endl;
+}
+
+void testEvictsNewestVoiceWhenFull() {
+    g_testCount++;
+    // At MAX_VOICES the highest session id (newest voice) is evicted, so a
+    // join flood cannot push out long-connected speakers.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    for (int32_t s = 1; s <= AudioOutputEngine::MAX_VOICES; ++s) {
+        queueOne(*engine, s, 0);
+    }
+    TEST_ASSERT_EQ(engine->activeUserCount(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 1, 0);
+    TEST_ASSERT_EQ(engine->activeUserCount(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    // The oldest voice survived eviction; the previous newest did not.
+    engine->removeUser(1);
+    TEST_ASSERT_EQ(engine->activeUserCount(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES - 1));
+    engine->removeUser(AudioOutputEngine::MAX_VOICES);
+    TEST_ASSERT_EQ(engine->activeUserCount(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES - 1));
+    std::cout << "  [PASS] testEvictsNewestVoiceWhenFull" << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -462,4 +512,6 @@ void run_audio_output_engine_tests() {
     testExpiryBoundary();
     testCarryoverPreservesOversizedBundle();
     testDecodeCappedAt120ms();
+    testEmptyTerminatorDrainsVoice();
+    testEvictsNewestVoiceWhenFull();
 }

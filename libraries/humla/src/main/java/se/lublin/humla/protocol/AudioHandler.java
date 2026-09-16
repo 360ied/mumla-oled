@@ -360,6 +360,7 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
+    @Override
     public void messageVoiceData(byte[] data, HumlaUDPMessageType messageType) {
         synchronized (mOutput) {
             mOutput.queueVoiceData(data, messageType);
