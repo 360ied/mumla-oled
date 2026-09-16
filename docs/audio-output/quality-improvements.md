@@ -61,19 +61,22 @@ output, and any HPF attenuates the constant-DC levels the native suite pins
 ~6000). Marginal benefit for pathological streams only; the saturation knee
 already bounds headroom. Revisit only with an AC-signal test corpus.
 
-## 6. First-utterance latency stack (~300 ms)
+## 6. First-utterance latency stack — CUT on branch `audio-output-latency`
 
-Two fixed delays add up before the Speex buffer's own delay:
+Was ~300 ms of stacked fixed delays; now ~100–165 ms typical:
 
-| Source | Cost |
-|---|---|
-| `m_jitterMarginFrames = 10` (100 ms), no call site for `setJitterMarginFrames` in the Java/app tree | 100 ms every utterance |
-| `STARTUP_QUIET_FRAMES = 20` (200 ms pre-roll before `started=true`) | 200 ms first utterance |
+| Source | Before | After |
+|---|---|---|
+| `m_jitterMarginFrames` (every utterance) | 10 frames (100 ms) | 4 frames (40 ms); Speex still adapts upward on bad links |
+| `STARTUP_QUIET_FRAMES` (empty buffer only; buffered packets always played immediately) | 20 frames (200 ms) | 2 frames (20 ms) |
+| Render quantum / idle wait (batching) | 60 ms | 20 ms |
+| Track buffer floor | ~120 ms | ~40 ms plus the hardware minimum |
 
-- Fix: start playout after 1–2 buffered frames instead of 20; make the margin
-  adaptive (good WiFi ~40–60 ms) or at least a user setting.
-- Risk: medium. Lower margins trade robustness for latency; needs real-network
-  testing on jittery links, not just localhost.
+Remaining risk: the leaner margin trades robustness for latency on jittery
+links. Needs real-network listening on bad links, not just localhost, plus
+per-voice queue-to-playout delay logging before tuning further. A user-facing
+margin setting (`setJitterMarginFrames` exists with no callers) is the
+follow-up if one size does not fit all.
 
 ## 7. Int16, fixed-48 kHz sink
 
