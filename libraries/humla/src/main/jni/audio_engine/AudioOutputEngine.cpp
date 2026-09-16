@@ -19,8 +19,14 @@
 #include "speex_jitter.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 
 namespace mumla {
 namespace audio {
@@ -69,7 +75,19 @@ struct AudioOutputEngine::Voice {
     // reconstruct it via Opus in-band FEC. Quantum-local: always resolved or
     // PLC-filled before the quantum ends, never carried across quanta.
     size_t fecDebtPos = kNoDebt;
+    // Arrival timestamp of the voice's first packet (monotonic ns), for the
+    // one-shot queue-to-first-audio delay log below. Zero until set.
+    int64_t firstPacketNs = 0;
+    bool delayLogged = false;
 };
+
+// Monotonic nanoseconds for latency diagnostics. std::chrono keeps this
+// host-test-safe; only the log sink itself is Android-gated.
+inline int64_t steadyNanos() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+ }
 
 AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
     : m_decoderFactory(std::move(decoderFactory)) {
@@ -338,6 +356,7 @@ void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
         int margin = FRAME_SIZE * m_jitterMarginFrames;
         jitter_buffer_ctl(voice->jitter, JITTER_BUFFER_SET_MARGIN, &margin);
         it = m_voices.emplace(session, std::move(voice)).first;
+        it->second->firstPacketNs = steadyNanos();
     }
     Voice* voice = it->second.get();
 
@@ -623,6 +642,21 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             // Snapshot the emitted (post-fade) tail so the next quantum can
             // blend a boundary chunk against it.
             snapshotTail(voice, m_voiceScratch.data(), filled);
+            // One-shot queue-to-first-audio diagnostic: arrival-to-mix delay
+            // per talk spurt (jitter fill + pre-roll + batching; the AudioTrack
+            // sink depth adds on top). Host builds skip the sink.
+            if (!voice->delayLogged && voice->firstPacketNs != 0) {
+                voice->delayLogged = true;
+#ifdef __ANDROID__
+                const double delayMs =
+                    (steadyNanos() - voice->firstPacketNs) / 1000000.0;
+                __android_log_print(
+                    ANDROID_LOG_VERBOSE, "AudioOutputEngine",
+                    "voice %d first audio %.1f ms after queue (%d buffered)",
+                    voice->session, delayMs,
+                    jitterBufferedCount(voice->jitter));
+#endif
+            }
             recordTalkLocked(voice, voice->session,
                              talkStateForFlags(voice->lastFlags), &m_pendingTalks);
             anyMixed = true;
