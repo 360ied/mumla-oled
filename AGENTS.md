@@ -72,5 +72,5 @@
 
 ## Licensing
 - **Project License**: GNU General Public License v3.0 or later (`GPL-3.0-or-later`).
-- **File Headers**: New source files must include the standard GPL-3.0-or-later header — copy it from any existing source file (e.g., `app/src/main/java/se/lublin/mumla/app/MumlaActivity.java`); do not use Apache, MIT, or other permissive/incompatible licenses.
+- **File Headers**: New source files must include the standard GPL-3.0-or-later header with `Copyright (C) <current year> Brian Zhu` — copy the full block from a recent file in the same component and keep existing third-party attributions (e.g., upstream Mumble authors) intact; do not use Apache, MIT, or other permissive/incompatible licenses.
 
