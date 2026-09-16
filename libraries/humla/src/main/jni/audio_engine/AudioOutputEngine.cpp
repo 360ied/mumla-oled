@@ -196,8 +196,12 @@ static void blendHead(float* base, size_t basePos, const float* src,
                 base[basePos - kXf + i] * xfadeOut[i] + src[i] * xfadeIn[i];
         }
     } else if (basePos == 0 && hasTail) {
+        // The tail is already emitted and immutable: the new side starts
+        // from the tail's last value so the joint stays C0, then ramps to
+        // the new chunk. (Pointwise tail[i] would step back 2 ms in time.)
+        const float last = tail[kXf - 1];
         for (size_t i = 0; i < kXf; ++i) {
-            base[i] = tail[i] * xfadeOut[i] + src[i] * xfadeIn[i];
+            base[i] = last * xfadeOut[i] + src[i] * xfadeIn[i];
         }
     }
 }
@@ -263,14 +267,19 @@ void AudioOutputEngine::snapshotTail(Voice* voice, const float* scratch,
                     kXf * sizeof(float));
         voice->hasXfadeTail = true;
     } else if (filled > 0) {
-        const size_t keep = voice->hasXfadeTail ? kXf - filled : 0;
-        if (keep > 0) {
+        if (voice->hasXfadeTail) {
+            const size_t keep = kXf - filled;
             std::memmove(voice->xfadeTail, voice->xfadeTail + filled,
                          keep * sizeof(float));
+            std::memcpy(voice->xfadeTail + keep, scratch,
+                        filled * sizeof(float));
         } else {
+            // No history yet: oldest samples are zeros, newest is the scratch
+            // head at the window end.
             std::memset(voice->xfadeTail, 0, kXf * sizeof(float));
+            std::memcpy(voice->xfadeTail + kXf - filled, scratch,
+                        filled * sizeof(float));
         }
-        std::memcpy(voice->xfadeTail + keep, scratch, filled * sizeof(float));
         voice->hasXfadeTail = true;
     }
 }
@@ -403,6 +412,7 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 if (voice->carryPos >= voice->carry.size()) {
                     voice->carry.clear();
                     voice->carryPos = 0;
+                    voice->carryConcealed = false;
                 }
                 continue;
             }
@@ -516,16 +526,32 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 }
                 continue;
             }
-            // First miss reserves a silent slot and defers concealment by one
-            // frame: the next packet is usually already jitter-buffered on a
+            // A miss reserves a silent slot and defers concealment one frame:
+            // the next packet is usually already jitter-buffered on a
             // lossy-but-alive link, and the OK path above reconstructs this
-            // slot from its in-band FEC data. A further miss while debt is
-            // outstanding, or a nearly-full quantum with no room for a whole
-            // slot, conceals immediately instead.
-            if (voice->fecDebtPos == Voice::kNoDebt &&
-                filled + FRAME_SIZE <= numSamples) {
+            // slot from its in-band FEC data. A nearly-full quantum with no
+            // room for a whole slot conceals immediately instead.
+            // A miss arriving with debt outstanding settles the old slot
+            // first: it is now two frames behind the pointer, beyond what the
+            // next packet's FEC can cover (LBRR reconstructs only the
+            // immediately previous frame), so the old debt is concealed now
+            // and the current miss starts a fresh debt below. Burst loss thus
+            // chains correctly instead of playing the wrong frame's audio in
+            // a stale slot.
+            if (voice->fecDebtPos != Voice::kNoDebt) {
+                const size_t debtPos = voice->fecDebtPos;
+                voice->fecDebtPos = Voice::kNoDebt;
+                const int debtPlc = voice->decoder->decodeConcealment(
+                    m_frameScratch.data(), FRAME_SIZE);
+                if (debtPlc > 0) {
+                    writeChunkAt(voice, m_voiceScratch.data(), debtPos,
+                                 m_frameScratch.data(), debtPlc, true,
+                                 m_xfadeIn.data(), m_xfadeOut.data());
+                }
+            }
+            if (filled + FRAME_SIZE <= numSamples) {
                 // Scratch is zeroed beyond filled, so the slot starts silent
-                // without a fill; a failed recovery below keeps it that way.
+                // without a fill; a failed recovery keeps it that way.
                 voice->fecDebtPos = filled;
                 filled += FRAME_SIZE;
                 jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
