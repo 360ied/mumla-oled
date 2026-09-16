@@ -5,7 +5,7 @@ Highest value first.
 
 ## 1. In-band FEC never used — IMPLEMENTED
 
-Status: done on branch `audio-output-fec-xfade-hpf`. `renderMix` now reserves
+Status: shipped on master. `renderMix` now reserves
 the missing frame as a silent FEC-debt slot and defers concealment one frame:
 when the next packet starts exactly at the pointer it is decoded with
 `decodeFec=1` into the slot; anything else (jitter jump, no LBRR) falls back
@@ -19,7 +19,7 @@ Mumla-to-Mumla streams recover single losses near-perfectly.
 
 ## 2. Clicks at loss boundaries — IMPLEMENTED
 
-Status: done on branch `audio-output-fec-xfade-hpf`. Real ↔ concealment chunk
+Status: shipped on master. Real ↔ concealment chunk
 boundaries (FEC recovery counts as real) blend over a 96-sample (2 ms)
 equal-power crossfade (`XFADE_SAMPLES`, precomputed `m_xfadeIn/m_xfadeOut`
 tables): two-sided within a quantum, one-sided from the tail snapshot's last
@@ -53,7 +53,7 @@ single quiet talker stays quiet while overlapping talkers get compressed.
 
 ## 5. No output high-pass — REJECTED
 
-Status: evaluated on branch `audio-output-fec-xfade-hpf`, not implemented.
+Status: evaluated and rejected, not implemented.
 Decoded Opus speech is already AC-coupled (unlike mic input, which needs its
 90 Hz HPF against wind/handling noise), upstream Mumble does not filter
 output, and any HPF attenuates the constant-DC levels the native suite pins
@@ -61,7 +61,7 @@ output, and any HPF attenuates the constant-DC levels the native suite pins
 ~6000). Marginal benefit for pathological streams only; the saturation knee
 already bounds headroom. Revisit only with an AC-signal test corpus.
 
-## 6. First-utterance latency stack — CUT on branch `audio-output-latency`
+## 6. First-utterance latency stack — CUT and shipped on master
 
 Was ~300 ms of stacked fixed delays; now ~100–165 ms typical:
 
