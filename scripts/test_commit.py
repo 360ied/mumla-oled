@@ -57,6 +57,27 @@ class TestTripartiteBody(unittest.TestCase):
         self.assertIn("[body-structure]", err)
         self.assertIn('"Technical Approach:"', err)
 
+    def test_run_together_sections_name_blank_line_remedy(self):
+        raw = (
+            "docs: x\n\n"
+            "Context & Motivation: Because things broke.\n"
+            "Technical Approach: Did it this way.\n"
+            "Edge Cases & Impact: None expected."
+        )
+        formatted, err = format_commit_message(raw)
+        self.assertIsNone(err)
+        subject, _, body = formatted.partition("\n\n")
+        err = validate_tripartite_body(subject, body)
+        self.assertIsNotNone(err)
+        self.assertIn("[body-structure]", err)
+        self.assertIn("blank line", err)
+        self.assertIn('"Technical Approach:"', err)
+        self.assertNotIn("missing", err)
+
+    def test_template_itself_passes_validation(self):
+        from scripts.commit import BODY_TEMPLATE
+        self.assertIsNone(validate_tripartite_body("docs: x", BODY_TEMPLATE))
+
     def test_labels_out_of_order(self):
         body = (
             "Technical Approach: Did it this way.\n"
