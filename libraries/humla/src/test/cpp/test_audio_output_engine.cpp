@@ -722,6 +722,24 @@ void testLosslessMixHasNoCrossfade() {
     std::cout << "  [PASS] testLosslessMixHasNoCrossfade" << std::endl;
 }
 
+void testStartupPlaysImmediatelyAtProductionQuantum() {
+    g_testCount++;
+    // Startup contract the latency budget depends on: a queued packet plays
+    // on the very first render at the production 20 ms quantum (960 samples)
+    // under the default jitter margin — no pre-roll gating, no buffering
+    // stall. Only the utterance-onset fade-in touches the first frame; the
+    // second frame is bit-exact (0.5 level, linear knee: 16384).
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 111, 0);
+    std::vector<int16_t> out(2 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT_EQ(out[3 * kFrame / 2], 16384);
+    std::cout << "  [PASS] testStartupPlaysImmediatelyAtProductionQuantum"
+              << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -731,6 +749,7 @@ void run_audio_output_engine_tests() {
     testTerminatorEndsUserAsPassive();
     testOverlappingSpeakersCompressInsteadOfWrapping();
     testMixingIsCommutative();
+    testStartupPlaysImmediatelyAtProductionQuantum();
     testLossConcealmentBridgesGapsThenExpires();
     testRemoveUserSilencesAndEmitsPassive();
     testClearResetsAllVoices();

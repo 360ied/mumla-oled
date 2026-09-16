@@ -643,8 +643,8 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             // blend a boundary chunk against it.
             snapshotTail(voice, m_voiceScratch.data(), filled);
             // One-shot queue-to-first-audio diagnostic: arrival-to-mix delay
-            // per talk spurt (jitter fill + pre-roll + batching; the AudioTrack
-            // sink depth adds on top). Host builds skip the sink.
+            // for the voice lifetime (jitter fill + pre-roll + batching; the
+            // AudioTrack sink depth adds on top). Host builds skip the sink.
             if (!voice->delayLogged && voice->firstPacketNs != 0) {
                 voice->delayLogged = true;
 #ifdef __ANDROID__
