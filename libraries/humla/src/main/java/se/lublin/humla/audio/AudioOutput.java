@@ -152,7 +152,14 @@ public class AudioOutput implements Runnable,
             thread = mThread;
         }
         synchronized (mInactiveLock) {
-            mInactiveLock.notify();
+            mInactiveLock.notifyAll();
+        }
+        if (thread != null) {
+            // The render thread idles in mInactiveLock.wait() when nobody
+            // is speaking. A notify raced with wait entry strands it and
+            // the join below blocks forever, so interrupt as well; the
+            // wait responds with InterruptedException and run() exits.
+            thread.interrupt();
         }
         if (thread != null && thread != Thread.currentThread()) {
             boolean interrupted = false;
