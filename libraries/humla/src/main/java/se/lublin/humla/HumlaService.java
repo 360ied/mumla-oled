@@ -213,7 +213,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             boolean isConnect = ACTION_CONNECT.equals(intent.getAction());
             Bundle extras = intent.getExtras();
             if (isConnect && (extras == null || !extras.containsKey(EXTRAS_SERVER))) {
-                // Ensure that we have been provided all required attributes.```
+                // Ensure that we have been provided all required attributes.
                 throw new RuntimeException(ACTION_CONNECT + " requires a server provided in extras.");
             }
             if (isConnect && mConnectionState == ConnectionState.CONNECTING) {
@@ -221,7 +221,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 // in progress; each would otherwise spawn a parallel connection. Guarded
                 // here (before configureExtras) so the in-flight attempt's target server
                 // isn't overwritten by the duplicate request.
-                Log.i(TAG, "Ignoring duplicate connect request while already connecting");
+                Log.v(TAG, "Ignoring duplicate connect request while already connecting");
                 return START_NOT_STICKY;
             }
             if (extras != null) {
@@ -233,6 +233,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
 
             if (isConnect) {
+                // A user-initiated connect supersedes any scheduled automatic reconnect.
+                // Disarm it so a stale retry can't orphan this attempt once it succeeds.
+                setReconnecting(false);
                 connect();
             }
         }

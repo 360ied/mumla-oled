@@ -580,15 +580,26 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         // Ignore rapid taps while a connection attempt is already in progress;
         // each tap would otherwise spawn a parallel connection attempt.
         if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
-            Toast.makeText(this, R.string.mumlaConnecting, Toast.LENGTH_SHORT).show();
+            if (isSameServer(mService.getTargetServer(), server)) {
+                Toast.makeText(this, R.string.mumlaConnecting, Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, R.string.already_connecting, Toast.LENGTH_LONG).show();
+            }
             return;
         }
-
 
         ServerConnectTask connectTask = new ServerConnectTask(this, mDatabase);
         connectTask.execute(server);
     }
 
+    private static boolean isSameServer(Server a, Server b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        String hostA = a.getHost() != null ? a.getHost() : "";
+        String hostB = b.getHost() != null ? b.getHost() : "";
+        return hostA.equalsIgnoreCase(hostB) && a.getPort() == b.getPort();
+    }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
@@ -708,7 +719,20 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                             if (server1.isSaved()) {
                                 mDatabase.updateServer(server1);
                             }
-                            connectToServer(server1);
+                            if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
+                                // Serialize the retry behind the in-flight attempt, mirroring
+                                // the already-connected flow: reconnect once it tears down.
+                                mService.registerObserver(new HumlaObserver() {
+                                    @Override
+                                    public void onDisconnected(HumlaException e) {
+                                        connectToServer(server1);
+                                        mService.unregisterObserver(this);
+                                    }
+                                });
+                                mService.disconnect();
+                            } else {
+                                connectToServer(server1);
+                            }
                         });
                         builder.setNegativeButton(android.R.string.cancel, (dialog, which) -> {
                             if (getService() != null) {
