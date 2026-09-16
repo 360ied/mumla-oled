@@ -119,7 +119,18 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeQueuePacket(
         return;
     }
     OutputEngineContext* ctx = getContext(handle);
-    if (ctx == nullptr || data == nullptr || length <= 0) {
+    if (ctx == nullptr) {
+        return;
+    }
+    if (isTerminator == JNI_TRUE && length == 0) {
+        // Empty end-of-speech marker (terminator with no Opus payload): no
+        // bytes to pin, just flag the voice so it drains instead of hitting
+        // the miss-expiry. data may be an empty array or null here.
+        ctx->engine->queuePacket(session, nullptr, 0,
+                                 static_cast<uint32_t>(sequence), flags, true);
+        return;
+    }
+    if (data == nullptr || length <= 0) {
         return;
     }
     const jsize arrayLen = env->GetArrayLength(data);
@@ -170,6 +181,7 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeRender(
     // Collect talk events synchronously; the engine invokes the callback on
     // this thread while rendering, so forward them straight to Java below.
     std::vector<std::pair<int32_t, int>> events;
+    events.reserve(8);
     ctx->engine->setTalkCallback(
         [&events](int32_t session, int stateOrdinal) {
             events.emplace_back(session, stateOrdinal);

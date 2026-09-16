@@ -68,10 +68,10 @@ public class AudioOutput implements Runnable,
         mMainHandler = new Handler(Looper.getMainLooper());
     }
 
-    public synchronized Thread startPlaying(int audioStream)
+    public synchronized void startPlaying(int audioStream)
             throws AudioInitializationException {
         if (mThread != null || mRunning) {
-            return null;
+            return;
         }
 
         final int quantumBytes = RENDER_SAMPLES * 2;
@@ -139,7 +139,6 @@ public class AudioOutput implements Runnable,
         mRunning = true;
         mThread = new Thread(this);
         mThread.start();
-        return mThread;
     }
 
     public void stopPlaying() {
@@ -231,22 +230,40 @@ public class AudioOutput implements Runnable,
                 rendered = engine.render(mix, 0, RENDER_SAMPLES);
             }
             if (rendered > 0) {
-                int written = mAudioTrack.write(mix, 0, rendered);
-                if (written < 0) {
-                    Log.e(TAG, "AudioTrack.write failed: " + written);
-                    try {
-                        Thread.sleep(10);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
+                int offset = 0;
+                while (offset < rendered) {
+                    int written = mAudioTrack.write(mix, offset, rendered - offset);
+                    if (written < 0) {
+                        Log.e(TAG, "AudioTrack.write failed: " + written);
+                        try {
+                            Thread.sleep(10);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
                         break;
                     }
+                    if (written == 0) {
+                        try {
+                            Thread.sleep(2);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        continue;
+                    }
+                    offset += written;
                 }
             } else {
                 // Nobody is speaking. Keep the track playing so resume is
-                // gapless, and idle until the next packet arrives.
+                // gapless, and idle until the next packet arrives. The wait
+                // is timed, not indefinite: renderMix advances jitter
+                // startup/expiry timing per call and reports pure pre-roll
+                // as silence (0), so without a periodic wake a lone queued
+                // packet would never play out and dead voices never expire.
                 synchronized (mInactiveLock) {
                     try {
-                        mInactiveLock.wait();
+                        mInactiveLock.wait(60);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
@@ -292,6 +309,12 @@ public class AudioOutput implements Runnable,
                 long header = pds.readLong();
                 int size = (int) (header & ((1 << 13) - 1));
                 boolean isTerminator = (header & (1 << 13)) != 0;
+                if (size == 0 && isTerminator) {
+                    engine.queuePacket(session, new byte[0], 0, seq + queued,
+                            msgFlags, true);
+                    queued++;
+                    continue;
+                }
                 if (size <= 0 || size > pds.left()) {
                     break;
                 }
@@ -323,13 +346,19 @@ public class AudioOutput implements Runnable,
             return;
         }
         byte[] opus = audioMsg.getOpusData().toByteArray();
-        if (opus.length == 0) {
-            return;
-        }
         int seq = (int) audioMsg.getFrameNumber();
         byte flags = (byte) (audioMsg.hasContext() ? audioMsg.getContext() : 0);
-        engine.queuePacket(session, opus, opus.length, seq, flags,
-                audioMsg.getIsTerminator());
+        boolean isTerminator = audioMsg.getIsTerminator();
+        if (opus.length == 0) {
+            // A terminator may carry no Opus payload; still forward the marker
+            // so the voice drains instead of lingering to the miss-expiry.
+            if (isTerminator) {
+                engine.queuePacket(session, new byte[0], 0, seq, flags, true);
+                signalData();
+            }
+            return;
+        }
+        engine.queuePacket(session, opus, opus.length, seq, flags, isTerminator);
         signalData();
     }
 
@@ -357,7 +386,7 @@ public class AudioOutput implements Runnable,
                 break;
             default:
                 Log.w(TAG, "Unknown talk state ordinal: " + talkStateOrdinal);
-                state = TalkState.TALKING;
+                state = TalkState.PASSIVE;
                 break;
         }
         mMainHandler.post(new Runnable() {
