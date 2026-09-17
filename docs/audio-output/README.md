@@ -32,8 +32,9 @@ UDP datagram / protobuf Audio
 | `SAMPLE_RATE` / `FRAME_SIZE` | 48000 Hz / 480 samples | Mono fullband, 10 ms frames |
 | `RENDER_SAMPLES` | 960 samples | 20 ms render quantum pulled per loop |
 | Track buffer | `max(minBytes, 2 quanta)` | Floor of ~40 ms plus the hardware minimum |
-| `m_jitterMarginFrames` | 4 frames | 40 ms jitter margin floor; Speex adapts upward on bad links |
-| `STARTUP_QUIET_FRAMES` | 2 frames | ~20 ms pre-roll; buffered packets play with no gating |
+| `m_jitterMarginFrames` | 4 frames | 40 ms jitter margin floor; also sizes the startup gate (a fresh voice plays once margin+1 frames of audio are queued); Speex adapts upward on bad links |
+| `GATE_TIMEOUT_FRAMES` | 20 frames | Startup gate force-start (200 ms): a fresh voice holds silent (zero PCM) until the gate fills, so the render loop never outruns the packet arrival clock; a lone blip force-starts instead of wedging |
+| Render lead bound | 1 quantum, or the track minimum | The render loop queues at most this far ahead of the playback head, mirroring a pull-model device clock |
 | `DEAD_MISS_FRAMES` | 10 frames | Voice expiry after 100 ms of consecutive misses |
 | `MAX_VOICES` | 32 | Evicts highest session id on join flood |
 | `MAX_DECODE_SAMPLES` | 5760 samples | Caps 120 ms Opus bundles |
@@ -42,9 +43,12 @@ UDP datagram / protobuf Audio
 
 ## Threading and lifecycle
 
-- One render thread (`THREAD_PRIORITY_URGENT_AUDIO`), 20 ms quanta. `renderMix`
-  returns 0 when silent so the thread idles on a timed 20 ms wait instead of
-  spinning zeros; the wait must stay timed because jitter startup/expiry timing
+- One render thread (`THREAD_PRIORITY_URGENT_AUDIO`), 20 ms quanta, paced
+  against the playback head (lead bound above) so it never free-runs ahead
+  of the 10 ms packet arrival cadence. `renderMix` returns 0 only when no
+  voice is live; gated voices render zero PCM so the loop keeps the track
+  fed and paced while their jitter buffer fills, then idles on a timed
+  20 ms wait. The wait must stay timed because jitter expiry timing
   advances per `renderMix` call.
 - `queuePacket` runs on network threads; a single mutex guards all voice state.
   Decode runs inline in `renderMix` — cheap for a handful of mono streams, no

@@ -407,6 +407,11 @@ void testOutOfOrderAndGapSequence() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    // This test exercises decode-path tolerance of gaps and late arrivals;
+    // open the gate on the first frame so the sequence gymnastics below
+    // are not confused with startup gating (the gap-inflated span must not
+    // be what opens the gate — see testGateHoldsWhenEarlyFramesLost).
+    openGateOnFirstFrame(*engine);
     // Gap: seq 0 then seq 5; loss concealment bridges the missing frames.
     queueOne(*engine, 31, 0);
     queueOne(*engine, 31, 5);
@@ -836,6 +841,102 @@ void testGateTimeoutStartsLoneVoice() {
     std::cout << "  [PASS] testGateTimeoutStartsLoneVoice" << std::endl;
 }
 
+void testGateHoldsWhenEarlyFramesLost() {
+    g_testCount++;
+    // In-transit loss must not open the gate early: the gate counts the
+    // union of accepted packet intervals, so a burst whose frames 1-2 are
+    // lost (seq 0, 3, 4 arrive) still measures only 3 queued frames at the
+    // default margin and keeps holding. A wall-clock span would read the
+    // 0->4 span (5 frames) and blurt into concealment.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 113, 0);
+    queueOne(*engine, 113, 3);
+    queueOne(*engine, 113, 4);
+    std::vector<int16_t> out(2 * kFrame, 0x1234);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT_EQ(peakAbs(out), 0); // held: only 3 of 5 frames arrived
+    TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    // A late fill of the hole (seq 2) extends coverage downward only: it
+    // must not open the gate (and must not be counted), matching the
+    // safe over-hold direction of the monotonic union end.
+    queueOne(*engine, 113, 2);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT_EQ(peakAbs(out), 0); // still held: 3 counted frames
+    // Two more arriving frames push the counted union to 5 frames and
+    // the gate opens with real audio behind it.
+    queueOne(*engine, 113, 5);
+    queueOne(*engine, 113, 6);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT(peakAbs(out) > 8000);
+    std::cout << "  [PASS] testGateHoldsWhenEarlyFramesLost" << std::endl;
+}
+
+void testEmptyTerminatorBypassesGate() {
+    g_testCount++;
+    // A short final burst (fewer frames than the gate span) must drain on
+    // an empty terminator at the default margin, not sit out the gate
+    // timeout: the terminator latches the gate bypass at queue time.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 114, 0);
+    engine->queuePacket(114, nullptr, 0, 1, 0, true);
+    std::vector<int16_t> out(kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(kFrame));
+    TEST_ASSERT(peakAbs(out) > 8000); // played despite the sub-span burst
+    TEST_ASSERT_EQ(engine->activeUserCount(), 0u);
+    TEST_ASSERT_EQ(events.back().session, 114);
+    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
+    std::cout << "  [PASS] testEmptyTerminatorBypassesGate" << std::endl;
+}
+
+void testPayloadTerminatorFirstPacketBypassesGate() {
+    g_testCount++;
+    // A payload-carrying terminator as a burst's first packet: the drain
+    // flag latches at dequeue, which a gated voice never reaches, so the
+    // bypass must come from the queue-time latch. The single frame plays
+    // on the first render instead of sitting out 200 ms of gate timeout.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 115, 0, 0, true);
+    std::vector<int16_t> out(kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(kFrame));
+    TEST_ASSERT(peakAbs(out) > 8000);
+    TEST_ASSERT_EQ(engine->activeUserCount(), 0u);
+    TEST_ASSERT_EQ(events.back().session, 115);
+    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
+    std::cout << "  [PASS] testPayloadTerminatorFirstPacketBypassesGate"
+              << std::endl;
+}
+
+void testGateArithmeticSurvivesSequenceWrap() {
+    g_testCount++;
+    // Frame timestamps are FRAME_SIZE * sequence in uint32 sample units
+    // and wrap after ~24.9 h of stream time. The gate's signed-diff union
+    // arithmetic must keep counting audio correctly across the rollover:
+    // a burst straddling the wrap opens the gate exactly like one that
+    // does not.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 116, 0xFFFFFFFEu);
+    queueOne(*engine, 116, 0xFFFFFFFFu);
+    for (uint32_t i = 0; i < 5; ++i) {
+        queueOne(*engine, 116, i);
+    }
+    std::vector<int16_t> out(2 * kFrame, 0);
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT(peakAbs(out) > 8000); // 7 frames queued: gate opens
+    TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    std::cout << "  [PASS] testGateArithmeticSurvivesSequenceWrap"
+              << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -847,6 +948,10 @@ void run_audio_output_engine_tests() {
     testMixingIsCommutative();
     testStartupGatesUntilMarginQueued();
     testGateTimeoutStartsLoneVoice();
+    testGateHoldsWhenEarlyFramesLost();
+    testEmptyTerminatorBypassesGate();
+    testPayloadTerminatorFirstPacketBypassesGate();
+    testGateArithmeticSurvivesSequenceWrap();
     testLossConcealmentBridgesGapsThenExpires();
     testRemoveUserSilencesAndEmitsPassive();
     testClearResetsAllVoices();
