@@ -252,11 +252,8 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     @Override
     public void onPause() {
         super.onPause();
-        if (getService() != null && getService().isConnected() &&
-            !Settings.getInstance(getActivity()).isPushToTalkToggle()) {
-            // XXX: This ensures that push to talk is disabled when we pause.
-            // We don't want to leave the talk state active if the fragment is paused while pressed.
-            getService().HumlaSession().setTalkingState(false);
+        if (getService() != null) {
+            getService().onTalkKeyCancel();
         }
     }
 
