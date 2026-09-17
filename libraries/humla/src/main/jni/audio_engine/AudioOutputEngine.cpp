@@ -50,7 +50,22 @@ struct AudioOutputEngine::Voice {
     int lastReportedState = -1;
     bool started = false;
     bool hasTerminator = false;
-    int quietFrames = 0;
+    // Startup gate, upstream parity (AudioOutputSpeech holds a fresh voice
+    // silent on jitter-buffer availability until its moving average is
+    // met): frames the gate has held so far, the total audio queued for
+    // this burst (union of accepted packet intervals, so in-transit loss
+    // never inflates the measured cushion), and the newest accepted end
+    // that grows the union. Counting duration, not packets, keeps bundled
+    // multi-frame datagrams gating by duration.
+    int gateWaitedFrames = 0;
+    uint32_t gateQueuedSamples = 0;
+    uint32_t gateMaxEndTs = 0;
+    bool gateAnchored = false;
+    // Terminator latched at queue time for the gate bypass only: the drain
+    // flag (hasTerminator) latches at dequeue, which a still-gated voice
+    // never reaches — so a payload-carrying terminator as the burst's first
+    // packet would otherwise sit out the full gate timeout.
+    bool gateTerminatorQueued = false;
     int missCount = 0;
     int consecutiveErrors = 0;
     // Decoded tail that did not fit the previous quantum, plus how much of
@@ -325,6 +340,10 @@ void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
         auto found = m_voices.find(session);
         if (found != m_voices.end()) {
             found->second->hasTerminator = true;
+            // This path never reaches queuePacketLocked, so the gate's
+            // own bypass latch must be set here too: a short final burst
+            // that never filled the gate still drains.
+            found->second->gateTerminatorQueued = true;
         }
         return;
     }
@@ -414,6 +433,35 @@ void AudioOutputEngine::queuePacketLocked(
     packet.user_data = (flags & 0xFF) | (isTerminator ? kTerminatorFlagBit : 0);
     // The jitter buffer copies packet bytes when no destroy callback is set.
     jitter_buffer_put(voice->jitter, &packet);
+    // Grow the startup gate's queued-audio union: only newly covered audio
+    // counts, so a sequence gap (in-transit loss) never inflates the
+    // measured cushion the way a wall-clock span would. Signed diffs keep
+    // the comparisons wrap-safe across the uint32 timestamp rollover,
+    // speex-style.
+    if (!voice->gateAnchored) {
+        voice->gateMaxEndTs = timestamp + packet.span;
+        voice->gateQueuedSamples = packet.span;
+        voice->gateAnchored = true;
+    } else if (static_cast<int32_t>(timestamp - voice->gateMaxEndTs) >= 0) {
+        // Entirely past the current end (a normal in-order arrival, gap or
+        // not): all of it is new audio.
+        voice->gateQueuedSamples += packet.span;
+        voice->gateMaxEndTs = timestamp + packet.span;
+    } else if (static_cast<int32_t>(timestamp + packet.span -
+                                    voice->gateMaxEndTs) > 0) {
+        // Overlaps the covered interval and extends it: only the extension
+        // counts (late, out-of-order fills of an earlier hole add nothing).
+        voice->gateQueuedSamples += static_cast<uint32_t>(
+            static_cast<int32_t>(timestamp + packet.span -
+                                 voice->gateMaxEndTs));
+        voice->gateMaxEndTs = timestamp + packet.span;
+    }
+    // Latch the gate's terminator bypass at queue time: a payload-carrying
+    // terminator as the first packet of a burst must skip the gate, and the
+    // dequeue-time hasTerminator latch never runs while gated.
+    if (isTerminator) {
+        voice->gateTerminatorQueued = true;
+    }
 }
 
 size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
@@ -438,13 +486,48 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
     m_deadSessions.clear();
     m_pendingTalks.clear();
     bool anyMixed = false;
+    bool anyGating = false;
 
     for (auto& entry : m_voices) {
         Voice* voice = entry.second.get();
+        // Captured before the gate: a gate-timeout force-start must still
+        // count as this voice's first audio, so its onset fades in.
+        const bool startedAtEntry = voice->started;
+        // Startup gate (upstream parity with AudioOutputSpeech's ts==0
+        // availability check): hold a fresh voice silent until margin+1
+        // frames of audio are actually queued, counting the union of
+        // accepted packet intervals so in-transit loss never opens the
+        // gate early. Without it, the first jitter_buffer_get syncs the
+        // pointer to the oldest packet
+        // and returns it immediately, so the render loop — free-running
+        // into a drained AudioTrack after idle — outruns the 10 ms arrival
+        // cadence: every empty get becomes a concealment miss, the
+        // advancing pointer stales the not-yet-arrived packets (dropped
+        // on put), and the poisoned arrival histogram pulls the pointer
+        // back as interpolation, i.e. yet more concealment. Gating gives
+        // the arrival clock the lead the margin promises. Gated quanta
+        // still emit zero PCM so the caller keeps feeding — and pacing
+        // on — the track while the buffer fills. A terminator bypasses
+        // the gate so a short final burst drains instead of timing out.
+        if (!voice->started && !voice->gateTerminatorQueued &&
+            voice->gateQueuedSamples <
+                static_cast<uint32_t>((m_jitterMarginFrames + 1) *
+                                      FRAME_SIZE)) {
+            voice->gateWaitedFrames +=
+                static_cast<int>(numSamples / FRAME_SIZE);
+            if (voice->gateWaitedFrames < GATE_TIMEOUT_FRAMES) {
+                anyGating = true;
+                continue;
+            }
+            // Gate timeout (upstream grants the gate 20 frames as well):
+            // the stream trickles in slower than the gate fills. Force-
+            // start so the miss expiry below retires the voice instead of
+            // parking it silent forever.
+            voice->started = true;
+        }
         std::fill(m_voiceScratch.begin(), m_voiceScratch.begin() + numSamples,
                   0.0f);
         size_t filled = 0;
-        const bool startedAtEntry = voice->started;
         bool producedAudio = false;
 
         while (filled < numSamples) {
@@ -476,7 +559,6 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 jitter_buffer_get(voice->jitter, &packet, FRAME_SIZE, &startOffset);
             if (result == JITTER_BUFFER_OK) {
                 voice->missCount = 0;
-                voice->quietFrames = 0;
                 voice->lastFlags = packet.user_data & 0xFF;
                 if (packet.user_data & kTerminatorFlagBit) {
                     voice->hasTerminator = true;
@@ -564,18 +646,6 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             }
 
             // Missing or late packet.
-            if (!voice->started) {
-                // Pre-roll silence until the jitter buffer has something to
-                // play, matching the legacy startup gate without the model
-                // object's moving average.
-                const size_t chunk =
-                    std::min<size_t>(FRAME_SIZE, numSamples - filled);
-                filled += chunk;
-                if (++voice->quietFrames >= STARTUP_QUIET_FRAMES) {
-                    voice->started = true;
-                }
-                continue;
-            }
             // A miss reserves a silent slot and defers concealment one frame:
             // the next packet is usually already jitter-buffered on a
             // lossy-but-alive link, and the OK path above reconstructs this
@@ -736,10 +806,12 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             callback(event.first, event.second);
         }
     }
-    if (!anyMixed) {
-        // Nothing audible this quantum (pre-roll gating before the jitter
-        // buffer releases its first packet): report silence so Java idles
-        // instead of writing zeros.
+    if (!anyMixed && !anyGating) {
+        // Nothing audible this quantum: report silence so Java idles
+        // instead of writing zeros. Gated quanta are deliberately emitted
+        // as zero PCM — the caller keeps the AudioTrack fed, so its write
+        // backpressure paces the render loop while the jitter buffer
+        // fills and the first real quantum lands behind a primed track.
         return 0;
     }
     return numSamples;
