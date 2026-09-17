@@ -92,10 +92,15 @@ public:
     // Largest single renderMix quantum the scratch buffers cover without
     // regrowing: 60 ms. Larger quanta still work via a slow-path resize.
     static constexpr size_t MAX_QUANTUM_SAMPLES = FRAME_SIZE * 6;
-    // Two pre-roll frames (20 ms): just enough to avoid blurting on a truly
-    // empty buffer. Buffered packets play immediately with no gating, and the
-    // jitter margin below does the real startup buffering.
-    static constexpr int STARTUP_QUIET_FRAMES = 2;
+    // A fresh voice stays silent (emitting zero PCM) until the jitter
+    // buffer holds margin+1 frames of queued audio — upstream parity with
+    // desktop Mumble's AudioOutputSpeech startup availability gate, which
+    // keeps the mixer from outrunning the packet arrival clock at the start
+    // of every talk burst. See renderMix for the full failure mode this
+    // prevents. If the gate never fills (a trickle or a lone blip), it
+    // force-starts the voice after this many 10 ms frames so the miss
+    // expiry can retire it; upstream grants its gate the same 20 frames.
+    static constexpr int GATE_TIMEOUT_FRAMES = 20;
     static constexpr int DEAD_MISS_FRAMES = 10;
     static constexpr int MAX_VOICES = 32;
     static constexpr int MAX_CONSECUTIVE_DECODE_ERRORS = 5;
@@ -124,7 +129,9 @@ public:
 
     /**
      * Sets the jitter buffer margin in 10 ms frames. Defaults to 4 frames
-     * (40 ms); applied to voices created after the call. The margin is a
+     * (40 ms); applied to voices created after the call. The margin both
+     * seeds the Speex buffer and sizes the startup gate (margin+1 frames of
+     * queued audio must arrive before a fresh voice plays). The margin is a
      * floor: Speex still grows effective buffering via adaptation when the
      * link needs it.
      */
