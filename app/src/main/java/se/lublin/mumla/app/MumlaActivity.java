@@ -396,6 +396,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mConnectingDialog.dismiss();
 
         if (mService != null) {
+            mService.onTalkKeyCancel();
             for (HumlaServiceFragment fragment : mServiceFragments) {
                 fragment.setServiceBound(false);
             }
@@ -461,6 +462,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return true;
         }
         return super.onKeyUp(keyCode, event);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus && mService != null) {
+            mService.onTalkKeyCancel();
+        }
     }
 
     @Override

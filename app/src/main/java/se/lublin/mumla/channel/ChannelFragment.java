@@ -161,7 +161,7 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
+                switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         if (getService() != null) {
                             getService().onTalkKeyDown();
@@ -170,6 +170,11 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                     case MotionEvent.ACTION_UP:
                         if (getService() != null) {
                             getService().onTalkKeyUp();
+                        }
+                        break;
+                    case MotionEvent.ACTION_CANCEL:
+                        if (getService() != null) {
+                            getService().onTalkKeyCancel();
                         }
                         break;
                 }
@@ -247,11 +252,8 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     @Override
     public void onPause() {
         super.onPause();
-        if (getService() != null && getService().isConnected() &&
-            !Settings.getInstance(getActivity()).isPushToTalkToggle()) {
-            // XXX: This ensures that push to talk is disabled when we pause.
-            // We don't want to leave the talk state active if the fragment is paused while pressed.
-            getService().HumlaSession().setTalkingState(false);
+        if (getService() != null) {
+            getService().onTalkKeyCancel();
         }
     }
 
