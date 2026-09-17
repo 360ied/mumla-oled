@@ -591,6 +591,38 @@ void testEvictsNewestVoiceWhenFull() {
     std::cout << "  [PASS] testEvictsNewestVoiceWhenFull" << std::endl;
 }
 
+void testEvictionEmitsPassiveForTalker() {
+    g_testCount++;
+    // An evicted voice must be reported PASSIVE like removeUser; without
+    // that, the UI keeps a talking state for a voice that no longer exists.
+    // Regression test: eviction previously freed the voice silently.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    for (int32_t s = 1; s <= AudioOutputEngine::MAX_VOICES; ++s) {
+        queueOne(*engine, s, 0);
+    }
+    std::vector<int16_t> out(kFrame, 0);
+    engine->renderMix(out.data(), out.size());
+    // One quantum made every buffered voice talk.
+    TEST_ASSERT_EQ(events.size(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    // The 33rd voice evicts session 32 (highest id). Its PASSIVE arrives
+    // synchronously from queuePacket on the calling thread.
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 1, 0);
+    TEST_ASSERT_EQ(events.size(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 1));
+    TEST_ASSERT_EQ(events.back().session, AudioOutputEngine::MAX_VOICES);
+    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
+    // The replacement voice (33) never rendered, so evicting it in turn
+    // emits nothing: only voices with a reported state can transition.
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 2, 0);
+    TEST_ASSERT_EQ(events.size(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 1));
+    TEST_ASSERT_EQ(engine->activeUserCount(),
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    std::cout << "  [PASS] testEvictionEmitsPassiveForTalker" << std::endl;
+}
+
 void testFecRecoveryFillsSingleLoss() {
     g_testCount++;
     // Gap at seq 1 with seq 2 already buffered: the engine defers
@@ -761,6 +793,7 @@ void run_audio_output_engine_tests() {
     testDecodeCappedAt120ms();
     testEmptyTerminatorDrainsVoice();
     testEvictsNewestVoiceWhenFull();
+    testEvictionEmitsPassiveForTalker();
     testFecRecoveryFillsSingleLoss();
     testFecFailureFallsBackToConcealment();
     testBurstLossQuarantinesStaleDebt();

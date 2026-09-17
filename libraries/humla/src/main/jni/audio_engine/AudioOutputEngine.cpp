@@ -87,7 +87,7 @@ inline int64_t steadyNanos() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
         .count();
- }
+}
 
 AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
     : m_decoderFactory(std::move(decoderFactory)) {
@@ -331,15 +331,46 @@ void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
     if (!m_decoderFactory) {
         return;
     }
-    std::lock_guard<std::mutex> lock(m_mutex);
+    // An evicted voice's PASSIVE (if any) is recorded under the lock and
+    // emitted after release, mirroring removeUser/clear: listener code must
+    // never run with m_mutex held.
+    OutputTalkCallback callback;
+    std::vector<std::pair<int32_t, int>> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        queuePacketLocked(session, data, len, sequence, flags, isTerminator,
+                          &pending);
+        if (!pending.empty()) {
+            callback = m_talkCallback;
+        }
+    }
+    if (callback) {
+        for (const auto& event : pending) {
+            callback(event.first, event.second);
+        }
+    }
+}
+
+void AudioOutputEngine::queuePacketLocked(
+    int32_t session, const uint8_t* data, size_t len, uint32_t sequence,
+    int flags, bool isTerminator,
+    std::vector<std::pair<int32_t, int>>* pendingEvents) {
     auto it = m_voices.find(session);
     if (it == m_voices.end()) {
         if (m_voices.size() >= static_cast<size_t>(MAX_VOICES)) {
             // No insertion-order tracking on the session map, so evict the
             // highest session id as the newest-voice approximation: long-
             // connected speakers keep their jitter history, and a join flood
-            // cannot push out the whole channel.
+            // cannot push out the whole channel. The evicted speaker is
+            // reported PASSIVE like removeUser so the UI never keeps a talk
+            // state for a voice that no longer exists.
             auto newest = std::prev(m_voices.end());
+            if (newest->second->lastReportedState != -1 &&
+                newest->second->lastReportedState !=
+                    static_cast<int>(OutputTalkState::PASSIVE)) {
+                recordTalkLocked(newest->second.get(), newest->first,
+                                 OutputTalkState::PASSIVE, pendingEvents);
+            }
             jitter_buffer_destroy(newest->second->jitter);
             m_voices.erase(newest);
         }
@@ -689,9 +720,16 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
         out[i] = static_cast<int16_t>(clamped);
     }
 
-    OutputTalkCallback callback = m_talkCallback;
+    // Copy the callback and detach the events only when events exist: with
+    // a callback installed for the engine's lifetime the std::function copy
+    // allocates, and the audio thread stays allocation-free in the common
+    // eventless quantum.
+    OutputTalkCallback callback;
     std::vector<std::pair<int32_t, int>> events;
-    events.swap(m_pendingTalks);
+    if (!m_pendingTalks.empty()) {
+        callback = m_talkCallback;
+        events.swap(m_pendingTalks);
+    }
     lock.unlock();
     if (callback) {
         for (const auto& event : events) {
