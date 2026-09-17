@@ -103,7 +103,9 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
             attached = true;
         }
 
-        env->SetByteArrayRegion(ctx->cachedBufferGlobalRef, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(data));
+        if (size > 0 && data != nullptr) {
+            env->SetByteArrayRegion(ctx->cachedBufferGlobalRef, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(data));
+        }
         env->CallVoidMethod(ctx->listenerGlobalRef, ctx->onPacketMethod,
                             ctx->cachedBufferGlobalRef, static_cast<jint>(size), static_cast<jint>(frames),
                             static_cast<jboolean>(isTerminator), static_cast<jlong>(frameNumber));
