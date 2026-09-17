@@ -251,8 +251,24 @@ public class AudioOutput implements Runnable,
                 final int head = mAudioTrack.getPlaybackHeadPosition();
                 final long headUnsigned = head & 0xFFFFFFFFL;
                 if (headUnsigned < (lastHead & 0xFFFFFFFFL)) {
-                    // 32-bit playback head wrapped (~24.9 h at 48 kHz).
-                    playedWrap += 1L << 32;
+                    if ((lastHead & 0xFFFFFFFFL) >= 0x80000000L) {
+                        // Genuine 32-bit playback-head wrap (~24.9 h at
+                        // 48 kHz): the previous reading was in the high
+                        // half of the counter.
+                        playedWrap += 1L << 32;
+                    } else {
+                        // Spurious head reset (reported on some OEM
+                        // builds after route changes). Treating it as a
+                        // wrap would put playedWrap ~4.29e9 frames ahead
+                        // of writtenTotal and silently disable pacing for
+                        // the rest of the session, reintroducing the
+                        // burst-start free-run. Rebase the lead instead:
+                        // writtenTotal matches the reset head, so the
+                        // bound restarts from the still-queued track fill.
+                        writtenTotal = playedWrap + headUnsigned;
+                        Log.w(TAG, "Playback head reset detected at "
+                                + headUnsigned + "; rebasing render lead");
+                    }
                 }
                 lastHead = head;
                 final long played = playedWrap + headUnsigned;

@@ -52,14 +52,20 @@ struct AudioOutputEngine::Voice {
     bool hasTerminator = false;
     // Startup gate, upstream parity (AudioOutputSpeech holds a fresh voice
     // silent on jitter-buffer availability until its moving average is
-    // met): frames the gate has held so far, and the span of audio queued
-    // for this burst (first accepted packet's timestamp to the newest
-    // accepted packet's end). The gate compares span, not packet count, so
-    // bundled multi-frame datagrams gate by duration.
+    // met): frames the gate has held so far, the total audio queued for
+    // this burst (union of accepted packet intervals, so in-transit loss
+    // never inflates the measured cushion), and the newest accepted end
+    // that grows the union. Counting duration, not packets, keeps bundled
+    // multi-frame datagrams gating by duration.
     int gateWaitedFrames = 0;
-    uint32_t gateAnchorTs = 0;
+    uint32_t gateQueuedSamples = 0;
     uint32_t gateMaxEndTs = 0;
     bool gateAnchored = false;
+    // Terminator latched at queue time for the gate bypass only: the drain
+    // flag (hasTerminator) latches at dequeue, which a still-gated voice
+    // never reaches — so a payload-carrying terminator as the burst's first
+    // packet would otherwise sit out the full gate timeout.
+    bool gateTerminatorQueued = false;
     int missCount = 0;
     int consecutiveErrors = 0;
     // Decoded tail that did not fit the previous quantum, plus how much of
@@ -334,6 +340,10 @@ void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
         auto found = m_voices.find(session);
         if (found != m_voices.end()) {
             found->second->hasTerminator = true;
+            // This path never reaches queuePacketLocked, so the gate's
+            // own bypass latch must be set here too: a short final burst
+            // that never filled the gate still drains.
+            found->second->gateTerminatorQueued = true;
         }
         return;
     }
@@ -423,19 +433,34 @@ void AudioOutputEngine::queuePacketLocked(
     packet.user_data = (flags & 0xFF) | (isTerminator ? kTerminatorFlagBit : 0);
     // The jitter buffer copies packet bytes when no destroy callback is set.
     jitter_buffer_put(voice->jitter, &packet);
-    // Track queued span for the startup gate: anchor on the burst's first
-    // accepted packet and grow the end monotonically, so late or
-    // out-of-order packets never extend it. Signed diffs keep the
-    // comparison wrap-safe, speex-style.
+    // Grow the startup gate's queued-audio union: only newly covered audio
+    // counts, so a sequence gap (in-transit loss) never inflates the
+    // measured cushion the way a wall-clock span would. Signed diffs keep
+    // the comparisons wrap-safe across the uint32 timestamp rollover,
+    // speex-style.
     if (!voice->gateAnchored) {
-        voice->gateAnchorTs = timestamp;
         voice->gateMaxEndTs = timestamp + packet.span;
+        voice->gateQueuedSamples = packet.span;
         voice->gateAnchored = true;
-    } else if (static_cast<int32_t>(timestamp + packet.span -
-                                    voice->gateAnchorTs) >
-               static_cast<int32_t>(voice->gateMaxEndTs -
-                                    voice->gateAnchorTs)) {
+    } else if (static_cast<int32_t>(timestamp - voice->gateMaxEndTs) >= 0) {
+        // Entirely past the current end (a normal in-order arrival, gap or
+        // not): all of it is new audio.
+        voice->gateQueuedSamples += packet.span;
         voice->gateMaxEndTs = timestamp + packet.span;
+    } else if (static_cast<int32_t>(timestamp + packet.span -
+                                    voice->gateMaxEndTs) > 0) {
+        // Overlaps the covered interval and extends it: only the extension
+        // counts (late, out-of-order fills of an earlier hole add nothing).
+        voice->gateQueuedSamples += static_cast<uint32_t>(
+            static_cast<int32_t>(timestamp + packet.span -
+                                 voice->gateMaxEndTs));
+        voice->gateMaxEndTs = timestamp + packet.span;
+    }
+    // Latch the gate's terminator bypass at queue time: a payload-carrying
+    // terminator as the first packet of a burst must skip the gate, and the
+    // dequeue-time hasTerminator latch never runs while gated.
+    if (isTerminator) {
+        voice->gateTerminatorQueued = true;
     }
 }
 
@@ -469,9 +494,11 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
         // count as this voice's first audio, so its onset fades in.
         const bool startedAtEntry = voice->started;
         // Startup gate (upstream parity with AudioOutputSpeech's ts==0
-        // availability check): hold a fresh voice silent until the jitter
-        // buffer holds margin+1 frames of queued audio. Without it the
-        // first jitter_buffer_get syncs the pointer to the oldest packet
+        // availability check): hold a fresh voice silent until margin+1
+        // frames of audio are actually queued, counting the union of
+        // accepted packet intervals so in-transit loss never opens the
+        // gate early. Without it, the first jitter_buffer_get syncs the
+        // pointer to the oldest packet
         // and returns it immediately, so the render loop — free-running
         // into a drained AudioTrack after idle — outruns the 10 ms arrival
         // cadence: every empty get becomes a concealment miss, the
@@ -482,10 +509,10 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
         // still emit zero PCM so the caller keeps feeding — and pacing
         // on — the track while the buffer fills. A terminator bypasses
         // the gate so a short final burst drains instead of timing out.
-        if (!voice->started && !voice->hasTerminator &&
-            static_cast<int32_t>(voice->gateMaxEndTs -
-                                 voice->gateAnchorTs) <
-                (m_jitterMarginFrames + 1) * FRAME_SIZE) {
+        if (!voice->started && !voice->gateTerminatorQueued &&
+            voice->gateQueuedSamples <
+                static_cast<uint32_t>((m_jitterMarginFrames + 1) *
+                                      FRAME_SIZE)) {
             voice->gateWaitedFrames +=
                 static_cast<int>(numSamples / FRAME_SIZE);
             if (voice->gateWaitedFrames < GATE_TIMEOUT_FRAMES) {
