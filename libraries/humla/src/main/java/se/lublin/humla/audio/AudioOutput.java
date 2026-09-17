@@ -214,11 +214,82 @@ public class AudioOutput implements Runnable,
         }
         mAudioTrack.play();
 
+        // Render-lead pacing: bound how far ahead of the playback head this
+        // loop may queue audio. The track's write path only blocks when its
+        // entire buffer is full, so on a fresh track — or after an idle
+        // drain, or once the engine's startup gate opens — the loop would
+        // sprint ahead of the 10 ms packet arrival cadence and drain the
+        // jitter buffer's safety margin: every frame the buffer cannot yet
+        // serve becomes loss concealment, heard as a buzz under the first
+        // syllables of each burst. Pacing against the device's consumption
+        // clock mirrors desktop Mumble's pull-model mixer, where the
+        // backend asks for exactly the frames it is about to play. The
+        // bound still covers the track's minimum buffer so the sink never
+        // starves while the loop idles between wakeups.
+        final int trackFrames =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                        ? mAudioTrack.getBufferSizeInFrames()
+                        : RENDER_SAMPLES * 2; // pre-M: write-blocking bounds
+        final int maxLeadSamples = Math.max(RENDER_SAMPLES,
+                Math.min(RENDER_SAMPLES * 2, trackFrames));
+        long writtenTotal = 0L;
+        long playedWrap = 0L;
+        int lastHead = 0;
         final short[] mix = new short[RENDER_SAMPLES];
         while (true) {
             synchronized (this) {
                 if (!mRunning) {
                     break;
+                }
+            }
+            // Block until one more quantum fits inside the lead bound. The
+            // 5 ms poll is cheap relative to the 20 ms quantum; the head
+            // advances only while the track is fed, and the idle branch
+            // below keeps writing (gate silence renders as zero PCM), so
+            // this can only ever wait, never deadlock.
+            while (true) {
+                final int head = mAudioTrack.getPlaybackHeadPosition();
+                final long headUnsigned = head & 0xFFFFFFFFL;
+                if (headUnsigned < (lastHead & 0xFFFFFFFFL)) {
+                    if ((lastHead & 0xFFFFFFFFL) >= 0x80000000L) {
+                        // Genuine 32-bit playback-head wrap (~24.9 h at
+                        // 48 kHz): the previous reading was in the high
+                        // half of the counter.
+                        playedWrap += 1L << 32;
+                    } else {
+                        // Spurious head reset (reported on some OEM
+                        // builds after route changes). Treating it as a
+                        // wrap would put playedWrap ~4.29e9 frames ahead
+                        // of writtenTotal and silently disable pacing for
+                        // the rest of the session, reintroducing the
+                        // burst-start free-run. Rebase the lead instead:
+                        // writtenTotal matches the reset head, so the
+                        // bound restarts from the still-queued track fill.
+                        writtenTotal = playedWrap + headUnsigned;
+                        Log.w(TAG, "Playback head reset detected at "
+                                + headUnsigned + "; rebasing render lead");
+                    }
+                }
+                lastHead = head;
+                final long played = playedWrap + headUnsigned;
+                if (writtenTotal + RENDER_SAMPLES - played <= maxLeadSamples) {
+                    break;
+                }
+                synchronized (mInactiveLock) {
+                    try {
+                        mInactiveLock.wait(5);
+                    } catch (InterruptedException e) {
+                        // stopPlaying interrupts after clearing mRunning;
+                        // a stray interrupt just ends pacing for this
+                        // quantum instead of busy-waiting on a set flag.
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+                synchronized (this) {
+                    if (!mRunning) {
+                        break;
+                    }
                 }
             }
             int rendered = 0;
@@ -253,14 +324,19 @@ public class AudioOutput implements Runnable,
                         continue;
                     }
                     offset += written;
+                    writtenTotal += written;
                 }
             } else {
-                // Nobody is speaking. Keep the track playing so resume is
-                // gapless, and idle until the next packet arrives. The wait
-                // is timed, not indefinite: renderMix advances jitter
-                // startup/expiry timing per call and reports pure pre-roll
-                // as silence (0), so without a periodic wake a lone queued
-                // packet would never play out and dead voices never expire.
+                // No live voice this quantum. Keep the track playing so
+                // resume is gapless, and idle until the next packet arrives.
+                // renderMix returns 0 only here or for a wedged voice:
+                // fresh voices hold silent in the engine's startup gate
+                // and still render zero PCM, so this loop keeps writing
+                // and stays paced by the track's backpressure while their
+                // jitter buffer fills. The wait is timed, not indefinite,
+                // so a notify raced with wait entry — or a wedged voice
+                // expiring via its per-render miss count — cannot strand
+                // the thread.
                 synchronized (mInactiveLock) {
                     try {
                         mInactiveLock.wait(20);

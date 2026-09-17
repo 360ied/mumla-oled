@@ -63,14 +63,18 @@ already bounds headroom. Revisit only with an AC-signal test corpus.
 
 ## 6. First-utterance latency stack — CUT and shipped on master
 
-Was ~300 ms of stacked fixed delays; now ~100–165 ms typical:
+Was ~300 ms of stacked fixed delays; now ~100–165 ms typical, plus ~50 ms
+of intentional burst-start hold (the gate waits for margin+1 frames of
+queued audio, ~50 ms at the default margin 4) that buys back far more in
+concealment artifacts it prevents:
 
 | Source | Before | After |
 |---|---|---|
-| `m_jitterMarginFrames` (every utterance) | 10 frames (100 ms) | 4 frames (40 ms); Speex still adapts upward on bad links |
-| `STARTUP_QUIET_FRAMES` (empty buffer only; buffered packets always played immediately) | 20 frames (200 ms) | 2 frames (20 ms) |
+| `m_jitterMarginFrames` (every utterance) | 10 frames (100 ms) | 4 frames (40 ms); also sizes the startup gate; Speex still adapts upward on bad links |
+| Startup gate (upstream parity) | none: buffered packets played immediately, the loop free-ran into concealment on burst start | holds until margin+1 frames queued, force-start at `GATE_TIMEOUT_FRAMES` = 20 frames (200 ms) |
 | Render quantum / idle wait (batching) | 60 ms | 20 ms |
 | Track buffer floor | ~120 ms | ~40 ms plus the hardware minimum |
+| Render lead | unbounded (loop sprinted into track slack) | 1 quantum past the playback head (or the track minimum if larger) |
 
 Remaining risk: the leaner margin trades robustness for latency on jittery
 links. Per-voice queue-to-playout delay is now logged on device
