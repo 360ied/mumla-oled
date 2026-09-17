@@ -82,7 +82,7 @@ public class MumlaService extends HumlaService implements
     public static final int PROXIMITY_SCREEN_OFF_WAKE_LOCK = 32;
     public static final int TTS_THRESHOLD = 250; // Maximum number of characters to read
 
-    private Settings mSettings;
+    Settings mSettings;
     private MumlaConnectionNotification mNotification;
     private MumlaMessageNotification mMessageNotification;
     /** Channel view overlay. */
@@ -211,12 +211,7 @@ public class MumlaService extends HumlaService implements
 
         @Override
         public void onHotCornerCancel() {
-            if (isConnectionEstablished()
-                    && Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod())) {
-                if (!mSettings.isPushToTalkToggle() && isTalking()) {
-                    setTalkingState(false);
-                }
-            }
+            onTalkKeyCancel();
         }
     };
 
@@ -874,6 +869,19 @@ public class MumlaService extends HumlaService implements
                 setTalkingState(!isTalking()); // Toggle talk state
             } else if (isTalking()) {
                 setTalkingState(false); // Stop talking
+            }
+        }
+    }
+
+    /**
+     * Called when a talk key gesture or focus is cancelled (e.g. gesture intercept or window blur).
+     */
+    @Override
+    public void onTalkKeyCancel() {
+        if (isConnectionEstablished()
+                && Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod())) {
+            if (!mSettings.isPushToTalkToggle() && isTalking()) {
+                setTalkingState(false);
             }
         }
     }
