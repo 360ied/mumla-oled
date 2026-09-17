@@ -22,6 +22,8 @@ public interface IMumlaService extends IHumlaService {
 
     void onTalkKeyUp();
 
+    void onTalkKeyCancel();
+
     List<IChatMessage> getMessageLog();
 
     void clearMessageLog();

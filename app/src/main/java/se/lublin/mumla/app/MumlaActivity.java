@@ -396,6 +396,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mConnectingDialog.dismiss();
 
         if (mService != null) {
+            mService.onTalkKeyCancel();
             for (HumlaServiceFragment fragment : mServiceFragments) {
                 fragment.setServiceBound(false);
             }
