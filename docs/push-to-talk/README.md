@@ -5,10 +5,10 @@ This directory provides a comprehensive, rigorous examination of the Push-to-Tal
 ## Table of Contents
 
 1. [Architectural Overview](#architectural-overview)
-2. [Data Flow & Pipeline](#data-flow--pipeline)
+2. [Data Flow & Pipeline](#data-flow-pipeline)
 3. [Component Inventory](#component-inventory)
 4. [Summary of Features](#summary-of-features)
-5. [Summary Matrix of Deficiencies & Bugs](#summary-matrix-of-deficiencies--bugs)
+5. [Summary Matrix of Deficiencies & Bugs](#summary-matrix-of-deficiencies-bugs)
 6. [Detailed Findings Modules](#detailed-findings-modules)
 
 ---
@@ -134,7 +134,7 @@ The user engages PTT via one of four entry points:
 |---|---|---|---|---|
 | **PTT-01** | **Audio Transport** | **Critical** | **Terminator packet omitted on packet boundaries**: When PTT is released and `m_accumulatedFrames == 0`, no terminator packet (`isTerminator = true`) is dispatched. Remote clients suffer 100ms of PLC artifacts / robotic stutter on 50%–75% of speech stops. | [`AudioInputEngine.cpp:128`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L128-L133) |
 | **PTT-02** | **UI / Touch** | **Critical** | **Stuck microphone on touch cancellation**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L163-L177) does not handle `MotionEvent.ACTION_CANCEL`. Gesture navigation, notification shade pull-downs, or scroll intercepts leave the mic transmitting indefinitely. | [`ChannelFragment.java:163`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L163-L177) |
-| **PTT-03** | **Service Logic** | **High** | **Half-duplex runtime preference ignored**: When `half_duplex` is toggled in Settings, `HumlaService.configureAudio()` evaluates `extras.getInt(EXTRAS_TRANSMIT_MODE)`, which defaults to 0 (VAD), always disabling half duplex at runtime. | [`HumlaService.java:700`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702) |
+| **PTT-03** | **Service Logic** | **High** | **Half-duplex runtime preference ignored**: When `half_duplex` is toggled in Settings, `HumlaService.configureExtras()` evaluates `extras.getInt(EXTRAS_TRANSMIT_MODE)`, which defaults to 0 (VAD), always disabling half duplex at runtime. | [`HumlaService.java:700`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702) |
 | **PTT-04** | **Audio Policy** | **High** | **Global Android system audio muting**: Half-duplex calls deprecated `mAudioManager.setStreamMute()` on the entire device voice call stream, muting third-party apps and risking permanent device muting on app crash, rather than muting in the internal mix engine. | [`AudioHandler.java:451`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L450-L453) |
 | **PTT-05** | **Audio DSP** | **Medium** | **Pre-speech lookahead ring buffer leaks acoustic clicks**: When PTT is engaged, 80ms of audio recorded *before* the button press is flushed into Opus packets, transmitting mechanical switch clicks, finger taps, and pre-speech breaths. | [`AudioInputEngine.cpp:118`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126) |
 | **PTT-06** | **Audio DSP** | **Medium** | **Zero PTT release hold delay**: PTT cuts off instantly on key release with zero hangover time, clipping the trailing syllables of utterances if released slightly early. | [`AudioInputEngine.cpp:90`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L89-L92) |
