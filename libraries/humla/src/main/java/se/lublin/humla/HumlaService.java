@@ -133,6 +133,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private List<Integer> mLocalIgnoreHistory;
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
+    private boolean mHalfDuplex;
 
     private byte mVoiceTargetId;
     private WhisperTargetList mWhisperTargetList;
@@ -696,9 +697,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             reconnectNeeded = true;
         }
         if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {
+            mHalfDuplex = extras.getBoolean(EXTRAS_HALF_DUPLEX);
+        }
+        if (extras.containsKey(EXTRAS_HALF_DUPLEX) || extras.containsKey(EXTRAS_TRANSMIT_MODE)) {
             mAudioBuilder.setHalfDuplexEnabled(
-                    extras.getInt(EXTRAS_TRANSMIT_MODE) == Constants.TRANSMIT_PUSH_TO_TALK
-                            && extras.getBoolean(EXTRAS_HALF_DUPLEX));
+                    mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex);
         }
         if (extras.containsKey(EXTRAS_LOCAL_MUTE_HISTORY)) {
             mLocalMuteHistory = extras.getIntegerArrayList(EXTRAS_LOCAL_MUTE_HISTORY);
