@@ -241,6 +241,13 @@ int peakAbs(const std::vector<int16_t>& out) {
     return peak;
 }
 
+// Zero jitter margin: the startup gate opens on the first queued frame, so
+// tests exercise post-gate decode/mix/fade behavior without first filling
+// the default (margin+1)-frame gate span.
+void openGateOnFirstFrame(AudioOutputEngine& engine) {
+    engine.setJitterMarginFrames(0);
+}
+
 void testSilentWithNoUsers() {
     g_testCount++;
     std::vector<TalkEvent> events;
@@ -255,6 +262,7 @@ void testQueuedPacketProducesAudioAndTalkState() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 7, 0);
     std::vector<int16_t> out(kFrame, 0);
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
@@ -272,6 +280,7 @@ void testTerminatorEndsUserAsPassive() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 9, 0, 0, true);
     std::vector<int16_t> out(kFrame, 0);
     engine->renderMix(out.data(), out.size());
@@ -288,6 +297,7 @@ void testOverlappingSpeakersCompressInsteadOfWrapping() {
     std::vector<TalkEvent> events;
     // Each voice at 0.8: linear sum 1.6 would hard-clip or wrap with int16.
     auto engine = makeEngine(0.8f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 1, 0);
     queueOne(*engine, 2, 0);
     std::vector<int16_t> out(kFrame, 0);
@@ -306,6 +316,7 @@ void testMixingIsCommutative() {
     {
         std::vector<TalkEvent> events;
         auto engine = makeEngine(0.4f, &events);
+        openGateOnFirstFrame(*engine);
         queueOne(*engine, 1, 0);
         queueOne(*engine, 2, 0);
         engine->renderMix(outA.data(), outA.size());
@@ -314,6 +325,7 @@ void testMixingIsCommutative() {
         std::vector<TalkEvent> events;
         auto engine = makeEngine(0.4f, &events);
         queueOne(*engine, 2, 0);
+        openGateOnFirstFrame(*engine);
         queueOne(*engine, 1, 0);
         engine->renderMix(outB.data(), outB.size());
     }
@@ -328,6 +340,7 @@ void testLossConcealmentBridgesGapsThenExpires() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 5, 0);
     std::vector<int16_t> out(kFrame, 0);
     engine->renderMix(out.data(), out.size());
@@ -348,6 +361,7 @@ void testRemoveUserSilencesAndEmitsPassive() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 11, 0);
     queueOne(*engine, 12, 0);
     std::vector<int16_t> out(kFrame, 0);
@@ -371,6 +385,7 @@ void testClearResetsAllVoices() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 21, 0);
     queueOne(*engine, 22, 0);
     std::vector<int16_t> out(kFrame, 0);
@@ -430,6 +445,7 @@ void testFlagsMapToTalkStates() {
     for (const auto& c : cases) {
         std::vector<TalkEvent> events;
         auto engine = makeEngine(0.5f, &events);
+        openGateOnFirstFrame(*engine);
         queueOne(*engine, 41, 0, c[0]);
         std::vector<int16_t> out(kFrame, 0);
         engine->renderMix(out.data(), out.size());
@@ -444,6 +460,7 @@ void testPartialRenderOffsetLength() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 51, 0);
     // Render a sub-frame quantum into the middle of a larger buffer guarded
     // by sentinels: only the window may change.
@@ -470,6 +487,7 @@ void testExpiryBoundary() {
     g_testCount++;
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 61, 0);
     std::vector<int16_t> out(kFrame, 0);
     engine->renderMix(out.data(), out.size());
@@ -495,6 +513,7 @@ void testCarryoverPreservesOversizedBundle() {
     // carried-over decode output).
     std::vector<TalkEvent> events;
     auto engine = makeSpanEngine(3 * kFrame, 0.5f, &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 71, 0);
     for (int i = 0; i < 3; ++i) {
         std::vector<int16_t> out(kFrame, 0);
@@ -598,6 +617,7 @@ void testEvictionEmitsPassiveForTalker() {
     // Regression test: eviction previously freed the voice silently.
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
     for (int32_t s = 1; s <= AudioOutputEngine::MAX_VOICES; ++s) {
         queueOne(*engine, s, 0);
     }
@@ -633,6 +653,7 @@ void testFecRecoveryFillsSingleLoss() {
     int fecAttempts = 0;
     auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
                                 &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 101, 0);
     queueOne(*engine, 101, 2);
     std::vector<int16_t> out(3 * kFrame, 0);
@@ -658,6 +679,7 @@ void testFecFailureFallsBackToConcealment() {
     int fecAttempts = 0;
     auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, true, &fecAttempts,
                                 &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 102, 0);
     queueOne(*engine, 102, 2);
     std::vector<int16_t> out(3 * kFrame, 0);
@@ -680,6 +702,7 @@ void testBurstLossQuarantinesStaleDebt() {
     int fecAttempts = 0;
     auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
                                 &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 106, 0);
     queueOne(*engine, 106, 3);
     std::vector<int16_t> out(4 * kFrame, 0);
@@ -700,6 +723,7 @@ void testUnrecoverableLossConcealsSilently() {
     int fecAttempts = 0;
     auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
                                 &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 103, 0);
     std::vector<int16_t> out(2 * kFrame, 0);
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
@@ -718,6 +742,7 @@ void testLossBoundaryCrossfadeSmoothsStep() {
     int fecAttempts = 0;
     auto engine = makeFecEngine(0.4f, 0.0f, 0.0f, false, &fecAttempts,
                                 &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 104, 0);
     std::vector<int16_t> out(2 * kFrame, 0);
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
@@ -741,6 +766,7 @@ void testLosslessMixHasNoCrossfade() {
     int fecAttempts = 0;
     auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
                                 &events);
+    openGateOnFirstFrame(*engine);
     queueOne(*engine, 105, 0);
     queueOne(*engine, 105, 1);
     queueOne(*engine, 105, 2);
@@ -754,22 +780,60 @@ void testLosslessMixHasNoCrossfade() {
     std::cout << "  [PASS] testLosslessMixHasNoCrossfade" << std::endl;
 }
 
-void testStartupPlaysImmediatelyAtProductionQuantum() {
+void testStartupGatesUntilMarginQueued() {
     g_testCount++;
-    // Startup contract the latency budget depends on: a queued packet plays
-    // on the very first render at the production 20 ms quantum (960 samples)
-    // under the default jitter margin — no pre-roll gating, no buffering
-    // stall. Only the utterance-onset fade-in touches the first frame; the
-    // second frame is bit-exact (0.5 level, linear knee: 16384).
+    // Startup contract (upstream parity): a fresh voice stays silent until
+    // the jitter buffer holds margin+1 frames of audio, emitting zero PCM
+    // so the render loop keeps the track primed and write-paced while the
+    // buffer fills. Once that span is queued, the first audible frame
+    // fades in and the second is bit-exact (0.5 level, linear knee: 16384).
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
     queueOne(*engine, 111, 0);
-    std::vector<int16_t> out(2 * kFrame, 0);
+    std::vector<int16_t> out(2 * kFrame, 0x1234);
+    // One 10 ms frame queued: below the (4+1)-frame default gate. Silent
+    // but rendered (the caller keeps feeding the track), still live, and
+    // not yet talking.
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
                    static_cast<size_t>(2 * kFrame));
-    TEST_ASSERT_EQ(out[3 * kFrame / 2], 16384);
-    std::cout << "  [PASS] testStartupPlaysImmediatelyAtProductionQuantum"
-              << std::endl;
+    TEST_ASSERT_EQ(peakAbs(out), 0);
+    TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    TEST_ASSERT_TRUE(events.empty());
+    // Five frames queued in total: the gate opens and audio flows.
+    for (uint32_t i = 1; i <= 4; ++i) {
+        queueOne(*engine, 111, i);
+    }
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(2 * kFrame));
+    TEST_ASSERT(out.front() < out[kFrame]); // onset fade-in on frame 1
+    TEST_ASSERT_EQ(out[3 * kFrame / 2], 16384); // frame 2 bit-exact
+    TEST_ASSERT_EQ(events.front().session, 111);
+    TEST_ASSERT_EQ(events.front().state, 0); // TALKING
+    std::cout << "  [PASS] testStartupGatesUntilMarginQueued" << std::endl;
+}
+
+void testGateTimeoutStartsLoneVoice() {
+    g_testCount++;
+    // A lone blip that never fills the gate must not park silent forever:
+    // after GATE_TIMEOUT_FRAMES of gated quanta the voice force-starts,
+    // plays its packet with the onset fade, and expires via the normal
+    // miss path from then on.
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    queueOne(*engine, 112, 0);
+    std::vector<int16_t> out(kFrame, 0);
+    for (int i = 0; i < AudioOutputEngine::GATE_TIMEOUT_FRAMES - 1; ++i) {
+        TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                       static_cast<size_t>(kFrame));
+        TEST_ASSERT_EQ(peakAbs(out), 0);
+    }
+    // The timeout quantum force-starts the voice and plays the packet.
+    TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
+                   static_cast<size_t>(kFrame));
+    TEST_ASSERT(peakAbs(out) > 8000);
+    TEST_ASSERT_EQ(events.front().session, 112);
+    TEST_ASSERT_EQ(events.front().state, 0); // TALKING
+    std::cout << "  [PASS] testGateTimeoutStartsLoneVoice" << std::endl;
 }
 
 } // namespace
@@ -781,7 +845,8 @@ void run_audio_output_engine_tests() {
     testTerminatorEndsUserAsPassive();
     testOverlappingSpeakersCompressInsteadOfWrapping();
     testMixingIsCommutative();
-    testStartupPlaysImmediatelyAtProductionQuantum();
+    testStartupGatesUntilMarginQueued();
+    testGateTimeoutStartsLoneVoice();
     testLossConcealmentBridgesGapsThenExpires();
     testRemoveUserSilencesAndEmitsPassive();
     testClearResetsAllVoices();
