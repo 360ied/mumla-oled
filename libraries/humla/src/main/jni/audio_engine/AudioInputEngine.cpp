@@ -141,7 +141,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             }
         }
 
-        // 6. Process current frame
+        // 7. Process current frame
         if (shouldTransmit) {
             std::memcpy(&m_accumulatedPcm[m_accumulatedFrames * SAMPLES_PER_10MS],
                         m_processedFrame.data(), SAMPLES_PER_10MS * sizeof(int16_t));
@@ -161,7 +161,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         talkingCb = m_talkingCallback;
     } // Critical section exited, mutex released!
 
-    // 7. Dispatch callbacks outside the lock to prevent deadlock
+    // 8. Dispatch callbacks outside the lock to prevent deadlock
     if (notifyTalking && talkingCb) {
         talkingCb(talkingState, peakEnergy);
     }
