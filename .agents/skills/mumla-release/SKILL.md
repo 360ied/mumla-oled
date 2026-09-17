@@ -3,7 +3,7 @@ name: mumla-release
 description: >-
   End-to-end release process for the Mumla OLED Android client: bump the
   semver version via git tag, write dry, user-centric GitHub release notes,
-  build the signed FOSS release APK, and publish the release with the
+  build the signed FOSS release APK, and publish the pre-release with the
   APK attached. Use when the user asks to cut, create, or publish a release.
 ---
 
@@ -125,17 +125,22 @@ release config).
 
 ## 6. Publish the release
 
+New releases are always published as pre-releases (`--prerelease`) rather than
+being marked as latest:
+
 ```bash
 gh release create <version> app/build/outputs/apk/foss/release/mumla-foss-release.apk \
   --target master --title "Mumla OLED <version>" \
+  --prerelease \
   --notes-file plans/release-<version>.md
 ```
 
 ## 7. Verify
 
-- `gh release view <version> --json assets,body` — APK attached, title
-  correct, body starts at `## Highlights` (no `# Mumla OLED` H1 — that would
-  duplicate `--title`), universal-APK note present at the end of the body,
-  and notes free of developer jargon or test-only sections.
-- Check the release list (`gh release list`) so the new entry matches the
-  naming of previous releases.
+- `gh release view <version> --json assets,body,isPrerelease` — APK attached,
+  title correct, `isPrerelease` is `true`, body starts at `## Highlights`
+  (no `# Mumla OLED` H1 — that would duplicate `--title`), universal-APK note
+  present at the end of the body, and notes free of developer jargon or
+  test-only sections.
+- Check the release list (`gh release list`) so the new entry shows type
+  `Pre-release` and matches the naming of previous releases.
