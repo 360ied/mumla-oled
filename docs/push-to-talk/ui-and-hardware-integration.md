@@ -9,15 +9,15 @@ This document details the user interface components, touch event handling, syste
 3. [Defect Deep-Dive: Button Height Display Density Bug (PTT-08)](#defect-deep-dive-button-height-display-density-bug-ptt-08)
 4. [Defect Deep-Dive: Disappearing PTT Button on Mute (PTT-09)](#defect-deep-dive-disappearing-ptt-button-on-mute-ptt-09)
 5. [Visual State Inconsistency: `setPressed` vs `setActivated` (PTT-10)](#visual-state-inconsistency-setpressed-vs-setactivated-ptt-10)
-6. [PTT Hot Corner Overlay & The Soft-Keyboard Myth (PTT-13)](#ptt-hot-corner-overlay--the-soft-keyboard-myth-ptt-13)
-7. [Hardware Keys, Peripherals & Background Limitations (PTT-11, PTT-12)](#hardware-keys-peripherals--background-limitations-ptt-11-ptt-12)
+6. [PTT Hot Corner Overlay & The Soft-Keyboard Myth (PTT-13)](#ptt-hot-corner-overlay-the-soft-keyboard-myth-ptt-13)
+7. [Hardware Keys, Peripherals & Background Limitations (PTT-11, PTT-12)](#hardware-keys-peripherals-background-limitations-ptt-11-ptt-12)
 8. [Audio Feedback Deficiencies (PTT-14)](#audio-feedback-deficiencies-ptt-14)
 
 ---
 
 ## In-App Push-to-Talk Button
 
-The main on-screen PTT button is defined in [`fragment_channel.xml:74-86`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/layout/fragment_channel.xml#L74-L86) and managed by [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java).
+The main on-screen PTT button is defined in [`fragment_channel.xml:68-87`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/layout/fragment_channel.xml#L68-L87) and managed by [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java).
 
 ```xml
 <LinearLayout
@@ -122,10 +122,7 @@ mTalkButton.setLayoutParams(params);
    On a modern 1080p or 1440p smartphone display:
    - Density is typically `xxhdpi` ($3.0\times$) or `xxxhdpi` ($3.5\times$ to $4.0\times$).
    - Passing raw `150` sets the button height to only $150\text{ px}$.
-   - Converting to dp:
-     ```math
-     \text{Height (dp)} = \frac{150\text{ px}}{3.5} \approx 42.8\text{ dp}
-     ```
+   - Converting to dp: $\text{Height (dp)} = \frac{150\text{ px}}{3.5} \approx 42.8\text{ dp}$.
    - This collapses the button below Google's official accessibility guideline for touch targets ($48\text{ dp}$), making it difficult to hit reliably. On an `mdpi` ($1.0\times$) tablet, 150px is a massive 150dp.
 2. **Layout Parameter Hierarchy Violation**:
    `mTalkView` is the parent `LinearLayout` containing `mTalkButton`. Calling `mTalkView.getLayoutParams()` retrieves the layout params of the container (matching its parent, the root channel layout). Assigning those exact params to the child `mTalkButton.setLayoutParams(params)` corrupts layout attributes and fails to resize the parent container `mTalkView`.

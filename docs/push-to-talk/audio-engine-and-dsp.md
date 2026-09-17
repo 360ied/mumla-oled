@@ -7,8 +7,8 @@ This document details the low-level digital signal processing (DSP), buffering, 
 1. [Native Ingestion Pipeline](#native-ingestion-pipeline)
 2. [Defect Deep-Dive: Terminator Packet Dropping (PTT-01)](#defect-deep-dive-terminator-packet-dropping-ptt-01)
 3. [Defect Deep-Dive: Pre-Speech Ring Buffer Click Leakage (PTT-05)](#defect-deep-dive-pre-speech-ring-buffer-click-leakage-ptt-05)
-4. [Defect Deep-Dive: Abrupt Stream Cutoff & Lack of PTT Hangover (PTT-06)](#defect-deep-dive-abrupt-stream-cutoff--lack-of-ptt-hangover-ptt-06)
-5. [VAD Co-Execution & Metering Gaps](#vad-co-execution--metering-gaps)
+4. [Defect Deep-Dive: Abrupt Stream Cutoff & Lack of PTT Hangover (PTT-06)](#defect-deep-dive-abrupt-stream-cutoff-lack-of-ptt-hangover-ptt-06)
+5. [VAD Co-Execution & Metering Gaps](#vad-co-execution-metering-gaps)
 6. [Native Test Coverage Assessment (PTT-15)](#native-test-coverage-assessment-ptt-15)
 
 ---
@@ -99,7 +99,7 @@ void AudioInputEngine::flushAccumulatorLocked(bool isTerminator, std::vector<Dis
 
 ### Mathematical Analysis of Packet Boundary Drop Probability
 
-Let $N = \text{m\_framesPerPacket}$. With standard 20ms Opus packets, $N = 2$.
+Let $N$ be the number of frames per packet (`m_framesPerPacket`). With standard 20ms Opus packets, $N = 2$.
 Each 10ms frame increases `m_accumulatedFrames`. When `m_accumulatedFrames == N`, a standard packet (`isTerminator = false`) is dispatched and `m_accumulatedFrames` is reset to 0:
 
 ```text
@@ -119,13 +119,13 @@ The probability that the release occurs precisely after an even number of frames
 P(\text{no terminator}) = \frac{1}{N}
 ```
 
-- For $N = 2$ (20ms packets, default): **$50\%$ of all PTT releases fail to send a terminator packet**.
-- For $N = 4$ (40ms packets): **$25\%$ of releases fail to send a terminator packet**.
-- For $N = 1$ (10ms packets): **$100\%$ of releases fail to send a terminator packet** because `m_accumulatedFrames` is always reset to 0 after every frame!
+- For $N = 2$ (20ms packets, default): **50% of all PTT releases fail to send a terminator packet**.
+- For $N = 4$ (40ms packets): **25% of releases fail to send a terminator packet**.
+- For $N = 1$ (10ms packets): **100% of releases fail to send a terminator packet** because `m_accumulatedFrames` is always reset to 0 after every frame!
 
 ### Impact & Symptoms
 
-When $m\_accumulatedFrames == 0$:
+When `m_accumulatedFrames == 0`:
 1. `flushAccumulatorLocked(true, ...)` is skipped entirely.
 2. Transmission halts abruptly.
 3. Every remote participant on the server experiences 100ms of PLC error concealment and robotic stutter.
@@ -138,7 +138,7 @@ When $m\_accumulatedFrames == 0$:
 
 [`PreSpeechRingBuffer`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.h) maintains an 8-frame (80ms) circular buffer of past PCM samples.
 
-In Voice Activity Detection (VAD) mode, this lookahead buffer is essential: neural networks and energy detectors require 20–40ms of speech energy to exceed onset thresholds. Flushing the lookahead buffer ensures that leading unvoiced consonants ($/p/$, $/t/$, $/k/$, $/s/$) are not clipped.
+In Voice Activity Detection (VAD) mode, this lookahead buffer is essential: neural networks and energy detectors require 20–40ms of speech energy to exceed onset thresholds. Flushing the lookahead buffer ensures that leading unvoiced consonants (/p/, /t/, /k/, /s/) are not clipped.
 
 ### The Code Flaw
 

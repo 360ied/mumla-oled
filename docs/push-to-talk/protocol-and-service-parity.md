@@ -9,7 +9,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 3. [Defect Deep-Dive: Silent Failure on Suppression](#defect-deep-dive-silent-failure-on-suppression)
 4. [Defect Deep-Dive: Broken Half-Duplex Runtime Preference (PTT-03)](#defect-deep-dive-broken-half-duplex-runtime-preference-ptt-03)
 5. [Defect Deep-Dive: Dangerous Global OS Stream Muting (PTT-04)](#defect-deep-dive-dangerous-global-os-stream-muting-ptt-04)
-6. [Decoupled Talk State & UI Round-Trip Latency](#decoupled-talk-state--ui-round-trip-latency)
+6. [Decoupled Talk State & UI Round-Trip Latency](#decoupled-talk-state-ui-round-trip-latency)
 
 ---
 
@@ -42,7 +42,7 @@ When a server administrator configures `suggestpushtotalk = true` in `mumble-ser
 
 ### The Implementation Gap in Humla
 
-In [`HumlaConnection.java:825-826`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L825-L826), the message is parsed from the TCP stream and dispatched:
+In [`HumlaConnection.java:825-826, 920`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L825-L826), the message is parsed from the TCP stream and dispatched to the handler:
 
 ```java
 case SuggestConfig:
@@ -107,7 +107,7 @@ case Settings.PREF_HALF_DUPLEX:
     break;
 ```
 
-`MumlaService` forwards `changedExtras` to [`HumlaService.configureAudio()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702):
+`MumlaService` forwards `changedExtras` to [`HumlaService.configureExtras()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702):
 
 ```java
 if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {

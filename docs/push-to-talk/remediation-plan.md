@@ -4,10 +4,10 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 ## Table of Contents
 
-1. [Phase 1: Critical Protocol & Audio Fixes (P0)](#phase-1-critical-protocol--audio-fixes-p0)
-2. [Phase 2: DSP Quality & Acoustic Refinements (P1)](#phase-2-dsp-quality--acoustic-refinements-p1)
-3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux--display-density-repairs-p2)
-4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral--background-support-p3)
+1. [Phase 1: Critical Protocol & Audio Fixes (P0)](#phase-1-critical-protocol-audio-fixes-p0)
+2. [Phase 2: DSP Quality & Acoustic Refinements (P1)](#phase-2-dsp-quality-acoustic-refinements-p1)
+3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux-display-density-repairs-p2)
+4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral-background-support-p3)
 
 ---
 
@@ -20,7 +20,9 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 **Problem**: Releasing PTT when `m_accumulatedFrames == 0` skips terminator packet emission, inducing 100ms of PLC stutter across all remote clients.
 
 **Solution**:
-Modify `flushAccumulatorLocked` to accept an explicit `forceTerminator` or dispatch a 0-sample / comfort-noise terminator packet when `m_accumulatedFrames == 0`:
+In the upstream Mumble protocol specification ([`MumbleProtocol.cpp:909-912`](file:///home/bualy/files/devel/mumla_dev/mumble/src/MumbleProtocol.cpp#L909-L912)), packets with empty `opus_data` are rejected as invalid (`Audio packets without audio data are invalid`), and legacy UDP requires at least 1 byte of payload. Therefore, sending a 0-byte packet is not interoperable with upstream desktop clients.
+
+Instead, when speech terminates on an exact packet boundary (`m_accumulatedFrames == 0`), `flushAccumulatorLocked` should pad a single packet of zeros (silence) and encode it through [`OpusVoiceEncoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.h) with `isTerminator = true`, matching upstream Mumble's own encoder behavior ([`AudioInput.cpp:1110-1135`](file:///home/bualy/files/devel/mumla_dev/mumble/src/mumble/AudioInput.cpp#L1110-L1135)):
 
 ```cpp
 // AudioInputEngine.cpp
@@ -29,19 +31,18 @@ Modify `flushAccumulatorLocked` to accept an explicit `forceTerminator` or dispa
     if (m_accumulatedFrames > 0) {
         flushAccumulatorLocked(true, packetsToDispatch);
     } else {
-        // Emit zero-payload or comfort-noise terminator packet
-        DispatchedPacket pkt{};
-        pkt.size = 0;
-        pkt.frames = 0;
-        pkt.isTerminator = true;
-        pkt.frameNumber = m_frameCounter;
-        packetsToDispatch.push_back(pkt);
+        // Packet boundary offset: encode 1 packet of zeroed PCM silence with isTerminator = true
+        // Opus encodes this into a valid ~3-byte silence frame accepted by all upstream clients
+        std::memset(m_accumulatedPcm.data(), 0,
+                    static_cast<size_t>(m_framesPerPacket) * SAMPLES_PER_10MS * sizeof(int16_t));
+        m_accumulatedFrames = m_framesPerPacket;
+        flushAccumulatorLocked(true, packetsToDispatch);
     }
     m_ringBuffer.clear();
 }
 ```
 
-In [`AudioHandler.java:398-420`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L398-L420), ensure zero-length payloads with `isTerminator = true` are validly framed into Protobuf UDP and Legacy UDP messages.
+In [`NativeAudioInputEngineJni.cpp:106`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp#L106), ensure array copies check `if (size > 0 && data != nullptr)` defensively before calling `SetByteArrayRegion` to prevent JNI aborts. In [`AudioHandler.java:398-420`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L398-L420), ensure packets with `isTerminator = true` continue to be framed correctly into Protobuf UDP and Legacy UDP messages.
 
 ---
 
@@ -52,7 +53,7 @@ In [`AudioHandler.java:398-420`](file:///home/bualy/files/devel/mumla_dev/mumla-
 **Problem**: Edge gestures, status bar pull-downs, and scroll intercepts emit `ACTION_CANCEL`, which is unhandled, locking the microphone open.
 
 **Solution**:
-Add `MotionEvent.ACTION_CANCEL` to the touch listener:
+Add `MotionEvent.ACTION_CANCEL` to the touch listener, calling a centralized `onTalkKeyCancel()` method on the service:
 
 ```java
 mTalkButton.setOnTouchListener(new View.OnTouchListener() {
@@ -71,10 +72,7 @@ mTalkButton.setOnTouchListener(new View.OnTouchListener() {
                 break;
             case MotionEvent.ACTION_CANCEL:
                 if (getService() != null) {
-                    Settings settings = Settings.getInstance(getActivity());
-                    if (!settings.isPushToTalkToggle() && getService().isTalking()) {
-                        getService().setTalkingState(false);
-                    }
+                    getService().onTalkKeyCancel();
                 }
                 break;
         }
@@ -82,6 +80,8 @@ mTalkButton.setOnTouchListener(new View.OnTouchListener() {
     }
 });
 ```
+
+Expose `void onTalkKeyCancel();` on [`IMumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/IMumlaService.java#L10-L31) and implement it in [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java) (reusing the existing [`onHotCornerCancel()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L213-L220) logic). Additionally, call `mService.onTalkKeyCancel()` in [`MumlaActivity.onPause()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L391-L406) so physical hardware PTT keys held down when the activity is backgrounded do not lock transmission open.
 
 ---
 
@@ -92,20 +92,20 @@ mTalkButton.setOnTouchListener(new View.OnTouchListener() {
 **Problem**: Evaluates `extras.getInt(EXTRAS_TRANSMIT_MODE)` which is missing when only `half_duplex` changes, always disabling half-duplex.
 
 **Solution**:
-Read the internal `mTransmitMode` field, and re-evaluate half-duplex whenever transmit mode changes:
+Maintain a `private boolean mHalfDuplex;` field in [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) (parallel to `mTransmitMode` at line 135), and re-evaluate half-duplex whenever either setting changes in `configureExtras()`:
 
 ```java
-// In configureAudio()
+// In configureExtras()
 if (extras.containsKey(EXTRAS_TRANSMIT_MODE)) {
     mTransmitMode = extras.getInt(EXTRAS_TRANSMIT_MODE);
     ...
 }
+if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {
+    mHalfDuplex = extras.getBoolean(EXTRAS_HALF_DUPLEX);
+}
 if (extras.containsKey(EXTRAS_HALF_DUPLEX) || extras.containsKey(EXTRAS_TRANSMIT_MODE)) {
-    boolean halfDuplexRequested = extras.containsKey(EXTRAS_HALF_DUPLEX)
-            ? extras.getBoolean(EXTRAS_HALF_DUPLEX)
-            : mAudioBuilder.isHalfDuplexEnabled();
     mAudioBuilder.setHalfDuplexEnabled(
-            mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && halfDuplexRequested);
+            mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex);
 }
 ```
 
@@ -241,6 +241,8 @@ if (showPtt) {
 }
 ```
 
+*(Note: Define `ptt_muted` in [`app/src/main/res/values/strings.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/values/strings.xml) as `"Muted"` to support the disabled button text).*
+
 ---
 
 ### 3.3 Harmonize Visual States (`setActivated`) (PTT-10)
@@ -293,7 +295,7 @@ Implement `MediaSessionCompat.Callback.onMediaButtonEvent()`:
 **Solution**:
 Implement `messageSuggestConfig(Mumble.SuggestConfig msg)`:
 - Store server suggestions in `ServerSettings`.
-- If `msg.getPushToTalk() == true` and client is currently configured for continuous or VAD transmission, notify the user with a dismissible snackbar/toast: *"This server suggests using Push-to-Talk."*
+- If `msg.hasPushToTalk() && msg.getPushToTalk()` is true and client is currently configured for continuous or VAD transmission, notify the user with a dismissible snackbar/toast: *"This server suggests using Push-to-Talk."*
 
 ---
 
