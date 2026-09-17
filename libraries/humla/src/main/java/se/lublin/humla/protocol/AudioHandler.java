@@ -60,7 +60,6 @@ public class AudioHandler extends HumlaNetworkListener
 
     private final Context mContext;
     private final HumlaLogger mLogger;
-    private final AudioManager mAudioManager;
     private final AudioInput mInput;
     private final AudioOutput mOutput;
     private final AudioOutput.AudioOutputListener mOutputListener;
@@ -125,8 +124,6 @@ public class AudioHandler extends HumlaNetworkListener
         mOutputListener = outputListener;
         mTalking = false;
         mTargetId = targetId;
-
-        mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         mAudioSource = audioSource;
 
         int nativeMode = NativeAudioInputEngine.INPUT_MODE_VOICE_ACTIVITY;
@@ -325,6 +322,9 @@ public class AudioHandler extends HumlaNetworkListener
         if (mEncodeListener != null) {
             mEncodeListener.onTalkingStateChanged(false);
         }
+        if (mOutput != null) {
+            mOutput.setHalfDuplexMuted(false);
+        }
     }
 
     @Override
@@ -447,8 +447,8 @@ public class AudioHandler extends HumlaNetworkListener
             if (mEncodeListener != null) {
                 mEncodeListener.onTalkingStateChanged(isTalking);
             }
-            if (mHalfDuplex) {
-                mAudioManager.setStreamMute(getAudioStream(), isTalking);
+            if (mHalfDuplex && mOutput != null) {
+                mOutput.setHalfDuplexMuted(isTalking);
             }
         }
     }
