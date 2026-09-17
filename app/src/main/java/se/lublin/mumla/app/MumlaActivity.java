@@ -465,6 +465,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus && mService != null) {
+            mService.onTalkKeyCancel();
+        }
+    }
+
+    @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
         mDrawerLayout.closeDrawers();
         loadDrawerFragment((int) id);
