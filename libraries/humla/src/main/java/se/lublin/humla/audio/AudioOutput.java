@@ -75,6 +75,7 @@ public class AudioOutput implements Runnable,
         if (mThread != null || mRunning) {
             return;
         }
+        mHalfDuplexMuted = false;
 
         final int quantumBytes = RENDER_SAMPLES * 2;
         int minBytes = AudioTrack.getMinBufferSize(AudioHandler.SAMPLE_RATE,
@@ -150,6 +151,7 @@ public class AudioOutput implements Runnable,
                 return;
             }
             mRunning = false;
+            mHalfDuplexMuted = false;
             thread = mThread;
         }
         synchronized (mInactiveLock) {
