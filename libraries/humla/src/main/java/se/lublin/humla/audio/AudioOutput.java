@@ -29,6 +29,7 @@ import android.os.Process;
 import android.util.Log;
 
 import java.nio.BufferUnderflowException;
+import java.util.Arrays;
 
 import se.lublin.humla.exception.AudioInitializationException;
 import se.lublin.humla.model.TalkState;
@@ -62,6 +63,7 @@ public class AudioOutput implements Runnable,
     private AudioTrack mAudioTrack;
     private Thread mThread;
     private boolean mRunning = false;
+    private volatile boolean mHalfDuplexMuted = false;
 
     public AudioOutput(AudioOutputListener listener) {
         mListener = listener;
@@ -201,6 +203,14 @@ public class AudioOutput implements Runnable,
         return mRunning;
     }
 
+    public void setHalfDuplexMuted(boolean muted) {
+        mHalfDuplexMuted = muted;
+    }
+
+    public boolean isHalfDuplexMuted() {
+        return mHalfDuplexMuted;
+    }
+
     @Override
     public void run() {
         Log.v(TAG, "Started thread.");
@@ -301,6 +311,9 @@ public class AudioOutput implements Runnable,
                 rendered = engine.render(mix, 0, RENDER_SAMPLES);
             }
             if (rendered > 0) {
+                if (mHalfDuplexMuted) {
+                    Arrays.fill(mix, 0, rendered, (short) 0);
+                }
                 int offset = 0;
                 while (offset < rendered) {
                     int written = mAudioTrack.write(mix, offset, rendered - offset);
