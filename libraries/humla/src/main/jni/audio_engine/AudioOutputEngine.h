@@ -77,7 +77,10 @@ public:
  * a handful of mono streams is cheap enough to run inline in renderMix, which
  * keeps the callback free of cross-thread handoff latency. Talk callbacks are
  * never invoked while holding the mutex; they are collected under the lock
- * and emitted from a copied list after unlock.
+ * and emitted from a copied list after unlock. Events fire on whichever
+ * thread produced them (the render thread for mix-time transitions, the
+ * calling thread for removeUser/clear/eviction), so a callback installed for
+ * the engine's lifetime must be safe to invoke from any of those threads.
  */
 class AudioOutputEngine {
 public:
@@ -179,6 +182,13 @@ private:
     // Soft-knee bus saturation, documented in the .cpp.
     static float saturateSample(float m);
     int jitterBufferedCount(JitterBuffer* jitter) const;
+    // queuePacket body with m_mutex held. Records an evicted voice's PASSIVE
+    // into pendingEvents (deduped like removeUser) so queuePacket can emit
+    // it after releasing the lock; the early-return paths (decoder or jitter
+    // init failure, unsizeable packet) still emit after an eviction.
+    void queuePacketLocked(int32_t session, const uint8_t* data, size_t len,
+                           uint32_t sequence, int flags, bool isTerminator,
+                           std::vector<std::pair<int32_t, int>>* pendingEvents);
 
     mutable std::mutex m_mutex;
     std::map<int32_t, std::unique_ptr<Voice>> m_voices;

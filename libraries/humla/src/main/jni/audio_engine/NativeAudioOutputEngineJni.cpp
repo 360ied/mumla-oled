@@ -21,6 +21,7 @@
 #include <android/log.h>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <utility>
 #include <vector>
@@ -38,6 +39,15 @@ struct OutputEngineContext {
     std::unique_ptr<AudioOutputEngine> engine;
     jobject listenerGlobalRef = nullptr;
     jmethodID onTalkMethod = nullptr;
+    // Talk events from the engine, which emits them after releasing its own
+    // mutex on whichever thread produced them (the render thread for
+    // mix-time transitions, network threads for removeUser/clear/eviction).
+    // The persistent callback registered in nativeCreate appends here;
+    // nativeRender drains after each quantum and forwards to Java. Lock
+    // order is strictly one-way — engine mutex, then this one — because the
+    // engine never invokes its callback while holding its mutex.
+    std::mutex talkEventMutex;
+    std::vector<std::pair<int32_t, int>> talkEvents;
 };
 
 static OutputEngineContext* getContext(jlong handle) {
@@ -67,6 +77,18 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeCreate(
         return 0;
     }
     ctx->engine = std::make_unique<AudioOutputEngine>([] { return makeOpusOutputDecoder(); });
+    // One persistent talk callback for the engine's lifetime. The previous
+    // code re-registered a lambda capturing a nativeRender stack vector per
+    // render; removeUser on a network thread could copy that callback and
+    // invoke it concurrently with — or after — the render call, a data race
+    // and use-after-free on the captured vector. It also dropped removeUser
+    // events entirely whenever no render was in flight. Events now land in
+    // the context queue and are drained by nativeRender, idle or not.
+    ctx->engine->setTalkCallback(
+        [ctx](int32_t session, int stateOrdinal) {
+            std::lock_guard<std::mutex> lock(ctx->talkEventMutex);
+            ctx->talkEvents.emplace_back(session, stateOrdinal);
+        });
     if (listener != nullptr) {
         jobject ref = env->NewGlobalRef(listener);
         if (ref == nullptr) {
@@ -178,22 +200,11 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeRender(
         return 0;
     }
 
-    // Collect talk events synchronously; the engine invokes the callback on
-    // this thread while rendering, so forward them straight to Java below.
-    std::vector<std::pair<int32_t, int>> events;
-    events.reserve(8);
-    ctx->engine->setTalkCallback(
-        [&events](int32_t session, int stateOrdinal) {
-            events.emplace_back(session, stateOrdinal);
-        });
-
     if (t_renderScratch.size() < static_cast<size_t>(length)) {
         t_renderScratch.resize(static_cast<size_t>(length));
     }
     const size_t rendered = ctx->engine->renderMix(
         t_renderScratch.data(), static_cast<size_t>(length));
-
-    ctx->engine->setTalkCallback(nullptr);
 
     if (rendered > 0) {
         env->SetShortArrayRegion(out, offset, static_cast<jsize>(rendered),
@@ -204,6 +215,16 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeRender(
             env->ExceptionClear();
             return 0;
         }
+    }
+    // Drain events queued by the persistent callback: this quantum's talk
+    // transitions plus anything emitted by removeUser/clear/eviction on
+    // network threads since the last render. Draining happens on every
+    // call, including silent quanta, so idle-time removals still reach
+    // Java within one 20 ms wake.
+    std::vector<std::pair<int32_t, int>> events;
+    {
+        std::lock_guard<std::mutex> lock(ctx->talkEventMutex);
+        events.swap(ctx->talkEvents);
     }
     if (ctx->listenerGlobalRef != nullptr && ctx->onTalkMethod != nullptr &&
         !events.empty()) {
