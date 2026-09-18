@@ -62,7 +62,7 @@ public:
     bool isEnabled() const override { return m_enabled; }
 
     void setModel(const uint8_t* modelData, size_t modelSize) override;
-    bool hasModel() const override { return m_modelData != nullptr && m_modelSize > 0; }
+    bool hasModel() const override { return !m_modelBuffer.empty(); }
 
     void reset() override;
 
@@ -72,8 +72,7 @@ private:
 
     DenoiseState* m_state;
     RNNModel* m_model;
-    const uint8_t* m_modelData;
-    size_t m_modelSize;
+    std::vector<uint8_t> m_modelBuffer;
     bool m_enabled;
     std::vector<float> m_floatIn;
     std::vector<float> m_floatOut;

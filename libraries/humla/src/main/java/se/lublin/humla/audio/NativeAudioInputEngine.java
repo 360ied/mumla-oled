@@ -65,7 +65,7 @@ public class NativeAudioInputEngine {
         return sCachedRnnoiseModel;
     }
 
-    private long mNativeHandle;
+    private volatile long mNativeHandle;
     private final AudioInputEngineListener mListener;
 
     public NativeAudioInputEngine(int bitrate,
@@ -109,9 +109,10 @@ public class NativeAudioInputEngine {
         mNativeHandle = nativeCreate(bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, inputMode, rnnoiseModel, listener);
     }
 
-    public synchronized void processFrame(short[] pcm, int offset, int length) {
-        if (mNativeHandle != 0 && pcm != null && length > 0) {
-            nativeProcessFrame(mNativeHandle, pcm, offset, length);
+    public void processFrame(short[] pcm, int offset, int length) {
+        long handle = mNativeHandle;
+        if (handle != 0 && pcm != null && length > 0) {
+            nativeProcessFrame(handle, pcm, offset, length);
         }
     }
 
