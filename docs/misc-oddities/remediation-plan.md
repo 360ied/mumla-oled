@@ -144,33 +144,42 @@ Phase 2 prevents bufferbloat and network congestion on unstable mobile connectio
 4. Voice data is real-time and perishable. Upon network recovery, blasting hundreds of stale packets wastes cellular bandwidth, overflows server jitter buffers, and creates confusing voice playback bursts. Upstream Mumble transmits datagrams immediately via non-blocking socket writes ([`ServerHandler.cpp:349`](file:///home/bualy/files/devel/mumla_dev/mumble/src/mumble/ServerHandler.cpp#L349)) without unbounded queueing.
 
 **Solution**:
-Introduce a bounded send queue with a deterministic drop policy:
+Introduce a bounded send queue whose capacity dynamically scales with the configured audio packet duration (`audio_per_packet`: 10ms, 20ms, 40ms, 60ms) to strictly maintain ~200ms target latency headroom:
+
+```math
+\text{capacity} = \max\left(2, \left\lceil \frac{200\text{ ms}}{\text{framesPerPacket} \times 10\text{ ms}} \right\rceil\right)
+```
+
+- **10ms** (1 frame): 20 packets (200ms)
+- **20ms** (2 frames, default): 10 packets (200ms)
+- **40ms** (4 frames): 5 packets (200ms)
+- **60ms** (6 frames): 4 packets (240ms)
 
 ```java
 // HumlaUDP.java
-/** Maximum queued outgoing datagrams (~200ms of audio buffer at 20ms frames). */
-private static final int MAX_SEND_QUEUE_CAPACITY = 10;
-
-private final BlockingQueue<DatagramPacket> mSendQueue;
-
-public HumlaUDP(...) {
-    ...
-    mSendQueue = new LinkedBlockingQueue<>(MAX_SEND_QUEUE_CAPACITY);
+public static int calculateQueueCapacity(int framesPerPacket) {
+    int fpp = sanitizeFramesPerPacket(framesPerPacket);
+    int packetDurationMs = fpp * FRAME_DURATION_MS;
+    return Math.max(2, (int) Math.ceil((double) TARGET_BUFFER_DURATION_MS / packetDurationMs));
 }
 
 public void sendMessage(@NotNull final byte[] data, final int length) {
-    if (!mCryptState.isValid() || !mConnected) {
+    final InetAddress resolvedHost = mResolvedHost;
+    if (!mCryptState.isValid() || !mConnected || resolvedHost == null) {
         return;
     }
     try {
         byte[] encryptedData = mCryptState.encrypt(data, length);
         final DatagramPacket packet = new DatagramPacket(encryptedData, encryptedData.length);
-        packet.setAddress(mResolvedHost);
+        packet.setAddress(resolvedHost);
         packet.setPort(mPort);
 
-        // Non-blocking offer; if full, evict the oldest packet (head drop / drop-oldest) to prioritize fresh audio
-        while (!mSendQueue.offer(packet)) {
-            mSendQueue.poll();
+        // Atomic compound eviction/offer guarantees strict capacity bounding without thread races
+        synchronized (mSendLock) {
+            while (mSendQueue.size() >= mSendQueueCapacity) {
+                mSendQueue.poll();
+            }
+            mSendQueue.offer(packet);
         }
     } catch (BadPaddingException | IllegalBlockSizeException | ShortBufferException e) {
         Log.w(TAG, "Failed to encrypt outgoing UDP packet", e);
@@ -179,8 +188,9 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 ```
 
 **Edge Cases & Impact**:
-- **Ping Packets**: Ensure UDP ping packets are not starved. Bounding the queue to 10 packets allows fresh pings and voice frames to proceed without multi-second delays.
-- **Terminator Packets**: The drop policy retains the freshest packets, preserving the critical voice terminator.
+- **Dynamic Reconfiguration**: When the user switches `audio_per_packet` in Settings while connected, `setTargetFramesPerPacket()` adjusts capacity on the fly and immediately flushes excess stale packets if capacity decreased.
+- **Atomic Head-Drop Eviction**: Guarding `size() >= mSendQueueCapacity`, `poll()`, and `offer()` with `mSendLock` prevents multi-producer queue inversions and race conditions while allowing non-blocking reads by `OutgoingConsumer`.
+- **Ping & Terminator Packets**: Maintaining ~200ms latency ceiling across all packet durations ensures fresh pings and speech terminators proceed without multi-second delays.
 
 ---
 
