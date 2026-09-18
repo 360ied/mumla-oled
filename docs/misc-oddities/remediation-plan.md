@@ -1,0 +1,400 @@
+# Miscellaneous Oddities Remediation Roadmap
+
+This document outlines a prioritized, phased engineering roadmap for resolving all identified miscellaneous codebase defects, threading bottlenecks, memory leaks, lifecycle issues, and code hygiene gaps in Mumla OLED ([`docs/misc-oddities/README.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/misc-oddities/README.md)).
+
+## Table of Contents
+
+1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1)](#phase-1-core-reliability--threading-architecture-p0--p1)
+   - [1.1 Fix Disconnected User Memory Leak in ModelHandler (ODD-01)](#11-fix-disconnected-user-memory-leak-in-modelhandler-odd-01)
+   - [1.2 Offload Incoming UDP Audio Processing from Main UI Thread (ODD-02)](#12-offload-incoming-udp-audio-processing-from-main-ui-thread-odd-02)
+2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2)](#phase-2-network-transport--real-time-buffer-parity-p1--p2)
+   - [2.1 Bound Outgoing UDP Send Queue & Enforce Drop Policy (ODD-03)](#21-bound-outgoing-udp-send-queue--enforce-drop-policy-odd-03)
+3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2)
+   - [3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06)](#31-fix-first-run-certificate-dialog-outside-touch--dismissal-odd-06)
+   - [3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07)](#32-harmonize-ptt-keycode-reset-sentinel--1-vs-0-odd-07)
+   - [3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05)](#33-refresh-hot-corner-gesture-exclusion-rects-on-configuration-change-odd-05)
+4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
+   - [4.1 Modernize Status & Navigation Bar Insets in Overlay HUD (ODD-04)](#41-modernize-status--navigation-bar-insets-in-overlay-hud-odd-04)
+   - [4.2 Remove Dead Commented-Out XML Preferences (ODD-08)](#42-remove-dead-commented-out-xml-preferences-odd-08)
+5. [Verification & Test Strategy](#verification--test-strategy)
+
+---
+
+## Phase 1: Core Reliability & Threading Architecture (P0 / P1)
+
+Phase 1 eliminates critical runtime defects that threaten long-running session stability and UI responsiveness under active voice traffic.
+
+### 1.1 Fix Disconnected User Memory Leak in ModelHandler (ODD-01)
+
+**Status**: Open
+
+**Component**: [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490)
+
+**Problem**:
+In [`ModelHandler.messageUserRemove()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469), disconnected and kicked users are detached from their channel (`user.setChannel(null)`), but are **never removed from `mUsers`**.
+1. **Memory Bloat**: Departed [`User`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java) objects accumulate monotonically in memory throughout the session, retaining certificates, names, comments, and textures.
+2. **Ghost User References**: Calls to [`ModelHandler.getUser(session)`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L78) return orphaned `User` instances whose `getChannel()` is `null`. Any downstream component assuming connected users have non-null channels (e.g., overlay adapters, search dialogs) encounters unexpected `NullPointerException`s.
+3. **Upstream Protocol Parity**: Upstream Mumble explicitly removes disconnected users from its model in [`Messages.cpp:873`](file:///home/bualy/files/devel/mumla_dev/mumble/src/mumble/Messages.cpp#L873) via `pmModel->removeUser(pDst)`.
+
+**Solution**:
+Remove the user session from `mUsers` in [`messageUserRemove()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469) after logging and notifying observers:
+
+```java
+@Override
+public void messageUserRemove(Mumble.UserRemove msg) {
+    final User user = mUsers.get(msg.getSession());
+    final User actor = mUsers.get(msg.getActor());
+    final String reason = msg.getReason();
+
+    final String userName = user != null ? user.getName() : "unknown";
+    final String actorName = actor != null ? actor.getName() : "unknown";
+    if (msg.getSession() == mSession) {
+        mLogger.logWarning(mContext.getString(msg.getBan() ? R.string.chat_notify_kick_ban_self : R.string.chat_notify_kick_self, MessageFormatter.highlightString(actorName), reason));
+    } else if (actor != null) {
+        mLogger.logWarning(mContext.getString(msg.getBan() ? R.string.chat_notify_kick_ban : R.string.chat_notify_kick, MessageFormatter.highlightString(actorName), reason, MessageFormatter.highlightString(userName)));
+    } else {
+        mLogger.logInfo(mContext.getString(R.string.chat_notify_disconnected, MessageFormatter.highlightString(userName)));
+    }
+
+    if (user != null) {
+        user.setChannel(null);
+    }
+    mUsers.remove(msg.getSession());
+    mObserver.onUserRemoved(user, reason);
+}
+```
+
+**Edge Cases & Impact**:
+- If `user == null` (e.g. out-of-order or duplicate `UserRemove` packets from server), `mUsers.remove()` is safe on missing keys and `mObserver.onUserRemoved(null, reason)` handles null gracefully.
+- If `msg.getSession() == mSession` (local client kicked or banned), the local user is removed from `mUsers` while the service proceeds to tear down or display the disconnect banner.
+
+---
+
+### 1.2 Offload Incoming UDP Audio Processing from Main UI Thread (ODD-02)
+
+**Status**: Open
+
+**Component**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L671), [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L370-L374)
+
+**Problem**:
+1. In [`HumlaUDP.java:123-128`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), incoming datagrams allocate a `new Runnable` and post to `mCallbackHandler` (`Looper.getMainLooper()`).
+2. This violates [`UDPConnectionListener`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L216-L223)'s documented threading model:
+   ```java
+   /** onUDPDataReceived is always called on the UDP receive thread. */
+   ```
+3. In [`HumlaConnection.onUDPDataReceived()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L699-L735), Protobuf parsing (`MumbleUDP.Audio.parseFrom`), byte copies, listener iterations, and [`AudioOutput.queueProtobufVoiceData()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L426) (JNI queueing and `mInactiveLock.notify()`) run on the Android Main UI thread.
+4. Active chatter at 50 packets/second per speaker inundates the main looper with hundreds of tasks per second, causing UI frame drops and introducing playback audio jitter whenever UI animations, drawer drags, or layout passes block the main looper.
+
+**Solution**:
+Execute [`onUDPDataReceived()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L699) directly on the background UDP receiving thread (`mDatagramThread`):
+
+```java
+// HumlaUDP.java
+try {
+    final byte[] buffer = mCryptState.decrypt(data, length);
+
+    if (mListener != null) {
+        if (buffer != null) {
+            // Direct callback on UDP receiver thread per UDPConnectionListener contract
+            mListener.onUDPDataReceived(buffer);
+        } else if (mCryptState.getLastGoodElapsed() > 5000000 &&
+                mCryptState.getLastRequestElapsed() > 5000000) {
+            mCryptState.resetLastRequestTime();
+            mCallbackHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mListener.resyncCryptState();
+                }
+            });
+            Log.d(TAG, "Packet failed to decrypt, discarding and requesting crypt state resync");
+        } else {
+            Log.d(TAG, "Packet failed to decrypt, discarding");
+        }
+    }
+} catch (BadPaddingException | IllegalBlockSizeException | ShortBufferException e) {
+    Log.d(TAG, "Discarding packet", e);
+}
+```
+
+**Thread Safety & Concurrency Requirements**:
+1. **`mUDPHandlers` in `HumlaConnection`**: Ensure `mUDPHandlers` is thread-safe for iteration (e.g. `CopyOnWriteArrayList<HumlaUDPMessageListener>` or synchronized list) so registrations do not race against packet dispatch.
+2. **`ModelHandler.getUser(session)`**: [`AudioOutput.queueProtobufVoiceData()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L435) calls `mListener.getUser(session)`. Ensure `ModelHandler.mUsers` uses a `ConcurrentHashMap<Integer, User>` to allow safe concurrent lookups from the UDP receive thread while the TCP thread mutates user state.
+3. **UI Observer Dispatch**: Any talking state events or icon animations triggered by incoming voice must be dispatched to the main UI looper via `Handler.post()`, isolating high-rate audio decoding from UI rendering.
+
+---
+
+## Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2)
+
+Phase 2 prevents bufferbloat and network congestion on unstable mobile connections.
+
+### 2.1 Bound Outgoing UDP Send Queue & Enforce Drop Policy (ODD-03)
+
+**Status**: Open
+
+**Component**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60-L75), [`HumlaUDP.java:186-202`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L186-L202)
+
+**Problem**:
+1. [`HumlaUDP.java:74`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) instantiates `mSendQueue` as an unbounded `new LinkedBlockingQueue<>()`.
+2. Voice packets are appended at 50–100 packets/sec during transmission.
+3. When cellular connectivity stalls (e.g. transit tunnels, cell tower handover), the queue accumulates unbounded packets.
+4. Voice data is real-time and perishable. Upon network recovery, blasting hundreds of stale packets wastes cellular bandwidth, overflows server jitter buffers, and creates confusing voice playback bursts. Upstream Mumble transmits datagrams immediately via non-blocking socket writes ([`ServerHandler.cpp:349`](file:///home/bualy/files/devel/mumla_dev/mumble/src/mumble/ServerHandler.cpp#L349)) without unbounded queueing.
+
+**Solution**:
+Introduce a bounded send queue with a deterministic drop policy:
+
+```java
+// HumlaUDP.java
+/** Maximum queued outgoing datagrams (~200ms of audio buffer at 20ms frames). */
+private static final int MAX_SEND_QUEUE_CAPACITY = 10;
+
+private final BlockingQueue<DatagramPacket> mSendQueue;
+
+public HumlaUDP(...) {
+    ...
+    mSendQueue = new LinkedBlockingQueue<>(MAX_SEND_QUEUE_CAPACITY);
+}
+
+public void sendMessage(@NotNull final byte[] data, final int length) {
+    if (!mCryptState.isValid() || !mConnected) {
+        return;
+    }
+    try {
+        byte[] encryptedData = mCryptState.encrypt(data, length);
+        final DatagramPacket packet = new DatagramPacket(encryptedData, encryptedData.length);
+        packet.setAddress(mResolvedHost);
+        packet.setPort(mPort);
+
+        // Non-blocking offer; if full, evict the oldest packet (tail drop) to prioritize fresh audio
+        while (!mSendQueue.offer(packet)) {
+            mSendQueue.poll();
+        }
+    } catch (BadPaddingException | IllegalBlockSizeException | ShortBufferException e) {
+        Log.w(TAG, "Failed to encrypt outgoing UDP packet", e);
+    }
+}
+```
+
+**Edge Cases & Impact**:
+- **Ping Packets**: Ensure UDP ping packets are not starved. Bounding the queue to 10 packets allows fresh pings and voice frames to proceed without multi-second delays.
+- **Terminator Packets**: The drop policy retains the freshest packets, preserving the critical voice terminator.
+
+---
+
+## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)
+
+Phase 3 resolves UX annoyances, preference state divergence, and overlay rotation inconsistencies.
+
+### 3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06)
+
+**Status**: Open
+
+**Component**: [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503)
+
+**Problem**:
+1. [`showFirstRunGuide()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481) creates an `AlertDialog` with only a positive button (`R.string.generate`).
+2. The dialog is cancelable by default. If the user touches outside or presses Back:
+   - The dialog dismisses silently.
+   - `mSettings.setFirstRun(false)` is **never executed**.
+   - [`StartupAction`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L372) is skipped because it is located in the `else` branch of `if (mSettings.isFirstRun())`.
+   - On the next app launch, `isFirstRun()` remains `true`, re-spawning the dialog repeatedly.
+
+**Solution**:
+Provide an explicit negative button and cancellation listener that mark `first_run = false` and proceed with standard startup:
+
+```java
+private void showFirstRunGuide() {
+    if (mSettings.isUsingCertificate()) {
+        mSettings.setFirstRun(false);
+        new StartupAction().execute(this);
+        return;
+    }
+    String msg = getString(R.string.first_run_generate_certificate);
+    new MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.first_run_generate_certificate_title)
+            .setMessage(msg)
+            .setPositiveButton(R.string.generate, (DialogInterface dialog, int which) -> {
+                MumlaCertificateGenerateTask generateTask = new MumlaCertificateGenerateTask(MumlaActivity.this) {
+                    @Override
+                    protected void onPostExecute(DatabaseCertificate result) {
+                        super.onPostExecute(result);
+                        if (result != null) mSettings.setDefaultCertificateId(result.getId());
+                        new StartupAction().execute(MumlaActivity.this);
+                    }
+                };
+                generateTask.execute();
+                mSettings.setFirstRun(false);
+            })
+            .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                mSettings.setFirstRun(false);
+                new StartupAction().execute(MumlaActivity.this);
+            })
+            .setOnCancelListener(dialog -> {
+                mSettings.setFirstRun(false);
+                new StartupAction().execute(MumlaActivity.this);
+            })
+            .show();
+}
+```
+
+---
+
+### 3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07)
+
+**Status**: Open
+
+**Component**: [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)
+
+**Problem**:
+1. [`Settings.java:59`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`.
+2. In [`KeySelectPreferenceDialogFragment.java:35`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35), clicking "Reset Key" sets `mCurrentValue = 0` and writes `0` to preferences. Line 56 falls back to `0`.
+3. In Android, `0` is `KeyEvent.KEYCODE_UNKNOWN`.
+4. If a user resets their PTT key, the preference is stored as `0`. External hardware devices, gamepads, or input drivers emitting `KEYCODE_UNKNOWN` (`0`) will match `keyCode == mSettings.getPushToTalkKey()`, inadvertently triggering PTT transmission. On a clean install where the preference is unconfigured (`-1`), this false activation never occurs.
+
+**Solution**:
+Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
+
+1. **`KeySelectPreferenceDialogFragment.java`**:
+   ```java
+   // In onBindDialogView()
+   KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
+   mCurrentValue = requireNonNull(preference.getSharedPreferences())
+           .getInt(preference.getKey(), Settings.DEFAULT_PUSH_KEY);
+   updateValueView();
+
+   // In onPrepareDialogBuilder()
+   builder.setNeutralButton(R.string.reset_key, (dialog, which) -> {
+       KeySelectDialogPreference pref = (KeySelectDialogPreference) getPreference();
+       mCurrentValue = Settings.DEFAULT_PUSH_KEY;
+       if (pref.callChangeListener(mCurrentValue)) {
+           requireNonNull(pref.getSharedPreferences())
+                   .edit().putInt(pref.getKey(), mCurrentValue).apply();
+       }
+   });
+
+   // In updateValueView()
+   private void updateValueView() {
+       if (mCurrentValue <= 0 || mCurrentValue == Settings.DEFAULT_PUSH_KEY) {
+           mValueView.setText(R.string.no_ptt_key);
+       } else {
+           ...
+       }
+   }
+   ```
+2. **`MumlaActivity.java`**:
+   Add a defensive guard ensuring unconfigured keycodes cannot match:
+   ```java
+   int pttKey = mSettings.getPushToTalkKey();
+   if (mService != null && pttKey > 0 && keyCode == pttKey) {
+       mService.onTalkKeyDown();
+       return true;
+   }
+   ```
+
+---
+
+### 3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05)
+
+**Status**: Open
+
+**Component**: [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637), [`MumlaHotCorner.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
+
+**Problem**:
+1. In [`MumlaService.onConfigurationChanged()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632), `mChannelOverlay.updatePosition()` is invoked, but `mHotCorner` is completely ignored.
+2. In [`MumlaHotCorner.addOnLayoutChangeListener()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65), `setSystemGestureExclusionRects()` is conditioned on `(width != mLastWidth || height != mLastHeight)`.
+3. Because [`ptt_corner.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/layout/ptt_corner.xml) is fixed at 48dp × 48dp, rotating between portrait and landscape preserves width and height. The condition evaluates to `false`, skipping `setSystemGestureExclusionRects()`.
+4. On Android 10+ (Q+), system gesture exclusion rects are cleared or invalidated upon display rotation. As a result, the hot corner loses its exclusion zone after rotation and becomes intercepted by Android's system back-gesture.
+
+**Solution**:
+1. Add an explicit `refreshGestureExclusion()` method on [`MumlaHotCorner`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java) that reapplies exclusion rects without checking dimensions:
+   ```java
+   public void refreshGestureExclusion() {
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && mView != null && mShown) {
+           int width = mView.getWidth();
+           int height = mView.getHeight();
+           if (width > 0 && height > 0) {
+               mView.setSystemGestureExclusionRects(Collections.singletonList(new Rect(0, 0, width, height)));
+           }
+       }
+   }
+   ```
+2. In [`MumlaService.onConfigurationChanged()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632), refresh both overlays:
+   ```java
+   @Override
+   public void onConfigurationChanged(Configuration newConfig) {
+       super.onConfigurationChanged(newConfig);
+       if (mChannelOverlay != null && mChannelOverlay.isShown()) {
+           mChannelOverlay.updatePosition();
+       }
+       if (mHotCorner != null && mHotCorner.isShown()) {
+           mHotCorner.refreshGestureExclusion();
+       }
+   }
+   ```
+
+---
+
+## Phase 4: Modernization & Code Hygiene (P3)
+
+Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
+
+### 4.1 Modernize Status & Navigation Bar Insets in Overlay HUD (ODD-04)
+
+**Status**: Open
+
+**Component**: [`MumlaOverlay.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L263-L285), [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L477-L489)
+
+**Problem**:
+1. [`MumlaOverlay.java:265, 277`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265) uses `Resources.getIdentifier()` to query system dimensions (`"status_bar_height"`, `"navigation_bar_height"`). This approach is deprecated, fragile across OEM skins, and ignorant of modern display cutouts, camera punch-holes, and gesture navigation bars.
+2. In [`Settings.java:477-489`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L477-L489), pinned overlay gravities return `Gravity.LEFT` / `Gravity.RIGHT` instead of `Gravity.START` / `Gravity.END`, preventing proper right-to-left (RTL) locale layout mirroring.
+
+**Solution**:
+1. For Android 11+ (API 30+), query `WindowMetrics` and `WindowInsets`:
+   ```java
+   private int getTopMargin(DisplayMetrics dm) {
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+           WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
+           android.graphics.Insets insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
+                   WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
+           return insets.top + (int) (8 * dm.density);
+       }
+       // Fallback for API < 30
+       int statusBarHeight = 0;
+       int resourceId = mService.getResources().getIdentifier("status_bar_height", "dimen", "android");
+       if (resourceId > 0) {
+           statusBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
+       }
+       return statusBarHeight > 0 ? statusBarHeight + (int) (8 * dm.density) : (int) (40 * dm.density);
+   }
+   ```
+2. Update [`Settings.getOverlayGravity()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L477) to return `Gravity.START` and `Gravity.END`.
+
+---
+
+### 4.2 Remove Dead Commented-Out XML Preferences (ODD-08)
+
+**Status**: Open
+
+**Component**: [`settings_appearance.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94)
+
+**Problem**:
+Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers`) remain commented out in [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94). The referenced resources (`@array/rowheightText`, `@string/rowheight`, etc.) do not exist in the project, causing confusion during codebase exploration.
+
+**Solution**:
+Prune lines 74–94 from [`settings_appearance.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94).
+
+---
+
+## Verification & Test Strategy
+
+To ensure zero regressions across all four phases, each change must be accompanied by targeted unit and integration tests:
+
+| Phase | Item | Automated Verification | Manual / Device Check |
+|---|---|---|---|
+| **Phase 1** | **ODD-01** | Add `ModelHandlerUserRemoveTest.java` verifying `mUsers.get(session) == null` after `messageUserRemove`. | Connect to test server, have a remote user join and leave; inspect heap via Android Profiler. |
+| **Phase 1** | **ODD-02** | Unit test verifying `onUDPDataReceived` is invoked on the UDP receive thread, not `Looper.getMainLooper()`. | High-rate voice chatter benchmark (150 packets/sec); measure UI thread frame times (`gfxinfo`) ensuring zero dropped frames. |
+| **Phase 2** | **ODD-03** | Add `HumlaUDPSendQueueTest.java` verifying queue bounds to `MAX_SEND_QUEUE_CAPACITY` and drops oldest packets on stall. | Throttle connection to 0 kbps for 5 seconds while holding PTT; unthrottle and observe server incoming packet rate. |
+| **Phase 3** | **ODD-06** | Robolectric test in `MumlaActivityTest.java` simulating outside touch dismissal and verifying `isFirstRun() == false`. | Fresh install; tap outside first-run certificate dialog; force stop and relaunch to verify dialog does not reappear. |
+| **Phase 3** | **ODD-07** | Unit test in `SettingsTest.java` verifying `getPushToTalkKey()` returns `-1` before and after reset; verify `KEYCODE_UNKNOWN` (`0`) does not trigger PTT. | Open PTT key preference, click "Reset Key", verify "None" is displayed and key events with `keyCode=0` are ignored. |
+| **Phase 3** | **ODD-05** | Service unit test verifying `mHotCorner.refreshGestureExclusion()` is called in `onConfigurationChanged()`. | Enable hot corner on Android 10+ device; rotate screen; perform edge back gesture over hot corner to verify exclusion is active. |
+| **Phase 4** | **ODD-04** | Overlay insets unit test comparing modern `WindowMetrics` against legacy fallback. | Test overlay positioning on punch-hole and notch devices in portrait and landscape. |
+| **Phase 4** | **ODD-08** | Gradle build and resource compilation check (`assembleFossDebug`). | Verify settings appearance screen loads and renders without XML inflation warnings. |

@@ -14,6 +14,7 @@ This directory catalogs defects, architectural inconsistencies, performance bott
    - [ODD-06: First Run Certificate Dialog Re-spawns on Outside Touch](#odd-06-first-run-certificate-dialog-re-spawns-on-outside-touch)
    - [ODD-07: Keycode Reset Inconsistency (-1 vs 0)](#odd-07-keycode-reset-inconsistency--1-vs-0)
    - [ODD-08: Stale Commented-Out XML Preferences](#odd-08-stale-commented-out-xml-preferences)
+3. [Remediation Roadmap](remediation-plan.md)
 
 ---
 
@@ -217,3 +218,11 @@ In [`settings_appearance.xml:74-85`](file:///home/bualy/files/devel/mumla_dev/mu
 ```
 
 These legacy Plumble settings are commented out in XML and should be removed.
+
+---
+
+## Remediation Roadmap
+
+For the prioritized engineering roadmap, implementation details, thread safety requirements, and test strategy, see:
+- [Miscellaneous Oddities Remediation Roadmap](remediation-plan.md)
+
