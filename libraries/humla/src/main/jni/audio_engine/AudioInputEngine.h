@@ -146,7 +146,7 @@ public:
     void reset();
 
 private:
-    void flushAccumulatorLocked(bool isTerminator, std::vector<DispatchedPacket>& packetsOut);
+    void flushAccumulatorLocked(bool isTerminator);
 
     mutable std::mutex m_mutex;
 
@@ -173,6 +173,7 @@ private:
     std::vector<int16_t> m_accumulatedPcm;
     size_t m_accumulatedFrames;
     std::vector<uint8_t> m_opusBuffer;
+    std::vector<DispatchedPacket> m_packetsToDispatch;
 
     AudioPacketCallback m_packetCallback;
     TalkingStateCallback m_talkingCallback;
