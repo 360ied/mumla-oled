@@ -161,5 +161,9 @@ float RnnoiseProcessor::process(const int16_t* inPcm, int16_t* outPcm, size_t sa
     return speechProb;
 }
 
+std::unique_ptr<IDenoiser> makeRnnoiseProcessor(bool enabled, const uint8_t* modelData, size_t modelSize) {
+    return std::make_unique<RnnoiseProcessor>(enabled, modelData, modelSize);
+}
+
 } // namespace audio
 } // namespace mumla

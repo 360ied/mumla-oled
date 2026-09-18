@@ -5,7 +5,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 ## Table of Contents
 
 1. [Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED](#phase-1-critical-protocol--audio-fixes-p0--completed)
-2. [Phase 2: DSP Quality & Acoustic Refinements (P1)](#phase-2-dsp-quality--acoustic-refinements-p1)
+2. [Phase 2: DSP Quality & Acoustic Refinements (P1) — COMPLETED](#phase-2-dsp-quality--acoustic-refinements-p1--completed)
 3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux--display-density-repairs-p2)
 4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral--background-support-p3)
 
@@ -142,7 +142,12 @@ Inside [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/
 
 ---
 
-## Phase 2: DSP Quality & Acoustic Refinements (P1)
+## Phase 2: DSP Quality & Acoustic Refinements (P1) — COMPLETED
+
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 2 remediation items (PTT-05, PTT-06, and PTT-15) have been implemented, tested, and resolved (PTT-05 closed as won't fix/working as intended; PTT-06 resolved with 150ms release hangover; PTT-15 resolved with comprehensive native unit tests in [`test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_input_engine.cpp)).
 
 ### 2.1 Retain Pre-Speech Lookahead Ring Buffer in PTT as Latency Compensation (PTT-05) — CLOSED (WON'T FIX)
 
@@ -163,19 +168,21 @@ Upon comprehensive review, this proposed change was rejected:
 
 ---
 
-### 2.2 Add Configurable PTT Release Hangover (PTT-06)
+### 2.2 Add PTT Release Hangover (PTT-06) — RESOLVED
 
-**Component**: [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h), [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L89-L92)
+**Status**: Resolved in branch `bugfix/ptt-phase2-remediation`.
+
+**Component**: [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h), [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L89-L100)
 
 **Problem**: Releasing PTT cuts off audio with 0ms hangover, clipping trailing syllables.
 
 **Solution**:
-Introduce a release hold counter (e.g. 15 frames = 150ms default):
+Introduce a fixed release hangover counter of 15 frames (150ms), avoiding unnecessary configuration complexity:
 
 ```cpp
 case InputMode::PUSH_TO_TALK:
     if (m_pttTalking) {
-        m_pttHoldFramesRemaining = m_pttHoldFrames; // e.g. 15 frames (150ms)
+        m_pttHoldFramesRemaining = PTT_HOLD_FRAMES; // 15 frames (150ms)
         shouldTransmit = true;
     } else if (m_pttHoldFramesRemaining > 0) {
         m_pttHoldFramesRemaining--;
@@ -189,16 +196,23 @@ case InputMode::PUSH_TO_TALK:
 
 ---
 
-### 2.3 Implement Native C++ PTT Unit Tests (PTT-15)
+### 2.3 Implement Native C++ PTT Unit Tests (PTT-15) — RESOLVED
 
-**Component**: [`libraries/humla/src/test/cpp/test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/)
+**Status**: Resolved in branch `bugfix/ptt-phase2-remediation`.
+
+**Component**: [`libraries/humla/src/test/cpp/test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_input_engine.cpp), [`scripts/test_native_audio.sh`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/scripts/test_native_audio.sh)
 
 **Solution**:
-Construct a dedicated test suite verifying:
+Constructed a dedicated test suite verifying:
 - PTT state transitions (`setPttTalking(true)` / `setPttTalking(false)`).
-- Guaranteed emission of `isTerminator = true` across both odd and even packet boundary releases.
+- Guaranteed emission of `isTerminator = true` across both odd and even packet boundary releases ($N=1, 2, 4, 6$).
 - Verification that pre-speech ring buffer is flushed upon PTT speech onset.
 - Verification that mute gates audio immediately.
+- Verification that PTT release hangover sustains transmission for exactly 150ms (15 frames).
+- Verification that re-asserting PTT during hangover avoids audio glitches or false terminator packets.
+- Rapid micro-tap handling.
+- Continuous and VAD input modes.
+- Engine reset and state recovery.
 
 ---
 

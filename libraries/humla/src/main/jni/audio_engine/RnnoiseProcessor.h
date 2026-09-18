@@ -18,8 +18,11 @@
 #ifndef MUMLA_RNNOISE_PROCESSOR_H_
 #define MUMLA_RNNOISE_PROCESSOR_H_
 
+#include "AudioInputEngine.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 struct DenoiseState;
@@ -34,12 +37,12 @@ namespace audio {
  * Integrates RNNoise recurrent neural network (GRU) denoiser running natively
  * at 48kHz with 480-sample (10ms) quanta. Returns speech probability.
  */
-class RnnoiseProcessor {
+class RnnoiseProcessor : public IDenoiser {
 public:
     static constexpr size_t FRAME_SIZE = 480; // 10ms @ 48kHz
 
     explicit RnnoiseProcessor(bool enabled = true, const uint8_t* modelData = nullptr, size_t modelSize = 0);
-    ~RnnoiseProcessor();
+    ~RnnoiseProcessor() override;
 
     // Non-copyable
     RnnoiseProcessor(const RnnoiseProcessor&) = delete;
@@ -53,15 +56,15 @@ public:
      * @param sampleCount Number of samples (expected 480).
      * @return Neural speech probability in range [0.0, 1.0], or -1.0f if disabled.
      */
-    float process(const int16_t* inPcm, int16_t* outPcm, size_t sampleCount);
+    float process(const int16_t* inPcm, int16_t* outPcm, size_t sampleCount) override;
 
-    void setEnabled(bool enabled);
-    bool isEnabled() const { return m_enabled; }
+    void setEnabled(bool enabled) override;
+    bool isEnabled() const override { return m_enabled; }
 
-    void setModel(const uint8_t* modelData, size_t modelSize);
-    bool hasModel() const { return m_modelData != nullptr && m_modelSize > 0; }
+    void setModel(const uint8_t* modelData, size_t modelSize) override;
+    bool hasModel() const override { return m_modelData != nullptr && m_modelSize > 0; }
 
-    void reset();
+    void reset() override;
 
 private:
     void initModel();
@@ -75,6 +78,8 @@ private:
     std::vector<float> m_floatIn;
     std::vector<float> m_floatOut;
 };
+
+std::unique_ptr<IDenoiser> makeRnnoiseProcessor(bool enabled = true, const uint8_t* modelData = nullptr, size_t modelSize = 0);
 
 } // namespace audio
 } // namespace mumla
