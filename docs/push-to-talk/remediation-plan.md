@@ -197,7 +197,7 @@ case InputMode::PUSH_TO_TALK:
 Construct a dedicated test suite verifying:
 - PTT state transitions (`setPttTalking(true)` / `setPttTalking(false)`).
 - Guaranteed emission of `isTerminator = true` across both odd and even packet boundary releases.
-- Verification that pre-speech ring buffer is bypassed in PTT mode.
+- Verification that pre-speech ring buffer is flushed upon PTT speech onset.
 - Verification that mute gates audio immediately.
 
 ---

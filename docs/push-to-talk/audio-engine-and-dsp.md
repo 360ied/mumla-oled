@@ -174,7 +174,7 @@ PTT-05 originally noted that in Push-to-Talk mode, flushing this 80ms buffer cou
 
 Following thorough review, this behavior was reclassified as **Working as Intended** and marked **Closed (Won't Fix)** for the following architectural and psychoacoustic reasons:
 
-1. **Android Capacitive Touch Latency ($\approx 30\text{--}60\text{ms}$)**:
+1. **Android Capacitive Touch Latency (~30–60ms)**:
    Physical touch contact on Android is not instantaneous. Between hardware touch digitizer scanning/debounce, Linux `evdev`, Android `InputDispatcher`, UI Looper/Choreographer dispatch, and JNI bridging into [`AudioInputEngine::setPttTalking`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L240), an unavoidable delay of 30–60ms elapses.
    Because the low-latency Oboe/AAudio recording stream is active continuously, clearing the ring buffer on PTT onset discards all speech captured during this physical touch latency window.
 
@@ -186,7 +186,7 @@ Following thorough review, this behavior was reclassified as **Working as Intend
    - [`RNNoise`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L80) processes frames *prior* to [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157), suppressing non-speech transients during silence.
 
 4. **Privacy & Duration**:
-   80ms ($0.08\text{s}$) is less than the duration of an average phoneme or syllable; it is physically impossible to leak intelligible private speech.
+   80ms (0.08s) is less than the duration of an average phoneme or syllable; it is physically impossible to leak intelligible private speech.
 
 5. **Symmetry with PTT-06 (PTT Release Hangover)**:
    The pre-speech ring buffer protects the **head** (speech onset) against touch latency, while PTT release hangover ([PTT-06](#defect-deep-dive-abrupt-stream-cutoff--lack-of-ptt-hangover-ptt-06)) protects the **tail** (speech termination) against premature button release. Retaining the 80ms lookahead ensures natural, unclipped voice transmission.
@@ -269,5 +269,5 @@ There are **zero unit tests** for:
 1. `AudioInputEngine` class lifecycle and frame processing.
 2. `InputMode::PUSH_TO_TALK` state transitions.
 3. Terminator packet emission on release across varied frame boundaries ($t \equiv 0 \pmod N$ vs $t \not\equiv 0 \pmod N$).
-4. Lookahead ring buffer bypassing during PTT onset.
+4. Lookahead ring buffer flushing and latency compensation during PTT onset.
 5. Mute gating interactions with PTT.
