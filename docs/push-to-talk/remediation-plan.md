@@ -295,14 +295,21 @@ Implement `MediaSessionCompat.Callback.onMediaButtonEvent()`:
 
 ---
 
-### 4.3 Support Server `SuggestConfig.push_to_talk` (PTT-07)
+### 4.3 Reject Remote Server Transmission Constraints (PTT-07) — CLOSED (WON'T FIX)
 
-**Component**: [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L554), [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java)
+**Status**: Closed as Won't Fix (User Autonomy Policy).
 
-**Solution**:
-Implement `messageSuggestConfig(Mumble.SuggestConfig msg)`:
-- Store server suggestions in `ServerSettings`.
-- If `msg.hasPushToTalk() && msg.getPushToTalk()` is true and client is currently configured for continuous or VAD transmission, notify the user with a dismissible snackbar/toast: *"This server suggests using Push-to-Talk."*
+**Component**: [`HumlaTCPMessageListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84), [`HumlaNetworkListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/util/HumlaNetworkListener.java#L156)
+
+**Evaluation & Decision**:
+PTT-07 originally proposed parsing `SuggestConfig.push_to_talk` to prompt or nudge the user toward PTT mode when requested by a server administrator.
+
+Upon architectural review, this was rejected:
+1. **User Agent Primacy**: A user agent represents the user, not the remote server. Remote servers must not be permitted to restrict, override, or harass the user regarding their chosen audio transmission mode.
+2. **Accessibility and Hands-Free Use**: Mobile users often rely on Voice Activity Detection (VAD) or continuous transmission for hands-free scenarios (e.g., cycling, driving, accessibility). Server suggestions imposing PTT degrade usability and safety.
+3. **Intentional No-Op**: Retaining the existing empty stub in [`HumlaTCPMessageListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) safely satisfies the wire protocol while preserving full user autonomy.
+
+**Outcome**: No code modifications required. The no-op handler is retained as an intentional architectural boundary.
 
 ---
 

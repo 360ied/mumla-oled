@@ -5,7 +5,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 ## Table of Contents
 
 1. [Upstream Protocol Parity Comparison](#upstream-protocol-parity-comparison)
-2. [Defect Deep-Dive: Ignored Server PTT Policies (PTT-07)](#defect-deep-dive-ignored-server-ptt-policies-ptt-07)
+2. [Architectural Evaluation: Server PTT Suggestion Policy (PTT-07)](#architectural-evaluation-server-ptt-suggestion-policy-ptt-07)
 3. [Defect Deep-Dive: Silent Failure on Suppression](#defect-deep-dive-silent-failure-on-suppression)
 4. [Defect Deep-Dive: Broken Half-Duplex Runtime Preference (PTT-03)](#defect-deep-dive-broken-half-duplex-runtime-preference-ptt-03)
 5. [Defect Deep-Dive: Dangerous Global OS Stream Muting (PTT-04)](#defect-deep-dive-dangerous-global-os-stream-muting-ptt-04)
@@ -17,7 +17,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 
 | Feature / Behavior | Upstream Mumble C++ Client (`../mumble`) | Mumla OLED Implementation | Parity Status |
 |---|---|---|---|
-| **Server PTT Suggestion** | Parses [`Mumble::Protocol::SuggestConfig`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Messages.cpp#L611-L612), prompts user if server requires/suggests PTT | Netty parses [`MumbleProto.SuggestConfig`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/Mumble.proto#L614-L626), but callbacks in [`HumlaTCPMessageListener`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) are empty stubs | **Broken / Stubbed** |
+| **Server PTT Suggestion** | Parses [`Mumble::Protocol::SuggestConfig`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Messages.cpp#L611-L612), prompts user if server requires/suggests PTT | Netty parses [`MumbleProto.SuggestConfig`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/Mumble.proto#L614-L626); callbacks in [`HumlaTCPMessageListener`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) are intentional no-ops to protect user agent autonomy | **Closed (Won't Fix)** |
 | **Talking While Muted Cue** | Detects `bTalkingWhenMuted`, suppresses audio output, plays `qsTxMuteCue` audio beep, emits `doMuteCue()` | Gated in `AudioInputEngine::processFrame`, but completely silent; no audio cue, no toast, no UI warning | **Missing Feedback** |
 | **Whisper / Target State** | Sets `ClientUser::setTalking(Settings::Shouting)` when transmitting to whisper/shout targets | Hardcodes `currentUser.setTalkState(TALKING)`, discarding whisper/shout context | **Degraded** |
 | **Stream Terminator** | Dispatches `isLastFrame = true` on speech offset under all conditions | Only flushes terminator when `m_accumulatedFrames > 0`; drops terminator on exact packet boundaries | **Critical Bug (PTT-01)** |
@@ -25,7 +25,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 
 ---
 
-## Defect Deep-Dive: Ignored Server PTT Policies (PTT-07)
+## Architectural Evaluation: Server PTT Suggestion Policy (PTT-07)
 
 The Mumble protocol specification defines `SuggestConfig` ([`Mumble.proto:614-626`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/Mumble.proto#L614-L626)):
 
@@ -40,7 +40,7 @@ message SuggestConfig {
 
 When a server administrator configures `suggestpushtotalk = true` in `mumble-server.ini` (e.g. for competitive gaming or tactical comms where hot mics cause interference), the server broadcasts this message upon client synchronization.
 
-### The Implementation Gap in Humla
+### The Implementation in Humla
 
 In [`HumlaConnection.java:825-826, 920`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L825-L826), the message is parsed from the TCP stream and dispatched to the handler:
 
@@ -58,7 +58,17 @@ However, [`HumlaTCPMessageListener.java:84`](file:///home/bualy/files/devel/muml
 public void messageSuggestConfig(Mumble.SuggestConfig msg) {}
 ```
 
-No class in `:app` or `:libraries:humla` implements this method. The server's suggested PTT policy is completely discarded. The user continues using continuous or VAD transmission despite the administrator's explicit policy.
+PTT-07 originally classified this stub as an omission because upstream desktop Mumble prompts the user or suggests switching transmission modes.
+
+### Resolution: Closed as Won't Fix (User Agent Autonomy Principle)
+
+Following architectural review, this item is **Closed (Won't Fix)** based on the foundational user-agent design principle:
+
+> **User agents must prioritize user autonomy and never restrict or coerce user functionality at the request of remote servers.**
+
+1. **Primacy of the User Agent**: The client software represents and serves the local user, not the remote host or server administrator. Audio transmission modes (Voice Activity Detection, Continuous Transmission, Push-to-Talk) are chosen deliberately by the user based on their specific hardware, ambient environment, and operational needs.
+2. **Mobile Ergonomics & Accessibility**: On mobile devices, Push-to-Talk demands active physical contact (holding an on-screen button or hardware key). For mobile users driving, cycling, using accessibility tools, or requiring hands-free operation, coercing or nagging the user to switch to PTT severely harms safety and usability.
+3. **Intentional No-Op Design**: The empty stub in [`HumlaTCPMessageListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) safely absorbs the incoming wire message without mutating client configuration or displaying intrusive, coercive dialogs.
 
 ---
 
