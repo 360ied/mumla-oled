@@ -1,6 +1,6 @@
 # Miscellaneous Oddities Remediation Roadmap
 
-This document outlines a prioritized, phased engineering roadmap for resolving all identified miscellaneous codebase defects, threading bottlenecks, memory leaks, lifecycle issues, and code hygiene gaps in Mumla OLED ([`docs/misc-oddities/README.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/misc-oddities/README.md)).
+This document outlines a prioritized, phased engineering roadmap for resolving all identified miscellaneous codebase defects, threading bottlenecks, memory leaks, lifecycle issues, and code hygiene gaps in Mumla OLED ([`README.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/misc-oddities/README.md)).
 
 ## Table of Contents
 
@@ -59,14 +59,14 @@ public void messageUserRemove(Mumble.UserRemove msg) {
     if (user != null) {
         user.setChannel(null);
     }
-    mUsers.remove(msg.getSession());
     mObserver.onUserRemoved(user, reason);
+    mUsers.remove(msg.getSession());
 }
 ```
 
 **Edge Cases & Impact**:
 - If `user == null` (e.g. out-of-order or duplicate `UserRemove` packets from server), `mUsers.remove()` is safe on missing keys and `mObserver.onUserRemoved(null, reason)` handles null gracefully.
-- If `msg.getSession() == mSession` (local client kicked or banned), the local user is removed from `mUsers` while the service proceeds to tear down or display the disconnect banner.
+- Upstream Mumble guards user removal with `if (pDst != pSelf) pmModel->removeUser(pDst);` ([`Messages.cpp:872`](file:///home/bualy/files/devel/mumla_dev/mumble/src/mumble/Messages.cpp#L872)). In Mumla, removing the local session upon self-kick/ban is also safe because a self-kick or ban terminates the connection and immediately triggers [`ModelHandler.clear()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L115).
 
 ---
 
@@ -117,9 +117,13 @@ try {
 ```
 
 **Thread Safety & Concurrency Requirements**:
-1. **`mUDPHandlers` in `HumlaConnection`**: Ensure `mUDPHandlers` is thread-safe for iteration (e.g. `CopyOnWriteArrayList<HumlaUDPMessageListener>` or synchronized list) so registrations do not race against packet dispatch.
-2. **`ModelHandler.getUser(session)`**: [`AudioOutput.queueProtobufVoiceData()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L435) calls `mListener.getUser(session)`. Ensure `ModelHandler.mUsers` uses a `ConcurrentHashMap<Integer, User>` to allow safe concurrent lookups from the UDP receive thread while the TCP thread mutates user state.
-3. **UI Observer Dispatch**: Any talking state events or icon animations triggered by incoming voice must be dispatched to the main UI looper via `Handler.post()`, isolating high-rate audio decoding from UI rendering.
+1. **`HumlaConnection` Concurrency**: In [`HumlaConnection.java:121`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L121), `mUDPHandlers` is already declared as a thread-safe `ConcurrentLinkedQueue<HumlaUDPMessageListener>`, so handler registration and iteration across threads is non-blocking and safe. However, shared connection fields mutated on the UDP thread must be hardened:
+   - `mLastUDPPing` ([`HumlaConnection.java:102`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L102)): Plain `long` updated on the UDP thread (lines 261, 271, 281) and read on the main thread — must use `volatile` or `AtomicLong` to prevent 64-bit word tearing on 32-bit platforms.
+   - `mServerVersionV2` (line 109) and `mMaxBandwidth` (line 113): Updated in `messageProtobufPing` on the UDP thread and read on TCP/UI threads — declare as `volatile`.
+2. **`ModelHandler.getUser(session)` and `User.mLocalMuted`**: [`AudioOutput.queueProtobufVoiceData()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L435) calls `mListener.getUser(session)` and `user.isLocalMuted()`.
+   - Ensure `ModelHandler.mUsers` uses a `ConcurrentHashMap<Integer, User>` to allow safe concurrent lookups from the UDP receive thread while the TCP thread mutates user state.
+   - Mark `User.mLocalMuted` ([`User.java:54`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java#L54)) as `volatile` to guarantee immediate cross-thread visibility when local mute state changes on the main thread.
+3. **UI Observer Dispatch**: Any talking state events or icon animations triggered by incoming voice must be dispatched to the main UI looper via `Handler.post()`, isolating high-rate audio decoding from UI rendering (which [`AudioOutput.java:483-492`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L483-L492) already handles via `mMainHandler.post` in `onUserTalkStateChanged`).
 
 ---
 
@@ -164,7 +168,7 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
         packet.setAddress(mResolvedHost);
         packet.setPort(mPort);
 
-        // Non-blocking offer; if full, evict the oldest packet (tail drop) to prioritize fresh audio
+        // Non-blocking offer; if full, evict the oldest packet (head drop / drop-oldest) to prioritize fresh audio
         while (!mSendQueue.offer(packet)) {
             mSendQueue.poll();
         }
@@ -281,11 +285,11 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
    }
    ```
 2. **`MumlaActivity.java`**:
-   Add a defensive guard ensuring unconfigured keycodes cannot match:
+   Add a defensive guard ensuring unconfigured keycodes cannot match in both `onKeyDown()` ([`MumlaActivity.java:451`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)) and `onKeyUp()` ([`MumlaActivity.java:460`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L460)):
    ```java
    int pttKey = mSettings.getPushToTalkKey();
    if (mService != null && pttKey > 0 && keyCode == pttKey) {
-       mService.onTalkKeyDown();
+       mService.onTalkKeyDown(); // or onTalkKeyUp() in onKeyUp()
        return true;
    }
    ```
@@ -348,7 +352,7 @@ Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
 2. In [`Settings.java:477-489`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L477-L489), pinned overlay gravities return `Gravity.LEFT` / `Gravity.RIGHT` instead of `Gravity.START` / `Gravity.END`, preventing proper right-to-left (RTL) locale layout mirroring.
 
 **Solution**:
-1. For Android 11+ (API 30+), query `WindowMetrics` and `WindowInsets`:
+1. For Android 11+ (API 30+), query `WindowMetrics` and `WindowInsets` for both top and bottom margins:
    ```java
    private int getTopMargin(DisplayMetrics dm) {
        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -364,6 +368,22 @@ Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
            statusBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
        }
        return statusBarHeight > 0 ? statusBarHeight + (int) (8 * dm.density) : (int) (40 * dm.density);
+   }
+
+   private int getBottomMargin(DisplayMetrics dm) {
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+           WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
+           android.graphics.Insets insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
+                   WindowInsets.Type.navigationBars());
+           return insets.bottom + (int) (8 * dm.density);
+       }
+       // Fallback for API < 30
+       int navBarHeight = 0;
+       int resourceId = mService.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+       if (resourceId > 0) {
+           navBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
+       }
+       return navBarHeight > 0 ? navBarHeight + (int) (8 * dm.density) : (int) (56 * dm.density);
    }
    ```
 2. Update [`Settings.getOverlayGravity()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L477) to return `Gravity.START` and `Gravity.END`.

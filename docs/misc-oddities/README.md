@@ -26,10 +26,10 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-02** | **Threading / Perf** | **High** | **UDP Voice Packets Processed on Main UI Thread**: In [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), every incoming UDP datagram allocates a `Runnable` and posts to the main Looper. Protobuf parsing, byte copying, and JNI queueing run on the UI thread, causing UI jank and audio jitter during active chatter. | [`HumlaUDP.java:123`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128) |
 | **ODD-03** | **Network / Memory** | **Medium** | **Unbounded Outgoing UDP Send Queue**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) instantiates `mSendQueue` as an unbounded `LinkedBlockingQueue<DatagramPacket>`. Degraded or blocked cellular connections cause memory bloat and post-reconnect packet bursts. | [`HumlaUDP.java:74`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) |
 | **ODD-04** | **UI / Compatibility** | **Medium** | **Deprecated `getIdentifier` Inset Query**: [`MumlaOverlay.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265-L281) queries `"status_bar_height"` and `"navigation_bar_height"` via `Resources.getIdentifier()`, which fails on modern Android display cutouts, camera punch-holes, and gesture bars. | [`MumlaOverlay.java:265`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265-L285) |
-| **ODD-05** | **UI / Window** | **Low** | **Hot Corner Disregards Orientation Change**: [`MumlaService.onConfigurationChanged()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L541-L545) updates overlay HUD coordinates on rotation, but neglects `MumlaHotCorner`, failing to refresh gesture exclusion rects or layout bounds. | [`MumlaService.java:541`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L541-L545) |
-| **ODD-06** | **UI / Lifecycle** | **Low** | **First Run Certificate Dialog Re-spawns**: [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L478-L494) displays an uncancelable dialog without a negative/dismiss listener; tapping outside dismisses the dialog without setting `first_run = false`, causing it to reappear on every app launch. | [`MumlaActivity.java:479`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L479-L494) |
+| **ODD-05** | **UI / Window** | **Low** | **Hot Corner Disregards Orientation Change**: [`MumlaService.onConfigurationChanged()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) updates overlay HUD coordinates on rotation, but neglects `MumlaHotCorner`, failing to refresh gesture exclusion rects or layout bounds. | [`MumlaService.java:632`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) |
+| **ODD-06** | **UI / Lifecycle** | **Low** | **First Run Certificate Dialog Re-spawns**: [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) displays a dialog without a negative button, cancel listener, or `setCancelable(false)`; tapping outside dismisses the dialog without setting `first_run = false`, causing it to reappear on every app launch. | [`MumlaActivity.java:481`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) |
 | **ODD-07** | **Preferences** | **Low** | **Inconsistent Reset Key Default Value**: [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`, but [`KeySelectPreferenceDialogFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) sets `mCurrentValue = 0` (`KEYCODE_UNKNOWN`), producing divergent preference states. | [`KeySelectPreferenceDialogFragment.java:35`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) |
-| **ODD-08** | **Code Hygiene** | **Low** | **Dead Commented-Out Preferences**: Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`) remain commented out in [`settings_appearance.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L85). | [`settings_appearance.xml:74`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L85) |
+| **ODD-08** | **Code Hygiene** | **Low** | **Dead Commented-Out Preferences**: Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers`) remain commented out in [`settings_appearance.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94). | [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94) |
 
 ---
 
@@ -59,7 +59,7 @@ public void messageUserRemove(Mumble.UserRemove msg) {
 
 Notice that `mUsers.remove(msg.getSession())` is **never executed**.
 - `user.setChannel(null)` detaches the user from the channel tree, but `mUsers` retains the `User` object reference permanently until disconnection.
-- Any subsequent call to `ModelHandler.getUser(session)` returns a non-null `User` instance whose channel is `null`, triggering `NullPointerException`s in calling code expecting active users (e.g. [`MumlaOverlay.java:51`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L51)).
+- Any subsequent call to `ModelHandler.getUser(session)` returns a non-null `User` instance whose channel is `null`, leaving stale user objects that necessitate defensive null checks (e.g. [`MumlaOverlay.java:51`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L51)) and risk bugs or null pointer dereferences in downstream components expecting active connected users.
 - On busy servers with high user turnover, memory usage grows monotonically throughout the session.
 
 ---
@@ -137,7 +137,7 @@ private int getTopMargin(DisplayMetrics dm) {
 
 ### ODD-05: Hot Corner Overlay Ignores Screen Rotation
 
-In [`MumlaService.java:541-545`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L541-L545):
+In [`MumlaService.java:632-637`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637):
 
 ```java
 @Override
@@ -158,7 +158,7 @@ When the device rotates (e.g., portrait to landscape while gaming):
 
 ### ODD-06: First Run Certificate Dialog Re-spawns on Outside Touch
 
-In [`MumlaActivity.java:472-494`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L472-L494):
+In [`MumlaActivity.java:481-503`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503):
 
 ```java
 new MaterialAlertDialogBuilder(this)
@@ -199,7 +199,7 @@ An unconfigured key defaults to `-1`, while a reset key is persisted as `0` (`Ke
 
 ### ODD-08: Stale Commented-Out XML Preferences
 
-In [`settings_appearance.xml:74-85`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L85):
+In [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94):
 
 ```xml
     <!--
@@ -214,6 +214,14 @@ In [`settings_appearance.xml:74-85`](file:///home/bualy/files/devel/mumla_dev/mu
         android:defaultValue="false"
         android:key="colorizechannellist"
         android:summary="@string/colorizechannelsSum"
+        android:title="@string/colorizechannels" />
+
+    <EditTextPreference
+        android:defaultValue="5"
+        android:inputType="number"
+        android:key="colorthresholdnumusers"
+        android:summary="@string/colorthresholdSum"
+        android:title="@string/colorthreshold" />
     -->
 ```
 
