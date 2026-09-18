@@ -91,5 +91,9 @@ void OpusVoiceEncoder::reset() {
     }
 }
 
+std::unique_ptr<IVoiceEncoder> makeOpusVoiceEncoder(int bitrate) {
+    return std::make_unique<OpusVoiceEncoder>(bitrate);
+}
+
 } // namespace audio
 } // namespace mumla

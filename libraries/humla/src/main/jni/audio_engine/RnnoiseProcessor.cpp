@@ -65,11 +65,12 @@ static RNNModel *ModelFromBuffer(const uint8_t *data, size_t size) {
 RnnoiseProcessor::RnnoiseProcessor(bool enabled, const uint8_t* modelData, size_t modelSize)
     : m_state(nullptr),
       m_model(nullptr),
-      m_modelData(modelData),
-      m_modelSize(modelSize),
       m_enabled(enabled),
       m_floatIn(FRAME_SIZE, 0.0f),
       m_floatOut(FRAME_SIZE, 0.0f) {
+    if (modelData != nullptr && modelSize > 0) {
+        m_modelBuffer.assign(modelData, modelData + modelSize);
+    }
     if (m_enabled) {
         initModel();
     }
@@ -81,9 +82,9 @@ RnnoiseProcessor::~RnnoiseProcessor() {
 
 void RnnoiseProcessor::initModel() {
     if (m_state != nullptr) return;
-    if (m_modelData != nullptr && m_modelSize > 0) {
+    if (!m_modelBuffer.empty()) {
         if (m_model == nullptr) {
-            m_model = ModelFromBuffer(m_modelData, m_modelSize);
+            m_model = ModelFromBuffer(m_modelBuffer.data(), m_modelBuffer.size());
         }
         if (m_model != nullptr) {
             m_state = rnnoise_create(m_model);
@@ -104,8 +105,10 @@ void RnnoiseProcessor::cleanupModel() {
 
 void RnnoiseProcessor::setModel(const uint8_t* modelData, size_t modelSize) {
     cleanupModel();
-    m_modelData = modelData;
-    m_modelSize = modelSize;
+    m_modelBuffer.clear();
+    if (modelData != nullptr && modelSize > 0) {
+        m_modelBuffer.assign(modelData, modelData + modelSize);
+    }
     if (m_enabled) {
         initModel();
     }
@@ -159,6 +162,10 @@ float RnnoiseProcessor::process(const int16_t* inPcm, int16_t* outPcm, size_t sa
     }
 
     return speechProb;
+}
+
+std::unique_ptr<IDenoiser> makeRnnoiseProcessor(bool enabled, const uint8_t* modelData, size_t modelSize) {
+    return std::make_unique<RnnoiseProcessor>(enabled, modelData, modelSize);
 }
 
 } // namespace audio

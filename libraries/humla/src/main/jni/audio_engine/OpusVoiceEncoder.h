@@ -18,8 +18,11 @@
 #ifndef MUMLA_OPUS_VOICE_ENCODER_H_
 #define MUMLA_OPUS_VOICE_ENCODER_H_
 
+#include "AudioInputEngine.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 struct OpusEncoder;
 
@@ -33,14 +36,14 @@ namespace audio {
  * weighting, in-band forward error correction (FEC), and strictly enforced
  * Hard Constant Bitrate (VBR=0) to prevent packet-length side-channel attacks.
  */
-class OpusVoiceEncoder {
+class OpusVoiceEncoder : public IVoiceEncoder {
 public:
     static constexpr int SAMPLE_RATE = 48000;
     static constexpr int CHANNELS = 1;
     static constexpr int DEFAULT_BITRATE = 40000; // 40 kbps
 
     explicit OpusVoiceEncoder(int bitrate = DEFAULT_BITRATE);
-    ~OpusVoiceEncoder();
+    ~OpusVoiceEncoder() override;
 
     // Non-copyable
     OpusVoiceEncoder(const OpusVoiceEncoder&) = delete;
@@ -55,12 +58,12 @@ public:
      * @param maxBytes Maximum capacity of outBuffer.
      * @return Number of compressed bytes written, or negative on error.
      */
-    int encode(const int16_t* pcm, size_t sampleCount, uint8_t* outBuffer, size_t maxBytes);
+    int encode(const int16_t* pcm, size_t sampleCount, uint8_t* outBuffer, size_t maxBytes) override;
 
-    void setBitrate(int bitrate);
-    int getBitrate() const;
+    void setBitrate(int bitrate) override;
+    int getBitrate() const override;
 
-    void reset();
+    void reset() override;
 
     bool isValid() const { return m_encoder != nullptr; }
 
@@ -68,6 +71,8 @@ private:
     OpusEncoder* m_encoder;
     int m_bitrate;
 };
+
+std::unique_ptr<IVoiceEncoder> makeOpusVoiceEncoder(int bitrate = OpusVoiceEncoder::DEFAULT_BITRATE);
 
 } // namespace audio
 } // namespace mumla
