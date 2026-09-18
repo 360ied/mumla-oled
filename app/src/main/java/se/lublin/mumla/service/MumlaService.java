@@ -22,7 +22,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
+import android.media.AudioAttributes;
 import android.media.AudioManager;
+import android.media.SoundPool;
 import android.net.Uri;
 import android.annotation.SuppressLint;
 import android.os.Binder;
@@ -89,8 +91,14 @@ public class MumlaService extends HumlaService implements
     private MumlaOverlay mChannelOverlay;
     /** Proximity lock for handset mode. */
     private PowerManager.WakeLock mProximityLock;
-    /** Play sound when push to talk key is pressed */
-    private boolean mPTTSoundEnabled;
+    /** Play sound when push to talk key is pressed or released */
+    boolean mPTTSoundEnabled;
+    private SoundPool mSoundPool;
+    private int mPttOnSoundId;
+    private int mPttOffSoundId;
+    private boolean mPttOnLoaded;
+    private boolean mPttOffLoaded;
+    boolean mSelfTalking;
     /** Try to shorten spoken messages when using TTS */
     private boolean mShortTtsMessagesEnabled;
     /**
@@ -278,6 +286,7 @@ public class MumlaService extends HumlaService implements
 
         @Override
         public void onDisconnected(HumlaException e) {
+            mSelfTalking = false;
             if (isReconnecting()) {
                 if (!mWasReconnecting) {
                     String ttsMsg;
@@ -436,30 +445,104 @@ public class MumlaService extends HumlaService implements
 
         @Override
         public void onUserTalkStateUpdated(IUser user) {
-            int selfSession = -1;
-            try {
-                selfSession = getSessionId();
-            } catch (IllegalStateException e) {
-                Log.d(TAG, "exception in onUserTalkStateUpdated: " + e);
-            }
-
-            if (user != null && user.getSession() == selfSession) {
-                if (mHotCorner != null) {
-                    TalkState ts = user.getTalkState();
-                    boolean isTalking = (ts == TalkState.TALKING || ts == TalkState.SHOUTING || ts == TalkState.WHISPERING);
-                    mHotCorner.updateTalkState(isTalking);
-                }
-
-                if (isConnectionEstablished() &&
-                        getTransmitMode() == Constants.TRANSMIT_PUSH_TO_TALK &&
-                        user.getTalkState() == TalkState.TALKING &&
-                        mPTTSoundEnabled) {
-                    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-                    audioManager.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, -1);
-                }
-            }
+            handleUserTalkStateUpdated(user);
         }
     };
+
+    void handleUserTalkStateUpdated(IUser user) {
+        int selfSession = -1;
+        try {
+            selfSession = getSessionId();
+        } catch (IllegalStateException e) {
+            Log.d(TAG, "exception in handleUserTalkStateUpdated: " + e);
+        }
+
+        if (user != null && user.getSession() == selfSession) {
+            TalkState ts = user.getTalkState();
+            boolean isTalking = (ts == TalkState.TALKING || ts == TalkState.SHOUTING || ts == TalkState.WHISPERING);
+            if (mHotCorner != null) {
+                mHotCorner.updateTalkState(isTalking);
+            }
+
+            if (isConnectionEstablished() &&
+                    getTransmitMode() == Constants.TRANSMIT_PUSH_TO_TALK &&
+                    mPTTSoundEnabled) {
+                if (isTalking && !mSelfTalking) {
+                    playPttSound(true);
+                } else if (!isTalking && mSelfTalking) {
+                    playPttSound(false);
+                }
+            }
+            mSelfTalking = isTalking;
+        }
+    }
+
+    void initSoundPool() {
+        releaseSoundPool();
+        try {
+            int streamType = (mSettings != null && mSettings.isHandsetMode())
+                    ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
+            int usage = (mSettings != null && mSettings.isHandsetMode())
+                    ? AudioAttributes.USAGE_VOICE_COMMUNICATION : AudioAttributes.USAGE_MEDIA;
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                    .setLegacyStreamType(streamType)
+                    .setUsage(usage)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            mSoundPool = new SoundPool.Builder()
+                    .setMaxStreams(2)
+                    .setAudioAttributes(attributes)
+                    .build();
+            if (mSoundPool != null) {
+                mSoundPool.setOnLoadCompleteListener(new SoundPool.OnLoadCompleteListener() {
+                    @Override
+                    public void onLoadComplete(SoundPool soundPool, int sampleId, int status) {
+                        if (status == 0) {
+                            if (sampleId == mPttOnSoundId) {
+                                mPttOnLoaded = true;
+                            } else if (sampleId == mPttOffSoundId) {
+                                mPttOffLoaded = true;
+                            }
+                        }
+                    }
+                });
+                mPttOnSoundId = mSoundPool.load(this, R.raw.ptt_on, 1);
+                mPttOffSoundId = mSoundPool.load(this, R.raw.ptt_off, 1);
+            }
+        } catch (Exception | NoSuchMethodError | NoClassDefFoundError e) {
+            Log.e(TAG, "Failed to initialize SoundPool: " + e.getMessage());
+        }
+    }
+
+    void releaseSoundPool() {
+        if (mSoundPool != null) {
+            try {
+                mSoundPool.release();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to release SoundPool: " + e.getMessage());
+            }
+            mSoundPool = null;
+        }
+        mPttOnSoundId = 0;
+        mPttOffSoundId = 0;
+        mPttOnLoaded = false;
+        mPttOffLoaded = false;
+    }
+
+    void playPttSound(boolean on) {
+        if (mSoundPool == null) {
+            return;
+        }
+        int soundId = on ? mPttOnSoundId : mPttOffSoundId;
+        boolean loaded = on ? mPttOnLoaded : mPttOffLoaded;
+        if (soundId != 0 && loaded) {
+            try {
+                mSoundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to play PTT cue: " + e.getMessage());
+            }
+        }
+    }
 
     @Override
     public void onCreate() {
@@ -469,6 +552,7 @@ public class MumlaService extends HumlaService implements
         // Register for preference changes
         mSettings = Settings.getInstance(this);
         mPTTSoundEnabled = mSettings.isPttSoundEnabled();
+        initSoundPool();
         mShortTtsMessagesEnabled = mSettings.isShortTextToSpeechMessagesEnabled();
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.registerOnSharedPreferenceChangeListener(this);
@@ -529,6 +613,8 @@ public class MumlaService extends HumlaService implements
             mActiveServerKey = "";
         }
         mMessageNotification.dismiss();
+        releaseSoundPool();
+        mSelfTalking = false;
         super.onDestroy();
     }
 
@@ -577,11 +663,13 @@ public class MumlaService extends HumlaService implements
         }
 
         updateConnectedNotification();
+        mSelfTalking = false;
     }
 
     @Override
     public void onConnectionDisconnected(HumlaException e) {
         super.onConnectionDisconnected(e);
+        mSelfTalking = false;
         try {
             unregisterReceiver(mTalkReceiver);
         } catch (IllegalArgumentException iae) {
@@ -592,11 +680,15 @@ public class MumlaService extends HumlaService implements
             mChannelOverlay.hide();
         }
 
-        mHotCorner.setShown(false);
+        if (mHotCorner != null) {
+            mHotCorner.setShown(false);
+        }
 
         setProximitySensorOn(false);
 
-        mMessageNotification.dismiss();
+        if (mMessageNotification != null) {
+            mMessageNotification.dismiss();
+        }
     }
 
     /**
@@ -619,6 +711,7 @@ public class MumlaService extends HumlaService implements
                 setProximitySensorOn(isConnectionEstablished() && mSettings.isHandsetMode());
                 changedExtras.putInt(HumlaService.EXTRAS_AUDIO_STREAM, mSettings.isHandsetMode() ?
                                      AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+                initSoundPool();
                 break;
             case Settings.PREF_THRESHOLD:
                 changedExtras.putFloat(HumlaService.EXTRAS_DETECTION_THRESHOLD,

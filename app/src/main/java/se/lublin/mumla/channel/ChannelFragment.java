@@ -93,16 +93,16 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                 return;
             }
             if (user != null && user.getSession() == selfSession) {
-                // Manually set button selection colour when we receive a talk state update.
+                // Manually set button activation state when we receive a talk state update.
                 // This allows representation of talk state when using hot corners and PTT toggle.
                 switch (user.getTalkState()) {
                 case TALKING:
                 case SHOUTING:
                 case WHISPERING:
-                    mTalkButton.setPressed(true);
+                    mTalkButton.setActivated(true);
                     break;
                 case PASSIVE:
-                    mTalkButton.setPressed(false);
+                    mTalkButton.setActivated(false);
                     break;
                 }
             }
@@ -163,16 +163,19 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        v.setPressed(true);
                         if (getService() != null) {
                             getService().onTalkKeyDown();
                         }
                         break;
                     case MotionEvent.ACTION_UP:
+                        v.setPressed(false);
                         if (getService() != null) {
                             getService().onTalkKeyUp();
                         }
                         break;
                     case MotionEvent.ACTION_CANCEL:
+                        v.setPressed(false);
                         if (getService() != null) {
                             getService().onTalkKeyCancel();
                         }
@@ -252,8 +255,20 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     @Override
     public void onPause() {
         super.onPause();
+        if (mTalkButton != null) {
+            mTalkButton.setPressed(false);
+        }
         if (getService() != null) {
             getService().onTalkKeyCancel();
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (mTalkButton != null) {
+            mTalkButton.setActivated(false);
+            mTalkButton.setPressed(false);
         }
     }
 
@@ -303,14 +318,38 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     /**
+     * Converts the configured PTT button height (in dp) to physical pixels using display metrics.
+     */
+    static int calculateButtonHeightPx(int heightDp, android.util.DisplayMetrics metrics) {
+        if (metrics == null) {
+            return heightDp;
+        }
+        float px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, heightDp, metrics);
+        if (px > 0) {
+            return (int) px;
+        }
+        return (int) (heightDp * (metrics.density > 0 ? metrics.density : 1.0f));
+    }
+
+    /**
      * Configures the fragment in accordance with the user's interface preferences.
      */
     private void configureInput() {
+        if (!isAdded() || getActivity() == null || mTalkButton == null) {
+            return;
+        }
         Settings settings = Settings.getInstance(getActivity());
 
-        ViewGroup.LayoutParams params = mTalkView.getLayoutParams();
-        params.height = settings.getPTTButtonHeight();
-        mTalkButton.setLayoutParams(params);
+        int heightDp = settings.getPTTButtonHeight();
+        int heightPx = calculateButtonHeightPx(
+                heightDp,
+                getResources() != null ? getResources().getDisplayMetrics() : null);
+
+        ViewGroup.LayoutParams params = mTalkButton.getLayoutParams();
+        if (params != null) {
+            params.height = heightPx;
+            mTalkButton.setLayoutParams(params);
+        }
 
         boolean muted = false;
         if (getService() != null && getService().isConnected()) {
@@ -331,6 +370,10 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
 
     private void setTalkButtonHidden(final boolean hidden) {
         mTalkView.setVisibility(hidden ? View.GONE : View.VISIBLE);
+        if (hidden && mTalkButton != null) {
+            mTalkButton.setActivated(false);
+            mTalkButton.setPressed(false);
+        }
         mTalkButtonHidden = hidden;
     }
 
