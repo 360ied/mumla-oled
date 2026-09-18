@@ -96,9 +96,10 @@ public class MumlaService extends HumlaService implements
     private SoundPool mSoundPool;
     private int mPttOnSoundId;
     private int mPttOffSoundId;
-    private boolean mPttOnLoaded;
-    private boolean mPttOffLoaded;
-    boolean mSelfTalking;
+    private volatile boolean mPttOnLoaded;
+    private volatile boolean mPttOffLoaded;
+    private volatile int mActivePttStreamId;
+    volatile boolean mSelfTalking;
     /** Try to shorten spoken messages when using TTS */
     private boolean mShortTtsMessagesEnabled;
     /**
@@ -497,6 +498,9 @@ public class MumlaService extends HumlaService implements
                 mSoundPool.setOnLoadCompleteListener(new SoundPool.OnLoadCompleteListener() {
                     @Override
                     public void onLoadComplete(SoundPool soundPool, int sampleId, int status) {
+                        if (soundPool != mSoundPool) {
+                            return;
+                        }
                         if (status == 0) {
                             if (sampleId == mPttOnSoundId) {
                                 mPttOnLoaded = true;
@@ -517,6 +521,7 @@ public class MumlaService extends HumlaService implements
     void releaseSoundPool() {
         if (mSoundPool != null) {
             try {
+                mSoundPool.setOnLoadCompleteListener(null);
                 mSoundPool.release();
             } catch (Exception e) {
                 Log.e(TAG, "Failed to release SoundPool: " + e.getMessage());
@@ -527,17 +532,22 @@ public class MumlaService extends HumlaService implements
         mPttOffSoundId = 0;
         mPttOnLoaded = false;
         mPttOffLoaded = false;
+        mActivePttStreamId = 0;
     }
 
     void playPttSound(boolean on) {
-        if (mSoundPool == null) {
+        final SoundPool soundPool = mSoundPool;
+        if (soundPool == null) {
             return;
         }
         int soundId = on ? mPttOnSoundId : mPttOffSoundId;
         boolean loaded = on ? mPttOnLoaded : mPttOffLoaded;
         if (soundId != 0 && loaded) {
             try {
-                mSoundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f);
+                if (mActivePttStreamId != 0) {
+                    soundPool.stop(mActivePttStreamId);
+                }
+                mActivePttStreamId = soundPool.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f);
             } catch (Exception e) {
                 Log.e(TAG, "Failed to play PTT cue: " + e.getMessage());
             }
