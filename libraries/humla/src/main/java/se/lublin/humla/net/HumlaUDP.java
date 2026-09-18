@@ -47,8 +47,8 @@ public class HumlaUDP implements Runnable {
     private final UDPConnectionListener mListener;
     private String mHost;
     private int mPort;
-    private InetAddress mResolvedHost;
-    private boolean mConnected;
+    private volatile InetAddress mResolvedHost;
+    private volatile boolean mConnected;
 
     /** Main datagram thread hosting this runnable. */
     private final Thread mDatagramThread;
@@ -56,7 +56,10 @@ public class HumlaUDP implements Runnable {
     /** Handler to invoke listener callback invocations on. */
     private final Handler mCallbackHandler;
 
-    /** Unbounded queue of outgoing packets to be sent. */
+    /** Maximum queued outgoing datagrams (~200ms of audio buffer at 20ms frames). */
+    public static final int MAX_SEND_QUEUE_CAPACITY = 10;
+
+    /** Bounded queue of outgoing packets to be sent. */
     private final BlockingQueue<DatagramPacket> mSendQueue;
 
     /**
@@ -68,11 +71,26 @@ public class HumlaUDP implements Runnable {
      */
     public HumlaUDP(@NotNull CryptState cryptState, @NotNull UDPConnectionListener listener,
                      @NotNull Handler callbackHandler) {
+        this(cryptState, listener, callbackHandler, MAX_SEND_QUEUE_CAPACITY);
+    }
+
+    /**
+     * Sets up a new UDP connection context with a custom send queue capacity.
+     * @param cryptState Cryptographic state provider.
+     * @param listener Callback target.
+     * @param callbackHandler Handler to post listener invocations on.
+     * @param sendQueueCapacity Maximum number of packets queued before evicting oldest.
+     */
+    HumlaUDP(@NotNull CryptState cryptState, @NotNull UDPConnectionListener listener,
+             @NotNull Handler callbackHandler, int sendQueueCapacity) {
+        if (sendQueueCapacity <= 0) {
+            throw new IllegalArgumentException("sendQueueCapacity must be > 0");
+        }
         mCryptState = cryptState;
         mListener = listener;
         mCallbackHandler = callbackHandler;
         mDatagramThread = new Thread(this);
-        mSendQueue = new LinkedBlockingQueue<>();
+        mSendQueue = new LinkedBlockingQueue<>(sendQueueCapacity);
     }
 
     public void connect(@NotNull String host, @NotNull int port) {
@@ -156,6 +174,7 @@ public class HumlaUDP implements Runnable {
             }
         } finally {
             mConnected = false;
+            mResolvedHost = null;
 
             // We want to interrupt the outgoing queue consumer thread to avoid sends after socket
             // cleanup. Blocking shouldn't be necessary.
@@ -166,17 +185,14 @@ public class HumlaUDP implements Runnable {
             // Clear the outgoing queue, in case the caller decides to reconnect with the same socket.
             mSendQueue.clear();
 
-            mUDPSocket.close();
+            if (mUDPSocket != null) {
+                mUDPSocket.close();
+            }
         }
     }
 
     public void sendMessage(@NotNull final byte[] data, final int length) {
-        if (!mCryptState.isValid()) {
-            Log.w(TAG, "Invalid cryptstate prior to sendMessage call.");
-            return;
-        }
-        if (!mConnected) {
-            Log.w(TAG, "Tried to send UDP message without an active connection.");
+        if (!mCryptState.isValid() || !mConnected || mResolvedHost == null) {
             return;
         }
 
@@ -185,17 +201,30 @@ public class HumlaUDP implements Runnable {
             final DatagramPacket packet = new DatagramPacket(encryptedData, encryptedData.length);
             packet.setAddress(mResolvedHost);
             packet.setPort(mPort);
-            mSendQueue.add(packet);
-        } catch (BadPaddingException e) {
-            // TODO
-            e.printStackTrace();
-        } catch (IllegalBlockSizeException e) {
-            // TODO
-            e.printStackTrace();
-        } catch (ShortBufferException e) {
-            // TODO
-            e.printStackTrace();
+
+            // Non-blocking offer; if full, evict the oldest packet (head drop / drop-oldest) to prioritize fresh audio
+            while (!mSendQueue.offer(packet)) {
+                mSendQueue.poll();
+            }
+        } catch (BadPaddingException | IllegalBlockSizeException | ShortBufferException e) {
+            Log.w(TAG, "Failed to encrypt outgoing UDP packet", e);
         }
+    }
+
+    /**
+     * Visible for testing: returns the outgoing packet queue.
+     */
+    BlockingQueue<DatagramPacket> getSendQueue() {
+        return mSendQueue;
+    }
+
+    /**
+     * Visible for testing: configures endpoint and connected state without starting background threads.
+     */
+    void setConnectedForTesting(boolean connected, InetAddress host, int port) {
+        mConnected = connected;
+        mResolvedHost = host;
+        mPort = port;
     }
 
     /**
@@ -241,9 +270,13 @@ public class HumlaUDP implements Runnable {
                     DatagramPacket packet = mQueue.take();
                     mSocket.send(packet);
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    if (mSocket.isClosed()) {
+                        break;
+                    }
+                    Log.w(TAG, "Failed to send outgoing datagram", e);
                 } catch (InterruptedException e) {
                     // Our datagram thread interrupted us. We should stop reading.
+                    Thread.currentThread().interrupt();
                     interrupted = true;
                 }
             }
