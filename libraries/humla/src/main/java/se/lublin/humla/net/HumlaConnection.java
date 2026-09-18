@@ -99,18 +99,18 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private final CryptState mCryptState = new CryptState();
 
     // Latency
-    private long mLastUDPPing;
+    private volatile long mLastUDPPing;
     private long mLastTCPPing;
 
     // Server
     private String mHost;
     private int mPort;
-    private int mServerVersion;
-    private long mServerVersionV2;
+    private volatile int mServerVersion;
+    private volatile long mServerVersionV2;
     private String mServerRelease;
     private String mServerOSName;
     private String mServerOSVersion;
-    private int mMaxBandwidth;
+    private volatile int mMaxBandwidth;
     private HumlaUDPMessageType mCodec;
 
     // Session
