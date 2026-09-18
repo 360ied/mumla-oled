@@ -25,6 +25,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import se.lublin.humla.Constants;
+import se.lublin.humla.model.TalkState;
+import se.lublin.humla.model.User;
 import se.lublin.mumla.Settings;
 
 public class MumlaServiceTalkKeyTest extends TestCase {
@@ -196,6 +199,46 @@ public class MumlaServiceTalkKeyTest extends TestCase {
             mTalking = talking;
             mSetTalkingStateCalls++;
         }
+
+        private int mSessionId = 42;
+        private int mTransmitMode = Constants.TRANSMIT_PUSH_TO_TALK;
+        private int mPttOnCueCalls = 0;
+        private int mPttOffCueCalls = 0;
+
+        public void setSessionId(int sessionId) {
+            mSessionId = sessionId;
+        }
+
+        @Override
+        public int getSessionId() {
+            return mSessionId;
+        }
+
+        public void setTransmitMode(int transmitMode) {
+            mTransmitMode = transmitMode;
+        }
+
+        @Override
+        public int getTransmitMode() {
+            return mTransmitMode;
+        }
+
+        @Override
+        void playPttSound(boolean on) {
+            if (on) {
+                mPttOnCueCalls++;
+            } else {
+                mPttOffCueCalls++;
+            }
+        }
+
+        public int getPttOnCueCalls() {
+            return mPttOnCueCalls;
+        }
+
+        public int getPttOffCueCalls() {
+            return mPttOffCueCalls;
+        }
     }
 
     public void testOnTalkKeyCancel_WhenTalkingAndHoldPtt_StopsTalking() {
@@ -327,5 +370,137 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         service.onTalkKeyUp();
         assertFalse("Second onTalkKeyUp must toggle talking OFF", service.isTalking());
         assertEquals(2, service.getSetTalkingStateCalls());
+    }
+
+    public void testPttAudioCue_ActivationAndDeactivation() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = true;
+
+        User user = new User(42, "localUser");
+
+        user.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("Activation cue must play once on onset", 1, service.getPttOnCueCalls());
+        assertEquals("Deactivation cue must not play on onset", 0, service.getPttOffCueCalls());
+
+        user.setTalkState(TalkState.PASSIVE);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("Activation cue count preserved", 1, service.getPttOnCueCalls());
+        assertEquals("Deactivation cue must play once on release", 1, service.getPttOffCueCalls());
+    }
+
+    public void testPttAudioCue_ConsecutiveStates_NoDuplicateCues() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = true;
+
+        User user = new User(42, "localUser");
+
+        user.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(user);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("Consecutive talking states must not duplicate activation cue", 1, service.getPttOnCueCalls());
+
+        user.setTalkState(TalkState.PASSIVE);
+        service.handleUserTalkStateUpdated(user);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("Consecutive passive states must not duplicate deactivation cue", 1, service.getPttOffCueCalls());
+    }
+
+    public void testPttAudioCue_DisabledSetting_NoCues() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = false;
+
+        User user = new User(42, "localUser");
+
+        user.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals(0, service.getPttOnCueCalls());
+
+        user.setTalkState(TalkState.PASSIVE);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals(0, service.getPttOffCueCalls());
+    }
+
+    public void testPttAudioCue_NonPttMode_NoCues() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = true;
+        service.setTransmitMode(Constants.TRANSMIT_VOICE_ACTIVITY);
+
+        User user = new User(42, "localUser");
+
+        user.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals(0, service.getPttOnCueCalls());
+
+        user.setTalkState(TalkState.PASSIVE);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals(0, service.getPttOffCueCalls());
+    }
+
+    public void testPttAudioCue_DifferentUser_Ignored() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = true;
+
+        User otherUser = new User(99, "remoteUser");
+
+        otherUser.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(otherUser);
+        assertEquals(0, service.getPttOnCueCalls());
+
+        otherUser.setTalkState(TalkState.PASSIVE);
+        service.handleUserTalkStateUpdated(otherUser);
+        assertEquals(0, service.getPttOffCueCalls());
+    }
+
+    public void testPttAudioCue_ShoutingAndWhispering_TreatedAsTalking() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = true;
+
+        User user = new User(42, "localUser");
+
+        user.setTalkState(TalkState.SHOUTING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("SHOUTING must trigger activation cue", 1, service.getPttOnCueCalls());
+
+        user.setTalkState(TalkState.PASSIVE);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("PASSIVE after SHOUTING must trigger deactivation cue", 1, service.getPttOffCueCalls());
+
+        user.setTalkState(TalkState.WHISPERING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("WHISPERING must trigger activation cue", 2, service.getPttOnCueCalls());
+    }
+
+    public void testPttAudioCue_DisconnectResetsState() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        TestTalkKeyService service = new TestTalkKeyService(settings);
+        service.mPTTSoundEnabled = true;
+
+        User user = new User(42, "localUser");
+
+        user.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals(1, service.getPttOnCueCalls());
+
+        // Simulate disconnect resetting state
+        service.mSelfTalking = false;
+
+        // Reconnect and start talking again
+        user.setTalkState(TalkState.TALKING);
+        service.handleUserTalkStateUpdated(user);
+        assertEquals("Reconnecting and talking must trigger activation cue again", 2, service.getPttOnCueCalls());
     }
 }
