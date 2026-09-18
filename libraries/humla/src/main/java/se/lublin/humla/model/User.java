@@ -51,7 +51,7 @@ public class User implements IUser, Comparable<User> {
     private final Set<Integer> mListeningChannels = new HashSet<Integer>();
 
     // Local state
-    private boolean mLocalMuted;
+    private volatile boolean mLocalMuted;
     private boolean mLocalIgnored;
 
     public User() {

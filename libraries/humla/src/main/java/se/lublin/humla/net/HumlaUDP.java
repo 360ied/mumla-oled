@@ -44,7 +44,7 @@ public class HumlaUDP implements Runnable {
     private final CryptState mCryptState;
 
     private DatagramSocket mUDPSocket;
-    private UDPConnectionListener mListener;
+    private final UDPConnectionListener mListener;
     private String mHost;
     private int mPort;
     private InetAddress mResolvedHost;
@@ -62,7 +62,8 @@ public class HumlaUDP implements Runnable {
     /**
      * Sets up a new UDP connection context.
      * @param cryptState Cryptographic state provider.
-     * @param listener Callback target. Messages will be posted on the callback handler given.
+     * @param listener Callback target. Connection state callbacks will be posted on the callback handler given;
+     *                 data callbacks are delivered directly on the UDP receive thread.
      * @param callbackHandler Handler to post listener invocations on.
      */
     public HumlaUDP(@NotNull CryptState cryptState, @NotNull UDPConnectionListener listener,
@@ -120,12 +121,8 @@ public class HumlaUDP implements Runnable {
 
                     if (mListener != null) {
                         if (buffer != null) {
-                            mCallbackHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    mListener.onUDPDataReceived(buffer);
-                                }
-                            });
+                            // Direct callback on UDP receiver thread per UDPConnectionListener contract
+                            mListener.onUDPDataReceived(buffer);
                         } else if (mCryptState.getLastGoodElapsed() > 5000000 &&
                                 mCryptState.getLastRequestElapsed() > 5000000) {
                             mCryptState.resetLastRequestTime();
