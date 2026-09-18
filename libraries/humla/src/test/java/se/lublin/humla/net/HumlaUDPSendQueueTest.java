@@ -31,9 +31,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Unit tests verifying that the outgoing UDP datagram queue is strictly bounded to
- * MAX_SEND_QUEUE_CAPACITY and enforces a deterministic drop-oldest (head drop) eviction
- * policy under queue saturation and network stalls (ODD-03).
+ * Unit tests verifying that the outgoing UDP datagram queue is dynamically bounded
+ * based on audio packet duration to maintain ~200ms target latency headroom, enforcing a
+ * deterministic drop-oldest (head drop) eviction policy across all supported packet sizes (ODD-03).
  */
 public class HumlaUDPSendQueueTest extends TestCase {
 
@@ -81,23 +81,51 @@ public class HumlaUDPSendQueueTest extends TestCase {
     }
 
     /**
-     * Verifies that when more packets than MAX_SEND_QUEUE_CAPACITY are sent while
-     * the consumer is stalled, the send queue remains bounded to MAX_SEND_QUEUE_CAPACITY.
+     * Verifies that calculateQueueCapacity computes correct packet capacities targeting
+     * ~200ms latency across all Mumla-supported framesPerPacket settings (10ms, 20ms, 40ms, 60ms).
+     */
+    public void testCalculateQueueCapacityForSupportedFramesPerPacket() {
+        // 10ms packets (1 frame @ 10ms) -> ceil(200 / 10) = 20 packets (200ms)
+        assertEquals(20, HumlaUDP.calculateQueueCapacity(1));
+
+        // 20ms packets (2 frames @ 10ms, default) -> ceil(200 / 20) = 10 packets (200ms)
+        assertEquals(10, HumlaUDP.calculateQueueCapacity(2));
+
+        // 40ms packets (4 frames @ 10ms) -> ceil(200 / 40) = 5 packets (200ms)
+        assertEquals(5, HumlaUDP.calculateQueueCapacity(4));
+
+        // 60ms packets (6 frames @ 10ms) -> ceil(200 / 60) = 4 packets (240ms)
+        assertEquals(4, HumlaUDP.calculateQueueCapacity(6));
+
+        // Invalid / unknown values should fall back safely to default 20ms frames (10 packets)
+        assertEquals(10, HumlaUDP.calculateQueueCapacity(0));
+        assertEquals(10, HumlaUDP.calculateQueueCapacity(-1));
+        assertEquals(10, HumlaUDP.calculateQueueCapacity(3));
+        assertEquals(10, HumlaUDP.calculateQueueCapacity(100));
+    }
+
+    /**
+     * Verifies that when more packets than DEFAULT_SEND_QUEUE_CAPACITY are sent while
+     * the consumer is stalled, the send queue remains bounded to DEFAULT_SEND_QUEUE_CAPACITY.
      */
     public void testSendQueueBoundsToDefaultCapacity() throws Exception {
         HumlaUDP humlaUDP = new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler);
         InetAddress loopback = InetAddress.getByName("127.0.0.1");
         humlaUDP.setConnectedForTesting(true, loopback, 12345);
 
-        // Send 25 packets; queue should cap at MAX_SEND_QUEUE_CAPACITY (10)
+        assertEquals("Default frames per packet should be 2", 2, humlaUDP.getTargetFramesPerPacket());
+        assertEquals("Default queue capacity should be 10", 10, humlaUDP.getSendQueueCapacity());
+
+        // Send 25 packets; queue should cap at 10
         for (int i = 0; i < 25; i++) {
             byte[] payload = new byte[]{(byte) i};
             humlaUDP.sendMessage(payload, payload.length);
         }
 
-        assertEquals("Send queue must be bounded to MAX_SEND_QUEUE_CAPACITY",
-                HumlaUDP.MAX_SEND_QUEUE_CAPACITY, humlaUDP.getSendQueue().size());
-        assertEquals("Default MAX_SEND_QUEUE_CAPACITY should be 10", 10, HumlaUDP.MAX_SEND_QUEUE_CAPACITY);
+        assertEquals("Send queue must be bounded to default capacity (10)",
+                HumlaUDP.DEFAULT_SEND_QUEUE_CAPACITY, humlaUDP.getSendQueue().size());
+        assertEquals("MAX_SEND_QUEUE_CAPACITY alias must match default capacity",
+                HumlaUDP.DEFAULT_SEND_QUEUE_CAPACITY, HumlaUDP.MAX_SEND_QUEUE_CAPACITY);
     }
 
     /**
@@ -116,7 +144,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
         }
 
         assertEquals("Send queue size must equal capacity",
-                HumlaUDP.MAX_SEND_QUEUE_CAPACITY, humlaUDP.getSendQueue().size());
+                humlaUDP.getSendQueueCapacity(), humlaUDP.getSendQueue().size());
 
         // With capacity 10 and 15 packets sent, packets 1-5 must have been dropped.
         // Packets 6 through 15 must be present in exact order.
@@ -134,24 +162,73 @@ public class HumlaUDPSendQueueTest extends TestCase {
     }
 
     /**
-     * Verifies that custom capacity queue bounds correctly and maintains drop-oldest policy.
+     * Verifies that queue capacity adapts accurately to each supported packet size in Mumla,
+     * maintaining ~200ms latency ceiling and FIFO drop-oldest behavior for all settings.
      */
-    public void testSendQueueCustomCapacity() throws Exception {
-        int customCapacity = 4;
-        HumlaUDP humlaUDP = new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, customCapacity);
+    public void testSendQueueCapacityAdaptsToAllSupportedFramesPerPacket() throws Exception {
+        int[] supportedFpp = {1, 2, 4, 6};
+        int[] expectedCapacities = {20, 10, 5, 4};
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+
+        for (int idx = 0; idx < supportedFpp.length; idx++) {
+            int fpp = supportedFpp[idx];
+            int expectedCap = expectedCapacities[idx];
+
+            HumlaUDP humlaUDP = new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, fpp);
+            humlaUDP.setConnectedForTesting(true, loopback, 12345);
+
+            assertEquals("Target frames per packet should match configured value", fpp, humlaUDP.getTargetFramesPerPacket());
+            assertEquals("Queue capacity should match calculated expectation for fpp=" + fpp,
+                    expectedCap, humlaUDP.getSendQueueCapacity());
+
+            // Send double the capacity of numbered packets
+            int totalPackets = expectedCap * 2;
+            for (int i = 1; i <= totalPackets; i++) {
+                byte[] payload = new byte[]{(byte) i};
+                humlaUDP.sendMessage(payload, payload.length);
+            }
+
+            assertEquals("Queue must be capped at expected capacity for fpp=" + fpp,
+                    expectedCap, humlaUDP.getSendQueue().size());
+
+            // Verify freshest packets are retained in order (first expectedCap packets dropped)
+            int firstRetainedSeq = totalPackets - expectedCap + 1;
+            for (int expectedSeq = firstRetainedSeq; expectedSeq <= totalPackets; expectedSeq++) {
+                DatagramPacket packet = humlaUDP.getSendQueue().poll();
+                assertNotNull(packet);
+                byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
+                assertNotNull(decrypted);
+                assertEquals((byte) expectedSeq, decrypted[0]);
+            }
+        }
+    }
+
+    /**
+     * Verifies dynamic preference reconfiguration: changing targetFramesPerPacket at runtime
+     * adjusts capacity on the fly and immediately flushes excess stale packets if capacity decreased.
+     */
+    public void testSendQueueDynamicResizeFlushesExcessPackets() throws Exception {
+        HumlaUDP humlaUDP = new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, 1); // 10ms -> capacity 20
         InetAddress loopback = InetAddress.getByName("127.0.0.1");
         humlaUDP.setConnectedForTesting(true, loopback, 12345);
 
-        // Send 8 packets: 1 to 8
-        for (int i = 1; i <= 8; i++) {
+        assertEquals(20, humlaUDP.getSendQueueCapacity());
+
+        // Fill queue to 20 packets: 1 through 20
+        for (int i = 1; i <= 20; i++) {
             byte[] payload = new byte[]{(byte) i};
             humlaUDP.sendMessage(payload, payload.length);
         }
+        assertEquals(20, humlaUDP.getSendQueue().size());
 
-        assertEquals("Queue size must equal custom capacity", customCapacity, humlaUDP.getSendQueue().size());
+        // Dynamically change to 60ms packets (fpp=6, capacity 4) while connected
+        humlaUDP.setTargetFramesPerPacket(6);
 
-        // Packets 1-4 must have been dropped; 5-8 must remain
-        for (int expectedSeq = 5; expectedSeq <= 8; expectedSeq++) {
+        assertEquals(4, humlaUDP.getSendQueueCapacity());
+        assertEquals("Queue should immediately shrink to 4 packets", 4, humlaUDP.getSendQueue().size());
+
+        // The remaining 4 packets must be the 4 newest (17, 18, 19, 20)
+        for (int expectedSeq = 17; expectedSeq <= 20; expectedSeq++) {
             DatagramPacket packet = humlaUDP.getSendQueue().poll();
             assertNotNull(packet);
             byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
@@ -161,16 +238,45 @@ public class HumlaUDPSendQueueTest extends TestCase {
     }
 
     /**
-     * Verifies that constructing HumlaUDP with capacity <= 0 throws IllegalArgumentException.
+     * Verifies that explicit custom capacity queue bounds correctly and maintains drop-oldest policy.
+     */
+    public void testSendQueueExplicitCapacity() throws Exception {
+        int customCapacity = 3;
+        HumlaUDP humlaUDP = HumlaUDP.createWithExplicitCapacity(mClientCrypt, mDummyListener, mDummyHandler, customCapacity);
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        humlaUDP.setConnectedForTesting(true, loopback, 12345);
+
+        assertEquals(customCapacity, humlaUDP.getSendQueueCapacity());
+
+        // Send 6 packets: 1 to 6
+        for (int i = 1; i <= 6; i++) {
+            byte[] payload = new byte[]{(byte) i};
+            humlaUDP.sendMessage(payload, payload.length);
+        }
+
+        assertEquals("Queue size must equal explicit capacity", customCapacity, humlaUDP.getSendQueue().size());
+
+        // Packets 1-3 dropped; 4-6 remain
+        for (int expectedSeq = 4; expectedSeq <= 6; expectedSeq++) {
+            DatagramPacket packet = humlaUDP.getSendQueue().poll();
+            assertNotNull(packet);
+            byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
+            assertNotNull(decrypted);
+            assertEquals((byte) expectedSeq, decrypted[0]);
+        }
+    }
+
+    /**
+     * Verifies that explicit capacity <= 0 throws IllegalArgumentException.
      */
     public void testInvalidCapacityThrowsException() {
         try {
-            new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, 0);
+            HumlaUDP.createWithExplicitCapacity(mClientCrypt, mDummyListener, mDummyHandler, 0);
             fail("Capacity 0 should throw IllegalArgumentException");
         } catch (IllegalArgumentException expected) {}
 
         try {
-            new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, -5);
+            HumlaUDP.createWithExplicitCapacity(mClientCrypt, mDummyListener, mDummyHandler, -5);
             fail("Negative capacity should throw IllegalArgumentException");
         } catch (IllegalArgumentException expected) {}
     }
@@ -268,10 +374,10 @@ public class HumlaUDPSendQueueTest extends TestCase {
         assertTrue("Concurrent senders must finish within timeout", doneLatch.await(5, TimeUnit.SECONDS));
         executor.shutdown();
 
-        assertTrue("Observed queue size (" + maxObservedQueueSize.get() + ") must never exceed MAX_SEND_QUEUE_CAPACITY",
-                maxObservedQueueSize.get() <= HumlaUDP.MAX_SEND_QUEUE_CAPACITY);
-        assertEquals("Final queue size must be MAX_SEND_QUEUE_CAPACITY",
-                HumlaUDP.MAX_SEND_QUEUE_CAPACITY, humlaUDP.getSendQueue().size());
+        assertTrue("Observed queue size (" + maxObservedQueueSize.get() + ") must never exceed capacity",
+                maxObservedQueueSize.get() <= humlaUDP.getSendQueueCapacity());
+        assertEquals("Final queue size must be capacity",
+                humlaUDP.getSendQueueCapacity(), humlaUDP.getSendQueue().size());
     }
 
     /**
