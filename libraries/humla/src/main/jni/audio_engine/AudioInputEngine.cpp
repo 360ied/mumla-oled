@@ -23,31 +23,32 @@
 namespace mumla {
 namespace audio {
 
-AudioInputEngine::AudioInputEngine(int bitrate,
+AudioInputEngine::AudioInputEngine(std::unique_ptr<IVoiceEncoder> encoder,
+                                   std::unique_ptr<IDenoiser> denoiser,
                                    int framesPerPacket,
                                    float amplitudeBoost,
-                                   bool rnnoiseEnabled,
                                    bool adaptiveLevelerEnabled,
-                                   InputMode mode,
-                                   const uint8_t* rnnoiseModelData,
-                                   size_t rnnoiseModelSize)
-    : m_framesPerPacket((framesPerPacket == 1 || framesPerPacket == 2 || framesPerPacket == 4 || framesPerPacket == 6) ? framesPerPacket : 2),
+                                   InputMode mode)
+    : m_encoder(std::move(encoder)),
+      m_denoiser(std::move(denoiser)),
+      m_bitrate(m_encoder ? m_encoder->getBitrate() : 40000),
+      m_framesPerPacket((framesPerPacket == 1 || framesPerPacket == 2 || framesPerPacket == 4 || framesPerPacket == 6) ? framesPerPacket : 2),
       m_amplitudeBoost(amplitudeBoost),
       m_inputMode(mode),
       m_pttTalking(false),
+      m_pttHoldFramesRemaining(0),
       m_muted(false),
       m_talking(false),
       m_frameCounter(0),
       m_ringBuffer(8, SAMPLES_PER_10MS),
-      m_rnnoiseModelData(rnnoiseModelData != nullptr && rnnoiseModelSize > 0 ? std::vector<uint8_t>(rnnoiseModelData, rnnoiseModelData + rnnoiseModelSize) : std::vector<uint8_t>()),
-      m_rnnoise(rnnoiseEnabled, m_rnnoiseModelData.data(), m_rnnoiseModelData.size()),
       m_leveler(adaptiveLevelerEnabled),
       m_vad(),
-      m_opus(bitrate),
       m_processedFrame(SAMPLES_PER_10MS, 0),
-      m_accumulatedPcm(6 * SAMPLES_PER_10MS, 0),
+      m_accumulatedPcm(12 * SAMPLES_PER_10MS, 0),
       m_accumulatedFrames(0),
-      m_opusBuffer(MAX_OPUS_BUFFER_BYTES, 0) {}
+      m_opusBuffer(MAX_OPUS_BUFFER_BYTES, 0) {
+    m_packetsToDispatch.reserve(16);
+}
 
 void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
     if (pcm == nullptr || sampleCount == 0) {
@@ -57,14 +58,13 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
     bool notifyTalking = false;
     bool talkingState = false;
     float peakEnergy = 0.0f;
-    std::vector<DispatchedPacket> packetsToDispatch;
-    packetsToDispatch.reserve(4);
 
     AudioPacketCallback packetCb;
     TalkingStateCallback talkingCb;
 
     {
         std::unique_lock<std::mutex> lock(m_mutex);
+        m_packetsToDispatch.clear();
 
         // 1. Copy to local frame buffer
         size_t count = std::min(sampleCount, SAMPLES_PER_10MS);
@@ -77,7 +77,10 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         m_hpf.process(m_processedFrame.data(), SAMPLES_PER_10MS);
 
         // 3. Neural Denoising (RNNoise)
-        float speechProb = m_rnnoise.process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+        float speechProb = -1.0f;
+        if (m_denoiser) {
+            speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+        }
 
         // 4. Determine transmission state based on InputMode (Pre-Gain VAD evaluation)
         bool shouldTransmit = false;
@@ -87,7 +90,15 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
                 m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb);
                 break;
             case InputMode::PUSH_TO_TALK:
-                shouldTransmit = m_pttTalking;
+                if (m_pttTalking) {
+                    m_pttHoldFramesRemaining = PTT_HOLD_FRAMES;
+                    shouldTransmit = true;
+                } else if (m_pttHoldFramesRemaining > 0) {
+                    m_pttHoldFramesRemaining--;
+                    shouldTransmit = true;
+                } else {
+                    shouldTransmit = false;
+                }
                 m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb);
                 break;
             case InputMode::VOICE_ACTIVITY:
@@ -98,6 +109,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
 
         if (m_muted) {
             shouldTransmit = false;
+            m_pttHoldFramesRemaining = 0;
         }
 
         // 5. Speech-Gated Adaptive RMS Voice Leveling & Amplitude Boost (Unified Single-Pass Saturation)
@@ -115,28 +127,18 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
 
             if (!m_talking && shouldTransmit) {
                 // Speech onset: Flush the 80ms lookahead ring buffer through the encoder
-                m_ringBuffer.flush([this, &packetsToDispatch](const int16_t* bufferedPcm, size_t len) {
+                m_ringBuffer.flush([this](const int16_t* bufferedPcm, size_t len) {
                     std::memcpy(&m_accumulatedPcm[m_accumulatedFrames * SAMPLES_PER_10MS],
                                 bufferedPcm, len * sizeof(int16_t));
                     m_accumulatedFrames++;
                     m_frameCounter++;
-                    if (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
-                        flushAccumulatorLocked(false, packetsToDispatch);
+                    while (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
+                        flushAccumulatorLocked(false);
                     }
                 });
             } else if (m_talking && !shouldTransmit) {
                 // Speech terminated: Always dispatch a terminator packet
-                if (m_accumulatedFrames > 0) {
-                    flushAccumulatorLocked(true, packetsToDispatch);
-                } else {
-                    // Packet boundary offset: encode 1 packet of zeroed PCM silence with isTerminator = true
-                    // Opus encodes this into a valid ~3-byte silence frame accepted by all upstream clients
-                    std::memset(m_accumulatedPcm.data(), 0,
-                                static_cast<size_t>(m_framesPerPacket) * SAMPLES_PER_10MS * sizeof(int16_t));
-                    m_frameCounter += m_framesPerPacket;
-                    m_accumulatedFrames = m_framesPerPacket;
-                    flushAccumulatorLocked(true, packetsToDispatch);
-                }
+                flushAccumulatorLocked(true);
                 m_ringBuffer.clear();
             }
         }
@@ -148,8 +150,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             m_accumulatedFrames++;
             m_frameCounter++;
 
-            if (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
-                flushAccumulatorLocked(false, packetsToDispatch);
+            while (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
+                flushAccumulatorLocked(false);
             }
         } else if (!m_muted) {
             // Silence: store into lookahead ring buffer (only when not muted)
@@ -167,43 +169,63 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
     }
 
     if (packetCb) {
-        for (const auto& pkt : packetsToDispatch) {
+        for (const auto& pkt : m_packetsToDispatch) {
             packetCb(pkt.data, pkt.size, pkt.frames, pkt.isTerminator, pkt.frameNumber);
         }
     }
 }
 
-void AudioInputEngine::flushAccumulatorLocked(bool isTerminator, std::vector<DispatchedPacket>& packetsOut) {
-    if (m_accumulatedFrames == 0) {
+void AudioInputEngine::flushAccumulatorLocked(bool isTerminator) {
+    if (m_accumulatedFrames == 0 && !isTerminator) {
         return;
     }
 
-    // Zero-pad if underfilled
-    if (m_accumulatedFrames < static_cast<size_t>(m_framesPerPacket)) {
-        size_t missingFrames = static_cast<size_t>(m_framesPerPacket) - m_accumulatedFrames;
+    size_t targetFrames = static_cast<size_t>(m_framesPerPacket);
+
+    // If terminator and empty accumulator, encode full packet of silence
+    if (m_accumulatedFrames == 0 && isTerminator) {
+        std::memset(m_accumulatedPcm.data(), 0, targetFrames * SAMPLES_PER_10MS * sizeof(int16_t));
+        m_accumulatedFrames = targetFrames;
+        m_frameCounter += targetFrames;
+    } else if (m_accumulatedFrames < targetFrames) {
+        // Zero-pad if underfilled
+        size_t missingFrames = targetFrames - m_accumulatedFrames;
         std::memset(&m_accumulatedPcm[m_accumulatedFrames * SAMPLES_PER_10MS], 0,
                     missingFrames * SAMPLES_PER_10MS * sizeof(int16_t));
         m_frameCounter += missingFrames;
-        m_accumulatedFrames = m_framesPerPacket;
+        m_accumulatedFrames = targetFrames;
     }
 
-    size_t totalSamples = m_accumulatedFrames * SAMPLES_PER_10MS;
-    int encodedBytes = m_opus.encode(m_accumulatedPcm.data(), totalSamples,
-                                     m_opusBuffer.data(), m_opusBuffer.size());
+    if (!m_encoder) {
+        m_accumulatedFrames = 0;
+        return;
+    }
+
+    size_t totalSamples = targetFrames * SAMPLES_PER_10MS;
+    int encodedBytes = m_encoder->encode(m_accumulatedPcm.data(), totalSamples,
+                                         m_opusBuffer.data(), m_opusBuffer.size());
 
     if (encodedBytes > 0) {
         uint64_t startFrameNumber = m_frameCounter - m_accumulatedFrames;
-        DispatchedPacket pkt;
+        m_packetsToDispatch.emplace_back();
+        auto& pkt = m_packetsToDispatch.back();
         size_t copyLen = std::min(static_cast<size_t>(encodedBytes), sizeof(pkt.data));
         std::memcpy(pkt.data, m_opusBuffer.data(), copyLen);
         pkt.size = copyLen;
-        pkt.frames = static_cast<int>(m_accumulatedFrames);
+        pkt.frames = static_cast<int>(targetFrames);
         pkt.isTerminator = isTerminator;
         pkt.frameNumber = startFrameNumber;
-        packetsOut.push_back(pkt);
     }
 
-    m_accumulatedFrames = 0;
+    if (m_accumulatedFrames > targetFrames) {
+        size_t remainingFrames = m_accumulatedFrames - targetFrames;
+        std::memmove(m_accumulatedPcm.data(),
+                     &m_accumulatedPcm[targetFrames * SAMPLES_PER_10MS],
+                     remainingFrames * SAMPLES_PER_10MS * sizeof(int16_t));
+        m_accumulatedFrames = remainingFrames;
+    } else {
+        m_accumulatedFrames = 0;
+    }
 }
 
 void AudioInputEngine::setPacketCallback(AudioPacketCallback callback) {
@@ -218,6 +240,9 @@ void AudioInputEngine::setTalkingCallback(TalkingStateCallback callback) {
 
 void AudioInputEngine::setInputMode(InputMode mode) {
     std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_inputMode != mode && mode != InputMode::PUSH_TO_TALK) {
+        m_pttHoldFramesRemaining = 0;
+    }
     m_inputMode = mode;
 }
 
@@ -229,6 +254,9 @@ InputMode AudioInputEngine::getInputMode() const {
 void AudioInputEngine::setPttTalking(bool talking) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_pttTalking = talking;
+    if (talking) {
+        m_pttHoldFramesRemaining = PTT_HOLD_FRAMES;
+    }
 }
 
 bool AudioInputEngine::isPttTalking() const {
@@ -237,23 +265,16 @@ bool AudioInputEngine::isPttTalking() const {
 }
 
 void AudioInputEngine::setMuted(bool muted) {
-    bool notifyTalking = false;
-    TalkingStateCallback talkingCb;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_muted = muted;
-        if (muted) {
-            m_ringBuffer.clear();
-            m_accumulatedFrames = 0;
-            if (m_talking) {
-                m_talking = false;
-                notifyTalking = true;
-                talkingCb = m_talkingCallback;
-            }
-        }
-    }
-    if (notifyTalking && talkingCb) {
-        talkingCb(false, 0.0f);
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_muted = muted;
+    if (muted) {
+        m_ringBuffer.clear();
+        m_accumulatedFrames = 0;
+        m_pttHoldFramesRemaining = 0;
+        // Do not clear m_talking here. If speech was active, the audio thread
+        // in processFrame() will detect that transmission is gated, encode
+        // a silence terminator packet, set m_talking = false, and fire
+        // the talking state change callback.
     }
 }
 
@@ -264,12 +285,15 @@ bool AudioInputEngine::isMuted() const {
 
 void AudioInputEngine::setBitrate(int bitrate) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_opus.setBitrate(bitrate);
+    m_bitrate = bitrate;
+    if (m_encoder) {
+        m_encoder->setBitrate(bitrate);
+    }
 }
 
 int AudioInputEngine::getBitrate() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_opus.getBitrate();
+    return m_encoder ? m_encoder->getBitrate() : m_bitrate;
 }
 
 void AudioInputEngine::setFramesPerPacket(int framesPerPacket) {
@@ -297,12 +321,14 @@ float AudioInputEngine::getAmplitudeBoost() const {
 
 void AudioInputEngine::setRnnoiseEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_rnnoise.setEnabled(enabled);
+    if (m_denoiser) {
+        m_denoiser->setEnabled(enabled);
+    }
 }
 
 bool AudioInputEngine::isRnnoiseEnabled() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_rnnoise.isEnabled();
+    return m_denoiser ? m_denoiser->isEnabled() : false;
 }
 
 void AudioInputEngine::setAdaptiveLevelerEnabled(bool enabled) {
@@ -317,17 +343,14 @@ bool AudioInputEngine::isAdaptiveLevelerEnabled() const {
 
 void AudioInputEngine::setRnnoiseModel(const uint8_t* modelData, size_t modelSize) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (modelData != nullptr && modelSize > 0) {
-        m_rnnoiseModelData.assign(modelData, modelData + modelSize);
-    } else {
-        m_rnnoiseModelData.clear();
+    if (m_denoiser) {
+        m_denoiser->setModel(modelData, modelSize);
     }
-    m_rnnoise.setModel(m_rnnoiseModelData.data(), m_rnnoiseModelData.size());
 }
 
 bool AudioInputEngine::hasRnnoiseModel() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_rnnoise.hasModel();
+    return m_denoiser ? m_denoiser->hasModel() : false;
 }
 
 void AudioInputEngine::setVadThresholds(float vadMax, float vadMin) {
@@ -354,13 +377,19 @@ void AudioInputEngine::reset() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_hpf.reset();
     m_ringBuffer.clear();
-    m_rnnoise.reset();
+    if (m_denoiser) {
+        m_denoiser->reset();
+    }
     m_leveler.reset();
     m_vad.reset();
-    m_opus.reset();
+    if (m_encoder) {
+        m_encoder->reset();
+    }
     m_accumulatedFrames = 0;
     m_talking = false;
+    m_pttTalking = false;
     m_frameCounter = 0;
+    m_pttHoldFramesRemaining = 0;
 }
 
 } // namespace audio

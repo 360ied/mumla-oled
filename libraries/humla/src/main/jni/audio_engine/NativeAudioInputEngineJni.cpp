@@ -16,6 +16,8 @@
  */
 
 #include "AudioInputEngine.h"
+#include "OpusVoiceEncoder.h"
+#include "RnnoiseProcessor.h"
 
 #include <jni.h>
 #include <android/log.h>
@@ -76,17 +78,21 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
     }
 
     auto mode = static_cast<InputMode>(inputMode);
+    auto encoder = makeOpusVoiceEncoder(bitrate);
+    std::unique_ptr<IDenoiser> denoiser;
     if (rnnoiseModelData != nullptr) {
         jsize modelLen = env->GetArrayLength(rnnoiseModelData);
         jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
-        ctx->engine = std::make_unique<AudioInputEngine>(
-                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, mode,
-                reinterpret_cast<const uint8_t*>(modelBytes), static_cast<size_t>(modelLen));
+        denoiser = makeRnnoiseProcessor(rnnoiseEnabled,
+                                        reinterpret_cast<const uint8_t*>(modelBytes),
+                                        static_cast<size_t>(modelLen));
         env->ReleaseByteArrayElements(rnnoiseModelData, modelBytes, JNI_ABORT);
     } else {
-        ctx->engine = std::make_unique<AudioInputEngine>(
-                bitrate, framesPerPacket, amplitudeBoost, rnnoiseEnabled, adaptiveLevelerEnabled, mode);
+        denoiser = makeRnnoiseProcessor(rnnoiseEnabled, nullptr, 0);
     }
+    ctx->engine = std::make_unique<AudioInputEngine>(
+            std::move(encoder), std::move(denoiser),
+            framesPerPacket, amplitudeBoost, adaptiveLevelerEnabled, mode);
 
     ctx->engine->setPacketCallback([ctx](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
         if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr ||

@@ -26,6 +26,7 @@ void run_adaptive_leveler_tests();
 void run_hysteresis_vad_tests();
 void run_jitter_buffer_tests();
 void run_audio_output_engine_tests();
+void run_audio_input_engine_tests();
 
 int main() {
     std::cout << "========================================" << std::endl;
@@ -51,6 +52,9 @@ int main() {
     std::cout << std::endl;
 
     run_audio_output_engine_tests();
+    std::cout << std::endl;
+
+    run_audio_input_engine_tests();
     std::cout << std::endl;
 
     std::cout << "========================================" << std::endl;

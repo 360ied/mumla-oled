@@ -16,6 +16,7 @@ for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$ENGINE_DIR/SoftLimiter.cpp" \
          "$ENGINE_DIR/PreSpeechRingBuffer.cpp" \
          "$ENGINE_DIR/AdaptiveLeveler.cpp" \
+         "$ENGINE_DIR/AudioInputEngine.cpp" \
          "$ENGINE_DIR/AudioOutputEngine.cpp" \
          "$ENGINE_DIR/HysteresisVad.cpp" \
          "$TEST_DIR/test_biquad_filter.cpp" \
@@ -24,6 +25,7 @@ for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$TEST_DIR/test_adaptive_leveler.cpp" \
          "$TEST_DIR/test_hysteresis_vad.cpp" \
          "$TEST_DIR/test_jitter_buffer.cpp" \
+         "$TEST_DIR/test_audio_input_engine.cpp" \
          "$TEST_DIR/test_audio_output_engine.cpp" \
          "$TEST_DIR/run_audio_tests.cpp"; do
     if [[ ! -f "$f" ]]; then
@@ -45,6 +47,7 @@ CXX="${CXX:-g++}"
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/SoftLimiter.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp" \
+    "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp" \
     "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_biquad_filter.cpp" \
@@ -53,6 +56,7 @@ CXX="${CXX:-g++}"
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_adaptive_leveler.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_hysteresis_vad.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_jitter_buffer.cpp" \
+    "$ROOT_DIR/libraries/humla/src/test/cpp/test_audio_input_engine.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_audio_output_engine.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/run_audio_tests.cpp" \
     -o "$BUILD_DIR/test_audio_engine"
