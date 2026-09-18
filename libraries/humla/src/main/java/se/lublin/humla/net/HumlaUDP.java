@@ -22,6 +22,8 @@ import android.util.Log;
 
 import org.jetbrains.annotations.NotNull;
 
+import se.lublin.humla.Constants;
+
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -60,13 +62,13 @@ public class HumlaUDP implements Runnable {
     public static final int TARGET_BUFFER_DURATION_MS = 200;
 
     /** Duration in milliseconds of an individual Opus audio frame in Mumble. */
-    public static final int FRAME_DURATION_MS = 10;
+    public static final int FRAME_DURATION_MS = Constants.FRAME_DURATION_MS;
 
     /** Default frames per packet (2 frames @ 10ms = 20ms). */
-    public static final int DEFAULT_FRAMES_PER_PACKET = 2;
+    public static final int DEFAULT_FRAMES_PER_PACKET = Constants.DEFAULT_FRAMES_PER_PACKET;
 
     /** Default send queue capacity corresponding to standard 20ms frames (~200ms buffer). */
-    public static final int DEFAULT_SEND_QUEUE_CAPACITY = 10;
+    public static final int DEFAULT_SEND_QUEUE_CAPACITY = calculateQueueCapacity(DEFAULT_FRAMES_PER_PACKET);
 
     /** Backward-compatibility alias for tests and external callers. */
     public static final int MAX_SEND_QUEUE_CAPACITY = DEFAULT_SEND_QUEUE_CAPACITY;

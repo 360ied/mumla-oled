@@ -23,6 +23,7 @@ import android.util.Log;
 
 import com.google.protobuf.ByteString;
 
+import se.lublin.humla.Constants;
 import se.lublin.humla.R;
 import se.lublin.humla.audio.AudioInput;
 import se.lublin.humla.audio.AudioOutput;
@@ -35,6 +36,7 @@ import se.lublin.humla.exception.AudioException;
 import se.lublin.humla.exception.AudioInitializationException;
 import se.lublin.humla.model.User;
 import se.lublin.humla.net.HumlaConnection;
+import se.lublin.humla.net.HumlaUDP;
 import se.lublin.humla.net.HumlaUDPMessageType;
 import se.lublin.humla.net.PacketBuffer;
 import se.lublin.humla.protobuf.Mumble;
@@ -158,11 +160,7 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     private static int sanitizeFramesPerPacket(int fpp) {
-        // Opus supports 10ms, 20ms, 40ms, 60ms (1, 2, 4, 6 frames @ 10ms)
-        if (fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6) {
-            return fpp;
-        }
-        return 2; // Default 20ms
+        return HumlaUDP.sanitizeFramesPerPacket(fpp);
     }
 
     public synchronized void initialize(User self, int maxBandwidth, HumlaUDPMessageType codec) throws AudioException {
@@ -254,7 +252,7 @@ public class AudioHandler extends HumlaNetworkListener
             if (framesPerPacket <= 4 && maxBandwidth <= 32000) {
                 framesPerPacket = 4;
             } else if (framesPerPacket == 1 && maxBandwidth <= 64000) {
-                framesPerPacket = 2;
+                framesPerPacket = Constants.DEFAULT_FRAMES_PER_PACKET;
             } else if (framesPerPacket == 2 && maxBandwidth <= 48000) {
                 framesPerPacket = 4;
             }
@@ -502,7 +500,7 @@ public class AudioHandler extends HumlaNetworkListener
         private int mAudioStream;
         private int mAudioSource;
         private int mTargetBitrate;
-        private int mTargetFramesPerPacket;
+        private int mTargetFramesPerPacket = Constants.DEFAULT_FRAMES_PER_PACKET;
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
