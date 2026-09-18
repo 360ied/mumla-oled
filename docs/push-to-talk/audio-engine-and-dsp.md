@@ -7,8 +7,8 @@ This document details the low-level digital signal processing (DSP), buffering, 
 1. [Native Ingestion Pipeline](#native-ingestion-pipeline)
 2. [Defect Deep-Dive: Terminator Packet Dropping (PTT-01)](#defect-deep-dive-terminator-packet-dropping-ptt-01)
 3. [Defect Deep-Dive: Pre-Speech Ring Buffer Click Leakage (PTT-05)](#defect-deep-dive-pre-speech-ring-buffer-click-leakage-ptt-05)
-4. [Defect Deep-Dive: Abrupt Stream Cutoff & Lack of PTT Hangover (PTT-06)](#defect-deep-dive-abrupt-stream-cutoff-lack-of-ptt-hangover-ptt-06)
-5. [VAD Co-Execution & Metering Gaps](#vad-co-execution-metering-gaps)
+4. [Defect Deep-Dive: Abrupt Stream Cutoff & Lack of PTT Hangover (PTT-06)](#defect-deep-dive-abrupt-stream-cutoff--lack-of-ptt-hangover-ptt-06)
+5. [VAD Co-Execution & Metering Gaps](#vad-co-execution--metering-gaps)
 6. [Native Test Coverage Assessment (PTT-15)](#native-test-coverage-assessment-ptt-15)
 
 ---
