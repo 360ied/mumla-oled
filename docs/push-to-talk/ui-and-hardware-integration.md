@@ -7,7 +7,7 @@ This document details the user interface components, touch event handling, syste
 1. [In-App Push-to-Talk Button](#in-app-push-to-talk-button)
 2. [Defect Deep-Dive: Stuck Microphone on Touch Cancellation (PTT-02)](#defect-deep-dive-stuck-microphone-on-touch-cancellation-ptt-02)
 3. [Defect Deep-Dive: Button Height Display Density Bug (PTT-08)](#defect-deep-dive-button-height-display-density-bug-ptt-08)
-4. [Defect Deep-Dive: Disappearing PTT Button on Mute (PTT-09)](#defect-deep-dive-disappearing-ptt-button-on-mute-ptt-09)
+4. [Architectural Evaluation: PTT Button Collapse on Mute (PTT-09)](#architectural-evaluation-ptt-button-collapse-on-mute-ptt-09)
 5. [Visual State Inconsistency: `setPressed` vs `setActivated` (PTT-10)](#visual-state-inconsistency-setpressed-vs-setactivated-ptt-10)
 6. [PTT Hot Corner Overlay & The Soft-Keyboard Myth (PTT-13)](#ptt-hot-corner-overlay--the-soft-keyboard-myth-ptt-13)
 7. [Hardware Keys, Peripherals & Background Limitations (PTT-11, PTT-12)](#hardware-keys-peripherals--background-limitations-ptt-11-ptt-12)
@@ -129,7 +129,7 @@ mTalkButton.setLayoutParams(params);
 
 ---
 
-## Defect Deep-Dive: Disappearing PTT Button on Mute (PTT-09)
+## Architectural Evaluation: PTT Button Collapse on Mute (PTT-09)
 
 In [`ChannelFragment.java:313-328`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L313-L328):
 
@@ -153,14 +153,18 @@ setTalkButtonHidden(!showPttButton);
 
 When `muted` is true, `setTalkButtonHidden(true)` sets `mTalkView.setVisibility(View.GONE)`.
 
-### Why This is Detrimental
+PTT-09 originally flagged this as a defect, arguing that hiding the button caused jarring layout shifts and that the button should instead remain visible in a disabled state (`setEnabled(false)`).
 
-1. **Jarring Layout Shifts**:
-   When the user taps "Self Mute", the PTT button abruptly disappears. The entire channel list / chat pager jumps downward to fill the vacant space. When unmuted, the button pops back into existence, jarring the user.
-2. **Inconsistent with Hot Corner**:
-   [`MumlaHotCorner.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java) **does not hide** when muted; it remains pinned to the corner.
-3. **Better Paradigm**:
-   Standard UI practice is to keep the button visible but **disable** it (`setEnabled(false)`) with reduced opacity and a mute icon, providing clear visual status rather than an unexpected UI collapse.
+### Resolution: Closed as Won't Fix (Screen Real Estate Reclamation)
+
+Following product and ergonomic review, this behavior is classified as **Working as Intended** and marked **Closed (Won't Fix)**:
+
+1. **Massive Button Heights & Screen Real Estate**:
+   Mumla allows users to configure the PTT button to be very large (up to 200–250dp, occupying almost half of the total screen height) to facilitate easy, blind touch interaction while driving, walking, or gaming. When self-muted or server-suppressed, transmission is impossible. Keeping a massive disabled block pinned to the screen wastes valuable vertical space and needlessly obstructs the channel hierarchy, participant list, and chat view.
+2. **Feature, Not a Bug**:
+   Collapsing the button (`View.GONE`) upon muting frees up significant screen real estate, allowing users to comfortably read chat and browse channels while muted.
+3. **Deliberate User Action**:
+   Muting and unmuting are deliberate, user-initiated actions (e.g. tapping the mute action in the top bar). Concerns regarding "jarring layout shifts" are overwrought; users expect the UI to adapt when they explicitly toggle mute.
 
 ---
 

@@ -229,26 +229,21 @@ private void configureInput() {
 
 ---
 
-### 3.2 Display Disabled State Instead of Hiding PTT Button on Mute (PTT-09)
+### 3.2 Retain PTT Button Collapse on Mute (PTT-09) — CLOSED (WON'T FIX)
+
+**Status**: Closed as Won't Fix (Working as Intended).
 
 **Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L323-L333)
 
-**Solution**:
-Keep `mTalkView` visible when PTT mode is enabled. Enable or disable `mTalkButton` based on mute status:
+**Evaluation & Decision**:
+PTT-09 originally proposed keeping the PTT button visible in a disabled state (`setEnabled(false)`) when muted or suppressed, arguing that setting `View.GONE` caused jarring layout shifts.
 
-```java
-boolean isPtt = settings.getInputMethod().equals(Settings.ARRAY_INPUT_METHOD_PTT);
-boolean showPtt = settings.isPushToTalkButtonShown() && isPtt;
-mTalkView.setVisibility(showPtt ? View.VISIBLE : View.GONE);
+Upon architectural and ergonomic review, this proposal was rejected:
+1. **Screen Real Estate Reclamation**: Mumla allows users to configure the PTT button to be very large (occupying up to half the screen height) for comfortable blind targeting while gaming, walking, or driving. When muted, transmission is completely blocked; preserving an inactive button across half the screen wastes critical viewport space and blocks the channel hierarchy and chat.
+2. **Intentional User Flow**: Muting is an explicit user action. Reclaiming the viewport space is an intentional feature, not an unexpected layout defect.
+3. **No String Bloat**: Avoids introducing unnecessary disabled state strings (`R.string.ptt_muted`) or complex alpha animation states.
 
-if (showPtt) {
-    mTalkButton.setEnabled(!muted);
-    mTalkButton.setAlpha(muted ? 0.4f : 1.0f);
-    mTalkButton.setText(muted ? R.string.ptt_muted : R.string.ptt);
-}
-```
-
-*(Note: Define `ptt_muted` in [`app/src/main/res/values/strings.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/values/strings.xml) as `"Muted"` to support the disabled button text).*
+**Outcome**: No code modifications required. The existing `setTalkButtonHidden(true)` collapse behavior is retained as designed.
 
 ---
 
