@@ -65,9 +65,9 @@
         app:useSimpleSummaryProvider="true"
         android:summary="@string/pttButtonHeightSum"
         app:multiplier="10"
-        app:max="100"
-        app:min="15"
-        android:defaultValue="15"
+        app:max="40"
+        app:min="4"
+        android:defaultValue="5"
         android:text=" dp"
         app:iconSpaceReserved="false" />
 
