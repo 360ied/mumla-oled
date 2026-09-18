@@ -112,7 +112,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private String mServerOSVersion;
     private volatile int mMaxBandwidth;
     private HumlaUDPMessageType mCodec;
-    private int mTargetFramesPerPacket = HumlaUDP.DEFAULT_FRAMES_PER_PACKET;
+    private volatile int mTargetFramesPerPacket = HumlaUDP.DEFAULT_FRAMES_PER_PACKET;
 
     // Session
     private int mSession;
@@ -440,8 +440,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
     public void setTargetFramesPerPacket(int targetFramesPerPacket) {
         mTargetFramesPerPacket = targetFramesPerPacket;
-        if (mUDP != null) {
-            mUDP.setTargetFramesPerPacket(targetFramesPerPacket);
+        final HumlaUDP udp = mUDP;
+        if (udp != null) {
+            udp.setTargetFramesPerPacket(targetFramesPerPacket);
         }
     }
 
