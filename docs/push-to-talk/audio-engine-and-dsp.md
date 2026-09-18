@@ -6,7 +6,7 @@ This document details the low-level digital signal processing (DSP), buffering, 
 
 1. [Native Ingestion Pipeline](#native-ingestion-pipeline)
 2. [Defect Deep-Dive: Terminator Packet Dropping (PTT-01)](#defect-deep-dive-terminator-packet-dropping-ptt-01)
-3. [Defect Deep-Dive: Pre-Speech Ring Buffer Click Leakage (PTT-05)](#defect-deep-dive-pre-speech-ring-buffer-click-leakage-ptt-05)
+3. [Architectural Evaluation: Pre-Speech Ring Buffer in PTT (PTT-05)](#architectural-evaluation-pre-speech-ring-buffer-in-ptt-ptt-05)
 4. [Defect Deep-Dive: Abrupt Stream Cutoff & Lack of PTT Hangover (PTT-06)](#defect-deep-dive-abrupt-stream-cutoff--lack-of-ptt-hangover-ptt-06)
 5. [VAD Co-Execution & Metering Gaps](#vad-co-execution--metering-gaps)
 6. [Native Test Coverage Assessment (PTT-15)](#native-test-coverage-assessment-ptt-15)
@@ -132,7 +132,7 @@ When `m_accumulatedFrames == 0`:
 
 ---
 
-## Defect Deep-Dive: Pre-Speech Ring Buffer Click Leakage (PTT-05)
+## Architectural Evaluation: Pre-Speech Ring Buffer in PTT (PTT-05)
 
 ### The Mechanism
 
@@ -140,7 +140,7 @@ When `m_accumulatedFrames == 0`:
 
 In Voice Activity Detection (VAD) mode, this lookahead buffer is essential: neural networks and energy detectors require 20–40ms of speech energy to exceed onset thresholds. Flushing the lookahead buffer ensures that leading unvoiced consonants (/p/, /t/, /k/, /s/) are not clipped.
 
-### The Code Flaw
+### The Original Finding
 
 In [`AudioInputEngine.cpp:116-126`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126):
 
@@ -159,7 +159,7 @@ if (!m_talking && shouldTransmit) {
 }
 ```
 
-Crucially, [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L148) is continuously fed whenever the client is unmuted:
+Crucially, [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157) is continuously fed whenever the client is unmuted:
 
 ```cpp
 } else if (!m_muted) {
@@ -168,12 +168,28 @@ Crucially, [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-
 }
 ```
 
-### Impact in Push-to-Talk Mode
+PTT-05 originally noted that in Push-to-Talk mode, flushing this 80ms buffer could transmit the acoustic "thump" of a finger striking the touchscreen, a mechanical switch click, or a sharp pre-speech breath.
 
-In Push-to-Talk mode, the user deliberately chooses when audio transmission begins. At the instant PTT transitions to `true`:
-- The ring buffer contains the **80ms of acoustic audio immediately preceding the button press**.
-- This audio includes the **mechanical switch click** of a physical key, the **acoustic "thump"** of a finger striking the touchscreen, sharp inhalations, or private conversations.
-- This 80ms buffer is encoded into two full 20ms Opus packets and transmitted over the network before the user's intended speech begins.
+### Resolution: Closed as Won't Fix (Working as Intended)
+
+Following thorough review, this behavior was reclassified as **Working as Intended** and marked **Closed (Won't Fix)** for the following architectural and psychoacoustic reasons:
+
+1. **Android Capacitive Touch Latency ($\approx 30\text{--}60\text{ms}$)**:
+   Physical touch contact on Android is not instantaneous. Between hardware touch digitizer scanning/debounce, Linux `evdev`, Android `InputDispatcher`, UI Looper/Choreographer dispatch, and JNI bridging into [`AudioInputEngine::setPttTalking`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L240), an unavoidable delay of 30–60ms elapses.
+   Because the low-latency Oboe/AAudio recording stream is active continuously, clearing the ring buffer on PTT onset discards all speech captured during this physical touch latency window.
+
+2. **Human Coarticulation & Speech Anticipation**:
+   Speakers routinely begin vocalizing simultaneously with or slightly before their finger makes contact with the screen. Discarding the pre-speech buffer in PTT mode guarantees clipping of leading plosives and unvoiced consonants (/p/, /t/, /k/, /s/), causing severe conversational degradation ("...opy that" instead of "Copy that").
+
+3. **Acoustic Mitigation via High-Pass Filtering and Neural Denoising**:
+   - The infrasonic high-pass filter (<90Hz) in [`AudioInputEngine::processPcm`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L77) strips out the sub-bass mechanical chassis thump from touchscreen taps.
+   - [`RNNoise`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L80) processes frames *prior* to [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157), suppressing non-speech transients during silence.
+
+4. **Privacy & Duration**:
+   80ms ($0.08\text{s}$) is less than the duration of an average phoneme or syllable; it is physically impossible to leak intelligible private speech.
+
+5. **Symmetry with PTT-06 (PTT Release Hangover)**:
+   The pre-speech ring buffer protects the **head** (speech onset) against touch latency, while PTT release hangover ([PTT-06](#defect-deep-dive-abrupt-stream-cutoff--lack-of-ptt-hangover-ptt-06)) protects the **tail** (speech termination) against premature button release. Retaining the 80ms lookahead ensures natural, unclipped voice transmission.
 
 ---
 
