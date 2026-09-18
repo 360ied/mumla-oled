@@ -46,7 +46,7 @@ public class HumlaUDP implements Runnable {
     private DatagramSocket mUDPSocket;
     private final UDPConnectionListener mListener;
     private String mHost;
-    private int mPort;
+    private volatile int mPort;
     private volatile InetAddress mResolvedHost;
     private volatile boolean mConnected;
 
@@ -192,14 +192,15 @@ public class HumlaUDP implements Runnable {
     }
 
     public void sendMessage(@NotNull final byte[] data, final int length) {
-        if (!mCryptState.isValid() || !mConnected || mResolvedHost == null) {
+        final InetAddress resolvedHost = mResolvedHost;
+        if (!mCryptState.isValid() || !mConnected || resolvedHost == null) {
             return;
         }
 
         try {
             byte[] encryptedData = mCryptState.encrypt(data, length);
             final DatagramPacket packet = new DatagramPacket(encryptedData, encryptedData.length);
-            packet.setAddress(mResolvedHost);
+            packet.setAddress(resolvedHost);
             packet.setPort(mPort);
 
             // Non-blocking offer; if full, evict the oldest packet (head drop / drop-oldest) to prioritize fresh audio
@@ -232,6 +233,7 @@ public class HumlaUDP implements Runnable {
      */
     public void disconnect() {
         mConnected = false;
+        mSendQueue.clear();
         // Closing a socket will trigger an IOException on the consumer thread.
         if (mUDPSocket != null) {
             mUDPSocket.close();

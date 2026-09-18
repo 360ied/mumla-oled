@@ -217,9 +217,8 @@ public class HumlaUDPSendQueueTest extends TestCase {
         assertEquals(5, humlaUDP.getSendQueue().size());
 
         humlaUDP.disconnect();
-        // Disconnect sets mConnected = false and closes socket.
-        // Queue clear is performed in run() finally block or caller disconnect.
         assertFalse(humlaUDP.isRunning());
+        assertTrue("Send queue must be empty after disconnect", humlaUDP.getSendQueue().isEmpty());
     }
 
     /**
