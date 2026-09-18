@@ -47,6 +47,7 @@ import se.lublin.humla.HumlaService;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.WhisperTarget;
 import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaObserver;
@@ -92,19 +93,10 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                 Log.d(TAG, "exception in onUserTalkStateUpdated: " + e);
                 return;
             }
-            if (user != null && user.getSession() == selfSession) {
-                // Manually set button selection colour when we receive a talk state update.
+            if (user != null && user.getSession() == selfSession && mTalkButton != null) {
+                // Manually set button activation state when we receive a talk state update.
                 // This allows representation of talk state when using hot corners and PTT toggle.
-                switch (user.getTalkState()) {
-                case TALKING:
-                case SHOUTING:
-                case WHISPERING:
-                    mTalkButton.setPressed(true);
-                    break;
-                case PASSIVE:
-                    mTalkButton.setPressed(false);
-                    break;
-                }
+                mTalkButton.setActivated(isTalkingState(user.getTalkState()));
             }
         }
 
@@ -163,16 +155,19 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        v.setPressed(true);
                         if (getService() != null) {
                             getService().onTalkKeyDown();
                         }
                         break;
                     case MotionEvent.ACTION_UP:
+                        v.setPressed(false);
                         if (getService() != null) {
                             getService().onTalkKeyUp();
                         }
                         break;
                     case MotionEvent.ACTION_CANCEL:
+                        v.setPressed(false);
                         if (getService() != null) {
                             getService().onTalkKeyCancel();
                         }
@@ -252,8 +247,20 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     @Override
     public void onPause() {
         super.onPause();
+        if (mTalkButton != null) {
+            mTalkButton.setPressed(false);
+        }
         if (getService() != null) {
             getService().onTalkKeyCancel();
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (mTalkButton != null) {
+            mTalkButton.setActivated(false);
+            mTalkButton.setPressed(false);
         }
     }
 
@@ -303,24 +310,74 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     /**
+     * Converts the configured PTT button height (in dp) to physical pixels using display metrics.
+     */
+    static int calculateButtonHeightPx(int heightDp, android.util.DisplayMetrics metrics) {
+        if (heightDp <= 0) {
+            return heightDp;
+        }
+        if (metrics == null) {
+            return heightDp;
+        }
+        float px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, heightDp, metrics);
+        if (px > 0) {
+            return Math.max(1, Math.round(px));
+        }
+        float density = metrics.density > 0 ? metrics.density : 1.0f;
+        return Math.max(1, Math.round(heightDp * density));
+    }
+
+    /**
+     * Evaluates whether a talk state corresponds to an active transmission state.
+     */
+    static boolean isTalkingState(TalkState state) {
+        if (state == null) {
+            return false;
+        }
+        switch (state) {
+        case TALKING:
+        case SHOUTING:
+        case WHISPERING:
+            return true;
+        case PASSIVE:
+        default:
+            return false;
+        }
+    }
+
+    /**
      * Configures the fragment in accordance with the user's interface preferences.
      */
     private void configureInput() {
+        if (!isAdded() || getActivity() == null || mTalkButton == null) {
+            return;
+        }
         Settings settings = Settings.getInstance(getActivity());
 
-        ViewGroup.LayoutParams params = mTalkView.getLayoutParams();
-        params.height = settings.getPTTButtonHeight();
-        mTalkButton.setLayoutParams(params);
+        int heightDp = settings.getPTTButtonHeight();
+        int heightPx = calculateButtonHeightPx(
+                heightDp,
+                getResources() != null ? getResources().getDisplayMetrics() : null);
+
+        ViewGroup.LayoutParams params = mTalkButton.getLayoutParams();
+        if (params != null) {
+            params.height = heightPx;
+            mTalkButton.setLayoutParams(params);
+        }
 
         boolean muted = false;
         if (getService() != null && getService().isConnected()) {
             IUser self = null;
             try {
-                self = getService().HumlaSession().getSessionUser();
+                IHumlaSession session = getService().HumlaSession();
+                mTalkButton.setActivated(session.isTalking());
+                self = session.getSessionUser();
             } catch (HumlaDisconnectedException|IllegalStateException e) {
                 Log.d(TAG, "exception in configureInput: " + e);
             }
             muted = self == null || self.isMuted() || self.isSuppressed() || self.isSelfMuted();
+        } else {
+            mTalkButton.setActivated(false);
         }
         boolean showPttButton =
                 !muted &&
@@ -331,6 +388,10 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
 
     private void setTalkButtonHidden(final boolean hidden) {
         mTalkView.setVisibility(hidden ? View.GONE : View.VISIBLE);
+        if (hidden && mTalkButton != null) {
+            mTalkButton.setActivated(false);
+            mTalkButton.setPressed(false);
+        }
         mTalkButtonHidden = hidden;
     }
 

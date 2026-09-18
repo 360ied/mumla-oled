@@ -6,7 +6,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 1. [Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED](#phase-1-critical-protocol--audio-fixes-p0--completed)
 2. [Phase 2: DSP Quality & Acoustic Refinements (P1) — COMPLETED](#phase-2-dsp-quality--acoustic-refinements-p1--completed)
-3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux--display-density-repairs-p2)
+3. [Phase 3: UI/UX & Display Density Repairs (P2) — COMPLETED](#phase-3-uiux--display-density-repairs-p2--completed)
 4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral--background-support-p3)
 
 ---
@@ -216,27 +216,41 @@ Constructed a dedicated test suite verifying:
 
 ---
 
-## Phase 3: UI/UX & Display Density Repairs (P2)
+## Phase 3: UI/UX & Display Density Repairs (P2) — COMPLETED
 
-### 3.1 Fix PTT Button Height Density Conversion (PTT-08)
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 3 remediation items (PTT-08, PTT-09, PTT-10, and PTT-14) have been implemented, tested, and resolved in branch `bugfix/ptt-phase3-remediation` (commit [`a5e77e57`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java)): PTT-08 resolved with density-independent pixel conversion via `calculateButtonHeightPx` and unit tests in [`ChannelFragmentDensityTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/channel/ChannelFragmentDensityTest.java); PTT-09 closed as won't fix/working as intended; PTT-10 resolved by decoupling touch `setPressed` from sustained audio talk state `setActivated`; PTT-14 resolved with low-latency `SoundPool` audio cue feedback on `STREAM_MUSIC`/`STREAM_VOICE_CALL` using upstream Mumble radio chirps on both activation and deactivation with unit tests in [`MumlaServiceTalkKeyTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java).
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L306-L312)
+### 3.1 Fix PTT Button Height Density Conversion (PTT-08) — RESOLVED
+
+**Status**: Resolved in branch `bugfix/ptt-phase3-remediation`.
+
+**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L321-L342)
+
+**Problem**: `settings.getPTTButtonHeight()` returns dp, but `mTalkButton.setLayoutParams(params)` directly assigned the dp integer as raw physical pixels, shrinking the button by $3\times$–$4\times$ on modern high-DPI displays below Google's 48dp accessibility guideline. Furthermore, the legacy preference configuration in `settings_appearance.xml` used bounds (150–1000) intended for raw pixels, which produced excessive heights (up to 3000px) once density scaling was active.
 
 **Solution**:
-Convert `settings.getPTTButtonHeight()` from dp to physical pixels using display metrics:
+Convert `settings.getPTTButtonHeight()` from dp to physical pixels using display metrics, and recalibrate the preference bounds in `settings_appearance.xml` and `Settings.java` to sane `dp` values: min $40\text{ dp}$, default $50\text{ dp}$, max $400\text{ dp}$ with defensive bounds clamping:
 
 ```java
 private void configureInput() {
+    if (!isAdded() || getActivity() == null || mTalkButton == null) {
+        return;
+    }
     Settings settings = Settings.getInstance(getActivity());
+
     int heightDp = settings.getPTTButtonHeight();
-    int heightPx = (int) TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
+    int heightPx = calculateButtonHeightPx(
             heightDp,
-            getResources().getDisplayMetrics());
+            getResources() != null ? getResources().getDisplayMetrics() : null);
 
     ViewGroup.LayoutParams params = mTalkButton.getLayoutParams();
-    params.height = heightPx;
-    mTalkButton.setLayoutParams(params);
+    if (params != null) {
+        params.height = heightPx;
+        mTalkButton.setLayoutParams(params);
+    }
     ...
 }
 ```
@@ -261,24 +275,32 @@ Upon architectural and ergonomic review, this proposal was rejected:
 
 ---
 
-### 3.3 Harmonize Visual States (`setActivated`) (PTT-10)
+### 3.3 Harmonize Visual States (`setActivated`) (PTT-10) — RESOLVED
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L98-L107)
+**Status**: Resolved in branch `bugfix/ptt-phase3-remediation`.
+
+**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L95-L107), [`ptt_button_tint.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/drawable/ptt_button_tint.xml#L6)
+
+**Problem**: Calling `mTalkButton.setPressed(true)` in `onUserTalkStateUpdated` conflicted with Android's touch dispatch pipeline, which automatically clears pressed state upon finger lift (`ACTION_UP`), creating visible flickering in toggle mode.
 
 **Solution**:
-Use `mTalkButton.setActivated(true)` to represent sustained talking state (especially in toggle mode), preventing conflicts with touch dispatch `setPressed()`.
+Use `mTalkButton.setActivated(true)` to represent sustained talking state (activating the existing `state_activated="true"` selector rule in `ptt_button_tint.xml`), while setting `setPressed(true)` on `ACTION_DOWN` and clearing on `ACTION_UP`/`ACTION_CANCEL` for instant touch feedback without conflict.
 
 ---
 
-### 3.4 Replace `playSoundEffect` with Low-Latency `SoundPool` (PTT-14)
+### 3.4 Replace `playSoundEffect` with Low-Latency `SoundPool` (PTT-14) — RESOLVED
 
-**Component**: [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L458-L464)
+**Status**: Resolved in branch `bugfix/ptt-phase3-remediation`.
+
+**Component**: [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L465-L545), [`res/raw/ptt_on.ogg`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/raw/ptt_on.ogg), [`res/raw/ptt_off.ogg`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/raw/ptt_off.ogg)
+
+**Problem**: `AudioManager.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD)` depends on the global Android system setting `Settings.System.SOUND_EFFECTS_ENABLED`, rendering PTT completely silent when typing clicks are turned off, and provided no deactivation cue upon releasing PTT.
 
 **Solution**:
-Pre-load two short audio clips (PTT On chirp, PTT Off chirp) into an Android `SoundPool` on `STREAM_MUSIC` / `STREAM_VOICE_CALL`:
+Integrated Android's low-latency `SoundPool` with upstream Mumble radio chirps (`ptt_on.ogg`, `ptt_off.ogg`), routing to `STREAM_VOICE_CALL` / `STREAM_MUSIC` matching handset/headset mode:
 - Plays reliably regardless of whether system touch sounds are disabled.
-- Plays on both activation and deactivation.
-- Provides tactile acoustic feedback matching radio standards.
+- Plays distinct radio chirp cues on both activation and deactivation.
+- Maintains talk state transition tracking (`mSelfTalking`) to eliminate duplicate cues.
 
 ---
 

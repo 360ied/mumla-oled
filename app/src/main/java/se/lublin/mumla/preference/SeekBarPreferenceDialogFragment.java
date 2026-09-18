@@ -45,8 +45,10 @@ public class SeekBarPreferenceDialogFragment extends PreferenceDialogFragmentCom
         // The persisted value is always multiplied, but the default value in the XML is not (nor
         // are the min and max values in the XML). Make this variable contain the correct
         // multiplier value in both cases.
-        mCurrentValue = requireNonNull(preference.getSharedPreferences())
+        int rawValue = requireNonNull(preference.getSharedPreferences())
                 .getInt(preference.getKey(), preference.mDefaultValue * mMultiplier);
+        mCurrentValue = Math.min(preference.mMax * mMultiplier,
+                Math.max(preference.mMin * mMultiplier, rawValue));
         updateValueView();
 
         seekBar.setMax(preference.mMax - mMin);

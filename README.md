@@ -223,7 +223,7 @@ Mumla OLED stands on the shoulders of the open-source community:
 
 - **[Andrew Comminos](https://github.com/acomminos)**: Original creator of **Plumble** and **Jumble**.
 - **[Daniel Lublin](https://lublin.se)**: Creator and maintainer of **Mumla** and **Humla**.
-- **The [Mumble](https://www.mumble.info) Team**: For developing and maintaining the Mumble protocol and server architecture.
+- **The [Mumble](https://www.mumble.info) Team**: For developing and maintaining the Mumble protocol and desktop client, including the push-to-talk audio chirps (`ptt_on.ogg`, `ptt_off.ogg`) distributed under the 3-Clause BSD License (Copyright (C) 2005-2023 The Mumble Developers).
 - **[Jean-Marc Valin](https://jmvalin.ca/) & the Xiph.Org / Mozilla Teams**: For the Opus codec, Speex DSP, and the RNNoise deep learning noise suppression project.
 
 ---
