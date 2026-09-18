@@ -542,6 +542,10 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
+        public int getTargetFramesPerPacket() {
+            return mTargetFramesPerPacket;
+        }
+
         public Builder setInputSampleRate(int inputSampleRate) {
             mInputSampleRate = inputSampleRate;
             return this;

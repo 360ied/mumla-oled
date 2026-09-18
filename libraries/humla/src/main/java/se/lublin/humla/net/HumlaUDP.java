@@ -56,14 +56,58 @@ public class HumlaUDP implements Runnable {
     /** Handler to invoke listener callback invocations on. */
     private final Handler mCallbackHandler;
 
-    /** Maximum queued outgoing datagrams (~200ms of audio buffer at 20ms frames). */
-    public static final int MAX_SEND_QUEUE_CAPACITY = 10;
+    /** Target audio buffer duration in milliseconds (~200ms for real-time conversational interactivity). */
+    public static final int TARGET_BUFFER_DURATION_MS = 200;
+
+    /** Duration in milliseconds of an individual Opus audio frame in Mumble. */
+    public static final int FRAME_DURATION_MS = 10;
+
+    /** Default frames per packet (2 frames @ 10ms = 20ms). */
+    public static final int DEFAULT_FRAMES_PER_PACKET = 2;
+
+    /** Default send queue capacity corresponding to standard 20ms frames (~200ms buffer). */
+    public static final int DEFAULT_SEND_QUEUE_CAPACITY = 10;
+
+    /** Backward-compatibility alias for tests and external callers. */
+    public static final int MAX_SEND_QUEUE_CAPACITY = DEFAULT_SEND_QUEUE_CAPACITY;
 
     /** Bounded queue of outgoing packets to be sent. */
     private final BlockingQueue<DatagramPacket> mSendQueue;
 
+    /** Lock guarding compound offer/poll queue eviction and dynamic capacity adjustments. */
+    private final Object mSendLock = new Object();
+
+    /** Audio frames per packet (1=10ms, 2=20ms, 4=40ms, 6=60ms). */
+    private volatile int mTargetFramesPerPacket;
+
+    /** Current send queue capacity in packets, calculated to bound latency to ~200ms. */
+    private volatile int mSendQueueCapacity;
+
     /**
-     * Sets up a new UDP connection context.
+     * Calculates the send queue capacity in packets to maintain ~200ms of real-time audio
+     * buffer headroom for the given frames-per-packet setting.
+     *
+     * @param framesPerPacket Number of 10ms frames per audio packet (1, 2, 4, 6).
+     * @return Queue capacity bounded to maintain ~200ms target latency.
+     */
+    public static int calculateQueueCapacity(int framesPerPacket) {
+        int fpp = sanitizeFramesPerPacket(framesPerPacket);
+        int packetDurationMs = fpp * FRAME_DURATION_MS;
+        return Math.max(2, (int) Math.ceil((double) TARGET_BUFFER_DURATION_MS / packetDurationMs));
+    }
+
+    /**
+     * Sanitizes frames-per-packet to valid Opus configurations (1, 2, 4, 6).
+     */
+    public static int sanitizeFramesPerPacket(int fpp) {
+        if (fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6) {
+            return fpp;
+        }
+        return DEFAULT_FRAMES_PER_PACKET;
+    }
+
+    /**
+     * Sets up a new UDP connection context with the default 20ms frames per packet.
      * @param cryptState Cryptographic state provider.
      * @param listener Callback target. Connection state callbacks will be posted on the callback handler given;
      *                 data callbacks are delivered directly on the UDP receive thread.
@@ -71,26 +115,41 @@ public class HumlaUDP implements Runnable {
      */
     public HumlaUDP(@NotNull CryptState cryptState, @NotNull UDPConnectionListener listener,
                      @NotNull Handler callbackHandler) {
-        this(cryptState, listener, callbackHandler, MAX_SEND_QUEUE_CAPACITY);
+        this(cryptState, listener, callbackHandler, DEFAULT_FRAMES_PER_PACKET);
     }
 
     /**
-     * Sets up a new UDP connection context with a custom send queue capacity.
+     * Sets up a new UDP connection context with a specified frames-per-packet setting.
+     * The send queue capacity is dynamically calculated to target ~200ms of real-time audio buffer.
+     *
      * @param cryptState Cryptographic state provider.
      * @param listener Callback target.
      * @param callbackHandler Handler to post listener invocations on.
-     * @param sendQueueCapacity Maximum number of packets queued before evicting oldest.
+     * @param targetFramesPerPacket Audio frames per packet (1=10ms, 2=20ms, 4=40ms, 6=60ms).
      */
-    HumlaUDP(@NotNull CryptState cryptState, @NotNull UDPConnectionListener listener,
-             @NotNull Handler callbackHandler, int sendQueueCapacity) {
-        if (sendQueueCapacity <= 0) {
-            throw new IllegalArgumentException("sendQueueCapacity must be > 0");
-        }
+    public HumlaUDP(@NotNull CryptState cryptState, @NotNull UDPConnectionListener listener,
+                    @NotNull Handler callbackHandler, int targetFramesPerPacket) {
         mCryptState = cryptState;
         mListener = listener;
         mCallbackHandler = callbackHandler;
         mDatagramThread = new Thread(this);
-        mSendQueue = new LinkedBlockingQueue<>(sendQueueCapacity);
+        mSendQueue = new LinkedBlockingQueue<>();
+        setTargetFramesPerPacket(targetFramesPerPacket);
+    }
+
+    /**
+     * Factory method to create HumlaUDP with an explicit queue capacity (primarily for testing).
+     */
+    static HumlaUDP createWithExplicitCapacity(@NotNull CryptState cryptState,
+                                               @NotNull UDPConnectionListener listener,
+                                               @NotNull Handler callbackHandler,
+                                               int explicitCapacity) {
+        if (explicitCapacity <= 0) {
+            throw new IllegalArgumentException("sendQueueCapacity must be > 0");
+        }
+        HumlaUDP udp = new HumlaUDP(cryptState, listener, callbackHandler);
+        udp.setSendQueueCapacity(explicitCapacity);
+        return udp;
     }
 
     public void connect(@NotNull String host, @NotNull int port) {
@@ -183,7 +242,9 @@ public class HumlaUDP implements Runnable {
             }
 
             // Clear the outgoing queue, in case the caller decides to reconnect with the same socket.
-            mSendQueue.clear();
+            synchronized (mSendLock) {
+                mSendQueue.clear();
+            }
 
             if (mUDPSocket != null) {
                 mUDPSocket.close();
@@ -203,12 +264,54 @@ public class HumlaUDP implements Runnable {
             packet.setAddress(resolvedHost);
             packet.setPort(mPort);
 
-            // Non-blocking offer; if full, evict the oldest packet (head drop / drop-oldest) to prioritize fresh audio
-            while (!mSendQueue.offer(packet)) {
-                mSendQueue.poll();
+            // Synchronized block guarantees atomic head-drop eviction and strict capacity bounding
+            synchronized (mSendLock) {
+                while (mSendQueue.size() >= mSendQueueCapacity) {
+                    mSendQueue.poll();
+                }
+                mSendQueue.offer(packet);
             }
         } catch (BadPaddingException | IllegalBlockSizeException | ShortBufferException e) {
             Log.w(TAG, "Failed to encrypt outgoing UDP packet", e);
+        }
+    }
+
+    /**
+     * Dynamically updates the frames per packet, recalculating the send queue capacity
+     * to preserve ~200ms target latency, and flushing excess stale packets if capacity decreased.
+     *
+     * @param framesPerPacket Audio frames per packet (1=10ms, 2=20ms, 4=40ms, 6=60ms).
+     */
+    public void setTargetFramesPerPacket(int framesPerPacket) {
+        synchronized (mSendLock) {
+            mTargetFramesPerPacket = sanitizeFramesPerPacket(framesPerPacket);
+            mSendQueueCapacity = calculateQueueCapacity(mTargetFramesPerPacket);
+            while (mSendQueue.size() > mSendQueueCapacity) {
+                mSendQueue.poll();
+            }
+        }
+    }
+
+    public int getTargetFramesPerPacket() {
+        return mTargetFramesPerPacket;
+    }
+
+    public int getSendQueueCapacity() {
+        return mSendQueueCapacity;
+    }
+
+    /**
+     * Explicitly sets send queue capacity (package-private for testing).
+     */
+    void setSendQueueCapacity(int capacity) {
+        if (capacity <= 0) {
+            throw new IllegalArgumentException("sendQueueCapacity must be > 0");
+        }
+        synchronized (mSendLock) {
+            mSendQueueCapacity = capacity;
+            while (mSendQueue.size() > mSendQueueCapacity) {
+                mSendQueue.poll();
+            }
         }
     }
 
@@ -233,7 +336,9 @@ public class HumlaUDP implements Runnable {
      */
     public void disconnect() {
         mConnected = false;
-        mSendQueue.clear();
+        synchronized (mSendLock) {
+            mSendQueue.clear();
+        }
         // Closing a socket will trigger an IOException on the consumer thread.
         if (mUDPSocket != null) {
             mUDPSocket.close();
