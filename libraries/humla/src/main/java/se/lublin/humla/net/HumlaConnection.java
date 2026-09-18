@@ -100,7 +100,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
     // Latency
     private volatile long mLastUDPPing;
-    private long mLastTCPPing;
+    private volatile long mLastTCPPing;
 
     // Server
     private String mHost;
