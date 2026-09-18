@@ -144,28 +144,22 @@ Inside [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/
 
 ## Phase 2: DSP Quality & Acoustic Refinements (P1)
 
-### 2.1 Bypass Pre-Speech Lookahead Ring Buffer in PTT (PTT-05)
+### 2.1 Retain Pre-Speech Lookahead Ring Buffer in PTT as Latency Compensation (PTT-05) — CLOSED (WON'T FIX)
+
+**Status**: Closed as Won't Fix (Working as Intended).
 
 **Component**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126)
 
-**Problem**: Flushing 80ms of past audio leaks physical switch clicks and touchscreen tap transients.
+**Evaluation & Decision**:
+PTT-05 originally proposed clearing `m_ringBuffer` upon speech onset in PTT mode to avoid transmitting pre-trigger mechanical switch clicks or touchscreen tap transients.
 
-**Solution**:
-Only flush `m_ringBuffer` when running under `InputMode::VOICE_ACTIVITY`. When running under `InputMode::PUSH_TO_TALK`, immediately clear the ring buffer upon speech onset:
+Upon comprehensive review, this proposed change was rejected:
+1. **Touch Latency Compensation**: Capacitive touchscreen input event dispatch on Android introduces 30–60ms of latency from physical touch to JNI dispatch. Flushing the 80ms buffer ensures that speech produced during this touch window is preserved rather than dropped.
+2. **Prevention of Word-Onset Clipping**: Discarding the ring buffer clips initial unvoiced consonants (/p/, /t/, /k/, /s/) due to human coarticulation and speech anticipation.
+3. **Existing Acoustic Filtering**: The 90Hz infrasonic high-pass filter and pre-buffering RNNoise neural denoising effectively suppress screen tap thumps and silence transients.
+4. **No Privacy Impact**: 80ms is shorter than a single syllable and cannot leak intelligible private speech.
 
-```cpp
-if (!m_talking && shouldTransmit) {
-    if (m_inputMode == InputMode::VOICE_ACTIVITY) {
-        // Speech onset in VAD mode: Flush the 80ms lookahead ring buffer
-        m_ringBuffer.flush([this, &packetsToDispatch](const int16_t* bufferedPcm, size_t len) {
-            ...
-        });
-    } else {
-        // PTT or Continuous: Discard pre-trigger audio to prevent click leakage
-        m_ringBuffer.clear();
-    }
-}
-```
+**Outcome**: No code modifications made to [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126). The 80ms pre-speech lookahead flush is retained across all input modes.
 
 ---
 
