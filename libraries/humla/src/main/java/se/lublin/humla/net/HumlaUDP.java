@@ -67,7 +67,11 @@ public class HumlaUDP implements Runnable {
     /** Default frames per packet (2 frames @ 10ms = 20ms). */
     public static final int DEFAULT_FRAMES_PER_PACKET = Constants.DEFAULT_FRAMES_PER_PACKET;
 
-    /** Default send queue capacity corresponding to standard 20ms frames (~200ms buffer). */
+    /**
+     * Default send queue capacity corresponding to standard 20ms frames (~200ms buffer).
+     * Note: static declaration must follow TARGET_BUFFER_DURATION_MS, FRAME_DURATION_MS,
+     * and DEFAULT_FRAMES_PER_PACKET to ensure correct <clinit> evaluation order.
+     */
     public static final int DEFAULT_SEND_QUEUE_CAPACITY = calculateQueueCapacity(DEFAULT_FRAMES_PER_PACKET);
 
     /** Backward-compatibility alias for tests and external callers. */
@@ -102,10 +106,7 @@ public class HumlaUDP implements Runnable {
      * Sanitizes frames-per-packet to valid Opus configurations (1, 2, 4, 6).
      */
     public static int sanitizeFramesPerPacket(int fpp) {
-        if (fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6) {
-            return fpp;
-        }
-        return DEFAULT_FRAMES_PER_PACKET;
+        return Constants.sanitizeFramesPerPacket(fpp);
     }
 
     /**
@@ -154,7 +155,7 @@ public class HumlaUDP implements Runnable {
         return udp;
     }
 
-    public void connect(@NotNull String host, @NotNull int port) {
+    public void connect(@NotNull String host, int port) {
         mHost = host;
         mPort = port;
         mDatagramThread.start();

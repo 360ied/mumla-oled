@@ -399,7 +399,11 @@ public class Settings {
     }
 
     public int getFramesPerPacket() {
-        return Integer.parseInt(preferences.getString(PREF_FRAMES_PER_PACKET, DEFAULT_FRAMES_PER_PACKET));
+        try {
+            return Integer.parseInt(preferences.getString(PREF_FRAMES_PER_PACKET, DEFAULT_FRAMES_PER_PACKET));
+        } catch (NumberFormatException e) {
+            return Constants.DEFAULT_FRAMES_PER_PACKET;
+        }
     }
 
     public boolean isHalfDuplex() {
