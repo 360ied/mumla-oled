@@ -67,22 +67,31 @@ public class ChannelFragmentDensityTest extends TestCase {
         assertEquals("Null metrics must fallback to raw dp value", 150, px);
     }
 
-    public void testTalkStateMapping_ActivatedState() {
-        assertTrue(isTalkingState(se.lublin.humla.model.TalkState.TALKING));
-        assertTrue(isTalkingState(se.lublin.humla.model.TalkState.SHOUTING));
-        assertTrue(isTalkingState(se.lublin.humla.model.TalkState.WHISPERING));
-        assertFalse(isTalkingState(se.lublin.humla.model.TalkState.PASSIVE));
+    public void testPttButtonDensityConversion_FractionalDensityRounding() {
+        int heightDp = 150;
+
+        DisplayMetrics density420 = new DisplayMetrics();
+        density420.density = 2.625f; // 420 dpi
+        int px = ChannelFragment.calculateButtonHeightPx(heightDp, density420);
+        // 150 * 2.625 = 393.75 -> rounded to 394
+        assertEquals(394, px);
     }
 
-    private static boolean isTalkingState(se.lublin.humla.model.TalkState state) {
-        switch (state) {
-            case TALKING:
-            case SHOUTING:
-            case WHISPERING:
-                return true;
-            case PASSIVE:
-            default:
-                return false;
-        }
+    public void testPttButtonDensityConversion_SentinelsAndEdgeCases() {
+        DisplayMetrics xxhdpi = new DisplayMetrics();
+        xxhdpi.density = 3.0f;
+
+        // Sentinel layout dimensions must remain untouched
+        assertEquals(-1, ChannelFragment.calculateButtonHeightPx(-1, xxhdpi)); // MATCH_PARENT
+        assertEquals(-2, ChannelFragment.calculateButtonHeightPx(-2, xxhdpi)); // WRAP_CONTENT
+        assertEquals(0, ChannelFragment.calculateButtonHeightPx(0, xxhdpi));
+    }
+
+    public void testTalkStateMapping_ActivatedState() {
+        assertTrue(ChannelFragment.isTalkingState(se.lublin.humla.model.TalkState.TALKING));
+        assertTrue(ChannelFragment.isTalkingState(se.lublin.humla.model.TalkState.SHOUTING));
+        assertTrue(ChannelFragment.isTalkingState(se.lublin.humla.model.TalkState.WHISPERING));
+        assertFalse(ChannelFragment.isTalkingState(se.lublin.humla.model.TalkState.PASSIVE));
+        assertFalse(ChannelFragment.isTalkingState(null));
     }
 }

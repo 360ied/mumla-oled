@@ -47,6 +47,7 @@ import se.lublin.humla.HumlaService;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.WhisperTarget;
 import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaObserver;
@@ -92,19 +93,10 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                 Log.d(TAG, "exception in onUserTalkStateUpdated: " + e);
                 return;
             }
-            if (user != null && user.getSession() == selfSession) {
+            if (user != null && user.getSession() == selfSession && mTalkButton != null) {
                 // Manually set button activation state when we receive a talk state update.
                 // This allows representation of talk state when using hot corners and PTT toggle.
-                switch (user.getTalkState()) {
-                case TALKING:
-                case SHOUTING:
-                case WHISPERING:
-                    mTalkButton.setActivated(true);
-                    break;
-                case PASSIVE:
-                    mTalkButton.setActivated(false);
-                    break;
-                }
+                mTalkButton.setActivated(isTalkingState(user.getTalkState()));
             }
         }
 
@@ -321,14 +313,36 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
      * Converts the configured PTT button height (in dp) to physical pixels using display metrics.
      */
     static int calculateButtonHeightPx(int heightDp, android.util.DisplayMetrics metrics) {
+        if (heightDp <= 0) {
+            return heightDp;
+        }
         if (metrics == null) {
             return heightDp;
         }
         float px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, heightDp, metrics);
         if (px > 0) {
-            return (int) px;
+            return Math.max(1, Math.round(px));
         }
-        return (int) (heightDp * (metrics.density > 0 ? metrics.density : 1.0f));
+        float density = metrics.density > 0 ? metrics.density : 1.0f;
+        return Math.max(1, Math.round(heightDp * density));
+    }
+
+    /**
+     * Evaluates whether a talk state corresponds to an active transmission state.
+     */
+    static boolean isTalkingState(TalkState state) {
+        if (state == null) {
+            return false;
+        }
+        switch (state) {
+        case TALKING:
+        case SHOUTING:
+        case WHISPERING:
+            return true;
+        case PASSIVE:
+        default:
+            return false;
+        }
     }
 
     /**
@@ -355,11 +369,15 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
         if (getService() != null && getService().isConnected()) {
             IUser self = null;
             try {
-                self = getService().HumlaSession().getSessionUser();
+                IHumlaSession session = getService().HumlaSession();
+                mTalkButton.setActivated(session.isTalking());
+                self = session.getSessionUser();
             } catch (HumlaDisconnectedException|IllegalStateException e) {
                 Log.d(TAG, "exception in configureInput: " + e);
             }
             muted = self == null || self.isMuted() || self.isSuppressed() || self.isSelfMuted();
+        } else {
+            mTalkButton.setActivated(false);
         }
         boolean showPttButton =
                 !muted &&
