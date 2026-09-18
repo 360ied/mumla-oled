@@ -26,7 +26,7 @@ Phase 1 eliminates critical runtime defects that threaten long-running session s
 
 ### 1.1 Fix Disconnected User Memory Leak in ModelHandler (ODD-01)
 
-**Status**: Open
+**Status**: Resolved
 
 **Component**: [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490)
 
@@ -72,7 +72,7 @@ public void messageUserRemove(Mumble.UserRemove msg) {
 
 ### 1.2 Offload Incoming UDP Audio Processing from Main UI Thread (ODD-02)
 
-**Status**: Open
+**Status**: Resolved
 
 **Component**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L671), [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L370-L374)
 

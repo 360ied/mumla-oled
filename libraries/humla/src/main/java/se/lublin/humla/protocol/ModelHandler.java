@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import se.lublin.humla.R;
 import se.lublin.humla.model.Channel;
@@ -63,7 +64,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
                         @Nullable List<Integer> localIgnoreHistory) {
         mContext = context;
         mChannels = new HashMap<Integer, Channel>();
-        mUsers = new HashMap<Integer, User>();
+        mUsers = new ConcurrentHashMap<Integer, User>();
         mLocalMuteHistory = localMuteHistory;
         mLocalIgnoreHistory = localIgnoreHistory;
         mObserver = observer;
@@ -487,6 +488,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             user.setChannel(null);
         }
         mObserver.onUserRemoved(user, reason);
+        mUsers.remove(msg.getSession());
     }
 
     @Override
