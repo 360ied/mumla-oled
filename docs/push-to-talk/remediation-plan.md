@@ -4,18 +4,26 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 ## Table of Contents
 
-1. [Phase 1: Critical Protocol & Audio Fixes (P0)](#phase-1-critical-protocol-audio-fixes-p0)
+1. [Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED](#phase-1-critical-protocol-audio-fixes-p0-completed)
 2. [Phase 2: DSP Quality & Acoustic Refinements (P1)](#phase-2-dsp-quality-acoustic-refinements-p1)
 3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux-display-density-repairs-p2)
 4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral-background-support-p3)
 
 ---
 
-## Phase 1: Critical Protocol & Audio Fixes (P0)
+<a id="phase-1-critical-protocol-audio-fixes-p0"></a>
+## Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED
 
-### 1.1 Fix Terminator Packet Dropping (PTT-01)
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 1 remediation items (PTT-01 through PTT-04) have been implemented, tested, and merged into `master` (branch `bugfix/ptt-phase1-remediation`, commits [`a372a9a4`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141) through [`36a9c702`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java), merge commit [`f04cb6fd`](file:///home/bualy/files/devel/mumla_dev/mumla-oled)).
 
-**Component**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L133), [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h#L119)
+### 1.1 Fix Terminator Packet Dropping (PTT-01) — RESOLVED
+
+**Status**: Resolved on `master` in commit [`a372a9a4`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141).
+
+**Component**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141), [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h#L119)
 
 **Problem**: Releasing PTT when `m_accumulatedFrames == 0` skips terminator packet emission, inducing 100ms of PLC stutter across all remote clients.
 
@@ -46,9 +54,11 @@ In [`NativeAudioInputEngineJni.cpp:106`](file:///home/bualy/files/devel/mumla_de
 
 ---
 
-### 1.2 Fix Stuck Microphone on Touch Cancellation (PTT-02)
+### 1.2 Fix Stuck Microphone on Touch Cancellation (PTT-02) — RESOLVED
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L163-L177)
+**Status**: Resolved on `master` in commits [`c6deeaa2`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L183), [`6d81b96d`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L253-L258), [`968d0cc7`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L464-L474), and [`36a9c702`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java).
+
+**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L183)
 
 **Problem**: Edge gestures, status bar pull-downs, and scroll intercepts emit `ACTION_CANCEL`, which is unhandled, locking the microphone open.
 
@@ -85,9 +95,11 @@ Expose `void onTalkKeyCancel();` on [`IMumlaService`](file:///home/bualy/files/d
 
 ---
 
-### 1.3 Fix Half-Duplex Preference Bug (PTT-03)
+### 1.3 Fix Half-Duplex Preference Bug (PTT-03) — RESOLVED
 
-**Component**: [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702)
+**Status**: Resolved on `master` in commit [`c0daf3b9`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L699-L705).
+
+**Component**: [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L699-L705)
 
 **Problem**: Evaluates `extras.getInt(EXTRAS_TRANSMIT_MODE)` which is missing when only `half_duplex` changes, always disabling half-duplex.
 
@@ -111,9 +123,11 @@ if (extras.containsKey(EXTRAS_HALF_DUPLEX) || extras.containsKey(EXTRAS_TRANSMIT
 
 ---
 
-### 1.4 Replace Dangerous OS Stream Muting (PTT-04)
+### 1.4 Replace Dangerous OS Stream Muting (PTT-04) — RESOLVED
 
-**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L450-L453)
+**Status**: Resolved on `master` in commits [`947643b9`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L208-L214) and [`a1e0a80d`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L78).
+
+**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L449-L452)
 
 **Problem**: Calls deprecated `AudioManager.setStreamMute()` on the global OS audio stream, impacting external apps and risking permanent device muting on crash.
 
