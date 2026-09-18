@@ -14,11 +14,11 @@
 - **Development & Verification**: Perform all code modifications, Gradle builds, and pre-completion verification (`./scripts/check.sh`) inside the dedicated worktree directory (from the repository root: `cd .worktrees/<branch-name>`).
 - **Task Completion Boundary (NO AUTONOMOUS MERGING, PUSHING, OR DELETION)**: An agent's task is COMPLETE once changes are committed and verified (`./scripts/check.sh`) inside the dedicated worktree. Agents must **NEVER autonomously merge into `master`, push, or delete worktrees** upon completing a task. Always leave the branch and worktree intact and unpushed, report completion to the user, and wait for review.
 - **Merging into Master (Explicit User Request Only)**: Merging a branch into `master` is a separate, user-initiated action that must be **explicitly requested by the user** (e.g., "merge into master", "land this branch"). Agents must never merge autonomously. When explicitly requested, follow the `mumla-merge` skill (`.agents/skills/mumla-merge/SKILL.md`).
-- **Documentation Exception**: Standalone documentation changes (such as editing `AGENTS.md`, `README.md`, standalone documentation files under `docs/`, or adding or updating agent skills under `.agents/skills/`) do not need the worktree process and should be made directly on `master`. Commit them via `scripts/commit.py`; do not push — report for review. Documentation that directly accompanies active feature or bugfix code development should remain in the corresponding feature worktree.
+- **Documentation Exception**: Standalone documentation changes (such as editing `AGENTS.md`, `README.md`, standalone documentation files under `docs/`, or adding or updating agent skills under `.agents/skills/`) do not need the worktree process and should be made directly on `master`. They are exempt from `./scripts/check.sh` verification. Commit them via `scripts/commit.py`; do not push — report for review. Documentation that directly accompanies active feature or bugfix code development should remain in the corresponding feature worktree.
 
 ## Commit Strategy
 - **Atomic Commits**: Single logical unit per commit. Separate automated code generation (e.g., `protoc`) from manual edits when feasible.
-- **Working State**: Every commit must leave the codebase working and passing `./scripts/check.sh` (the gate). `nix develop --command ./gradlew testFossDebugUnitTest` runs the fast unit-test subset during development.
+- **Working State**: Every code commit must leave the codebase working and passing `./scripts/check.sh` (the gate). Documentation-only commits are exempt from the `./scripts/check.sh` gate. `nix develop --command ./gradlew testFossDebugUnitTest` runs the fast unit-test subset during development.
 - **Commit Messages & Detailed Descriptions**:
   - **Commit Wrapper**: Use `python3 scripts/commit.py -m "<message>"` to automatically format to the 50/72 rule, validate the body format (the wrapper hard-fails if the body does not use the three labeled sections below, exactly and in order), and execute `git commit`. Stage changes with `git add` first — the wrapper runs plain `git commit` and only records what's staged.
   - **Subject Line**: Concise and imperative with a scope prefix (e.g., `app:`, `ui:`, `humla:`, `audio:`, `proto:`, `build:`, `nix:`, `docs:`, `util:`), max 50 chars (merge commits are exempt from the 50-character limit).
@@ -37,7 +37,7 @@
 - **Forward-Only History**: Never rewrite, rebase, squash, amend, or force-push commits — pushed or not. Fix mistakes with a new commit.
 
 ## Verification
-- **Pre-Completion Check**: Run `./scripts/check.sh` inside the dedicated worktree before completing any task. Passing verification signifies that the branch is ready for user review—it does NOT trigger or authorize merging into `master`.
+- **Pre-Completion Check**: Run `./scripts/check.sh` inside the dedicated worktree before completing any code task. Passing verification signifies that the branch is ready for user review—it does NOT trigger or authorize merging into `master`. Standalone documentation-only changes (committed on `master`) are exempt from `./scripts/check.sh`.
 - **Fast Unit Tests**: FOSS debug unit tests via `nix develop --command ./gradlew testFossDebugUnitTest`.
 - **Full Test Suite** (when required): `nix develop --command ./gradlew test`.
 
