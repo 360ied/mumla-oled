@@ -81,6 +81,10 @@ android {
         }
     }
 
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
     // Prepare RNNoise pre-trained model weights from official upstream model archive
     task prepareRnnoiseModel {
         def versionFile = file('src/main/jni/rnnoise/model_version')
