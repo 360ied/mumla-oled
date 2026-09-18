@@ -313,6 +313,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
 
             mConnection = new HumlaConnection(this);
+            mConnection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket());
             mConnection.setForceTCP(mForceTcp);
             mConnection.setKeys(mCertificate, mCertificatePassword);
             mConnection.setTrustStore(mTrustStore, mTrustStorePassword, mTrustStoreFormat);
@@ -682,7 +683,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioBuilder.setAudioStream(extras.getInt(EXTRAS_AUDIO_STREAM));
         }
         if (extras.containsKey(EXTRAS_FRAMES_PER_PACKET)) {
-            mAudioBuilder.setTargetFramesPerPacket(extras.getInt(EXTRAS_FRAMES_PER_PACKET));
+            int fpp = extras.getInt(EXTRAS_FRAMES_PER_PACKET);
+            mAudioBuilder.setTargetFramesPerPacket(fpp);
+            if (mConnection != null) {
+                mConnection.setTargetFramesPerPacket(fpp);
+            }
         }
         if (extras.containsKey(EXTRAS_TRUST_STORE)) {
             mTrustStore = extras.getString(EXTRAS_TRUST_STORE);
