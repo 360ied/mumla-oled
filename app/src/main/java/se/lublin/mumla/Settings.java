@@ -104,7 +104,9 @@ public class Settings {
     public static final String PREF_LANGUAGE = "language";
 
     public static final String PREF_PTT_BUTTON_HEIGHT = "pttButtonHeight";
-    public static final int DEFAULT_PTT_BUTTON_HEIGHT = 150;
+    public static final int DEFAULT_PTT_BUTTON_HEIGHT = 50;
+    public static final int MIN_PTT_BUTTON_HEIGHT = 40;
+    public static final int MAX_PTT_BUTTON_HEIGHT = 400;
 
     /**
      * The DB identifier for the default certificate.
@@ -284,9 +286,13 @@ public class Settings {
     }
 
 
-    /* @return the height of PTT button */
+    /* @return the height of PTT button in dp */
     public int getPTTButtonHeight() {
-        return preferences.getInt(Settings.PREF_PTT_BUTTON_HEIGHT, DEFAULT_PTT_BUTTON_HEIGHT);
+        int height = preferences.getInt(Settings.PREF_PTT_BUTTON_HEIGHT, DEFAULT_PTT_BUTTON_HEIGHT);
+        if (height <= 0) {
+            return DEFAULT_PTT_BUTTON_HEIGHT;
+        }
+        return Math.min(MAX_PTT_BUTTON_HEIGHT, Math.max(MIN_PTT_BUTTON_HEIGHT, height));
     }
 
     /**
