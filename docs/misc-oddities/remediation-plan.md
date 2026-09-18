@@ -133,7 +133,7 @@ Phase 2 prevents bufferbloat and network congestion on unstable mobile connectio
 
 ### 2.1 Bound Outgoing UDP Send Queue & Enforce Drop Policy (ODD-03)
 
-**Status**: Open
+**Status**: Resolved
 
 **Component**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60-L75), [`HumlaUDP.java:186-202`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L186-L202)
 
