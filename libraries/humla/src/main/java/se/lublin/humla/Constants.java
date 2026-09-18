@@ -39,6 +39,19 @@ public class Constants {
     /** Default audio frames per packet in Mumble (2 frames @ 10ms = 20ms audio per packet). */
     public static final int DEFAULT_FRAMES_PER_PACKET = 2;
 
+    /**
+     * Sanitizes audio frames per packet to valid Opus configurations (1, 2, 4, 6).
+     *
+     * @param fpp Requested frames per packet count.
+     * @return A valid Opus frames per packet count, or {@link #DEFAULT_FRAMES_PER_PACKET}.
+     */
+    public static int sanitizeFramesPerPacket(int fpp) {
+        if (fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6) {
+            return fpp;
+        }
+        return DEFAULT_FRAMES_PER_PACKET;
+    }
+
     public static final long PROTOBUF_INTRODUCTION_VERSION_V2 = toVersionV2(1, 5, 0);
     public static final int PROTOBUF_INTRODUCTION_VERSION_V1 = (1 << 16) | (5 << 8);
 

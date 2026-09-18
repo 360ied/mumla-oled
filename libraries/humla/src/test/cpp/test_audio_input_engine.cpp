@@ -180,6 +180,15 @@ void testAudioInputEngineDefaultsAndAccessors() {
     engine.setAmplitudeBoost(1.5f);
     TEST_ASSERT_NEAR(engine.getAmplitudeBoost(), 1.5f, 0.001f);
 
+    // Constructor default and invalid argument fallback to DEFAULT_FRAMES_PER_PACKET
+    AudioInputEngine defaultEngine;
+    TEST_ASSERT_EQ(defaultEngine.getFramesPerPacket(), AudioInputEngine::DEFAULT_FRAMES_PER_PACKET);
+
+    auto fallbackEncoder = std::make_unique<FakeVoiceEncoder>(40000);
+    auto fallbackDenoiser = std::make_unique<FakeDenoiser>();
+    AudioInputEngine fallbackEngine(std::move(fallbackEncoder), std::move(fallbackDenoiser), 0);
+    TEST_ASSERT_EQ(fallbackEngine.getFramesPerPacket(), AudioInputEngine::DEFAULT_FRAMES_PER_PACKET);
+
     std::cout << "  [PASS] testAudioInputEngineDefaultsAndAccessors" << std::endl;
 }
 
