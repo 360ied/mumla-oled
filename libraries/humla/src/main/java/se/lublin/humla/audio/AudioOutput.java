@@ -31,6 +31,7 @@ import android.util.Log;
 import java.nio.BufferUnderflowException;
 import java.util.Arrays;
 
+import se.lublin.humla.Constants;
 import se.lublin.humla.exception.AudioInitializationException;
 import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.User;
@@ -53,7 +54,7 @@ public class AudioOutput implements Runnable,
     private static final String TAG = AudioOutput.class.getName();
 
     /** 20 ms render quantum at 48 kHz: bounds batching delay on first audio. */
-    private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 2;
+    private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * Constants.DEFAULT_FRAMES_PER_PACKET;
 
     private final Object mInactiveLock = new Object();
     private final Handler mMainHandler;

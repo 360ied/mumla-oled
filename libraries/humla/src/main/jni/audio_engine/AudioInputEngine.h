@@ -90,10 +90,11 @@ public:
     static constexpr size_t SAMPLES_PER_10MS = 480; // 10ms @ 48kHz
     static constexpr size_t MAX_OPUS_BUFFER_BYTES = 1024;
     static constexpr uint32_t PTT_HOLD_FRAMES = 15; // 15 frames = 150ms fixed hangover
+    static constexpr int DEFAULT_FRAMES_PER_PACKET = 2; // 2 frames @ 10ms = 20ms audio per packet
 
     explicit AudioInputEngine(std::unique_ptr<IVoiceEncoder> encoder = nullptr,
                               std::unique_ptr<IDenoiser> denoiser = nullptr,
-                              int framesPerPacket = 2,
+                              int framesPerPacket = DEFAULT_FRAMES_PER_PACKET,
                               float amplitudeBoost = 1.0f,
                               bool adaptiveLevelerEnabled = true,
                               InputMode mode = InputMode::VOICE_ACTIVITY);

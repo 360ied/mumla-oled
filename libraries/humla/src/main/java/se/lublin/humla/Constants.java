@@ -33,6 +33,12 @@ public class Constants {
     public static final String PROTOCOL_STRING = PROTOCOL_MAJOR + "." + PROTOCOL_MINOR + "." + PROTOCOL_PATCH;
     public static final int DEFAULT_PORT = 64738;
 
+    /** Duration in milliseconds of an individual Opus audio frame in Mumble. */
+    public static final int FRAME_DURATION_MS = 10;
+
+    /** Default audio frames per packet in Mumble (2 frames @ 10ms = 20ms audio per packet). */
+    public static final int DEFAULT_FRAMES_PER_PACKET = 2;
+
     public static final long PROTOBUF_INTRODUCTION_VERSION_V2 = toVersionV2(1, 5, 0);
     public static final int PROTOBUF_INTRODUCTION_VERSION_V1 = (1 << 16) | (5 << 8);
 
