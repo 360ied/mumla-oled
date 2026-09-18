@@ -4,14 +4,13 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 ## Table of Contents
 
-1. [Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED](#phase-1-critical-protocol-audio-fixes-p0-completed)
-2. [Phase 2: DSP Quality & Acoustic Refinements (P1)](#phase-2-dsp-quality-acoustic-refinements-p1)
-3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux-display-density-repairs-p2)
-4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral-background-support-p3)
+1. [Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED](#phase-1-critical-protocol--audio-fixes-p0--completed)
+2. [Phase 2: DSP Quality & Acoustic Refinements (P1)](#phase-2-dsp-quality--acoustic-refinements-p1)
+3. [Phase 3: UI/UX & Display Density Repairs (P2)](#phase-3-uiux--display-density-repairs-p2)
+4. [Phase 4: Hardware, Peripheral & Background Support (P3)](#phase-4-hardware-peripheral--background-support-p3)
 
 ---
 
-<a id="phase-1-critical-protocol-audio-fixes-p0"></a>
 ## Phase 1: Critical Protocol & Audio Fixes (P0) — COMPLETED
 
 > [!NOTE]

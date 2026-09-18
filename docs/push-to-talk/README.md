@@ -5,10 +5,10 @@ This directory provides a comprehensive, rigorous examination of the Push-to-Tal
 ## Table of Contents
 
 1. [Architectural Overview](#architectural-overview)
-2. [Data Flow & Pipeline](#data-flow-pipeline)
+2. [Data Flow & Pipeline](#data-flow--pipeline)
 3. [Component Inventory](#component-inventory)
 4. [Summary of Features](#summary-of-features)
-5. [Summary Matrix of Deficiencies & Bugs](#summary-matrix-of-deficiencies-bugs)
+5. [Summary Matrix of Deficiencies & Bugs](#summary-matrix-of-deficiencies--bugs)
 6. [Detailed Findings Modules](#detailed-findings-modules)
 
 ---

@@ -9,8 +9,8 @@ This document details the user interface components, touch event handling, syste
 3. [Defect Deep-Dive: Button Height Display Density Bug (PTT-08)](#defect-deep-dive-button-height-display-density-bug-ptt-08)
 4. [Defect Deep-Dive: Disappearing PTT Button on Mute (PTT-09)](#defect-deep-dive-disappearing-ptt-button-on-mute-ptt-09)
 5. [Visual State Inconsistency: `setPressed` vs `setActivated` (PTT-10)](#visual-state-inconsistency-setpressed-vs-setactivated-ptt-10)
-6. [PTT Hot Corner Overlay & The Soft-Keyboard Myth (PTT-13)](#ptt-hot-corner-overlay-the-soft-keyboard-myth-ptt-13)
-7. [Hardware Keys, Peripherals & Background Limitations (PTT-11, PTT-12)](#hardware-keys-peripherals-background-limitations-ptt-11-ptt-12)
+6. [PTT Hot Corner Overlay & The Soft-Keyboard Myth (PTT-13)](#ptt-hot-corner-overlay--the-soft-keyboard-myth-ptt-13)
+7. [Hardware Keys, Peripherals & Background Limitations (PTT-11, PTT-12)](#hardware-keys-peripherals--background-limitations-ptt-11-ptt-12)
 8. [Audio Feedback Deficiencies (PTT-14)](#audio-feedback-deficiencies-ptt-14)
 
 ---

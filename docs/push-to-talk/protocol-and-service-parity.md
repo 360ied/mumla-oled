@@ -9,7 +9,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 3. [Defect Deep-Dive: Silent Failure on Suppression](#defect-deep-dive-silent-failure-on-suppression)
 4. [Defect Deep-Dive: Broken Half-Duplex Runtime Preference (PTT-03)](#defect-deep-dive-broken-half-duplex-runtime-preference-ptt-03)
 5. [Defect Deep-Dive: Dangerous Global OS Stream Muting (PTT-04)](#defect-deep-dive-dangerous-global-os-stream-muting-ptt-04)
-6. [Decoupled Talk State & UI Round-Trip Latency](#decoupled-talk-state-ui-round-trip-latency)
+6. [Decoupled Talk State & UI Round-Trip Latency](#decoupled-talk-state--ui-round-trip-latency)
 
 ---
 
