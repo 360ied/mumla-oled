@@ -52,6 +52,19 @@ public class ChannelFragmentDensityTest extends TestCase {
         assertEquals(600, pxXxxhdpi);
     }
 
+    public void testPttButtonDensityConversion_DefaultHeight() {
+        int defaultHeightDp = se.lublin.mumla.Settings.DEFAULT_PTT_BUTTON_HEIGHT;
+        assertEquals(50, defaultHeightDp);
+
+        DisplayMetrics mdpi = new DisplayMetrics();
+        mdpi.density = 1.0f;
+        assertEquals(50, ChannelFragment.calculateButtonHeightPx(defaultHeightDp, mdpi));
+
+        DisplayMetrics xxhdpi = new DisplayMetrics();
+        xxhdpi.density = 3.0f;
+        assertEquals(150, ChannelFragment.calculateButtonHeightPx(defaultHeightDp, xxhdpi));
+    }
+
     public void testPttButtonDensityConversion_CustomHeight() {
         int customHeightDp = 80;
 

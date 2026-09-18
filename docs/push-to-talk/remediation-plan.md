@@ -229,10 +229,10 @@ Constructed a dedicated test suite verifying:
 
 **Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L321-L342)
 
-**Problem**: `settings.getPTTButtonHeight()` returns dp, but `mTalkButton.setLayoutParams(params)` directly assigned the dp integer as raw physical pixels, shrinking the button by $3\times$–$4\times$ on modern high-DPI displays below Google's 48dp accessibility guideline.
+**Problem**: `settings.getPTTButtonHeight()` returns dp, but `mTalkButton.setLayoutParams(params)` directly assigned the dp integer as raw physical pixels, shrinking the button by $3\times$–$4\times$ on modern high-DPI displays below Google's 48dp accessibility guideline. Furthermore, the legacy preference configuration in `settings_appearance.xml` used bounds (150–1000) intended for raw pixels, which produced excessive heights (up to 3000px) once density scaling was active.
 
 **Solution**:
-Convert `settings.getPTTButtonHeight()` from dp to physical pixels using display metrics:
+Convert `settings.getPTTButtonHeight()` from dp to physical pixels using display metrics, and recalibrate the preference bounds in `settings_appearance.xml` and `Settings.java` to sane `dp` values: min $40\text{ dp}$, default $50\text{ dp}$, max $400\text{ dp}$ with defensive bounds clamping:
 
 ```java
 private void configureInput() {
