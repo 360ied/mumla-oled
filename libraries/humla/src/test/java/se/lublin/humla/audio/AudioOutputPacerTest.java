@@ -113,6 +113,33 @@ public class AudioOutputPacerTest extends TestCase {
         // Next check can now proceed
         action = pacer.check(0);
         assertEquals(AudioOutput.Pacer.Action.PROCEED, action);
+
+        // Subsequent stall: verify stallCount was reset so breakout requires another 8 full polls
+        pacer.onWritten(RENDER_SAMPLES * 3);
+        for (int i = 0; i < 7; i++) {
+            action = pacer.check(0);
+            assertEquals("Must wait full 40 ms on subsequent stall rather than breaking immediately",
+                    AudioOutput.Pacer.Action.WAIT, action);
+        }
+        action = pacer.check(0);
+        assertEquals(AudioOutput.Pacer.Action.STALL_BREAK, action);
+    }
+
+    public void testStallBreakoutAtNonZeroHead() {
+        AudioOutput.Pacer pacer = new AudioOutput.Pacer(RENDER_SAMPLES, TRACK_FRAMES);
+        pacer.check(48000); // active head position
+
+        // Force writtenTotal beyond lead bound
+        pacer.onWritten(RENDER_SAMPLES * 3);
+
+        // Exactly 8 polls at head 48000 before triggering STALL_BREAK
+        for (int i = 0; i < 7; i++) {
+            AudioOutput.Pacer.Action action = pacer.check(48000);
+            assertEquals(AudioOutput.Pacer.Action.WAIT, action);
+        }
+        AudioOutput.Pacer.Action action = pacer.check(48000);
+        assertEquals(AudioOutput.Pacer.Action.STALL_BREAK, action);
+        assertEquals(48000L, pacer.writtenTotal);
     }
 
     public void testStallCounterResetsWhenHeadAdvances() {
@@ -128,7 +155,7 @@ public class AudioOutputPacerTest extends TestCase {
 
         // Head moves slightly (100 samples)
         pacer.check(100);
-        assertEquals(0, pacer.stallCount);
+        assertEquals(1, pacer.stallCount);
     }
 
     public void testPlaybackHead32BitWrap() {
