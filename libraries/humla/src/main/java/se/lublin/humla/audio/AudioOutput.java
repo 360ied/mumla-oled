@@ -224,7 +224,10 @@ public class AudioOutput implements Runnable,
                 return;
             }
         }
-        mAudioTrack.play();
+        try {
+            mAudioTrack.play();
+        } catch (IllegalStateException ignored) {
+        }
 
         // Render-lead pacing: bound how far ahead of the playback head this
         // loop may queue audio. The track's write path only blocks when its
@@ -242,11 +245,7 @@ public class AudioOutput implements Runnable,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                         ? mAudioTrack.getBufferSizeInFrames()
                         : RENDER_SAMPLES * 2; // pre-M: write-blocking bounds
-        final int maxLeadSamples = Math.max(RENDER_SAMPLES,
-                Math.min(RENDER_SAMPLES * 2, trackFrames));
-        long writtenTotal = 0L;
-        long playedWrap = 0L;
-        int lastHead = 0;
+        final Pacer pacer = new Pacer(RENDER_SAMPLES, trackFrames);
         final short[] mix = new short[RENDER_SAMPLES];
         while (true) {
             synchronized (this) {
@@ -254,37 +253,35 @@ public class AudioOutput implements Runnable,
                     break;
                 }
             }
+            if (mAudioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
+                try {
+                    mAudioTrack.play();
+                } catch (IllegalStateException ignored) {
+                }
+            }
             // Block until one more quantum fits inside the lead bound. The
             // 5 ms poll is cheap relative to the 20 ms quantum; the head
-            // advances only while the track is fed, and the idle branch
-            // below keeps writing (gate silence renders as zero PCM), so
-            // this can only ever wait, never deadlock.
+            // advances only while the track is fed. When resuming from idle,
+            // or if playback stalls (e.g. on underrun or route change),
+            // writtenTotal is rebased to prevent deadlock.
             while (true) {
                 final int head = mAudioTrack.getPlaybackHeadPosition();
-                final long headUnsigned = head & 0xFFFFFFFFL;
-                if (headUnsigned < (lastHead & 0xFFFFFFFFL)) {
-                    if ((lastHead & 0xFFFFFFFFL) >= 0x80000000L) {
-                        // Genuine 32-bit playback-head wrap (~24.9 h at
-                        // 48 kHz): the previous reading was in the high
-                        // half of the counter.
-                        playedWrap += 1L << 32;
-                    } else {
-                        // Spurious head reset (reported on some OEM
-                        // builds after route changes). Treating it as a
-                        // wrap would put playedWrap ~4.29e9 frames ahead
-                        // of writtenTotal and silently disable pacing for
-                        // the rest of the session, reintroducing the
-                        // burst-start free-run. Rebase the lead instead:
-                        // writtenTotal matches the reset head, so the
-                        // bound restarts from the still-queued track fill.
-                        writtenTotal = playedWrap + headUnsigned;
-                        Log.w(TAG, "Playback head reset detected at "
-                                + headUnsigned + "; rebasing render lead");
-                    }
+                final Pacer.Action action = pacer.check(head);
+                if (action == Pacer.Action.PROCEED) {
+                    break;
                 }
-                lastHead = head;
-                final long played = playedWrap + headUnsigned;
-                if (writtenTotal + RENDER_SAMPLES - played <= maxLeadSamples) {
+                if (action == Pacer.Action.STALL_BREAK) {
+                    Log.w(TAG, "Playback head stalled at " + (head & 0xFFFFFFFFL)
+                            + " for " + (Pacer.MAX_STALL_POLLS * 5)
+                            + " ms (writtenTotal=" + pacer.writtenTotal
+                            + ", played=" + (pacer.playedWrap + (head & 0xFFFFFFFFL))
+                            + "); rebasing render lead");
+                    if (mAudioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
+                        try {
+                            mAudioTrack.play();
+                        } catch (IllegalStateException ignored) {
+                        }
+                    }
                     break;
                 }
                 synchronized (mInactiveLock) {
@@ -339,9 +336,10 @@ public class AudioOutput implements Runnable,
                         continue;
                     }
                     offset += written;
-                    writtenTotal += written;
+                    pacer.onWritten(written);
                 }
             } else {
+                pacer.onIdle();
                 // No live voice this quantum. Keep the track playing so
                 // resume is gapless, and idle until the next packet arrives.
                 // renderMix returns 0 only here or for a wedged voice:
@@ -499,6 +497,89 @@ public class AudioOutput implements Runnable,
         }
         if (engine != null) {
             engine.removeUser(session);
+        }
+    }
+
+    /**
+     * Manages render-lead pacing against the AudioTrack playback head.
+     * Prevents render loops from out-pacing real-time consumption while
+     * eliminating deadlocks caused by underruns, route resets, or idle periods.
+     */
+    static class Pacer {
+        static final int MAX_STALL_POLLS = 8;
+        final int renderSamples;
+        final int maxLeadSamples;
+        long writtenTotal = 0L;
+        long playedWrap = 0L;
+        int lastHead = 0;
+        int stallHead = -1;
+        int stallCount = 0;
+        boolean wasIdle = true;
+
+        enum Action {
+            PROCEED,
+            WAIT,
+            STALL_BREAK
+        }
+
+        Pacer(int renderSamples, int trackFrames) {
+            this.renderSamples = renderSamples;
+            this.maxLeadSamples = Math.max(renderSamples * 2, Math.max(0, trackFrames));
+        }
+
+        Action check(int head) {
+            final long headUnsigned = head & 0xFFFFFFFFL;
+            if (headUnsigned < (lastHead & 0xFFFFFFFFL)) {
+                if ((lastHead & 0xFFFFFFFFL) >= 0x80000000L) {
+                    // Genuine 32-bit playback-head wrap (~24.9 h at 48 kHz).
+                    playedWrap += 1L << 32;
+                } else {
+                    // Spurious head reset (reported on some OEM builds after route changes).
+                    writtenTotal = playedWrap + headUnsigned;
+                    Log.w(TAG, "Playback head reset detected at "
+                            + headUnsigned + "; rebasing render lead");
+                }
+            }
+            lastHead = head;
+            final long played = playedWrap + headUnsigned;
+            if (writtenTotal < played) {
+                writtenTotal = played;
+            }
+            if (wasIdle) {
+                writtenTotal = played;
+                wasIdle = false;
+                stallHead = -1;
+                stallCount = 0;
+                return Action.PROCEED;
+            }
+            if (writtenTotal + renderSamples - played <= maxLeadSamples) {
+                stallHead = -1;
+                stallCount = 0;
+                return Action.PROCEED;
+            }
+            if (head == stallHead) {
+                stallCount++;
+                if (stallCount >= MAX_STALL_POLLS) {
+                    writtenTotal = played;
+                    stallHead = -1;
+                    stallCount = 0;
+                    return Action.STALL_BREAK;
+                }
+            } else {
+                stallHead = head;
+                stallCount = 1;
+            }
+            return Action.WAIT;
+        }
+
+        void onWritten(int written) {
+            writtenTotal += written;
+        }
+
+        void onIdle() {
+            wasIdle = true;
+            stallHead = -1;
+            stallCount = 0;
         }
     }
 
