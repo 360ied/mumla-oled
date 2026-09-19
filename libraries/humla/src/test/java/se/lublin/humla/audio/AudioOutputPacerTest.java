@@ -29,7 +29,7 @@ public class AudioOutputPacerTest extends TestCase {
     private static final int TRACK_FRAMES = 1920;  // 40 ms buffer
 
     public void testMaxLeadSamplesFloorAndTrackCapacity() {
-        // Floor of 1 render quantum (960 samples) when trackFrames is smaller
+        // Floor of 1 render quantum (960 samples) when trackFrames is smaller than 1 quantum (e.g. 480 or 0)
         AudioOutput.Pacer pacerSmall = new AudioOutput.Pacer(RENDER_SAMPLES, 480);
         assertEquals(RENDER_SAMPLES, pacerSmall.maxLeadSamples);
 
