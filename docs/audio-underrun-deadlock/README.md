@@ -307,13 +307,13 @@ sequenceDiagram
     Note over Net,Track: Voice Resumes from Silence (wasIdle = true)
     Net->>Engine: Packet 0 arrives (seq 100)
     Engine->>JB: jitter_buffer_put(Packet 0)
-    Java->>Java: Pacer.checkPacing(): wasIdle=true -> rebase writtenTotal=played (lead = 0)
+    Java->>Java: Pacer.check(head): wasIdle=true -> rebase writtenTotal=played (lead = 0)
     Note over Java,Track: maxLeadSamples = 11,532 frames (240 ms buffer capacity)
 
     rect rgb(255, 235, 235)
         Note over Java,Engine: Free-Run Sprint (under 1 ms wall-clock time)
         loop Quanta 1 to 10 (under 1 ms elapsed, played has not advanced)
-            Java->>Java: Pacer.checkPacing(): lead <= 11,532? YES (lead is 960..9600)
+            Java->>Java: Pacer.check(head): lead <= 11,532? YES (lead is 960..9600)
             Java->>Engine: renderMix(out, 960)
             Engine->>Engine: gateWaitedFrames += 2
             alt Quanta 1-9 (gateWaitedFrames < 20)
@@ -398,7 +398,7 @@ sequenceDiagram
 A secondary defect in 0.21.5 was the stall breakout threshold:
 
 ```java
-private static final int MAX_STALL_POLLS = 8; // 8 * 5 ms = 40 ms
+static final int MAX_STALL_POLLS = 8; // 8 * 5 ms = 40 ms
 ```
 
 In vivo profiling on physical hardware demonstrated that Android's Bluetooth A2DP HAL routinely takes **80 to 100 ms** to restart an underrun track and begin incrementing `getPlaybackHeadPosition()`.
@@ -479,7 +479,7 @@ this.maxLeadSamples = Math.max(renderSamples,
 In `AudioOutput.Pacer`:
 
 ```java
-public static final int MAX_STALL_POLLS = 40; // 40 polls * 5 ms = 200 ms
+static final int MAX_STALL_POLLS = 40; // 40 polls * 5 ms = 200 ms
 ```
 
 - **A2DP Restart Latency Tolerance**:

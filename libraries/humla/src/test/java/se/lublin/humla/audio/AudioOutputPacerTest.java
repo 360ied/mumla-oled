@@ -30,8 +30,11 @@ public class AudioOutputPacerTest extends TestCase {
 
     public void testMaxLeadSamplesFloorAndTrackCapacity() {
         // Floor of 1 render quantum (960 samples) when trackFrames is smaller
-        AudioOutput.Pacer pacerSmall = new AudioOutput.Pacer(RENDER_SAMPLES, 960);
+        AudioOutput.Pacer pacerSmall = new AudioOutput.Pacer(RENDER_SAMPLES, 480);
         assertEquals(RENDER_SAMPLES, pacerSmall.maxLeadSamples);
+
+        AudioOutput.Pacer pacerZero = new AudioOutput.Pacer(RENDER_SAMPLES, 0);
+        assertEquals(RENDER_SAMPLES, pacerZero.maxLeadSamples);
 
         // Clamps to 2 render quanta (1920 samples) even with larger hardware buffers
         // (e.g. Bluetooth A2DP 4800 frames) so render-lead never outruns the jitter buffer margin
@@ -148,14 +151,14 @@ public class AudioOutputPacerTest extends TestCase {
         pacer.check(0);
         pacer.onWritten(RENDER_SAMPLES * 3); // exceeds maxLead (1920)
 
-        // Poll 5 times at head 0
-        for (int i = 0; i < 5; i++) {
+        // Poll 39 times at head 0 (just below MAX_STALL_POLLS of 40)
+        for (int i = 0; i < AudioOutput.Pacer.MAX_STALL_POLLS - 1; i++) {
             assertEquals(AudioOutput.Pacer.Action.WAIT, pacer.check(0));
         }
-        assertEquals(5, pacer.stallCount);
+        assertEquals(AudioOutput.Pacer.MAX_STALL_POLLS - 1, pacer.stallCount);
 
-        // Head moves slightly (100 samples)
-        pacer.check(100);
+        // Head moves slightly (100 samples) before 40th poll: resets counter to 1 while still waiting
+        assertEquals(AudioOutput.Pacer.Action.WAIT, pacer.check(100));
         assertEquals(1, pacer.stallCount);
     }
 
