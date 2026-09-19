@@ -34,6 +34,7 @@
     - **Context & Motivation**: Why the change is needed and what problem it solves.
     - **Technical Approach**: Architectural decisions, algorithmic details, and notable changes across components.
     - **Edge Cases & Impact**: Handled boundary conditions, defensive checks, or protocol parity considerations.
+- **Public Repository & Sensitive Information**: This is a publicly accessible repository. Never commit sensitive information, secrets, credentials, API tokens, personal data, or physical hardware identifiers (such as device serial numbers, MAC addresses, or private IPs) to Git history or documentation.
 - **Forward-Only History**: Never rewrite, rebase, squash, amend, or force-push commits — pushed or not. Fix mistakes with a new commit.
 
 ## Verification
