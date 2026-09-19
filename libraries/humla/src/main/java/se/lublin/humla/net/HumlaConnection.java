@@ -193,7 +193,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
                     ByteString serverNonce = msg.getServerNonce();
                     if(serverNonce.size() == CryptState.AES_BLOCK_SIZE) {
                         mCryptState.mUiResync++;
-                        mCryptState.mDecryptIV = serverNonce.toByteArray();
+                        mCryptState.setDecryptIV(serverNonce.toByteArray());
                     }
                 } else {
                     Mumble.CryptSetup.Builder csb = Mumble.CryptSetup.newBuilder();
@@ -239,6 +239,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
             if(((mCryptState.mUiRemoteGood == 0) || (mCryptState.mUiGood == 0)) && mUsingUDP && elapsed > 20000000) {
                 mUsingUDP = false;
+                enableForceTCP();
                 Log.i(TAG, "Switching to TCP mode (remoteGood=" + mCryptState.mUiRemoteGood +
                         ", localGood=" + mCryptState.mUiGood + ")");
             } else if (!mUsingUDP && (mCryptState.mUiRemoteGood > 3) && (mCryptState.mUiGood > 3)) {
