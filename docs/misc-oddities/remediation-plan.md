@@ -4,29 +4,25 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 ## Table of Contents
 
-1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1)](#phase-1-core-reliability--threading-architecture-p0--p1)
-   - [1.1 Fix Disconnected User Memory Leak in ModelHandler (ODD-01)](#11-fix-disconnected-user-memory-leak-in-modelhandler-odd-01)
-   - [1.2 Offload Incoming UDP Audio Processing from Main UI Thread (ODD-02)](#12-offload-incoming-udp-audio-processing-from-main-ui-thread-odd-02)
-2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2)](#phase-2-network-transport--real-time-buffer-parity-p1--p2)
-   - [2.1 Bound Outgoing UDP Send Queue & Enforce Drop Policy (ODD-03)](#21-bound-outgoing-udp-send-queue--enforce-drop-policy-odd-03)
+1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED](#phase-1-core-reliability--threading-architecture-p0--p1--completed)
+2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED](#phase-2-network-transport--real-time-buffer-parity-p1--p2--completed)
 3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2)
-   - [3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06)](#31-fix-first-run-certificate-dialog-outside-touch--dismissal-odd-06)
-   - [3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07)](#32-harmonize-ptt-keycode-reset-sentinel--1-vs-0-odd-07)
-   - [3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05)](#33-refresh-hot-corner-gesture-exclusion-rects-on-configuration-change-odd-05)
 4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
-   - [4.1 Modernize Status & Navigation Bar Insets in Overlay HUD (ODD-04)](#41-modernize-status--navigation-bar-insets-in-overlay-hud-odd-04)
-   - [4.2 Remove Dead Commented-Out XML Preferences (ODD-08)](#42-remove-dead-commented-out-xml-preferences-odd-08)
-5. [Verification & Test Strategy](#verification--test-strategy)
+5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
+6. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
 
-## Phase 1: Core Reliability & Threading Architecture (P0 / P1)
+## Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED
 
-Phase 1 eliminates critical runtime defects that threaten long-running session stability and UI responsiveness under active voice traffic.
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 1 remediation items (ODD-01 and ODD-02) have been implemented, tested, and merged into `master` (branch `bugfix/oddities-phase1-remediation`, commits [`9be4ab1b`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) through [`9fbbc750`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L102), merge commit [`8bd15530`](file:///home/bualy/files/devel/mumla_dev/mumla-oled)): ODD-01 resolved by removing user sessions from `mUsers` in [`ModelHandler.messageUserRemove()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) with automated verification in [`ModelHandlerUserRemoveTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/protocol/ModelHandlerUserRemoveTest.java); ODD-02 resolved by offloading incoming UDP voice processing to the background receiver thread with cross-thread visibility hardening and automated verification in [`HumlaUDPReceiveThreadTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPReceiveThreadTest.java).
 
-### 1.1 Fix Disconnected User Memory Leak in ModelHandler (ODD-01)
+### 1.1 Fix Disconnected User Memory Leak in ModelHandler (ODD-01) — RESOLVED
 
-**Status**: Resolved
+**Status**: Resolved on `master` in commit [`9be4ab1b`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) (branch `bugfix/oddities-phase1-remediation`).
 
 **Component**: [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490)
 
@@ -70,9 +66,9 @@ public void messageUserRemove(Mumble.UserRemove msg) {
 
 ---
 
-### 1.2 Offload Incoming UDP Audio Processing from Main UI Thread (ODD-02)
+### 1.2 Offload Incoming UDP Audio Processing from Main UI Thread (ODD-02) — RESOLVED
 
-**Status**: Resolved
+**Status**: Resolved on `master` in commits [`b8938c50`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128) and [`9fbbc750`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L102) (branch `bugfix/oddities-phase1-remediation`).
 
 **Component**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L671), [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L370-L374)
 
@@ -127,13 +123,16 @@ try {
 
 ---
 
-## Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2)
+## Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED
 
-Phase 2 prevents bufferbloat and network congestion on unstable mobile connections.
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> Phase 2 remediation item ODD-03 has been implemented, hardened, and merged into `master` (branch `bugfix/oddities-phase2-remediation`, commits [`c98bff81`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60-L75) and [`cc0f9260`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java), merge commit [`2b0cfd5d`](file:///home/bualy/files/devel/mumla_dev/mumla-oled)), with dynamic packet duration queue scaling added in branch `feature/dynamic-udp-send-queue` (commits [`3dc5f152`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) and [`c7e2bab4`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), merge commit [`571f15a0`](file:///home/bualy/files/devel/mumla_dev/mumla-oled)). Verified with comprehensive unit test coverage in [`HumlaUDPSendQueueTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPSendQueueTest.java).
 
-### 2.1 Bound Outgoing UDP Send Queue & Enforce Drop Policy (ODD-03)
+### 2.1 Bound Outgoing UDP Send Queue & Enforce Drop Policy (ODD-03) — RESOLVED
 
-**Status**: Resolved
+**Status**: Resolved on `master` in commits [`c98bff81`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60-L75) and [`cc0f9260`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) (branch `bugfix/oddities-phase2-remediation`), dynamically scaled in commit [`3dc5f152`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) (branch `feature/dynamic-udp-send-queue`).
 
 **Component**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60-L75), [`HumlaUDP.java:186-202`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L186-L202)
 
@@ -191,25 +190,6 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 - **Dynamic Reconfiguration**: When the user switches `audio_per_packet` in Settings while connected, `setTargetFramesPerPacket()` adjusts capacity on the fly and immediately flushes excess stale packets if capacity decreased.
 - **Atomic Head-Drop Eviction**: Guarding `size() >= mSendQueueCapacity`, `poll()`, and `offer()` with `mSendLock` prevents multi-producer queue inversions and race conditions while allowing non-blocking reads by `OutgoingConsumer`.
 - **Ping & Terminator Packets**: Maintaining ~200ms latency ceiling across all packet durations ensures fresh pings and speech terminators proceed without multi-second delays.
-
----
-
-### 2.2 Scale HumlaUDP Send Queue on Bandwidth Throttling (ODD-09)
-
-**Status**: Open
-
-**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272), [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L441), [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L685)
-
-**Problem**:
-1. When server maximum bandwidth constraints trigger auto-degradation in `AudioHandler.setMaxBandwidth()`, `framesPerPacket` may be increased from 2 to 4 (or 1 to 2/4) to reduce packet header overhead.
-2. `AudioHandler` updates `mNativeEngine` so local Opus encoding outputs 40ms packets, but does not notify `HumlaConnection` or `HumlaUDP`.
-3. Consequently, `HumlaUDP.mSendQueueCapacity` remains at 10 packets (configured for default 20ms audio).
-4. With 40ms packets, a 10-packet queue allows up to 400ms ($10 \times 40\text{ ms}$) of buffered voice data during network stalls, doubling latency and causing bufferbloat.
-
-**Solution**:
-Wire a listener or feedback mechanism from `AudioHandler` to `HumlaConnection.setTargetFramesPerPacket()`:
-1. When `setMaxBandwidth()` adjusts `framesPerPacket`, emit a callback or notification to `HumlaConnection`.
-2. `HumlaConnection.setTargetFramesPerPacket()` dynamically scales `HumlaUDP` send queue capacity to 5 packets for 40ms audio (preserving the ~200ms target latency ceiling) and immediately flushes stale excess packets if downsized.
 
 ---
 
@@ -433,18 +413,41 @@ Prune lines 74–94 from [`settings_appearance.xml`](file:///home/bualy/files/de
 
 ---
 
+## Phase 5: Dynamic Bandwidth & Network Adaptation (P2)
+
+Phase 5 addresses secondary transport feedback loops and real-time buffer adaptation under server-enforced bandwidth constraints.
+
+### 5.1 Scale HumlaUDP Send Queue on Bandwidth Throttling (ODD-09)
+
+**Status**: Open
+
+**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272), [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L441), [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L685)
+
+**Problem**:
+1. When server maximum bandwidth constraints trigger auto-degradation in `AudioHandler.setMaxBandwidth()`, `framesPerPacket` may be increased from 2 to 4 (or 1 to 2/4) to reduce packet header overhead.
+2. `AudioHandler` updates `mNativeEngine` so local Opus encoding outputs 40ms packets, but does not notify `HumlaConnection` or `HumlaUDP`.
+3. Consequently, `HumlaUDP.mSendQueueCapacity` remains at 10 packets (configured for default 20ms audio).
+4. With 40ms packets, a 10-packet queue allows up to 400ms ($10 \times 40\text{ ms}$) of buffered voice data during network stalls, doubling latency and causing bufferbloat.
+
+**Solution**:
+Wire a listener or feedback mechanism from `AudioHandler` to `HumlaConnection.setTargetFramesPerPacket()`:
+1. When `setMaxBandwidth()` adjusts `framesPerPacket`, emit a callback or notification to `HumlaConnection`.
+2. `HumlaConnection.setTargetFramesPerPacket()` dynamically scales `HumlaUDP` send queue capacity to 5 packets for 40ms audio (preserving the ~200ms target latency ceiling) and immediately flushes stale excess packets if downsized.
+
+---
+
 ## Verification & Test Strategy
 
-To ensure zero regressions across all four phases, each change must be accompanied by targeted unit and integration tests:
+To ensure zero regressions across all phases, each change must be accompanied by targeted unit and integration tests:
 
 | Phase | Item | Automated Verification | Manual / Device Check |
 |---|---|---|---|
-| **Phase 1** | **ODD-01** | Add `ModelHandlerUserRemoveTest.java` verifying `mUsers.get(session) == null` after `messageUserRemove`. | Connect to test server, have a remote user join and leave; inspect heap via Android Profiler. |
-| **Phase 1** | **ODD-02** | Unit test verifying `onUDPDataReceived` is invoked on the UDP receive thread, not `Looper.getMainLooper()`. | High-rate voice chatter benchmark (150 packets/sec); measure UI thread frame times (`gfxinfo`) ensuring zero dropped frames. |
-| **Phase 2** | **ODD-03** | Add `HumlaUDPSendQueueTest.java` verifying queue bounds to `MAX_SEND_QUEUE_CAPACITY` and drops oldest packets on stall. | Throttle connection to 0 kbps for 5 seconds while holding PTT; unthrottle and observe server incoming packet rate. |
-| **Phase 2** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
+| **Phase 1** | **ODD-01** | [`ModelHandlerUserRemoveTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/protocol/ModelHandlerUserRemoveTest.java) verifying `mUsers.get(session) == null` after `messageUserRemove`. | Connect to test server, have a remote user join and leave; inspect heap via Android Profiler. |
+| **Phase 1** | **ODD-02** | [`HumlaUDPReceiveThreadTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPReceiveThreadTest.java) verifying `onUDPDataReceived` is invoked on the UDP receive thread, not `Looper.getMainLooper()`. | High-rate voice chatter benchmark (150 packets/sec); measure UI thread frame times (`gfxinfo`) ensuring zero dropped frames. |
+| **Phase 2** | **ODD-03** | [`HumlaUDPSendQueueTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPSendQueueTest.java) verifying queue bounds to capacity, dynamic packet duration scaling, and dropping oldest packets on stall. | Throttle connection to 0 kbps for 5 seconds while holding PTT; unthrottle and observe server incoming packet rate. |
 | **Phase 3** | **ODD-06** | Robolectric test in `MumlaActivityTest.java` simulating outside touch dismissal and verifying `isFirstRun() == false`. | Fresh install; tap outside first-run certificate dialog; force stop and relaunch to verify dialog does not reappear. |
 | **Phase 3** | **ODD-07** | Unit test in `SettingsTest.java` verifying `getPushToTalkKey()` returns `-1` before and after reset; verify `KEYCODE_UNKNOWN` (`0`) does not trigger PTT. | Open PTT key preference, click "Reset Key", verify "None" is displayed and key events with `keyCode=0` are ignored. |
 | **Phase 3** | **ODD-05** | Service unit test verifying `mHotCorner.refreshGestureExclusion()` is called in `onConfigurationChanged()`. | Enable hot corner on Android 10+ device; rotate screen; perform edge back gesture over hot corner to verify exclusion is active. |
 | **Phase 4** | **ODD-04** | Overlay insets unit test comparing modern `WindowMetrics` against legacy fallback. | Test overlay positioning on punch-hole and notch devices in portrait and landscape. |
 | **Phase 4** | **ODD-08** | Gradle build and resource compilation check (`assembleFossDebug`). | Verify settings appearance screen loads and renders without XML inflation warnings. |
+| **Phase 5** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
