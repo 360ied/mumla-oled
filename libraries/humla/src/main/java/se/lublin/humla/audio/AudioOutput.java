@@ -506,7 +506,10 @@ public class AudioOutput implements Runnable,
      * eliminating deadlocks caused by underruns, route resets, or idle periods.
      */
     static class Pacer {
-        static final int MAX_STALL_POLLS = 8;
+        // 40 polls * 5 ms = 200 ms: comfortably exceeds Bluetooth A2DP
+        // underrun restart latency (~80-100 ms) while swiftly breaking out
+        // of genuine hardware deadlocks.
+        static final int MAX_STALL_POLLS = 40;
         final int renderSamples;
         final int maxLeadSamples;
         long writtenTotal = 0L;
@@ -524,7 +527,12 @@ public class AudioOutput implements Runnable,
 
         Pacer(int renderSamples, int trackFrames) {
             this.renderSamples = renderSamples;
-            this.maxLeadSamples = Math.max(renderSamples * 2, Math.max(0, trackFrames));
+            // Bound render lead to at most two quanta (~40 ms) so the loop
+            // never outruns the native jitter buffer's margin (40 ms) into
+            // large sink buffers (e.g. Bluetooth A2DP 4800-11532 frames),
+            // while respecting smaller sink floors.
+            this.maxLeadSamples = Math.max(renderSamples,
+                    Math.min(renderSamples * 2, Math.max(0, trackFrames)));
         }
 
         Action check(int head) {

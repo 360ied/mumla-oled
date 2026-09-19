@@ -29,13 +29,17 @@ public class AudioOutputPacerTest extends TestCase {
     private static final int TRACK_FRAMES = 1920;  // 40 ms buffer
 
     public void testMaxLeadSamplesFloorAndTrackCapacity() {
-        // Floor of 2 render quanta (1920 samples) when trackFrames is smaller
-        AudioOutput.Pacer pacerSmall = new AudioOutput.Pacer(RENDER_SAMPLES, 960);
-        assertEquals(RENDER_SAMPLES * 2, pacerSmall.maxLeadSamples);
+        // Floor of 1 render quantum (960 samples) when trackFrames is smaller than 1 quantum (e.g. 480 or 0)
+        AudioOutput.Pacer pacerSmall = new AudioOutput.Pacer(RENDER_SAMPLES, 480);
+        assertEquals(RENDER_SAMPLES, pacerSmall.maxLeadSamples);
 
-        // Accommodates larger hardware minimum buffers (e.g. Bluetooth A2DP 4800 frames)
+        AudioOutput.Pacer pacerZero = new AudioOutput.Pacer(RENDER_SAMPLES, 0);
+        assertEquals(RENDER_SAMPLES, pacerZero.maxLeadSamples);
+
+        // Clamps to 2 render quanta (1920 samples) even with larger hardware buffers
+        // (e.g. Bluetooth A2DP 4800 frames) so render-lead never outruns the jitter buffer margin
         AudioOutput.Pacer pacerLarge = new AudioOutput.Pacer(RENDER_SAMPLES, 4800);
-        assertEquals(4800, pacerLarge.maxLeadSamples);
+        assertEquals(RENDER_SAMPLES * 2, pacerLarge.maxLeadSamples);
     }
 
     public void testInitialCheckProceedsAndRebases() {
@@ -92,7 +96,7 @@ public class AudioOutputPacerTest extends TestCase {
         assertEquals(AudioOutput.Pacer.Action.PROCEED, action);
     }
 
-    public void testStallBreakoutAfterEightUnchangedPolls() {
+    public void testStallBreakoutAfterUnchangedPolls() {
         AudioOutput.Pacer pacer = new AudioOutput.Pacer(RENDER_SAMPLES, TRACK_FRAMES);
         pacer.check(0);
 
@@ -100,12 +104,12 @@ public class AudioOutputPacerTest extends TestCase {
         pacer.onWritten(RENDER_SAMPLES * 3); // 2880
 
         // Simulate head frozen at 0 (e.g. stalled sink or un-clocked AudioTrack)
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < AudioOutput.Pacer.MAX_STALL_POLLS - 1; i++) {
             AudioOutput.Pacer.Action action = pacer.check(0);
             assertEquals(AudioOutput.Pacer.Action.WAIT, action);
         }
 
-        // The 8th poll with frozen head must trigger STALL_BREAK and rebase writtenTotal
+        // The MAX_STALL_POLLS-th poll with frozen head must trigger STALL_BREAK and rebase writtenTotal
         AudioOutput.Pacer.Action action = pacer.check(0);
         assertEquals(AudioOutput.Pacer.Action.STALL_BREAK, action);
         assertEquals(0L, pacer.writtenTotal);
@@ -114,11 +118,11 @@ public class AudioOutputPacerTest extends TestCase {
         action = pacer.check(0);
         assertEquals(AudioOutput.Pacer.Action.PROCEED, action);
 
-        // Subsequent stall: verify stallCount was reset so breakout requires another 8 full polls
+        // Subsequent stall: verify stallCount was reset so breakout requires full MAX_STALL_POLLS polls
         pacer.onWritten(RENDER_SAMPLES * 3);
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < AudioOutput.Pacer.MAX_STALL_POLLS - 1; i++) {
             action = pacer.check(0);
-            assertEquals("Must wait full 40 ms on subsequent stall rather than breaking immediately",
+            assertEquals("Must wait full stall timeout on subsequent stall rather than breaking immediately",
                     AudioOutput.Pacer.Action.WAIT, action);
         }
         action = pacer.check(0);
@@ -132,8 +136,8 @@ public class AudioOutputPacerTest extends TestCase {
         // Force writtenTotal beyond lead bound
         pacer.onWritten(RENDER_SAMPLES * 3);
 
-        // Exactly 8 polls at head 48000 before triggering STALL_BREAK
-        for (int i = 0; i < 7; i++) {
+        // Exactly MAX_STALL_POLLS polls at head 48000 before triggering STALL_BREAK
+        for (int i = 0; i < AudioOutput.Pacer.MAX_STALL_POLLS - 1; i++) {
             AudioOutput.Pacer.Action action = pacer.check(48000);
             assertEquals(AudioOutput.Pacer.Action.WAIT, action);
         }
@@ -145,16 +149,16 @@ public class AudioOutputPacerTest extends TestCase {
     public void testStallCounterResetsWhenHeadAdvances() {
         AudioOutput.Pacer pacer = new AudioOutput.Pacer(RENDER_SAMPLES, 4800);
         pacer.check(0);
-        pacer.onWritten(4800); // exactly at maxLead
+        pacer.onWritten(RENDER_SAMPLES * 3); // exceeds maxLead (1920)
 
-        // Poll 5 times at head 0
-        for (int i = 0; i < 5; i++) {
+        // Poll 39 times at head 0 (just below MAX_STALL_POLLS of 40)
+        for (int i = 0; i < AudioOutput.Pacer.MAX_STALL_POLLS - 1; i++) {
             assertEquals(AudioOutput.Pacer.Action.WAIT, pacer.check(0));
         }
-        assertEquals(5, pacer.stallCount);
+        assertEquals(AudioOutput.Pacer.MAX_STALL_POLLS - 1, pacer.stallCount);
 
-        // Head moves slightly (100 samples)
-        pacer.check(100);
+        // Head moves slightly (100 samples) before 40th poll: resets counter to 1 while still waiting
+        assertEquals(AudioOutput.Pacer.Action.WAIT, pacer.check(100));
         assertEquals(1, pacer.stallCount);
     }
 
