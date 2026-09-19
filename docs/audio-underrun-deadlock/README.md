@@ -81,7 +81,8 @@ The investigation revealed that this bug was not part of the original legacy Mum
 | **≤ 0.19.0** | Legacy Java mixer (`BasicClippingShortMixer`) | Blocking `AudioTrack.write()` only; explicit `pause()`/`flush()` on silence | **No** (Never queried `getPlaybackHeadPosition()`) |
 | **0.20.0 – 0.20.4** | Native C++ rewrite (`AudioOutputEngine`) | Blocking `AudioTrack.write()` only | **No** (Suffered from burst-onset audio buzz, but could not deadlock) |
 | **0.20.5 – 0.21.4** | Native C++ engine with burst-start gating | Render-lead pacing loop added in commit `b1e753b1` | **Yes** (Vulnerable to permanent circular deadlock on dirty stalls) |
-| **0.21.5** | Native C++ engine with testable `AudioOutput.Pacer` | Dynamic buffer sizing + `wasIdle` rebase + 40 ms stall breakout | **No** (Permanent resolution with zero burst-onset buzz) |
+| **0.21.5** | Native C++ engine with testable `AudioOutput.Pacer` | Uncapped buffer sizing (`maxLeadSamples = trackFrames`) + `wasIdle` rebase + 40 ms stall breakout | **No** (Fixed deadlock, but uncapped lead bound reintroduced burst-onset buzz; 40 ms timeout caused false breakouts on A2DP) |
+| **0.21.6** | Native C++ engine with clamped `AudioOutput.Pacer` | Clamped lead bound (`Math.min(2*renderSamples, trackFrames)`) + `wasIdle` rebase + 200 ms stall breakout | **No** (Permanent resolution of deadlock and burst-onset buzz across all sinks) |
 
 ### The Genesis in 0.20.5 (Commit `b1e753b1`)
 
@@ -280,13 +281,14 @@ stateDiagram-v2
 
 ### The Three Defenses
 
-1. **Hardware-Aware Lead Bound**:
+1. **Clamped Lead Bound**:
 
    ```java
-   this.maxLeadSamples = Math.max(renderSamples * 2, Math.max(0, trackFrames));
+   this.maxLeadSamples = Math.max(renderSamples,
+           Math.min(renderSamples * 2, Math.max(0, trackFrames)));
    ```
 
-   Instead of clamping to 1,920 frames (40 ms), the bound now expands to accommodate high-latency sinks like Bluetooth A2DP (which often require 4,800–9,600 frames). Normal sink buffering no longer starves the pacing loop.
+   In 0.21.5, allowing `maxLeadSamples` to expand to `trackFrames` (which is 4,800 to 11,532 frames on Bluetooth A2DP) meant that whenever speech resumed after an idle gap (`wasIdle = true`), the render loop was permitted to sprint ahead and queue up to 240 ms of audio into the empty `AudioTrack` buffer. This rapid render pump outpaced packet arrival over UDP, triggering the native engine's startup gate timeout (`GATE_TIMEOUT_FRAMES = 20`), draining the Speex jitter buffer to empty, generating consecutive packet loss concealment (PLC) buzzing, and exceeding `DEAD_MISS_FRAMES = 10`, which prematurely destroyed the voice. Clamping the lead bound to at most two quanta (40 ms) mirrors desktop Mumble's pull model and ensures the render loop never outruns the native jitter margin (40 ms).
 
 2. **Idle Rebase (`wasIdle`)**:
 
@@ -300,14 +302,14 @@ stateDiagram-v2
    }
    ```
 
-   Whenever conversation resumes after silence, `writtenTotal` is immediately synchronized with the actual hardware head position. Any stale lead or drift accumulated during the pause is zeroed out before the first sample is rendered.
+   Whenever conversation resumes after silence, `writtenTotal` is immediately synchronized with the actual hardware head position. Any stale lead or drift accumulated during the pause is zeroed out before the first sample is rendered. This eliminates the circular deadlock on resume without needing an expanded lead bound.
 
 3. **Stall Breakout (`Action.STALL_BREAK`)**:
 
    ```java
    if (head == stallHead) {
        stallCount++;
-       if (stallCount >= MAX_STALL_POLLS) { // 8 polls * 5 ms = 40 ms
+       if (stallCount >= MAX_STALL_POLLS) { // 40 polls * 5 ms = 200 ms
            writtenTotal = played;
            stallHead = -1;
            stallCount = 0;
@@ -319,7 +321,7 @@ stateDiagram-v2
    }
    ```
 
-   If a dirty underrun, Bluetooth stall, or HAL routing glitch freezes the playback head mid-stream, the pacer detects that the head hasn't advanced for 40 ms. It logs a diagnostic warning, rebases `writtenTotal = played`, ensures `mAudioTrack.play()` is invoked, and breaks out to resume rendering immediately.
+   In 0.21.5, `MAX_STALL_POLLS` was set to 8 (40 ms). In vivo profiling revealed that on Bluetooth A2DP sinks, hardware underrun restart routinely takes ~80–100 ms to resume advancing the playback head. A 40 ms timeout caused false-positive stall breakouts and lead rebases during normal speech. Increasing `MAX_STALL_POLLS` to 40 (200 ms) provides ample headroom for A2DP HAL latency while still swiftly breaking out of genuine, permanent hardware deadlocks.
 
 ---
 
@@ -330,11 +332,11 @@ The fix was verified across three rigorous layers:
 ### 1. Host Unit Tests
 
 - **`AudioOutputPacerTest.java`**:
-  - `testMaxLeadSamplesFloorAndTrackCapacity()`: Verifies hardware buffer floor and expansion.
+  - `testMaxLeadSamplesFloorAndTrackCapacity()`: Verifies hardware buffer floor and clamping to at most two quanta.
   - `testInitialCheckProceedsAndRebases()`: Verifies zero-lag resumption on initial check.
   - `testNormalPacingBlocksWhenLeadExceededAndResumesOnPlayback()`: Verifies standard lead backpressure.
   - `testIdleRebasePreventsDeadlockAfterUnderrun()`: Verifies zero-lag resumption after silence/underrun.
-  - `testStallBreakoutAfterEightUnchangedPolls()`: Verifies exact 8-poll (40 ms) breakout timing and subsequent stall counter reset.
+  - `testStallBreakoutAfterUnchangedPolls()`: Verifies exact 40-poll (200 ms) breakout timing and subsequent stall counter reset.
   - `testStallBreakoutAtNonZeroHead()`: Verifies breakout at arbitrary counter offsets.
   - `testStallCounterResetsWhenHeadAdvances()`: Verifies stall counter resets as soon as the playback head moves.
   - `testPlaybackHead32BitWrap()`: Verifies 32-bit hardware overflow (~24.9 hours).
