@@ -16,7 +16,7 @@
         <!-- Mark the cardview background a bit darker (used for server list and chat item list) -->
         <item name="cardStyle">@style/Theme.Mumla.Dark.CardView</item>
         <!-- Make it so appbar's popupmenu has dark theme (it would anyway in general dark theme,
-        but this is needed because in the light theme this is set to Material3.Light z-->
+        but this is needed because in the light theme this is set to Material3.Light) -->
         <item name="popupOverlay">@style/ThemeOverlay.Material3.Dark</item>
     </style>
 

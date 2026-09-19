@@ -15,7 +15,7 @@
         <item name="actionModeStyle">@style/App.Widget.ActionMode</item>
     </style>
 
-    <!-- This is for always have dark themed appbar, used in activity .xmls -->
+    <!-- Always use dark-themed appbar in activity layouts -->
     <style name="TweakedAppBarLayout" parent="">
         <!-- Set background to primary color of theme -->
         <item name="android:background">?attr/colorPrimary</item>
