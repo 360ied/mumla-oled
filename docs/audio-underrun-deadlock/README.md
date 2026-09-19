@@ -19,9 +19,9 @@ During active voice sessions, incoming audio would intermittently cut out comple
 
 A **circular pacing deadlock** between the application's render thread and Android's audio subsystem:
 1. In 0.20.5, render-lead pacing was introduced in `AudioOutput.run()` to prevent the render loop from sprinting ahead of network packets and draining the native jitter buffer on burst starts.
-2. The loop calculated the unplayed buffer lead: $\text{lead} = \text{writtenTotal} + \text{RENDER\_SAMPLES} - \text{played}$, where $\text{played} = \text{AudioTrack.getPlaybackHeadPosition()}$. If $\text{lead} > \text{maxLeadSamples}$, the loop paused for 5 ms, waiting for the hardware playback head to advance.
+2. The loop calculated the unplayed buffer lead: `lead = writtenTotal + RENDER_SAMPLES - played`, where `played = AudioTrack.getPlaybackHeadPosition()`. If `lead > maxLeadSamples`, the loop paused for 5 ms, waiting for the hardware playback head to advance.
 3. When an unexpected hardware audio stall, Bluetooth A2DP transport slip, or mid-stream audio routing change occurred, Android's `AudioFlinger` disabled the track due to an underrun and froze `getPlaybackHeadPosition()`.
-4. If the track froze before the hardware played all samples written to it, $\text{lead}$ remained permanently greater than $\text{maxLeadSamples}$.
+4. If the track froze before the hardware played all samples written to it, `lead` remained permanently greater than `maxLeadSamples`.
 5. **The Deadlock**:
    - Mumla's render loop refused to render or write audio until the playback head advanced.
    - Android's `AudioTrack` could only advance its playback head if new audio was written into it.
@@ -124,12 +124,12 @@ VoIP audio uses **Discontinuous Transmission (DTX)**:
 2. Mumla's native engine renders 0 samples (`rendered == 0`).
 3. Mumla stops writing to `AudioTrack` and sleeps.
 4. The hardware sink continues draining the remaining buffered audio frames (~40–100 ms) and physically plays them out the speaker.
-5. Once the last sample plays, the hardware buffer is empty. At this moment: $\text{writtenTotal} = \text{played} \implies \text{lead} = 0$.
+5. Once the last sample plays, the hardware buffer is empty. At this moment: `writtenTotal == played` (lead = 0).
 6. Android's `AudioFlinger` detects an empty buffer on an active track and logs:
    ```text
    AudioTrack: restartIfDisabled(448): releaseBuffer() track 0xb4... disabled due to previous underrun, restarting
    ```
-7. When Speaker B talks 3 seconds later: $\text{lead} = 0 + 960 - 0 = 960 \le \text{maxLeadSamples}$. The pacing check passes immediately on the first poll. Audio flows seamlessly.
+7. When Speaker B talks 3 seconds later: `lead = 0 + 960 - 0 = 960 <= maxLeadSamples`. The pacing check passes immediately on the first poll. Audio flows seamlessly.
 
 ### Condition B: The "Dirty" Underrun / Playback Head Stall (Catastrophic)
 
@@ -139,18 +139,18 @@ An unexpected hardware or transport discontinuity occurs while audio frames are 
 - **Mid-word network drop**: Sudden Wi-Fi jitter causes a temporary packet starvation mid-word while the track buffer still contains unplayed audio.
 
 When a dirty underrun occurred:
-1. Mumla had written 2,400 samples into `AudioTrack` ($\text{writtenTotal} = 2400$).
-2. The HAL glitched or dropped pending frames when $\text{played}$ reached only 600.
+1. Mumla had written 2,400 samples into `AudioTrack` (`writtenTotal = 2400`).
+2. The HAL glitched or dropped pending frames when `played` reached only 600.
 3. `AudioFlinger` disabled the track for underrun, freezing `getPlaybackHeadPosition()` at 600.
 4. The unplayed 1,800 frames were discarded by the hardware and would **never** play.
-5. When the next packet arrived: $\text{lead} = 2400 + 960 - 600 = 2760$.
+5. When the next packet arrived: `lead = 2400 + 960 - 600 = 2760`.
 6. On `master`, `maxLeadSamples` was hardcoded to:
 
    ```java
    Math.max(RENDER_SAMPLES, Math.min(RENDER_SAMPLES * 2, trackFrames)); // Capped at 1920
    ```
 
-7. Because $2760 > 1920$, the pacing loop refused to proceed:
+7. Because `2760 > 1920`, the pacing loop refused to proceed:
 
    ```java
    while (writtenTotal + RENDER_SAMPLES - played > maxLeadSamples) {
