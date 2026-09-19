@@ -14,6 +14,7 @@ This directory catalogs defects, architectural inconsistencies, performance bott
    - [ODD-06: First Run Certificate Dialog Re-spawns on Outside Touch](#odd-06-first-run-certificate-dialog-re-spawns-on-outside-touch)
    - [ODD-07: Keycode Reset Inconsistency (-1 vs 0)](#odd-07-keycode-reset-inconsistency--1-vs-0)
    - [ODD-08: Stale Commented-Out XML Preferences](#odd-08-stale-commented-out-xml-preferences)
+   - [ODD-09: Bandwidth-Degraded framesPerPacket Fails to Scale UDP Send Queue](#odd-09-bandwidth-degraded-framesperpacket-fails-to-scale-udp-send-queue)
 3. [Remediation Roadmap](remediation-plan.md)
 
 ---
@@ -30,6 +31,7 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-06** | **UI / Lifecycle** | **Low** | **First Run Certificate Dialog Re-spawns**: [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) displays a dialog without a negative button, cancel listener, or `setCancelable(false)`; tapping outside dismisses the dialog without setting `first_run = false`, causing it to reappear on every app launch. | [`MumlaActivity.java:481`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) |
 | **ODD-07** | **Preferences** | **Low** | **Inconsistent Reset Key Default Value**: [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`, but [`KeySelectPreferenceDialogFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) sets `mCurrentValue = 0` (`KEYCODE_UNKNOWN`), producing divergent preference states. | [`KeySelectPreferenceDialogFragment.java:35`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) |
 | **ODD-08** | **Code Hygiene** | **Low** | **Dead Commented-Out Preferences**: Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers`) remain commented out in [`settings_appearance.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94). | [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94) |
+| **ODD-09** | **Network / Latency** | **Medium** | **Bandwidth-Degraded `framesPerPacket` Fails to Scale HumlaUDP Send Queue**: When low server bandwidth triggers `AudioHandler.setMaxBandwidth()` to increase `framesPerPacket` (e.g. from 2 to 4), `HumlaUDP` is not updated, keeping a 10-packet queue ($10 \times 40\text{ ms} = 400\text{ ms}$) and causing latency bloat. | [`AudioHandler.java:266`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272) |
 
 ---
 
@@ -226,6 +228,31 @@ In [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mu
 ```
 
 These legacy Plumble settings are commented out in XML and should be removed.
+
+---
+
+### ODD-09: Bandwidth-Degraded framesPerPacket Fails to Scale UDP Send Queue
+
+In [`AudioHandler.java:266-272`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272):
+
+```java
+if (HumlaConnection.calculateAudioBandwidth(bitrate, framesPerPacket) > maxBandwidth) {
+    if (framesPerPacket <= 4 && maxBandwidth <= 32000) {
+        framesPerPacket = 4;
+    } else if (framesPerPacket == 1 && maxBandwidth <= 64000) {
+        framesPerPacket = 2;
+    } else if (framesPerPacket == 2 && maxBandwidth <= 48000) {
+        framesPerPacket = 4;
+    }
+    ...
+}
+```
+
+When server bandwidth limits enforce auto-degradation, `AudioHandler` increases `mFramesPerPacket` (e.g. from 2 to 4), reconfiguring the native encoder to produce 40ms audio packets.
+However, neither `HumlaConnection` nor `HumlaUDP` is notified of this adjusted packet size:
+- `HumlaUDP.mSendQueueCapacity` remains at 10 packets (calculated for standard 20ms audio).
+- With 40ms packets, a 10-packet queue buffers $10 \times 40\text{ ms} = 400\text{ ms}$ of audio—double the target latency ceiling of ~200ms.
+- The send queue should dynamically scale down to 5 packets for 40ms audio to preserve real-time interactivity.
 
 ---
 
