@@ -194,6 +194,25 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 
 ---
 
+### 2.2 Scale HumlaUDP Send Queue on Bandwidth Throttling (ODD-09)
+
+**Status**: Open
+
+**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272), [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L441), [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L685)
+
+**Problem**:
+1. When server maximum bandwidth constraints trigger auto-degradation in `AudioHandler.setMaxBandwidth()`, `framesPerPacket` may be increased from 2 to 4 (or 1 to 2/4) to reduce packet header overhead.
+2. `AudioHandler` updates `mNativeEngine` so local Opus encoding outputs 40ms packets, but does not notify `HumlaConnection` or `HumlaUDP`.
+3. Consequently, `HumlaUDP.mSendQueueCapacity` remains at 10 packets (configured for default 20ms audio).
+4. With 40ms packets, a 10-packet queue allows up to 400ms ($10 \times 40\text{ ms}$) of buffered voice data during network stalls, doubling latency and causing bufferbloat.
+
+**Solution**:
+Wire a listener or feedback mechanism from `AudioHandler` to `HumlaConnection.setTargetFramesPerPacket()`:
+1. When `setMaxBandwidth()` adjusts `framesPerPacket`, emit a callback or notification to `HumlaConnection`.
+2. `HumlaConnection.setTargetFramesPerPacket()` dynamically scales `HumlaUDP` send queue capacity to 5 packets for 40ms audio (preserving the ~200ms target latency ceiling) and immediately flushes stale excess packets if downsized.
+
+---
+
 ## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)
 
 Phase 3 resolves UX annoyances, preference state divergence, and overlay rotation inconsistencies.
@@ -423,6 +442,7 @@ To ensure zero regressions across all four phases, each change must be accompani
 | **Phase 1** | **ODD-01** | Add `ModelHandlerUserRemoveTest.java` verifying `mUsers.get(session) == null` after `messageUserRemove`. | Connect to test server, have a remote user join and leave; inspect heap via Android Profiler. |
 | **Phase 1** | **ODD-02** | Unit test verifying `onUDPDataReceived` is invoked on the UDP receive thread, not `Looper.getMainLooper()`. | High-rate voice chatter benchmark (150 packets/sec); measure UI thread frame times (`gfxinfo`) ensuring zero dropped frames. |
 | **Phase 2** | **ODD-03** | Add `HumlaUDPSendQueueTest.java` verifying queue bounds to `MAX_SEND_QUEUE_CAPACITY` and drops oldest packets on stall. | Throttle connection to 0 kbps for 5 seconds while holding PTT; unthrottle and observe server incoming packet rate. |
+| **Phase 2** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
 | **Phase 3** | **ODD-06** | Robolectric test in `MumlaActivityTest.java` simulating outside touch dismissal and verifying `isFirstRun() == false`. | Fresh install; tap outside first-run certificate dialog; force stop and relaunch to verify dialog does not reappear. |
 | **Phase 3** | **ODD-07** | Unit test in `SettingsTest.java` verifying `getPushToTalkKey()` returns `-1` before and after reset; verify `KEYCODE_UNKNOWN` (`0`) does not trigger PTT. | Open PTT key preference, click "Reset Key", verify "None" is displayed and key events with `keyCode=0` are ignored. |
 | **Phase 3** | **ODD-05** | Service unit test verifying `mHotCorner.refreshGestureExclusion()` is called in `onConfigurationChanged()`. | Enable hot corner on Android 10+ device; rotate screen; perform edge back gesture over hot corner to verify exclusion is active. |

@@ -133,7 +133,7 @@ public class Settings {
     public static final boolean DEFAULT_LOAD_IMAGES = false;
 
     public static final String PREF_FRAMES_PER_PACKET = "audio_per_packet";
-    public static final String DEFAULT_FRAMES_PER_PACKET = "2";
+    public static final String DEFAULT_FRAMES_PER_PACKET = Integer.toString(Constants.DEFAULT_FRAMES_PER_PACKET);
 
     public static final String PREF_HALF_DUPLEX = "half_duplex";
     public static final boolean DEFAULT_HALF_DUPLEX = false;
@@ -399,7 +399,11 @@ public class Settings {
     }
 
     public int getFramesPerPacket() {
-        return Integer.parseInt(preferences.getString(PREF_FRAMES_PER_PACKET, DEFAULT_FRAMES_PER_PACKET));
+        try {
+            return Integer.parseInt(preferences.getString(PREF_FRAMES_PER_PACKET, DEFAULT_FRAMES_PER_PACKET));
+        } catch (NumberFormatException e) {
+            return Constants.DEFAULT_FRAMES_PER_PACKET;
+        }
     }
 
     public boolean isHalfDuplex() {

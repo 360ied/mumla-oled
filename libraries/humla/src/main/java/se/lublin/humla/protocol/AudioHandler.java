@@ -23,6 +23,7 @@ import android.util.Log;
 
 import com.google.protobuf.ByteString;
 
+import se.lublin.humla.Constants;
 import se.lublin.humla.R;
 import se.lublin.humla.audio.AudioInput;
 import se.lublin.humla.audio.AudioOutput;
@@ -158,11 +159,7 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     private static int sanitizeFramesPerPacket(int fpp) {
-        // Opus supports 10ms, 20ms, 40ms, 60ms (1, 2, 4, 6 frames @ 10ms)
-        if (fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6) {
-            return fpp;
-        }
-        return 2; // Default 20ms
+        return Constants.sanitizeFramesPerPacket(fpp);
     }
 
     public synchronized void initialize(User self, int maxBandwidth, HumlaUDPMessageType codec) throws AudioException {
@@ -273,7 +270,7 @@ public class AudioHandler extends HumlaNetworkListener
                 mNativeEngine.setFramesPerPacket(mFramesPerPacket);
             }
             mLogger.logInfo(mContext.getString(R.string.audio_max_bandwidth,
-                    maxBandwidth / 1000, maxBandwidth / 1000, framesPerPacket * 10));
+                    maxBandwidth / 1000, bitrate / 1000, framesPerPacket * Constants.FRAME_DURATION_MS));
         }
     }
 
@@ -502,7 +499,7 @@ public class AudioHandler extends HumlaNetworkListener
         private int mAudioStream;
         private int mAudioSource;
         private int mTargetBitrate;
-        private int mTargetFramesPerPacket;
+        private int mTargetFramesPerPacket = Constants.DEFAULT_FRAMES_PER_PACKET;
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
