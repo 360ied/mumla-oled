@@ -150,4 +150,28 @@ public class CryptStateTest extends TestCase {
         assertNotNull("Packet must not be falsely dropped due to mEncryptIV[0] collision", decrypted2);
         assertTrue(Arrays.equals(plain2, decrypted2));
     }
+
+    public void testDecryptPacketLossUnsignedByteHandling() throws Exception {
+        CryptState sender = new CryptState();
+        sender.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
+
+        CryptState receiver = new CryptState();
+        receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
+
+        // Set IVs to byte values >= 128 (0x80) where Java sign extension occurs if not masked
+        sender.mEncryptIV[0] = (byte) 130; // -126 in Java byte
+        receiver.mDecryptIV[0] = (byte) 130;
+
+        // Skip 5 packets (send packet with IV 136)
+        sender.mEncryptIV[0] = (byte) 135; // encrypt() will increment to 136
+        byte[] plain = "Lost packets test".getBytes();
+        byte[] enc = sender.encrypt(plain, plain.length);
+
+        receiver.mUiLost = 0;
+        byte[] decrypted = receiver.decrypt(enc, enc.length);
+        assertNotNull(decrypted);
+
+        // ivbyte = 136, mDecryptIV[0] = 130 -> lost = 136 - 130 - 1 = 5
+        assertEquals(5, receiver.mUiLost);
+    }
 }

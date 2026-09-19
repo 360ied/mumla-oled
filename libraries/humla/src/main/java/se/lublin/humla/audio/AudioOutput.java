@@ -224,7 +224,10 @@ public class AudioOutput implements Runnable,
                 return;
             }
         }
-        mAudioTrack.play();
+        try {
+            mAudioTrack.play();
+        } catch (IllegalStateException ignored) {
+        }
 
         // Render-lead pacing: bound how far ahead of the playback head this
         // loop may queue audio. The track's write path only blocks when its
@@ -509,7 +512,7 @@ public class AudioOutput implements Runnable,
         long writtenTotal = 0L;
         long playedWrap = 0L;
         int lastHead = 0;
-        int stallHead = 0;
+        int stallHead = -1;
         int stallCount = 0;
         boolean wasIdle = true;
 
@@ -545,20 +548,26 @@ public class AudioOutput implements Runnable,
             if (wasIdle) {
                 writtenTotal = played;
                 wasIdle = false;
+                stallHead = -1;
+                stallCount = 0;
                 return Action.PROCEED;
             }
             if (writtenTotal + renderSamples - played <= maxLeadSamples) {
+                stallHead = -1;
+                stallCount = 0;
                 return Action.PROCEED;
             }
             if (head == stallHead) {
                 stallCount++;
                 if (stallCount >= MAX_STALL_POLLS) {
                     writtenTotal = played;
+                    stallHead = -1;
+                    stallCount = 0;
                     return Action.STALL_BREAK;
                 }
             } else {
                 stallHead = head;
-                stallCount = 0;
+                stallCount = 1;
             }
             return Action.WAIT;
         }
@@ -569,6 +578,8 @@ public class AudioOutput implements Runnable,
 
         void onIdle() {
             wasIdle = true;
+            stallHead = -1;
+            stallCount = 0;
         }
     }
 

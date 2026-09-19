@@ -89,7 +89,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private HumlaTCP mTCP;
     private volatile HumlaUDP mUDP;
     private ScheduledFuture<?> mPingTask;
-    private boolean mUsingUDP = true;
+    private volatile boolean mUsingUDP = true;
     private boolean mForceTCP;
     private boolean mConnected;
     private boolean mSynchronized;
@@ -197,7 +197,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
                     }
                 } else {
                     Mumble.CryptSetup.Builder csb = Mumble.CryptSetup.newBuilder();
-                    csb.setClientNonce(ByteString.copyFrom(mCryptState.mEncryptIV));
+                    csb.setClientNonce(ByteString.copyFrom(mCryptState.getEncryptIV()));
                     sendTCPMessage(csb.build(), HumlaTCPMessageType.CryptSetup);
                 }
             } catch (InvalidKeyException e) {
