@@ -7,15 +7,16 @@
         <item name="android:textColorPrimaryInverse">#dddddd</item>
         <item name="android:textColorSecondaryInverse">#dddddd</item>
 
-        <!-- Dark primary color is too dark for dialog buttons (on dark background). We tweak old
-             style, material style, and old preference dialogs to use a higher-contrast primary -->
+        <!-- Dark primary color is too dark for dialog buttons and hyperlinks (on dark background).
+             We tweak dialogs, preference dialogs, and link text color to use a higher-contrast primary -->
+        <item name="android:textColorLink">@color/md_theme_dark_primary_lighter_more</item>
         <item name="alertDialogTheme">@style/TweakedAlertDialog</item>
         <item name="materialAlertDialogTheme">@style/TweakedMaterialAlertDialog</item>
         <item name="dialogPreferenceStyle">@style/TweakedDialogPreference</item>
         <!-- Mark the cardview background a bit darker (used for server list and chat item list) -->
         <item name="cardStyle">@style/Theme.Mumla.Dark.CardView</item>
         <!-- Make it so appbar's popupmenu has dark theme (it would anyway in general dark theme,
-        but this is needed because in the light theme this is set to Material3.Light z-->
+        but this is needed because in the light theme this is set to Material3.Light) -->
         <item name="popupOverlay">@style/ThemeOverlay.Material3.Dark</item>
     </style>
 
@@ -44,6 +45,7 @@
         <item name="colorSurfaceContainerHighest">#000000</item>
         <item name="colorPrimary">@color/black</item>
         <item name="colorPrimaryDark">@color/black</item>
+        <item name="android:textColorLink">@color/md_theme_dark_primary_lighter_more</item>
         <item name="pttPressed">#222222</item>
         <item name="cardStyle">@style/Theme.Mumla.Oled.CardView</item>
         <item name="materialAlertDialogTheme">@style/TweakedMaterialAlertDialog.Oled</item>

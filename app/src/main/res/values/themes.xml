@@ -4,6 +4,7 @@
         <item name="colorPrimary">@color/md_theme_light_primary</item>
         <item name="colorOnPrimary">@color/md_theme_light_onPrimary</item>
         <item name="pttPressed">@color/md_theme_light_primary_darker</item>
+        <item name="android:textColorLink">@color/md_theme_light_primary</item>
         <!-- Make it so appbar's popupmenu has light theme, even though appbar has dark -->
         <item name="popupOverlay">@style/ThemeOverlay.Material3.Light</item>
         <!-- Make the Chat Target "banner" ActionMode obscure the ActionBar,
@@ -14,7 +15,7 @@
         <item name="actionModeStyle">@style/App.Widget.ActionMode</item>
     </style>
 
-    <!-- This is for always have dark themed appbar, used in activity .xmls -->
+    <!-- Always use dark-themed appbar in activity layouts -->
     <style name="TweakedAppBarLayout" parent="">
         <!-- Set background to primary color of theme -->
         <item name="android:background">?attr/colorPrimary</item>
