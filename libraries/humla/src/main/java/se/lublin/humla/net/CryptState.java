@@ -93,6 +93,13 @@ public class CryptState {
         return mDecryptIV;
     }
 
+    public synchronized void setDecryptIV(final byte[] div) {
+        if (div != null && div.length == AES_BLOCK_SIZE) {
+            System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
+            Arrays.fill(mDecryptHistory, (byte) 0);
+        }
+    }
+
     public synchronized void setKeys(final byte[] rkey, final byte[] eiv, final byte[] div) throws InvalidKeyException {
         try {
             mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
@@ -112,6 +119,7 @@ public class CryptState {
         System.arraycopy(eiv, 0, mEncryptIV, 0, AES_BLOCK_SIZE);
         mDecryptIV = new byte[div.length];
         System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
+        Arrays.fill(mDecryptHistory, (byte) 0);
 
         mEncryptCipher.init(Cipher.ENCRYPT_MODE, cryptKey);
         mDecryptCipher.init(Cipher.DECRYPT_MODE, cryptKey);
@@ -198,7 +206,7 @@ public class CryptState {
                 return null;
             }
 
-            if (mDecryptHistory[mDecryptIV[0] & 0xFF] == mEncryptIV[0]) {
+            if (mDecryptHistory[mDecryptIV[0] & 0xFF] == mDecryptIV[1]) {
                 System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
                 return null;
             }
