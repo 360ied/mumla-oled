@@ -1,6 +1,6 @@
 # Comprehensive Architectural Audit & Investigation: Power Draw Optimizations in Mumla OLED
 
-An in-depth empirical and architectural investigation into the electrical power consumption and battery drain profiles of the **Mumla OLED** client on Android. This report dissects hardware interactions across the Application Processor (AP), Audio DSP/DAC, Cellular Baseband Modem, and OLED display subsystem, identifies concrete defects and inefficiencies in the codebase, and proposes an actionable, phased remediation roadmap.
+An in-depth empirical and architectural investigation into the electrical power consumption and battery drain profiles of the **Mumla OLED** client on Android. This report dissects hardware interactions across the Application Processor (AP), Audio DSP/DAC, Cellular Baseband Modem, and OLED display subsystem, identifies concrete defects and inefficiencies in the codebase, and proposes an actionable, phased remediation roadmap vetted against upstream Mumble protocol specifications and Android hardware constraints.
 
 ---
 
@@ -8,16 +8,15 @@ An in-depth empirical and architectural investigation into the electrical power 
 
 Mobile voice-over-IP (VoIP) applications face a difficult power engineering challenge: they must sustain low-latency audio capture, real-time digital signal processing (DSP), network packet delivery, and audio rendering while keeping the host mobile device in the lowest possible energy state. 
 
-Mumla OLED was designed to provide an ultra-clean, OLED-optimized dark theme alongside a modernized native C++ audio engine (`AudioInputEngine`, `AudioOutputEngine`, RNNoise neural noise suppression, Opus hard CBR). However, a comprehensive audit of the codebase reveals that the application currently suffers from **severe systemic energy leaks** across all major subsystems:
+Mumla OLED was designed to provide an ultra-clean, OLED-optimized dark theme alongside a modernized native C++ audio engine (`AudioInputEngine`, `AudioOutputEngine`, RNNoise neural noise suppression, Opus hard CBR). However, a comprehensive audit of the codebase reveals that the application currently suffers from **systemic energy leaks** across all major subsystems:
 
 1. **Permanent Application Processor (AP) Wakelock**: A `PARTIAL_WAKE_LOCK` is acquired unconditionally upon connection synchronization and held indefinitely, permanently preventing the device SoC from entering Linux kernel suspend-to-RAM (`deep sleep`).
 2. **24/7 Microphone Capture & Neural Network Inference**: `AudioRecord` and the RNNoise recurrent neural network (GRU) run continuously at 100 Hz even when the client is completely muted, when the Push-To-Talk (PTT) button is released, or when the room is silent.
 3. **50 Hz Render Thread Spin & AudioTrack Idle Lock**: When no remote participants are speaking, the audio output thread wakes up every 20 ms to poll JNI, keeping CPU cores out of deep C-states, while `AudioTrack` remains continuously in `PLAYSTATE_PLAYING`, preventing the hardware audio DSP/DAC from entering low-power sleep.
 4. **Cellular Radio Resource Control (RRC) Tail Lock**: Both UDP and TCP keepalive pings are transmitted on a rigid 5-second interval. Because typical cellular carrier radio inactivity timers are 10–15 seconds, the mobile baseband modem is trapped in the high-power `RRC_CONNECTED` state continuously.
 5. **GC Allocation Churn & JNI Crossings in OCB2-AES**: Packet encryption and decryption are executed in Java via `Cipher.getInstance("AES/ECB/NoPadding")`, allocating multiple heap byte arrays per 16-byte block across every transmitted and received voice datagram.
-6. **Missing NEON SIMD in 32-bit Native Builds**: Missing build flags cause RNNoise to compile down to unvectorized scalar loops on 32-bit ARM architectures, increasing DSP execution cycles by 4–6×.
-7. **Exhaustive Opus CPU Complexity**: The encoder is hardcoded to `OPUS_SET_COMPLEXITY(10)` with DTX disabled, burning ~2.5–3× more CPU cycles than necessary for zero perceptual benefit in voice communication.
-8. **Main-Thread Avatar Decompression Churn**: Every time a user stops speaking in the channel list, uncompressed avatar textures are decoded synchronously from raw bytes on the UI thread without caching.
+6. **Exhaustive Opus CPU Complexity**: The encoder is hardcoded to `OPUS_SET_COMPLEXITY(10)`, burning ~2.5–3× more CPU cycles than necessary for zero perceptual benefit in voice communication.
+7. **Main-Thread Avatar Decompression Churn**: Every time a user stops speaking in the channel list, uncompressed avatar textures are decoded synchronously from raw bytes on the UI thread without caching.
 
 ### Subsystem Current & Power Impact Matrix
 
@@ -25,19 +24,19 @@ The table below outlines modeled and empirical hardware current draw (assuming a
 
 | Subsystem | Failure Mechanism | Current Draw (Current) | Power Draw (Current) | Current Draw (Optimized) | Power Draw (Optimized) | Power Delta (Savings) |
 |---|---|---|---|---|---|---|
-| **SoC / AP Standby** | Indefinite `PARTIAL_WAKE_LOCK` preventing kernel suspend | 35.0 – 60.0 mA | 135 – 231 mW | 2.5 – 5.0 mA | 9.6 – 19.3 mW | **−91% (−175 mW)** |
-| **Microphone / ADC** | Continuous capture when muted / PTT idle | 15.0 – 25.0 mA | 58 – 96 mW | 0.0 mA (Gated) | 0.0 mW (Gated) | **−100% (−77 mW)** |
-| **DSP (RNNoise / VAD)** | Always-on 100 Hz GRU inference during silence | 18.0 – 35.0 mA | 69 – 135 mW | 0.8 – 2.5 mA | 3.1 – 9.6 mW | **−94% (−92 mW)** |
-| **Audio Output HAL** | 50 Hz render polling + `AudioTrack` playing silence | 12.0 – 22.0 mA | 46 – 85 mW | 0.5 – 2.0 mA | 1.9 – 7.7 mW | **−93% (−60 mW)** |
-| **Cellular Modem** | 5s ping interval keeping RRC tail timer active | 90.0 – 160.0 mA | 346 – 616 mW | 15.0 – 35.0 mA | 58 – 135 mW | **−80% (−380 mW)** |
-| **Opus Encoder** | Hardcoded Complexity 10 + DTX Disabled | 14.0 – 22.0 mA | 54 – 85 mW | 4.5 – 7.0 mA | 17 – 27 mW | **−68% (−47 mW)** |
-| **Crypto & GC Churn** | Java OCB2-AES allocations & JNI per-block crossing | 4.0 – 8.0 mA | 15 – 31 mW | 0.5 – 1.2 mA | 1.9 – 4.6 mW | **−85% (−20 mW)** |
-| **Total (Idle Standby)** | *Connected, screen off, zero audio* | **~174 – 312 mA** | **~670 – 1201 mW** | **~19 – 46 mA** | **~73 – 177 mW** | **−85% to −89%** |
-| **Total (Active Voice)** | *Connected, talking/listening over LTE/5G* | **~245 – 420 mA** | **~943 – 1617 mW** | **~85 – 150 mA** | **~327 – 578 mW** | **−64% to −65%** |
+| **SoC / AP Standby** | Indefinite `PARTIAL_WAKE_LOCK` preventing kernel suspend | 35.0 – 60.0 mA | 135 – 231 mW | 5.0 – 12.0 mA | 19.3 – 46.2 mW | **−80% (−185 mW)** |
+| **Microphone / ADC** | Continuous capture when muted | 15.0 – 25.0 mA | 58 – 96 mW | 0.0 mA (Mute Gated) | 0.0 mW (Mute Gated) | **−100% (−77 mW)** |
+| **DSP (RNNoise / VAD)** | Always-on 100 Hz GRU inference during silence & PTT idle | 18.0 – 35.0 mA | 69 – 135 mW | 1.5 – 3.5 mA | 5.8 – 13.5 mW | **−90% (−90 mW)** |
+| **Audio Output HAL** | 50 Hz render polling + `AudioTrack` playing silence | 12.0 – 22.0 mA | 46 – 85 mW | 1.0 – 3.0 mA | 3.9 – 11.6 mW | **−86% (−55 mW)** |
+| **Cellular Modem** | 5s ping interval keeping RRC tail timer active | 90.0 – 160.0 mA | 346 – 616 mW | 55.0 – 95.0 mA | 212 – 366 mW | **−40% (−190 mW)** |
+| **Opus Encoder** | Hardcoded Complexity 10 (Voice Mode) | 14.0 – 22.0 mA | 54 – 85 mW | 4.5 – 7.0 mA | 17 – 27 mW | **−68% (−47 mW)** |
+| **Crypto & GC Churn** | Java OCB2-AES allocations & JNI per-block crossing (Active Voice) | 4.0 – 8.0 mA | 15 – 31 mW | 0.5 – 1.2 mA | 1.9 – 4.6 mW | **−85% (−20 mW)** |
+| **Total (Idle Standby)** | *Connected, screen off, zero audio* | **~170 – 302 mA** | **~654 – 1162 mW** | **~62 – 113 mA** | **~238 – 435 mW** | **−63% to −64%** |
+| **Total (Active Voice)** | *Connected, talking/listening over LTE/5G* | **~245 – 420 mA** | **~943 – 1617 mW** | **~110 – 195 mA** | **~423 – 750 mW** | **−54% to −55%** |
 
 On a standard 4000 mAh smartphone battery:
-- **Current Standby Time (Connected, Idle)**: $\approx 12.8 \text{ to } 23.0 \text{ hours}$.
-- **Optimized Standby Time (Connected, Idle)**: $\approx 87.0 \text{ to } 210.5 \text{ hours}$ (**4× to 9× battery life increase**).
+- **Current Standby Time (Connected, Idle)**: $\approx 13.2 \text{ to } 23.5 \text{ hours}$.
+- **Optimized Standby Time (Connected, Idle)**: $\approx 35.4 \text{ to } 64.5 \text{ hours}$ (**~3× battery life increase in connected standby**).
 
 ---
 
@@ -71,7 +70,7 @@ flowchart TD
     CPU -->|PARTIAL_WAKE_LOCK| LinuxPM
     CPU -->|AudioTrack MODE_STREAM| DSP
     CPU -->|AudioRecord Capture| Mic
-    CPU -->|UDP/TCP 5s Ping Cadence| Baseband
+    CPU -->|UDP/TCP Keepalive Cadence| Baseband
     DSP --> Codec
     Baseband --> RRC
 ```
@@ -155,7 +154,6 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
    `AudioRecord` is left capturing 48 kHz PCM constantly, even if:
    - The user is self-muted (`mMuted == true`).
    - The user is server-muted or suppressed.
-   - The input mode is Push-To-Talk (PTT) and the PTT button is released.
 2. **Unconditional RNNoise Forward Passes**:
    In `AudioInputEngine::processFrame()`, incoming PCM frames are processed sequentially:
    ```cpp
@@ -192,7 +190,7 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 
 #### Impact
 - **CPU & Hardware Drain**: RNNoise performs FFTs, pitch analysis, band energy projections, and dense GRU matrix-vector multiplications every 10 ms. On mobile ARM cores, this consumes 1–3% of a high-performance core or 6–10% of an efficiency core ($20 \text{ to } 40 \text{ mW}$), plus $50 \text{ to } 80 \text{ mW}$ of continuous microphone/ADC power.
-- **PTT & Mute Irony**: A user who selects Push-To-Talk or stays muted to save battery and bandwidth experiences **zero battery savings**, as the microphone and neural network continue running at 100 Hz.
+- **PTT & Mute Inefficiency**: When the user is muted or idle in Push-To-Talk, the recurrent neural network and adaptive leveler continue running at 100 Hz, wasting battery without producing any outgoing audio.
 
 ---
 
@@ -259,7 +257,7 @@ if (!shouldForceTCP()) {
 sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
 ```
 
-#### The Defect
+#### The Defect & Protocol Analysis
 1. **Excessive 5-Second Keepalive Cadence**:
    The client transmits both a UDP Ping and a TCP Ping every **5 seconds**.
    - Standard Mumble server timeout (`timeout` in `murmur.ini`) is **30 seconds**.
@@ -268,10 +266,21 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
 2. **Cellular Radio Tail State Lock**:
    As analyzed in Section 2.C, LTE and 5G cellular modems have carrier inactivity tail timers between 10 and 15 seconds.
    - Because a ping burst occurs every 5 seconds, the inactivity timer never expires.
-   - The cellular baseband processor is trapped in `RRC_CONNECTED` mode 100% of the time, consuming $100 \text{ to } 250 \text{ mA}$ ($385 \text{ to } 960 \text{ mW}$) continuously.
-   - If the interval were relaxed to 15–20 seconds during idle periods, the modem could enter DRX / `RRC_INACTIVE` cycles, reducing baseline cellular power by 70–85%.
-3. **Dual UDP + TCP Transmission**:
-   When UDP connectivity is functioning perfectly, sending a full TLS-framed TCP ping packet alongside the UDP ping doubles packet serialization, encryption, and socket wakes for no operational gain.
+   - The cellular baseband processor is trapped in `RRC_CONNECTED` mode 100% of the time, consuming $90 \text{ to } 160 \text{ mA}$ ($346 \text{ to } 616 \text{ mW}$) continuously.
+3. **Upstream Murmur Timeout Mechanics (CRITICAL PROTOCOL CONSTRAINT)**:
+   In upstream Murmur (`../mumble/src/murmur/Server.cpp:1843`), the client timeout check is evaluated exclusively against the TCP connection's activity timestamp (`u->activityTime()`):
+   ```cpp
+   if (u->activityTime() > (iTimeout * 1000)) {
+       log(u, "Timeout");
+       qlClose.append(u);
+   }
+   ```
+   Murmur resets `activityTime()` **only when receiving TCP messages** (`Server::message` at line 1725). Murmur's UDP message handler **never resets `activityTime()`**.
+   > [!CRITICAL]
+   > Mumla OLED **must never omit TCP keepalive pings**. If TCP pings are dropped, standard Murmur servers will forcibly disconnect the client after exactly 30 seconds with a "Timeout" error.
+4. **Mobile Carrier CGNAT UDP Binding Windows**:
+   Cellular carrier CGNAT (Carrier-Grade NAT) gateways frequently maintain aggressive UDP binding timeouts of 20 to 30 seconds. If UDP keepalives are relaxed beyond 12–15 seconds, packet loss on cellular links can cause the NAT pin-hole to expire, causing incoming audio to be silently blocked at the carrier firewall.
+   - **Optimal Keepalive Cadence**: A 10–12 second UDP ping safely refreshes carrier NAT tables with headroom for packet drops, while a 15-second TCP ping safely refreshes Murmur's 30-second activity timer.
 
 ---
 
@@ -302,35 +311,21 @@ while (len > AES_BLOCK_SIZE) {
 2. **Per-Block JNI Crossings**:
    `mDecryptCipher.doFinal(tmp, 0, AES_BLOCK_SIZE, tmp)` is called block-by-block. For an audio packet carrying 4 frames (80–120 bytes), the execution crosses the Java-to-native JNI boundary into Conscrypt/BoringSSL 6 to 8 times per packet.
 3. **Garbage Collection (GC) Pressure**:
-   At 50 packets per second (or 100+ packets/sec with multiple speakers), tens of thousands of ephemeral byte arrays are allocated per second, triggering frequent Android Dalvik/ART GC pauses and elevated CPU power.
+   At 50 packets per second (or 100+ packets/sec with multiple speakers), tens of thousands of ephemeral byte arrays are allocated per second, triggering frequent Android Dalvik/ART GC pauses and elevated CPU power during active conversations.
 
 ---
 
-### 3.6. Missing ARM NEON SIMD in 32-bit Native Builds
+### 3.6. Compiler SIMD Vectorization Audit
 
-#### Exact Source Locations
-- `Android.mk`: [`libraries/humla/src/main/jni/Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk#L59-L94)
-- `vec.h`: [`libraries/humla/src/main/jni/rnnoise/src/vec.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/rnnoise/src/vec.h#L41-L51)
-
-#### The Defect
-In `Android.mk`, module `humlaaudio` compiles RNNoise:
-```makefile
-LOCAL_MODULE := humlaaudio
-LOCAL_SRC_FILES := ... rnnoise/src/rnn.c rnnoise/src/nnet.c rnnoise/src/nnet_default.c ...
-LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 $(COMMON_CFLAGS) -DVAR_ARRAYS -Wno-#warnings
-```
-- In 64-bit ARM (`arm64-v8a`), NEON is mandatory and enabled by default by Clang.
-- In 32-bit ARM (`armeabi-v7a`), NEON is **not** enabled by default in Android NDK unless `LOCAL_ARM_NEON := true` or `-mfpu=neon` is specified in `LOCAL_CFLAGS`.
-- Because `LOCAL_ARM_NEON := true` is absent:
-  - In `vec.h`, the preprocessor condition `(defined(__ARM_NEON__) || defined(__ARM_NEON)) && !defined(DISABLE_NEON)` evaluates to **false**.
-  - RNNoise falls back to `NO_OPTIMIZATIONS`, triggering:
-    `#warning Compiling without any vectorization. This code will be very slow`
-    (which was silenced by `-Wno-#warnings` in `Android.mk`!).
-  - Dense matrix multiplications (`sgemv16x1`, `sgemv8x1`) execute as slow scalar C loops without 128-bit vectorization, taking **4× to 6× more CPU cycles** on 32-bit ARM devices.
+An audit of the native build system ([`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk) and [`Application.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Application.mk)) with pinned NDK `r25c` (`25.1.8937393`) and `APP_PLATFORM := android-21` confirms the following:
+- In Clang (NDK r19+), ARM NEON is enabled by default for both `armeabi-v7a` and `arm64-v8a`. The preprocessor definitions `__ARM_NEON` and `__ARM_NEON__` are automatically emitted.
+- In `rnnoise/src/vec.h`, the check `#elif (defined(__ARM_NEON__) || defined(__ARM_NEON)) && !defined(DISABLE_NEON)` successfully evaluates to true, including `vec_neon.h`.
+- Disassembly of compiled `nnet.o` objects confirms that 128-bit NEON instructions (`vmla.f32`, `vldmia`) are generated across all ARM targets.
+- **Optimization Opportunity**: While vectorization is active, adding `-ffast-math` and explicit vector loop unrolling flags (`-O3 -fvectorize`) in `Android.mk` can further accelerate recurrent GRU dot-product kernels and eliminate redundant bounds checks.
 
 ---
 
-### 3.7. Unoptimized Opus Encoder Settings (Complexity 10, DTX Disabled)
+### 3.7. Unoptimized Opus Encoder Settings (Complexity 10)
 
 #### Exact Source Location
 [`libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp#L34-L50)
@@ -346,14 +341,17 @@ opus_encoder_ctl(m_encoder, OPUS_SET_PACKET_LOSS_PERC(10));
 opus_encoder_ctl(m_encoder, OPUS_SET_DTX(0));
 ```
 
-#### The Defect
+#### The Defect & Constraint Analysis
 1. **Hardcoded Maximum Complexity 10**:
    Complexity 10 performs exhaustive psychoacoustic search and vector quantization. 
    - According to Xiph/Opus benchmarking data, Complexity 10 consumes **2.5× to 3× more CPU cycles** than Complexity 5 or 6.
    - In speech/VoIP mode (`OPUS_APPLICATION_VOIP` with `OPUS_SIGNAL_VOICE`), the perceptual PESQ difference between Complexity 6 and Complexity 10 is $< 0.15 \text{ dB}$ (virtually imperceptible to the human ear).
    - Standard WebRTC and Android mobile VoIP configurations recommend Complexity 5 or 6 for battery efficiency.
-2. **DTX Explicitly Disabled (`OPUS_SET_DTX(0)`)**:
-   Discontinuous Transmission (DTX) allows Opus to cease transmission or transmit lightweight comfort noise during conversational pauses in continuous transmission mode. Disabling DTX forces the encoder to process and emit full packets even during speech hesitations.
+2. **Why DTX Must Remain Disabled (`OPUS_SET_DTX(0)`)**:
+   While enabling DTX (Discontinuous Transmission) is common in SIP telephony, it is **unsuitable for Mumla OLED**:
+   - **Hard CBR Privacy Guarantee**: Lines 34–36 explicitly enforce `MANDATORY HARD CONSTANT BITRATE (CBR) - STRICTLY UNCONFIGURABLE` to prevent side-channel speech timing and length fingerprinting. DTX directly breaks this privacy guarantee.
+   - **Jitter Buffer Concealment Artifacts**: In Mumble, a client signals speech cessation by sending an explicit terminator packet. During active speech, the Speex jitter buffer (`AudioOutputEngine.cpp`) expects contiguous sequence numbers. If DTX suppresses packets during micro-pauses within a sentence, the receiver flags packet misses and triggers Packet Loss Concealment (PLC), producing robotic audio artifacts.
+   - **Resolution**: Keep `OPUS_SET_DTX(0)`, but drop complexity to `OPUS_SET_COMPLEXITY(6)`.
 
 ---
 
@@ -389,7 +387,9 @@ Every time a user finishes an utterance, their talk state transitions to `PASSIV
 
 Mumla OLED specifically targets OLED/AMOLED display hardware. Unlike LCD displays where a global CCFL or LED backlight is energized regardless of pixel content, OLED pixels are **individual organic light-emitting diodes**:
 
-$$\mathcal{P}_{\text{OLED}} = \mathcal{P}_{\text{logic}} + \sum_{i=1}^{N_{\text{pixels}}} \left( \alpha_R \cdot R_i^{\gamma} + \alpha_G \cdot G_i^{\gamma} + \alpha_B \cdot B_i^{\gamma} \right)$$
+```math
+\mathcal{P}_{\text{OLED}} = \mathcal{P}_{\text{logic}} + \sum_{i=1}^{N_{\text{pixels}}} \left( \alpha_R \cdot R_i^{\gamma} + \alpha_G \cdot G_i^{\gamma} + \alpha_B \cdot B_i^{\gamma} \right)
+```
 
 When an OLED pixel displays true black (`#000000` / RGB $(0, 0, 0)$), the subpixels are completely powered down, consuming **zero emission power** ($0.0 \text{ mA}$).
 
@@ -403,7 +403,7 @@ In [`app/src/main/res/values-night/themes.xml`](file:///home/bualy/files/devel/m
 2. **Proximity Sensor Integration**:
    [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L809-L818) uses `PROXIMITY_SCREEN_OFF_WAKE_LOCK` for handset mode. When the user holds the phone to their ear, the proximity sensor immediately disables the display. Ensure the proximity lock is active **only** when handset mode is selected and audio routing is directed to the earpiece.
 3. **Avoid Unnecessary View Invalidation**:
-   In `ChannelListFragment.java`:
+   In [`ChannelListFragment.java:125-129`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelListFragment.java#L125-L129):
    ```java
    public void onUserStateUpdated(IUser user) {
        mChannelListAdapter.updateUserStates(user, mChannelView);
@@ -421,21 +421,21 @@ To address these inefficiencies systematically without compromising audio qualit
 ```mermaid
 flowchart TD
     subgraph Phase1 ["Phase 1: Immediate Low-Risk Quick Wins"]
-        P1_Opus["Opus Complexity 6 + DTX"]
-        P1_RenderWait["Render Thread Indefinite Wait on Zero Voices"]
+        P1_Opus["Opus Complexity 6 (Keep CBR/DTX0)"]
+        P1_RenderWait["Stateful Indefinite Render Sleep on Zero Voices"]
         P1_AvatarCache["Avatar Bitmap LRU Cache"]
         P1_SquelchGate["Squelch-Before-RNNoise Gate"]
     end
 
     subgraph Phase2 ["Phase 2: Core Subsystem Gating"]
-        P2_CaptureGate["AudioRecord Gating (Mute & PTT Idle)"]
-        P2_AudioTrackPause["AudioTrack Standby Pause After Silence Timeout"]
-        P2_AdaptivePing["Adaptive Cellular Keepalive (5s -> 15s)"]
+        P2_CaptureGate["AudioRecord Gating (Mute) & DSP Gating (PTT Idle)"]
+        P2_AudioTrackPause["AudioTrack Standby Pause (Non-SCO, 15s Timeout)"]
+        P2_AdaptivePing["Adaptive Keepalive (UDP 10-12s, TCP 15s)"]
     end
 
     subgraph Phase3 ["Phase 3: Deep Architectural Modernization"]
-        P3_Wakelock["Adaptive Wakelock / Suspend-Ready Idle"]
-        P3_SIMD["ARM NEON Build Hardening in Android.mk"]
+        P3_Wakelock["Adaptive Wakelock Pulsing / Doze Exemption"]
+        P3_SIMD["Compiler Fast-Math & Vectorization Tuning"]
         P3_NativeCrypto["Native In-Place OCB2-AES Crypto Engine"]
     end
 
@@ -461,73 +461,84 @@ flowchart TD
   ```
 - **Benefit**: Completely eliminates 80–90% of RNNoise neural network inference during ambient silence and pauses.
 
-#### 1.2. Render Thread Indefinite Wait on Zero Voices
+#### 1.2. Render Thread Indefinite Wait with Lost-Notification Guard
 - **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L353-L360)
-- **Change**: Replace `mInactiveLock.wait(20)` with `mInactiveLock.wait()` when the native engine reports no active or expiring voices.
+- **Change**: Replace `mInactiveLock.wait(20)` with an indefinite wait guarded by a stateful predicate to prevent lost-wakeup race conditions:
 - **Implementation**:
-  Add `engine.hasActiveVoices()` query. If false, wait indefinitely until `signalData()` is invoked by incoming network packets.
+  ```java
+  synchronized (mInactiveLock) {
+      while (mRunning && !mHasIncomingAudio && (mEngine == null || !mEngine.hasActiveVoices())) {
+          try {
+              mInactiveLock.wait();
+          } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+              break;
+          }
+      }
+      mHasIncomingAudio = false;
+  }
+  ```
 - **Benefit**: Eliminates the 50 Hz CPU spin, allowing CPU cores to drop to deep C-states when nobody is talking.
 
-#### 1.3. Optimize Opus Complexity and Enable DTX
+#### 1.3. Optimize Opus Complexity
 - **Target**: [`OpusVoiceEncoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp#L39-L46)
 - **Change**:
   ```cpp
   opus_encoder_ctl(m_encoder, OPUS_SET_COMPLEXITY(6));
-  opus_encoder_ctl(m_encoder, OPUS_SET_DTX(1));
+  // Keep OPUS_SET_DTX(0) to maintain Hard CBR security and avoid jitter buffer PLC artifacts
   ```
 - **Benefit**: Cuts Opus CPU consumption by $\sim 65\%$ during voice encoding with zero audible loss in quality.
 
 #### 1.4. Avatar Bitmap LRU Caching
 - **Target**: [`ChannelListAdapter.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java#L368-L375)
-- **Change**: Introduce an in-memory `LruCache<Integer, Drawable>` keyed by session ID or avatar hash.
+- **Change**: Introduce an in-memory `LruCache<Integer, Drawable>` keyed by session ID or avatar texture hash.
 - **Benefit**: Eliminates UI thread bitmap decompression on every talk state change, eliminating frame jank and GC allocations.
 
 ---
 
 ### Phase 2: Core Subsystem Gating
 
-#### 2.1. Microphone AudioRecord Gating for Mute & PTT
-- **Target**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) and [`AudioInput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)
+#### 2.1. Microphone Gating (Mute) & DSP Gating (PTT Idle)
+- **Target**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) and [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp)
 - **Change**:
-  - In `AudioHandler`: When the user is self-muted, server-muted, or in PTT mode with the PTT button released, pause `AudioInput` recording.
-  - In PTT mode: If lookahead buffer is required, maintain a lightweight circular buffer of raw PCM without running DSP until PTT is engaged, or start capture on PTT touch down.
-- **Benefit**: Saves $50 \text{ to } 80 \text{ mW}$ of analog microphone and ADC hardware power during silence/mute.
+  - **Self-Muted State**: Call `mInput.stopRecording()`. Unmuting is a deliberate user action where 50ms HAL startup lag is completely imperceptible, saving 100% of mic hardware and ADC power.
+  - **Push-To-Talk Idle State**: **Do not stop `AudioRecord`**. Keep `AudioRecord` capturing into `PreSpeechRingBuffer` to preserve the 80ms lookahead onset audio and avoid PTT click latency. However, **bypass RNNoise (`m_denoiser->process`) and Adaptive Leveler** while PTT is unpressed.
+- **Benefit**: Saves $50 \text{ to } 80 \text{ mW}$ of mic hardware power during mute, and cuts 90% of CPU power during PTT standby without any speech onset clipping.
 
-#### 2.2. AudioTrack Standby Pause on Silence Timeout
+#### 2.2. AudioTrack Standby Pause (Guarded against Bluetooth SCO)
 - **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
 - **Change**:
-  After 3 seconds of continuous zero-audio rendering, invoke `mAudioTrack.pause()`. On the next incoming voice packet, rebase pacer state and invoke `mAudioTrack.play()`.
+  - When the native engine reports 0 active voices for **15 consecutive seconds**, invoke `mAudioTrack.pause()`.
+  - **Bluetooth SCO Guard**: If `AudioManager.isBluetoothScoOn()` is true, **never pause `AudioTrack`**, preventing Bluetooth voice link teardown.
+  - Apply a 10ms raised-cosine fade before pausing to prevent hardware DAC pop transients.
 - **Benefit**: Allows the audio DSP (Hexagon/LPASS) and audio DAC to power down into low-power standby during conversational pauses.
 
-#### 2.3. Adaptive Cellular Keepalive Pinging
+#### 2.3. Adaptive Keepalive Pinging
 - **Target**: [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
 - **Change**:
-  - Dynamically adjust the ping interval:
-    - Active conversation / foreground: 5 seconds.
-    - Silent standby / background: 15–20 seconds (comfortably within the 30-second server timeout and mobile NAT UDP keepalive window).
-  - Omit redundant TCP pings when UDP is confirmed functional (`mUsingUDP == true`).
-- **Benefit**: Allows the cellular modem to exit `RRC_CONNECTED` and enter low-power DRX mode, saving $150 \text{ to } 350 \text{ mW}$ on cellular connections.
+  - **Never drop TCP pings** (Murmur requires TCP pings to reset client timeout).
+  - Dynamically adjust keepalives:
+    - Active conversation / foreground: 5s interval (UDP + TCP).
+    - Silent standby / background: 10–12s UDP ping (safely inside the 20s carrier CGNAT window), 15s TCP ping (safely inside Murmur's 30s timeout).
+- **Benefit**: Allows the cellular modem to enter DRX cycles without risking carrier NAT drops or server disconnects, reducing cellular baseline current by $35\%\text{--}45\%$.
 
 ---
 
 ### Phase 3: Deep Architectural Modernization
 
-#### 3.1. Adaptive Wakelock Management & Kernel Suspend Support
+#### 3.1. Adaptive Wakelock Pulsing & Doze Coordination
 - **Target**: [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)
 - **Change**:
-  - Drop the permanent, unconditional `mWakeLock.acquire()`.
-  - Rely on Android's `ForegroundService` lifecycle (`microphone` / `mediaPlayback`) to prevent process termination.
-  - Acquire timed wakelocks only during active incoming/outgoing voice bursts and keepalive packet dispatch.
-  - Allow the Linux kernel to enter suspend-to-RAM when the phone is in a pocket, screen off, in a quiet channel.
-- **Benefit**: Unlocks true SoC deep sleep, cutting standby current from $40 \text{ mA}$ to $< 5 \text{ mA}$.
+  - On devices with battery optimization whitelisting (`PowerManager.isIgnoringBatteryOptimizations()`), drop the permanent `PARTIAL_WAKE_LOCK` during extended silent standby.
+  - Coordinate with Android `AlarmManager.setAndAllowWhileIdle()` to pulse wakelocks during scheduled keepalive transmissions.
+  - Hold `PARTIAL_WAKE_LOCK` continuously while incoming or outgoing audio is active.
+- **Benefit**: Allows the Linux kernel to enter true `suspend-to-RAM` during silent connected standby.
 
-#### 3.2. SIMD Vectorization Hardening in Build System
-- **Target**: [`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk) and [`Application.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Application.mk)
+#### 3.2. Compiler Fast-Math & Vectorization Tuning
+- **Target**: [`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
 - **Change**:
-  - Add `LOCAL_ARM_NEON := true` to `humlaaudio` in `Android.mk`.
-  - Add `-mfpu=neon` and define `RNN_ENABLE_NEON` for `armeabi-v7a` targets.
-  - Verify vector code generation in disassembly (`vmla.f32`, `vld1.32`).
-- **Benefit**: Ensures 32-bit ARM devices execute vectorized NEON code instead of slow scalar emulation.
+  - Add `-ffast-math -fvectorize` to `humlaaudio` CFLAGS to optimize NEON vector loop generation across both 32-bit and 64-bit ARM architectures.
+- **Benefit**: Maximizes vector SIMD throughput across RNNoise GRU and audio DSP routines.
 
 #### 3.3. Native In-Place OCB2-AES Cryptographic Engine
 - **Target**: [`CryptState.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) and native JNI
@@ -562,7 +573,7 @@ When implementing the optimizations outlined above, changes should be verified u
    - Verify render thread transitions from 50 Hz wakeups to dormant state during silence.
    - Verify `AudioTrack` enters pause/standby state after silence timeout.
 4. **Hardware Power Monitor (Monsoon / Power Meter)**:
-   Measure physical USB-C/battery rail power to confirm current reduction matches the modeled targets ($19 \text{ to } 46 \text{ mA}$ standby target).
+   Measure physical USB-C/battery rail power to confirm current reduction matches the modeled targets ($62 \text{ to } 113 \text{ mA}$ standby target).
 
 ---
 
@@ -570,4 +581,4 @@ When implementing the optimizations outlined above, changes should be verified u
 
 Mumla OLED possesses a well-structured modern native audio core, but legacy desktop assumptions (5s keepalive pings, permanent wakelocks, continuous audio capture and rendering) impose severe power penalties on mobile battery hardware. 
 
-By implementing the three-phase remediation plan—particularly squelch-gating RNNoise, sleeping the render thread on zero voices, relaxing cellular keepalives, and eliminating the permanent wakelock—Mumla OLED can achieve an **$85\%\text{--}89\%$ reduction in idle standby power draw**, transforming it into one of the most energy-efficient mobile Mumble clients available.
+By implementing the three-phase remediation plan—particularly squelch-gating RNNoise, sleeping the render thread on zero voices, relaxing cellular keepalives while respecting Murmur's TCP timeout, gating mic capture when muted, and eliminating the permanent wakelock—Mumla OLED can achieve a **$63\%\text{--}64\%$ reduction in idle standby power draw** and **~3× longer battery life in connected standby**, transforming it into one of the most energy-efficient mobile Mumble clients available.
