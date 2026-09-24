@@ -135,6 +135,10 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 - **Power Drain**: Traps the Application Processor in active mode, burning $35 \text{ to } 60 \text{ mA}$ ($135 \text{ to } 231 \text{ mW}$) continuously on modern hardware.
 - **Battery Impact**: Over an 8-hour overnight standby connected to a quiet Mumble channel, this single bug wastes $\sim 350 \text{ to } 480 \text{ mAh}$ of battery (10–15% of total battery capacity) without a single spoken word.
 
+> [!NOTE]
+> **Sidenote & Trade-off Analysis (Android Vitals & Aggressive OEM Background Killers)**:
+> While releasing `PARTIAL_WAKE_LOCK` exposes stationary devices to Android Deep Doze socket restrictions if battery optimization exemptions are not granted, holding an indefinite partial wakelock 24/7 is heavily penalized by Google Play's **Android Vitals** ("Bad behavior: excessive wake locks" threshold: > 1 hour cumulative background wakelock). Furthermore, aggressive OEM power managers (such as Samsung Device Care, Xiaomi MIUI/HyperOS, and Huawei EMUI) actively kill background processes that hold continuous partial wakelocks without user interaction. Thus, holding the wakelock permanently is not a benign safety measure—it frequently causes silent process termination on non-stock Android devices.
+
 ---
 
 ### 3.2. Unconditional AudioRecord & 100 Hz RNNoise Neural Inference
@@ -282,6 +286,10 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
    Cellular carrier CGNAT (Carrier-Grade NAT) gateways frequently maintain aggressive UDP binding timeouts of 20 to 30 seconds. If UDP keepalives are relaxed beyond 12–15 seconds, packet loss on cellular links can cause the NAT pin-hole to expire, causing incoming audio to be silently blocked at the carrier firewall.
    - **Optimal Keepalive Cadence**: A 10–12 second UDP ping safely refreshes carrier NAT tables with headroom for packet drops, while a 15-second TCP ping safely refreshes Murmur's 30-second activity timer.
 
+> [!NOTE]
+> **Sidenote & Counter-Perspective (IPv6 & Wi-Fi Exemption from CGNAT Constraints)**:
+> The 10–12 second keepalive restriction is driven strictly by IPv4 Carrier-Grade NAT (CGNAT) state tables. On native IPv6 cellular connections (where end-to-end addressing eliminates NAT translation entirely) or standard Wi-Fi networks (where local router NAT state timeouts are typically 60–120 seconds), UDP keepalive pings can safely be extended to 20–25 seconds. A network-aware keepalive manager could dynamically apply 20s UDP intervals on IPv6/Wi-Fi while retaining 10–12s on IPv4 cellular, extracting maximum DRX sleep savings where feasible.
+
 ---
 
 ### 3.5. Java GC Allocation Churn & Crypto JNI Overhead in OCB2-AES
@@ -352,6 +360,10 @@ opus_encoder_ctl(m_encoder, OPUS_SET_DTX(0));
    - **Hard CBR Privacy Guarantee**: Lines 34–36 explicitly enforce `MANDATORY HARD CONSTANT BITRATE (CBR) - STRICTLY UNCONFIGURABLE` to prevent side-channel speech timing and length fingerprinting. DTX directly breaks this privacy guarantee.
    - **Jitter Buffer Concealment Artifacts**: In Mumble, a client signals speech cessation by sending an explicit terminator packet. During active speech, the Speex jitter buffer (`AudioOutputEngine.cpp`) expects contiguous sequence numbers. If DTX suppresses packets during micro-pauses within a sentence, the receiver flags packet misses and triggers Packet Loss Concealment (PLC), producing robotic audio artifacts.
    - **Resolution**: Keep `OPUS_SET_DTX(0)`, but drop complexity to `OPUS_SET_COMPLEXITY(6)`.
+
+> [!NOTE]
+> **Sidenote & Counter-Perspective (Opt-in DTX for Metered / Ultra-Low-Power Usage)**:
+> While Hard CBR is essential for strict cryptographic privacy against eavesdroppers performing packet timing analysis, some users operate on metered data plans or critically low battery where traffic confidentiality is secondary to survival. In conventional VoIP networks, DTX reduces audio transmission packet volume by 50–70% during conversational pauses. If the Speex jitter buffer were updated to distinguish intentional DTX comfort noise gaps from network packet drops, an opt-in "Low-Power / Metered Data" mode could allow users to intentionally enable DTX when privacy guarantees are not required.
 
 ---
 
@@ -505,6 +517,10 @@ flowchart TD
   - **Push-To-Talk Idle State**: **Do not stop `AudioRecord`**. Keep `AudioRecord` capturing into `PreSpeechRingBuffer` to preserve the 80ms lookahead onset audio and avoid PTT click latency. However, **bypass RNNoise (`m_denoiser->process`) and Adaptive Leveler** while PTT is unpressed.
 - **Benefit**: Saves $50 \text{ to } 80 \text{ mW}$ of mic hardware power during mute, and cuts 90% of CPU power during PTT standby without any speech onset clipping.
 
+> [!NOTE]
+> **Sidenote & Counter-Perspective (Ultra-Power-Saving PTT Mode)**:
+> Preserving `AudioRecord` capture during PTT idle protects the 80ms lookahead ring buffer and avoids 50–200ms HAL re-initialization lag. However, keeping the hardware microphone bias and ADC energized consumes $15\text{--}25\text{ mA}$ ($58\text{--}96\text{ mW}$) continuously. For extended listening-only scenarios (e.g. monitoring a dispatch or conference channel for 4–8 hours where the user rarely or never transmits), an optional "Ultra Power Saver" PTT mode could fully sleep the `AudioRecord` hardware, accepting a brief initial onset ramp in exchange for true zero-power microphone idling.
+
 #### 2.2. AudioTrack Standby Pause (Guarded against Bluetooth SCO)
 - **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
 - **Change**:
@@ -512,6 +528,10 @@ flowchart TD
   - **Bluetooth SCO Guard**: If `AudioManager.isBluetoothScoOn()` is true, **never pause `AudioTrack`**, preventing Bluetooth voice link teardown.
   - Apply a 10ms raised-cosine fade before pausing to prevent hardware DAC pop transients.
 - **Benefit**: Allows the audio DSP (Hexagon/LPASS) and audio DAC to power down into low-power standby during conversational pauses.
+
+> [!NOTE]
+> **Sidenote & Counter-Perspective (AudioTrack Standby on Built-in Speaker vs Bluetooth)**:
+> While a 15-second inactivity timeout is essential on Bluetooth SCO to prevent link teardown and re-pairing delay, on built-in phone speakers or wired 3.5mm/USB-C headphones, modern Android HALs handle track pause and resumption with $< 10\text{ ms}$ latency. On non-Bluetooth routes, the standby threshold could be shortened to 3–5 seconds without audible penalty, allowing the audio DSP and DAC to power-gate much earlier during conversational pauses.
 
 #### 2.3. Adaptive Keepalive Pinging
 - **Target**: [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
