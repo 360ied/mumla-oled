@@ -42,7 +42,7 @@ public class AudioInput implements Runnable {
 
     private final AudioInputListener mListener;
     private final int mAudioSource;
-    private AudioRecord mAudioRecord;
+    private volatile AudioRecord mAudioRecord;
     private NoiseSuppressor mNs;
     private AutomaticGainControl mAgc;
 
@@ -163,9 +163,6 @@ public class AudioInput implements Runnable {
         releaseEffects();
         if (mAudioRecord != null) {
             try {
-                if (mAudioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-                    mAudioRecord.stop();
-                }
                 mAudioRecord.release();
             } catch (Exception ignored) {
             }
