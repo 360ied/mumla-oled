@@ -148,30 +148,33 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             peakEnergy = m_vad.getPeakEnergy();
 
             if (!m_talking && shouldTransmit) {
-                // Speech onset: Flush the 80ms lookahead ring buffer into encoder.
+                // Speech onset: In VAD mode, flush the 80ms lookahead ring buffer into encoder.
                 // Lookahead frames were already denoised in sequential time order during Step 3
                 // when buffered; do NOT run them through m_denoiser again to preserve recurrent
                 // GRU state causality and prevent double-denoising spectral degradation.
-                m_ringBuffer.flush([this](const int16_t* bufferedPcm, size_t len) {
-                    int16_t tempPcm[SAMPLES_PER_10MS];
-                    size_t count = std::min(len, static_cast<size_t>(SAMPLES_PER_10MS));
-                    std::memcpy(tempPcm, bufferedPcm, count * sizeof(int16_t));
-                    if (count < SAMPLES_PER_10MS) {
-                        std::memset(tempPcm + count, 0, (SAMPLES_PER_10MS - count) * sizeof(int16_t));
-                    }
-                    if (m_leveler.isEnabled()) {
-                        m_leveler.process(tempPcm, SAMPLES_PER_10MS, -1.0f, m_amplitudeBoost);
-                    } else if (m_amplitudeBoost != 1.0f) {
-                        SoftLimiter::processBuffer(tempPcm, SAMPLES_PER_10MS, m_amplitudeBoost);
-                    }
-                    std::memcpy(&m_accumulatedPcm[m_accumulatedFrames * SAMPLES_PER_10MS],
-                                tempPcm, SAMPLES_PER_10MS * sizeof(int16_t));
-                    m_accumulatedFrames++;
-                    m_frameCounter++;
-                    while (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
-                        flushAccumulatorLocked(false);
-                    }
-                });
+                // PTT mode starts transmission immediately without prepending pre-PTT idle audio.
+                if (m_inputMode == InputMode::VOICE_ACTIVITY) {
+                    m_ringBuffer.flush([this](const int16_t* bufferedPcm, size_t len) {
+                        int16_t tempPcm[SAMPLES_PER_10MS];
+                        size_t count = std::min(len, static_cast<size_t>(SAMPLES_PER_10MS));
+                        std::memcpy(tempPcm, bufferedPcm, count * sizeof(int16_t));
+                        if (count < SAMPLES_PER_10MS) {
+                            std::memset(tempPcm + count, 0, (SAMPLES_PER_10MS - count) * sizeof(int16_t));
+                        }
+                        if (m_leveler.isEnabled()) {
+                            m_leveler.process(tempPcm, SAMPLES_PER_10MS, -1.0f, m_amplitudeBoost);
+                        } else if (m_amplitudeBoost != 1.0f) {
+                            SoftLimiter::processBuffer(tempPcm, SAMPLES_PER_10MS, m_amplitudeBoost);
+                        }
+                        std::memcpy(&m_accumulatedPcm[m_accumulatedFrames * SAMPLES_PER_10MS],
+                                    tempPcm, SAMPLES_PER_10MS * sizeof(int16_t));
+                        m_accumulatedFrames++;
+                        m_frameCounter++;
+                        while (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
+                            flushAccumulatorLocked(false);
+                        }
+                    });
+                }
             } else if (m_talking && !shouldTransmit) {
                 // Speech terminated: Always dispatch a terminator packet
                 flushAccumulatorLocked(true);
@@ -198,8 +201,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             while (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
                 flushAccumulatorLocked(false);
             }
-        } else if (!m_muted) {
-            // Silence: store into lookahead ring buffer (only when not muted)
+        } else if (!m_muted && m_inputMode == InputMode::VOICE_ACTIVITY) {
+            // Silence in VAD mode: store into lookahead ring buffer to prevent syllable clipping
             m_ringBuffer.push(m_processedFrame.data(), SAMPLES_PER_10MS);
         }
 
