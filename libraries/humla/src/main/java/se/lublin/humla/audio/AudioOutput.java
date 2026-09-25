@@ -613,8 +613,14 @@ public class AudioOutput implements Runnable,
                 AudioDeviceInfo[] devices = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
                 if (devices != null) {
                     for (AudioDeviceInfo device : devices) {
-                        if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                        int type = device.getType();
+                        if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
                             return STANDBY_TIMEOUT_A2DP_MS;
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            if (type == AudioDeviceInfo.TYPE_BLE_HEADSET || type == AudioDeviceInfo.TYPE_BLE_SPEAKER) {
+                                return STANDBY_TIMEOUT_A2DP_MS;
+                            }
                         }
                     }
                 }

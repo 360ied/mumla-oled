@@ -92,7 +92,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     // Networking and protocols
     private HumlaTCP mTCP;
     private volatile HumlaUDP mUDP;
-    private ScheduledFuture<?> mPingTask;
+    private volatile ScheduledFuture<?> mPingTask;
     private volatile boolean mUsingUDP = true;
     private boolean mForceTCP;
     private volatile boolean mConnected;
@@ -572,7 +572,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         if(mPingTask != null) mPingTask.cancel(true);
         if(mTCP != null) mTCP.disconnect();
         if(mUDP != null) mUDP.disconnect();
-        if (mPingExecutorService != null) mPingExecutorService.shutdown();
+        if (mPingExecutorService != null) mPingExecutorService.shutdownNow();
 
         mTCP = null;
         mUDP = null;
