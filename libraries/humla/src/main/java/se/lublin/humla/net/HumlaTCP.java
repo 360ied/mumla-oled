@@ -34,6 +34,7 @@ import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketException;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -262,6 +263,7 @@ public class HumlaTCP extends HumlaNetworkThread {
      * @param messageType The type of the message to send.
      */
     public void sendMessage(final byte[] message, final int length, final HumlaTCPMessageType messageType) {
+        final byte[] copy = Arrays.copyOf(message, length);
         executeOnSendThread(new Runnable() {
             @Override
             public void run() {
@@ -270,7 +272,7 @@ public class HumlaTCP extends HumlaNetworkThread {
                 try {
                     mDataOutput.writeShort(messageType.ordinal());
                     mDataOutput.writeInt(length);
-                    mDataOutput.write(message, 0, length);
+                    mDataOutput.write(copy, 0, length);
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
