@@ -417,8 +417,8 @@ public class AudioOutput implements Runnable,
                                         }
                                     }
                                 }
-                            } else if (scoActive) {
-                                // In Bluetooth SCO mode, keep AudioTrack playing and sleep indefinitely to avoid tearing down link
+                            } else {
+                                // Bluetooth SCO is active, or standbyTimeout <= 0: keep AudioTrack playing and sleep indefinitely
                                 while (mRunning && !mHasIncomingAudio) {
                                     engine = mEngine;
                                     if (engine != null && engine.hasActiveVoices()) {
@@ -591,18 +591,8 @@ public class AudioOutput implements Runnable,
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 AudioDeviceInfo commDevice = mAudioManager.getCommunicationDevice();
-                if (commDevice != null && commDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                    return true;
-                }
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                AudioDeviceInfo[] devices = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
-                if (devices != null) {
-                    for (AudioDeviceInfo device : devices) {
-                        if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                            return true;
-                        }
-                    }
+                if (commDevice != null) {
+                    return commDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
                 }
             }
             return mAudioManager.isBluetoothScoOn();
