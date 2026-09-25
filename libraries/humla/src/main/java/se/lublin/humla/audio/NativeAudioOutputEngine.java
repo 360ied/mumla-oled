@@ -121,6 +121,16 @@ public class NativeAudioOutputEngine {
         }
     }
 
+    public boolean hasActiveVoices() {
+        final long handle;
+        synchronized (this) {
+            handle = mNativeHandle;
+        }
+        if (handle != 0) {
+            return nativeHasActiveVoices(handle);
+        }
+        return false;
+    }
 
     public interface AudioOutputEngineListener {
         void onTalkStateChanged(int session, int talkStateOrdinal);
@@ -136,4 +146,5 @@ public class NativeAudioOutputEngine {
     private static native void nativeRemoveUser(long handle, int session);
     private static native void nativeReset(long handle);
     private static native void nativeSetJitterMarginFrames(long handle, int frames);
+    private static native boolean nativeHasActiveVoices(long handle);
 }
