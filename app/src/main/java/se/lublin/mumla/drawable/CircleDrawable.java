@@ -44,6 +44,8 @@ public class CircleDrawable extends Drawable {
     private Paint mPaint;
     private Paint mStrokePaint;
     private ConstantState mConstantState;
+    private final RectF mImageRect = new RectF();
+    private final RectF mStrokeRect = new RectF();
 
     public CircleDrawable(Resources resources, Bitmap bitmap) {
         mResources = resources;
@@ -111,14 +113,14 @@ public class CircleDrawable extends Drawable {
 
     @Override
     public void draw(Canvas canvas) {
-        RectF imageRect = new RectF(getBounds());
-        RectF strokeRect = new RectF(getBounds());
+        mImageRect.set(getBounds());
+        mStrokeRect.set(getBounds());
         // Default stroke drawing is both inset and outset.
-        strokeRect.inset(mStrokePaint.getStrokeWidth()/2,
+        mStrokeRect.inset(mStrokePaint.getStrokeWidth()/2,
                          mStrokePaint.getStrokeWidth()/2);
 
-        canvas.drawOval(imageRect, mPaint);
-        canvas.drawOval(strokeRect, mStrokePaint);
+        canvas.drawOval(mImageRect, mPaint);
+        canvas.drawOval(mStrokeRect, mStrokePaint);
     }
 
     @Override
