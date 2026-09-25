@@ -77,7 +77,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         // 2. Infrasonic High-Pass Filtering (<90Hz)
         m_hpf.process(m_processedFrame.data(), SAMPLES_PER_10MS);
 
-        // 3. Squelch-Gated Neural Denoising (RNNoise)
+        // 3. Squelch-Gated & PTT-Gated Neural Denoising (RNNoise)
         float peakDb = HysteresisVad::calculateRmsDb(m_processedFrame.data(), SAMPLES_PER_10MS);
         float speechProb = -1.0f;
 
@@ -93,13 +93,16 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         }
 
         if (m_denoiser) {
-            if (!isActivelyTransmitting && peakDb < m_vad.getSquelchMinDb()) {
-                // Idle silence (< -65 dBFS) while not actively transmitting: feed static zeroes
-                // to RNNoise to advance overlap-add delay (delayed_X) and pitch buffers while cleanly
-                // triggering its native silence bypass (!silence in denoise.c). This completely avoids
-                // running recurrent GRU matrix multiplications without freezing internal filter state.
-                // Raw acoustic PCM in m_processedFrame is preserved so pre-speech lookahead buffering
-                // and VAD evaluate authentic audio.
+            // Bypass RNNoise during squelched silence or when PTT is idle (unpressed):
+            // In PTT mode when not transmitting, bypass unconditionally regardless of peakDb.
+            // In VAD mode, bypass when below the squelch floor.
+            bool shouldBypassRnnoise = !isActivelyTransmitting &&
+                (m_inputMode == InputMode::PUSH_TO_TALK || peakDb < m_vad.getSquelchMinDb());
+
+            if (shouldBypassRnnoise) {
+                // Feed static zeroes to RNNoise to advance overlap-add delay (delayed_X) and pitch buffers
+                // while cleanly triggering its native silence bypass (!silence in denoise.c). This completely
+                // avoids running recurrent GRU matrix multiplications without freezing internal filter state.
                 static const int16_t kSilencePcm[SAMPLES_PER_10MS] = {0};
                 m_denoiser->process(kSilencePcm, m_silenceDiscardBuffer.data(), SAMPLES_PER_10MS);
                 speechProb = 0.0f;
@@ -139,10 +142,12 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         }
 
         // 5. Speech-Gated Adaptive RMS Voice Leveling & Amplitude Boost (Unified Single-Pass Saturation)
-        if (m_leveler.isEnabled()) {
-            m_leveler.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, m_amplitudeBoost);
-        } else if (m_amplitudeBoost != 1.0f) {
-            SoftLimiter::processBuffer(m_processedFrame.data(), SAMPLES_PER_10MS, m_amplitudeBoost);
+        if (isActivelyTransmitting) {
+            if (m_leveler.isEnabled()) {
+                m_leveler.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, m_amplitudeBoost);
+            } else if (m_amplitudeBoost != 1.0f) {
+                SoftLimiter::processBuffer(m_processedFrame.data(), SAMPLES_PER_10MS, m_amplitudeBoost);
+            }
         }
 
         // 6. Handle talking state transitions
@@ -152,10 +157,25 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
             peakEnergy = m_vad.getPeakEnergy();
 
             if (!m_talking && shouldTransmit) {
-                // Speech onset: Flush the 80ms lookahead ring buffer through the encoder
+                // Speech onset: Flush the 80ms lookahead ring buffer through denoiser/leveler into encoder
                 m_ringBuffer.flush([this](const int16_t* bufferedPcm, size_t len) {
+                    int16_t tempPcm[SAMPLES_PER_10MS];
+                    size_t count = std::min(len, static_cast<size_t>(SAMPLES_PER_10MS));
+                    std::memcpy(tempPcm, bufferedPcm, count * sizeof(int16_t));
+                    if (count < SAMPLES_PER_10MS) {
+                        std::memset(tempPcm + count, 0, (SAMPLES_PER_10MS - count) * sizeof(int16_t));
+                    }
+                    float ringSpeechProb = -1.0f;
+                    if (m_denoiser) {
+                        ringSpeechProb = m_denoiser->process(tempPcm, tempPcm, SAMPLES_PER_10MS);
+                    }
+                    if (m_leveler.isEnabled()) {
+                        m_leveler.process(tempPcm, SAMPLES_PER_10MS, ringSpeechProb, m_amplitudeBoost);
+                    } else if (m_amplitudeBoost != 1.0f) {
+                        SoftLimiter::processBuffer(tempPcm, SAMPLES_PER_10MS, m_amplitudeBoost);
+                    }
                     std::memcpy(&m_accumulatedPcm[m_accumulatedFrames * SAMPLES_PER_10MS],
-                                bufferedPcm, len * sizeof(int16_t));
+                                tempPcm, SAMPLES_PER_10MS * sizeof(int16_t));
                     m_accumulatedFrames++;
                     m_frameCounter++;
                     while (m_accumulatedFrames >= static_cast<size_t>(m_framesPerPacket)) {
@@ -291,16 +311,46 @@ bool AudioInputEngine::isPttTalking() const {
 }
 
 void AudioInputEngine::setMuted(bool muted) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_muted = muted;
-    if (muted) {
-        m_ringBuffer.clear();
-        m_accumulatedFrames = 0;
-        m_pttHoldFramesRemaining = 0;
-        // Do not clear m_talking here. If speech was active, the audio thread
-        // in processFrame() will detect that transmission is gated, encode
-        // a silence terminator packet, set m_talking = false, and fire
-        // the talking state change callback.
+    bool notifyTalking = false;
+    AudioPacketCallback packetCb = nullptr;
+    TalkingStateCallback talkingCb = nullptr;
+    std::vector<DispatchedPacket> packetsToSend;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_muted == muted) {
+            return;
+        }
+        m_muted = muted;
+        if (muted) {
+            m_ringBuffer.clear();
+            m_pttHoldFramesRemaining = 0;
+            if (m_talking) {
+                m_packetsToDispatch.clear();
+                flushAccumulatorLocked(true);
+                m_talking = false;
+                notifyTalking = true;
+                packetsToSend = m_packetsToDispatch;
+                m_packetsToDispatch.clear();
+            } else {
+                m_accumulatedFrames = 0;
+            }
+            packetCb = m_packetCallback;
+            talkingCb = m_talkingCallback;
+        } else {
+            m_ringBuffer.clear();
+            m_accumulatedFrames = 0;
+        }
+    }
+
+    if (notifyTalking && talkingCb) {
+        talkingCb(false, 0.0f);
+    }
+
+    if (packetCb && !packetsToSend.empty()) {
+        for (const auto& pkt : packetsToSend) {
+            packetCb(pkt.data, pkt.size, pkt.frames, pkt.isTerminator, pkt.frameNumber);
+        }
     }
 }
 

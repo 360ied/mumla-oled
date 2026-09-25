@@ -41,6 +41,7 @@ public class AudioInput implements Runnable {
     public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
 
     private final AudioInputListener mListener;
+    private final int mAudioSource;
     private AudioRecord mAudioRecord;
     private NoiseSuppressor mNs;
     private AutomaticGainControl mAgc;
@@ -51,6 +52,7 @@ public class AudioInput implements Runnable {
     public AudioInput(AudioInputListener listener, int audioSource)
             throws AudioInitializationException {
         mListener = listener;
+        mAudioSource = audioSource;
 
         mAudioRecord = setupAudioRecord(audioSource);
         enableAudioEffects();
@@ -137,6 +139,14 @@ public class AudioInput implements Runnable {
     public synchronized void stopRecording() {
         if (!mRecording) return;
         mRecording = false;
+        if (mAudioRecord != null) {
+            try {
+                if (mAudioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    mAudioRecord.stop();
+                }
+            } catch (Exception ignored) {
+            }
+        }
         if (mRecordThread != null) {
             try {
                 mRecordThread.interrupt();
@@ -190,15 +200,31 @@ public class AudioInput implements Runnable {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
 
         if (mAudioRecord == null || mAudioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord not initialized, capture thread aborting");
-            return;
+            try {
+                mAudioRecord = setupAudioRecord(mAudioSource);
+                enableAudioEffects();
+            } catch (AudioInitializationException e) {
+                Log.e(TAG, "AudioRecord initialization failed, capture thread aborting: " + e.getMessage());
+                return;
+            }
         }
 
         try {
             mAudioRecord.startRecording();
         } catch (IllegalStateException e) {
-            Log.e(TAG, "Failed to start recording: " + e.getMessage());
-            return;
+            Log.w(TAG, "Failed to start recording, recreating AudioRecord: " + e.getMessage());
+            try {
+                releaseEffects();
+                if (mAudioRecord != null) {
+                    mAudioRecord.release();
+                }
+                mAudioRecord = setupAudioRecord(mAudioSource);
+                enableAudioEffects();
+                mAudioRecord.startRecording();
+            } catch (Exception ex) {
+                Log.e(TAG, "AudioRecord recreation failed: " + ex.getMessage());
+                return;
+            }
         }
 
         final short[] buffer = new short[FRAME_SIZE];
