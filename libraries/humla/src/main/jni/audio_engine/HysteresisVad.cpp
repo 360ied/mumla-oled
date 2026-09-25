@@ -50,16 +50,22 @@ float HysteresisVad::calculateRmsDb(const int16_t* pcm, size_t sampleCount) {
     double micLevel = std::sqrt(sum / static_cast<double>(sampleCount));
     // Logarithmic scale: 0.0 (-96dB) to 1.0 (0dB)
     float peakDb = static_cast<float>(20.0 * std::log10(micLevel / 32768.0));
-    return std::max(peakDb, -96.0f);
+    return clampVal(peakDb, -96.0f, 0.0f);
 }
 
 bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb) {
     if (pcm == nullptr || sampleCount == 0) {
         return false;
     }
+    return process(pcm, sampleCount, neuralSpeechProb, calculateRmsDb(pcm, sampleCount));
+}
+
+bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb, float peakDb) {
+    if (pcm == nullptr || sampleCount == 0) {
+        return false;
+    }
 
     // 1. Calculate RMS energy
-    float peakDb = calculateRmsDb(pcm, sampleCount);
     m_peakEnergy = 1.0f + (peakDb / 96.0f); // 0.0 to 1.0
     m_peakEnergy = clampVal(m_peakEnergy, 0.0f, 1.0f);
 

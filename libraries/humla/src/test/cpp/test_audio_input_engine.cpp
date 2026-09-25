@@ -789,8 +789,8 @@ void testSquelchGateBeforeRnnoise() {
     StateCollector collector;
     collector.wire(engine);
 
-    // 1. Send ambient noise frame below squelch floor (amp = 5 -> ~-76 dBFS < -65 dBFS)
-    std::vector<int16_t> ambientBelowSquelch(480, 5);
+    // 1. Send ambient noise AC frame below squelch floor (amplitude 10 -> ~-70 dBFS < -65 dBFS)
+    auto ambientBelowSquelch = generateSineFrame(0, 10);
     engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
 
     // Denoiser must have received pure silence (zeros) to advance overlap-add delay
@@ -818,6 +818,42 @@ void testSquelchGateBeforeRnnoise() {
         }
     }
     TEST_ASSERT_TRUE(hasNonZero);
+
+    // 3. During VAD hangover (speaking is true), low-energy frame must NOT be squelch-bypassed
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool hangoverReceivedRealAudio = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            hangoverReceivedRealAudio = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(hangoverReceivedRealAudio);
+
+    // 4. In CONTINUOUS mode, low-energy frame must NOT be squelch-bypassed
+    engine.setInputMode(InputMode::CONTINUOUS);
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool continuousReceivedRealAudio = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            continuousReceivedRealAudio = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(continuousReceivedRealAudio);
+
+    // 5. In PUSH_TO_TALK mode with PTT active, low-energy frame must NOT be squelch-bypassed
+    engine.setInputMode(InputMode::PUSH_TO_TALK);
+    engine.setPttTalking(true);
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool pttReceivedRealAudio = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            pttReceivedRealAudio = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(pttReceivedRealAudio);
 
     std::cout << "  [PASS] testSquelchGateBeforeRnnoise" << std::endl;
 }
