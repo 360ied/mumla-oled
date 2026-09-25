@@ -966,6 +966,61 @@ void testPttOnsetDoesNotPrependIdleNoise() {
     std::cout << "  [PASS] testPttOnsetDoesNotPrependIdleNoise" << std::endl;
 }
 
+// -----------------------------------------------------------------------------
+// Test 18: Muted Bypasses RNNoise Even With Ambient Noise in VAD Mode
+// -----------------------------------------------------------------------------
+void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    auto denoiser = std::make_unique<FakeDenoiser>(0.9f);
+    FakeDenoiser* denoiserPtr = denoiser.get();
+
+    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // Loud frame above squelch (peakDb ~ -10 dBFS >> -65 dBFS)
+    auto loudAmbientFrame = generateSineFrame(1, 10000);
+
+    // When unmuted in VAD mode, loud ambient frame must NOT bypass denoiser
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool nonZeroWhenUnmuted = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            nonZeroWhenUnmuted = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(nonZeroWhenUnmuted);
+
+    // Now mute client: denoiser MUST be bypassed by feeding static zeroes even with loud frame
+    engine.setMuted(true);
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool allZerosWhenMuted = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            allZerosWhenMuted = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(allZerosWhenMuted);
+
+    // Unmute: denoiser resumes receiving real audio
+    engine.setMuted(false);
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool nonZeroAfterUnmute = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            nonZeroAfterUnmute = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(nonZeroAfterUnmute);
+
+    std::cout << "  [PASS] testMutedBypassesRnnoiseEvenWithAmbientNoise" << std::endl;
+}
+
 } // namespace
 
 void run_audio_input_engine_tests() {
@@ -987,4 +1042,5 @@ void run_audio_input_engine_tests() {
     testSquelchGateBeforeRnnoise();
     testPttIdleBypassesRnnoiseEvenWithAmbientNoise();
     testPttOnsetDoesNotPrependIdleNoise();
+    testMutedBypassesRnnoiseEvenWithAmbientNoise();
 }
