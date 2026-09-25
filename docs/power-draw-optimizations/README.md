@@ -266,12 +266,12 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
    The client transmits both a UDP Ping and a TCP Ping every **5 seconds**.
    - Standard Mumble server timeout (`timeout` in `murmur.ini`) is **30 seconds**.
    - Upstream desktop Mumble uses a 5-second interval designed for AC-powered PCs with wired Ethernet or unmetered Wi-Fi.
-   - Pinging every 5 seconds is $6\times$ more frequent than required to maintain the server connection.
+   - Pinging every 5 seconds is unnecessarily frequent for basic connection maintenance, but relaxing it requires strict adherence to Murmur server state machines.
 2. **Cellular Radio Tail State Lock**:
    As analyzed in Section 2.C, LTE and 5G cellular modems have carrier inactivity tail timers between 10 and 15 seconds.
    - Because a ping burst occurs every 5 seconds, the inactivity timer never expires.
    - The cellular baseband processor is trapped in `RRC_CONNECTED` mode 100% of the time, consuming $90 \text{ to } 160 \text{ mA}$ ($346 \text{ to } 616 \text{ mW}$) continuously.
-3. **Upstream Murmur Timeout Mechanics (CRITICAL PROTOCOL CONSTRAINT)**:
+3. **Upstream Murmur Timeout Mechanics & Zero-Margin Hazard (`Server.cpp:1843`)**:
    In upstream Murmur (`../mumble/src/murmur/Server.cpp:1843`), the client timeout check is evaluated exclusively against the TCP connection's activity timestamp (`u->activityTime()`):
    ```cpp
    if (u->activityTime() > (iTimeout * 1000)) {
@@ -279,16 +279,33 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
        qlClose.append(u);
    }
    ```
-   Murmur resets `activityTime()` **only when receiving TCP messages** (`Server::message` at line 1725). Murmur's UDP message handler **never resets `activityTime()`**.
-   > [!CRITICAL]
-   > Mumla OLED **must never omit TCP keepalive pings**. If TCP pings are dropped, standard Murmur servers will forcibly disconnect the client after exactly 30 seconds with a "Timeout" error.
-4. **Mobile Carrier CGNAT UDP Binding Windows**:
-   Cellular carrier CGNAT (Carrier-Grade NAT) gateways frequently maintain aggressive UDP binding timeouts of 20 to 30 seconds. If UDP keepalives are relaxed beyond 12–15 seconds, packet loss on cellular links can cause the NAT pin-hole to expire, causing incoming audio to be silently blocked at the carrier firewall.
-   - **Optimal Keepalive Cadence**: A 10–12 second UDP ping safely refreshes carrier NAT tables with headroom for packet drops, while a 15-second TCP ping safely refreshes Murmur's 30-second activity timer.
+   - **Periodic Check Cadence**: Murmur runs `checkTimeout()` on a periodic timer (`qtTimeout->start(15500)` at `Server.cpp:283`) every **15.5 seconds**.
+   - **TCP Activity Exclusivity**: Murmur resets `activityTime()` **only when receiving TCP messages** (`Server::message` at line 1725). Murmur's UDP message receiver (`Server::run`) **never resets `activityTime()`**.
+   - **The 15-Second Ping Trap**: A 15.0-second TCP keepalive provides **zero error margin**. If a single TCP ping is delayed by cellular scheduling latency, bufferbloat, or TLS retransmission by even 500 ms ($t \ge 15.5\text{s}$), the Murmur tick at $t \approx 31.0\text{s}$ will observe `u->activityTime() > 30000` and forcefully terminate the socket. Furthermore, community servers frequently configure `timeout = 15` or `timeout = 20`.
+   - **Protocol Constraint**: TCP keepalives must be bounded to **at most 10.0 seconds** (providing a minimum 3× retry margin against the default 30s timeout and surviving custom 15–20s server configs).
+4. **Hardcoded Cryptographic Resync Invariant (`Server.cpp:1055-1060` & `HumlaUDP.java:206`)**:
+   Both Murmur and Mumla enforce an internal 5-second threshold (`tLastGood.elapsed() > 5s`) to detect broken encryption:
+   ```cpp
+   // Upstream Murmur Server.cpp:1055
+   if (u->csCrypt->tLastGood.elapsed() > std::chrono::seconds(5)) {
+       if (u->csCrypt->tLastRequest.elapsed() > std::chrono::seconds(5)) {
+           u->csCrypt->tLastRequest.restart();
+           emit reqSync(u->uiSession); // Triggers CryptSetup renegotiation
+       }
+   }
+   ```
+   In Mumla, [`HumlaUDP.java:206-208`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L206-L208) enforces the exact same 5-second check.
+   - If UDP pings are spaced beyond 10 seconds, `tLastGood` remains permanently expired during idle standby. A single corrupted datagram or stray network probe will immediately trigger a cascading `CryptSetup` resync storm over TCP.
+   - **Protocol Constraint**: UDP pings must remain strictly bounded between **7.0 and 10.0 seconds** (never $> 10\text{s}$).
+5. **Initial 20-Second TCP Fallback Trap (`HumlaConnection.java:240-249`)**:
+   In Mumla, if `mCryptState.mUiRemoteGood == 0` after 20 seconds of connection elapsed time (`elapsed > 20000000`), the client triggers `enableForceTCP()`.
+   - If pings are relaxed immediately at connection onset, dropping the initial UDP ping will cause the 20-second check to trip, forcing TCP tunneling.
+   - In Murmur (`Server.cpp:1737`), when a client falls back to TCP, the server sets `u->aiUdpFlag = 0`. Crucially, Murmur **only resets `aiUdpFlag = 1` upon receiving an encrypted UDP voice packet** (`Server.cpp:1006`), **never on a UDP ping** (`Server.cpp:1015-1028`)! Once trapped in TCP mode, the server will tunnel all incoming audio over TCP indefinitely until the local user transmits speech.
+   - **Protocol Constraint**: Keepalives must strictly maintain the aggressive **5-second cadence during the first 30 seconds of connection bootstrap** until UDP bidirectional health (`mUiRemoteGood > 3 && mUiGood > 3`) is established.
 
 > [!NOTE]
-> **Sidenote & Counter-Perspective (IPv6 & Wi-Fi Exemption from CGNAT Constraints)**:
-> The 10–12 second keepalive restriction is driven strictly by IPv4 Carrier-Grade NAT (CGNAT) state tables. On native IPv6 cellular connections (where end-to-end addressing eliminates NAT translation entirely) or standard Wi-Fi networks (where local router NAT state timeouts are typically 60–120 seconds), UDP keepalive pings can safely be extended to 20–25 seconds. A network-aware keepalive manager could dynamically apply 20s UDP intervals on IPv6/Wi-Fi while retaining 10–12s on IPv4 cellular, extracting maximum DRX sleep savings where feasible.
+> **Sidenote & Counter-Perspective (IPv6 vs. Cryptographic Resync Limits)**:
+> While native IPv6 and standard Wi-Fi eliminate IPv4 CGNAT binding expirations (which typically occur at 20–30s), UDP keepalives **cannot** be extended to 20–25s on any network architecture without modifying Murmur's hardcoded 5-second `tLastGood` crypt resync check. A 7.0–10.0 second UDP ping is the mathematical sweet spot: it safely stays below the resync threshold, satisfies carrier CGNAT pin-holes, and still cuts cellular keepalive wakeups by 50%.
 
 ---
 
@@ -362,8 +379,8 @@ opus_encoder_ctl(m_encoder, OPUS_SET_DTX(0));
    - **Resolution**: Keep `OPUS_SET_DTX(0)`, but drop complexity to `OPUS_SET_COMPLEXITY(6)`.
 
 > [!NOTE]
-> **Sidenote & Counter-Perspective (Opt-in DTX for Metered / Ultra-Low-Power Usage)**:
-> While Hard CBR is essential for strict cryptographic privacy against eavesdroppers performing packet timing analysis, some users operate on metered data plans or critically low battery where traffic confidentiality is secondary to survival. In conventional VoIP networks, DTX reduces audio transmission packet volume by 50–70% during conversational pauses. If the Speex jitter buffer were updated to distinguish intentional DTX comfort noise gaps from network packet drops, an opt-in "Low-Power / Metered Data" mode could allow users to intentionally enable DTX when privacy guarantees are not required.
+> **Sidenote & Protocol Barrier (Ecosystem Incompatibility of Opus DTX)**:
+> While DTX (Discontinuous Transmission) is common in standard WebRTC/SIP telephony to cut data volume by 50–70% during conversational pauses, in the Mumble protocol ecosystem it is an architectural impossibility without protocol-wide schema negotiation. Upstream desktop Mumble (`AudioOutputSpeech.cpp:333`), Plumble, and server forwarders have zero awareness of DTX comfort noise. A remote Mumble client seeing dropped packet sequence numbers without a terminator packet interprets them as network loss, runs 10 consecutive frames of Packet Loss Concealment (PLC), and forcibly terminates the voice buffer. Unilateral DTX enablement would corrupt audio for every listening peer on the server.
 
 ---
 
@@ -471,6 +488,7 @@ flowchart TD
       speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
   }
   ```
+- **Filter Continuity Requirement**: RNNoise is a stateful filter maintaining a 10ms overlap-add delay buffer (`delayed_X`) and pitch history (`pitch_buf`). Completely bypassing `rnnoise_process_frame` corrupts overlap-add synthesis when speech resumes, causing audible clicks. Implementations should leverage RNNoise's native silence optimization (`rnnoise/src/denoise.c:472-474` -> `if (!silence)`), which skips dense GRU matrix multiplications while updating delay and pitch buffers cleanly.
 - **Benefit**: Completely eliminates 80–90% of RNNoise neural network inference during ambient silence and pauses.
 
 #### 1.2. Render Thread Indefinite Wait with Lost-Notification Guard
@@ -513,8 +531,9 @@ flowchart TD
 #### 2.1. Microphone Gating (Mute) & DSP Gating (PTT Idle)
 - **Target**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) and [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp)
 - **Change**:
-  - **Self-Muted State**: Call `mInput.stopRecording()`. Unmuting is a deliberate user action where 50ms HAL startup lag is completely imperceptible, saving 100% of mic hardware and ADC power.
+  - **Self-Muted State**: Flush pending frames, emit an explicit terminator packet, then call `mInput.stopRecording()`. Unmuting is a deliberate user action where 50ms HAL startup lag is completely imperceptible, saving 100% of mic hardware and ADC power.
   - **Push-To-Talk Idle State**: **Do not stop `AudioRecord`**. Keep `AudioRecord` capturing into `PreSpeechRingBuffer` to preserve the 80ms lookahead onset audio and avoid PTT click latency. However, **bypass RNNoise (`m_denoiser->process`) and Adaptive Leveler** while PTT is unpressed.
+  - **Mandatory Terminator Packet Invariant**: Prior to pausing or stopping `AudioRecord` (whether from mute or PTT release), the audio pipeline **must flush any remaining samples and dispatch an explicit terminator packet** (`is_terminator = true` in Protobuf or `header |= (1 << 13)` in legacy varint format) preserving the active whisper target ID (`iPrevTarget`). Halting capture without a terminator forces remote Mumble receivers to interpret the sudden packet drop as loss, invoking 10 frames of robotic Packet Loss Concealment (PLC) before voice expiry.
 - **Benefit**: Saves $50 \text{ to } 80 \text{ mW}$ of mic hardware power during mute, and cuts 90% of CPU power during PTT standby without any speech onset clipping.
 
 > [!NOTE]
@@ -533,32 +552,41 @@ flowchart TD
 > **Sidenote & Counter-Perspective (AudioTrack Standby on Built-in Speaker vs Bluetooth)**:
 > While a 15-second inactivity timeout is essential on Bluetooth SCO to prevent link teardown and re-pairing delay, on built-in phone speakers or wired 3.5mm/USB-C headphones, modern Android HALs handle track pause and resumption with $< 10\text{ ms}$ latency. On non-Bluetooth routes, the standby threshold could be shortened to 3–5 seconds without audible penalty, allowing the audio DSP and DAC to power-gate much earlier during conversational pauses.
 
-#### 2.3. Adaptive Keepalive Pinging
+#### 2.3. Adaptive Keepalive Pinging & CryptSetup Compliance
 - **Target**: [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
 - **Change**:
-  - **Never drop TCP pings** (Murmur requires TCP pings to reset client timeout).
-  - Dynamically adjust keepalives:
-    - Active conversation / foreground: 5s interval (UDP + TCP).
-    - Silent standby / background: 10–12s UDP ping (safely inside the 20s carrier CGNAT window), 15s TCP ping (safely inside Murmur's 30s timeout).
-- **Benefit**: Allows the cellular modem to enter DRX cycles without risking carrier NAT drops or server disconnects, reducing cellular baseline current by $35\%\text{--}45\%$.
+  - **Never drop TCP pings** (Murmur requires TCP messages to reset `Connection::activityTime()`).
+  - **Bootstrap Phase (Initial 30s)**: Maintain aggressive 5s keepalives (UDP + TCP) to establish `mUiRemoteGood > 3 && mUiGood > 3` before the 20-second threshold in `HumlaConnection.java:240`, preventing false-positive traps in TCP tunneling.
+  - **Steady-State Background**: Relax keepalives to **7.0–10.0s for UDP** (staying safely below Murmur's 5s/10s `tLastGood` crypt resync limit and carrier CGNAT pin-hole timeouts) and **maximum 10.0s for TCP** (providing a 3× retry margin against Murmur's 30s timeout and surviving custom `timeout = 15/20` server configs).
+  - **Implement Missing CryptSetup Server Resync**: In `HumlaConnection.java:181`, implement the missing branch for empty `CryptSetup` requests from Murmur, replying with the client's current encryption IV:
+    ```java
+    } else {
+        // Empty CryptSetup from server requesting client nonce
+        Mumble.CryptSetup.Builder csb = Mumble.CryptSetup.newBuilder();
+        csb.setClientNonce(ByteString.copyFrom(mCryptState.getEncryptIV()));
+        sendTCPMessage(csb.build(), HumlaTCPMessageType.CryptSetup);
+    }
+    ```
+- **Benefit**: Allows the cellular modem to enter DRX cycles without risking carrier NAT drops, server disconnects, or crypt-resync storms, reducing cellular baseline current by $30\%\text{--}40\%$.
 
 ---
 
 ### Phase 3: Deep Architectural Modernization
 
-#### 3.1. Adaptive Wakelock Pulsing & Doze Coordination
+#### 3.1. Adaptive Wakelock Pulsing & Android Deep Doze Reality
 - **Target**: [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)
 - **Change**:
   - On devices with battery optimization whitelisting (`PowerManager.isIgnoringBatteryOptimizations()`), drop the permanent `PARTIAL_WAKE_LOCK` during extended silent standby.
-  - Coordinate with Android `AlarmManager.setAndAllowWhileIdle()` to pulse wakelocks during scheduled keepalive transmissions.
-  - Hold `PARTIAL_WAKE_LOCK` continuously while incoming or outgoing audio is active.
-- **Benefit**: Allows the Linux kernel to enter true `suspend-to-RAM` during silent connected standby.
+  - **Deep Doze Constraint**: Android Deep Doze restricts `AlarmManager.setAndAllowWhileIdle()` to once every **9 to 15 minutes**, making it physically impossible to pulse 10s keepalives via alarms during deep sleep. Therefore, true kernel `suspend-to-RAM` can only be sustained if battery optimization exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) is granted, or if the Linux kernel Wi-Fi/cellular driver supports socket wakeup interrupts for incoming Mumble traffic.
+  - Hold `PARTIAL_WAKE_LOCK` continuously while incoming or outgoing audio is actively streaming.
+- **Benefit**: Allows the Linux kernel to enter true `suspend-to-RAM` during silent connected standby on exempt devices.
 
-#### 3.2. Compiler Fast-Math & Vectorization Tuning
+#### 3.2. Compiler Vectorization Tuning (Safe Math Flags)
 - **Target**: [`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
 - **Change**:
-  - Add `-ffast-math -fvectorize` to `humlaaudio` CFLAGS to optimize NEON vector loop generation across both 32-bit and 64-bit ARM architectures.
-- **Benefit**: Maximizes vector SIMD throughput across RNNoise GRU and audio DSP routines.
+  - Add `-O3 -fno-math-errno -fvectorize` to `humlaaudio` CFLAGS to optimize NEON vector loop generation across both 32-bit and 64-bit ARM architectures.
+  - **Avoid `-ffast-math` / `-ffinite-math-only`**: Fast-math optimizes away `celt_isnan(x) ((x) != (x))` in `rnnoise/src/arch.h:173`. Disabling NaN validation risks permanent NaN poisoning of RNNoise's recurrent GRU hidden state if a floating-point denormal occurs.
+- **Benefit**: Maximizes vector SIMD throughput across RNNoise GRU and audio DSP routines without risking floating-point state corruption.
 
 #### 3.3. Native In-Place OCB2-AES Cryptographic Engine
 - **Target**: [`CryptState.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) and native JNI
