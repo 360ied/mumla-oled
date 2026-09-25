@@ -118,4 +118,10 @@ public class ChannelAdapterTest extends TestCase {
     public void testTalkStateDrawableWithNullContext() {
         assertNull(mAdapter.getTalkStateDrawable(mUser1));
     }
+
+    public void testAvatarCacheManagement() {
+        assertNotNull(mAdapter.getAvatarCache());
+        mAdapter.clearAvatarCache();
+        assertEquals(0, mAdapter.getAvatarCache().size());
+    }
 }
