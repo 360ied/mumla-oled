@@ -66,7 +66,7 @@ public class AudioHandler extends HumlaNetworkListener
     private final AudioEncodeListener mEncodeListener;
     private final NativeAudioInputEngine mNativeEngine;
 
-    private int mSession;
+    private volatile int mSession;
     private HumlaUDPMessageType mCodec;
 
     private final int mAudioStream;
@@ -76,7 +76,7 @@ public class AudioHandler extends HumlaNetworkListener
     private final IInputMode mInputMode;
     private final float mAmplitudeBoost;
 
-    private boolean mInitialized;
+    private volatile boolean mInitialized;
     private volatile boolean mSelfMuted;
     private volatile boolean mServerMuted;
     private volatile boolean mSuppressed;
@@ -86,7 +86,7 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mTalking;
 
     private volatile byte mTargetId;
-    private boolean mProtobufUdp;
+    private volatile boolean mProtobufUdp;
 
     // Pre-allocated packet buffers for zero heap allocation on audio path
     private final Object mPacketBufferLock = new Object();

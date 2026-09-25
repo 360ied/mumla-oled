@@ -56,9 +56,9 @@ public class CryptState {
     volatile int mUiRemoteResync = 0;
     Cipher mEncryptCipher;
     Cipher mDecryptCipher;
-    long mLastGoodStart;
-    long mLastRequestStart;
-    boolean mInit = false;
+    volatile long mLastGoodStart;
+    volatile long mLastRequestStart;
+    volatile boolean mInit = false;
 
     public boolean isValid() {
         return mInit;
