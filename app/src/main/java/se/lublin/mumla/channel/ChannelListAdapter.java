@@ -18,7 +18,7 @@
 package se.lublin.mumla.channel;
 
 import android.content.Context;
-import android.content.res.Resources;
+import androidx.appcompat.content.res.AppCompatResources;
 import android.graphics.Bitmap;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -357,25 +357,24 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     }
 
     Drawable getTalkStateDrawable(IUser user) {
-        Resources resources = mContext.getResources();
         if (user == null) {
-            return resources.getDrawable(R.drawable.outline_circle_talking_off);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
         }
         if (user.isSelfDeafened()) {
-            return resources.getDrawable(R.drawable.outline_circle_deafened);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_deafened);
         } else if (user.isDeafened()) {
-            return resources.getDrawable(R.drawable.outline_circle_server_deafened);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_deafened);
         } else if (user.isSelfMuted()) {
-            return resources.getDrawable(R.drawable.outline_circle_muted);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_muted);
         } else if (user.isMuted()) {
-            return resources.getDrawable(R.drawable.outline_circle_server_muted);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_muted);
         } else if (user.isSuppressed()) {
-            return resources.getDrawable(R.drawable.outline_circle_suppressed);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_suppressed);
         } else if (user.getTalkState() == TalkState.TALKING
                 || user.getTalkState() == TalkState.SHOUTING
                 || user.getTalkState() == TalkState.WHISPERING) {
             // TODO whisper and shouting?
-            return resources.getDrawable(R.drawable.outline_circle_talking_on);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on);
         } else {
             // Passive drawables
             Bitmap bitmap = mAvatarCache.get(user);
@@ -384,7 +383,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             }
         }
         // "default" symbol, used also if bitmap decoding fails
-        return resources.getDrawable(R.drawable.outline_circle_talking_off);
+        return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
     }
 
     public int getUserPosition(int session) {
