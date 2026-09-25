@@ -17,9 +17,10 @@
 
 package se.lublin.mumla.channel;
 
+import com.google.protobuf.ByteString;
+
 import junit.framework.TestCase;
 
-import se.lublin.humla.model.Channel;
 import se.lublin.humla.model.User;
 
 public class AvatarCacheTest extends TestCase {
@@ -40,6 +41,23 @@ public class AvatarCacheTest extends TestCase {
         User user = new User(10, "TestUser");
         assertFalse(user.hasTexture());
         assertEquals(0, user.getTextureCacheKey());
+        assertNull(mCache.get(user));
+    }
+
+    public void testNegativeCachingForUnparseableTexture() {
+        User user = new User(20, "CorruptUser");
+        user.setTexture(ByteString.copyFromUtf8("corrupt_png_stream"));
+        assertTrue(user.hasTexture());
+        assertTrue(user.getTextureCacheKey() != 0);
+
+        // First call fails decode and puts negative entry
+        assertNull(mCache.get(user));
+        AvatarCache.Entry entry = mCache.getEntry(user.getSession());
+        assertNotNull(entry);
+        assertEquals(user.getTextureCacheKey(), entry.getCacheKey());
+        assertNull(entry.getBitmap());
+
+        // Subsequent call returns null from cache hit
         assertNull(mCache.get(user));
     }
 

@@ -19,10 +19,10 @@ package se.lublin.mumla.channel;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.util.LruCache;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+import androidx.collection.LruCache;
 
 import se.lublin.humla.model.IUser;
 
@@ -111,6 +111,10 @@ public class AvatarCache {
                     return bitmap;
                 }
             }
+            // Decoding failed or texture was unparseable: record negative entry to prevent repeated
+            // UI-thread toByteArray() allocations and decoding attempts on every scroll or talk event.
+            mCache.put(session, new Entry(key, null));
+            return null;
         }
 
         mCache.remove(session);
