@@ -150,6 +150,7 @@ private:
     void flushAccumulatorLocked(bool isTerminator);
 
     mutable std::mutex m_mutex;
+    mutable std::mutex m_callbackMutex;
 
     std::unique_ptr<IVoiceEncoder> m_encoder;
     std::unique_ptr<IDenoiser> m_denoiser;

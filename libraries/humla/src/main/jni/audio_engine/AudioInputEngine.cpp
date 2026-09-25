@@ -64,8 +64,9 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
     TalkingStateCallback talkingCb;
     std::vector<DispatchedPacket> packetsToSend;
 
+    std::lock_guard<std::mutex> cbLock(m_callbackMutex);
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
+        std::lock_guard<std::mutex> lock(m_mutex);
         m_packetsToDispatch.clear();
 
         // 1. Copy to local frame buffer
@@ -280,11 +281,13 @@ void AudioInputEngine::flushAccumulatorLocked(bool isTerminator) {
 }
 
 void AudioInputEngine::setPacketCallback(AudioPacketCallback callback) {
+    std::lock_guard<std::mutex> cbLock(m_callbackMutex);
     std::lock_guard<std::mutex> lock(m_mutex);
     m_packetCallback = std::move(callback);
 }
 
 void AudioInputEngine::setTalkingCallback(TalkingStateCallback callback) {
+    std::lock_guard<std::mutex> cbLock(m_callbackMutex);
     std::lock_guard<std::mutex> lock(m_mutex);
     m_talkingCallback = std::move(callback);
 }
@@ -324,6 +327,7 @@ void AudioInputEngine::setMuted(bool muted) {
     TalkingStateCallback talkingCb = nullptr;
     std::vector<DispatchedPacket> packetsToSend;
 
+    std::lock_guard<std::mutex> cbLock(m_callbackMutex);
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_muted == muted) {
