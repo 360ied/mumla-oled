@@ -187,10 +187,15 @@ void testCalculateRmsDb() {
     float dbFull = mumla::audio::HysteresisVad::calculateRmsDb(fullScale.data(), fullScale.size());
     TEST_ASSERT_TRUE(dbFull > -0.1f && dbFull <= 0.0f);
 
-    // Silence -> -96 dBFS
+    // Silence -> exact floor clamp -96 dBFS
     std::vector<int16_t> silence(480, 0);
     float dbSilence = mumla::audio::HysteresisVad::calculateRmsDb(silence.data(), silence.size());
-    TEST_ASSERT_TRUE(dbSilence <= -90.0f);
+    TEST_ASSERT_EQ(dbSilence, -96.0f);
+
+    // Negative full scale DC -32768 -> clamped to exactly 0.0 dBFS
+    std::vector<int16_t> negFullScale(480, -32768);
+    float dbNegFull = mumla::audio::HysteresisVad::calculateRmsDb(negFullScale.data(), negFullScale.size());
+    TEST_ASSERT_EQ(dbNegFull, 0.0f);
 
     std::cout << "  [PASS] testCalculateRmsDb" << std::endl;
 }

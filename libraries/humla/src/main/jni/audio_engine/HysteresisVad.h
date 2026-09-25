@@ -55,6 +55,17 @@ public:
     bool process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb);
 
     /**
+     * Computes voice activity for a 10ms frame with pre-calculated RMS energy in dBFS.
+     *
+     * @param pcm 16-bit PCM samples.
+     * @param sampleCount Number of samples.
+     * @param neuralSpeechProb Speech probability from RNNoise (0.0 to 1.0, or <0 if unused).
+     * @param peakDb Pre-calculated RMS energy in dBFS.
+     * @return true if transmitting speech.
+     */
+    bool process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb, float peakDb);
+
+    /**
      * Computes RMS level in dBFS for a 16-bit PCM buffer.
      *
      * @param pcm 16-bit PCM samples.
