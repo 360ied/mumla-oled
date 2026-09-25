@@ -90,7 +90,7 @@ public class CircleDrawable extends Drawable {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             CircleConstantState that = (CircleConstantState) o;
-            return mBitmap != null && mBitmap.equals(that.mBitmap);
+            return java.util.Objects.equals(mBitmap, that.mBitmap);
         }
 
         @Override

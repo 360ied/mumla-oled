@@ -20,14 +20,12 @@ package se.lublin.mumla.channel;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Drawable.ConstantState;
 import android.os.RemoteException;
 import android.util.DisplayMetrics;
 import android.util.Log;
-import android.util.LruCache;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -40,7 +38,6 @@ import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -339,12 +336,21 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
      * @param view The view containing this adapter.
      */
     public void updateUserStates(IUser user, RecyclerView view) {
+        if (user == null || view == null) {
+            return;
+        }
         long itemId = user.getSession() | USER_ID_MASK;
         UserViewHolder uvh = (UserViewHolder) view.findViewHolderForItemId(itemId);
-        if (uvh != null) {
+        if (uvh != null && uvh.mUserTalkHighlight != null) {
             Drawable newState = getTalkStateDrawable(user);
-            ConstantState state = uvh.mUserTalkHighlight.getDrawable().getCurrent().getConstantState();
-            if (state != null && !state.equals(newState.getConstantState())) {
+            Drawable current = uvh.mUserTalkHighlight.getDrawable();
+            if (newState != null && current != null) {
+                Drawable currentInner = current.getCurrent();
+                ConstantState state = (currentInner != null) ? currentInner.getConstantState() : null;
+                if (state == null || !state.equals(newState.getConstantState())) {
+                    uvh.mUserTalkHighlight.setImageDrawable(newState);
+                }
+            } else if (newState != null) {
                 uvh.mUserTalkHighlight.setImageDrawable(newState);
             }
         }
@@ -352,6 +358,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
 
     Drawable getTalkStateDrawable(IUser user) {
         Resources resources = mContext.getResources();
+        if (user == null) {
+            return resources.getDrawable(R.drawable.outline_circle_talking_off);
+        }
         if (user.isSelfDeafened()) {
             return resources.getDrawable(R.drawable.outline_circle_deafened);
         } else if (user.isDeafened()) {
