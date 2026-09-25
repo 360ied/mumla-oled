@@ -830,6 +830,21 @@ void testSquelchGateBeforeRnnoise() {
     }
     TEST_ASSERT_TRUE(hangoverReceivedRealAudio);
 
+    // Tick through remaining hangover hold frames (DEFAULT_HOLD_FRAMES = 25)
+    for (int i = 0; i < 30; ++i) {
+        engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    }
+    // Now that hangover has expired, low-energy ambient frame must resume squelch bypass
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool squelchResumedZeros = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            squelchResumedZeros = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(squelchResumedZeros);
+
     // 4. In CONTINUOUS mode, low-energy frame must NOT be squelch-bypassed
     engine.setInputMode(InputMode::CONTINUOUS);
     engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
