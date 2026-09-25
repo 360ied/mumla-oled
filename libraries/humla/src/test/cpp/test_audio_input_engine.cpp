@@ -76,6 +76,11 @@ public:
         : m_speechProb(speechProb), m_enabled(true), m_hasModel(false) {}
 
     float process(const int16_t* inPcm, int16_t* outPcm, size_t sampleCount) override {
+        if (inPcm != nullptr && sampleCount > 0) {
+            m_lastInSamples.assign(inPcm, inPcm + sampleCount);
+        } else {
+            m_lastInSamples.clear();
+        }
         if (inPcm != nullptr && outPcm != nullptr) {
             std::memcpy(outPcm, inPcm, sampleCount * sizeof(int16_t));
         }
@@ -91,11 +96,13 @@ public:
     void reset() override {}
 
     void setSpeechProb(float prob) { m_speechProb = prob; }
+    const std::vector<int16_t>& getLastInSamples() const { return m_lastInSamples; }
 
 private:
     float m_speechProb;
     bool m_enabled;
     bool m_hasModel;
+    std::vector<int16_t> m_lastInSamples;
 };
 
 struct PacketRecord {
@@ -769,6 +776,52 @@ void testDynamicInputModeSwitchingMidSpeech() {
     std::cout << "  [PASS] testDynamicInputModeSwitchingMidSpeech" << std::endl;
 }
 
+// -----------------------------------------------------------------------------
+// Test 15: Squelch Gate Before RNNoise
+// -----------------------------------------------------------------------------
+void testSquelchGateBeforeRnnoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    auto denoiser = std::make_unique<FakeDenoiser>(0.95f);
+    FakeDenoiser* denoiserPtr = denoiser.get();
+    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // 1. Send ambient noise frame below squelch floor (amp = 5 -> ~-76 dBFS < -65 dBFS)
+    std::vector<int16_t> ambientBelowSquelch(480, 5);
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+
+    // Denoiser must have received pure silence (zeros) to advance overlap-add delay
+    // while bypassing recurrent GRU inference
+    TEST_ASSERT_EQ(denoiserPtr->getLastInSamples().size(), 480u);
+    bool allZeros = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            allZeros = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(allZeros);
+
+    // 2. Send active speech frame above squelch (sine wave)
+    auto speechFrame = generateSineFrame(1);
+    engine.processFrame(speechFrame.data(), speechFrame.size());
+
+    // Denoiser receives active speech PCM
+    bool hasNonZero = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            hasNonZero = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(hasNonZero);
+
+    std::cout << "  [PASS] testSquelchGateBeforeRnnoise" << std::endl;
+}
+
 } // namespace
 
 void run_audio_input_engine_tests() {
@@ -787,4 +840,5 @@ void run_audio_input_engine_tests() {
     testAudioInputEngineReset();
     testLargePacketFramingAndTerminators();
     testDynamicInputModeSwitchingMidSpeech();
+    testSquelchGateBeforeRnnoise();
 }

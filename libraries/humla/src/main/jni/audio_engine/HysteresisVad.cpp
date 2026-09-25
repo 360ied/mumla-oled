@@ -38,12 +38,10 @@ HysteresisVad::HysteresisVad(float vadMax, float vadMin, uint32_t holdFrames, fl
       m_lastSpeechProb(0.0f),
       m_squelchMinDb(squelchMinDb) {}
 
-bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb) {
+float HysteresisVad::calculateRmsDb(const int16_t* pcm, size_t sampleCount) {
     if (pcm == nullptr || sampleCount == 0) {
-        return false;
+        return -96.0f;
     }
-
-    // 1. Calculate RMS energy
     double sum = 1.0;
     for (size_t i = 0; i < sampleCount; ++i) {
         double s = static_cast<double>(pcm[i]);
@@ -52,7 +50,16 @@ bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neural
     double micLevel = std::sqrt(sum / static_cast<double>(sampleCount));
     // Logarithmic scale: 0.0 (-96dB) to 1.0 (0dB)
     float peakDb = static_cast<float>(20.0 * std::log10(micLevel / 32768.0));
-    peakDb = std::max(peakDb, -96.0f);
+    return std::max(peakDb, -96.0f);
+}
+
+bool HysteresisVad::process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb) {
+    if (pcm == nullptr || sampleCount == 0) {
+        return false;
+    }
+
+    // 1. Calculate RMS energy
+    float peakDb = calculateRmsDb(pcm, sampleCount);
     m_peakEnergy = 1.0f + (peakDb / 96.0f); // 0.0 to 1.0
     m_peakEnergy = clampVal(m_peakEnergy, 0.0f, 1.0f);
 
