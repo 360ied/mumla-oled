@@ -45,26 +45,7 @@ import se.lublin.mumla.drawable.CircleDrawable;
  */
 public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHolder> {
 
-    private static class CachedAvatar {
-        final byte[] textureHash;
-        final int textureLength;
-        final Drawable drawable;
-
-        CachedAvatar(byte[] textureHash, int textureLength, Drawable drawable) {
-            this.textureHash = textureHash;
-            this.textureLength = textureLength;
-            this.drawable = drawable;
-        }
-
-        boolean matches(byte[] hash, byte[] texture) {
-            if (hash != null && this.textureHash != null) {
-                return Arrays.equals(this.textureHash, hash);
-            }
-            return texture != null && texture.length == this.textureLength;
-        }
-    }
-
-    private final LruCache<Integer, CachedAvatar> mAvatarCache = new LruCache<>(100);
+    private final AvatarCache mAvatarCache = new AvatarCache();
     private final Context mContext;
     private IChannel mChannel;
 
@@ -140,27 +121,9 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
                 || user.getTalkState() == TalkState.WHISPERING) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on);
         } else {
-            byte[] hash = user.getTextureHash();
-            if (hash != null) {
-                CachedAvatar cached = mAvatarCache.get(user.getSession());
-                if (cached != null && cached.textureHash != null && Arrays.equals(cached.textureHash, hash)) {
-                    return cached.drawable;
-                }
-            }
-            byte[] texture = user.getTexture();
-            if (texture != null && texture.length > 0) {
-                CachedAvatar cached = mAvatarCache.get(user.getSession());
-                if (cached != null && cached.matches(hash, texture)) {
-                    return cached.drawable;
-                }
-                Bitmap bitmap = BitmapFactory.decodeByteArray(texture, 0, texture.length);
-                if (bitmap != null && mContext != null) {
-                    CircleDrawable drawable = new CircleDrawable(mContext.getResources(), bitmap);
-                    mAvatarCache.put(user.getSession(), new CachedAvatar(hash, texture.length, drawable));
-                    return drawable;
-                }
-            } else {
-                mAvatarCache.remove(user.getSession());
+            Bitmap bitmap = mAvatarCache.get(user);
+            if (bitmap != null) {
+                return new CircleDrawable(mContext.getResources(), bitmap);
             }
         }
         return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
@@ -215,5 +178,13 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
 
     public IChannel getChannel() {
         return mChannel;
+    }
+
+    public void clearAvatarCache() {
+        mAvatarCache.clear();
+    }
+
+    AvatarCache getAvatarCache() {
+        return mAvatarCache;
     }
 }

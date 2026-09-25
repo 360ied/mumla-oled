@@ -63,17 +63,40 @@ public class CircleDrawable extends Drawable {
         mStrokePaint.setStrokeWidth(strokeWidth);
         mStrokePaint.setStyle(Paint.Style.STROKE);
 
-        mConstantState = new ConstantState() {
-            @Override
-            public Drawable newDrawable() {
-                return new CircleDrawable(mResources, mBitmap);
-            }
+        mConstantState = new CircleConstantState(mResources, mBitmap);
+    }
 
-            @Override
-            public int getChangingConfigurations() {
-                return 0;
-            }
-        };
+    private static final class CircleConstantState extends ConstantState {
+        private final Resources mResources;
+        private final Bitmap mBitmap;
+
+        CircleConstantState(Resources resources, Bitmap bitmap) {
+            mResources = resources;
+            mBitmap = bitmap;
+        }
+
+        @Override
+        public Drawable newDrawable() {
+            return new CircleDrawable(mResources, mBitmap);
+        }
+
+        @Override
+        public int getChangingConfigurations() {
+            return 0;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            CircleConstantState that = (CircleConstantState) o;
+            return mBitmap != null && mBitmap.equals(that.mBitmap);
+        }
+
+        @Override
+        public int hashCode() {
+            return mBitmap != null ? mBitmap.hashCode() : 0;
+        }
     }
 
     @Override
