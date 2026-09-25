@@ -59,10 +59,10 @@ public class AudioOutput implements Runnable,
     private final Handler mMainHandler;
     private final AudioOutputListener mListener;
 
-    private NativeAudioOutputEngine mEngine;
+    private volatile NativeAudioOutputEngine mEngine;
     private AudioTrack mAudioTrack;
     private Thread mThread;
-    private boolean mRunning = false;
+    private volatile boolean mRunning = false;
     private volatile boolean mHalfDuplexMuted = false;
     private boolean mHasIncomingAudio = false;
 
@@ -350,12 +350,18 @@ public class AudioOutput implements Runnable,
                 // or wedged voices pending miss expiry), use the 20 ms timed wait
                 // to keep paced ticks progressing.
                 synchronized (mInactiveLock) {
-                    if (mEngine == null || !mEngine.hasActiveVoices()) {
-                        while (mRunning && !mHasIncomingAudio && (mEngine == null || !mEngine.hasActiveVoices())) {
+                    engine = mEngine;
+                    boolean hasVoices = (engine != null && engine.hasActiveVoices());
+                    if (!hasVoices) {
+                        while (mRunning && !mHasIncomingAudio) {
                             try {
                                 mInactiveLock.wait();
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
+                                break;
+                            }
+                            engine = mEngine;
+                            if (engine != null && engine.hasActiveVoices()) {
                                 break;
                             }
                         }

@@ -66,6 +66,12 @@ public class NativeAudioOutputEngine {
         }
     }
 
+    /** Package-private constructor for unit testing handle guards without native loading. */
+    NativeAudioOutputEngine(long handle) {
+        mListener = null;
+        mNativeHandle = handle;
+    }
+
     public synchronized void queuePacket(int session, byte[] data, int length,
                                          int sequence, int flags,
                                          boolean isTerminator) {
