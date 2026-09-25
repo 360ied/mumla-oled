@@ -307,6 +307,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         if (!mConnected || mPingExecutorService == null || mPingExecutorService.isShutdown()) {
             return;
         }
+        if (mPingTask != null && !mPingTask.isDone()) {
+            mPingTask.cancel(false);
+        }
         try {
             mPingTask = mPingExecutorService.schedule(mPingRunnable, delaySeconds, TimeUnit.SECONDS);
         } catch (RejectedExecutionException e) {
