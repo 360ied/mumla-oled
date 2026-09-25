@@ -95,7 +95,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private ScheduledFuture<?> mPingTask;
     private volatile boolean mUsingUDP = true;
     private boolean mForceTCP;
-    private boolean mConnected;
+    private volatile boolean mConnected;
     private boolean mSynchronized;
     private HumlaException mError;
     private boolean mExceptionHandled = false;

@@ -32,6 +32,7 @@ public class AdaptiveKeepaliveTest extends TestCase {
 
     public void testInitialBootstrapIntervalIsFiveSeconds() {
         HumlaConnection connection = new HumlaConnection(null);
+        connection.mStartTimestamp = System.nanoTime();
         // At start (elapsed = 0, good = 0), interval must be bootstrap (5s)
         assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
     }
