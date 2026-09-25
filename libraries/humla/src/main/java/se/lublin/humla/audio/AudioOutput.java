@@ -622,6 +622,11 @@ public class AudioOutput implements Runnable,
                                 return STANDBY_TIMEOUT_A2DP_MS;
                             }
                         }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            if (type == AudioDeviceInfo.TYPE_HEARING_AID) {
+                                return STANDBY_TIMEOUT_A2DP_MS;
+                            }
+                        }
                     }
                 }
             } else if (mAudioManager.isBluetoothA2dpOn()) {

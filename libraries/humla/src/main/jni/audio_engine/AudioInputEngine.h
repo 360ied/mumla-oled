@@ -40,8 +40,10 @@ enum class InputMode {
     CONTINUOUS = 2
 };
 
+constexpr size_t kMaxOpusBufferBytes = 1024;
+
 struct DispatchedPacket {
-    uint8_t data[1024];
+    uint8_t data[kMaxOpusBufferBytes];
     size_t size;
     int frames;
     bool isTerminator;
@@ -88,7 +90,7 @@ public:
 class AudioInputEngine {
 public:
     static constexpr size_t SAMPLES_PER_10MS = 480; // 10ms @ 48kHz
-    static constexpr size_t MAX_OPUS_BUFFER_BYTES = 1024;
+    static constexpr size_t MAX_OPUS_BUFFER_BYTES = kMaxOpusBufferBytes;
     static constexpr uint32_t PTT_HOLD_FRAMES = 15; // 15 frames = 150ms fixed hangover
     static constexpr int DEFAULT_FRAMES_PER_PACKET = 2; // 2 frames @ 10ms = 20ms audio per packet
 
@@ -150,7 +152,7 @@ private:
     void flushAccumulatorLocked(bool isTerminator);
 
     mutable std::mutex m_mutex;
-    mutable std::mutex m_callbackMutex;
+    std::mutex m_callbackMutex;
 
     std::unique_ptr<IVoiceEncoder> m_encoder;
     std::unique_ptr<IDenoiser> m_denoiser;

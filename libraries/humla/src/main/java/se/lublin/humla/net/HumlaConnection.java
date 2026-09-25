@@ -96,7 +96,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private volatile boolean mUsingUDP = true;
     private boolean mForceTCP;
     private volatile boolean mConnected;
-    private boolean mSynchronized;
+    private volatile boolean mSynchronized;
     private HumlaException mError;
     private boolean mExceptionHandled = false;
     volatile long mStartTimestamp; // Time that the connection was initiated in nanoseconds
@@ -562,7 +562,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     /**
      * Gracefully shuts down all networking. Blocks until all network threads have stopped.
      */
-    public void disconnect() {
+    public synchronized void disconnect() {
         mConnected = false;
         mSynchronized = false;
         mHost = null;
