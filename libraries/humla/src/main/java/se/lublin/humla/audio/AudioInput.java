@@ -131,6 +131,18 @@ public class AudioInput implements Runnable {
 
     public synchronized void startRecording() {
         if (mRecording) return;
+        if (mRecordThread != null && mRecordThread.isAlive()) {
+            try {
+                mRecordThread.interrupt();
+                mRecordThread.join(500);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            if (mRecordThread.isAlive()) {
+                Log.w(TAG, "Previous capture thread still alive, skipping duplicate startRecording");
+                return;
+            }
+        }
         mRecording = true;
         mRecordThread = new Thread(this, "MumlaAudioInput");
         mRecordThread.start();
@@ -139,10 +151,11 @@ public class AudioInput implements Runnable {
     public synchronized void stopRecording() {
         if (!mRecording) return;
         mRecording = false;
-        if (mAudioRecord != null) {
+        AudioRecord record = mAudioRecord;
+        if (record != null) {
             try {
-                if (mAudioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-                    mAudioRecord.stop();
+                if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    record.stop();
                 }
             } catch (Exception ignored) {
             }
@@ -154,19 +167,22 @@ public class AudioInput implements Runnable {
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
-            mRecordThread = null;
+            if (!mRecordThread.isAlive()) {
+                mRecordThread = null;
+            }
         }
     }
 
     public synchronized void shutdown() {
         stopRecording();
         releaseEffects();
-        if (mAudioRecord != null) {
+        AudioRecord record = mAudioRecord;
+        mAudioRecord = null;
+        if (record != null) {
             try {
-                mAudioRecord.release();
+                record.release();
             } catch (Exception ignored) {
             }
-            mAudioRecord = null;
         }
     }
 
@@ -199,6 +215,15 @@ public class AudioInput implements Runnable {
 
         if (mAudioRecord == null || mAudioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
             try {
+                releaseEffects();
+                AudioRecord staleRecord = mAudioRecord;
+                mAudioRecord = null;
+                if (staleRecord != null) {
+                    try {
+                        staleRecord.release();
+                    } catch (Exception ignored) {
+                    }
+                }
                 mAudioRecord = setupAudioRecord(mAudioSource);
                 enableAudioEffects();
             } catch (AudioInitializationException e) {
@@ -208,13 +233,21 @@ public class AudioInput implements Runnable {
         }
 
         try {
-            mAudioRecord.startRecording();
+            AudioRecord record = mAudioRecord;
+            if (record != null) {
+                record.startRecording();
+            }
         } catch (IllegalStateException e) {
             Log.w(TAG, "Failed to start recording, recreating AudioRecord: " + e.getMessage());
             try {
                 releaseEffects();
-                if (mAudioRecord != null) {
-                    mAudioRecord.release();
+                AudioRecord staleRecord = mAudioRecord;
+                mAudioRecord = null;
+                if (staleRecord != null) {
+                    try {
+                        staleRecord.release();
+                    } catch (Exception ignored) {
+                    }
                 }
                 mAudioRecord = setupAudioRecord(mAudioSource);
                 enableAudioEffects();
@@ -227,25 +260,34 @@ public class AudioInput implements Runnable {
 
         final short[] buffer = new short[FRAME_SIZE];
 
-        while (mRecording && !Thread.currentThread().isInterrupted()) {
-            int read = mAudioRecord.read(buffer, 0, FRAME_SIZE);
-            if (read > 0) {
-                if (mListener != null) {
-                    mListener.onAudioInputReceived(buffer, read);
-                }
-            } else if (read < 0) {
-                Log.e(TAG, "AudioRecord read error: " + read);
-                try {
-                    Thread.sleep(10);
-                } catch (InterruptedException e) {
+        try {
+            while (mRecording && !Thread.currentThread().isInterrupted()) {
+                AudioRecord record = mAudioRecord;
+                if (record == null) {
                     break;
                 }
+                int read = record.read(buffer, 0, FRAME_SIZE);
+                if (read > 0) {
+                    if (mListener != null) {
+                        mListener.onAudioInputReceived(buffer, read);
+                    }
+                } else if (read < 0) {
+                    Log.e(TAG, "AudioRecord read error: " + read);
+                    try {
+                        Thread.sleep(10);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
             }
+        } catch (Exception e) {
+            Log.w(TAG, "Exception in AudioInput capture loop: " + e.getMessage());
         }
 
         try {
-            if (mAudioRecord != null && mAudioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-                mAudioRecord.stop();
+            AudioRecord record = mAudioRecord;
+            if (record != null && record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                record.stop();
             }
         } catch (Exception ignored) {
         }
