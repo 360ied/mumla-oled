@@ -76,10 +76,24 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         // 2. Infrasonic High-Pass Filtering (<90Hz)
         m_hpf.process(m_processedFrame.data(), SAMPLES_PER_10MS);
 
-        // 3. Neural Denoising (RNNoise)
+        // 3. Squelch-Gated Neural Denoising (RNNoise)
+        float peakDb = HysteresisVad::calculateRmsDb(m_processedFrame.data(), SAMPLES_PER_10MS);
         float speechProb = -1.0f;
-        if (m_denoiser) {
-            speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+        if (peakDb >= m_vad.getSquelchMinDb()) {
+            if (m_denoiser) {
+                speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+            }
+        } else {
+            // Squelched silence (< -65 dBFS): feed zeroes to RNNoise to trigger its native
+            // silence bypass (!silence in denoise.c). This completely avoids running the
+            // recurrent GRU matrix multiplications while cleanly updating overlap-add delay
+            // (delayed_X) and pitch buffers, preventing clicks on speech onset.
+            if (m_denoiser) {
+                int16_t silencePcm[SAMPLES_PER_10MS] = {0};
+                m_denoiser->process(silencePcm, silencePcm, SAMPLES_PER_10MS);
+            }
+            std::memset(m_processedFrame.data(), 0, SAMPLES_PER_10MS * sizeof(int16_t));
+            speechProb = 0.0f;
         }
 
         // 4. Determine transmission state based on InputMode (Pre-Gain VAD evaluation)

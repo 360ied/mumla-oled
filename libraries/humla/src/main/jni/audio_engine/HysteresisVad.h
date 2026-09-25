@@ -54,6 +54,15 @@ public:
      */
     bool process(const int16_t* pcm, size_t sampleCount, float neuralSpeechProb);
 
+    /**
+     * Computes RMS level in dBFS for a 16-bit PCM buffer.
+     *
+     * @param pcm 16-bit PCM samples.
+     * @param sampleCount Number of samples.
+     * @return Energy in dBFS (clamped to [-96.0f, 0.0f]).
+     */
+    static float calculateRmsDb(const int16_t* pcm, size_t sampleCount);
+
     void setThresholds(float vadMax, float vadMin);
     void setHoldFrames(uint32_t holdFrames);
     void setSquelchMinDb(float squelchMinDb);
