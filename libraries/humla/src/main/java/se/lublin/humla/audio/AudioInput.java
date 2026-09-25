@@ -152,6 +152,7 @@ public class AudioInput implements Runnable {
                 mRecordThread.interrupt();
                 mRecordThread.join(500);
             } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
             }
             mRecordThread = null;
         }
