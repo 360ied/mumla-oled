@@ -57,8 +57,11 @@ public:
     /**
      * Computes voice activity for a 10ms frame with pre-calculated RMS energy in dBFS.
      *
-     * @param pcm 16-bit PCM samples.
-     * @param sampleCount Number of samples.
+     * Validates pcm and sampleCount for non-null/non-empty presence while evaluating
+     * speech activity against the supplied pre-calculated peakDb.
+     *
+     * @param pcm 16-bit PCM samples (guarded against nullptr).
+     * @param sampleCount Number of samples (guarded against 0).
      * @param neuralSpeechProb Speech probability from RNNoise (0.0 to 1.0, or <0 if unused).
      * @param peakDb Pre-calculated RMS energy in dBFS.
      * @return true if transmitting speech.
