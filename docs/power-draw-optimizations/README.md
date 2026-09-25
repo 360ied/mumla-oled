@@ -610,14 +610,23 @@ When implementing the optimizations outlined above, changes should be verified u
    - Verify `PARTIAL_WAKE_LOCK` duration drops to near-zero during silent standby.
    - Verify `Top app doing work` and CPU usage frequency clusters.
    - Verify Mobile Radio Active time drops significantly with relaxed ping intervals.
-2. **Simpleperf CPU Sampling**:
-   Profile CPU execution during background idle:
+2. **Simpleperf CPU Profiling**:
+   Profile CPU execution during background idle directly via on-device `simpleperf` (standard on Android 8.0+ / API 26+):
    ```bash
-   python3 app_profiler.py -p se.lublin.mumla.oled15 -r "-e task-clock -f 1000 --duration 30"
+   # Record 30 seconds of CPU samples for the Mumla process
+   adb shell simpleperf record --app se.lublin.mumla.oled15 -e task-clock -f 1000 --duration 30 -o /data/local/tmp/perf.data
+   # Generate summary report sorted by symbol overhead
+   adb shell simpleperf report -i /data/local/tmp/perf.data --sort comm,symbol
    ```
+   *(Alternatively, if using the NDK simpleperf wrapper to generate HTML flamegraphs: `python3 "$ANDROID_NDK_ROOT/simpleperf/app_profiler.py" -p se.lublin.mumla.oled15 -r "-e task-clock -f 1000 --duration 30"` followed by `python3 "$ANDROID_NDK_ROOT/simpleperf/report_html.py"`)*
    Confirm that `rnnoise_process_frame` and `AudioOutput::run` disappear from top hotspots when no speech is present.
-3. **Systrace / Perfetto Tracing**:
-   Capture trace of `AudioFlinger`, `AudioTrack`, and scheduler wakeups:
+3. **Perfetto System Tracing**:
+   Capture an on-device Perfetto trace to inspect thread scheduling, CPU frequencies, and audio track states:
+   ```bash
+   adb shell perfetto -o /data/misc/perfetto-traces/trace.perfetto-trace -t 10s sched freq idle am wm audio
+   adb pull /data/misc/perfetto-traces/trace.perfetto-trace
+   ```
+   Inspect in the [Perfetto UI](https://ui.perfetto.dev):
    - Verify render thread transitions from 50 Hz wakeups to dormant state during silence.
    - Verify `AudioTrack` enters pause/standby state after silence timeout.
 4. **Hardware Power Monitor (Monsoon / Power Meter)**:
