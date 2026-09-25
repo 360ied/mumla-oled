@@ -100,7 +100,7 @@ public class AudioInput implements Runnable {
         return record;
     }
 
-    private void enableAudioEffects() {
+    private synchronized void enableAudioEffects() {
         if (mAudioRecord == null) return;
         int sessionId = mAudioRecord.getAudioSessionId();
 
@@ -132,10 +132,19 @@ public class AudioInput implements Runnable {
     public synchronized void startRecording() {
         if (mRecording) return;
         if (mRecordThread != null && mRecordThread.isAlive()) {
+            boolean interrupted = false;
             try {
                 mRecordThread.interrupt();
-                mRecordThread.join();
-            } catch (InterruptedException ignored) {
+                mRecordThread.join(200);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+            if (mRecordThread.isAlive()) {
+                Log.w(TAG, "Previous capture thread still alive after timeout, postponing startRecording");
+                if (interrupted) Thread.currentThread().interrupt();
+                return;
+            }
+            if (interrupted) {
                 Thread.currentThread().interrupt();
             }
             mRecordThread = null;
@@ -165,9 +174,16 @@ public class AudioInput implements Runnable {
     public synchronized void shutdown() {
         stopRecording();
         if (mRecordThread != null) {
-            try {
-                mRecordThread.join();
-            } catch (InterruptedException ignored) {
+            boolean interrupted = false;
+            while (mRecordThread.isAlive()) {
+                try {
+                    mRecordThread.join();
+                    break;
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) {
                 Thread.currentThread().interrupt();
             }
             mRecordThread = null;
@@ -274,7 +290,13 @@ public class AudioInput implements Runnable {
                     if (mListener != null) {
                         mListener.onAudioInputReceived(buffer, read);
                     }
-                } else if (read < 0) {
+                } else if (read == 0) {
+                    try {
+                        Thread.sleep(2);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                } else {
                     Log.e(TAG, "AudioRecord read error: " + read);
                     try {
                         Thread.sleep(10);
