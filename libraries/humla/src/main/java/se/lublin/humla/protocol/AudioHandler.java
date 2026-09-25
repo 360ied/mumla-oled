@@ -66,7 +66,7 @@ public class AudioHandler extends HumlaNetworkListener
     private final AudioEncodeListener mEncodeListener;
     private final NativeAudioInputEngine mNativeEngine;
 
-    private int mSession;
+    private volatile int mSession;
     private HumlaUDPMessageType mCodec;
 
     private final int mAudioStream;
@@ -76,17 +76,20 @@ public class AudioHandler extends HumlaNetworkListener
     private final IInputMode mInputMode;
     private final float mAmplitudeBoost;
 
-    private boolean mInitialized;
-    private boolean mMuted;
+    private volatile boolean mInitialized;
+    private volatile boolean mSelfMuted;
+    private volatile boolean mServerMuted;
+    private volatile boolean mSuppressed;
     private boolean mHalfDuplex;
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
-    private boolean mTalking;
+    private volatile boolean mTalking;
 
-    private byte mTargetId;
-    private boolean mProtobufUdp;
+    private volatile byte mTargetId;
+    private volatile boolean mProtobufUdp;
 
     // Pre-allocated packet buffers for zero heap allocation on audio path
+    private final Object mPacketBufferLock = new Object();
     private final byte[] mProtobufPacketBuffer = new byte[2048];
     private final byte[] mLegacyPacketBuffer = new byte[1024];
     private final PacketBuffer mLegacyDataStream = new PacketBuffer(mLegacyPacketBuffer, 1024);
@@ -155,7 +158,7 @@ public class AudioHandler extends HumlaNetworkListener
         }
 
         mInput = new AudioInput(this, mAudioSource);
-        mOutput = new AudioOutput(mOutputListener);
+        mOutput = new AudioOutput(mContext, mOutputListener);
     }
 
     private static int sanitizeFramesPerPacket(int fpp) {
@@ -163,42 +166,52 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public synchronized void initialize(User self, int maxBandwidth, HumlaUDPMessageType codec) throws AudioException {
-        if (mInitialized) return;
+        if (mInitialized || self == null) return;
         mSession = self.getSession();
 
         setMaxBandwidth(maxBandwidth);
         setCodec(codec);
-        setServerMuted(self.isMuted() || self.isLocalMuted() || self.isSuppressed());
-        startRecording();
+        mSelfMuted = self.isSelfMuted();
+        mServerMuted = self.isMuted();
+        mSuppressed = self.isSuppressed();
+        boolean isMuted = mSelfMuted || mServerMuted || mSuppressed;
 
         mOutput.startPlaying(mAudioStream);
         mInitialized = true;
+        updateMuteState(isMuted);
     }
 
-    private void startRecording() throws AudioException {
+    private void startRecording() {
         synchronized (mInput) {
             if (!mInput.isRecording()) {
                 mInput.startRecording();
-            } else {
-                throw new AudioException("Attempted to start recording while already recording!");
             }
         }
     }
 
-    private void stopRecording() throws AudioException {
+    private void stopRecording() {
         synchronized (mInput) {
             if (mInput.isRecording()) {
                 mInput.stopRecording();
-            } else {
-                throw new AudioException("Attempted to stop recording while not recording!");
             }
         }
     }
 
-    private void setServerMuted(boolean muted) {
-        mMuted = muted;
-        if (mNativeEngine != null) {
-            mNativeEngine.setMuted(muted);
+    private synchronized void updateMuteState(boolean muted) {
+        if (muted) {
+            if (mInput != null) {
+                stopRecording();
+            }
+            if (mNativeEngine != null) {
+                mNativeEngine.setMuted(true);
+            }
+        } else {
+            if (mNativeEngine != null) {
+                mNativeEngine.setMuted(false);
+            }
+            if (mInput != null && mInitialized) {
+                startRecording();
+            }
         }
     }
 
@@ -342,9 +355,23 @@ public class AudioHandler extends HumlaNetworkListener
     public void messageUserState(Mumble.UserState msg) {
         if (!mInitialized) return;
 
-        if (msg.hasSession() && msg.getSession() == mSession &&
-                (msg.hasMute() || msg.hasSelfMute() || msg.hasSuppress())) {
-            setServerMuted(msg.getMute() || msg.getSelfMute() || msg.getSuppress());
+        if (msg.hasSession() && msg.getSession() == mSession) {
+            boolean changed = false;
+            if (msg.hasMute()) {
+                mServerMuted = msg.getMute();
+                changed = true;
+            }
+            if (msg.hasSelfMute()) {
+                mSelfMuted = msg.getSelfMute();
+                changed = true;
+            }
+            if (msg.hasSuppress()) {
+                mSuppressed = msg.getSuppress();
+                changed = true;
+            }
+            if (changed) {
+                updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
+            }
         }
     }
 
@@ -396,43 +423,45 @@ public class AudioHandler extends HumlaNetworkListener
             return;
         }
 
-        if (mProtobufUdp) {
-            MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
-            if (mTargetId != 0) {
-                audioBuilder.setTarget(mTargetId & 0xFF);
-            }
-            audioBuilder.setFrameNumber(frameNumber);
-            audioBuilder.setOpusData(ByteString.copyFrom(data, 0, length));
-            if (isTerminator) {
-                audioBuilder.setIsTerminator(true);
-            }
+        synchronized (mPacketBufferLock) {
+            if (mProtobufUdp) {
+                MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
+                if (mTargetId != 0) {
+                    audioBuilder.setTarget(mTargetId & 0xFF);
+                }
+                audioBuilder.setFrameNumber(frameNumber);
+                audioBuilder.setOpusData(ByteString.copyFrom(data, 0, length));
+                if (isTerminator) {
+                    audioBuilder.setIsTerminator(true);
+                }
 
-            byte[] protoBytes = audioBuilder.build().toByteArray();
-            int totalLen = 1 + protoBytes.length;
-            if (totalLen <= mProtobufPacketBuffer.length) {
-                mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
-                System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
-                mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+                byte[] protoBytes = audioBuilder.build().toByteArray();
+                int totalLen = 1 + protoBytes.length;
+                if (totalLen <= mProtobufPacketBuffer.length) {
+                    mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
+                    System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
+                    mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+                }
+            } else {
+                int flags = 0;
+                flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
+                flags |= mTargetId & 0x1F;
+
+                mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
+                mLegacyDataStream.rewind();
+                mLegacyDataStream.skip(1);
+                mLegacyDataStream.writeLong(frameNumber);
+
+                long header = length & ((1 << 13) - 1);
+                if (isTerminator) {
+                    header |= (1 << 13);
+                }
+                mLegacyDataStream.writeLong(header);
+                mLegacyDataStream.append(data, length);
+
+                int totalLen = mLegacyDataStream.size();
+                mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
             }
-        } else {
-            int flags = 0;
-            flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
-            flags |= mTargetId & 0x1F;
-
-            mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
-            mLegacyDataStream.rewind();
-            mLegacyDataStream.skip(1);
-            mLegacyDataStream.writeLong(frameNumber);
-
-            long header = length & ((1 << 13) - 1);
-            if (isTerminator) {
-                header |= (1 << 13);
-            }
-            mLegacyDataStream.writeLong(header);
-            mLegacyDataStream.append(data, length);
-
-            int totalLen = mLegacyDataStream.size();
-            mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
         }
     }
 
