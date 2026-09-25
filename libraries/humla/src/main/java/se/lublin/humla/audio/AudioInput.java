@@ -43,8 +43,8 @@ public class AudioInput implements Runnable {
     private final AudioInputListener mListener;
     private final int mAudioSource;
     private volatile AudioRecord mAudioRecord;
-    private NoiseSuppressor mNs;
-    private AutomaticGainControl mAgc;
+    private volatile NoiseSuppressor mNs;
+    private volatile AutomaticGainControl mAgc;
 
     private Thread mRecordThread;
     private volatile boolean mRecording;
@@ -134,14 +134,11 @@ public class AudioInput implements Runnable {
         if (mRecordThread != null && mRecordThread.isAlive()) {
             try {
                 mRecordThread.interrupt();
-                mRecordThread.join(500);
+                mRecordThread.join();
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
-            if (mRecordThread.isAlive()) {
-                Log.w(TAG, "Previous capture thread still alive, skipping duplicate startRecording");
-                return;
-            }
+            mRecordThread = null;
         }
         mRecording = true;
         mRecordThread = new Thread(this, "MumlaAudioInput");
@@ -161,20 +158,20 @@ public class AudioInput implements Runnable {
             }
         }
         if (mRecordThread != null) {
-            try {
-                mRecordThread.interrupt();
-                mRecordThread.join(500);
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-            if (!mRecordThread.isAlive()) {
-                mRecordThread = null;
-            }
+            mRecordThread.interrupt();
         }
     }
 
     public synchronized void shutdown() {
         stopRecording();
+        if (mRecordThread != null) {
+            try {
+                mRecordThread.join();
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            mRecordThread = null;
+        }
         releaseEffects();
         AudioRecord record = mAudioRecord;
         mAudioRecord = null;
@@ -186,13 +183,19 @@ public class AudioInput implements Runnable {
         }
     }
 
-    private void releaseEffects() {
+    private synchronized void releaseEffects() {
         if (mNs != null) {
-            mNs.release();
+            try {
+                mNs.release();
+            } catch (Exception ignored) {
+            }
             mNs = null;
         }
         if (mAgc != null) {
-            mAgc.release();
+            try {
+                mAgc.release();
+            } catch (Exception ignored) {
+            }
             mAgc = null;
         }
     }
