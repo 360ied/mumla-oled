@@ -460,11 +460,11 @@ To address these inefficiencies systematically without compromising audio qualit
 
 ### Implementation Phases at a Glance
 
-1. **[Phase 1: Immediate Low-Risk Quick Wins](remediation-plan.md#phase-1-immediate-low-risk-quick-wins)**:
-   - **Squelch-Before-RNNoise Gate**: Skip dense GRU matrix multiplications during silence while preserving overlap-add delay and pitch filter continuity.
-   - **Render Thread Indefinite Wait**: Replace 50 Hz `mInactiveLock.wait(20)` polling with stateful wait on zero voices to allow CPU cores to drop to deep C-states.
-   - **Opus Complexity 6**: Reduce complexity from 10 to 6 (saving ~65% encoder CPU) while keeping Hard CBR / DTX disabled.
-   - **Avatar Bitmap LRU Cache**: Eliminate main-thread bitmap decoding churn on talk-state transitions.
+1. **[Phase 1: Immediate Low-Risk Quick Wins — COMPLETED](remediation-plan.md#phase-1-immediate-low-risk-quick-wins--completed)** (Released in `0.21.8`):
+   - **Squelch-Before-RNNoise Gate**: Skip dense GRU matrix multiplications during silence while preserving overlap-add delay and pitch filter continuity. *(Resolved)*
+   - **Render Thread Indefinite Wait**: Replace 50 Hz `mInactiveLock.wait(20)` polling with stateful wait on zero voices to allow CPU cores to drop to deep C-states. *(Resolved)*
+   - **Opus Complexity 6**: Reduce complexity from 10 to 6 (saving ~65% encoder CPU) while keeping Hard CBR / DTX disabled. *(Resolved)*
+   - **Avatar Bitmap LRU Cache**: Eliminate main-thread bitmap decoding churn on talk-state transitions. *(Resolved)*
 
 2. **[Phase 2: Core Subsystem Gating](remediation-plan.md#phase-2-core-subsystem-gating)**:
    - **AudioRecord Gating (Mute) & DSP Gating (PTT Idle)**: Stop recording on self-mute; bypass RNNoise/leveler on PTT idle while preserving the 80ms lookahead ring buffer. Always emit explicit terminator packets (`is_terminator = true` / `1 << 13`) before stopping capture.
