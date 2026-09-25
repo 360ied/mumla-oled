@@ -61,6 +61,9 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     private IHumlaObserver mServiceObserver = new HumlaObserver() {
         @Override
         public void onDisconnected(HumlaException e) {
+            if (mChannelListAdapter != null) {
+                mChannelListAdapter.clearAvatarCache();
+            }
             mChannelView.setAdapter(null);
         }
 
@@ -116,6 +119,10 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
             // We won't be in a synchronized state.
             if (getService() == null || !getService().isConnected()) {
                 return;
+            }
+
+            if (user != null && mChannelListAdapter != null) {
+                mChannelListAdapter.removeUser(user.getSession());
             }
 
             mChannelListAdapter.updateChannels();
@@ -187,6 +194,9 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         super.onDestroy();
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
         preferences.unregisterOnSharedPreferenceChangeListener(this);
+        if (mChannelListAdapter != null) {
+            mChannelListAdapter.clearAvatarCache();
+        }
     }
 
     @Override

@@ -31,6 +31,8 @@ import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.util.TypedValue;
 
+import androidx.core.content.res.ResourcesCompat;
+
 import se.lublin.mumla.R;
 
 /**
@@ -39,11 +41,11 @@ import se.lublin.mumla.R;
  */
 public class CircleDrawable extends Drawable {
     public static final int STROKE_WIDTH_DP = 1;
-    private Resources mResources;
-    private Bitmap mBitmap;
-    private Paint mPaint;
-    private Paint mStrokePaint;
-    private ConstantState mConstantState;
+    private final Resources mResources;
+    private final Bitmap mBitmap;
+    private final Paint mPaint;
+    private final Paint mStrokePaint;
+    private final ConstantState mConstantState;
     private final RectF mImageRect = new RectF();
     private final RectF mStrokeRect = new RectF();
 
@@ -59,7 +61,7 @@ public class CircleDrawable extends Drawable {
         mStrokePaint = new Paint();
         mStrokePaint.setDither(true);
         mStrokePaint.setAntiAlias(true);
-        mStrokePaint.setColor(resources.getColor(R.color.ripple_talk_state_disabled));
+        mStrokePaint.setColor(ResourcesCompat.getColor(resources, R.color.ripple_talk_state_disabled, null));
         float strokeWidth = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
                 STROKE_WIDTH_DP, resources.getDisplayMetrics());
         mStrokePaint.setStrokeWidth(strokeWidth);
@@ -125,12 +127,16 @@ public class CircleDrawable extends Drawable {
 
     @Override
     public void setAlpha(int alpha) {
-
+        mPaint.setAlpha(alpha);
+        mStrokePaint.setAlpha(alpha);
+        invalidateSelf();
     }
 
     @Override
     public void setColorFilter(ColorFilter cf) {
-
+        mPaint.setColorFilter(cf);
+        mStrokePaint.setColorFilter(cf);
+        invalidateSelf();
     }
 
     @Override

@@ -73,6 +73,9 @@ public class MumlaOverlay {
         @Override
         public void onUserRemoved(IUser user, String reason) {
             if (mChannelAdapter != null) {
+                if (user != null) {
+                    mChannelAdapter.removeUser(user.getSession());
+                }
                 mChannelAdapter.notifyDataSetChanged();
             }
         }
@@ -348,6 +351,9 @@ public class MumlaOverlay {
         mShown = false;
         mService.unregisterObserver(mObserver);
         mOverlayList.setAdapter(null);
+        if (mChannelAdapter != null) {
+            mChannelAdapter.clearAvatarCache();
+        }
         mChannelAdapter = null;
         try {
             mWindowManager.removeView(mOverlayView);
