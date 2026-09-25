@@ -490,26 +490,27 @@ void testTerminatorPacketWithSingleFramePackets() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 9: Pre-Speech Ring Buffer Flushed on PTT Speech Onset (80ms Lookahead)
+// Test 9: Pre-Speech Ring Buffer Flushed on VAD Speech Onset (80ms Lookahead)
 // -----------------------------------------------------------------------------
 void testPreSpeechRingBufferFlushedOnOnset() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
+    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
+    engine.setVadThresholds(0.5f, 0.2f);
     StateCollector collector;
     collector.wire(engine);
 
-    // Feed 8 frames while unmuted and not talking (ring buffer capacity is 8 frames = 80ms)
+    // Feed 8 frames while unmuted below VAD threshold (amplitude 100 -> quiet, below speech threshold)
+    // In VOICE_ACTIVITY mode, these are buffered in the 80ms lookahead ring buffer
     for (int i = 1; i <= 8; ++i) {
-        auto preFrame = generateSineFrame(i);
+        auto preFrame = generateSineFrame(i, 100);
         engine.processFrame(preFrame.data(), preFrame.size());
     }
     TEST_ASSERT_EQ(collector.packets.size(), 0);
 
-    // Press PTT and feed the 9th frame (speech onset)
-    engine.setPttTalking(true);
-    auto onsetFrame = generateSineFrame(9);
+    // Feed 9th frame with loud speech (amplitude 15000 -> triggers VAD onset)
+    auto onsetFrame = generateSineFrame(9, 15000);
     engine.processFrame(onsetFrame.data(), onsetFrame.size());
 
     // Onset flushes the 8 buffered frames + processes current frame = 9 frames.
@@ -928,6 +929,43 @@ void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
     std::cout << "  [PASS] testPttIdleBypassesRnnoiseEvenWithAmbientNoise" << std::endl;
 }
 
+// -----------------------------------------------------------------------------
+// Test 17: PTT Onset Does Not Prepend Idle Noise
+// -----------------------------------------------------------------------------
+void testPttOnsetDoesNotPrependIdleNoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // Feed 8 frames of ambient noise while PTT is unpressed
+    for (int i = 1; i <= 8; ++i) {
+        auto preFrame = generateSineFrame(i, 5000);
+        engine.processFrame(preFrame.data(), preFrame.size());
+    }
+    TEST_ASSERT_EQ(collector.packets.size(), 0);
+
+    // Press PTT and feed 1 frame
+    engine.setPttTalking(true);
+    auto frame1 = generateSineFrame(9, 5000);
+    engine.processFrame(frame1.data(), frame1.size());
+
+    // Because PTT does not buffer pre-speech idle noise, exactly 1 frame is accumulated (0 packets sent for 2 fpp)
+    TEST_ASSERT_EQ(collector.packets.size(), 0);
+
+    // Feed 2nd frame while talking
+    auto frame2 = generateSineFrame(10, 5000);
+    engine.processFrame(frame2.data(), frame2.size());
+
+    // Exactly 1 packet emitted with 2 frames
+    TEST_ASSERT_EQ(collector.packets.size(), 1);
+    TEST_ASSERT_EQ(collector.packets[0].frames, 2);
+
+    std::cout << "  [PASS] testPttOnsetDoesNotPrependIdleNoise" << std::endl;
+}
+
 } // namespace
 
 void run_audio_input_engine_tests() {
@@ -948,4 +986,5 @@ void run_audio_input_engine_tests() {
     testDynamicInputModeSwitchingMidSpeech();
     testSquelchGateBeforeRnnoise();
     testPttIdleBypassesRnnoiseEvenWithAmbientNoise();
+    testPttOnsetDoesNotPrependIdleNoise();
 }
