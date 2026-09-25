@@ -112,6 +112,7 @@ public class MumlaOverlay {
         public void onDisconnected(HumlaException e) {
             if (mChannelAdapter != null) {
                 mChannelAdapter.setChannel(null);
+                mChannelAdapter.clearAvatarCache();
             }
         }
     };

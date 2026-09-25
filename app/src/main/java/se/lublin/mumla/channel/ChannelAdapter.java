@@ -28,6 +28,7 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -190,6 +191,7 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         mAvatarCache.clear();
     }
 
+    @VisibleForTesting
     AvatarCache getAvatarCache() {
         return mAvatarCache;
     }
