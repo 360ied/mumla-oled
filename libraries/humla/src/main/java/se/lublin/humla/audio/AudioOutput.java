@@ -18,7 +18,9 @@
 
 package se.lublin.humla.audio;
 
+import android.content.Context;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
@@ -55,9 +57,14 @@ public class AudioOutput implements Runnable,
     /** 20 ms render quantum at 48 kHz: bounds batching delay on first audio. */
     private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 2;
 
+    public static final long STANDBY_TIMEOUT_DEFAULT_MS = 3000L;
+    public static final long STANDBY_TIMEOUT_A2DP_MS = 15000L;
+
     private final Object mInactiveLock = new Object();
     private final Handler mMainHandler;
     private final AudioOutputListener mListener;
+    private final Context mContext;
+    private final AudioManager mAudioManager;
 
     private volatile NativeAudioOutputEngine mEngine;
     private AudioTrack mAudioTrack;
@@ -67,7 +74,13 @@ public class AudioOutput implements Runnable,
     private boolean mHasIncomingAudio = false;
 
     public AudioOutput(AudioOutputListener listener) {
+        this(null, listener);
+    }
+
+    public AudioOutput(Context context, AudioOutputListener listener) {
         mListener = listener;
+        mContext = context != null ? context.getApplicationContext() : null;
+        mAudioManager = mContext != null ? (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE) : null;
         mMainHandler = new Handler(Looper.getMainLooper());
     }
 
@@ -352,6 +365,46 @@ public class AudioOutput implements Runnable,
                         engine = mEngine;
                         boolean hasVoices = (engine != null && engine.hasActiveVoices());
                         if (!hasVoices) {
+                            long standbyTimeout = getStandbyTimeoutMs();
+                            boolean scoActive = isBluetoothScoActive();
+
+                            // Two-tier standby: wait up to standbyTimeout ms with track playing.
+                            // If timeout expires with zero voices and no incoming audio, pause AudioTrack
+                            // (unless Bluetooth SCO is active, which requires continuous output to maintain link).
+                            if (!scoActive && standbyTimeout > 0) {
+                                long waitStart = System.currentTimeMillis();
+                                while (mRunning && !mHasIncomingAudio) {
+                                    long elapsed = System.currentTimeMillis() - waitStart;
+                                    long remaining = standbyTimeout - elapsed;
+                                    if (remaining <= 0) {
+                                        break;
+                                    }
+                                    try {
+                                        mInactiveLock.wait(remaining);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        break renderLoop;
+                                    }
+                                    engine = mEngine;
+                                    if (engine != null && engine.hasActiveVoices()) {
+                                        break;
+                                    }
+                                }
+
+                                // If timeout expired with zero voices and no incoming audio, pause track
+                                engine = mEngine;
+                                boolean stillNoVoices = (engine == null || !engine.hasActiveVoices());
+                                if (mRunning && !mHasIncomingAudio && stillNoVoices) {
+                                    try {
+                                        if (mAudioTrack != null && mAudioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) {
+                                            mAudioTrack.pause();
+                                        }
+                                    } catch (IllegalStateException ignored) {
+                                    }
+                                }
+                            }
+
+                            // Indefinite sleep until next incoming audio packet, voice, or shutdown
                             while (mRunning && !mHasIncomingAudio) {
                                 try {
                                     mInactiveLock.wait();
@@ -516,6 +569,36 @@ public class AudioOutput implements Runnable,
         if (engine != null) {
             engine.removeUser(session);
         }
+    }
+
+    boolean isBluetoothScoActive() {
+        if (mAudioManager == null) return false;
+        try {
+            if (mAudioManager.isBluetoothScoOn()) {
+                return true;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioDeviceInfo commDevice = mAudioManager.getCommunicationDevice();
+                if (commDevice != null && commDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    long getStandbyTimeoutMs() {
+        if (mAudioManager == null) {
+            return STANDBY_TIMEOUT_DEFAULT_MS;
+        }
+        try {
+            if (mAudioManager.isBluetoothA2dpOn()) {
+                return STANDBY_TIMEOUT_A2DP_MS;
+            }
+        } catch (Exception ignored) {
+        }
+        return STANDBY_TIMEOUT_DEFAULT_MS;
     }
 
     /**
