@@ -83,9 +83,9 @@ public class AudioHandler extends HumlaNetworkListener
     private boolean mHalfDuplex;
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
-    private boolean mTalking;
+    private volatile boolean mTalking;
 
-    private byte mTargetId;
+    private volatile byte mTargetId;
     private boolean mProtobufUdp;
 
     // Pre-allocated packet buffers for zero heap allocation on audio path

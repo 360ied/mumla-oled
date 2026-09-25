@@ -606,6 +606,9 @@ public class AudioOutput implements Runnable,
             return STANDBY_TIMEOUT_DEFAULT_MS;
         }
         try {
+            // Check for A2DP connected devices. We intentionally err on the side of a conservative
+            // 15-second standby timeout whenever an A2DP device is connected to prevent clipping
+            // or Bluetooth stack underruns if audio routing transitions dynamically.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 AudioDeviceInfo[] devices = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
                 if (devices != null) {
