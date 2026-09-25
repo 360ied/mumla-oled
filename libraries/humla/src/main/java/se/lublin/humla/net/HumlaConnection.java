@@ -99,7 +99,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private boolean mSynchronized;
     private HumlaException mError;
     private boolean mExceptionHandled = false;
-    long mStartTimestamp; // Time that the connection was initiated in nanoseconds
+    volatile long mStartTimestamp; // Time that the connection was initiated in nanoseconds
     final CryptState mCryptState = new CryptState();
 
     // Latency
@@ -292,10 +292,13 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
     int getNextPingIntervalSeconds() {
         long elapsed = getElapsed();
-        if (elapsed < BOOTSTRAP_DURATION_MICROS ||
-                mCryptState.mUiRemoteGood <= 3 ||
-                mCryptState.mUiGood <= 3) {
+        if (elapsed < BOOTSTRAP_DURATION_MICROS) {
             return BOOTSTRAP_PING_INTERVAL_SECONDS;
+        }
+        if (!shouldForceTCP() && mUsingUDP) {
+            if (mCryptState.mUiRemoteGood <= 3 || mCryptState.mUiGood <= 3) {
+                return BOOTSTRAP_PING_INTERVAL_SECONDS;
+            }
         }
         return STEADY_STATE_PING_INTERVAL_SECONDS;
     }
@@ -314,39 +317,42 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private Runnable mPingRunnable = new Runnable() {
         @Override
         public void run() {
+            try {
+                // In microseconds
+                long t = getElapsed();
 
-            // In microseconds
-            long t = getElapsed();
-
-            if (!shouldForceTCP()) {
-                if (isProtobufUdpSupported()) {
-                    MumbleUDP.Ping.Builder pb = MumbleUDP.Ping.newBuilder();
-                    pb.setTimestamp(t);
-                    byte[] pingBytes = pb.build().toByteArray();
-                    byte[] packet = new byte[1 + pingBytes.length];
-                    packet[0] = 0x01; // Protobuf Ping type
-                    System.arraycopy(pingBytes, 0, packet, 1, pingBytes.length);
-                    sendUDPMessage(packet, packet.length, true);
-                } else {
-                    byte[] pingBuffer = new byte[10];
-                    pingBuffer[0] = (byte) ((HumlaUDPMessageType.UDPPing.ordinal() << 5) & 0xFF);
-                    PacketBuffer pb = new PacketBuffer(pingBuffer, 10);
-                    pb.skip(1);
-                    pb.writeLong(t);
-                    sendUDPMessage(pingBuffer, pb.size(), true);
+                if (!shouldForceTCP()) {
+                    if (isProtobufUdpSupported()) {
+                        MumbleUDP.Ping.Builder pb = MumbleUDP.Ping.newBuilder();
+                        pb.setTimestamp(t);
+                        byte[] pingBytes = pb.build().toByteArray();
+                        byte[] packet = new byte[1 + pingBytes.length];
+                        packet[0] = 0x01; // Protobuf Ping type
+                        System.arraycopy(pingBytes, 0, packet, 1, pingBytes.length);
+                        sendUDPMessage(packet, packet.length, true);
+                    } else {
+                        byte[] pingBuffer = new byte[10];
+                        pingBuffer[0] = (byte) ((HumlaUDPMessageType.UDPPing.ordinal() << 5) & 0xFF);
+                        PacketBuffer pb = new PacketBuffer(pingBuffer, 10);
+                        pb.skip(1);
+                        pb.writeLong(t);
+                        sendUDPMessage(pingBuffer, pb.size(), true);
+                    }
                 }
+
+                Mumble.Ping.Builder pb = Mumble.Ping.newBuilder();
+                pb.setTimestamp(t);
+                pb.setGood(mCryptState.mUiGood);
+                pb.setLate(mCryptState.mUiLate);
+                pb.setLost(mCryptState.mUiLost);
+                pb.setResync(mCryptState.mUiResync);
+                // TODO accumulate stats and send with ping
+                sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
+            } catch (Exception e) {
+                Log.w(TAG, "Error during keepalive ping execution: " + e.getMessage());
+            } finally {
+                scheduleNextPing(getNextPingIntervalSeconds());
             }
-
-            Mumble.Ping.Builder pb = Mumble.Ping.newBuilder();
-            pb.setTimestamp(t);
-            pb.setGood(mCryptState.mUiGood);
-            pb.setLate(mCryptState.mUiLate);
-            pb.setLost(mCryptState.mUiLost);
-            pb.setResync(mCryptState.mUiResync);
-            // TODO accumulate stats and send with ping
-            sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
-
-            scheduleNextPing(getNextPingIntervalSeconds());
         }
     };
 
@@ -563,7 +569,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         if(mPingTask != null) mPingTask.cancel(true);
         if(mTCP != null) mTCP.disconnect();
         if(mUDP != null) mUDP.disconnect();
-        mPingExecutorService.shutdown();
+        if (mPingExecutorService != null) mPingExecutorService.shutdown();
 
         mTCP = null;
         mUDP = null;

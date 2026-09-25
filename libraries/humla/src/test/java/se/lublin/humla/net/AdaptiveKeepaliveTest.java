@@ -66,4 +66,17 @@ public class AdaptiveKeepaliveTest extends TestCase {
         connection.mCryptState.mUiRemoteGood = 4;
         assertEquals(HumlaConnection.STEADY_STATE_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
     }
+
+    public void testForceTcpModeTransitionsToSteadyStateAfterThirtySeconds() {
+        HumlaConnection connection = new HumlaConnection(null);
+        connection.setForceTCP(true);
+
+        // Before 30 seconds: bootstrap 5s
+        connection.mStartTimestamp = System.nanoTime() - 10_000_000_000L;
+        assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+
+        // After 30 seconds: even with 0 good crypt packets (UDP is disabled), transition to steady state 10s
+        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L;
+        assertEquals(HumlaConnection.STEADY_STATE_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+    }
 }
