@@ -77,10 +77,9 @@ public class AudioHandler extends HumlaNetworkListener
     private final float mAmplitudeBoost;
 
     private boolean mInitialized;
-    private boolean mMuted;
-    private boolean mSelfMuted;
-    private boolean mServerMuted;
-    private boolean mSuppressed;
+    private volatile boolean mSelfMuted;
+    private volatile boolean mServerMuted;
+    private volatile boolean mSuppressed;
     private boolean mHalfDuplex;
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
@@ -175,16 +174,13 @@ public class AudioHandler extends HumlaNetworkListener
         mServerMuted = self.isMuted();
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mSuppressed;
-        setServerMuted(isMuted);
-        if (!isMuted) {
-            startRecording();
-        }
 
         mOutput.startPlaying(mAudioStream);
         mInitialized = true;
+        updateMuteState(isMuted);
     }
 
-    private void startRecording() throws AudioException {
+    private void startRecording() {
         synchronized (mInput) {
             if (!mInput.isRecording()) {
                 mInput.startRecording();
@@ -192,7 +188,7 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
-    private void stopRecording() throws AudioException {
+    private void stopRecording() {
         synchronized (mInput) {
             if (mInput.isRecording()) {
                 mInput.stopRecording();
@@ -200,20 +196,20 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
-    private void setServerMuted(boolean muted) {
-        mMuted = muted;
-        if (mNativeEngine != null) {
-            mNativeEngine.setMuted(muted);
-        }
-        if (mInput != null) {
-            try {
-                if (muted) {
-                    stopRecording();
-                } else if (mInitialized) {
-                    startRecording();
-                }
-            } catch (AudioException e) {
-                Log.e(TAG, "Failed to toggle audio recording on mute transition", e);
+    private synchronized void updateMuteState(boolean muted) {
+        if (muted) {
+            if (mInput != null) {
+                stopRecording();
+            }
+            if (mNativeEngine != null) {
+                mNativeEngine.setMuted(true);
+            }
+        } else {
+            if (mNativeEngine != null) {
+                mNativeEngine.setMuted(false);
+            }
+            if (mInput != null && mInitialized) {
+                startRecording();
             }
         }
     }
@@ -373,7 +369,7 @@ public class AudioHandler extends HumlaNetworkListener
                 changed = true;
             }
             if (changed) {
-                setServerMuted(mServerMuted || mSelfMuted || mSuppressed);
+                updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
             }
         }
     }
@@ -421,7 +417,7 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     @Override
-    public void onAudioPacketEncoded(byte[] data, int length, int frames, boolean isTerminator, long frameNumber) {
+    public synchronized void onAudioPacketEncoded(byte[] data, int length, int frames, boolean isTerminator, long frameNumber) {
         if (data == null || length <= 0 || mEncodeListener == null) {
             return;
         }
