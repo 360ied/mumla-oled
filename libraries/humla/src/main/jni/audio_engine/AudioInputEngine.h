@@ -173,6 +173,7 @@ private:
     std::vector<int16_t> m_processedFrame;
     std::vector<int16_t> m_accumulatedPcm;
     size_t m_accumulatedFrames;
+    std::vector<int16_t> m_silenceDiscardBuffer;
     std::vector<uint8_t> m_opusBuffer;
     std::vector<DispatchedPacket> m_packetsToDispatch;
 
