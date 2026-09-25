@@ -34,6 +34,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -402,7 +403,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     }
 
     public int getChannelPosition(int channelId) {
-        long itemId = channelId | CHANNEL_ID_MASK;
+        long itemId = (((long) channelId) & 0xFFFFFFFFL) | CHANNEL_ID_MASK;
         for (int i = 0; i < mNodes.size(); i++) {
             Node node = mNodes.get(i);
             try {
@@ -545,6 +546,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         mAvatarCache.clear();
     }
 
+    @VisibleForTesting
     AvatarCache getAvatarCache() {
         return mAvatarCache;
     }
