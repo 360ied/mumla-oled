@@ -31,19 +31,22 @@ import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.util.TypedValue;
 
+import androidx.core.content.res.ResourcesCompat;
+
 import se.lublin.mumla.R;
 
 /**
  * A drawable containing a circular bitmap in the style of @drawable/outline_circle_talking_off.
- * Created by andrew on 19/10/14.
  */
 public class CircleDrawable extends Drawable {
     public static final int STROKE_WIDTH_DP = 1;
-    private Resources mResources;
-    private Bitmap mBitmap;
-    private Paint mPaint;
-    private Paint mStrokePaint;
-    private ConstantState mConstantState;
+    private final Resources mResources;
+    private final Bitmap mBitmap;
+    private final Paint mPaint;
+    private final Paint mStrokePaint;
+    private final ConstantState mConstantState;
+    private final RectF mImageRect = new RectF();
+    private final RectF mStrokeRect = new RectF();
 
     public CircleDrawable(Resources resources, Bitmap bitmap) {
         mResources = resources;
@@ -57,23 +60,51 @@ public class CircleDrawable extends Drawable {
         mStrokePaint = new Paint();
         mStrokePaint.setDither(true);
         mStrokePaint.setAntiAlias(true);
-        mStrokePaint.setColor(resources.getColor(R.color.ripple_talk_state_disabled));
+        mStrokePaint.setColor(ResourcesCompat.getColor(resources, R.color.ripple_talk_state_disabled, null));
         float strokeWidth = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
                 STROKE_WIDTH_DP, resources.getDisplayMetrics());
         mStrokePaint.setStrokeWidth(strokeWidth);
         mStrokePaint.setStyle(Paint.Style.STROKE);
 
-        mConstantState = new ConstantState() {
-            @Override
-            public Drawable newDrawable() {
-                return new CircleDrawable(mResources, mBitmap);
-            }
+        mConstantState = new CircleConstantState(mResources, mBitmap);
+    }
 
-            @Override
-            public int getChangingConfigurations() {
-                return 0;
-            }
-        };
+    private static final class CircleConstantState extends ConstantState {
+        private final Resources mResources;
+        private final Bitmap mBitmap;
+
+        CircleConstantState(Resources resources, Bitmap bitmap) {
+            mResources = resources;
+            mBitmap = bitmap;
+        }
+
+        @Override
+        public Drawable newDrawable() {
+            return new CircleDrawable(mResources, mBitmap);
+        }
+
+        @Override
+        public Drawable newDrawable(Resources res) {
+            return new CircleDrawable(res != null ? res : mResources, mBitmap);
+        }
+
+        @Override
+        public int getChangingConfigurations() {
+            return 0;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            CircleConstantState that = (CircleConstantState) o;
+            return java.util.Objects.equals(mBitmap, that.mBitmap);
+        }
+
+        @Override
+        public int hashCode() {
+            return mBitmap != null ? mBitmap.hashCode() : 0;
+        }
     }
 
     @Override
@@ -88,24 +119,28 @@ public class CircleDrawable extends Drawable {
 
     @Override
     public void draw(Canvas canvas) {
-        RectF imageRect = new RectF(getBounds());
-        RectF strokeRect = new RectF(getBounds());
+        mImageRect.set(getBounds());
+        mStrokeRect.set(getBounds());
         // Default stroke drawing is both inset and outset.
-        strokeRect.inset(mStrokePaint.getStrokeWidth()/2,
+        mStrokeRect.inset(mStrokePaint.getStrokeWidth()/2,
                          mStrokePaint.getStrokeWidth()/2);
 
-        canvas.drawOval(imageRect, mPaint);
-        canvas.drawOval(strokeRect, mStrokePaint);
+        canvas.drawOval(mImageRect, mPaint);
+        canvas.drawOval(mStrokeRect, mStrokePaint);
     }
 
     @Override
     public void setAlpha(int alpha) {
-
+        mPaint.setAlpha(alpha);
+        mStrokePaint.setAlpha(alpha);
+        invalidateSelf();
     }
 
     @Override
     public void setColorFilter(ColorFilter cf) {
-
+        mPaint.setColorFilter(cf);
+        mStrokePaint.setColorFilter(cf);
+        invalidateSelf();
     }
 
     @Override

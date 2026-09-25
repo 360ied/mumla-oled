@@ -142,6 +142,23 @@ public class User implements IUser, Comparable<User> {
     }
 
     @Override
+    public boolean hasTexture() {
+        return mTexture != null && !mTexture.isEmpty();
+    }
+
+    @Override
+    public int getTextureCacheKey() {
+        if (mTexture != null && !mTexture.isEmpty()) {
+            int h = mTexture.hashCode();
+            return h != 0 ? h : 1;
+        } else if (mTextureHash != null && !mTextureHash.isEmpty()) {
+            int h = mTextureHash.hashCode();
+            return h != 0 ? h : 1;
+        }
+        return 0;
+    }
+
+    @Override
     public String getHash() {
         return mHash;
     }

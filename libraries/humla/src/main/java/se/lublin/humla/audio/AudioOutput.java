@@ -59,11 +59,12 @@ public class AudioOutput implements Runnable,
     private final Handler mMainHandler;
     private final AudioOutputListener mListener;
 
-    private NativeAudioOutputEngine mEngine;
+    private volatile NativeAudioOutputEngine mEngine;
     private AudioTrack mAudioTrack;
     private Thread mThread;
-    private boolean mRunning = false;
+    private volatile boolean mRunning = false;
     private volatile boolean mHalfDuplexMuted = false;
+    private boolean mHasIncomingAudio = false;
 
     public AudioOutput(AudioOutputListener listener) {
         mListener = listener;
@@ -247,6 +248,7 @@ public class AudioOutput implements Runnable,
                         : RENDER_SAMPLES * 2; // pre-M: write-blocking bounds
         final Pacer pacer = new Pacer(RENDER_SAMPLES, trackFrames);
         final short[] mix = new short[RENDER_SAMPLES];
+        renderLoop:
         while (true) {
             synchronized (this) {
                 if (!mRunning) {
@@ -302,10 +304,7 @@ public class AudioOutput implements Runnable,
                 }
             }
             int rendered = 0;
-            NativeAudioOutputEngine engine;
-            synchronized (this) {
-                engine = mEngine;
-            }
+            NativeAudioOutputEngine engine = mEngine;
             if (engine != null) {
                 rendered = engine.render(mix, 0, RENDER_SAMPLES);
             }
@@ -322,7 +321,7 @@ public class AudioOutput implements Runnable,
                             Thread.sleep(10);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
-                            break;
+                            break renderLoop;
                         }
                         break;
                     }
@@ -331,7 +330,7 @@ public class AudioOutput implements Runnable,
                             Thread.sleep(2);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
-                            break;
+                            break renderLoop;
                         }
                         continue;
                     }
@@ -340,23 +339,41 @@ public class AudioOutput implements Runnable,
                 }
             } else {
                 pacer.onIdle();
-                // No live voice this quantum. Keep the track playing so
+                // No live voice rendered this quantum. Keep the track playing so
                 // resume is gapless, and idle until the next packet arrives.
-                // renderMix returns 0 only here or for a wedged voice:
-                // fresh voices hold silent in the engine's startup gate
-                // and still render zero PCM, so this loop keeps writing
-                // and stays paced by the track's backpressure while their
-                // jitter buffer fills. The wait is timed, not indefinite,
-                // so a notify raced with wait entry — or a wedged voice
-                // expiring via its per-render miss count — cannot strand
-                // the thread.
+                // When nobody is speaking and zero voices are registered in the
+                // native engine, wait indefinitely to eliminate the 50 Hz CPU spin
+                // and allow cores to enter deep C-states.
+                // If active voices exist (fresh voices filling their startup gate,
+                // or wedged voices pending miss expiry), use the 20 ms timed wait
+                // to keep paced ticks progressing.
                 synchronized (mInactiveLock) {
-                    try {
-                        mInactiveLock.wait(20);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
+                    if (!mHasIncomingAudio) {
+                        engine = mEngine;
+                        boolean hasVoices = (engine != null && engine.hasActiveVoices());
+                        if (!hasVoices) {
+                            while (mRunning && !mHasIncomingAudio) {
+                                try {
+                                    mInactiveLock.wait();
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    break renderLoop;
+                                }
+                                engine = mEngine;
+                                if (engine != null && engine.hasActiveVoices()) {
+                                    break;
+                                }
+                            }
+                        } else {
+                            try {
+                                mInactiveLock.wait(20);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                break renderLoop;
+                            }
+                        }
                     }
+                    mHasIncomingAudio = false;
                 }
             }
         }
@@ -453,6 +470,7 @@ public class AudioOutput implements Runnable,
 
     private void signalData() {
         synchronized (mInactiveLock) {
+            mHasIncomingAudio = true;
             mInactiveLock.notify();
         }
     }

@@ -39,6 +39,10 @@ public interface IUser {
 
     byte[] getTextureHash();
 
+    boolean hasTexture();
+
+    int getTextureCacheKey();
+
     String getHash();
 
     boolean isMuted();

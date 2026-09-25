@@ -295,4 +295,14 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeReset(
     }
 }
 
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeHasActiveVoices(
+        JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    OutputEngineContext* ctx = getContext(handle);
+    if (ctx != nullptr && ctx->engine != nullptr) {
+        return ctx->engine->activeUserCount() > 0 ? JNI_TRUE : JNI_FALSE;
+    }
+    return JNI_FALSE;
+}
+
 } // extern "C"

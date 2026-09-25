@@ -66,6 +66,12 @@ public class NativeAudioOutputEngine {
         }
     }
 
+    /** Package-private constructor for unit testing handle guards without native loading. */
+    NativeAudioOutputEngine(long handle) {
+        mListener = null;
+        mNativeHandle = handle;
+    }
+
     public synchronized void queuePacket(int session, byte[] data, int length,
                                          int sequence, int flags,
                                          boolean isTerminator) {
@@ -121,6 +127,21 @@ public class NativeAudioOutputEngine {
         }
     }
 
+    /**
+     * Checks if any active voices exist in the native output engine.
+     *
+     * Should only be called by the audio output render thread while managing render-quantum
+     * idle sleep states. Synchronized with respect to concurrent engine lifecycle methods
+     * (e.g. destroy()).
+     *
+     * @return true if voices are actively queued, gating, or playing; false if completely idle.
+     */
+    public synchronized boolean hasActiveVoices() {
+        if (mNativeHandle != 0) {
+            return nativeHasActiveVoices(mNativeHandle);
+        }
+        return false;
+    }
 
     public interface AudioOutputEngineListener {
         void onTalkStateChanged(int session, int talkStateOrdinal);
@@ -136,4 +157,5 @@ public class NativeAudioOutputEngine {
     private static native void nativeRemoveUser(long handle, int session);
     private static native void nativeReset(long handle);
     private static native void nativeSetJitterMarginFrames(long handle, int frames);
+    private static native boolean nativeHasActiveVoices(long handle);
 }
