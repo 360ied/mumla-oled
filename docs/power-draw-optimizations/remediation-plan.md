@@ -55,29 +55,52 @@ flowchart TD
 ## Phase 1: Immediate Low-Risk Quick Wins
 
 ### 1.1. Invert Squelch Gate Before RNNoise
-- **Target**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L76-L84)
-- **Change**: In `AudioInputEngine::processFrame`, compute the cheap RMS energy of `m_processedFrame` before running neural denoising.
+- **Target**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L76-L84), [`HysteresisVad.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/HysteresisVad.h), [`HysteresisVad.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp)
+- **Change**: In `AudioInputEngine::processFrame`, compute the frame RMS energy in dBFS before running neural denoising.
 - **Implementation**:
   ```cpp
-  // Quick energy check (< 0.001 ms)
-  float peakDb = calculateEnergyDb(m_processedFrame.data(), SAMPLES_PER_10MS);
+  // Quick energy check (< 0.001 ms) against squelch floor (getSquelchMinDb = -65 dBFS)
+  float peakDb = HysteresisVad::calculateRmsDb(m_processedFrame.data(), SAMPLES_PER_10MS);
   float speechProb = -1.0f;
-  if (peakDb >= m_vad.getSquelchFloor() && m_denoiser) {
-      speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+  if (peakDb >= m_vad.getSquelchMinDb()) {
+      if (m_denoiser) {
+          speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+      }
+  } else {
+      // Squelch silence: feed zeroed frame to trigger RNNoise's native silence bypass
+      if (m_denoiser) {
+          int16_t silencePcm[SAMPLES_PER_10MS] = {0};
+          m_denoiser->process(silencePcm, silencePcm, SAMPLES_PER_10MS);
+      }
+      std::memset(m_processedFrame.data(), 0, SAMPLES_PER_10MS * sizeof(int16_t));
+      speechProb = 0.0f;
   }
   ```
-- **Filter Continuity Requirement**: RNNoise is a stateful filter maintaining a 10ms overlap-add delay buffer (`delayed_X`) and pitch history (`pitch_buf`). Completely bypassing `rnnoise_process_frame` corrupts overlap-add synthesis when speech resumes, causing audible clicks. Implementations should leverage RNNoise's native silence optimization (`rnnoise/src/denoise.c:472-474` -> `if (!silence)`), which skips dense GRU matrix multiplications while updating delay and pitch buffers cleanly.
-- **Benefit**: Completely eliminates 80–90% of RNNoise neural network inference during ambient silence and pauses.
+- **Filter Continuity & RNNoise Silence Optimization**: RNNoise is a stateful filter maintaining a 10ms overlap-add delay buffer (`delayed_X`), pitch history (`pitch_buf`), and synthesis memory (`synthesis_mem`). Completely bypassing `rnnoise_process_frame` freezes internal filter state; when speech resumes, synthesis crossfades against stale audio from the last active frame, causing audible clicks. Furthermore, RNNoise's native silence shortcut (`rnnoise/src/denoise.c:389` & `472-474` -> `if (!silence)`) evaluates $E < 0.04$ against unnormalized band energies of raw 16-bit PCM amplitudes. Real ambient room noise at $-70\text{ dBFS}$ yields $E \gg 0.04$, meaning ambient silence never triggers the native bypass on its own. Feeding a zeroed buffer during squelched silence ($E = 0 < 0.04$) cleanly triggers `silence = 1`: dense GRU matrix multiplications (`compute_rnn`) and pitch filtering are completely bypassed, while `frame_synthesis` advances and zeroes `delayed_X` and pitch history smoothly.
+- **Benefit**: Completely eliminates 80–90% of RNNoise neural network inference during ambient silence and pauses with zero overlap-add clicks on speech resumption.
 
 ### 1.2. Render Thread Indefinite Wait with Lost-Notification Guard
-- **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L353-L360)
-- **Change**: Replace `mInactiveLock.wait(20)` with an indefinite wait guarded by a stateful predicate to prevent lost-wakeup race conditions:
+- **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L353-L360), [`NativeAudioOutputEngine.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioOutputEngine.java), [`NativeAudioOutputEngineJni.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp), [`AudioOutputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.h)
+- **Change**: Expose `activeUserCount()` as `hasActiveVoices()` from C++ through JNI to `NativeAudioOutputEngine`, track incoming audio packets via `mHasIncomingAudio` when waking `mInactiveLock`, and replace the 50 Hz `mInactiveLock.wait(20)` loop with an indefinite wait when zero voices are registered:
 - **Implementation**:
   ```java
   synchronized (mInactiveLock) {
-      while (mRunning && !mHasIncomingAudio && (mEngine == null || !mEngine.hasActiveVoices())) {
+      if (mEngine == null || !mEngine.hasActiveVoices()) {
+          // Zero active voices registered in native engine: wait indefinitely
+          // until incoming packets arrive via signalData()
+          while (mRunning && !mHasIncomingAudio && (mEngine == null || !mEngine.hasActiveVoices())) {
+              try {
+                  mInactiveLock.wait();
+              } catch (InterruptedException e) {
+                  Thread.currentThread().interrupt();
+                  break;
+              }
+          }
+      } else {
+          // Active voices exist (e.g. startup gate filling or wedged voices expiring):
+          // timed wait to allow jitter buffer accumulation or miss count advancement
           try {
-              mInactiveLock.wait();
+              mInactiveLock.wait(20);
           } catch (InterruptedException e) {
               Thread.currentThread().interrupt();
               break;
@@ -86,7 +109,7 @@ flowchart TD
       mHasIncomingAudio = false;
   }
   ```
-- **Benefit**: Eliminates the 50 Hz CPU spin, allowing CPU cores to drop to deep C-states when nobody is talking.
+- **Benefit**: Eliminates the 50 Hz CPU spin, JNI boundary transitions, and mutex acquisitions when nobody is talking, allowing CPU cores to drop to deep C-states during silent standby.
 
 ### 1.3. Optimize Opus Complexity
 - **Target**: [`OpusVoiceEncoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp#L39-L46)
@@ -99,7 +122,7 @@ flowchart TD
 
 ### 1.4. Avatar Bitmap LRU Caching
 - **Target**: [`ChannelListAdapter.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java#L368-L375)
-- **Change**: Introduce an in-memory `LruCache<Integer, Drawable>` keyed by session ID or avatar texture hash.
+- **Change**: In `ChannelListAdapter.getTalkStateDrawable()`, replace unmemoized main-thread `BitmapFactory.decodeByteArray()` (`// FIXME: cache bitmaps`) with an `LruCache<Integer, Drawable>` keyed by session ID (or validated against `user.getTextureHash()`), invalidating on user removal or texture update.
 - **Benefit**: Eliminates UI thread bitmap decompression on every talk state change, eliminating frame jank and GC allocations.
 
 ---
