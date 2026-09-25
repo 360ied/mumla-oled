@@ -114,4 +114,8 @@ public class ChannelAdapterTest extends TestCase {
         mUser1.setTalkState(TalkState.PASSIVE);
         assertEquals(TalkState.PASSIVE, mUser1.getTalkState());
     }
+
+    public void testTalkStateDrawableWithNullContext() {
+        assertNull(mAdapter.getTalkStateDrawable(mUser1));
+    }
 }

@@ -27,6 +27,7 @@ import android.graphics.drawable.Drawable.ConstantState;
 import android.os.RemoteException;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.LruCache;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -39,6 +40,7 @@ import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -80,6 +82,27 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     private OnChannelClickListener mChannelClickListener;
     private boolean mShowChannelUserCount;
     private final FragmentManager mFragmentManager;
+
+    private static class CachedAvatar {
+        final byte[] textureHash;
+        final int textureLength;
+        final Drawable drawable;
+
+        CachedAvatar(byte[] textureHash, int textureLength, Drawable drawable) {
+            this.textureHash = textureHash;
+            this.textureLength = textureLength;
+            this.drawable = drawable;
+        }
+
+        boolean matches(byte[] hash, byte[] texture) {
+            if (hash != null && this.textureHash != null) {
+                return Arrays.equals(this.textureHash, hash);
+            }
+            return texture != null && texture.length == this.textureLength;
+        }
+    }
+
+    private final LruCache<Integer, CachedAvatar> mAvatarCache = new LruCache<>(100);
 
     public ChannelListAdapter(Context context, IHumlaService service, MumlaDatabase database,
                               FragmentManager fragmentManager, boolean showPinnedOnly,
@@ -346,7 +369,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         }
     }
 
-    private Drawable getTalkStateDrawable(IUser user) {
+    Drawable getTalkStateDrawable(IUser user) {
         Resources resources = mContext.getResources();
         if (user.isSelfDeafened()) {
             return resources.getDrawable(R.drawable.outline_circle_deafened);
@@ -365,13 +388,27 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             return resources.getDrawable(R.drawable.outline_circle_talking_on);
         } else {
             // Passive drawables
-            if (user.getTexture() != null) {
-                // FIXME: cache bitmaps
-                Bitmap bitmap = BitmapFactory.decodeByteArray(user.getTexture(), 0, user.getTexture().length);
-                // yes, decoding can fail
-                if (bitmap != null) {
-                    return new CircleDrawable(mContext.getResources(), bitmap);
+            byte[] hash = user.getTextureHash();
+            if (hash != null) {
+                CachedAvatar cached = mAvatarCache.get(user.getSession());
+                if (cached != null && cached.textureHash != null && Arrays.equals(cached.textureHash, hash)) {
+                    return cached.drawable;
                 }
+            }
+            byte[] texture = user.getTexture();
+            if (texture != null && texture.length > 0) {
+                CachedAvatar cached = mAvatarCache.get(user.getSession());
+                if (cached != null && cached.matches(hash, texture)) {
+                    return cached.drawable;
+                }
+                Bitmap bitmap = BitmapFactory.decodeByteArray(texture, 0, texture.length);
+                if (bitmap != null) {
+                    CircleDrawable drawable = new CircleDrawable(mContext.getResources(), bitmap);
+                    mAvatarCache.put(user.getSession(), new CachedAvatar(hash, texture.length, drawable));
+                    return drawable;
+                }
+            } else {
+                mAvatarCache.remove(user.getSession());
             }
         }
         // "default" symbol, used also if bitmap decoding fails
