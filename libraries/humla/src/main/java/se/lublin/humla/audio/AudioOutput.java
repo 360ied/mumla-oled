@@ -350,27 +350,29 @@ public class AudioOutput implements Runnable,
                 // or wedged voices pending miss expiry), use the 20 ms timed wait
                 // to keep paced ticks progressing.
                 synchronized (mInactiveLock) {
-                    engine = mEngine;
-                    boolean hasVoices = (engine != null && engine.hasActiveVoices());
-                    if (!hasVoices) {
-                        while (mRunning && !mHasIncomingAudio) {
+                    if (!mHasIncomingAudio) {
+                        engine = mEngine;
+                        boolean hasVoices = (engine != null && engine.hasActiveVoices());
+                        if (!hasVoices) {
+                            while (mRunning && !mHasIncomingAudio) {
+                                try {
+                                    mInactiveLock.wait();
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    break;
+                                }
+                                engine = mEngine;
+                                if (engine != null && engine.hasActiveVoices()) {
+                                    break;
+                                }
+                            }
+                        } else {
                             try {
-                                mInactiveLock.wait();
+                                mInactiveLock.wait(20);
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                                 break;
                             }
-                            engine = mEngine;
-                            if (engine != null && engine.hasActiveVoices()) {
-                                break;
-                            }
-                        }
-                    } else {
-                        try {
-                            mInactiveLock.wait(20);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
                         }
                     }
                     mHasIncomingAudio = false;
