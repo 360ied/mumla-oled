@@ -339,7 +339,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         if (user == null || view == null) {
             return;
         }
-        long itemId = user.getSession() | USER_ID_MASK;
+        long itemId = (((long) user.getSession()) & 0xFFFFFFFFL) | USER_ID_MASK;
         UserViewHolder uvh = (UserViewHolder) view.findViewHolderForItemId(itemId);
         if (uvh != null && uvh.mUserTalkHighlight != null) {
             Drawable newState = getTalkStateDrawable(user);
@@ -387,7 +387,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     }
 
     public int getUserPosition(int session) {
-        long itemId = session | USER_ID_MASK;
+        long itemId = (((long) session) & 0xFFFFFFFFL) | USER_ID_MASK;
         for (int i = 0; i < mNodes.size(); i++) {
             Node node = mNodes.get(i);
             try {
@@ -537,6 +537,10 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         }
     }
 
+    public void removeUser(int session) {
+        mAvatarCache.remove(session);
+    }
+
     public void clearAvatarCache() {
         mAvatarCache.clear();
     }
@@ -592,9 +596,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         public Long getId() throws RemoteException {
             // Apply flags to differentiate integer-length identifiers
             if (isChannel()) {
-                return CHANNEL_ID_MASK | mChannel.getId();
+                return CHANNEL_ID_MASK | (((long) mChannel.getId()) & 0xFFFFFFFFL);
             } else if (isUser()) {
-                return USER_ID_MASK | mUser.getSession();
+                return USER_ID_MASK | (((long) mUser.getSession()) & 0xFFFFFFFFL);
             }
             return null;
         }

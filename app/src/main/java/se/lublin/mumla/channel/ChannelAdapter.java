@@ -20,6 +20,7 @@ package se.lublin.mumla.channel;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.Drawable.ConstantState;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -151,8 +152,13 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
                 if (vh.stateIcon != null) {
                     Drawable newState = getTalkStateDrawable(user);
                     Drawable currentDrawable = vh.stateIcon.getDrawable();
-                    if (newState != null && (currentDrawable == null || currentDrawable.getConstantState() == null
-                            || !currentDrawable.getConstantState().equals(newState.getConstantState()))) {
+                    if (newState != null && currentDrawable != null) {
+                        Drawable currentInner = currentDrawable.getCurrent();
+                        ConstantState state = (currentInner != null) ? currentInner.getConstantState() : null;
+                        if (state == null || !state.equals(newState.getConstantState())) {
+                            vh.stateIcon.setImageDrawable(newState);
+                        }
+                    } else if (newState != null) {
                         vh.stateIcon.setImageDrawable(newState);
                     }
                 }
@@ -174,6 +180,10 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
 
     public IChannel getChannel() {
         return mChannel;
+    }
+
+    public void removeUser(int session) {
+        mAvatarCache.remove(session);
     }
 
     public void clearAvatarCache() {

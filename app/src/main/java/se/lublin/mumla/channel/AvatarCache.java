@@ -36,7 +36,7 @@ public class AvatarCache {
     /** Default 4 MB maximum heap allocation for decoded avatars. */
     public static final int DEFAULT_MAX_SIZE_KB = 4 * 1024;
 
-    public static class Entry {
+    public static final class Entry {
         final int cacheKey;
         final Bitmap bitmap;
 
