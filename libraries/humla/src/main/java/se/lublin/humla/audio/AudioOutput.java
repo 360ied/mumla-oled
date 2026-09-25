@@ -28,6 +28,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.nio.BufferUnderflowException;
@@ -372,9 +373,9 @@ public class AudioOutput implements Runnable,
                             // If timeout expires with zero voices and no incoming audio, pause AudioTrack
                             // (unless Bluetooth SCO is active, which requires continuous output to maintain link).
                             if (!scoActive && standbyTimeout > 0) {
-                                long waitStart = System.currentTimeMillis();
+                                long waitStart = SystemClock.elapsedRealtime();
                                 while (mRunning && !mHasIncomingAudio) {
-                                    long elapsed = System.currentTimeMillis() - waitStart;
+                                    long elapsed = SystemClock.elapsedRealtime() - waitStart;
                                     long remaining = standbyTimeout - elapsed;
                                     if (remaining <= 0) {
                                         break;
@@ -401,20 +402,34 @@ public class AudioOutput implements Runnable,
                                         }
                                     } catch (IllegalStateException ignored) {
                                     }
-                                }
-                            }
 
-                            // Indefinite sleep until next incoming audio packet, voice, or shutdown
-                            while (mRunning && !mHasIncomingAudio) {
-                                try {
-                                    mInactiveLock.wait();
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                    break renderLoop;
+                                    // Indefinite sleep until next incoming audio packet, voice, or shutdown
+                                    while (mRunning && !mHasIncomingAudio) {
+                                        engine = mEngine;
+                                        if (engine != null && engine.hasActiveVoices()) {
+                                            break;
+                                        }
+                                        try {
+                                            mInactiveLock.wait();
+                                        } catch (InterruptedException e) {
+                                            Thread.currentThread().interrupt();
+                                            break renderLoop;
+                                        }
+                                    }
                                 }
-                                engine = mEngine;
-                                if (engine != null && engine.hasActiveVoices()) {
-                                    break;
+                            } else if (scoActive) {
+                                // In Bluetooth SCO mode, keep AudioTrack playing and sleep indefinitely to avoid tearing down link
+                                while (mRunning && !mHasIncomingAudio) {
+                                    engine = mEngine;
+                                    if (engine != null && engine.hasActiveVoices()) {
+                                        break;
+                                    }
+                                    try {
+                                        mInactiveLock.wait();
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                        break renderLoop;
+                                    }
                                 }
                             }
                         } else {
@@ -574,15 +589,23 @@ public class AudioOutput implements Runnable,
     boolean isBluetoothScoActive() {
         if (mAudioManager == null) return false;
         try {
-            if (mAudioManager.isBluetoothScoOn()) {
-                return true;
-            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 AudioDeviceInfo commDevice = mAudioManager.getCommunicationDevice();
                 if (commDevice != null && commDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                     return true;
                 }
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                AudioDeviceInfo[] devices = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+                if (devices != null) {
+                    for (AudioDeviceInfo device : devices) {
+                        if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return mAudioManager.isBluetoothScoOn();
         } catch (Exception ignored) {
         }
         return false;
@@ -593,7 +616,16 @@ public class AudioOutput implements Runnable,
             return STANDBY_TIMEOUT_DEFAULT_MS;
         }
         try {
-            if (mAudioManager.isBluetoothA2dpOn()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                AudioDeviceInfo[] devices = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+                if (devices != null) {
+                    for (AudioDeviceInfo device : devices) {
+                        if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
+                            return STANDBY_TIMEOUT_A2DP_MS;
+                        }
+                    }
+                }
+            } else if (mAudioManager.isBluetoothA2dpOn()) {
                 return STANDBY_TIMEOUT_A2DP_MS;
             }
         } catch (Exception ignored) {
