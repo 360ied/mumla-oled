@@ -321,7 +321,7 @@ public class AudioOutput implements Runnable,
                             Thread.sleep(10);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
-                            break;
+                            break renderLoop;
                         }
                         break;
                     }
@@ -330,7 +330,7 @@ public class AudioOutput implements Runnable,
                             Thread.sleep(2);
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
-                            break;
+                            break renderLoop;
                         }
                         continue;
                     }
