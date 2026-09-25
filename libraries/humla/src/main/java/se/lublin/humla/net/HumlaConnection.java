@@ -77,6 +77,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     // Authentication
     private byte[] mCertificate;
     private String mCertificatePassword;
+    public static final int BOOTSTRAP_PING_INTERVAL_SECONDS = 5;
+    public static final int STEADY_STATE_PING_INTERVAL_SECONDS = 10;
+    public static final long BOOTSTRAP_DURATION_MICROS = 30_000_000L; // 30 seconds
+
     private String mTrustStorePath;
     private String mTrustStorePassword;
     private String mTrustStoreFormat;
@@ -95,8 +99,8 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private boolean mSynchronized;
     private HumlaException mError;
     private boolean mExceptionHandled = false;
-    private long mStartTimestamp; // Time that the connection was initiated in nanoseconds
-    private final CryptState mCryptState = new CryptState();
+    long mStartTimestamp; // Time that the connection was initiated in nanoseconds
+    final CryptState mCryptState = new CryptState();
 
     // Latency
     private volatile long mLastUDPPing;
@@ -133,12 +137,8 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
                 enableForceTCP();
             }
 
-            // Start TCP/UDP ping thread. FIXME is this the right place?
-            try {
-                mPingTask = mPingExecutorService.scheduleAtFixedRate(mPingRunnable, 0, 5, TimeUnit.SECONDS);
-            } catch(RejectedExecutionException e) {
-                Log.w(TAG, "failed to start ping thread, in \"shutdown\"? ", e);
-            }
+            // Start TCP/UDP ping loop using adaptive self-rescheduling.
+            scheduleNextPing(0);
 
             mSession = msg.getSession();
             mMaxBandwidth = msg.hasMaxBandwidth() ? msg.getMaxBandwidth() : -1;
@@ -290,6 +290,27 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         }
     };
 
+    int getNextPingIntervalSeconds() {
+        long elapsed = getElapsed();
+        if (elapsed < BOOTSTRAP_DURATION_MICROS ||
+                mCryptState.mUiRemoteGood <= 3 ||
+                mCryptState.mUiGood <= 3) {
+            return BOOTSTRAP_PING_INTERVAL_SECONDS;
+        }
+        return STEADY_STATE_PING_INTERVAL_SECONDS;
+    }
+
+    synchronized void scheduleNextPing(int delaySeconds) {
+        if (!mConnected || mPingExecutorService == null || mPingExecutorService.isShutdown()) {
+            return;
+        }
+        try {
+            mPingTask = mPingExecutorService.schedule(mPingRunnable, delaySeconds, TimeUnit.SECONDS);
+        } catch (RejectedExecutionException e) {
+            Log.w(TAG, "Failed to schedule next ping: " + e.getMessage());
+        }
+    }
+
     private Runnable mPingRunnable = new Runnable() {
         @Override
         public void run() {
@@ -324,6 +345,8 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             pb.setResync(mCryptState.mUiResync);
             // TODO accumulate stats and send with ping
             sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
+
+            scheduleNextPing(getNextPingIntervalSeconds());
         }
     };
 
