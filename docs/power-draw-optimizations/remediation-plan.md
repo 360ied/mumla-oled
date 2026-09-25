@@ -204,8 +204,12 @@ Implemented a centralized, memory-bounded [`AvatarCache.java`](file:///home/bual
 ### 2.1. Microphone Gating (Mute) & DSP Gating (PTT Idle)
 - **Target**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) and [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp)
 - **Change**:
-  - **Self-Muted State**: Flush pending frames, emit an explicit terminator packet, then call `mInput.stopRecording()`. Unmuting is a deliberate user action where 50ms HAL startup lag is completely imperceptible, saving 100% of mic hardware and ADC power.
+  - **Self-Muted State & Explicit Terminator Dispatch**: Flush pending frames, emit an explicit terminator packet, then call `mInput.stopRecording()`. Unmuting is a deliberate user action where 50ms HAL startup lag is completely imperceptible, saving 100% of mic hardware and ADC power.
+    - *Critical Terminator Sequencing*: `AudioInputEngine::setMuted(true)` historically relied on a subsequent `processFrame()` invocation from `AudioRecord` to detect mute, generate a silence terminator, and clear `m_talking`. Because stopping `AudioRecord` halts further `processFrame()` calls, `AudioInputEngine` must explicitly flush pending accumulator audio or encode a silence terminator, reset `m_talking = false`, clear `m_ringBuffer`, and dispatch callbacks synchronously under lock before `AudioRecord` is stopped.
+    - *Mute-on-Connect & Cumulative UserState*: In `AudioHandler.initialize()`, check `self.isSelfMuted()` in addition to server mute flags to avoid starting `AudioRecord` on connect if already muted. In `messageUserState()`, track cumulative local boolean states rather than relying on sparse protobuf deltas.
   - **Push-To-Talk Idle State**: **Do not stop `AudioRecord`**. Keep `AudioRecord` capturing into `PreSpeechRingBuffer` to preserve the 80ms lookahead onset audio and avoid PTT click latency. However, **bypass RNNoise (`m_denoiser->process`) and Adaptive Leveler** while PTT is unpressed.
+    - *Filter Continuity*: Feed static zeroes (`kSilencePcm`) to RNNoise unconditionally during PTT idle (regardless of `peakDb`) to bypass GRU inference completely while keeping overlap-add delay and pitch filters continuous.
+    - *Ring Buffer Flush Harmonization*: When PTT is pressed and `m_ringBuffer` is flushed, pass the buffered 80ms frames through RNNoise/leveler in a single sub-millisecond burst to ensure consistent noise floor and gain before live speech begins.
   - **Mandatory Terminator Packet Invariant**: Prior to pausing or stopping `AudioRecord` (whether from mute or PTT release), the audio pipeline **must flush any remaining samples and dispatch an explicit terminator packet** (`is_terminator = true` in Protobuf or `header |= (1 << 13)` in legacy varint format) preserving the active whisper target ID (`iPrevTarget`). Halting capture without a terminator forces remote Mumble receivers to interpret the sudden packet drop as loss, invoking 10 frames of robotic Packet Loss Concealment (PLC) before voice expiry.
 - **Benefit**: Saves $50 \text{ to } 80 \text{ mW}$ of mic hardware power during mute, and cuts 90% of CPU power during PTT standby without any speech onset clipping.
 
@@ -216,9 +220,10 @@ Implemented a centralized, memory-bounded [`AvatarCache.java`](file:///home/bual
 ### 2.2. AudioTrack Standby Pause (Guarded against Bluetooth SCO)
 - **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
 - **Change**:
-  - When the native engine reports 0 active voices for **15 consecutive seconds**, invoke `mAudioTrack.pause()`.
-  - **Bluetooth SCO Guard**: If `AudioManager.isBluetoothScoOn()` is true, **never pause `AudioTrack`**, preventing Bluetooth voice link teardown.
-  - Apply a 10ms raised-cosine fade before pausing to prevent hardware DAC pop transients.
+  - **Two-Tier Standby Wait**: Reconcile with the Phase 1 indefinite wait in `AudioOutput.java`. When `!hasActiveVoices()`, the thread must first wait on a timed condition (`mInactiveLock.wait(standbyTimeoutMs)`). Only once that timeout expires with zero voices and no incoming audio does it call `mAudioTrack.pause()`, followed by an indefinite wait (`mInactiveLock.wait()`).
+  - **Playback Resume**: When incoming audio arrives (`signalData()`), the thread wakes and the existing check (`if (mAudioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) mAudioTrack.play()`) unpauses playback immediately, with `Pacer`'s idle rebase synchronizing the playback head without underrun deadlock.
+  - **Route Detection & Bluetooth SCO Guard**: Pass `Context` or `AudioManager` into `AudioOutput`. If `AudioManager.isBluetoothScoOn()` (or on API 31+, `getCommunicationDevice()?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO`) is true, **never pause `AudioTrack`**, preventing Bluetooth SCO voice link teardown.
+  - **Zero-Padding & DAC Pops**: By the time standby timeout elapses, the hardware buffer has already drained to digital silence. Software fade is not needed on drained silence, but zero-padding before pause ensures no partial quanta remain in the HAL buffer.
 - **Benefit**: Allows the audio DSP (Hexagon/LPASS) and audio DAC to power down into low-power standby during conversational pauses.
 
 > [!NOTE]
@@ -228,18 +233,11 @@ Implemented a centralized, memory-bounded [`AvatarCache.java`](file:///home/bual
 ### 2.3. Adaptive Keepalive Pinging & CryptSetup Compliance
 - **Target**: [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
 - **Change**:
+  - **Synchronized UDP/TCP Wakeup Alignment**: Never ping on unaligned intervals (e.g. 7s UDP and 10s TCP), which would trigger interleaved radio wakeups every 3–4 seconds and keep cellular modems continuously in high-power `RRC_CONNECTED`. Both UDP and TCP keepalive pings must be dispatched synchronously in the **exact same scheduled tick** of `mPingRunnable`.
   - **Never drop TCP pings** (Murmur requires TCP messages to reset `Connection::activityTime()`).
   - **Bootstrap Phase (Initial 30s)**: Maintain aggressive 5s keepalives (UDP + TCP) to establish `mUiRemoteGood > 3 && mUiGood > 3` before the 20-second threshold in `HumlaConnection.java:240`, preventing false-positive traps in TCP tunneling.
-  - **Steady-State Background**: Relax keepalives to **7.0–10.0s for UDP** (staying safely below Murmur's 5s/10s `tLastGood` crypt resync limit and carrier CGNAT pin-hole timeouts) and **maximum 10.0s for TCP** (providing a 3× retry margin against Murmur's 30s timeout and surviving custom `timeout = 15/20` server configs).
-  - **Implement Missing CryptSetup Server Resync**: In `HumlaConnection.java:181`, implement the missing branch for empty `CryptSetup` requests from Murmur, replying with the client's current encryption IV:
-    ```java
-    } else {
-        // Empty CryptSetup from server requesting client nonce
-        Mumble.CryptSetup.Builder csb = Mumble.CryptSetup.newBuilder();
-        csb.setClientNonce(ByteString.copyFrom(mCryptState.getEncryptIV()));
-        sendTCPMessage(csb.build(), HumlaTCPMessageType.CryptSetup);
-    }
-    ```
+  - **Steady-State Background**: Relax keepalives to **8.0–10.0s synchronously for both UDP and TCP** (staying safely below Murmur's 30s timeout and carrier CGNAT pin-hole timeouts). Implement dynamic transition via a self-rescheduling task (`mPingExecutorService.schedule(mPingRunnable, delaySec, TimeUnit.SECONDS)`), resetting back to 5s bootstrap on reconnect.
+  - **CryptSetup Server Resync Compliance (Already Satisfied)**: Upstream Murmur's `tLastGood.elapsed() > 5s` check (`Server.cpp:1055`) is only evaluated on UDP decryption failures. In `HumlaConnection.java:198-202`, the client already responds to empty `CryptSetup` requests by retransmitting `mCryptState.getEncryptIV()`, satisfying protocol compliance.
 - **Benefit**: Allows the cellular modem to enter DRX cycles without risking carrier NAT drops, server disconnects, or crypt-resync storms, reducing cellular baseline current by $30\%\text{--}40\%$.
 
 ---

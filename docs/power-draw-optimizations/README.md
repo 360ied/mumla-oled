@@ -467,9 +467,9 @@ To address these inefficiencies systematically without compromising audio qualit
    - **Avatar Bitmap LRU Cache**: Eliminate main-thread bitmap decoding churn on talk-state transitions. *(Resolved)*
 
 2. **[Phase 2: Core Subsystem Gating](remediation-plan.md#phase-2-core-subsystem-gating)**:
-   - **AudioRecord Gating (Mute) & DSP Gating (PTT Idle)**: Stop recording on self-mute; bypass RNNoise/leveler on PTT idle while preserving the 80ms lookahead ring buffer. Always emit explicit terminator packets (`is_terminator = true` / `1 << 13`) before stopping capture.
-   - **AudioTrack Standby Pause**: Pause `AudioTrack` after 15s consecutive silence (guarded against Bluetooth SCO link teardown; shortened to 3–5s on non-Bluetooth routes).
-   - **Adaptive Keepalive Pinging**: Bounded to 7.0–10.0s UDP and $\le 10.0\text{s}$ TCP with an initial 30s 5s bootstrap and server `CryptSetup` nonce resync.
+   - **AudioRecord Gating (Mute) & DSP Gating (PTT Idle)**: Stop recording on self-mute with explicit synchronous terminator dispatch before capture halt; unconditionally bypass RNNoise/leveler on PTT idle while preserving lookahead ring buffer continuity.
+   - **AudioTrack Standby Pause**: Reconcile Phase 1 indefinite wait with timed pause after 15s consecutive silence (guarded against Bluetooth SCO link teardown; shortened to 3–5s on non-Bluetooth routes).
+   - **Adaptive Keepalive Pinging**: Synchronized UDP/TCP keepalives bounded to 8.0–10.0s with an initial 30s 5s bootstrap; empty server `CryptSetup` nonce resync compliance already verified.
 
 3. **[Phase 3: Deep Architectural Modernization](remediation-plan.md#phase-3-deep-architectural-modernization)**:
    - **Adaptive Wakelock Pulsing & Android Deep Doze Reality**: Release continuous `PARTIAL_WAKE_LOCK` during background standby on battery-optimization exempt devices.
