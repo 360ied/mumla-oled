@@ -21,6 +21,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
+import android.util.LruCache;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -30,6 +31,8 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.recyclerview.widget.RecyclerView;
+
+import java.util.Arrays;
 
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
@@ -42,6 +45,26 @@ import se.lublin.mumla.drawable.CircleDrawable;
  */
 public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHolder> {
 
+    private static class CachedAvatar {
+        final byte[] textureHash;
+        final int textureLength;
+        final Drawable drawable;
+
+        CachedAvatar(byte[] textureHash, int textureLength, Drawable drawable) {
+            this.textureHash = textureHash;
+            this.textureLength = textureLength;
+            this.drawable = drawable;
+        }
+
+        boolean matches(byte[] hash, byte[] texture) {
+            if (hash != null && this.textureHash != null) {
+                return Arrays.equals(this.textureHash, hash);
+            }
+            return texture != null && texture.length == this.textureLength;
+        }
+    }
+
+    private final LruCache<Integer, CachedAvatar> mAvatarCache = new LruCache<>(100);
     private final Context mContext;
     private IChannel mChannel;
 
@@ -98,7 +121,7 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         return RecyclerView.NO_ID;
     }
 
-    private Drawable getTalkStateDrawable(IUser user) {
+    Drawable getTalkStateDrawable(IUser user) {
         if (mContext == null) {
             return null;
         }
@@ -117,11 +140,27 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
                 || user.getTalkState() == TalkState.WHISPERING) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on);
         } else {
-            if (user.getTexture() != null && user.getTexture().length > 0) {
-                Bitmap bitmap = BitmapFactory.decodeByteArray(user.getTexture(), 0, user.getTexture().length);
-                if (bitmap != null) {
-                    return new CircleDrawable(mContext.getResources(), bitmap);
+            byte[] hash = user.getTextureHash();
+            if (hash != null) {
+                CachedAvatar cached = mAvatarCache.get(user.getSession());
+                if (cached != null && cached.textureHash != null && Arrays.equals(cached.textureHash, hash)) {
+                    return cached.drawable;
                 }
+            }
+            byte[] texture = user.getTexture();
+            if (texture != null && texture.length > 0) {
+                CachedAvatar cached = mAvatarCache.get(user.getSession());
+                if (cached != null && cached.matches(hash, texture)) {
+                    return cached.drawable;
+                }
+                Bitmap bitmap = BitmapFactory.decodeByteArray(texture, 0, texture.length);
+                if (bitmap != null && mContext != null) {
+                    CircleDrawable drawable = new CircleDrawable(mContext.getResources(), bitmap);
+                    mAvatarCache.put(user.getSession(), new CachedAvatar(hash, texture.length, drawable));
+                    return drawable;
+                }
+            } else {
+                mAvatarCache.remove(user.getSession());
             }
         }
         return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
