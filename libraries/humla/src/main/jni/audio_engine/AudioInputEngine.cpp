@@ -62,6 +62,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
 
     AudioPacketCallback packetCb;
     TalkingStateCallback talkingCb;
+    std::vector<DispatchedPacket> packetsToSend;
 
     {
         std::unique_lock<std::mutex> lock(m_mutex);
@@ -93,11 +94,11 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         }
 
         if (m_denoiser) {
-            // Bypass RNNoise during squelched silence or when PTT is idle (unpressed):
-            // In PTT mode when not transmitting, bypass unconditionally regardless of peakDb.
+            // Bypass RNNoise during squelched silence, client mute, or when PTT is idle (unpressed):
+            // In PTT mode when not transmitting or when client is muted, bypass unconditionally regardless of peakDb.
             // In VAD mode, bypass when below the squelch floor.
-            bool shouldBypassRnnoise = !isActivelyTransmitting &&
-                (m_inputMode == InputMode::PUSH_TO_TALK || peakDb < m_vad.getSquelchMinDb());
+            bool shouldBypassRnnoise = m_muted || (!isActivelyTransmitting &&
+                (m_inputMode == InputMode::PUSH_TO_TALK || peakDb < m_vad.getSquelchMinDb()));
 
             if (shouldBypassRnnoise) {
                 // Feed static zeroes to RNNoise to advance overlap-add delay (delayed_X) and pitch buffers
@@ -209,6 +210,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         m_talking = shouldTransmit;
         packetCb = m_packetCallback;
         talkingCb = m_talkingCallback;
+        packetsToSend = std::move(m_packetsToDispatch);
+        m_packetsToDispatch.clear();
     } // Critical section exited, mutex released!
 
     // 8. Dispatch callbacks outside the lock to prevent deadlock
@@ -216,8 +219,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         talkingCb(talkingState, peakEnergy);
     }
 
-    if (packetCb) {
-        for (const auto& pkt : m_packetsToDispatch) {
+    if (packetCb && !packetsToSend.empty()) {
+        for (const auto& pkt : packetsToSend) {
             packetCb(pkt.data, pkt.size, pkt.frames, pkt.isTerminator, pkt.frameNumber);
         }
     }
