@@ -100,8 +100,8 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
                 // Raw acoustic PCM in m_processedFrame is preserved so pre-speech lookahead buffering
                 // and VAD evaluate authentic audio.
                 static const int16_t kSilencePcm[SAMPLES_PER_10MS] = {0};
-                int16_t dummyOut[SAMPLES_PER_10MS];
-                m_denoiser->process(kSilencePcm, dummyOut, SAMPLES_PER_10MS);
+                static int16_t s_dummyOut[SAMPLES_PER_10MS];
+                m_denoiser->process(kSilencePcm, s_dummyOut, SAMPLES_PER_10MS);
                 speechProb = 0.0f;
             } else {
                 speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);

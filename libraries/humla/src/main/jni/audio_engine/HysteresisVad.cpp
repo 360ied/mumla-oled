@@ -48,7 +48,7 @@ float HysteresisVad::calculateRmsDb(const int16_t* pcm, size_t sampleCount) {
         sum += s * s;
     }
     double micLevel = std::sqrt(sum / static_cast<double>(sampleCount));
-    // Logarithmic scale: 0.0 (-96dB) to 1.0 (0dB)
+    // RMS energy relative to full scale: -96.0 dBFS to 0.0 dBFS
     float peakDb = static_cast<float>(20.0 * std::log10(micLevel / 32768.0));
     return clampVal(peakDb, -96.0f, 0.0f);
 }
