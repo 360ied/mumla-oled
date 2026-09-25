@@ -89,6 +89,7 @@ public class AudioHandler extends HumlaNetworkListener
     private boolean mProtobufUdp;
 
     // Pre-allocated packet buffers for zero heap allocation on audio path
+    private final Object mPacketBufferLock = new Object();
     private final byte[] mProtobufPacketBuffer = new byte[2048];
     private final byte[] mLegacyPacketBuffer = new byte[1024];
     private final PacketBuffer mLegacyDataStream = new PacketBuffer(mLegacyPacketBuffer, 1024);
@@ -165,7 +166,7 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public synchronized void initialize(User self, int maxBandwidth, HumlaUDPMessageType codec) throws AudioException {
-        if (mInitialized) return;
+        if (mInitialized || self == null) return;
         mSession = self.getSession();
 
         setMaxBandwidth(maxBandwidth);
@@ -417,48 +418,50 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     @Override
-    public synchronized void onAudioPacketEncoded(byte[] data, int length, int frames, boolean isTerminator, long frameNumber) {
+    public void onAudioPacketEncoded(byte[] data, int length, int frames, boolean isTerminator, long frameNumber) {
         if (data == null || length <= 0 || mEncodeListener == null) {
             return;
         }
 
-        if (mProtobufUdp) {
-            MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
-            if (mTargetId != 0) {
-                audioBuilder.setTarget(mTargetId & 0xFF);
-            }
-            audioBuilder.setFrameNumber(frameNumber);
-            audioBuilder.setOpusData(ByteString.copyFrom(data, 0, length));
-            if (isTerminator) {
-                audioBuilder.setIsTerminator(true);
-            }
+        synchronized (mPacketBufferLock) {
+            if (mProtobufUdp) {
+                MumbleUDP.Audio.Builder audioBuilder = MumbleUDP.Audio.newBuilder();
+                if (mTargetId != 0) {
+                    audioBuilder.setTarget(mTargetId & 0xFF);
+                }
+                audioBuilder.setFrameNumber(frameNumber);
+                audioBuilder.setOpusData(ByteString.copyFrom(data, 0, length));
+                if (isTerminator) {
+                    audioBuilder.setIsTerminator(true);
+                }
 
-            byte[] protoBytes = audioBuilder.build().toByteArray();
-            int totalLen = 1 + protoBytes.length;
-            if (totalLen <= mProtobufPacketBuffer.length) {
-                mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
-                System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
-                mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+                byte[] protoBytes = audioBuilder.build().toByteArray();
+                int totalLen = 1 + protoBytes.length;
+                if (totalLen <= mProtobufPacketBuffer.length) {
+                    mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
+                    System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
+                    mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+                }
+            } else {
+                int flags = 0;
+                flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
+                flags |= mTargetId & 0x1F;
+
+                mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
+                mLegacyDataStream.rewind();
+                mLegacyDataStream.skip(1);
+                mLegacyDataStream.writeLong(frameNumber);
+
+                long header = length & ((1 << 13) - 1);
+                if (isTerminator) {
+                    header |= (1 << 13);
+                }
+                mLegacyDataStream.writeLong(header);
+                mLegacyDataStream.append(data, length);
+
+                int totalLen = mLegacyDataStream.size();
+                mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
             }
-        } else {
-            int flags = 0;
-            flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
-            flags |= mTargetId & 0x1F;
-
-            mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
-            mLegacyDataStream.rewind();
-            mLegacyDataStream.skip(1);
-            mLegacyDataStream.writeLong(frameNumber);
-
-            long header = length & ((1 << 13) - 1);
-            if (isTerminator) {
-                header |= (1 << 13);
-            }
-            mLegacyDataStream.writeLong(header);
-            mLegacyDataStream.append(data, length);
-
-            int totalLen = mLegacyDataStream.size();
-            mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
         }
     }
 
