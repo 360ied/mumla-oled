@@ -36,6 +36,7 @@ struct EngineContext {
     jbyteArray cachedBufferGlobalRef;
     jmethodID onPacketMethod;
     jmethodID onTalkingMethod;
+    std::mutex callbackMutex;
 };
 
 static EngineContext* getContext(jlong handle) {
@@ -95,6 +96,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
             framesPerPacket, amplitudeBoost, adaptiveLevelerEnabled, mode);
 
     ctx->engine->setPacketCallback([ctx](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
+        std::lock_guard<std::mutex> lock(ctx->callbackMutex);
         if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr ||
             ctx->onPacketMethod == nullptr || ctx->cachedBufferGlobalRef == nullptr) {
             return;

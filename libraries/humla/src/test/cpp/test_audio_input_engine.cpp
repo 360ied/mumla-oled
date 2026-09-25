@@ -490,26 +490,27 @@ void testTerminatorPacketWithSingleFramePackets() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 9: Pre-Speech Ring Buffer Flushed on PTT Speech Onset (80ms Lookahead)
+// Test 9: Pre-Speech Ring Buffer Flushed on VAD Speech Onset (80ms Lookahead)
 // -----------------------------------------------------------------------------
 void testPreSpeechRingBufferFlushedOnOnset() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
+    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
+    engine.setVadThresholds(0.5f, 0.2f);
     StateCollector collector;
     collector.wire(engine);
 
-    // Feed 8 frames while unmuted and not talking (ring buffer capacity is 8 frames = 80ms)
+    // Feed 8 frames while unmuted below VAD threshold (amplitude 100 -> quiet, below speech threshold)
+    // In VOICE_ACTIVITY mode, these are buffered in the 80ms lookahead ring buffer
     for (int i = 1; i <= 8; ++i) {
-        auto preFrame = generateSineFrame(i);
+        auto preFrame = generateSineFrame(i, 100);
         engine.processFrame(preFrame.data(), preFrame.size());
     }
     TEST_ASSERT_EQ(collector.packets.size(), 0);
 
-    // Press PTT and feed the 9th frame (speech onset)
-    engine.setPttTalking(true);
-    auto onsetFrame = generateSineFrame(9);
+    // Feed 9th frame with loud speech (amplitude 15000 -> triggers VAD onset)
+    auto onsetFrame = generateSineFrame(9, 15000);
     engine.processFrame(onsetFrame.data(), onsetFrame.size());
 
     // Onset flushes the 8 buffered frames + processes current frame = 9 frames.
@@ -546,18 +547,14 @@ void testMuteGatesAudioImmediately() {
     TEST_ASSERT_EQ(collector.packets.size(), 1);
     TEST_ASSERT_TRUE(collector.talkEvents.back().first);
 
-    // Mute immediately gates audio
+    // Mute immediately gates audio, emits terminator packet, and clears talking state synchronously
     engine.setMuted(true);
     TEST_ASSERT_TRUE(engine.isMuted());
-
-    // Next frame on audio thread detects speech termination under mute,
-    // encodes a silence terminator packet, and notifies talking state change.
-    engine.processFrame(frame.data(), frame.size());
     TEST_ASSERT_EQ(collector.packets.size(), 2);
     TEST_ASSERT_TRUE(collector.packets.back().isTerminator);
     TEST_ASSERT_FALSE(collector.talkEvents.back().first);
 
-    // Subsequent frames while muted: no packets should be emitted
+    // Subsequent frames while muted (or if AudioRecord is halted): no new packets should be emitted
     for (int i = 0; i < 10; ++i) {
         engine.processFrame(frame.data(), frame.size());
     }
@@ -873,6 +870,157 @@ void testSquelchGateBeforeRnnoise() {
     std::cout << "  [PASS] testSquelchGateBeforeRnnoise" << std::endl;
 }
 
+// -----------------------------------------------------------------------------
+// Test 16: PTT Idle Unconditionally Bypasses RNNoise Regardless of Ambient Noise
+// -----------------------------------------------------------------------------
+void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    auto denoiser = std::make_unique<FakeDenoiser>(0.9f);
+    FakeDenoiser* denoiserPtr = denoiser.get();
+
+    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::PUSH_TO_TALK);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // Loud frame above squelch (peakDb ~ -10 dBFS >> -65 dBFS)
+    auto loudAmbientFrame = generateSineFrame(1, 10000);
+
+    // While PTT is idle (unpressed), denoiser MUST be bypassed by feeding static zeroes
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool allZerosInIdle = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            allZerosInIdle = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(allZerosInIdle);
+    TEST_ASSERT_EQ(collector.packets.size(), 0);
+
+    // Press PTT: denoiser must immediately receive real audio and packets must be emitted
+    engine.setPttTalking(true);
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool nonZeroWhenPttActive = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            nonZeroWhenPttActive = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(nonZeroWhenPttActive);
+
+    // Release PTT: after hold hangover expires, denoiser must revert to static zeroes
+    engine.setPttTalking(false);
+    for (int i = 0; i < 20; ++i) {
+        engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    }
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool zeroesResumedAfterPttRelease = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            zeroesResumedAfterPttRelease = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(zeroesResumedAfterPttRelease);
+
+    std::cout << "  [PASS] testPttIdleBypassesRnnoiseEvenWithAmbientNoise" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+// Test 17: PTT Onset Does Not Prepend Idle Noise
+// -----------------------------------------------------------------------------
+void testPttOnsetDoesNotPrependIdleNoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // Feed 8 frames of ambient noise while PTT is unpressed
+    for (int i = 1; i <= 8; ++i) {
+        auto preFrame = generateSineFrame(i, 5000);
+        engine.processFrame(preFrame.data(), preFrame.size());
+    }
+    TEST_ASSERT_EQ(collector.packets.size(), 0);
+
+    // Press PTT and feed 1 frame
+    engine.setPttTalking(true);
+    auto frame1 = generateSineFrame(9, 5000);
+    engine.processFrame(frame1.data(), frame1.size());
+
+    // Because PTT does not buffer pre-speech idle noise, exactly 1 frame is accumulated (0 packets sent for 2 fpp)
+    TEST_ASSERT_EQ(collector.packets.size(), 0);
+
+    // Feed 2nd frame while talking
+    auto frame2 = generateSineFrame(10, 5000);
+    engine.processFrame(frame2.data(), frame2.size());
+
+    // Exactly 1 packet emitted with 2 frames
+    TEST_ASSERT_EQ(collector.packets.size(), 1);
+    TEST_ASSERT_EQ(collector.packets[0].frames, 2);
+
+    std::cout << "  [PASS] testPttOnsetDoesNotPrependIdleNoise" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+// Test 18: Muted Bypasses RNNoise Even With Ambient Noise in VAD Mode
+// -----------------------------------------------------------------------------
+void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    auto denoiser = std::make_unique<FakeDenoiser>(0.9f);
+    FakeDenoiser* denoiserPtr = denoiser.get();
+
+    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // Loud frame above squelch (peakDb ~ -10 dBFS >> -65 dBFS)
+    auto loudAmbientFrame = generateSineFrame(1, 10000);
+
+    // When unmuted in VAD mode, loud ambient frame must NOT bypass denoiser
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool nonZeroWhenUnmuted = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            nonZeroWhenUnmuted = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(nonZeroWhenUnmuted);
+
+    // Now mute client: denoiser MUST be bypassed by feeding static zeroes even with loud frame
+    engine.setMuted(true);
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool allZerosWhenMuted = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            allZerosWhenMuted = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(allZerosWhenMuted);
+
+    // Unmute: denoiser resumes receiving real audio
+    engine.setMuted(false);
+    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    bool nonZeroAfterUnmute = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            nonZeroAfterUnmute = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(nonZeroAfterUnmute);
+
+    std::cout << "  [PASS] testMutedBypassesRnnoiseEvenWithAmbientNoise" << std::endl;
+}
+
 } // namespace
 
 void run_audio_input_engine_tests() {
@@ -892,4 +1040,7 @@ void run_audio_input_engine_tests() {
     testLargePacketFramingAndTerminators();
     testDynamicInputModeSwitchingMidSpeech();
     testSquelchGateBeforeRnnoise();
+    testPttIdleBypassesRnnoiseEvenWithAmbientNoise();
+    testPttOnsetDoesNotPrependIdleNoise();
+    testMutedBypassesRnnoiseEvenWithAmbientNoise();
 }
