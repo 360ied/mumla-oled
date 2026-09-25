@@ -131,17 +131,14 @@ public class NativeAudioOutputEngine {
      * Checks if any active voices exist in the native output engine.
      *
      * Should only be called by the audio output render thread while managing render-quantum
-     * idle sleep states. Thread-safe with respect to concurrent engine teardown via handle snapshot.
+     * idle sleep states. Synchronized with respect to concurrent engine lifecycle methods
+     * (e.g. destroy()).
      *
      * @return true if voices are actively queued, gating, or playing; false if completely idle.
      */
-    public boolean hasActiveVoices() {
-        final long handle;
-        synchronized (this) {
-            handle = mNativeHandle;
-        }
-        if (handle != 0) {
-            return nativeHasActiveVoices(handle);
+    public synchronized boolean hasActiveVoices() {
+        if (mNativeHandle != 0) {
+            return nativeHasActiveVoices(mNativeHandle);
         }
         return false;
     }

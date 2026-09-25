@@ -46,6 +46,7 @@ AudioInputEngine::AudioInputEngine(std::unique_ptr<IVoiceEncoder> encoder,
       m_processedFrame(SAMPLES_PER_10MS, 0),
       m_accumulatedPcm(12 * SAMPLES_PER_10MS, 0),
       m_accumulatedFrames(0),
+      m_silenceDiscardBuffer(SAMPLES_PER_10MS, 0),
       m_opusBuffer(MAX_OPUS_BUFFER_BYTES, 0) {
     m_packetsToDispatch.reserve(16);
 }
@@ -100,8 +101,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
                 // Raw acoustic PCM in m_processedFrame is preserved so pre-speech lookahead buffering
                 // and VAD evaluate authentic audio.
                 static const int16_t kSilencePcm[SAMPLES_PER_10MS] = {0};
-                static int16_t s_dummyOut[SAMPLES_PER_10MS];
-                m_denoiser->process(kSilencePcm, s_dummyOut, SAMPLES_PER_10MS);
+                m_denoiser->process(kSilencePcm, m_silenceDiscardBuffer.data(), SAMPLES_PER_10MS);
                 speechProb = 0.0f;
             } else {
                 speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);

@@ -42,6 +42,7 @@ float HysteresisVad::calculateRmsDb(const int16_t* pcm, size_t sampleCount) {
     if (pcm == nullptr || sampleCount == 0) {
         return -96.0f;
     }
+    // Initialize to 1.0 as an epsilon floor to prevent log10(0) on complete silence.
     double sum = 1.0;
     for (size_t i = 0; i < sampleCount; ++i) {
         double s = static_cast<double>(pcm[i]);

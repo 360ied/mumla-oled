@@ -248,6 +248,7 @@ public class AudioOutput implements Runnable,
                         : RENDER_SAMPLES * 2; // pre-M: write-blocking bounds
         final Pacer pacer = new Pacer(RENDER_SAMPLES, trackFrames);
         final short[] mix = new short[RENDER_SAMPLES];
+        renderLoop:
         while (true) {
             synchronized (this) {
                 if (!mRunning) {
@@ -303,10 +304,7 @@ public class AudioOutput implements Runnable,
                 }
             }
             int rendered = 0;
-            NativeAudioOutputEngine engine;
-            synchronized (this) {
-                engine = mEngine;
-            }
+            NativeAudioOutputEngine engine = mEngine;
             if (engine != null) {
                 rendered = engine.render(mix, 0, RENDER_SAMPLES);
             }
@@ -359,7 +357,7 @@ public class AudioOutput implements Runnable,
                                     mInactiveLock.wait();
                                 } catch (InterruptedException e) {
                                     Thread.currentThread().interrupt();
-                                    break;
+                                    break renderLoop;
                                 }
                                 engine = mEngine;
                                 if (engine != null && engine.hasActiveVoices()) {
@@ -371,7 +369,7 @@ public class AudioOutput implements Runnable,
                                 mInactiveLock.wait(20);
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
-                                break;
+                                break renderLoop;
                             }
                         }
                     }
