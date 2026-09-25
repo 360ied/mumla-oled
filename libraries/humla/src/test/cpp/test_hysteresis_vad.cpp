@@ -176,6 +176,30 @@ void testSquelchConfigurationAndGetters() {
     std::cout << "  [PASS] testSquelchConfigurationAndGetters" << std::endl;
 }
 
+void testCalculateRmsDb() {
+    g_testCount++;
+
+    // Null or empty check
+    TEST_ASSERT_EQ(mumla::audio::HysteresisVad::calculateRmsDb(nullptr, 0), -96.0f);
+
+    // Full scale DC ~32767 -> near 0 dBFS
+    std::vector<int16_t> fullScale(480, 32767);
+    float dbFull = mumla::audio::HysteresisVad::calculateRmsDb(fullScale.data(), fullScale.size());
+    TEST_ASSERT_TRUE(dbFull > -0.1f && dbFull <= 0.0f);
+
+    // Silence -> exact floor clamp -96 dBFS
+    std::vector<int16_t> silence(480, 0);
+    float dbSilence = mumla::audio::HysteresisVad::calculateRmsDb(silence.data(), silence.size());
+    TEST_ASSERT_EQ(dbSilence, -96.0f);
+
+    // Negative full scale DC -32768 -> clamped to exactly 0.0 dBFS
+    std::vector<int16_t> negFullScale(480, -32768);
+    float dbNegFull = mumla::audio::HysteresisVad::calculateRmsDb(negFullScale.data(), negFullScale.size());
+    TEST_ASSERT_EQ(dbNegFull, 0.0f);
+
+    std::cout << "  [PASS] testCalculateRmsDb" << std::endl;
+}
+
 } // namespace
 
 void run_hysteresis_vad_tests() {
@@ -191,4 +215,5 @@ void run_hysteresis_vad_tests() {
     testHighAmbientNoiseImmunity();
     testQuietWhisperSensitivityAboveSquelch();
     testSquelchConfigurationAndGetters();
+    testCalculateRmsDb();
 }

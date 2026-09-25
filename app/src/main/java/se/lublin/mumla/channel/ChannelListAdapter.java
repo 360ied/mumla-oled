@@ -18,9 +18,8 @@
 package se.lublin.mumla.channel;
 
 import android.content.Context;
-import android.content.res.Resources;
+import androidx.appcompat.content.res.AppCompatResources;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Drawable.ConstantState;
@@ -35,6 +34,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -80,6 +80,8 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     private OnChannelClickListener mChannelClickListener;
     private boolean mShowChannelUserCount;
     private final FragmentManager mFragmentManager;
+
+    private final AvatarCache mAvatarCache = new AvatarCache();
 
     public ChannelListAdapter(Context context, IHumlaService service, MumlaDatabase database,
                               FragmentManager fragmentManager, boolean showPinnedOnly,
@@ -335,51 +337,58 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
      * @param view The view containing this adapter.
      */
     public void updateUserStates(IUser user, RecyclerView view) {
-        long itemId = user.getSession() | USER_ID_MASK;
+        if (user == null || view == null) {
+            return;
+        }
+        long itemId = (((long) user.getSession()) & 0xFFFFFFFFL) | USER_ID_MASK;
         UserViewHolder uvh = (UserViewHolder) view.findViewHolderForItemId(itemId);
-        if (uvh != null) {
+        if (uvh != null && uvh.mUserTalkHighlight != null) {
             Drawable newState = getTalkStateDrawable(user);
-            ConstantState state = uvh.mUserTalkHighlight.getDrawable().getCurrent().getConstantState();
-            if (state != null && !state.equals(newState.getConstantState())) {
+            Drawable current = uvh.mUserTalkHighlight.getDrawable();
+            if (newState != null && current != null) {
+                Drawable currentInner = current.getCurrent();
+                ConstantState state = (currentInner != null) ? currentInner.getConstantState() : null;
+                if (state == null || !state.equals(newState.getConstantState())) {
+                    uvh.mUserTalkHighlight.setImageDrawable(newState);
+                }
+            } else if (newState != null) {
                 uvh.mUserTalkHighlight.setImageDrawable(newState);
             }
         }
     }
 
-    private Drawable getTalkStateDrawable(IUser user) {
-        Resources resources = mContext.getResources();
+    Drawable getTalkStateDrawable(IUser user) {
+        if (user == null) {
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
+        }
         if (user.isSelfDeafened()) {
-            return resources.getDrawable(R.drawable.outline_circle_deafened);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_deafened);
         } else if (user.isDeafened()) {
-            return resources.getDrawable(R.drawable.outline_circle_server_deafened);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_deafened);
         } else if (user.isSelfMuted()) {
-            return resources.getDrawable(R.drawable.outline_circle_muted);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_muted);
         } else if (user.isMuted()) {
-            return resources.getDrawable(R.drawable.outline_circle_server_muted);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_muted);
         } else if (user.isSuppressed()) {
-            return resources.getDrawable(R.drawable.outline_circle_suppressed);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_suppressed);
         } else if (user.getTalkState() == TalkState.TALKING
                 || user.getTalkState() == TalkState.SHOUTING
                 || user.getTalkState() == TalkState.WHISPERING) {
             // TODO whisper and shouting?
-            return resources.getDrawable(R.drawable.outline_circle_talking_on);
+            return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on);
         } else {
             // Passive drawables
-            if (user.getTexture() != null) {
-                // FIXME: cache bitmaps
-                Bitmap bitmap = BitmapFactory.decodeByteArray(user.getTexture(), 0, user.getTexture().length);
-                // yes, decoding can fail
-                if (bitmap != null) {
-                    return new CircleDrawable(mContext.getResources(), bitmap);
-                }
+            Bitmap bitmap = mAvatarCache.get(user);
+            if (bitmap != null) {
+                return new CircleDrawable(mContext.getResources(), bitmap);
             }
         }
         // "default" symbol, used also if bitmap decoding fails
-        return resources.getDrawable(R.drawable.outline_circle_talking_off);
+        return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
     }
 
     public int getUserPosition(int session) {
-        long itemId = session | USER_ID_MASK;
+        long itemId = (((long) session) & 0xFFFFFFFFL) | USER_ID_MASK;
         for (int i = 0; i < mNodes.size(); i++) {
             Node node = mNodes.get(i);
             try {
@@ -394,7 +403,7 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
     }
 
     public int getChannelPosition(int channelId) {
-        long itemId = channelId | CHANNEL_ID_MASK;
+        long itemId = (((long) channelId) & 0xFFFFFFFFL) | CHANNEL_ID_MASK;
         for (int i = 0; i < mNodes.size(); i++) {
             Node node = mNodes.get(i);
             try {
@@ -529,6 +538,19 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         }
     }
 
+    public void removeUser(int session) {
+        mAvatarCache.remove(session);
+    }
+
+    public void clearAvatarCache() {
+        mAvatarCache.clear();
+    }
+
+    @VisibleForTesting
+    AvatarCache getAvatarCache() {
+        return mAvatarCache;
+    }
+
     /**
      * An arbitrary node in the channel-user hierarchy.
      * Can be either a channel or user.
@@ -576,9 +598,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
         public Long getId() throws RemoteException {
             // Apply flags to differentiate integer-length identifiers
             if (isChannel()) {
-                return CHANNEL_ID_MASK | mChannel.getId();
+                return CHANNEL_ID_MASK | (((long) mChannel.getId()) & 0xFFFFFFFFL);
             } else if (isUser()) {
-                return USER_ID_MASK | mUser.getSession();
+                return USER_ID_MASK | (((long) mUser.getSession()) & 0xFFFFFFFFL);
             }
             return null;
         }

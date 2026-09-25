@@ -19,8 +19,8 @@ package se.lublin.mumla.channel;
 
 import android.content.Context;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.Drawable.ConstantState;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -28,6 +28,7 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -42,6 +43,7 @@ import se.lublin.mumla.drawable.CircleDrawable;
  */
 public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHolder> {
 
+    private final AvatarCache mAvatarCache = new AvatarCache();
     private final Context mContext;
     private IChannel mChannel;
 
@@ -98,7 +100,7 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
         return RecyclerView.NO_ID;
     }
 
-    private Drawable getTalkStateDrawable(IUser user) {
+    Drawable getTalkStateDrawable(IUser user) {
         if (mContext == null) {
             return null;
         }
@@ -117,11 +119,9 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
                 || user.getTalkState() == TalkState.WHISPERING) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on);
         } else {
-            if (user.getTexture() != null && user.getTexture().length > 0) {
-                Bitmap bitmap = BitmapFactory.decodeByteArray(user.getTexture(), 0, user.getTexture().length);
-                if (bitmap != null) {
-                    return new CircleDrawable(mContext.getResources(), bitmap);
-                }
+            Bitmap bitmap = mAvatarCache.get(user);
+            if (bitmap != null) {
+                return new CircleDrawable(mContext.getResources(), bitmap);
             }
         }
         return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off);
@@ -153,8 +153,13 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
                 if (vh.stateIcon != null) {
                     Drawable newState = getTalkStateDrawable(user);
                     Drawable currentDrawable = vh.stateIcon.getDrawable();
-                    if (newState != null && (currentDrawable == null || currentDrawable.getConstantState() == null
-                            || !currentDrawable.getConstantState().equals(newState.getConstantState()))) {
+                    if (newState != null && currentDrawable != null) {
+                        Drawable currentInner = currentDrawable.getCurrent();
+                        ConstantState state = (currentInner != null) ? currentInner.getConstantState() : null;
+                        if (state == null || !state.equals(newState.getConstantState())) {
+                            vh.stateIcon.setImageDrawable(newState);
+                        }
+                    } else if (newState != null) {
                         vh.stateIcon.setImageDrawable(newState);
                     }
                 }
@@ -176,5 +181,18 @@ public final class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.Vi
 
     public IChannel getChannel() {
         return mChannel;
+    }
+
+    public void removeUser(int session) {
+        mAvatarCache.remove(session);
+    }
+
+    public void clearAvatarCache() {
+        mAvatarCache.clear();
+    }
+
+    @VisibleForTesting
+    AvatarCache getAvatarCache() {
+        return mAvatarCache;
     }
 }

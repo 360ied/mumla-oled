@@ -46,6 +46,7 @@ AudioInputEngine::AudioInputEngine(std::unique_ptr<IVoiceEncoder> encoder,
       m_processedFrame(SAMPLES_PER_10MS, 0),
       m_accumulatedPcm(12 * SAMPLES_PER_10MS, 0),
       m_accumulatedFrames(0),
+      m_silenceDiscardBuffer(SAMPLES_PER_10MS, 0),
       m_opusBuffer(MAX_OPUS_BUFFER_BYTES, 0) {
     m_packetsToDispatch.reserve(16);
 }
@@ -76,10 +77,35 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         // 2. Infrasonic High-Pass Filtering (<90Hz)
         m_hpf.process(m_processedFrame.data(), SAMPLES_PER_10MS);
 
-        // 3. Neural Denoising (RNNoise)
+        // 3. Squelch-Gated Neural Denoising (RNNoise)
+        float peakDb = HysteresisVad::calculateRmsDb(m_processedFrame.data(), SAMPLES_PER_10MS);
         float speechProb = -1.0f;
+
+        bool isActivelyTransmitting = false;
+        if (!m_muted) {
+            if (m_inputMode == InputMode::CONTINUOUS) {
+                isActivelyTransmitting = true;
+            } else if (m_inputMode == InputMode::PUSH_TO_TALK) {
+                isActivelyTransmitting = m_pttTalking || (m_pttHoldFramesRemaining > 0);
+            } else { // InputMode::VOICE_ACTIVITY
+                isActivelyTransmitting = m_vad.isSpeaking();
+            }
+        }
+
         if (m_denoiser) {
-            speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+            if (!isActivelyTransmitting && peakDb < m_vad.getSquelchMinDb()) {
+                // Idle silence (< -65 dBFS) while not actively transmitting: feed static zeroes
+                // to RNNoise to advance overlap-add delay (delayed_X) and pitch buffers while cleanly
+                // triggering its native silence bypass (!silence in denoise.c). This completely avoids
+                // running recurrent GRU matrix multiplications without freezing internal filter state.
+                // Raw acoustic PCM in m_processedFrame is preserved so pre-speech lookahead buffering
+                // and VAD evaluate authentic audio.
+                static const int16_t kSilencePcm[SAMPLES_PER_10MS] = {0};
+                m_denoiser->process(kSilencePcm, m_silenceDiscardBuffer.data(), SAMPLES_PER_10MS);
+                speechProb = 0.0f;
+            } else {
+                speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+            }
         }
 
         // 4. Determine transmission state based on InputMode (Pre-Gain VAD evaluation)
@@ -87,7 +113,7 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
         switch (m_inputMode) {
             case InputMode::CONTINUOUS:
                 shouldTransmit = true;
-                m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb);
+                m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, peakDb);
                 break;
             case InputMode::PUSH_TO_TALK:
                 if (m_pttTalking) {
@@ -99,11 +125,11 @@ void AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount) {
                 } else {
                     shouldTransmit = false;
                 }
-                m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb);
+                m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, peakDb);
                 break;
             case InputMode::VOICE_ACTIVITY:
             default:
-                shouldTransmit = m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb);
+                shouldTransmit = m_vad.process(m_processedFrame.data(), SAMPLES_PER_10MS, speechProb, peakDb);
                 break;
         }
 

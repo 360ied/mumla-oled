@@ -76,6 +76,11 @@ public:
         : m_speechProb(speechProb), m_enabled(true), m_hasModel(false) {}
 
     float process(const int16_t* inPcm, int16_t* outPcm, size_t sampleCount) override {
+        if (inPcm != nullptr && sampleCount > 0) {
+            m_lastInSamples.assign(inPcm, inPcm + sampleCount);
+        } else {
+            m_lastInSamples.clear();
+        }
         if (inPcm != nullptr && outPcm != nullptr) {
             std::memcpy(outPcm, inPcm, sampleCount * sizeof(int16_t));
         }
@@ -91,11 +96,13 @@ public:
     void reset() override {}
 
     void setSpeechProb(float prob) { m_speechProb = prob; }
+    const std::vector<int16_t>& getLastInSamples() const { return m_lastInSamples; }
 
 private:
     float m_speechProb;
     bool m_enabled;
     bool m_hasModel;
+    std::vector<int16_t> m_lastInSamples;
 };
 
 struct PacketRecord {
@@ -769,6 +776,103 @@ void testDynamicInputModeSwitchingMidSpeech() {
     std::cout << "  [PASS] testDynamicInputModeSwitchingMidSpeech" << std::endl;
 }
 
+// -----------------------------------------------------------------------------
+// Test 15: Squelch Gate Before RNNoise
+// -----------------------------------------------------------------------------
+void testSquelchGateBeforeRnnoise() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    auto denoiser = std::make_unique<FakeDenoiser>(0.95f);
+    FakeDenoiser* denoiserPtr = denoiser.get();
+    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
+    StateCollector collector;
+    collector.wire(engine);
+
+    // 1. Send ambient noise AC frame below squelch floor (amplitude 10 -> ~-70 dBFS < -65 dBFS)
+    auto ambientBelowSquelch = generateSineFrame(0, 10);
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+
+    // Denoiser must have received pure silence (zeros) to advance overlap-add delay
+    // while bypassing recurrent GRU inference
+    TEST_ASSERT_EQ(denoiserPtr->getLastInSamples().size(), 480u);
+    bool allZeros = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            allZeros = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(allZeros);
+
+    // 2. Send active speech frame above squelch (sine wave)
+    auto speechFrame = generateSineFrame(1);
+    engine.processFrame(speechFrame.data(), speechFrame.size());
+
+    // Denoiser receives active speech PCM
+    bool hasNonZero = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            hasNonZero = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(hasNonZero);
+
+    // 3. During VAD hangover (speaking is true), low-energy frame must NOT be squelch-bypassed
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool hangoverReceivedRealAudio = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            hangoverReceivedRealAudio = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(hangoverReceivedRealAudio);
+
+    // Tick through remaining hangover hold frames (DEFAULT_HOLD_FRAMES = 25)
+    for (int i = 0; i < 30; ++i) {
+        engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    }
+    // Now that hangover has expired, low-energy ambient frame must resume squelch bypass
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool squelchResumedZeros = true;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            squelchResumedZeros = false;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(squelchResumedZeros);
+
+    // 4. In CONTINUOUS mode, low-energy frame must NOT be squelch-bypassed
+    engine.setInputMode(InputMode::CONTINUOUS);
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool continuousReceivedRealAudio = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            continuousReceivedRealAudio = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(continuousReceivedRealAudio);
+
+    // 5. In PUSH_TO_TALK mode with PTT active, low-energy frame must NOT be squelch-bypassed
+    engine.setInputMode(InputMode::PUSH_TO_TALK);
+    engine.setPttTalking(true);
+    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    bool pttReceivedRealAudio = false;
+    for (int16_t s : denoiserPtr->getLastInSamples()) {
+        if (s != 0) {
+            pttReceivedRealAudio = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(pttReceivedRealAudio);
+
+    std::cout << "  [PASS] testSquelchGateBeforeRnnoise" << std::endl;
+}
+
 } // namespace
 
 void run_audio_input_engine_tests() {
@@ -787,4 +891,5 @@ void run_audio_input_engine_tests() {
     testAudioInputEngineReset();
     testLargePacketFramingAndTerminators();
     testDynamicInputModeSwitchingMidSpeech();
+    testSquelchGateBeforeRnnoise();
 }
