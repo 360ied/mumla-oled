@@ -22,6 +22,7 @@ An exhaustive architectural investigation, physical power model, and engineering
    - [Step 5: User-Facing Standby Policy Setting](#step-5-user-facing-standby-policy-setting)
 7. [Implementation Milestones & Phased Roadmap](#7-implementation-milestones--phased-roadmap)
 8. [Verification, Edge Cases & Risk Mitigation Matrix](#8-verification-edge-cases--risk-mitigation-matrix)
+9. [Conclusion](#9-conclusion)
 
 ---
 
@@ -67,7 +68,7 @@ On mobile Application Processors (SoCs) such as Qualcomm Snapdragon, Google Tens
 - CPU core clusters are prevented from falling below C1/C2 states. Clock trees, high-speed memory buses (LPDDR4X/LPDDR5), and internal power rails remain energized.
 - Even when all threads are blocked on locks (`wait()`), the Linux kernel scheduler continuously wakes CPU cores to service system tick interrupts (100–250 Hz).
 - **Current Draw**: Burns **$35.0\text{ to }60.0\text{ mA}$** continuously on modern hardware ($135\text{ to }231\text{ mW}$ at nominal 3.85 V).
-- **Battery Drain**: Over an 8-hour overnight standby connected to a silent Mumble server, this single defect consumes **$\approx 350\text{ to }480\text{ mAh}$** (10% to 15% of total battery capacity) without a single spoken word or audible sound.
+- **Battery Drain**: Over an 8-hour overnight standby connected to a silent Mumble server, this single defect consumes **$\approx 280\text{ to }480\text{ mAh}$** (typically $\sim 350\text{ to }480\text{ mAh}$ accounting for baseline SoC standby; 10% to 15% of total battery capacity) without a single spoken word or audible sound.
 
 ---
 
@@ -117,8 +118,8 @@ Starting in Android 6.0 (Marshmallow, API 23), Android introduces **Doze Mode**:
 - When the screen is off, the device is stationary (accelerometer idle), and running on battery, Android enters **Deep Doze**.
 - In Deep Doze:
   1. Network access is completely blocked for all non-whitelisted apps.
-  2. Standard wakelocks are ignored.
-  3. `AlarmManager.setExactAndAllowWhileIdle()` is throttled: alarms are batched and executed **only once every 9 to 15 minutes** (in a brief maintenance window).
+  2. Standard wakelocks are ignored for non-whitelisted apps.
+  3. `AlarmManager.setExactAndAllowWhileIdle()` is strictly throttled by `AlarmManagerService`: alarms are clamped to `ALLOW_WHILE_IDLE_LONG_TIME` (**once every 9 to 15 minutes**) during deep idle, while even outside deep idle in low-power states the framework enforces `ALLOW_WHILE_IDLE_SHORT_TIME` (a **60-second** minimum interval).
 
 ### D. The Deadlock Formulation
 
@@ -130,6 +131,7 @@ This mathematical inequality constitutes the core platform deadlock:
 - Murmur drops the connection after **30 seconds** of silence.
 - Android Deep Doze only permits background CPU wakeups every **540 to 900 seconds**.
 - Therefore, on a standard non-whitelisted Android device, **a VoIP client cannot sustain an active TCP Mumble session in Deep Doze without battery optimization exemption**.
+- Furthermore, because `AlarmManagerService`'s 60-second / 15-minute rate-limiting constants apply system-wide (even to apps on the power whitelist), **a client cannot sustain 10-second keepalives via `setExactAndAllowWhileIdle` while fully unheld in stationary Deep Doze**. Instead, battery optimization exemption enables two critical privileges: **unrestricted background network access** and the **permission to hold partial wakelocks during Doze**. A viable architecture must therefore decouple active screen-off suspend-to-RAM from stationary Deep Doze defense.
 
 ---
 
@@ -193,12 +195,12 @@ stateDiagram-v2
         }
 
         state GracePeriod {
-            RunTrailingTimer: 10-15s Standby Timeout (Track Still Playing)
+            RunTrailingTimer: 3s / 15s Standby Timeout (Track Still Playing)
         }
 
         state SilentStandby {
             ReleaseLocks: Release All Wakelocks (AP Enters Suspend)
-            ScheduleAlarm: AlarmManager.setExactAndAllowWhileIdle (10s Keepalive)
+            ScheduleAlarm: AlarmManager Exact Wakeup (10s Keepalive)
             WaitInbound: Await Hardware Baseband/Wi-Fi Wakeup
         }
 
@@ -211,10 +213,18 @@ stateDiagram-v2
         SilentStandby --> KeepaliveBurst: 10s Alarm Fires
         
         state KeepaliveBurst {
-            PulseLock: Acquire mKeepaliveWakeLock (500ms cap)
+            PulseLock: Acquire mKeepaliveWakeLock (1000ms safety cap)
             SendPings: Dispatch Synchronous UDP/TCP Keepalives
         }
         KeepaliveBurst --> SilentStandby: Pings Dispatched (Release Lock)
+
+        SilentStandby --> DeepDozeHold: Device Enters Deep Doze (isDeviceIdleMode == true)
+        DeepDozeHold --> SilentStandby: Device Exits Deep Doze (Motion Detected / Screen On)
+
+        state DeepDozeHold {
+            HoldExemptLock: Hold Defensive Wakelock (Permitted Under Exemption)
+            PreventTimeout: Maintain 10s Keepalives While Bypassing 15m Alarm Clamp
+        }
     }
 ```
 
@@ -226,7 +236,7 @@ PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE)
 boolean isExempt = pm.isIgnoringBatteryOptimizations(context.getPackageName());
 ```
 - **If Not Exempt (`isExempt == false`)**: Fall back to holding `mWakeLock` continuously (preserving connection reliability) and display a non-intrusive banner in the UI inviting the user to grant exemption via `android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
-- **If Exempt (`isExempt == true`)**: Enable the adaptive standby sleep architecture. Android waives network restrictions and 15-minute alarm clamping for exempt apps, allowing reliable 10-second alarm ticks.
+- **If Exempt (`isExempt == true`)**: Enable the adaptive standby sleep architecture. Android waives background network cutoffs and permits holding partial wakelocks during Doze for exempt apps. During active mobile and pocket screen-off standby, exact wakeup alarms dispatch keepalive bursts while allowing kernel suspend-to-RAM. If the device enters stationary Deep Doze (`PowerManager.isDeviceIdleMode() == true`), the exemption permits holding a defensive keepalive wakelock to prevent Murmur 30-second timeouts against AOSP's 15-minute alarm clamp.
 
 ### Step 2: Audio-Scoped Active Lock (`mAudioWakeLock`)
 
@@ -241,6 +251,7 @@ Decouple audio processing from connection maintenance in [`HumlaService.java`](f
 ### Step 3: Exact Alarm Pulsed Keepalive Lock (`mKeepaliveWakeLock`)
 
 When in silent standby with `mAudioWakeLock` released:
+- Declare `android.permission.SCHEDULE_EXACT_ALARM` in [`app/src/main/AndroidManifest.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/AndroidManifest.xml) (required on Android 12+, API 31+) and verify `alarmManager.canScheduleExactAlarms()` before arming exact alarms.
 - Replace `mPingExecutorService.schedule(...)` with an Android `AlarmManager` exact wakeup alarm:
   ```java
   alarmManager.setExactAndAllowWhileIdle(
@@ -250,10 +261,10 @@ When in silent standby with `mAudioWakeLock` released:
   );
   ```
 - When the alarm triggers:
-  1. Acquire a timed wakelock with a hard safety cap: `mKeepaliveWakeLock.acquire(1000)`.
+  1. Acquire a timed wakelock with a hard safety cap: `mKeepaliveWakeLock.acquire(1000)` (1000ms safety timeout cap; typical execution completes in 50–100 ms).
   2. Execute `mPingRunnable`: synchronously transmit the UDP Ping and TCP Ping via [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java).
   3. Schedule the next alarm tick.
-  4. Explicitly release `mKeepaliveWakeLock`, allowing the AP to return to kernel suspend-to-RAM within 50–100 ms.
+  4. Explicitly release `mKeepaliveWakeLock` in a `finally` block, allowing the AP to return to kernel suspend-to-RAM.
 
 ### Step 4: Inbound Socket Packet Wakeup Bridge
 
@@ -269,7 +280,7 @@ When an incoming packet arrives over the cellular modem or Wi-Fi while the AP is
 
 ### Step 5: User-Facing Standby Policy Setting
 
-Provide explicit user control in **Settings > Connection & Audio**:
+Provide explicit user control in **Settings > General** (in [`app/src/main/res/xml/settings_general.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_general.xml)):
 
 - **Reliable Standby (Continuous Awake)** *(Default)*:
   - Preserves the legacy behavior (permanent `PARTIAL_WAKE_LOCK`).
@@ -302,7 +313,8 @@ gantt
 
 ### Milestone W1: Exemption API & Settings Infrastructure
 - Implement `BatteryOptimizationHelper.java` to query and request battery exemption.
-- Add user-configurable `standby_power_policy` preference (`RELIABLE` vs `BATTERY_SAVER`) in `app/src/main/res/xml/preferences.xml`.
+- Add user-configurable `standby_power_policy` preference (`RELIABLE` vs `BATTERY_SAVER`) in [`app/src/main/res/xml/settings_general.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_general.xml).
+- Declare `android.permission.SCHEDULE_EXACT_ALARM` in [`app/src/main/AndroidManifest.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/AndroidManifest.xml) and wire `alarmManager.canScheduleExactAlarms()` checks for Android 12+ (API 31+).
 - Wire preference change listeners into `HumlaService`.
 
 ### Milestone W2: Audio-Scoped Wakelock Management
@@ -312,7 +324,8 @@ gantt
 
 ### Milestone W3: Exact Alarm Keepalive Loop & Socket Bridge
 - Replace `ScheduledExecutorService` keepalive loop in `HumlaConnection` with `AlarmManager.setExactAndAllowWhileIdle()` when in `BATTERY_SAVER` standby mode.
-- Implement `KeepaliveBroadcastReceiver` to handle alarm wakeups with a 500ms pulsed wakelock.
+- Implement `KeepaliveBroadcastReceiver` to handle alarm wakeups with a pulsed wakelock (1000ms safety cap, ~50–100 ms execution).
+- Listen for `PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED` to hold a defensive keepalive wakelock if the device enters stationary Deep Doze.
 - Add socket wakeup bridge lock in `HumlaUDP` and `HumlaTCP`.
 
 ### Milestone W4: Laboratory Verification & Field Testing
@@ -330,7 +343,8 @@ gantt
 | **Dropped Speech Onset on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | Default setting remains `RELIABLE` (continuous wakelock); document Wi-Fi DTIM caveat in settings; use transient 2s bridge lock on socket read. |
 | **Android Vitals Flagging** | Wakelock held $> 1\text{ hour}$ background time | Releasing wakelock in `BATTERY_SAVER` mode completely eliminates background wakelock accumulation during silent periods. |
 | **OEM Watchdog Termination** | Samsung Device Care or Xiaomi MIUI kills app holding wakelock without active audio | Gating wakelock strictly to active audio states prevents OEM watchdogs from identifying Mumla as an abusive background process. |
-| **Alarm Drift on Non-Exempt OS** | OEM clamps `setExactAndAllowWhileIdle` to 15 minutes when non-exempt | Never drop wakelock unless `isIgnoringBatteryOptimizations() == true`. |
+| **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
+| **Exact Alarm Permission Denial** | Android 12+ (API 31+) revokes or denies `SCHEDULE_EXACT_ALARM`, causing `SecurityException` | Check `alarmManager.canScheduleExactAlarms()`; fall back to continuous wakelock if exact alarms cannot be armed. |
 | **Rapid PTT Button Flutter** | User rapidly taps PTT button causing high-frequency wakelock thrashing | Implement a trailing 3-second hold hangover on `mAudioWakeLock` to prevent rapid lock/unlock thrashing. |
 | **Bluetooth SCO Link Drop** | Audio HAL pauses track while on active Bluetooth SCO call | Preserve Phase 2 invariant: `isBluetoothScoActive()` strictly inhibits both `AudioTrack` pause and `mAudioWakeLock` release. |
 | **Transient Ping Socket Error** | Network socket throws `IOException` during keepalive burst | Enclose alarm handler in `try-finally` to guarantee immediate lock release and rescheduling of subsequent alarm ticks. |
