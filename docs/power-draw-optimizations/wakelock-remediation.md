@@ -140,7 +140,7 @@ Starting in Android 6.0 (Marshmallow, API 23), Android introduces **Doze Mode**:
 ### D. The Deadlock Formulation
 
 ```math
-T_{\text{doze\_alarm}} \approx 9\text{ to }15\text{ minutes} \gg T_{\text{murmur\_timeout}} = 30\text{ seconds}
+T_{\text{doze-alarm}} \approx 9\text{ to }15\text{ minutes} \gg T_{\text{murmur-timeout}} = 30\text{ seconds}
 ```
 
 This mathematical inequality constitutes the core platform deadlock:
@@ -267,26 +267,26 @@ In laboratory testing and real-world mobile deployments, consumer-grade Wi-Fi ro
 When an incoming speech burst arrives while the Application Processor is suspended in Linux kernel `suspend-to-RAM`, the end-to-end latency to render audio is composed of a multi-stage hardware and software pipeline:
 
 ```math
-T_{\text{onset\_latency}} = T_{\text{medium\_delay}} + T_{\text{hw\_irq}} + T_{\text{kernel\_resume}} + T_{\text{sched\_boost}} + T_{\text{render\_prime}}
+T_{\text{onset-latency}} = T_{\text{medium-delay}} + T_{\text{hw-irq}} + T_{\text{kernel-resume}} + T_{\text{sched-boost}} + T_{\text{render-prime}}
 ```
 
 Where:
 
-- $T_{\text{medium\_delay}}$: Air-interface scheduling delay (PDCCH allocation on cellular vs. DTIM beacon wait + PS-Poll on Wi-Fi).
-- $T_{\text{hw\_irq}}$: Bus transaction time to transfer packet data (PCIe L1 exit / DMA transfer).
-- $T_{\text{kernel\_resume}}$: Linux kernel autosuspend wakeup latency (power-rail gating, clock tree restabilization).
-- $T_{\text{sched\_boost}}$: CFS scheduler wakeup and CPU frequency scaling via `schedutil` governor.
-- $T_{\text{render\_prime}}$: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) decoding, unpausing `AudioTrack`, and priming the Speex jitter buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c)).
+- $T_{\text{medium-delay}}$: Air-interface scheduling delay (PDCCH allocation on cellular vs. DTIM beacon wait + PS-Poll on Wi-Fi).
+- $T_{\text{hw-irq}}$: Bus transaction time to transfer packet data (PCIe L1 exit / DMA transfer).
+- $T_{\text{kernel-resume}}$: Linux kernel autosuspend wakeup latency (power-rail gating, clock tree restabilization).
+- $T_{\text{sched-boost}}$: CFS scheduler wakeup and CPU frequency scaling via `schedutil` governor.
+- $T_{\text{render-prime}}$: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) decoding, unpausing `AudioTrack`, and priming the Speex jitter buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c)).
 
 #### Latency Budget Comparison
 
 | Pipeline Stage | Cellular Modem (LTE / 5G) | Consumer Wi-Fi (802.11ac / ax) |
 | --- | --- | --- |
-| Air Interface Latency ($T_{\text{medium\_delay}}$) | $10\text{ to }25\text{ ms}$ (C-DRX subframe grant) | $50\text{ to }300\text{ ms}$ (DTIM beacon phase delay) |
-| Bus Transfer & HW IRQ ($T_{\text{hw\_irq}}$) | $2\text{ to }5\text{ ms}$ (Dedicated PCIe PME pin) | $5\text{ to }15\text{ ms}$ (SDIO / PCIe shared IRQ) |
-| Kernel Resume ($T_{\text{kernel\_resume}}$) | $15\text{ to }25\text{ ms}$ (SoC wake from C2/retention) | $15\text{ to }25\text{ ms}$ (SoC wake from C2/retention) |
-| CPU DVFS Boost ($T_{\text{sched\_boost}}$) | $5\text{ to }10\text{ ms}$ (`schedutil` ramp) | $5\text{ to }10\text{ ms}$ (`schedutil` ramp) |
-| Jitter Buffer Prime ($T_{\text{render\_prime}}$) | $10\text{ to }20\text{ ms}$ (Opus decode & `AudioTrack.play`) | $10\text{ to }20\text{ ms}$ (Opus decode & `AudioTrack.play`) |
+| Air Interface Latency ($T_{\text{medium-delay}}$) | $10\text{ to }25\text{ ms}$ (C-DRX subframe grant) | $50\text{ to }300\text{ ms}$ (DTIM beacon phase delay) |
+| Bus Transfer & HW IRQ ($T_{\text{hw-irq}}$) | $2\text{ to }5\text{ ms}$ (Dedicated PCIe PME pin) | $5\text{ to }15\text{ ms}$ (SDIO / PCIe shared IRQ) |
+| Kernel Resume ($T_{\text{kernel-resume}}$) | $15\text{ to }25\text{ ms}$ (SoC wake from C2/retention) | $15\text{ to }25\text{ ms}$ (SoC wake from C2/retention) |
+| CPU DVFS Boost ($T_{\text{sched-boost}}$) | $5\text{ to }10\text{ ms}$ (`schedutil` ramp) | $5\text{ to }10\text{ ms}$ (`schedutil` ramp) |
+| Jitter Buffer Prime ($T_{\text{render-prime}}$) | $10\text{ to }20\text{ ms}$ (Opus decode & `AudioTrack.play`) | $10\text{ to }20\text{ ms}$ (Opus decode & `AudioTrack.play`) |
 | **Total Speech Onset Latency** | **$42\text{ to }85\text{ ms}$** | **$85\text{ to }370\text{ ms}$ (or packet loss)** |
 
 #### Impact on the Speex Jitter Buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c))
