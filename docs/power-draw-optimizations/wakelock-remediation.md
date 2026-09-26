@@ -45,6 +45,12 @@ However, an exhaustive engineering audit demonstrates that **the wakelock issue 
 
 Because this remediation represents the **single largest engineering lift** across the entire power optimization initiative, it has been decoupled into this dedicated specification to allow independent tracking, rigorous formal prototyping, and deep verification.
 
+> [!TIP]
+> **Pragmatic Low-Hanging Fruit (The Lite Track)**:
+> While this document details the universal, full-scope architecture for sleeping the Application Processor between spoken utterances in active channels, a streamlined, low-risk alternative focused exclusively on provably zero-audio conditions (such as when the user is deafened or alone on the server) is documented in:
+>
+> 👉 **[Wakelock Remediation (Lite Track): Zero-Audio Standby Optimization](wakelock-remediation-lite.md)**
+
 ---
 
 ## 2. Current Implementation Defect & Physical Hardware Footprint

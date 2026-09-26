@@ -149,10 +149,11 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 > While releasing `PARTIAL_WAKE_LOCK` exposes stationary devices to Android Deep Doze socket restrictions if battery optimization exemptions are not granted, holding an indefinite partial wakelock 24/7 drains $35\text{ to }60\text{ mA}$ continuously, wasting battery on pure silence and triggering on-device OS battery abuse alerts. (While commercial Play Store apps monitor Google Play's "Android Vitals" excessive wake lock threshold, for a FOSS project distributed via GitHub/F-Droid, the true stakes are physical battery longevity and on-device process survival). In versions 0.21.7 and earlier, Mumla OLED masked the wakelock from aggressive OEM watchdogs (e.g. Samsung Device Care, Xiaomi MIUI/HyperOS, Huawei EMUI) by perpetually playing digital silence through `AudioTrack`, successfully preventing watchdog `SIGKILL` terminations at the cost of continuous audio hardware drain ($15\text{ to }30\text{ mW}$). However, with Phase 2 introducing `AudioTrack` standby pause to reclaim that power, leaving the monolithic wakelock active while `AudioTrack` is paused directly exposes the process to OEM watchdog kills. Thus, holding the wakelock permanently is not a benign safety measure—power-gating the audio hardware necessitates modernizing the wakelock lifecycle.
 
 > [!IMPORTANT]
-> **Decoupled Architectural Specification**:
-> Due to the complex interplay between Linux kernel suspend-to-RAM, Android Deep Doze alarm throttling, upstream Murmur 30s TCP timeouts, and OEM task-killing behavior, the remediation for the permanent wakelock has been decoupled from the general roadmap into its own dedicated engineering plan:
+> **Decoupled Architectural Specifications**:
+> Due to the complex interplay between Linux kernel suspend-to-RAM, Android Deep Doze alarm throttling, upstream Murmur 30s TCP timeouts, and OEM task-killing behavior, the remediation for the permanent wakelock has been decoupled from the general roadmap into dedicated engineering tracks:
 >
-> 👉 **[Wakelock & Deep Doze Remediation Plan](wakelock-remediation.md)**
+> 👉 **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)** *(Low-risk, high-yield: optimizes provable zero-audio states like deafened and solo standby)*
+> 👉 **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)** *(Universal conversational standby suspend across active channels)*
 
 ---
 
@@ -481,8 +482,9 @@ To address these inefficiencies systematically without compromising audio qualit
    - **Compiler Vectorization Tuning**: Enable `-O3 -fno-math-errno -fvectorize` while strictly avoiding `-ffast-math` / `-ffinite-math-only` to preserve `celt_isnan` validation in RNNoise.
    - **Native In-Place OCB2-AES Cryptographic Engine**: Eliminate Java heap GC allocation churn by moving packet crypto to native C++ SIMD routines.
 
-4. **[Decoupled Dedicated Track: Partial Wakelock & Deep Doze](wakelock-remediation.md)**:
-   - **Adaptive Wakelock Pulsing, Kernel Suspend & Android Deep Doze Reality**: Decoupled from Phase 3 due to its massive architectural lift. Addresses the permanent `PARTIAL_WAKE_LOCK` via battery optimization exemption gating, audio-scoped active locks, pulsed exact alarm keepalives, and incoming socket wakeup bridges.
+4. **Decoupled Dedicated Tracks: Partial Wakelock & Deep Doze**:
+   - **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)**: Targeted low-risk specification for eliminating wakelocks during provably zero-audio states (deafened or solo standby), capturing ~80% of real-world idle savings with zero audio risk.
+   - **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)**: Universal conversational standby suspend across active channels, navigating baseband IRQs, router packet buffers, and autonomous transport adaptation.
 
 ---
 

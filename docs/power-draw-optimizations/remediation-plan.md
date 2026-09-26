@@ -17,7 +17,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 4. [Phase 3: Deep Architectural Modernization](#phase-3-deep-architectural-modernization)
    - [3.1 Compiler Vectorization Tuning (Safe Math Flags)](#31-compiler-vectorization-tuning-safe-math-flags)
    - [3.2 Native In-Place OCB2-AES Cryptographic Engine](#32-native-in-place-ocb2-aes-cryptographic-engine)
-5. [Decoupled Track: Partial Wakelock & Deep Doze](wakelock-remediation.md)
+5. [Decoupled Tracks: Partial Wakelock & Deep Doze (Lite Track & Full Overhaul)](wakelock-remediation-lite.md)
 
 ---
 
@@ -336,9 +336,10 @@ int getNextPingIntervalSeconds() {
 
 > [!NOTE]
 > **Decoupling Notice: Partial Wakelock, Kernel Suspend & Deep Doze**:
-> The permanent partial wakelock and Deep Doze remediation, originally proposed as item 3.1 of Phase 3, has been decoupled from this roadmap due to its extensive architectural footprint, kernel-to-user-space timer complexities, cellular/Wi-Fi hardware wake asymmetries, and reliance on platform-level battery optimization exemptions. Because it represents the single largest engineering lift in the project, it is now tracked independently in:
+> The permanent partial wakelock and Deep Doze remediation, originally proposed as item 3.1 of Phase 3, has been decoupled from this roadmap due to its extensive architectural footprint, kernel-to-user-space timer complexities, and cellular/Wi-Fi hardware wake asymmetries. To manage engineering risk and provide immediate low-hanging fruit, it is decoupled into two complementary tracks:
 >
-> 👉 **[Wakelock & Deep Doze Remediation Plan](wakelock-remediation.md)**
+> 👉 **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)** *(Low-risk, high-yield: optimizes provable zero-audio states like deafened and solo standby)*
+> 👉 **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)** *(Universal plan for conversational standby suspend across active channels)*
 
 ### 3.1. Compiler Vectorization Tuning (Safe Math Flags)
 - **Target**: [`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
