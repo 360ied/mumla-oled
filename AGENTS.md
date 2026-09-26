@@ -65,6 +65,7 @@
 - **Release Tagging**: Tag releases using annotated Git tags: `git tag -a <version> -m "Release <version>"`.
 
 ## Documentation & Markdown Standards
+- **Application Naming Convention**: The name of the application is ALWAYS "Mumla OLED", never "Mumla" in isolation. It is a hard fork of Mumla which has yet to be comprehensively rebranded.
 - **GitHub Flavored Markdown (GFM)**: All documentation (`docs/`, `README.md`, skills, guidelines) must target GFM as rendered by GitHub's web interface (KaTeX math engine).
 - **Math Block Delimiters**: Use GitHub's fenced ```` ```math ```` code block syntax for display equations; avoid ambiguous `$$ ... $$` delimiters.
 - **Blank Line Isolation**: Always isolate math blocks with blank lines before and after. Never place math blocks directly adjacent to text paragraphs or within lists without blank line separation (CommonMark paragraph rules will fold them into inline text, unescaping LaTeX `\\` newlines into `\` and corrupting KaTeX parsing).

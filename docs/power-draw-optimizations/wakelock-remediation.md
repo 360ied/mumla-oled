@@ -166,10 +166,10 @@ Developers historically held `PARTIAL_WAKE_LOCK` 24/7 as an easy way to guarante
 
 ### Historical Context: The 0.21.7 "Continuous Silence" Workaround
 
-It is crucial to emphasize that **the 0.21.7 implementation was not functionally broken**. In Mumla 0.21.7 and earlier, the application never suffered from OEM watchdog `SIGKILL` terminations during silent connected standby.
+It is crucial to emphasize that **the 0.21.7 implementation was not functionally broken**. In Mumla OLED 0.21.7 and earlier, the application never suffered from OEM watchdog `SIGKILL` terminations during silent connected standby.
 
 Historically, [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) kept `AudioTrack` continuously in `PLAYSTATE_PLAYING`, constantly rendering digital silence (zero PCM) even when no participants were speaking on the server. Far from being a bug, this perpetual playback served as an effective (albeit brute-force) shield against aggressive OEM task killers:
-- Because the audio pipeline was actively playing sound through `AudioTrack`, OEM watchdogs classified Mumla as an active media playback service rather than an idle background abuser.
+- Because the audio pipeline was actively playing sound through `AudioTrack`, OEM watchdogs classified Mumla OLED as an active media playback service rather than an idle background abuser.
 - Consequently, the watchdog's kill condition (*"wakelock held without active `AudioTrack` playback"*) was never satisfied, and the process was spared from `SIGKILL`.
 - Background connection stability was fully maintained; silent disconnections did not occur.
 
@@ -263,14 +263,14 @@ The stark contrast in wake reliability stems directly from the underlying radio 
 In laboratory testing and real-world mobile deployments, consumer-grade Wi-Fi routers (ASUS, TP-Link, Netgear, ISP-supplied combo gateways) demonstrate catastrophic failure modes when handling incoming VoIP UDP traffic destined for sleeping Android clients:
 
 1. **Drop-Tail Buffer Discard on Burst Arrival**:
-   - Mumble/Mumla voice streams use Opus audio framed at $20\text{ ms}$ intervals ($50\text{ packets/second}$).
+   - Mumble / Mumla OLED voice streams use Opus audio framed at $20\text{ ms}$ intervals ($50\text{ packets/second}$).
    - When a remote participant presses PTT and speaks, the server dispatches a rapid succession of UDP packets.
    - Consumer routers allocate minimal SRAM (often only 4 to 8 packets per associated station) for PSM sleep buffering. When a burst of 5 to 10 incoming UDP datagrams arrives between DTIM intervals, the router's queue overflows almost instantaneously, causing **immediate drop-tail packet loss**. The first $100\text{ to }200\text{ ms}$ of speech is discarded at the router before the phone ever learns that packets were pending.
 
 2. **Aggressive NAT State Pruning (The 15-Second Window)**:
    - Consumer router state tables maintain Network Address Translation (NAT) binding entries for outbound UDP sessions.
    - While TCP connections typically enjoy 24-hour default NAT timeouts, **UDP NAT bindings are aggressively pruned**—frequently after only **$15\text{ to }30\text{ seconds}$ of silence**.
-   - If Mumla extends keepalive ping intervals beyond the router's UDP binding lifetime, the router silently drops the pinhole translation. Subsequent inbound voice packets from the server hit the router's WAN interface without an active port forwarding rule and are silently discarded or rejected with `ICMP Port Unreachable`.
+   - If Mumla OLED extends keepalive ping intervals beyond the router's UDP binding lifetime, the router silently drops the pinhole translation. Subsequent inbound voice packets from the server hit the router's WAN interface without an active port forwarding rule and are silently discarded or rejected with `ICMP Port Unreachable`.
 
 3. **Stale ARP / MAC Resolution Failures**:
    - When a phone has been stationary with the screen off in suspend-to-RAM for several minutes, some router firmware implementations flag the station's IP/MAC address mapping in the ARP cache as "stale" or "expired".
@@ -311,7 +311,7 @@ Where:
 
 #### Impact on the Speex Jitter Buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c))
 
-- Mumla’s native audio engine relies on the Speex adaptive jitter buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c)) configured with a target buffer margin (`buffer_margin` $\approx 40\text{ to }60\text{ ms}$).
+- Mumla OLED's native audio engine relies on the Speex adaptive jitter buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c)) configured with a target buffer margin (`buffer_margin` $\approx 40\text{ to }60\text{ ms}$).
 - **On Cellular**: The $42\text{ to }85\text{ ms}$ total wake latency causes the first packet to arrive slightly late, but the jitter buffer's dynamic auto-adjustment ([`jitter_buffer_update_delay`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c#L748)) easily absorbs the delay, resulting in crisp, unclipped speech playback.
 - **On Wi-Fi**: If the router delays the packet across a $200\text{ ms}$ DTIM window or drops the initial packet, the jitter buffer detects an unrecoverable gap. It invokes Packet Loss Concealment (PLC) extrapolation via [`OpusVoiceDecoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceDecoder.cpp), synthesizing artificial comfort noise or robotic pitch-period repetitions. If multiple initial packets are dropped, **the first 1 to 2 spoken words are permanently muted**, destroying the user experience.
 
@@ -572,7 +572,7 @@ gantt
 | **Murmur TCP Timeout (30s)** | Phone suspends, user-space timer fails to tick, Murmur drops socket after 30s | Use `AlarmManager.setExactAndAllowWhileIdle()`; gate behind `isIgnoringBatteryOptimizations()`; fallback to continuous wakelock if non-exempt. |
 | **Dropped Speech Onset on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | Autonomous transport awareness retains continuous awake standby on Wi-Fi; transient 2s socket bridge cushions incoming bursts; zero user configuration required. |
 | **Android Vitals Flagging** | Wakelock held $> 1\text{ hour}$ background time | Autonomous suspend on cellular eliminates background wakelock accumulation during mobile on-the-go use where battery life is most critical. |
-| **OEM Watchdog Termination** | Samsung Device Care or Xiaomi MIUI kills app holding wakelock without active audio | Gating wakelock strictly to active audio states prevents OEM watchdogs from identifying Mumla as an abusive background process. |
+| **OEM Watchdog Termination** | Samsung Device Care or Xiaomi MIUI kills app holding wakelock without active audio | Gating wakelock strictly to active audio states prevents OEM watchdogs from identifying Mumla OLED as an abusive background process. |
 | **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
 | **Exact Alarm Permission Denial** | Android 12+ (API 31+) revokes or denies `SCHEDULE_EXACT_ALARM`, causing `SecurityException` | Check `alarmManager.canScheduleExactAlarms()`; fall back to continuous wakelock if exact alarms cannot be armed. |
 | **Rapid PTT Button Flutter** | User rapidly taps PTT button causing high-frequency wakelock thrashing | Implement a trailing 3-second hold hangover on `mAudioWakeLock` to prevent rapid lock/unlock thrashing. |

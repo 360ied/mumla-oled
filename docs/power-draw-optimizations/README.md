@@ -146,7 +146,7 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 
 > [!NOTE]
 > **Sidenote & Trade-off Analysis (Android Vitals & Aggressive OEM Background Killers)**:
-> While releasing `PARTIAL_WAKE_LOCK` exposes stationary devices to Android Deep Doze socket restrictions if battery optimization exemptions are not granted, holding an indefinite partial wakelock 24/7 is heavily penalized by Google Play's **Android Vitals** ("Bad behavior: excessive wake locks" threshold: > 1 hour cumulative background wakelock). In versions 0.21.7 and earlier, Mumla masked the wakelock from aggressive OEM watchdogs (e.g. Samsung Device Care, Xiaomi MIUI/HyperOS, Huawei EMUI) by perpetually playing digital silence through `AudioTrack`, successfully preventing watchdog `SIGKILL` terminations at the cost of continuous audio hardware drain ($15\text{ to }30\text{ mW}$). However, with Phase 2 introducing `AudioTrack` standby pause to reclaim that power, leaving the monolithic wakelock active while `AudioTrack` is paused directly exposes the process to OEM watchdog kills. Thus, holding the wakelock permanently is not a benign safety measure—power-gating the audio hardware necessitates modernizing the wakelock lifecycle.
+> While releasing `PARTIAL_WAKE_LOCK` exposes stationary devices to Android Deep Doze socket restrictions if battery optimization exemptions are not granted, holding an indefinite partial wakelock 24/7 is heavily penalized by Google Play's **Android Vitals** ("Bad behavior: excessive wake locks" threshold: > 1 hour cumulative background wakelock). In versions 0.21.7 and earlier, Mumla OLED masked the wakelock from aggressive OEM watchdogs (e.g. Samsung Device Care, Xiaomi MIUI/HyperOS, Huawei EMUI) by perpetually playing digital silence through `AudioTrack`, successfully preventing watchdog `SIGKILL` terminations at the cost of continuous audio hardware drain ($15\text{ to }30\text{ mW}$). However, with Phase 2 introducing `AudioTrack` standby pause to reclaim that power, leaving the monolithic wakelock active while `AudioTrack` is paused directly exposes the process to OEM watchdog kills. Thus, holding the wakelock permanently is not a benign safety measure—power-gating the audio hardware necessitates modernizing the wakelock lifecycle.
 
 > [!IMPORTANT]
 > **Decoupled Architectural Specification**:
@@ -299,7 +299,7 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
    - **The 15-Second Ping Trap**: A 15.0-second TCP keepalive provides **zero error margin**. If a single TCP ping is delayed by cellular scheduling latency, bufferbloat, or TLS retransmission by even 500 ms ($t \ge 15.5\text{s}$), the Murmur tick at $t \approx 31.0\text{s}$ will observe `u->activityTime() > 30000` and forcefully terminate the socket. Furthermore, community servers frequently configure `timeout = 15` or `timeout = 20`.
    - **Protocol Constraint**: TCP keepalives must be bounded to **at most 10.0 seconds** (providing a minimum 3× retry margin against the default 30s timeout and surviving custom 15–20s server configs).
 4. **Hardcoded Cryptographic Resync Invariant (`Server.cpp:1055-1060` & `HumlaUDP.java:206`)**:
-   Both Murmur and Mumla enforce an internal 5-second threshold (`tLastGood.elapsed() > 5s`) to detect broken encryption:
+   Both Murmur and Mumla OLED enforce an internal 5-second threshold (`tLastGood.elapsed() > 5s`) to detect broken encryption:
    ```cpp
    // Upstream Murmur Server.cpp:1055
    if (u->csCrypt->tLastGood.elapsed() > std::chrono::seconds(5)) {
@@ -309,11 +309,11 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
        }
    }
    ```
-   In Mumla, [`HumlaUDP.java:206-208`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L206-L208) enforces the exact same 5-second check.
+   In Mumla OLED, [`HumlaUDP.java:206-208`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L206-L208) enforces the exact same 5-second check.
    - If UDP pings are spaced beyond 10 seconds, `tLastGood` remains permanently expired during idle standby. A single corrupted datagram or stray network probe will immediately trigger a cascading `CryptSetup` resync storm over TCP.
    - **Protocol Constraint**: UDP pings must remain strictly bounded between **7.0 and 10.0 seconds** (never $> 10\text{s}$).
 5. **Initial 20-Second TCP Fallback Trap (`HumlaConnection.java:240-249`)**:
-   In Mumla, if `mCryptState.mUiRemoteGood == 0` after 20 seconds of connection elapsed time (`elapsed > 20000000`), the client triggers `enableForceTCP()`.
+   In Mumla OLED, if `mCryptState.mUiRemoteGood == 0` after 20 seconds of connection elapsed time (`elapsed > 20000000`), the client triggers `enableForceTCP()`.
    - If pings are relaxed immediately at connection onset, dropping the initial UDP ping will cause the 20-second check to trip, forcing TCP tunneling.
    - In Murmur (`Server.cpp:1737`), when a client falls back to TCP, the server sets `u->aiUdpFlag = 0`. Crucially, Murmur **only resets `aiUdpFlag = 1` upon receiving an encrypted UDP voice packet** (`Server.cpp:1006`), **never on a UDP ping** (`Server.cpp:1015-1028`)! Once trapped in TCP mode, the server will tunnel all incoming audio over TCP indefinitely until the local user transmits speech.
    - **Protocol Constraint**: Keepalives must strictly maintain the aggressive **5-second cadence during the first 30 seconds of connection bootstrap** until UDP bidirectional health (`mUiRemoteGood > 3 && mUiGood > 3`) is established.

@@ -323,7 +323,7 @@ int getNextPingIntervalSeconds() {
     return STEADY_STATE_PING_INTERVAL_SECONDS; // 10s
 }
 ```
-   - **Bootstrap Phase (Initial 30s)**: Aggressive 5-second keepalives (`BOOTSTRAP_PING_INTERVAL_SECONDS = 5`) ensure `mUiRemoteGood > 3 && mUiGood > 3` before Mumla's 20-second TCP fallback check trips.
+   - **Bootstrap Phase (Initial 30s)**: Aggressive 5-second keepalives (`BOOTSTRAP_PING_INTERVAL_SECONDS = 5`) ensure `mUiRemoteGood > 3 && mUiGood > 3` before Mumla OLED's 20-second TCP fallback check trips.
    - **Steady-State Phase**: Once elapsed time exceeds 30 seconds (`BOOTSTRAP_DURATION_MICROS = 30_000_000L`) and crypt health is confirmed, keepalives relax to **10.0 seconds** (`STEADY_STATE_PING_INTERVAL_SECONDS = 10`), halving modem wakeups while preserving a 3× retry margin against Murmur's 30-second TCP timeout.
 3. **Firewall & Force-TCP Compatibility**: For Force-TCP and UDP-blocked connections, steady-state relaxation activates automatically at 30 seconds elapsed without requiring UDP crypt packet confirmation.
 4. **Lifecycle & Concurrency Safety**: Wrapped ping execution in `try-finally` to ensure subsequent ticks are scheduled even on transient socket exceptions, defensively copied TCP buffers in `HumlaTCP.sendMessage()`, declared packet counters and 64-bit timestamps `volatile` in `CryptState` to prevent word tearing on 32-bit ARM, cancelled existing ping tasks on reschedule, and called `mPingExecutorService.shutdownNow()` upon disconnect.
