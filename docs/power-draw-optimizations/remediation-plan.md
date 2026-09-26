@@ -10,10 +10,10 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
    - [1.2 Render Thread Indefinite Wait with Lost-Notification Guard — RESOLVED](#12-render-thread-indefinite-wait-with-lost-notification-guard--resolved)
    - [1.3 Optimize Opus Complexity — RESOLVED](#13-optimize-opus-complexity--resolved)
    - [1.4 Avatar Bitmap LRU Caching — RESOLVED](#14-avatar-bitmap-lru-caching--resolved)
-3. [Phase 2: Core Subsystem Gating](#phase-2-core-subsystem-gating)
-   - [2.1 Microphone Gating (Mute) & DSP Gating (PTT Idle)](#21-microphone-gating-mute--dsp-gating-ptt-idle)
-   - [2.2 AudioTrack Standby Pause (Guarded against Bluetooth SCO)](#22-audiotrack-standby-pause-guarded-against-bluetooth-sco)
-   - [2.3 Adaptive Keepalive Pinging & CryptSetup Compliance](#23-adaptive-keepalive-pinging--cryptsetup-compliance)
+3. [Phase 2: Core Subsystem Gating — COMPLETED](#phase-2-core-subsystem-gating--completed)
+   - [2.1 Microphone Gating (Mute) & DSP Gating (PTT Idle) — RESOLVED](#21-microphone-gating-mute--dsp-gating-ptt-idle--resolved)
+   - [2.2 AudioTrack Standby Pause (Guarded against Bluetooth SCO) — RESOLVED](#22-audiotrack-standby-pause-guarded-against-bluetooth-sco--resolved)
+   - [2.3 Adaptive Keepalive Pinging & CryptSetup Compliance — RESOLVED](#23-adaptive-keepalive-pinging--cryptsetup-compliance--resolved)
 4. [Phase 3: Deep Architectural Modernization](#phase-3-deep-architectural-modernization)
    - [3.1 Adaptive Wakelock Pulsing & Android Deep Doze Reality](#31-adaptive-wakelock-pulsing--android-deep-doze-reality)
    - [3.2 Compiler Vectorization Tuning (Safe Math Flags)](#32-compiler-vectorization-tuning-safe-math-flags)
@@ -34,7 +34,7 @@ flowchart TD
         P1_SquelchGate["Squelch-Before-RNNoise Gate"]
     end
 
-    subgraph Phase2 ["Phase 2: Core Subsystem Gating"]
+    subgraph Phase2 ["Phase 2: Core Subsystem Gating (COMPLETED)"]
         P2_CaptureGate["AudioRecord Gating (Mute) & DSP Gating (PTT Idle)"]
         P2_AudioTrackPause["AudioTrack Standby Pause (Non-SCO, 15s Timeout)"]
         P2_AdaptivePing["Adaptive Keepalive (UDP 7-10s, TCP <= 10s)"]
@@ -199,46 +199,132 @@ Implemented a centralized, memory-bounded [`AvatarCache.java`](file:///home/bual
 
 ---
 
-## Phase 2: Core Subsystem Gating
+## Phase 2: Core Subsystem Gating — COMPLETED
 
-### 2.1. Microphone Gating (Mute) & DSP Gating (PTT Idle)
-- **Target**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) and [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp)
-- **Change**:
-  - **Self-Muted State & Explicit Terminator Dispatch**: Flush pending frames, emit an explicit terminator packet, then call `mInput.stopRecording()`. Unmuting is a deliberate user action where 50ms HAL startup lag is completely imperceptible, saving 100% of mic hardware and ADC power.
-    - *Critical Terminator Sequencing*: `AudioInputEngine::setMuted(true)` historically relied on a subsequent `processFrame()` invocation from `AudioRecord` to detect mute, generate a silence terminator, and clear `m_talking`. Because stopping `AudioRecord` halts further `processFrame()` calls, `AudioInputEngine` must explicitly flush pending accumulator audio or encode a silence terminator, reset `m_talking = false`, clear `m_ringBuffer`, and dispatch callbacks synchronously under lock before `AudioRecord` is stopped.
-    - *Mute-on-Connect & Cumulative UserState*: In `AudioHandler.initialize()`, check `self.isSelfMuted()` in addition to server mute flags to avoid starting `AudioRecord` on connect if already muted. In `messageUserState()`, track cumulative local boolean states rather than relying on sparse protobuf deltas.
-  - **Push-To-Talk Idle State**: **Do not stop `AudioRecord`**. Keep `AudioRecord` capturing into `PreSpeechRingBuffer` to preserve the 80ms lookahead onset audio and avoid PTT click latency. However, **bypass RNNoise (`m_denoiser->process`) and Adaptive Leveler** while PTT is unpressed.
-    - *Filter Continuity*: Feed static zeroes (`kSilencePcm`) to RNNoise unconditionally during PTT idle (regardless of `peakDb`) to bypass GRU inference completely while keeping overlap-add delay and pitch filters continuous.
-    - *Ring Buffer Flush Harmonization*: When PTT is pressed and `m_ringBuffer` is flushed, pass the buffered 80ms frames through RNNoise/leveler in a single sub-millisecond burst to ensure consistent noise floor and gain before live speech begins.
-  - **Mandatory Terminator Packet Invariant**: Prior to pausing or stopping `AudioRecord` (whether from mute or PTT release), the audio pipeline **must flush any remaining samples and dispatch an explicit terminator packet** (`is_terminator = true` in Protobuf or `header |= (1 << 13)` in legacy varint format) preserving the active whisper target ID (`iPrevTarget`). Halting capture without a terminator forces remote Mumble receivers to interpret the sudden packet drop as loss, invoking 10 frames of robotic Packet Loss Concealment (PLC) before voice expiry.
-- **Benefit**: Saves $50 \text{ to } 80 \text{ mW}$ of mic hardware power during mute, and cuts 90% of CPU power during PTT standby without any speech onset clipping.
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 2 remediation items (2.1 through 2.3) have been implemented, tested, and merged into `master` in release `0.21.9` (branch `feature/power-optimizations-phase2`, commits [`26367b9e`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) through [`411caa29`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), merge commit [`b4f71f3e`](file:///home/bualy/files/devel/mumla_dev/mumla-oled)): 2.1 resolved by gating microphone capture on self/server mute with synchronous silence terminator dispatch, bypassing RNNoise GRU inference and Adaptive Leveler during PTT idle, and restricting lookahead buffering to VAD mode with native unit tests in [`test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_input_engine.cpp); 2.2 resolved by introducing route-aware AudioTrack standby pause (3s timeout for built-in/wired, 15s for Bluetooth A2DP/BLE Audio/hearing aids, never paused on active SCO) with unit tests in [`AudioOutputStandbyTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/audio/AudioOutputStandbyTest.java); 2.3 resolved by implementing synchronized adaptive UDP/TCP keepalive (5s bootstrap relaxing to 10s steady-state) with unit tests in [`AdaptiveKeepaliveTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/net/AdaptiveKeepaliveTest.java).
+
+### 2.1 Microphone Gating (Mute) & DSP Gating (PTT Idle) — RESOLVED
+
+**Status**: Resolved on `master` in release `0.21.9` (commits [`1a971285`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp), [`85272b49`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp), [`ee5146d2`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java), [`638d260c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp), [`a4214876`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp), [`79dd8ff0`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java), [`701ddfd4`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp), [`946a535a`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java), and [`47cff378`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)).
+
+**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java), [`AudioInput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java), [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h), [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp), [`NativeAudioInputEngineJni.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp), [`test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_input_engine.cpp)
+
+**Problem**: `AudioRecord` was capturing 48 kHz PCM constantly even when the client was self-muted, server-muted, or suppressed, wasting $50\text{ to }80\text{ mW}$ of microphone ADC and analog front-end power. In Push-To-Talk (PTT) idle, RNNoise and Adaptive Leveler ran 100 Hz inference continuously on ambient noise. Furthermore, simply halting capture upon mute risked dropping speech terminators and forcing listening peers into robotic Packet Loss Concealment (PLC).
+
+**Solution**:
+1. **Microphone Capture Gating on Mute**: In `AudioHandler`, cumulative mute states (`self.isSelfMuted()`, server mute, suppression) are tracked. On connect or transition to muted, `mInput.stopRecording()` halts `AudioRecord`. On unmute, `AudioRecord` is restarted. In `AudioInput`, `stopRecording()` is non-blocking to prevent UI/network thread stalls, while `shutdown()` implements an unbroken join loop to guarantee capture thread termination before native handles are freed.
+2. **Synchronous Silence Terminator Dispatch**: In `AudioInputEngine::setMuted(true)`, pending accumulator audio is flushed, an explicit silence terminator (`isTerminator = true`) is generated and dispatched, `m_talking` is set to false, and callbacks are serialized under `m_callbackMutex` before capture halts, strictly preserving remote peer audio continuity.
+3. **Unconditional RNNoise & Leveler Bypass during PTT Idle**: In `AudioInputEngine::processFrame()`, RNNoise GRU inference and Adaptive Leveler are bypassed unconditionally when idle in Push-to-Talk or when muted:
+```cpp
+// Bypass RNNoise during squelched silence, client mute, or when PTT is idle (unpressed):
+// In PTT mode when not transmitting or when client is muted, bypass unconditionally regardless of peakDb.
+// In VAD mode, bypass when below the squelch floor.
+bool shouldBypassRnnoise = m_muted || (!isActivelyTransmitting &&
+    (m_inputMode == InputMode::PUSH_TO_TALK || peakDb < m_vad.getSquelchMinDb()));
+
+if (shouldBypassRnnoise) {
+    static const int16_t kSilencePcm[SAMPLES_PER_10MS] = {0};
+    m_denoiser->process(kSilencePcm, m_silenceDiscardBuffer.data(), SAMPLES_PER_10MS);
+    speechProb = 0.0f;
+} else {
+    speechProb = m_denoiser->process(m_processedFrame.data(), m_processedFrame.data(), SAMPLES_PER_10MS);
+}
+```
+   Feeding static zero PCM to RNNoise maintains overlap-add delay and pitch buffer continuity without running recurrent GRU matrix multiplications.
+4. **VAD-Exclusive Lookahead Buffering**: Lookahead ring buffering is restricted to `InputMode::VOICE_ACTIVITY`. In PTT mode, transmission starts immediately without prepending pre-PTT raw ambient noise, verified by native test 17.
+5. **Thread Safety & Serialization**: Added `m_callbackMutex` in `AudioInputEngine` and `callbackMutex` in JNI to serialize callback execution and packet buffer reuse in strict FIFO order without deadlocks. Isolated packet serialization in `AudioHandler` with `mPacketBufferLock`.
+
+**Benefit**: Saves $50\text{ to }80\text{ mW}$ of microphone and ADC power during mute, and cuts 90% of CPU DSP power during PTT standby without speech onset clipping or PLC artifacts.
 
 > [!NOTE]
 > **Sidenote & Counter-Perspective (Ultra-Power-Saving PTT Mode)**:
-> Preserving `AudioRecord` capture during PTT idle protects the 80ms lookahead ring buffer and avoids 50–200ms HAL re-initialization lag. However, keeping the hardware microphone bias and ADC energized consumes $15\text{--}25\text{ mA}$ ($58\text{--}96\text{ mW}$) continuously. For extended listening-only scenarios (e.g. monitoring a dispatch or conference channel for 4–8 hours where the user rarely or never transmits), an optional "Ultra Power Saver" PTT mode could fully sleep the `AudioRecord` hardware, accepting a brief initial onset ramp in exchange for true zero-power microphone idling.
+> Preserving `AudioRecord` capture during PTT idle protects immediate transmission responsiveness and avoids 50–200ms HAL re-initialization lag. However, keeping the hardware microphone bias and ADC energized consumes $15\text{--}25\text{ mA}$ ($58\text{--}96\text{ mW}$) continuously. For extended listening-only scenarios (e.g. monitoring a dispatch or conference channel for 4–8 hours where the user rarely or never transmits), an optional "Ultra Power Saver" PTT mode could fully sleep the `AudioRecord` hardware, accepting a brief initial onset ramp in exchange for true zero-power microphone idling.
 
-### 2.2. AudioTrack Standby Pause (Guarded against Bluetooth SCO)
-- **Target**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
-- **Change**:
-  - **Two-Tier Standby Wait**: Reconcile with the Phase 1 indefinite wait in `AudioOutput.java`. When `!hasActiveVoices()`, the thread must first wait on a timed condition (`mInactiveLock.wait(standbyTimeoutMs)`). Only once that timeout expires with zero voices and no incoming audio does it call `mAudioTrack.pause()`, followed by an indefinite wait (`mInactiveLock.wait()`).
-  - **Playback Resume**: When incoming audio arrives (`signalData()`), the thread wakes and the existing check (`if (mAudioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) mAudioTrack.play()`) unpauses playback immediately, with `Pacer`'s idle rebase synchronizing the playback head without underrun deadlock.
-  - **Route Detection & Bluetooth SCO Guard**: Pass `Context` or `AudioManager` into `AudioOutput`. If `AudioManager.isBluetoothScoOn()` (or on API 31+, `getCommunicationDevice()?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO`) is true, **never pause `AudioTrack`**, preventing Bluetooth SCO voice link teardown.
-  - **Zero-Padding & DAC Pops**: By the time standby timeout elapses, the hardware buffer has already drained to digital silence. Software fade is not needed on drained silence, but zero-padding before pause ensures no partial quanta remain in the HAL buffer.
-- **Benefit**: Allows the audio DSP (Hexagon/LPASS) and audio DAC to power down into low-power standby during conversational pauses.
+---
+
+### 2.2 AudioTrack Standby Pause (Guarded against Bluetooth SCO) — RESOLVED
+
+**Status**: Resolved on `master` in release `0.21.9` (commits [`26367b9e`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), [`76c12b23`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), [`e3e9578d`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), [`efd4015f`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), [`47cff378`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), and [`411caa29`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)).
+
+**Component**: [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), [`AudioOutputStandbyTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/audio/AudioOutputStandbyTest.java)
+
+**Problem**: `AudioTrack` was left in `PLAYSTATE_PLAYING` continuously when nobody was speaking on the server. Android's `AudioFlinger` mixer thread remained active, preventing the hardware audio DSP (Hexagon LPASS), external DAC, and headphone/speaker amplifiers from entering low-power sleep states, wasting $15\text{ to }30\text{ mW}$ on continuous digital silence.
+
+**Solution**:
+1. **Two-Tier Standby Wait**: In `AudioOutput`, reconciled with Phase 1's indefinite wait on zero voices. When `!hasActiveVoices()`, the render thread performs a timed wait on `mInactiveLock` using monotonic `SystemClock.elapsedRealtime()`. If the route-dependent standby timeout expires with zero active voices and no incoming audio, `mAudioTrack.pause()` is invoked, followed by an indefinite wait (`mInactiveLock.wait()`):
+```java
+// Two-tier standby: wait up to standbyTimeout ms with track playing.
+// If timeout expires with zero voices and no incoming audio, pause AudioTrack
+// (unless Bluetooth SCO is active, which requires continuous output to maintain link).
+if (!scoActive && standbyTimeout > 0) {
+    long waitStart = SystemClock.elapsedRealtime();
+    while (mRunning && !mHasIncomingAudio) {
+        long elapsed = SystemClock.elapsedRealtime() - waitStart;
+        long remaining = standbyTimeout - elapsed;
+        if (remaining <= 0) break;
+        mInactiveLock.wait(remaining);
+        if (mEngine != null && mEngine.hasActiveVoices()) break;
+    }
+
+    if (mRunning && !mHasIncomingAudio && (mEngine == null || !mEngine.hasActiveVoices())) {
+        if (mAudioTrack != null && mAudioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) {
+            mAudioTrack.pause();
+        }
+        while (mRunning && !mHasIncomingAudio) {
+            if (mEngine != null && mEngine.hasActiveVoices()) break;
+            mInactiveLock.wait();
+        }
+    }
+}
+```
+2. **Adaptive Route-Aware Timeouts**:
+   - `STANDBY_TIMEOUT_DEFAULT_MS = 3000L` (3 seconds) for built-in speakers, earpieces, and wired 3.5mm/USB-C headsets where HAL resumption latency is $< 10\text{ ms}$.
+   - `STANDBY_TIMEOUT_A2DP_MS = 15000L` (15 seconds) for Bluetooth A2DP, Bluetooth LE Audio (`TYPE_BLE_HEADSET`, `TYPE_BLE_SPEAKER`), and hearing aids (`TYPE_HEARING_AID`) to prevent underruns and buffer renegotiation.
+3. **Active Bluetooth SCO Link Protection**: `isBluetoothScoActive()` checks active communication routing (`getCommunicationDevice()` on API 31+, `isBluetoothScoOn()` on API 23–30). Standby pause is strictly bypassed while SCO is active, preventing SCO voice link teardown and re-pairing delay.
+4. **Seamless Resume**: On incoming audio (`signalData()`), the render thread wakes up, immediately unpauses playback via `mAudioTrack.play()`, and `Pacer.rebase()` resynchronizes the playback head without underrun deadlocks.
+
+**Benefit**: Powers down the audio DSP, DAC, and power amplifiers into low-power standby during conversational pauses, saving $15\text{ to }30\text{ mW}$ with zero audible pops or Bluetooth disconnects.
 
 > [!NOTE]
 > **Sidenote & Counter-Perspective (AudioTrack Standby on Built-in Speaker vs Bluetooth)**:
-> While a 15-second inactivity timeout is essential on Bluetooth SCO to prevent link teardown and re-pairing delay, on built-in phone speakers or wired 3.5mm/USB-C headphones, modern Android HALs handle track pause and resumption with $< 10\text{ ms}$ latency. On non-Bluetooth routes, the standby threshold could be shortened to 3–5 seconds without audible penalty, allowing the audio DSP and DAC to power-gate much earlier during conversational pauses.
+> While a 15-second inactivity timeout is essential on Bluetooth SCO and A2DP to prevent link teardown and re-pairing delay, on built-in phone speakers or wired 3.5mm/USB-C headphones, modern Android HALs handle track pause and resumption with $< 10\text{ ms}$ latency. On non-Bluetooth routes, the standby threshold is safely shortened to 3 seconds without audible penalty, allowing the audio DSP and DAC to power-gate much earlier during conversational pauses.
 
-### 2.3. Adaptive Keepalive Pinging & CryptSetup Compliance
-- **Target**: [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
-- **Change**:
-  - **Synchronized UDP/TCP Wakeup Alignment**: Never ping on unaligned intervals (e.g. 7s UDP and 10s TCP), which would trigger interleaved radio wakeups every 3–4 seconds and keep cellular modems continuously in high-power `RRC_CONNECTED`. Both UDP and TCP keepalive pings must be dispatched synchronously in the **exact same scheduled tick** of `mPingRunnable`.
-  - **Never drop TCP pings** (Murmur requires TCP messages to reset `Connection::activityTime()`).
-  - **Bootstrap Phase (Initial 30s)**: Maintain aggressive 5s keepalives (UDP + TCP) to establish `mUiRemoteGood > 3 && mUiGood > 3` before the 20-second threshold in `HumlaConnection.java:240`, preventing false-positive traps in TCP tunneling.
-  - **Steady-State Background**: Relax keepalives to **8.0–10.0s synchronously for both UDP and TCP** (staying safely below Murmur's 30s timeout and carrier CGNAT pin-hole timeouts). Implement dynamic transition via a self-rescheduling task (`mPingExecutorService.schedule(mPingRunnable, delaySec, TimeUnit.SECONDS)`), resetting back to 5s bootstrap on reconnect.
-  - **CryptSetup Server Resync Compliance (Already Satisfied)**: Upstream Murmur's `tLastGood.elapsed() > 5s` check (`Server.cpp:1055`) is only evaluated on UDP decryption failures. In `HumlaConnection.java:198-202`, the client already responds to empty `CryptSetup` requests by retransmitting `mCryptState.getEncryptIV()`, satisfying protocol compliance.
-- **Benefit**: Allows the cellular modem to enter DRX cycles without risking carrier NAT drops, server disconnects, or crypt-resync storms, reducing cellular baseline current by $30\%\text{--}40\%$.
+---
+
+### 2.3 Adaptive Keepalive Pinging & CryptSetup Compliance — RESOLVED
+
+**Status**: Resolved on `master` in release `0.21.9` (commits [`59f85d17`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), [`2117883a`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), [`bda9e3b9`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java), [`d25ba10c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), [`35daa326`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java), and [`411caa29`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java)).
+
+**Component**: [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), [`HumlaTCP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java), [`CryptState.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java), [`AdaptiveKeepaliveTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/java/se/lublin/humla/net/AdaptiveKeepaliveTest.java)
+
+**Problem**: Rigid 5-second UDP and TCP keepalive pings prevented cellular baseband modems from entering low-power DRX sleep states, locking them permanently in `RRC_CONNECTED` ($90\text{--}160\text{ mA}$). Unaligned ping intervals would worsen tail state locks, while relaxing pings prematurely risked triggering Murmur's 20-second TCP fallback trap or 30-second disconnect timeout.
+
+**Solution**:
+1. **Synchronized Dual Keepalive Dispatch**: In `HumlaConnection`, both UDP and TCP keepalive pings are dispatched synchronously in the exact same tick of `mPingRunnable` via `scheduleNextPing()`, eliminating interleaved radio wakeups.
+2. **Bootstrap vs. Steady-State Transition**:
+```java
+int getNextPingIntervalSeconds() {
+    long elapsed = getElapsed();
+    if (elapsed < BOOTSTRAP_DURATION_MICROS) {
+        return BOOTSTRAP_PING_INTERVAL_SECONDS; // 5s
+    }
+    if (!shouldForceTCP() && mUsingUDP) {
+        if (mCryptState.mUiRemoteGood <= 3 || mCryptState.mUiGood <= 3) {
+            return BOOTSTRAP_PING_INTERVAL_SECONDS; // 5s
+        }
+    }
+    return STEADY_STATE_PING_INTERVAL_SECONDS; // 10s
+}
+```
+   - **Bootstrap Phase (Initial 30s)**: Aggressive 5-second keepalives (`BOOTSTRAP_PING_INTERVAL_SECONDS = 5`) ensure `mUiRemoteGood > 3 && mUiGood > 3` before Mumla's 20-second TCP fallback check trips.
+   - **Steady-State Phase**: Once elapsed time exceeds 30 seconds (`BOOTSTRAP_DURATION_MICROS = 30_000_000L`) and crypt health is confirmed, keepalives relax to **10.0 seconds** (`STEADY_STATE_PING_INTERVAL_SECONDS = 10`), halving modem wakeups while preserving a 3× retry margin against Murmur's 30-second TCP timeout.
+3. **Firewall & Force-TCP Compatibility**: For Force-TCP and UDP-blocked connections, steady-state relaxation activates automatically at 30 seconds elapsed without requiring UDP crypt packet confirmation.
+4. **Lifecycle & Concurrency Safety**: Wrapped ping execution in `try-finally` to ensure subsequent ticks are scheduled even on transient socket exceptions, defensively copied TCP buffers in `HumlaTCP.sendMessage()`, declared packet counters and 64-bit timestamps `volatile` in `CryptState` to prevent word tearing on 32-bit ARM, cancelled existing ping tasks on reschedule, and called `mPingExecutorService.shutdownNow()` upon disconnect.
+
+**Benefit**: Halves cellular modem keepalive wakeups during idle connected standby, reducing cellular baseline power by $30\%\text{ to }40\%$ without risking carrier NAT drops, server disconnects, or crypt-resync storms.
 
 ---
 
