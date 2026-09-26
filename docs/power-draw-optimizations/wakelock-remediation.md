@@ -11,7 +11,7 @@ An exhaustive architectural investigation, physical power model, and engineering
    - [B. Upstream Murmur TCP Timeout Mechanics (`Server.cpp:1843`)](#b-upstream-murmur-tcp-timeout-mechanics-servercpp1843)
    - [C. Android Deep Doze & Alarm Throttling Limits](#c-android-deep-doze--alarm-throttling-limits)
    - [D. The Deadlock Formulation](#d-the-deadlock-formulation)
-4. [The Real-World OEM & Android Vitals Paradox](#4-the-real-world-oem--android-vitals-paradox)
+4. [The Real-World OEM Watchdog & On-Device Power Paradox](#4-the-real-world-oem-watchdog--on-device-power-paradox)
 5. [Network Subsystem Physical Asymmetry: Cellular vs. Wi-Fi](#5-network-subsystem-physical-asymmetry-cellular-vs-wi-fi)
    - [A. Hardware Topology & Intersystem Wake Interfaces](#a-hardware-topology--intersystem-wake-interfaces)
    - [B. 3GPP Cellular DRX vs. IEEE 802.11 Power Save Protocol](#b-3gpp-cellular-drx-vs-ieee-80211-power-save-protocol)
@@ -152,17 +152,17 @@ This mathematical inequality constitutes the core platform deadlock:
 
 ---
 
-## 4. The Real-World OEM & Android Vitals Paradox
+## 4. The Real-World OEM Watchdog & On-Device Power Paradox
 
-Developers historically held `PARTIAL_WAKE_LOCK` 24/7 as an easy way to guarantee connection stability. However, modern Android platforms heavily penalize this pattern:
+Developers historically held `PARTIAL_WAKE_LOCK` 24/7 as an easy way to guarantee connection stability. Because Mumla OLED is strictly a FOSS application distributed via GitHub Releases and F-Droid (and never published to the Google Play Store), commercial Play Store discoverability penalties and Google Play Console metrics are completely irrelevant. Instead, the operational penalty is enforced directly on the physical mobile device:
 
-1. **Google Play Android Vitals Threshold**:
-   - Google Play tracks cumulative background wakelock durations.
-   - Any app holding a `PARTIAL_WAKE_LOCK` for more than **1 hour cumulative background time per day** is flagged as "Bad Behavior: Excessive Wake Locks".
-   - Apps exceeding the bad behavior threshold suffer reduced Play Store search discoverability and algorithmic demotion.
+1. **Physical Battery Drain & On-Device OS Warnings**:
+   - Holding a `PARTIAL_WAKE_LOCK` continuously burns **$35\text{ to }60\text{ mA}$** constantly by preventing Linux kernel `suspend-to-RAM`. Over an 8-hour period, this wastes **$\approx 280\text{ to }480\text{ mAh}$** (10% to 15% of battery capacity) on pure silence.
+   - Modern Android builds track per-app background drain and CPU wake time locally. The system battery manager flags the app directly to the user: *"Mumla OLED is draining battery in the background. Put app to sleep?"* Users who heed this prompt restrict background execution, which completely severs network connectivity when the screen turns off.
 2. **Aggressive OEM Task Killers (The "Don't Kill My App" Problem)**:
-   - Modern OEM skins (Samsung Device Care / OneUI, Xiaomi MIUI / HyperOS, Huawei EMUI, BBK ColorOS / OxygenOS) implement proprietary background watchdogs.
+   - Modern OEM skins (Samsung Device Care / OneUI, Xiaomi MIUI / HyperOS, Huawei EMUI, BBK ColorOS / OxygenOS) implement proprietary background watchdogs that operate at framework and kernel levels.
    - When an OEM watchdog detects an app holding an active partial wakelock while the screen is off without media audio playing through `AudioTrack`, **the OS forcefully kills the process (`SIGKILL`)**.
+   - *(Note on Google Play Vitals)*: While Google Play enforces a commercial "Excessive Wake Locks" threshold (> 1 hour cumulative background wakelock/day), Mumla OLED's mandate is driven entirely by on-device battery longevity and preventing premature OS termination.
 
 ### Historical Context: The 0.21.7 "Continuous Silence" Workaround
 
@@ -571,7 +571,7 @@ gantt
 | --- | --- | --- |
 | **Murmur TCP Timeout (30s)** | Phone suspends, user-space timer fails to tick, Murmur drops socket after 30s | Use `AlarmManager.setExactAndAllowWhileIdle()`; gate behind `isIgnoringBatteryOptimizations()`; fallback to continuous wakelock if non-exempt. |
 | **Dropped Speech Onset on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | Autonomous transport awareness retains continuous awake standby on Wi-Fi; transient 2s socket bridge cushions incoming bursts; zero user configuration required. |
-| **Android Vitals Flagging** | Wakelock held $> 1\text{ hour}$ background time | Autonomous suspend on cellular eliminates background wakelock accumulation during mobile on-the-go use where battery life is most critical. |
+| **On-Device Battery Warnings** | Wakelock held continuously in background triggers OS battery alerts ("putting app to sleep") | Autonomous suspend on cellular eliminates continuous background wakelock accumulation during mobile on-the-go use. |
 | **OEM Watchdog Termination** | Samsung Device Care or Xiaomi MIUI kills app holding wakelock without active audio | Gating wakelock strictly to active audio states prevents OEM watchdogs from identifying Mumla OLED as an abusive background process. |
 | **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
 | **Exact Alarm Permission Denial** | Android 12+ (API 31+) revokes or denies `SCHEDULE_EXACT_ALARM`, causing `SecurityException` | Check `alarmManager.canScheduleExactAlarms()`; fall back to continuous wakelock if exact alarms cannot be armed. |
