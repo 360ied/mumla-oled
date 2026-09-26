@@ -15,15 +15,15 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
    - [2.2 AudioTrack Standby Pause (Guarded against Bluetooth SCO) — RESOLVED](#22-audiotrack-standby-pause-guarded-against-bluetooth-sco--resolved)
    - [2.3 Adaptive Keepalive Pinging & CryptSetup Compliance — RESOLVED](#23-adaptive-keepalive-pinging--cryptsetup-compliance--resolved)
 4. [Phase 3: Deep Architectural Modernization](#phase-3-deep-architectural-modernization)
-   - [3.1 Adaptive Wakelock Pulsing & Android Deep Doze Reality](#31-adaptive-wakelock-pulsing--android-deep-doze-reality)
-   - [3.2 Compiler Vectorization Tuning (Safe Math Flags)](#32-compiler-vectorization-tuning-safe-math-flags)
-   - [3.3 Native In-Place OCB2-AES Cryptographic Engine](#33-native-in-place-ocb2-aes-cryptographic-engine)
+   - [3.1 Compiler Vectorization Tuning (Safe Math Flags)](#31-compiler-vectorization-tuning-safe-math-flags)
+   - [3.2 Native In-Place OCB2-AES Cryptographic Engine](#32-native-in-place-ocb2-aes-cryptographic-engine)
+5. [Decoupled Track: Partial Wakelock & Deep Doze](wakelock-remediation.md)
 
 ---
 
 ## Architectural Remediation Overview
 
-To address these inefficiencies systematically without compromising audio quality, protocol compliance, or user experience, optimizations are organized into three prioritized phases:
+To address these inefficiencies systematically without compromising audio quality, protocol compliance, or user experience, optimizations are organized into three prioritized phases alongside a decoupled track for the partial wakelock overhaul:
 
 ```mermaid
 flowchart TD
@@ -41,13 +41,17 @@ flowchart TD
     end
 
     subgraph Phase3 ["Phase 3: Deep Architectural Modernization"]
-        P3_Wakelock["Adaptive Wakelock Pulsing / Doze Reality"]
         P3_SIMD["Compiler Vectorization Tuning (Safe Math Flags)"]
         P3_NativeCrypto["Native In-Place OCB2-AES Crypto Engine"]
     end
 
+    subgraph DecoupledTrack ["Decoupled Dedicated Track (Highest Lift)"]
+        Track_Wakelock["Partial Wakelock, Kernel Suspend & Deep Doze"]
+    end
+
     Phase1 --> Phase2
     Phase2 --> Phase3
+    Phase2 -.-> DecoupledTrack
 ```
 
 ---
@@ -330,22 +334,20 @@ int getNextPingIntervalSeconds() {
 
 ## Phase 3: Deep Architectural Modernization
 
-### 3.1. Adaptive Wakelock Pulsing & Android Deep Doze Reality
-- **Target**: [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)
-- **Change**:
-  - On devices with battery optimization whitelisting (`PowerManager.isIgnoringBatteryOptimizations()`), drop the permanent `PARTIAL_WAKE_LOCK` during extended silent standby.
-  - **Deep Doze Constraint**: Android Deep Doze restricts `AlarmManager.setAndAllowWhileIdle()` to once every **9 to 15 minutes**, making it physically impossible to pulse 10s keepalives via alarms during deep sleep. Therefore, true kernel `suspend-to-RAM` can only be sustained if battery optimization exemption (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) is granted, or if the Linux kernel Wi-Fi/cellular driver supports socket wakeup interrupts for incoming Mumble traffic.
-  - Hold `PARTIAL_WAKE_LOCK` continuously while incoming or outgoing audio is actively streaming.
-- **Benefit**: Allows the Linux kernel to enter true `suspend-to-RAM` during silent connected standby on exempt devices.
+> [!NOTE]
+> **Decoupling Notice: Partial Wakelock, Kernel Suspend & Deep Doze**:
+> The permanent partial wakelock and Deep Doze remediation, originally proposed as item 3.1 of Phase 3, has been decoupled from this roadmap due to its extensive architectural footprint, kernel-to-user-space timer complexities, cellular/Wi-Fi hardware wake asymmetries, and reliance on platform-level battery optimization exemptions. Because it represents the single largest engineering lift in the project, it is now tracked independently in:
+>
+> 👉 **[Wakelock & Deep Doze Remediation Plan](wakelock-remediation.md)**
 
-### 3.2. Compiler Vectorization Tuning (Safe Math Flags)
+### 3.1. Compiler Vectorization Tuning (Safe Math Flags)
 - **Target**: [`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
 - **Change**:
   - Add `-O3 -fno-math-errno -fvectorize` to `humlaaudio` CFLAGS to optimize NEON vector loop generation across both 32-bit and 64-bit ARM architectures.
   - **Avoid `-ffast-math` / `-ffinite-math-only`**: Fast-math optimizes away `celt_isnan(x) ((x) != (x))` in `rnnoise/src/arch.h:173`. Disabling NaN validation risks permanent NaN poisoning of RNNoise's recurrent GRU hidden state if a floating-point denormal occurs.
 - **Benefit**: Maximizes vector SIMD throughput across RNNoise GRU and audio DSP routines without risking floating-point state corruption.
 
-### 3.3. Native In-Place OCB2-AES Cryptographic Engine
+### 3.2. Native In-Place OCB2-AES Cryptographic Engine
 - **Target**: [`CryptState.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) and native JNI
 - **Change**:
   - Migrate OCB2-AES encryption and decryption into native C++ (e.g. leveraging ARMv8 Cryptographic Extensions `arm_neon.h` / OpenSSL AES-NI).

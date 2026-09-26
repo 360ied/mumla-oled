@@ -8,7 +8,7 @@ An in-depth empirical and architectural investigation into the electrical power 
 2. [Hardware Architecture & Energy Consumption Fundamentals](#2-hardware-architecture--energy-consumption-fundamentals)
 3. [Detailed Audit of Power Defects & Bottlenecks](#3-detailed-audit-of-power-defects--bottlenecks)
 4. [OLED Display Power Consumption Analysis](#4-oled-display-power-consumption-analysis)
-5. [Remediation Roadmap](remediation-plan.md)
+5. [Remediation Roadmap](remediation-plan.md) & [Wakelock Remediation Plan](wakelock-remediation.md)
 6. [Conclusion](#6-conclusion)
 
 ---
@@ -147,6 +147,12 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 > [!NOTE]
 > **Sidenote & Trade-off Analysis (Android Vitals & Aggressive OEM Background Killers)**:
 > While releasing `PARTIAL_WAKE_LOCK` exposes stationary devices to Android Deep Doze socket restrictions if battery optimization exemptions are not granted, holding an indefinite partial wakelock 24/7 is heavily penalized by Google Play's **Android Vitals** ("Bad behavior: excessive wake locks" threshold: > 1 hour cumulative background wakelock). Furthermore, aggressive OEM power managers (such as Samsung Device Care, Xiaomi MIUI/HyperOS, and Huawei EMUI) actively kill background processes that hold continuous partial wakelocks without user interaction. Thus, holding the wakelock permanently is not a benign safety measure—it frequently causes silent process termination on non-stock Android devices.
+
+> [!IMPORTANT]
+> **Decoupled Architectural Specification**:
+> Due to the complex interplay between Linux kernel suspend-to-RAM, Android Deep Doze alarm throttling, upstream Murmur 30s TCP timeouts, and OEM task-killing behavior, the remediation for the permanent wakelock has been decoupled from the general roadmap into its own dedicated engineering plan:
+>
+> 👉 **[Wakelock & Deep Doze Remediation Plan](wakelock-remediation.md)**
 
 ---
 
@@ -472,9 +478,11 @@ To address these inefficiencies systematically without compromising audio qualit
    - **Adaptive Keepalive Pinging**: Synchronized UDP/TCP keepalives bounded to 8.0–10.0s with an initial 30s 5s bootstrap; empty server `CryptSetup` nonce resync compliance already verified. *(Resolved)*
 
 3. **[Phase 3: Deep Architectural Modernization](remediation-plan.md#phase-3-deep-architectural-modernization)**:
-   - **Adaptive Wakelock Pulsing & Android Deep Doze Reality**: Release continuous `PARTIAL_WAKE_LOCK` during background standby on battery-optimization exempt devices.
    - **Compiler Vectorization Tuning**: Enable `-O3 -fno-math-errno -fvectorize` while strictly avoiding `-ffast-math` / `-ffinite-math-only` to preserve `celt_isnan` validation in RNNoise.
    - **Native In-Place OCB2-AES Cryptographic Engine**: Eliminate Java heap GC allocation churn by moving packet crypto to native C++ SIMD routines.
+
+4. **[Decoupled Dedicated Track: Partial Wakelock & Deep Doze](wakelock-remediation.md)**:
+   - **Adaptive Wakelock Pulsing, Kernel Suspend & Android Deep Doze Reality**: Decoupled from Phase 3 due to its massive architectural lift. Addresses the permanent `PARTIAL_WAKE_LOCK` via battery optimization exemption gating, audio-scoped active locks, pulsed exact alarm keepalives, and incoming socket wakeup bridges.
 
 ---
 
