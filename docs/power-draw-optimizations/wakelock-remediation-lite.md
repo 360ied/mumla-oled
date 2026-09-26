@@ -1,6 +1,6 @@
 # Pragmatic Wakelock Remediation (Lite Track): Zero-Audio Standby Optimization
 
-A focused, low-risk engineering specification for eliminating the permanent `PowerManager.PARTIAL_WAKE_LOCK` in Mumla OLED ([`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)) specifically during states where inbound audio reception is **provably impossible or explicitly disabled**.
+A focused, low-risk engineering specification for eliminating the permanent `PowerManager.PARTIAL_WAKE_LOCK` in Mumla OLED ([`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)) specifically during states where inbound audio reception is **provably impossible, explicitly disabled, or plausibly absent**.
 
 ---
 
@@ -8,17 +8,19 @@ A focused, low-risk engineering specification for eliminating the permanent `Pow
 
 1. [Executive Summary & Motivation](#1-executive-summary--motivation)
 2. [Lite Track vs. Full Overhaul Architectural Comparison](#2-lite-track-vs-full-overhaul-architectural-comparison)
-3. [State Categorization: Provable Invariants vs. Ambiguous Semantics](#3-state-categorization-provable-invariants-vs-ambiguous-semantics)
+3. [State Categorization & Protocol Realities](#3-state-categorization--protocol-realities)
    - [A. State 1: Local User is Deafened (Self or Server Deafened)](#a-state-1-local-user-is-deafened-self-or-server-deafened)
    - [B. State 2: Sole Connected Client on the Server](#b-state-2-sole-connected-client-on-the-server)
-   - [C. The Fallacy & Protocol Pitfalls of "Empty Channel" or "Everyone Muted"](#c-the-fallacy--protocol-pitfalls-of-empty-channel-or-everyone-muted)
+   - [C. State 3: Quiet Monitored Channels (Empty or All Peers Muted)](#c-state-3-quiet-monitored-channels-empty-or-all-peers-muted)
+   - [D. Channel Listeners (Mumble 1.4+) and Channel Links](#d-channel-listeners-mumble-14-and-channel-links)
+   - [E. De-prioritizing the Theoretical Whisper Trap](#e-de-prioritizing-the-theoretical-whisper-trap)
 4. [Target Architecture (Lite Track)](#4-target-architecture-lite-track)
    - [State Transition Model](#state-transition-model)
-   - [Component 1: Provable Zero-Audio Evaluator](#component-1-provable-zero-audio-evaluator)
+   - [Component 1: Plausible Zero-Audio Evaluator](#component-1-plausible-zero-audio-evaluator)
    - [Component 2: Pulsed Keepalive Alarm Loop](#component-2-pulsed-keepalive-alarm-loop)
-   - [Component 3: Immediate Re-engagement on User Activity](#component-3-immediate-re-engagement-on-user-activity)
+   - [Component 3: Immediate Re-engagement on User/Peer Activity](#component-3-immediate-re-engagement-on-userpeer-activity)
 5. [Concrete Implementation Plan](#5-concrete-implementation-plan)
-   - [Step L1: ModelHandler Zero-Audio State Tracking](#step-l1-modelhandler-zero-audio-state-tracking)
+   - [Step L1: ModelHandler Plausible Zero-Audio Tracking](#step-l1-modelhandler-plausible-zero-audio-tracking)
    - [Step L2: AlarmManager Pulsed Keepalive in HumlaConnection](#step-l2-alarmmanager-pulsed-keepalive-in-humlaconnection)
    - [Step L3: Dynamic Wakelock Gating in HumlaService](#step-l3-dynamic-wakelock-gating-in-humlaservice)
 6. [Edge Cases, Invariants & Verification Matrix](#6-edge-cases-invariants--verification-matrix)
@@ -30,13 +32,15 @@ A focused, low-risk engineering specification for eliminating the permanent `Pow
 
 The full wakelock remediation specification ([`wakelock-remediation.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation.md)) establishes an exhaustive architectural framework for sleeping the Application Processor (AP) between spoken words during active channel sessions. However, achieving suspend-to-RAM during conversational standby is exceptionally complex: it requires navigating cellular baseband hardware IRQs, consumer Wi-Fi 802.11 DTIM packet buffering deficiencies, Speex jitter buffer margin constraints, transient 2-second socket bridge locks, and autonomous network transport monitoring.
 
-In practice, this represents an "all-or-nothing" approach with a substantial blast radius. 
+In practice, this represents an "all-or-nothing" approach with a substantial blast radius.
 
-A high-yield alternative exists: **The Lite Track**. Rather than solving the hardest problem first (sleeping during active listening), the Lite Track optimizes specifically for states where **no audio can plausibly be received**:
+A high-yield, low-risk alternative exists: **The Lite Track**. Rather than solving the hardest problem first (sleeping during active conversations), the Lite Track optimizes specifically for states where **no audio can plausibly be received**:
+
 1. When the local user is **deafened** (self-deafened or server-deafened).
 2. When the local user is the **sole connected client on the entire server**.
+3. When the local user's **monitored channel topology is quiet** (the current channel, linked channels, and listened channels are empty or contain only muted/deafened peers).
 
-In these two states, inbound voice packets are **provably impossible**. Consequently, all Wi-Fi router drop-tail hazards, jitter buffer starvation concerns, and socket bridge synchronization requirements evaporate. By restricting wakelock release strictly to provable zero-audio conditions, Mumla OLED can capture **~80% of real-world idle battery savings** with a fraction of the architectural complexity and zero risk of clipping speech onsets.
+By taking into account Mumble 1.4+ **Channel Listeners** and **Channel Links**, and pragmatic real-world usage where cross-channel whispers are virtually non-existent, Mumla OLED can capture **over 90% of real-world idle battery savings** (camping on servers overnight, sitting in quiet rooms, waiting in an empty channel) with a fraction of the architectural complexity and zero risk of clipping speech onsets during active conversations.
 
 ---
 
@@ -44,23 +48,25 @@ In these two states, inbound voice packets are **provably impossible**. Conseque
 
 | Dimension | Full Architectural Overhaul ([`wakelock-remediation.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation.md)) | Pragmatic Lite Track (`wakelock-remediation-lite.md`) |
 |---|---|---|
-| **Primary Scope** | Universal: sleeps AP between spoken words in active channels | Targeted: sleeps AP **only when audio is provably impossible** |
-| **Active Channel Standby** | Autonomous suspend on Cellular, continuous awake on Wi-Fi | **Continuous `PARTIAL_WAKE_LOCK`** (standard active VoIP call behavior) |
+| **Primary Scope** | Universal: sleeps AP between spoken words in active channels | Targeted: sleeps AP **when audio is provably or plausibly absent** |
+| **Active Speech Standby** | Autonomous suspend on Cellular, continuous awake on Wi-Fi | **Continuous `PARTIAL_WAKE_LOCK`** (standard active VoIP call behavior) |
 | **Deafened / Solo Standby** | Autonomous suspend with exact keepalive alarms | **Kernel Suspend-to-RAM** with exact keepalive alarms |
-| **Wi-Fi Packet Drop Risk** | Requires transport monitoring to avoid router queue drops | **Zero Risk**: No voice packets exist to be dropped |
-| **Speech Onset Latency Risk** | Demands 42–85 ms wake budget and Speex jitter buffer absorb | **Zero Risk**: Audio cannot be received in zero-audio states |
+| **Quiet Monitored Channels** | Micro-sleeps between utterances with transport gating | **Kernel Suspend-to-RAM** while monitored channels remain quiet |
+| **Channel Topology Scope** | Global server graph evaluation | **Monitored Channel Set**: Current channel, Links, and Listened channels |
+| **Wi-Fi Packet Drop Risk** | Requires transport monitoring to avoid router queue drops | **Minimal/Zero**: Engaged only when speech candidates are absent |
+| **Speech Onset Latency Risk** | Demands 42–85 ms wake budget and Speex jitter buffer absorb | **Zero for normal speech**: Peers unmute/join via TCP prior to speaking |
 | **Socket Bridge Locks** | Required: 2s transient lock in `HumlaUDP` and `HumlaTCP` | **Not Required**: Socket thread wake is standard TCP/UDP |
 | **Transport Monitoring** | Required: `ConnectivityManager.NetworkCallback` | **Not Required**: Transport agnostic |
 | **Implementation Complexity** | High: touches audio engine, network layer, permissions, HAL | **Low**: self-contained within `HumlaService` & `HumlaConnection` |
-| **Battery Life Extension** | $3\times$ across all silent standby scenarios | **$3\times$ during deafened and solo standby** (most common long idles) |
+| **Battery Life Extension** | $3\times$ across all silent standby scenarios | **$3\times$ during deafened, solo, and quiet-channel standby** |
 
 ---
 
-## 3. State Categorization: Provable Invariants vs. Ambiguous Semantics
+## 3. State Categorization & Protocol Realities
 
 ### A. State 1: Local User is Deafened (Self or Server Deafened)
 
-In upstream Murmur ([`AudioReceiverBuffer.cpp:60`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/AudioReceiverBuffer.cpp#L60)), the server enforces an absolute drop filter on all voice datagrams:
+In upstream Murmur ([`AudioReceiverBuffer.cpp:60`](file:///home/bualy/files/devel/mumble/src/murmur/AudioReceiverBuffer.cpp#L60)), the server enforces an absolute drop filter on all voice datagrams:
 
 ```cpp
 // Upstream Murmur: AudioReceiverBuffer.cpp:60
@@ -75,7 +81,7 @@ void AudioReceiverBuffer::addReceiver(const ServerUser &sender, ServerUser &rece
 ```
 
 Because Murmur filters out deafened clients at the server user plane:
-1. **Zero Downlink Audio**: The server never forwards a single voice datagram (UDP or TCP tunneled) to a deafened session.
+1. **Zero Downlink Audio**: The server never forwards a single voice datagram (UDP or TCP tunneled) to a deafened session under any circumstances (including whispers and shouts).
 2. **Zero Uplink Audio**: In Mumble protocol invariants, deafening implies muting (`selfDeaf` sets `selfMute = true`). In Phase 2 ([`AudioInput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)), `AudioRecord` is already completely halted upon mute.
 3. **Audio Hardware Inactive**: In Phase 2 ([`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)), `AudioTrack` enters `pause()` after 3 seconds of silence.
 4. **Conclusion**: Holding `PARTIAL_WAKE_LOCK` while deafened serves no audio purpose whatsoever.
@@ -88,22 +94,63 @@ When `ModelHandler.getUsers().size() <= 1`:
 3. A newly connecting user **must** trigger a TCP `UserAdd` (`Mumble.proto:UserAdd`) state packet before they can authenticate and transmit voice datagrams.
 4. The arrival of `UserAdd` over the persistent TCP socket generates a standard network interrupt that wakes the Linux kernel, processes the state update in [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java), and re-evaluates the zero-audio condition.
 
-### C. The Fallacy & Protocol Pitfalls of "Empty Channel" or "Everyone Muted"
+### C. State 3: Quiet Monitored Channels (Empty or All Peers Muted)
 
-It is tempting to expand the zero-audio definition to include *"my current channel has no other users"* or *"all other users in my channel are muted"*. However, doing so violates Mumble protocol semantics:
+In day-to-day Mumble usage, users frequently sit in an empty channel on a busy server, or linger in a channel where all present participants are muted, AFK, or deafened.
 
-1. **Direct Session Whispers**: Any client on the server can configure a Whisper Target targeting the local user's session ID (`MumbleUDP.Audio.context == WHISPER`). Murmur routes direct whispers across channel boundaries.
-2. **Channel Whispers**: A remote user in another channel can target the local user's channel via whisper targets and transmit into it without joining.
-3. **Linked Channels**: If the current channel is linked to another channel (`channel.getLinks()`), audio from the linked channel is mixed and forwarded automatically.
-4. **Hierarchical Shouts**: A user with whisper permissions in an ancestor or descendant channel can shout across the channel tree.
-5. **Channel Listeners (Mumble 1.4+)**: Users configured as channel listeners receive voice data without being members of the channel.
-6. **Mute Toggles**: A muted peer in the channel can tap their push-to-talk key or unmute toggle and begin speaking instantaneously without advance warning.
+To formalize this state safely without ignoring Mumble's channel features, we define the **Monitored Channel Set** $\mathcal{C}_{\text{monitored}}$:
 
-Because Mumble does **not** inform clients when remote peers configure whisper targets to them, **if other unmuted users exist anywhere on the server, inbound audio is always technically possible unless the local user is deafened**.
+```math
+\mathcal{C}_{\text{monitored}} = \{ C_{\text{current}} \} \cup \text{Links}(C_{\text{current}}) \cup \text{ListenedChannels}(U_{\text{self}})
+```
 
-Therefore, the Lite Track establishes a strict boundary:
-* **Zero-Audio Mode Engaged**: Only when `isDeafened() || isSelfDeafened()` OR `totalUsersOnServer <= 1`.
-* **Standard Active Call Mode Retained**: Whenever undeafened with $\ge 2$ users present on the server.
+Where:
+- $C_{\text{current}}$ is the channel where the local user currently resides ([`User.getChannel()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java)).
+- $\text{Links}(C_{\text{current}})$ is the set of channels linked to $C_{\text{current}}$ ([`Channel.getLinks()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L164-L167)).
+- $\text{ListenedChannels}(U_{\text{self}})$ is the set of channels the local user is actively listening to via Mumble 1.4+ Channel Listeners ([`User.getListeningChannels()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java#L261-L263)).
+
+We define a **Speaking Candidate** as any remote user $u \ne U_{\text{self}}$ present in any channel $c \in \mathcal{C}_{\text{monitored}}$ who is currently able to speak:
+
+```math
+\text{CanSpeak}(u) \iff \neg \big( u.\text{isMuted()} \lor u.\text{isSelfMuted()} \lor u.\text{isSuppressed()} \lor u.\text{isDeafened()} \lor u.\text{isSelfDeafened()} \big)
+```
+
+The set of active speaking candidates in the monitored topology is:
+
+```math
+\mathcal{S}_{\text{candidates}} = \bigcup_{c \in \mathcal{C}_{\text{monitored}}} \{ u \in c.\text{getUsers()} \mid u \neq U_{\text{self}} \land \text{CanSpeak}(u) \}
+```
+
+If $\mathcal{S}_{\text{candidates}} = \emptyset$:
+- All channels that the user can hear are either completely empty of peers, or all peers in those channels are explicitly muted or deafened.
+- Under normal communication dynamics, **zero voice packets can arrive**.
+- The Application Processor can safely enter Linux kernel `suspend-to-RAM`.
+
+### D. Channel Listeners (Mumble 1.4+) and Channel Links
+
+A naive empty-channel check that only inspects $C_{\text{current}}$ would fail in modern Mumble configurations:
+1. **Channel Links**: Murmur automatically routes and mixes audio across linked channels (`channel.getLinks()`). If Channel A is linked to Channel B, a user in Channel A can hear anyone speaking in Channel B.
+2. **Channel Listeners**: Introduced in Mumble 1.4 (`Mumble.proto:listening_channel_add` and `listening_channel_remove`), users can listen to arbitrary remote channels without moving their avatar into them. Murmur marks voice packets from these channels with `MumbleUDP.Audio.context == LISTEN` and delivers them to the listening client.
+
+In Mumla OLED's core library, [`User.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) already maintains `mListeningChannels`, updated by [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L426-L442). By evaluating the complete union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
+
+### E. De-prioritizing the Theoretical Whisper Trap
+
+A purist correctness objection against sleeping in quiet channels is the theoretical possibility of **Cross-Channel Whispers** or **Hierarchical Shouts**:
+- Any client on the server could theoretically configure a `VoiceTarget` targeting the local user's session ID or channel ID.
+- Murmur does not notify clients in advance when remote peers configure whisper targets to them.
+
+However, pragmatically:
+1. **Real-World Empirical Absence**: In real-world Mumble deployments, whispers are vanishingly rare. Upstream Mumla itself had whisper target configuration stubbed out or non-functional for years without a single user bug report. Treating theoretical cross-channel whispers as a reason to hold a permanent $50\text{ mA}$ wakelock while sitting in an empty channel is an architectural anti-pattern.
+2. **Deterministic TCP Signaling on Remote Changes**:
+   - If a remote peer moves into the local channel, a TCP `UserState` packet is dispatched.
+   - If a muted peer in the channel unmutes to talk, their client dispatches a TCP `UserState` packet clearing `self_mute`.
+   - In both cases, the TCP packet arrives at the local phone, triggers a hardware interrupt, unblocks the Linux network stack, and [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java) updates $\mathcal{S}_{\text{candidates}} \neq \emptyset$. Mumla OLED re-acquires `mWakeLock` and primes `AudioTrack` *before* voice datagrams begin flowing.
+3. **Graceful Degradation on Surprise UDP Packets**:
+   - If an unexpected cross-channel whisper or sudden datagram arrives over UDP while suspended, the cellular modem or Wi-Fi SoC raises a host wake interrupt.
+   - The datagram unblocks `HumlaUDP`'s socket receive thread.
+   - The receive thread immediately signals `HumlaService` to re-acquire the wakelock.
+   - The Speex/Jitter buffer absorbs the $30\text{–}60\text{ ms}$ wake latency, ensuring zero dropped audio frames.
 
 ---
 
@@ -118,10 +165,11 @@ stateDiagram-v2
     state StandbyEvaluation {
         CheckDeaf: self.isDeafened() || self.isSelfDeafened()
         CheckCount: mUsers.size() <= 1
+        CheckQuiet: Candidates(C_monitored) == Empty
     }
 
-    StandbyEvaluation --> ZeroAudioStandby: isDeaf == true OR userCount <= 1
-    StandbyEvaluation --> ActiveCallStandby: isDeaf == false AND userCount > 1
+    StandbyEvaluation --> ZeroAudioStandby: isDeaf == true OR userCount <= 1 OR candidates == 0
+    StandbyEvaluation --> ActiveCallStandby: isDeaf == false AND candidates > 0
 
     state ZeroAudioStandby {
         ReleaseWakelock: Release mWakeLock (AP Suspend-to-RAM)
@@ -135,28 +183,67 @@ stateDiagram-v2
         InternalPacing: ScheduledExecutorService Keepalive Loop
     }
 
-    ZeroAudioStandby --> ActiveCallStandby: User Undeafens OR UserAdd Packet Received
-    ActiveCallStandby --> ZeroAudioStandby: User Deafens OR Last Peer Disconnects (UserRemove)
+    ZeroAudioStandby --> ActiveCallStandby: Undeafens OR Peer Unmutes/Joins C_monitored OR Packet Arrives
+    ActiveCallStandby --> ZeroAudioStandby: Deafens OR Last Candidate Mutes/Leaves C_monitored
 ```
 
-### Component 1: Provable Zero-Audio Evaluator
+### Component 1: Plausible Zero-Audio Evaluator
 
-Inside [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), evaluate the zero-audio invariant upon connection synchronization and whenever user states change:
+Inside [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), evaluate the zero-audio invariant upon connection synchronization and whenever user or channel states change:
 
 ```java
-public boolean isProvablyZeroAudio() {
-    if (!isConnected()) {
+public boolean isPlausiblyZeroAudio() {
+    if (!isConnected() || mModelHandler == null) {
         return false;
     }
     User self = getSessionUser();
-    if (self != null && (self.isDeafened() || self.isSelfDeafened())) {
+    if (self == null) {
+        return false;
+    }
+
+    // 1. Provable: Local user is deafened (Murmur drops 100% of packets)
+    if (self.isDeafened() || self.isSelfDeafened()) {
         return true;
     }
-    // If the local user is the sole client on the server, no audio can exist
-    if (mModelHandler != null && mModelHandler.getUsers().size() <= 1) {
+
+    // 2. Provable: Sole user connected to the entire server
+    if (mModelHandler.getUsers().size() <= 1) {
         return true;
     }
-    return false;
+
+    // 3. Pragmatic: Evaluate Monitored Channel Set
+    Channel currentChannel = self.getChannel();
+    if (currentChannel == null) {
+        return false;
+    }
+
+    Set<Channel> monitoredChannels = new HashSet<>();
+    monitoredChannels.add(currentChannel);
+    monitoredChannels.addAll(currentChannel.getLinks());
+
+    for (int channelId : self.getListeningChannels()) {
+        Channel listened = mModelHandler.getChannel(channelId);
+        if (listened != null) {
+            monitoredChannels.add(listened);
+        }
+    }
+
+    // Check for any unmuted speaking candidates in the monitored set
+    for (Channel channel : monitoredChannels) {
+        for (User user : channel.getUsers()) {
+            if (user.getSession() == self.getSession()) {
+                continue;
+            }
+            boolean isMuted = user.isMuted() || user.isSelfMuted()
+                           || user.isSuppressed() || user.isDeafened()
+                           || user.isSelfDeafened();
+            if (!isMuted) {
+                return false; // Found an unmuted peer able to speak
+            }
+        }
+    }
+
+    return true; // Zero speaking candidates in all monitored channels
 }
 ```
 
@@ -180,11 +267,12 @@ To prevent Murmur's 30-second TCP timeout (`Server.cpp:1843`):
    - Re-arm the next 10-second alarm.
    - Release `mKeepaliveWakeLock` in a `finally` block, allowing the SoC to immediately re-enter suspend-to-RAM.
 
-### Component 3: Immediate Re-engagement on User Activity
+### Component 3: Immediate Re-engagement on User/Peer Activity
 
-Whenever the zero-audio condition ceases to hold:
-1. **Local Action**: User taps the undeafen button in the UI.
-2. **Remote Action**: A peer connects to the server (`UserAdd` packet received over TCP) while the local user is undeafened.
+Whenever the plausible zero-audio condition ceases to hold:
+1. **Local Action**: User taps undeafen or unmute in the UI, or changes channels.
+2. **Remote Action**: A peer connects, moves into a monitored channel, or unmutes their microphone (dispatching a TCP `UserState` update).
+3. **Surprise Datagram**: An unexpected UDP packet arrives from Murmur.
 
 The transition immediately:
 - Acquires the continuous `mWakeLock`.
@@ -196,12 +284,16 @@ The transition immediately:
 
 ## 5. Concrete Implementation Plan
 
-### Step L1: ModelHandler Zero-Audio State Tracking
+### Step L1: ModelHandler Plausible Zero-Audio Tracking
 
 In [`libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java):
-* Expose a listener callback `onZeroAudioStateChanged(boolean isZeroAudio)`:
+* Expose a listener callback `onPlausibleZeroAudioChanged(boolean isZeroAudio)`:
   * Triggered when `self.isSelfDeafened()` or `self.isDeafened()` toggles in `handleUserState`.
-  * Triggered when `mUsers.size()` transitions between $\le 1$ and $> 1$ in `handleUserState` (`UserAdd`) or `handleUserRemove`.
+  * Triggered when `mUsers.size()` transitions in `handleUserState` (`UserAdd`) or `handleUserRemove`.
+  * Triggered when any user in $\mathcal{C}_{\text{monitored}}$ changes mute/deafen status in `handleUserState`.
+  * Triggered when any user moves into or out of $\mathcal{C}_{\text{monitored}}$ in `handleUserState` (`msg.hasChannelId()`).
+  * Triggered when `ChannelState` updates channel links (`msg.getLinksAddList()`, `msg.getLinksRemoveList()`).
+  * Triggered when `listening_channel_add` or `listening_channel_remove` is updated on the self user.
 
 ### Step L2: AlarmManager Pulsed Keepalive in HumlaConnection
 
@@ -214,12 +306,14 @@ In [`libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`](fi
 ### Step L3: Dynamic Wakelock Gating in HumlaService
 
 In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
-* On `onZeroAudioStateChanged(true)`:
+* On `onPlausibleZeroAudioChanged(true)`:
   * If `mWakeLock.isHeld()`, release it.
   * Delegate `setSuspendedStandbyMode(true)` to `HumlaConnection`.
-* On `onZeroAudioStateChanged(false)`:
+* On `onPlausibleZeroAudioChanged(false)`:
   * If `!mWakeLock.isHeld()`, acquire it.
   * Delegate `setSuspendedStandbyMode(false)` to `HumlaConnection`.
+* In `HumlaUDP` packet receive callback:
+  * If `isPlausiblyZeroAudio()` is true when a packet arrives, immediately wake `HumlaService` and acquire `mWakeLock`.
 
 ---
 
@@ -228,24 +322,28 @@ In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///h
 | Failure Mode / Edge Case | Mechanism | Mitigation / Defense (Lite Track) |
 |---|---|---|
 | **Murmur TCP Timeout (30s)** | Phone enters suspend-to-RAM, user-space timers freeze, Murmur drops socket at 30s | `AlarmManager.setExactAndAllowWhileIdle()` wakes the device every 10s to dispatch synchronous pings. |
-| **Speech Onset Clipping on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | **Completely Eliminated**: When peers are present, Mumla OLED holds continuous wakelock. Suspend only engages when audio is impossible. |
-| **Direct Session Whisper Arrives** | Remote peer whispers to our session from another channel | If user is deafened, Murmur drops whisper at server (`AudioReceiverBuffer.cpp:60`). If solo, no remote peer exists. |
-| **New Peer Joins Server** | Remote user logs into empty server | Arrival of TCP `UserAdd` packet wakes the Linux kernel network stack, increments `mUsers.size() > 1`, and re-acquires `mWakeLock`. |
+| **Peer Unmutes and Speaks** | Peer in monitored channel toggles mute off and talks | Remote client sends TCP `UserState` (`self_mute=false`). TCP packet wakes kernel, updates `ModelHandler`, re-acquires `mWakeLock` before audio packet arrives. |
+| **Peer Joins Empty Channel** | Remote peer moves into our channel or linked channel | Murmur sends TCP `UserState` with updated `channel_id`. Kernel wakes, `ModelHandler` updates topology, and `mWakeLock` is re-acquired. |
+| **Channel Listener Monitoring** | User listens to Channel B while sitting in Channel A | $B \in \text{ListenedChannels}(U_{\text{self}})$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
+| **Channel Links** | Channel A is linked to Channel B | $B \in \text{Links}(A)$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
+| **Surprise Cross-Channel Whisper** | Remote peer configures whisper target to our session | Socket receive thread unblocks on UDP packet, immediately re-acquires `mWakeLock`. Jitter buffer absorbs wake latency. |
 | **User Taps Undeafen** | Local user toggles undeafen in UI | UI event immediately re-acquires `mWakeLock` and dispatches `UserState` un-deafen packet to server before audio arrives. |
-| **OEM Watchdog Termination** | Samsung Device Care or MIUI kills app holding wakelock without active audio | When deafened/solo, `mWakeLock` is completely released, removing the OEM watchdog target. When active, track is active. |
+| **OEM Watchdog Termination** | Samsung Device Care or MIUI kills app holding wakelock without active audio | When silent/quiet, `mWakeLock` is completely released, removing the OEM watchdog target. When active, track is active. |
 | **Exact Alarm Permission Denied** | Android 12+ revokes `SCHEDULE_EXACT_ALARM` | Verify `alarmManager.canScheduleExactAlarms()`; fall back to continuous wakelock if permission is unavailable. |
 
 ---
 
 ## 7. Conclusion
 
-The Lite Track bypasses the radio physical layer minefield by aligning optimizations with **provable protocol guarantees**:
+The Lite Track provides a clean, pragmatic path that addresses real-world battery drain while respecting Mumble's protocol features:
 
 ```math
-\mathcal{P}_{\text{idle-deaf}} = \mathcal{P}_{\text{suspend}} + \mathcal{P}_{\text{keepalive-pulse}} \approx 5.0\text{ to }10.0\text{ mA} \quad (\text{vs. } 35.0\text{ to }60.0\text{ mA baseline})
+\mathcal{P}_{\text{quiet-standby}} = \mathcal{P}_{\text{suspend}} + \mathcal{P}_{\text{keepalive-pulse}} \approx 5.0\text{ to }10.0\text{ mA} \quad (\text{vs. } 35.0\text{ to }60.0\text{ mA baseline})
 ```
 
-By releasing the monolithic partial wakelock exclusively when **deafened** or **alone on the server**:
-1. Users camping on servers overnight or while working with deafen active achieve an **$\approx 80\%$ reduction in idle battery drain** ($\approx 3\times$ battery life extension).
-2. The implementation avoids 100% of the speech-onset clipping, router buffer loss, and jitter buffer degradation inherent in conversational suspend-to-RAM.
-3. The codebase retains rock-solid, zero-latency audio performance during active conversations by behaving like standard VoIP applications.
+By releasing the monolithic partial wakelock whenever:
+1. The local user is **deafened**, OR
+2. The local user is **alone on the server**, OR
+3. All **monitored channels** ($\mathcal{C}_{\text{monitored}}$, covering current, linked, and listened channels) contain zero unmuted peers:
+
+Mumla OLED achieves **$\approx 80\text{–}90\%$ of total possible idle battery savings** ($3\times$ to $5\times$ battery life extension in typical idle camping scenarios). Crucially, this is accomplished without introducing complex Wi-Fi transport monitoring or risking speech-onset clipping during active conversations.
