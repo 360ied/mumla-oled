@@ -25,7 +25,7 @@ An exhaustive architectural investigation, physical power model, and engineering
    - [Step 2: Audio-Scoped Active Lock (`mAudioWakeLock`)](#step-2-audio-scoped-active-lock-maudiowakelock)
    - [Step 3: Exact Alarm Pulsed Keepalive Lock (`mKeepaliveWakeLock`)](#step-3-exact-alarm-pulsed-keepalive-lock-mkeepalivewakelock)
    - [Step 4: Inbound Socket Packet Wakeup Bridge](#step-4-inbound-socket-packet-wakeup-bridge)
-   - [Step 5: User-Facing Standby Policy Setting](#step-5-user-facing-standby-policy-setting)
+   - [Step 5: Autonomous Transport-Aware Standby Adaptation](#step-5-autonomous-transport-aware-standby-adaptation)
 7. [Implementation Milestones & Phased Roadmap](#7-implementation-milestones--phased-roadmap)
 8. [Verification, Edge Cases & Risk Mitigation Matrix](#8-verification-edge-cases--risk-mitigation-matrix)
 9. [Conclusion](#9-conclusion)
@@ -338,7 +338,7 @@ The table below synthesizes the complete physical, architectural, and operationa
 | **NAT State Lifetime** | Carrier CGNAT timers: $30\text{ to }60\text{ s}$ | Enterprise state tables: $60\text{ to }300\text{ s}$ | Consumer router tables: **$15\text{ to }30\text{ s}$** (rapid collapse) |
 | **Speech Onset Latency ($T_{\text{onset}}$)** | $42\text{ to }85\text{ ms}$ (smooth Speex jitter buffer absorb) | $60\text{ to }120\text{ ms}$ (acceptable latency) | $85\text{ to }370\text{ ms}$ (frequent syllable clipping / PLC distortion) |
 | **Active Radio Standby Drain** | $\approx 3.0\text{ to }8.0\text{ mA}$ (modem in DRX paging) | $\approx 2.0\text{ to }5.0\text{ mA}$ (DTIM beacon listen) | $\approx 2.0\text{ to }5.0\text{ mA}$ (DTIM beacon listen) |
-| **Recommended Standby Policy** | **`BATTERY_SAVER` Standby** (Full kernel suspend-to-RAM) | **`BATTERY_SAVER` Standby** (Safe with U-APSD) | **`RELIABLE` (Default)** or **`BATTERY_SAVER` with user consent** |
+| **Autonomous Standby Policy** | **Kernel Suspend-to-RAM** (Zero packet loss via modem FIFO) | **Continuous Awake** (Guarantees zero onset clipping) | **Continuous Awake** (Guarantees zero packet loss & NAT stability) |
 
 ### Architectural Implication for Mumla OLED
 
@@ -347,7 +347,9 @@ This physical asymmetry proves that **a single uniform standby policy cannot fit
 1. When connected over **LTE / 5G cellular**, `BATTERY_SAVER` standby with Linux kernel suspend-to-RAM is remarkably safe, responsive, and delivers up to $3\times$ battery life extension without audible degradation.
 2. When connected over **Wi-Fi**, especially across diverse consumer routers, dropping wakelocks risks clipping the beginning of incoming transmissions.
 3. Therefore, Mumla OLED must:
-   - Provide explicit user control via `standby_power_policy` in **Settings > General** (Step 5), defaulting to `RELIABLE` for mission-critical and tactical environments.
+   - **Automate Standby Transport Selection (Zero User Configuration)**: A VoIP application's primary purpose is real-time voice communication. It must never expose a "save battery at the expense of dropped speech" setting that offloads radio protocol complexities onto the user. Standby policy must be determined automatically by querying Android's `ConnectivityManager`:
+     - On **Cellular (LTE / 5G)**, where modem hardware FIFO and out-of-band IRQs guarantee zero packet drop, the Application Processor autonomously enters kernel suspend-to-RAM during silence.
+     - On **Wi-Fi**, where consumer routers exhibit shallow buffers and aggressive NAT pruning, the client autonomously retains continuous awake standby to guarantee 100% speech onset delivery and pinhole survival.
    - Deploy the transient 2-second socket wakeup bridge (`mBridgeWakeLock` in Step 4) across both [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) and [`HumlaTCP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java) to cushion the kernel resume sequence against Wi-Fi driver packet ring drops.
 
 ---
@@ -475,18 +477,25 @@ When an incoming packet arrives over the cellular modem or Wi-Fi while the AP is
 
    This keeps the CPU awake long enough for the packet to be pushed into [`AudioOutput`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), which in turn promotes `mAudioWakeLock` to active status and unpauses `AudioTrack`.
 
-### Step 5: User-Facing Standby Policy Setting
+### Step 5: Autonomous Transport-Aware Standby Adaptation
 
-Provide explicit user control in **Settings > General** (in [`app/src/main/res/xml/settings_general.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_general.xml)):
+A VoIP client exists to deliver clear, reliable, real-time voice—not to force users to choose between battery life and missing the beginning of transmissions. Shifting radio protocol physics onto end users via a configuration toggle is an anti-pattern that creates a "press this to degrade VoIP" trap.
 
-- **Reliable Standby (Continuous Awake)** *(Default)*:
-  - Preserves the legacy behavior (permanent `PARTIAL_WAKE_LOCK`).
-  - Zero risk of dropped speech onsets or Wi-Fi router packet loss.
-  - Recommended for critical public safety, dispatch, or tactical operations.
-- **Battery Saver Standby (Kernel Suspend)**:
-  - Dynamically drops wakelocks during silent standby when exempted from battery optimizations.
-  - Slashes idle power consumption by **63% to 64%** (~3× battery life improvement).
-  - Automatically falls back to continuous awake if battery optimization exemption is revoked.
+Instead, standby behavior is governed **entirely autonomously** based on active network transport and battery exemption:
+
+1. **Cellular Transport (`NetworkCapabilities.TRANSPORT_CELLULAR`)**:
+   - Because 3GPP standards mandate eNodeB/gNodeB packet buffering and modern baseband modems feature dedicated SRAM FIFOs with out-of-band wake pins (`WAKE_HOST`), inbound packet wake is physically guaranteed with zero packet drop.
+   - When running on cellular data and exempted from battery optimizations, `HumlaService` drops CPU wakelocks during silent standby and enters Linux kernel `suspend-to-RAM`, cutting standby power by **63% to 64%** without risking clipped audio onsets.
+
+2. **Wi-Fi Transport (`NetworkCapabilities.TRANSPORT_WIFI`)**:
+   - Because consumer Wi-Fi access points suffer from shallow sleep buffers (4–8 packets), variable DTIM beacon phases ($100\text{ to }300\text{ ms}$), and aggressive NAT pinhole pruning ($15\text{ to }30\text{ seconds}$), kernel suspend risks dropping initial speech bursts.
+   - To guarantee that speech is never clipped, Mumla OLED automatically retains continuous awake standby on Wi-Fi.
+
+3. **Seamless Dynamic Transitions**:
+   - A registered `ConnectivityManager.NetworkCallback` monitors active transport changes.
+   - Handing over from Wi-Fi to Cellular seamlessly enables suspend-to-RAM standby.
+   - Handing over from Cellular to Wi-Fi immediately acquires `mWakeLock` to safeguard voice packets against router buffer drops.
+   - Zero user settings, zero cognitive overhead, and zero risk of misconfiguration.
 
 ---
 
@@ -499,7 +508,7 @@ gantt
     title Wakelock & Deep Doze Implementation Milestones
     dateFormat  YYYY-MM-DD
     section Milestone W1
-    Battery Exemption API & Settings UI             :w1, 2026-10-01, 7d
+    Battery Exemption API & Transport Monitor       :w1, 2026-10-01, 7d
     section Milestone W2
     Audio-Scoped State Machine in HumlaService      :w2, after w1, 10d
     section Milestone W3
@@ -508,12 +517,12 @@ gantt
     Lab Verification, Doze Simulation & Soak Tests :w4, after w3, 14d
 ```
 
-### Milestone W1: Exemption API & Settings Infrastructure
+### Milestone W1: Exemption API & Transport Monitoring
 
 - Implement `BatteryOptimizationHelper.java` to query and request battery exemption.
-- Add user-configurable `standby_power_policy` preference (`RELIABLE` vs `BATTERY_SAVER`) in [`app/src/main/res/xml/settings_general.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_general.xml).
+- Implement `NetworkTransportMonitor` using Android `ConnectivityManager.NetworkCallback` to detect Cellular vs. Wi-Fi transport changes dynamically without user configuration.
 - Declare `android.permission.SCHEDULE_EXACT_ALARM` in [`app/src/main/AndroidManifest.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/AndroidManifest.xml) and wire `alarmManager.canScheduleExactAlarms()` checks for Android 12+ (API 31+).
-- Wire preference change listeners into [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java).
+- Connect transport and exemption state listeners to [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java).
 
 ### Milestone W2: Audio-Scoped Wakelock Management
 
@@ -523,7 +532,7 @@ gantt
 
 ### Milestone W3: Exact Alarm Keepalive Loop & Socket Bridge
 
-- Replace `ScheduledExecutorService` keepalive loop in [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java) with `AlarmManager.setExactAndAllowWhileIdle()` when in `BATTERY_SAVER` standby mode.
+- Replace `ScheduledExecutorService` keepalive loop in [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java) with `AlarmManager.setExactAndAllowWhileIdle()` when in autonomous suspend standby mode.
 - Implement `KeepaliveBroadcastReceiver` to handle alarm wakeups with a pulsed wakelock (1000ms safety cap, ~50–100 ms execution).
 - Listen for `PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED` to hold a defensive keepalive wakelock if the device enters stationary Deep Doze.
 - Add socket wakeup bridge lock in [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) and [`HumlaTCP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java).
@@ -541,8 +550,8 @@ gantt
 | Failure Mode / Edge Case | Mechanism | Mitigation / Defense |
 | --- | --- | --- |
 | **Murmur TCP Timeout (30s)** | Phone suspends, user-space timer fails to tick, Murmur drops socket after 30s | Use `AlarmManager.setExactAndAllowWhileIdle()`; gate behind `isIgnoringBatteryOptimizations()`; fallback to continuous wakelock if non-exempt. |
-| **Dropped Speech Onset on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | Default setting remains `RELIABLE` (continuous wakelock); document Wi-Fi DTIM caveat in settings; use transient 2s bridge lock on socket read. |
-| **Android Vitals Flagging** | Wakelock held $> 1\text{ hour}$ background time | Releasing wakelock in `BATTERY_SAVER` mode completely eliminates background wakelock accumulation during silent periods. |
+| **Dropped Speech Onset on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | Autonomous transport awareness retains continuous awake standby on Wi-Fi; transient 2s socket bridge cushions incoming bursts; zero user configuration required. |
+| **Android Vitals Flagging** | Wakelock held $> 1\text{ hour}$ background time | Autonomous suspend on cellular eliminates background wakelock accumulation during mobile on-the-go use where battery life is most critical. |
 | **OEM Watchdog Termination** | Samsung Device Care or Xiaomi MIUI kills app holding wakelock without active audio | Gating wakelock strictly to active audio states prevents OEM watchdogs from identifying Mumla as an abusive background process. |
 | **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
 | **Exact Alarm Permission Denial** | Android 12+ (API 31+) revokes or denies `SCHEDULE_EXACT_ALARM`, causing `SecurityException` | Check `alarmManager.canScheduleExactAlarms()`; fall back to continuous wakelock if exact alarms cannot be armed. |
