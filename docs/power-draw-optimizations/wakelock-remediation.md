@@ -50,7 +50,9 @@ Because this remediation represents the **single largest engineering lift** acro
 ## 2. Current Implementation Defect & Physical Hardware Footprint
 
 ### Source Location
+
 [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401):
+
 ```java
 // HumlaService.java:396-401
 Log.v(TAG, "Connected");
@@ -63,13 +65,17 @@ if (mWakeLock != null) {
 ```
 
 ### The Defect
+
 Upon receiving `ServerSync` from the server, `HumlaService` acquires an untimed, indefinite `PowerManager.PARTIAL_WAKE_LOCK`.
-- Reference counting is disabled (`mWakeLock.setReferenceCounted(false)` at line 264).
+
+- Reference counting is disabled (`mWakeLock.setReferenceCounted(false)` at [`HumlaService.java#L264`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L264)).
 - The lock remains held continuously until the connection is fully torn down in `disconnect()` or `onDestroy()`.
 - The lock is never dropped during hours of silent connected standby, screen-off periods, or when the client is completely muted and deafened.
 
 ### Physical Hardware Footprint
+
 On mobile Application Processors (SoCs) such as Qualcomm Snapdragon, Google Tensor, and MediaTek Dimensity:
+
 - Holding a `PARTIAL_WAKE_LOCK` permanently prevents the Linux kernel power management framework from executing `suspend-to-RAM` (`echo mem > /sys/power/state`).
 - CPU core clusters are prevented from falling below C1/C2 states. Clock trees, high-speed memory buses (LPDDR4X/LPDDR5), and internal power rails remain energized.
 - Even when all threads are blocked on locks (`wait()`), the Linux kernel scheduler continuously wakes CPU cores to service system tick interrupts (100–250 Hz).
@@ -100,27 +106,31 @@ flowchart TD
 ```
 
 When no Android wakelocks are active, the Linux kernel autosuspend subsystem suspends all user-space threads. Crucially:
+
 - `ScheduledExecutorService` (used by [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java) for keepalives) relies on POSIX `timerfd` or `epoll_wait`.
 - While `CLOCK_BOOTTIME` or `CLOCK_MONOTONIC` tracks suspended time in the kernel, **user-space timerfd timeouts do not wake the Application Processor from suspend-to-RAM**.
 - Consequently, when the AP suspends, the keepalive loop **stops ticking entirely**.
 
 ### B. Upstream Murmur TCP Timeout Mechanics (`Server.cpp:1843`)
 
-In upstream Murmur (`../mumble/src/murmur/Server.cpp:1843`), the client timeout check is evaluated strictly against the TCP connection's activity timestamp (`u->activityTime()`):
+In upstream Murmur ([`Server.cpp:1843`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Server.cpp#L1843-L1847)), the client timeout check is evaluated strictly against the TCP connection's activity timestamp (`u->activityTime()`):
+
 ```cpp
 if (u->activityTime() > (iTimeout * 1000)) {
     log(u, "Timeout");
     qlClose.append(u);
 }
 ```
+
 - **Timeout Value**: Default `iTimeout` is **30 seconds** (configurable down to 15–20 seconds).
 - **TCP Exclusivity**: Murmur resets `activityTime()` **only when receiving TCP messages** (`Server::message`). UDP pings do not reset TCP `activityTime()`.
-- **Periodic Murmur Tick**: Murmur checks client timeouts every **15.5 seconds** (`qtTimeout->start(15500)` at `Server.cpp:283`).
+- **Periodic Murmur Tick**: Murmur checks client timeouts every **15.5 seconds** ([`qtTimeout->start(15500)`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Server.cpp#L283) at [`Server.cpp:283`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Server.cpp#L283)).
 - **Failure Consequence**: If the client AP suspends for $\ge 30\text{ seconds}$ without sending a TCP ping, the server forcefully terminates the connection with `"Timeout"`.
 
 ### C. Android Deep Doze & Alarm Throttling Limits
 
 Starting in Android 6.0 (Marshmallow, API 23), Android introduces **Doze Mode**:
+
 - When the screen is off, the device is stationary (accelerometer idle), and running on battery, Android enters **Deep Doze**.
 - In Deep Doze:
   1. Network access is completely blocked for all non-whitelisted apps.
@@ -130,10 +140,11 @@ Starting in Android 6.0 (Marshmallow, API 23), Android introduces **Doze Mode**:
 ### D. The Deadlock Formulation
 
 ```math
-T_{\text{doze\_alarm}} \approx 9\text{--}15\text{ minutes} \gg T_{\text{murmur\_timeout}} = 30\text{ seconds}
+T_{\text{doze\_alarm}} \approx 9\text{ to }15\text{ minutes} \gg T_{\text{murmur\_timeout}} = 30\text{ seconds}
 ```
 
 This mathematical inequality constitutes the core platform deadlock:
+
 - Murmur drops the connection after **30 seconds** of silence.
 - Android Deep Doze only permits background CPU wakeups every **540 to 900 seconds**.
 - Therefore, on a standard non-whitelisted Android device, **a VoIP client cannot sustain an active TCP Mumble session in Deep Doze without battery optimization exemption**.
@@ -193,7 +204,7 @@ flowchart TD
 
 1. **Cellular Modem Subsystem (Autonomous Baseband)**:
    - Modern LTE/5G baseband modems (e.g., Qualcomm Snapdragon X65/X70/X75, Samsung Exynos Modem, MediaTek M80) are fully autonomous secondary computers. They operate on isolated power rails and execute their own real-time operating systems (RTOS) independently of the Application Processor (AP).
-   - The modem interfaces with the AP across high-speed PCIe (with Active State Power Management ASPM L1/L1ss) or HS-UART/SPMI, coupled with a dedicated, out-of-band physical GPIO interrupt line (typically labeled `AP_WAKEUP` or `WAKE_HOST`).
+   - The modem interfaces with the AP across high-speed PCIe (with Active State Power Management (ASPM L1/L1ss)) or HS-UART/SPMI, coupled with a dedicated, out-of-band physical GPIO interrupt line (typically labeled `AP_WAKEUP` or `WAKE_HOST`).
    - When the host AP enters Linux kernel `suspend-to-RAM` (`echo mem > /sys/power/state`), the modem stays fully active in low-power cellular listening mode.
    - When an incoming IP datagram arrives over the cellular air interface, the modem's internal DSP buffers the packet in hardware SRAM/DRAM FIFO queues and pulls the `WAKE_HOST` pin low. This triggers a dedicated hardware interrupt on the AP's Power Management Integrated Circuit (PMIC) or SoC interrupt controller, waking the kernel within $15\text{ to }25\text{ ms}$ with **zero packet loss**.
 
@@ -209,6 +220,7 @@ flowchart TD
 The stark contrast in wake reliability stems directly from the underlying radio protocol specifications:
 
 #### 1. 3GPP Cellular Discontinuous Reception (C-DRX & I-DRX)
+
 - In LTE (3GPP TS 36.321) and 5G NR (3GPP TS 38.321), power conservation is governed by **Discontinuous Reception (DRX)**:
   - **Connected-Mode DRX (C-DRX)**: While an active radio link is maintained, the UE (User Equipment) cycles between an *On Duration* ($1\text{ to }10\text{ ms}$) and an *Off Duration* ($40\text{ to }640\text{ ms}$). During the on-duration, the modem monitors the Physical Downlink Control Channel (PDCCH) for downlink scheduling allocations.
   - **Idle-Mode DRX (I-DRX)**: When the radio connection is released to save energy, the modem sleeps for extended paging cycles ($1.28\text{ to }2.56\text{ s}$).
@@ -216,6 +228,7 @@ The stark contrast in wake reliability stems directly from the underlying radio 
 - Once the scheduling grant is signaled on PDCCH, the cellular base station transmits the buffered IP datagrams over the Physical Downlink Shared Channel (PDSCH). The terminal baseband accepts the transport block into its DMA ring and asserts the host AP wake interrupt. The cellular radio protocol guarantees that packet drop due to mobile device sleep is essentially non-existent ($< 0.1\%$).
 
 #### 2. IEEE 802.11 Power Save Mode (PSM) & DTIM
+
 - In IEEE 802.11, a sleeping station (STA) enters **Power Save Mode (PSM)** by asserting the `Power Management (PM)` bit ($PM=1$) in the MAC frame control header:
   - The STA shuts down its RF transceiver and only powers up to listen for periodic **Beacon frames** transmitted by the Access Point (AP), typically every $100\text{ TU} \approx 102.4\text{ ms}$.
   - The Access Point broadcasts a **Delivery Traffic Indication Message (DTIM)** at integer multiples of the beacon interval (e.g., DTIM period = 1, 2, or 3, yielding wake intervals of $102.4\text{ ms}$ to $307.2\text{ ms}$).
@@ -258,6 +271,7 @@ T_{\text{onset\_latency}} = T_{\text{medium\_delay}} + T_{\text{hw\_irq}} + T_{\
 ```
 
 Where:
+
 - $T_{\text{medium\_delay}}$: Air-interface scheduling delay (PDCCH allocation on cellular vs. DTIM beacon wait + PS-Poll on Wi-Fi).
 - $T_{\text{hw\_irq}}$: Bus transaction time to transfer packet data (PCIe L1 exit / DMA transfer).
 - $T_{\text{kernel\_resume}}$: Linux kernel autosuspend wakeup latency (power-rail gating, clock tree restabilization).
@@ -267,7 +281,7 @@ Where:
 #### Latency Budget Comparison
 
 | Pipeline Stage | Cellular Modem (LTE / 5G) | Consumer Wi-Fi (802.11ac / ax) |
-|---|---|---|
+| --- | --- | --- |
 | Air Interface Latency ($T_{\text{medium\_delay}}$) | $10\text{ to }25\text{ ms}$ (C-DRX subframe grant) | $50\text{ to }300\text{ ms}$ (DTIM beacon phase delay) |
 | Bus Transfer & HW IRQ ($T_{\text{hw\_irq}}$) | $2\text{ to }5\text{ ms}$ (Dedicated PCIe PME pin) | $5\text{ to }15\text{ ms}$ (SDIO / PCIe shared IRQ) |
 | Kernel Resume ($T_{\text{kernel\_resume}}$) | $15\text{ to }25\text{ ms}$ (SoC wake from C2/retention) | $15\text{ to }25\text{ ms}$ (SoC wake from C2/retention) |
@@ -276,9 +290,10 @@ Where:
 | **Total Speech Onset Latency** | **$42\text{ to }85\text{ ms}$** | **$85\text{ to }370\text{ ms}$ (or packet loss)** |
 
 #### Impact on the Speex Jitter Buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c))
+
 - Mumla’s native audio engine relies on the Speex adaptive jitter buffer ([`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c)) configured with a target buffer margin (`buffer_margin` $\approx 40\text{ to }60\text{ ms}$).
-- **On Cellular**: The $42\text{--}85\text{ ms}$ total wake latency causes the first packet to arrive slightly late, but the jitter buffer's dynamic auto-adjustment (`jitter_buffer_update_delay`) easily absorbs the delay, resulting in crisp, unclipped speech playback.
-- **On Wi-Fi**: If the router delays the packet across a $200\text{ ms}$ DTIM window or drops the initial packet, the jitter buffer detects an unrecoverable gap. It invokes Packet Loss Concealment (PLC) extrapolation via `OpusVoiceDecoder.cpp`, synthesizing artificial comfort noise or robotic pitch-period repetitions. If multiple initial packets are dropped, **the first 1 to 2 spoken words are permanently muted**, destroying the user experience.
+- **On Cellular**: The $42\text{ to }85\text{ ms}$ total wake latency causes the first packet to arrive slightly late, but the jitter buffer's dynamic auto-adjustment ([`jitter_buffer_update_delay`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c#L748)) easily absorbs the delay, resulting in crisp, unclipped speech playback.
+- **On Wi-Fi**: If the router delays the packet across a $200\text{ ms}$ DTIM window or drops the initial packet, the jitter buffer detects an unrecoverable gap. It invokes Packet Loss Concealment (PLC) extrapolation via [`OpusVoiceDecoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceDecoder.cpp), synthesizing artificial comfort noise or robotic pitch-period repetitions. If multiple initial packets are dropped, **the first 1 to 2 spoken words are permanently muted**, destroying the user experience.
 
 ---
 
@@ -294,10 +309,12 @@ An exhaustive audit of the Android framework demonstrates that **`WifiLock` cann
 
 2. **Android 10+ (API 29) Screen-Off Deactivation**:
    - Starting in Android 10, the Android OS power manager enforces aggressive restrictions on `WifiLock`:
+
      ```java
      // Android Framework: WifiLockManager.java
      // High-perf and low-latency Wi-Fi locks are automatically disabled when the screen turns off!
      ```
+
    - Unless an application is exempted or actively streaming an audible foreground media session, the framework **automatically deactivates high-performance Wi-Fi locks as soon as the screen turns off**.
    - Consequently, when the phone enters silent standby with the screen off, any acquired `WifiLock` is ignored by the OS, and the Wi-Fi chip falls back to 802.11 PSM and DTIM listening regardless of developer intent.
 
@@ -312,19 +329,21 @@ An exhaustive audit of the Android framework demonstrates that **`WifiLock` cann
 The table below synthesizes the complete physical, architectural, and operational asymmetry between cellular networks and Wi-Fi environments:
 
 | Engineering Dimension | Cellular Modem (LTE / 5G NR) | Enterprise Wi-Fi (802.11ax / WMM-PS) | Consumer Wi-Fi (802.11ac / Home Router) |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Autonomous Hardware Subsystem** | Dedicated Baseband SoC + PMIC | Shared Wi-Fi MAC/PHY Chipset | Shared Wi-Fi MAC/PHY Chipset |
 | **Intersystem Host Wake Interface** | Dedicated out-of-band HW IRQ (`WAKE_HOST` pin / PCIe PME) | Shared SDIO 3.0 / PCIe in-band interrupt | Shared SDIO 3.0 / PCIe in-band interrupt |
-| **Power Save Protocol** | 3GPP Connected DRX (C-DRX, $40\text{--}640\text{ ms}$) | 802.11 WMM-PS / U-APSD with QoS queues | 802.11 Legacy PSM with DTIM ($102\text{--}307\text{ ms}$) |
+| **Power Save Protocol** | 3GPP Connected DRX (C-DRX, $40\text{ to }640\text{ ms}$) | 802.11 WMM-PS / U-APSD with QoS queues | 802.11 Legacy PSM with DTIM ($102.4\text{ to }307.2\text{ ms}$) |
 | **Network Infrastructure Buffering** | **Mandatory by 3GPP Standard**: eNodeB/gNodeB buffers all downlink SDUs | Deep router memory buffers with Voice QoS (`AC_VO`) queues | **Unreliable / Shallow**: 4–8 packet queues; frequent drop-tail discards |
-| **Inbound Wake Reliability** | **$> 99.9\%$**: Zero packet drop during AP sleep | **$\approx 90\text{--}95\%$**: Occasional beacon phase jitter | **$\approx 60\text{--}85\%$**: Severe packet loss on initial speech bursts |
+| **Inbound Wake Reliability** | **$> 99.9\%$**: Zero packet drop during AP sleep | **$\approx 90\%\text{ to }95\%$**: Occasional beacon phase jitter | **$\approx 60\%\text{ to }85\%$**: Severe packet loss on initial speech bursts |
 | **NAT State Lifetime** | Carrier CGNAT timers: $30\text{ to }60\text{ s}$ | Enterprise state tables: $60\text{ to }300\text{ s}$ | Consumer router tables: **$15\text{ to }30\text{ s}$** (rapid collapse) |
 | **Speech Onset Latency ($T_{\text{onset}}$)** | $42\text{ to }85\text{ ms}$ (smooth Speex jitter buffer absorb) | $60\text{ to }120\text{ ms}$ (acceptable latency) | $85\text{ to }370\text{ ms}$ (frequent syllable clipping / PLC distortion) |
 | **Active Radio Standby Drain** | $\approx 3.0\text{ to }8.0\text{ mA}$ (modem in DRX paging) | $\approx 2.0\text{ to }5.0\text{ mA}$ (DTIM beacon listen) | $\approx 2.0\text{ to }5.0\text{ mA}$ (DTIM beacon listen) |
 | **Recommended Standby Policy** | **`BATTERY_SAVER` Standby** (Full kernel suspend-to-RAM) | **`BATTERY_SAVER` Standby** (Safe with U-APSD) | **`RELIABLE` (Default)** or **`BATTERY_SAVER` with user consent** |
 
 ### Architectural Implication for Mumla OLED
+
 This physical asymmetry proves that **a single uniform standby policy cannot fit all network environments**:
+
 1. When connected over **LTE / 5G cellular**, `BATTERY_SAVER` standby with Linux kernel suspend-to-RAM is remarkably safe, responsive, and delivers up to $3\times$ battery life extension without audible degradation.
 2. When connected over **Wi-Fi**, especially across diverse consumer routers, dropping wakelocks risks clipping the beginning of incoming transmissions.
 3. Therefore, Mumla OLED must:
@@ -353,6 +372,9 @@ stateDiagram-v2
         HoldMonolithicLock: Hold Continuous PARTIAL_WAKE_LOCK
         PromptUser: Display In-App Exemption Recommendation
     }
+
+    NonExemptMode --> ExemptMode: Exemption Granted by User
+    ExemptMode --> NonExemptMode: Exemption Revoked by User / OS
 
     state ExemptMode {
         state ActiveAudio {
@@ -397,16 +419,19 @@ stateDiagram-v2
 ### Step 1: Battery Optimization Exemption Gating
 
 The app must never release its continuous wakelock unless battery optimization exemption is verified:
+
 ```java
 PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
 boolean isExempt = pm.isIgnoringBatteryOptimizations(context.getPackageName());
 ```
+
 - **If Not Exempt (`isExempt == false`)**: Fall back to holding `mWakeLock` continuously (preserving connection reliability) and display a non-intrusive banner in the UI inviting the user to grant exemption via `android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
 - **If Exempt (`isExempt == true`)**: Enable the adaptive standby sleep architecture. Android waives background network cutoffs and permits holding partial wakelocks during Doze for exempt apps. During active mobile and pocket screen-off standby, exact wakeup alarms dispatch keepalive bursts while allowing kernel suspend-to-RAM. If the device enters stationary Deep Doze (`PowerManager.isDeviceIdleMode() == true`), the exemption permits holding a defensive keepalive wakelock to prevent Murmur 30-second timeouts against AOSP's 15-minute alarm clamp.
 
 ### Step 2: Audio-Scoped Active Lock (`mAudioWakeLock`)
 
 Decouple audio processing from connection maintenance in [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
+
 1. **Acquisition Triggers**:
    - Push-To-Talk button pressed or VAD speech detected in [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp).
    - Incoming voice packet decoded or registered voice in [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`hasActiveVoices() == true`).
@@ -417,8 +442,10 @@ Decouple audio processing from connection maintenance in [`HumlaService.java`](f
 ### Step 3: Exact Alarm Pulsed Keepalive Lock (`mKeepaliveWakeLock`)
 
 When in silent standby with `mAudioWakeLock` released:
+
 - Declare `android.permission.SCHEDULE_EXACT_ALARM` in [`app/src/main/AndroidManifest.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/AndroidManifest.xml) (required on Android 12+, API 31+) and verify `alarmManager.canScheduleExactAlarms()` before arming exact alarms.
 - Replace `mPingExecutorService.schedule(...)` with an Android `AlarmManager` exact wakeup alarm:
+
   ```java
   alarmManager.setExactAndAllowWhileIdle(
       AlarmManager.ELAPSED_REALTIME_WAKEUP,
@@ -426,6 +453,7 @@ When in silent standby with `mAudioWakeLock` released:
       mKeepalivePendingIntent
   );
   ```
+
 - When the alarm triggers:
   1. Acquire a timed wakelock with a hard safety cap: `mKeepaliveWakeLock.acquire(1000)` (1000ms safety timeout cap; typical execution completes in 50–100 ms).
   2. Execute `mPingRunnable`: synchronously transmit the UDP Ping and TCP Ping via [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java).
@@ -435,13 +463,16 @@ When in silent standby with `mAudioWakeLock` released:
 ### Step 4: Inbound Socket Packet Wakeup Bridge
 
 When an incoming packet arrives over the cellular modem or Wi-Fi while the AP is suspended:
+
 1. The hardware interrupt wakes the Linux kernel network stack.
 2. Inside [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) and [`HumlaTCP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java), the socket reader thread unblocks from `select()` or `read()`.
 3. **The Race Condition**: If the CPU attempts to suspend before the audio pipeline starts rendering, the packet will be delayed.
 4. **The Bridge**: The socket reader immediately acquires a transient bridge wakelock:
+
    ```java
    mBridgeWakeLock.acquire(2000); // 2-second transient bridge
    ```
+
    This keeps the CPU awake long enough for the packet to be pushed into [`AudioOutput`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), which in turn promotes `mAudioWakeLock` to active status and unpauses `AudioTrack`.
 
 ### Step 5: User-Facing Standby Policy Setting
@@ -478,23 +509,27 @@ gantt
 ```
 
 ### Milestone W1: Exemption API & Settings Infrastructure
+
 - Implement `BatteryOptimizationHelper.java` to query and request battery exemption.
 - Add user-configurable `standby_power_policy` preference (`RELIABLE` vs `BATTERY_SAVER`) in [`app/src/main/res/xml/settings_general.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_general.xml).
 - Declare `android.permission.SCHEDULE_EXACT_ALARM` in [`app/src/main/AndroidManifest.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/AndroidManifest.xml) and wire `alarmManager.canScheduleExactAlarms()` checks for Android 12+ (API 31+).
-- Wire preference change listeners into `HumlaService`.
+- Wire preference change listeners into [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java).
 
 ### Milestone W2: Audio-Scoped Wakelock Management
-- Refactor `HumlaService.java` to support separate `mAudioWakeLock`, `mKeepaliveWakeLock`, and `mBridgeWakeLock` instances.
-- Connect `AudioInputEngine` talking callbacks and `AudioOutput` active voice state listeners to `HumlaService` to drive `mAudioWakeLock` acquisition and release.
+
+- Refactor [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) to support separate `mAudioWakeLock`, `mKeepaliveWakeLock`, and `mBridgeWakeLock` instances.
+- Connect [`AudioInputEngine`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h) talking callbacks and [`AudioOutput`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) active voice state listeners to `HumlaService` to drive `mAudioWakeLock` acquisition and release.
 - Integrate with Phase 2's route-aware standby pause: hold `mAudioWakeLock` while `AudioTrack` is playing, release when `AudioTrack.pause()` is called.
 
 ### Milestone W3: Exact Alarm Keepalive Loop & Socket Bridge
-- Replace `ScheduledExecutorService` keepalive loop in `HumlaConnection` with `AlarmManager.setExactAndAllowWhileIdle()` when in `BATTERY_SAVER` standby mode.
+
+- Replace `ScheduledExecutorService` keepalive loop in [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java) with `AlarmManager.setExactAndAllowWhileIdle()` when in `BATTERY_SAVER` standby mode.
 - Implement `KeepaliveBroadcastReceiver` to handle alarm wakeups with a pulsed wakelock (1000ms safety cap, ~50–100 ms execution).
 - Listen for `PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED` to hold a defensive keepalive wakelock if the device enters stationary Deep Doze.
-- Add socket wakeup bridge lock in `HumlaUDP` and `HumlaTCP`.
+- Add socket wakeup bridge lock in [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) and [`HumlaTCP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java).
 
 ### Milestone W4: Laboratory Verification & Field Testing
+
 - Execute automated ADB Deep Doze simulations (`dumpsys deviceidle force-idle`).
 - Conduct 8-hour connected standby drain tests comparing baseline vs. optimized.
 - Test incoming speech onset latency on cellular (LTE/5G) and Wi-Fi networks across multiple consumer routers.
@@ -504,7 +539,7 @@ gantt
 ## 8. Verification, Edge Cases & Risk Mitigation Matrix
 
 | Failure Mode / Edge Case | Mechanism | Mitigation / Defense |
-|---|---|---|
+| --- | --- | --- |
 | **Murmur TCP Timeout (30s)** | Phone suspends, user-space timer fails to tick, Murmur drops socket after 30s | Use `AlarmManager.setExactAndAllowWhileIdle()`; gate behind `isIgnoringBatteryOptimizations()`; fallback to continuous wakelock if non-exempt. |
 | **Dropped Speech Onset on Wi-Fi** | Consumer router prunes NAT state or drops UDP unicast packet sent to sleeping 802.11 STA | Default setting remains `RELIABLE` (continuous wakelock); document Wi-Fi DTIM caveat in settings; use transient 2s bridge lock on socket read. |
 | **Android Vitals Flagging** | Wakelock held $> 1\text{ hour}$ background time | Releasing wakelock in `BATTERY_SAVER` mode completely eliminates background wakelock accumulation during silent periods. |
