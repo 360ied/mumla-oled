@@ -163,7 +163,27 @@ Developers historically held `PARTIAL_WAKE_LOCK` 24/7 as an easy way to guarante
 2. **Aggressive OEM Task Killers (The "Don't Kill My App" Problem)**:
    - Modern OEM skins (Samsung Device Care / OneUI, Xiaomi MIUI / HyperOS, Huawei EMUI, BBK ColorOS / OxygenOS) implement proprietary background watchdogs.
    - When an OEM watchdog detects an app holding an active partial wakelock while the screen is off without media audio playing through `AudioTrack`, **the OS forcefully kills the process (`SIGKILL`)**.
-   - **The Paradox**: Holding the wakelock permanently to prevent server timeouts actually causes the app to be **killed by the Android OS**, resulting in silent disconnections for end users.
+
+### Historical Context: The 0.21.7 "Continuous Silence" Workaround
+
+It is crucial to emphasize that **the 0.21.7 implementation was not functionally broken**. In Mumla 0.21.7 and earlier, the application never suffered from OEM watchdog `SIGKILL` terminations during silent connected standby.
+
+Historically, [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) kept `AudioTrack` continuously in `PLAYSTATE_PLAYING`, constantly rendering digital silence (zero PCM) even when no participants were speaking on the server. Far from being a bug, this perpetual playback served as an effective (albeit brute-force) shield against aggressive OEM task killers:
+- Because the audio pipeline was actively playing sound through `AudioTrack`, OEM watchdogs classified Mumla as an active media playback service rather than an idle background abuser.
+- Consequently, the watchdog's kill condition (*"wakelock held without active `AudioTrack` playback"*) was never satisfied, and the process was spared from `SIGKILL`.
+- Background connection stability was fully maintained; silent disconnections did not occur.
+
+However, this stability was purchased at an extreme power cost:
+- Pumping continuous silence forced Android's `AudioFlinger` mixer thread to run 24/7.
+- The hardware audio DSP (e.g., Qualcomm Hexagon LPASS), external DAC, I2S/SoundWire inter-chip buses, and speaker/earpiece analog amplifiers remained fully energized, continuously burning **$15\text{ to }30\text{ mW}$** purely on digital silence—in addition to the **$35\text{ to }60\text{ mA}$** ($135\text{ to }231\text{ mW}$) burned by keeping the Application Processor out of kernel suspend-to-RAM.
+
+### The Modern Paradox Emerges with Subsystem Gating (Phase 2 / 0.21.9)
+
+The true paradox only emerged when addressing audio hardware power draw in **Phase 2** (Release 0.21.9, item 2.2):
+- To eliminate the $15\text{ to }30\text{ mW}$ wasted on silent playback, [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) introduced route-aware `AudioTrack` standby pausing (`mAudioTrack.pause()`) after 3 seconds (speaker/wired) or 15 seconds (Bluetooth) of consecutive silence.
+- Pausing `AudioTrack` successfully powers down the audio DSP and DAC, but it simultaneously **strips away the historical "silence shield"**.
+- If the permanent monolithic `PARTIAL_WAKE_LOCK` in [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401) is left active while `AudioTrack` is in `PLAYSTATE_PAUSED`, the application suddenly meets the exact criteria monitored by OEM watchdogs: an active partial wakelock held with the screen off and no audio playing through `AudioTrack`.
+- **The Paradox**: The historical codebase was not broken—it sustained stability by burning battery on silence. But optimizing audio hardware power draw without simultaneously modernizing the wakelock lifecycle creates a fatal conflict, causing OEM watchdogs to forcefully kill the process (`SIGKILL`). Power-gating `AudioTrack` therefore mandates decoupling and scoping the wakelock to active speech so that `mWakeLock` is released alongside `AudioTrack.pause()`.
 
 ---
 
