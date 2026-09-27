@@ -375,7 +375,7 @@ public class AudioOutput implements Runnable,
                             // (unless Bluetooth SCO is active, standby pause is inhibited, or standbyTimeout <= 0).
                             if (!scoActive && mStandbyPauseEnabled && standbyTimeout > 0) {
                                 long waitStart = SystemClock.elapsedRealtime();
-                                while (mRunning && !mHasIncomingAudio) {
+                                while (mRunning && !mHasIncomingAudio && mStandbyPauseEnabled && !isBluetoothScoActive()) {
                                     long elapsed = SystemClock.elapsedRealtime() - waitStart;
                                     long remaining = standbyTimeout - elapsed;
                                     if (remaining <= 0) {

@@ -189,11 +189,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 @Override
                 public void onTalkingStateChanged(final boolean talking) {
                     if (talking && mZeroAudioStandby) {
-                        exitZeroAudioStandby();
+                        if (mWakeLock != null && !mWakeLock.isHeld()) {
+                            mWakeLock.acquire();
+                        }
                     }
                     mHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            if (talking && mZeroAudioStandby) {
+                                exitZeroAudioStandby();
+                            }
                             try {
                                 // If the server session is inactive, ignore this message.
                                 // It's likely that this is leftover from a terminated connection.
