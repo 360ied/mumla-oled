@@ -19,9 +19,10 @@ An exhaustive architectural investigation and empirical analysis of the screen-o
    - [C. Screen State Asymmetry (Display Wakelock Coupling)](#c-screen-state-asymmetry-display-wakelock-coupling)
 5. [Secondary Pipeline Defect: Unflushed Conscrypt SSL Streams](#5-secondary-pipeline-defect-unflushed-conscrypt-ssl-streams)
 6. [The Core Hardware Paradox: OEM Watchdog SIGKILL (0.21.9) vs. Murmur Timeout (0.21.10)](#6-the-core-hardware-paradox-oem-watchdog-sigkill-0219-vs-murmur-timeout-02110)
-   - [A. The Impossible Triad: Comparative Invariant Matrix](#a-the-impossible-triad-comparative-invariant-matrix)
-   - [B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination](#b-deconstructing-the-0219-flaw-audio-gating-triggers-process-termination)
-   - [C. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout](#c-deconstructing-the-02110-flaw-wakelock-release-triggers-murmur-timeout)
+   - [A. The Ontological Gap: Mumble Protocol vs. Android Power Model](#a-the-ontological-gap-mumble-protocol-vs-android-power-model)
+   - [B. The Impossible Triad: Comparative Invariant Matrix](#b-the-impossible-triad-comparative-invariant-matrix)
+   - [C. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination](#c-deconstructing-the-0219-flaw-audio-gating-triggers-process-termination)
+   - [D. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout](#d-deconstructing-the-02110-flaw-wakelock-release-triggers-murmur-timeout)
 7. [Actionable Remediation: Complete Restoration of the 0.21.7 Baseline](#7-actionable-remediation-complete-restoration-of-the-0217-baseline)
 
 ---
@@ -276,7 +277,30 @@ if (mHandler != null) {
 
 The root challenge in Mumla OLED's power optimization initiative is governed by a fundamental hardware, operating system, and protocol trilemma:
 
-### A. The Impossible Triad: Comparative Invariant Matrix
+### A. The Ontological Gap: Mumble Protocol vs. Android Power Model
+
+At its root, this failure sequence is not merely an isolated implementation bug in alarm scheduling or audio gating; it is the physical manifestation of an **irreconcilable ontological gap** between the desktop-era assumptions of the upstream Mumble protocol and the power management architecture of modern Android:
+
+| Dimension | Upstream Mumble Protocol (Desktop / Continuous Compute) | Modern Android OS (Mobile / Ephemeral Suspend) |
+|---|---|---|
+| **Hardware Environment** | AC wall power, desktop workstation, wired Ethernet or unmetered Wi-Fi. | Finite $3.85\text{ V}$ lithium-ion battery, strict thermal and current budgets. |
+| **Execution Paradigm** | Continuous compute: the client process is assumed to run an uninterrupted, constantly ticking event loop. | Ephemeral compute: the Application Processor spends $\sim 99\%$ of its life in Linux kernel `suspend-to-RAM`. |
+| **Connection Liveness** | **Client-driven keepalive**: the client must proactively push packets to prove it is alive. | **Server-push notification**: devices sleep until the network baseband or APNs/FCM wakes them on incoming traffic. |
+| **Silence Semantics** | 30 seconds of client silence = dead socket $\implies$ Murmur forcefully closes the connection. | Sustained silence = normal idle state $\implies$ OS suppresses timers, batches radios, and deep-sleeps the CPU. |
+| **Background Legitimacy** | Any connected process is legitimate and expected to run background threads continuously. | Continuous `PARTIAL_WAKE_LOCK` without active audio is classified as rogue behavior and terminated with `SIGKILL`. |
+
+This philosophical divergence creates three concrete structural collisions:
+
+1. **Keepalive Cadence vs. While-Idle Throttling Floor**:
+   Murmur requires client TCP keepalives every $< 30$ seconds. Android's power architecture dictates that an unheld CPU must not wake from `suspend-to-RAM` more frequently than once every 60 seconds (`ALLOW_WHILE_IDLE_SHORT_TIME`, where $T_{\text{android-while-idle-min}} = 60\text{ s} > T_{\text{murmur-timeout}} = 30\text{ s}$), extending to 15 minutes during Deep Doze. Android provides **no platform mechanism** that permits an unheld Application Processor to wake up every 10 seconds while asleep on battery.
+2. **Directionality Inversion (Client-Initiated vs. Server-Push)**:
+   Modern mobile communication architectures (VoIP over WebRTC, Matrix, Apple PushKit) rely on server-push wakeups: the client sleeps silently until the server sends an inbound packet or push notification that asserts a hardware interrupt on the modem/AP. In contrast, Murmur **never initiates pings** and **never wakes clients**. The client is held hostage by the protocol: it must continuously burn battery keeping the Application Processor awake simply to remind Murmur that it has not died.
+3. **The VoIP Masquerade (The Silence Shield)**:
+   Because proprietary OEM watchdogs (Samsung Device Care, Xiaomi MIUI/HyperOS, Vivo PEM) inspect kernel wakelocks alongside `AudioFlinger` playback state, an app holding a wakelock without actively streaming audio frames to the HAL is classified as a battery abuser and murdered with `SIGKILL`. In Mumla OLED 0.21.7, the client survived only by **masquerading as an active media player**—rendering continuous digital silence through `AudioTrack`—to legitimize its CPU wakelock to the operating system.
+
+The moment Mumla OLED attempted to behave like an honest mobile citizen by power-gating either the audio sink or the CPU wakelock, this ontological mismatch triggered immediate failure:
+
+### B. The Impossible Triad: Comparative Invariant Matrix
 
 | Architecture Baseline | `PARTIAL_WAKE_LOCK` State | `AudioTrack` Playback State | Murmur TCP Keepalive (30s) | OEM Watchdog (`SIGKILL`) | Power Footprint | Real-World Operational Outcome |
 |---|---|---|---|---|---|---|
@@ -284,7 +308,7 @@ The root challenge in Mumla OLED's power optimization initiative is governed by 
 | **Mumla OLED 0.21.9 (Hardware Audio Gating)** | Held continuously (24/7) | `PLAYSTATE_PAUSED` (Standby pause after 3s/15s silence) | **Sustained** (In-memory loop pings Murmur every 5–10s) | **FATAL FAILURE (`SIGKILL`)**: Watchdog detects wakelock held without active audio | Moderate ($35\text{--}60\text{ mA}$ AP + $0\text{ mW}$ Audio DSP) | **Process Killed by OS**: Samsung Device Care, Xiaomi MIUI, and Vivo PEM kill app with `SIGKILL`. |
 | **Mumla OLED 0.21.10 (Zero-Audio Standby Lite)** | Released in Zero-Audio Standby | `PLAYSTATE_PAUSED` (Standby pause enabled) | **FATAL FAILURE (TIMEOUT)**: Alarms deferred 37s–104s; Murmur drops socket | **Immune** (No wakelock held while audio is paused) | Low ($5\text{--}10\text{ mA}$ AP theoretical + $0\text{ mW}$ Audio DSP) | **Connection Dropped**: Murmur detects 30s inactivity and terminates session (`EOFException`). |
 
-### B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination
+### C. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination
 
 In Release **0.21.9**, the audio pipeline introduced route-aware `AudioTrack` standby pausing ([`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)) after 3 seconds of silence (15 seconds on Bluetooth A2DP) to cut the $15\text{ to }30\text{ mW}$ wasted by `AudioFlinger` and the hardware audio DSP/DAC on digital silence.
 
@@ -296,7 +320,7 @@ However, 0.21.9 left the monolithic `PowerManager.PARTIAL_WAKE_LOCK` active in [
 
 Any naive recommendation to "simply hold `PARTIAL_WAKE_LOCK` while pausing `AudioTrack`" directly recreates the 0.21.9 defect and guarantees that the process will be murdered by OEM watchdogs within minutes of turning the screen off.
 
-### C. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout
+### D. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout
 
 To prevent the 0.21.9 `SIGKILL` termination, 0.21.10 implemented `wakelock-remediation-lite`: whenever `isPlausiblyZeroAudio() == true`, `HumlaService` released `mWakeLock` alongside `AudioTrack.pause()`, ensuring no wakelock was held while audio was paused.
 
