@@ -147,11 +147,11 @@ However, pragmatically:
    - If a remote peer moves into the local channel, a TCP `UserState` packet is dispatched.
    - If a muted peer in the channel unmutes to talk, their client dispatches a TCP `UserState` packet clearing `self_mute`.
    - In both cases, the TCP packet arrives at the local phone, triggers a hardware interrupt, unblocks the Linux network stack, and [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java) updates $\mathcal{S}_{\text{candidates}} \neq \emptyset$. Mumla OLED re-acquires `mWakeLock` and primes `AudioTrack` *before* voice datagrams begin flowing.
-3. **Graceful Degradation on Surprise UDP Packets**:
-   - If an unexpected cross-channel whisper or sudden datagram arrives over UDP while suspended, the cellular modem or Wi-Fi SoC raises a host wake interrupt.
-   - The datagram unblocks [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java)'s socket receive thread.
-   - The receive thread immediately signals [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) to re-acquire the wakelock.
-   - The Speex/Jitter buffer absorbs the $30\text{ to }60\text{ ms}$ wake latency, ensuring zero dropped audio frames.
+3. **Graceful Degradation on Surprise Voice Packets (UDP & TCP Tunneling)**:
+   - If an unexpected cross-channel whisper or sudden voice packet arrives while suspended (either via direct UDP or tunneled over TCP via `Mumble.UDPTunnel` when `forceTCP` or firewalls are active), the cellular modem or Wi-Fi SoC raises a host wake interrupt.
+   - The packet unblocks the socket receive thread in [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) or [`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java).
+   - In [`HumlaConnection.onUDPDataReceived(...)`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L745) (the shared entry point for both native UDP packets and TCP `UDPTunnel` frames), incoming voice datagrams immediately signal [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) to re-acquire `mWakeLock`.
+   - The Speex/Jitter buffer absorbs the $30\text{ to }60\text{ ms}$ wake latency, ensuring zero dropped audio frames regardless of whether transport is UDP or TCP tunneled.
 
 ---
 
@@ -303,7 +303,7 @@ To prevent Murmur's 30-second TCP timeout ([`Server.cpp:1843`](https://github.co
 Whenever the plausible zero-audio condition ceases to hold:
 1. **Local Action**: User taps undeafen or unmute in the UI, or changes channels.
 2. **Remote Action**: A peer connects, moves into a monitored channel, or unmutes their microphone (dispatching a TCP `UserState` update).
-3. **Surprise Datagram**: An unexpected UDP packet arrives from Murmur.
+3. **Surprise Voice Packet**: An unexpected voice packet arrives from Murmur—either directly over UDP or tunneled over TCP via `Mumble.UDPTunnel` (used when `forceTCP` is enabled or UDP is firewalled).
 
 The transition immediately:
 - Acquires the continuous `mWakeLock`.
@@ -349,8 +349,8 @@ In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](../../lib
   * If `!mWakeLock.isHeld()`, acquire it.
   * Disable audio standby pause in [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring continuous playback (`mAudioTrack.play()`) and engaging the 0.21.7 silence shield to protect the held wakelock from OEM watchdog termination.
   * Delegate `setSuspendedStandbyMode(false)` to `HumlaConnection`.
-* In [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) packet receive callback:
-  * If `isPlausiblyZeroAudio()` is true when a packet arrives, immediately wake [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), acquire `mWakeLock`, and disable audio standby pausing.
+* In [`HumlaConnection.onUDPDataReceived(...)`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L745) (shared audio entry point for both [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) packets and [`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java) `UDPTunnel` messages):
+  * If `isPlausiblyZeroAudio()` is true when an audio packet arrives, immediately wake [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), acquire `mWakeLock`, and disable audio standby pausing.
 
 ---
 
@@ -363,7 +363,7 @@ In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](../../lib
 | **Peer Joins Empty Channel** | Remote peer moves into our channel or linked channel | Murmur sends TCP `UserState` with updated `channel_id`. Kernel wakes, `ModelHandler` updates topology, and `mWakeLock` is re-acquired. |
 | **Channel Listener Monitoring** | User listens to Channel B while sitting in Channel A | $B \in \text{ListenedChannels}(U_{\text{self}})$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
 | **Channel Links** | Channel A is linked to Channel B | $B \in \text{Links}(A)$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
-| **Surprise Cross-Channel Whisper** | Remote peer configures whisper target to our session | Socket receive thread unblocks on UDP packet, immediately re-acquires `mWakeLock`. Jitter buffer absorbs wake latency. |
+| **Surprise Cross-Channel Whisper** | Remote peer configures whisper target to our session | Socket receive thread unblocks on incoming UDP or TCP-tunneled (`UDPTunnel`) packet in `HumlaConnection.onUDPDataReceived()`, immediately re-acquiring `mWakeLock`. Jitter buffer absorbs wake latency regardless of transport. |
 | **User Taps Undeafen** | Local user toggles undeafen in UI | UI event immediately re-acquires `mWakeLock` and dispatches `UserState` un-deafen packet to server before audio arrives. |
 | **OEM Watchdog Termination** | Samsung Device Care or MIUI kills app holding wakelock without active audio playback during conversational pauses | Dual gating: When in `ActiveCallStandby` (`isPlausiblyZeroAudio() == false`), `AudioTrack` standby pause is inhibited, maintaining `PLAYSTATE_PLAYING` (the 0.21.7 continuous silence workaround) so OEM watchdogs classify the app as active VoIP playback. When in `ZeroAudioStandby` (`isPlausiblyZeroAudio() == true`), `mWakeLock` is completely released before `AudioTrack.pause()` is permitted, eliminating the wakelock condition that triggers watchdogs. |
 | **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
