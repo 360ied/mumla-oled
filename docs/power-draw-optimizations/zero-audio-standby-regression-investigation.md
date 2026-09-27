@@ -22,9 +22,7 @@ An exhaustive architectural investigation and empirical analysis of the screen-o
    - [A. The Impossible Triad: Comparative Invariant Matrix](#a-the-impossible-triad-comparative-invariant-matrix)
    - [B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination](#b-deconstructing-the-0219-flaw-audio-gating-triggers-process-termination)
    - [C. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout](#c-deconstructing-the-02110-flaw-wakelock-release-triggers-murmur-timeout)
-7. [Actionable Remediation Paths](#7-actionable-remediation-paths)
-   - [Path B: Complete Restoration of the 0.21.7 Baseline (Recommended)](#path-b-complete-restoration-of-the-0217-baseline-recommended)
-   - [Path A: Screen-Aware Dynamic Silence Shield Coupling (Complex Alternative)](#path-a-screen-aware-dynamic-silence-shield-coupling-complex-alternative)
+7. [Actionable Remediation: Complete Restoration of the 0.21.7 Baseline](#7-actionable-remediation-complete-restoration-of-the-0217-baseline)
 
 ---
 
@@ -309,11 +307,9 @@ However, releasing `mWakeLock` collided with Android power management:
 
 ---
 
-## 7. Actionable Remediation Paths
+## 7. Actionable Remediation: Complete Restoration of the 0.21.7 Baseline
 
 A viable architecture must resolve both constraints simultaneously: it must maintain TCP keepalive pings every $< 30$ seconds to satisfy Murmur, while never holding a `PARTIAL_WAKE_LOCK` with `AudioTrack` paused while the screen is off to satisfy OEM watchdogs.
-
-### Path B: Complete Restoration of the 0.21.7 Baseline (Recommended)
 
 Restoring the proven, battle-tested 0.21.7 baseline provides absolute code simplicity, immediate regression elimination, and guaranteed operational certainty across all OEM devices:
 
@@ -321,29 +317,8 @@ Restoring the proven, battle-tested 0.21.7 baseline provides absolute code simpl
 2. **Restore Monolithic Wakelock**: Keep `PARTIAL_WAKE_LOCK` held continuously in `HumlaService` throughout the connection.
 3. **Restore Native In-Memory Keepalives**: Retain the standard `ScheduledExecutorService` keepalive loop in `HumlaConnection`.
 4. **Transport Hardening in `HumlaTCP.java`**: Add explicit `mDataOutput.flush()` to `HumlaTCP.sendMessage()` to guarantee TLS records leave user space immediately, and enable `setTcpNoDelay(true)` on `mTCPSocket`.
-5. **Architectural Rationale (Why Path B is Recommended)**:
-   - **Zero State-Machine Fragility**: Path B eliminates fragile runtime screen-state tracking (`ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF`), avoiding broadcast receiver lifecycle leaks, threading races during rapid display on/off cycles, and synchronization complexity between the display subsystem, audio sink, and network engine.
-   - **Negligible Return on Screen-On Audio Gating**: Path A attempts to power-gate the audio DSP/DAC ($15\text{ to }30\text{ mW}$) exclusively when the screen is ON. However, when the screen is illuminated, the OLED display panel and Application Processor already consume $300\text{ to }1000\text{ mW}$. Saving $\sim 20\text{ mW}$ only while the user is actively looking at their screen represents a negligible $\sim 2\text{--}5\%$ delta on active power draw, while introducing substantial technical debt and regression risk.
+5. **Architectural Rationale**:
+   - **Zero State-Machine Fragility**: Eliminates fragile runtime screen-state tracking (`ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF`), avoiding broadcast receiver lifecycle leaks, threading races during rapid display on/off cycles, and synchronization complexity between the display subsystem, audio sink, and network engine.
+   - **Negligible Return on Screen-On Audio Gating**: Attempting to power-gate the audio DSP/DAC ($15\text{ to }30\text{ mW}$) exclusively when the screen is ON yields negligible real-world benefit. When the screen is illuminated, the OLED display panel and Application Processor already consume $300\text{ to }1000\text{ mW}$. Saving $\sim 20\text{ mW}$ only while the user is actively looking at their screen represents a marginal $\sim 2\text{--}5\%$ delta on active power draw, while introducing substantial technical debt and regression risk.
    - **100% Proven Immunity**: Re-establishing the monolithic silence shield is provably immune to both OEM watchdog termination (`SIGKILL`) and Murmur 30s timeouts across all Android versions and manufacturer skins.
-
-### Path A: Screen-Aware Dynamic Silence Shield Coupling (Complex Alternative)
-
-This hybrid architecture attempts to reclaim $15\text{ to }30\text{ mW}$ of audio DSP/DAC power draw while the screen is on, leveraging the observation that OEM watchdogs only enforce their kill heuristic when the screen is **off**:
-
-1. **Screen-On Behavior (Foreground & Active Interaction)**:
-   - When the screen is ON (monitored via `ACTION_SCREEN_ON`), the Android display subsystem holds a display wakelock (`PowerManager.SCREEN_BRIGHT_WAKE_LOCK` or display C0 state).
-   - OEM watchdogs **never issue `SIGKILL` while the screen is on**.
-   - Therefore, `AudioOutput.setStandbyPauseEnabled(true)` can be permitted, allowing `AudioTrack.pause()` and power-gating the audio DSP/DAC ($15\text{ to }30\text{ mW}$ saved) while the user is actively using the phone.
-2. **Screen-Off Behavior (Background Connected Standby)**:
-   - When the screen turns OFF (monitored via `ACTION_SCREEN_OFF`):
-     - `HumlaService` must **strictly inhibit audio standby pause** (`AudioOutput.setStandbyPauseEnabled(false)`).
-     - `AudioTrack` enters `PLAYSTATE_PLAYING` rendering zero PCM digital silence (the proven 0.21.7 silence shield).
-     - `HumlaService` maintains `PARTIAL_WAKE_LOCK` and keeps `HumlaConnection`'s in-memory `ScheduledExecutorService` active.
-   - **Result**:
-     - OEM watchdogs inspect `AudioFlinger`, observe an active playback track, classify Mumla OLED as active VoIP media, and **refrain from issuing `SIGKILL`**.
-     - The in-memory keepalive loop continues ticking, dispatching TCP keepalive pings every 10–30 seconds, **preventing Murmur 30s timeouts**.
-3. **Transport Hardening in `HumlaTCP.java`**:
-   - Add explicit `mDataOutput.flush()` to `HumlaTCP.sendMessage()` to guarantee TLS records leave user space immediately.
-   - Enable `setTcpNoDelay(true)` on `mTCPSocket` to disable Nagle packet coalescing.
-4. **Drawbacks**: Adds a multi-component state machine, creates edge cases with display receiver registration and headset unplugs, and adds architectural maintenance burden for minor power savings achievable only while the display is active.
 
