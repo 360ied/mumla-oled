@@ -93,6 +93,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String ACTION_KEEPALIVE_ALARM = "se.lublin.humla.KEEPALIVE_ALARM";
     private static final long STANDBY_KEEPALIVE_INTERVAL_MS = 10000L;
     private static final long STANDBY_KEEPALIVE_WAKELOCK_TIMEOUT_MS = 1000L;
+    private static final long STANDBY_KEEPALIVE_TX_DRAIN_MS = 200L;
 
     /** A {@link Server} specifying the server to connect to. */
     public static final String EXTRAS_SERVER = "server";
@@ -328,7 +329,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                                         mKeepaliveWakeLock.release();
                                     }
                                 }
-                            }, 200);
+                            }, STANDBY_KEEPALIVE_TX_DRAIN_MS);
                         }
                     }
                 }
@@ -342,16 +343,15 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             registerReceiver(mKeepaliveReceiver, keepaliveFilter);
         }
 
-        mIdleModeReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(intent.getAction())) {
-                    updateStandbyState();
-                }
-            }
-        };
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            mIdleModeReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(intent.getAction())) {
+                        updateStandbyState();
+                    }
+                }
+            };
             IntentFilter idleFilter = new IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(mIdleModeReceiver, idleFilter, Context.RECEIVER_EXPORTED);

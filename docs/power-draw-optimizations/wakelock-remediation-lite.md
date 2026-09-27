@@ -89,7 +89,7 @@ Because Murmur filters out deafened clients at the server user plane:
 
 ### B. State 2: Sole Connected Client on the Server
 
-When [`ModelHandler.getUsers()`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L102-L104) reports `size() <= 1`:
+When [`ModelHandler.getUsers()`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L181-L183) reports `size() <= 1`:
 1. The local client is the only user logged into the Murmur instance.
 2. No other human or bot exists to generate voice frames, whispers, or shouts.
 3. A newly connecting user **must** trigger a TCP `UserState` (`Mumble.proto:UserState`) packet before they can authenticate and transmit voice datagrams.
@@ -107,7 +107,7 @@ To formalize this state safely without ignoring Mumble's channel features, we de
 
 Where:
 - $C_{\text{current}}$ is the channel where the local user currently resides ([`User.getChannel()`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L72)).
-- $\text{AllLinks}(c)$ is the reflexive transitive closure of channels linked to $c$ ([`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L173-L191)), matching upstream Mumble's `Channel::allLinks()` traversal.
+- $\text{AllLinks}(c)$ is the reflexive transitive closure of channels linked to $c$ ([`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L178-L195)), matching upstream Mumble's `Channel::allLinks()` traversal.
 - $\text{ListenedChannels}(U_{\text{self}})$ is the set of channels the local user is actively listening to via Mumble 1.4+ Channel Listeners ([`User.getListeningChannels()`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L261-L263)).
 
 We define a **Speaking Candidate** as any remote user $u \neq U_{\text{self}}$ present in any channel $c \in \mathcal{C}_{\text{monitored}}$ who is currently able to speak:
@@ -130,10 +130,10 @@ If $\mathcal{S}_{\text{candidates}} = \emptyset$:
 ### D. Channel Listeners (Mumble 1.4+) and Transitive Channel Links
 
 A naive empty-channel check that only inspects $C_{\text{current}}$ or immediate 1-hop links would fail in modern Mumble configurations:
-1. **Transitive Channel Links**: In upstream Murmur ([`src/Channel.cpp:210`](https://github.com/mumble-voip/mumble/blob/master/src/Channel.cpp#L210), [`src/murmur/Server.cpp:1222`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1222)), channel link topologies are transitive and cyclic (`Channel::allLinks()`). If Channel A is linked to Channel B, and Channel B is linked to Channel C, Murmur routes audio across all three channels. Inspecting only direct links via `getLinks()` would omit Channel C and incorrectly enter zero-audio standby while peers speak in C. Mumla OLED resolves this by implementing DFS transitive link resolution in [`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L173-L191).
+1. **Transitive Channel Links**: In upstream Murmur ([`src/Channel.cpp:210`](https://github.com/mumble-voip/mumble/blob/master/src/Channel.cpp#L210), [`src/murmur/Server.cpp:1222`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1222)), channel link topologies are transitive and cyclic (`Channel::allLinks()`). If Channel A is linked to Channel B, and Channel B is linked to Channel C, Murmur routes audio across all three channels. Inspecting only direct links via `getLinks()` would omit Channel C and incorrectly enter zero-audio standby while peers speak in C. Mumla OLED resolves this by implementing DFS transitive link resolution in [`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L178-L195).
 2. **Channel Listeners with Linked Topology**: Introduced in Mumble 1.4 (`listening_channel_add` and `listening_channel_remove` in `Mumble.proto:UserState`), users can listen to arbitrary remote channels without moving their avatar into them. Crucially, upstream Murmur ([`src/murmur/Server.cpp:1230`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1230)) delivers speech to listeners from any channel linked to the listened channel. Therefore, each listened channel must also be expanded via $\text{AllLinks}(l)$.
 
-In Mumla OLED's core library, [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) maintains `mListeningChannels`, updated by [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L442-L460). By evaluating the complete transitive union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
+In Mumla OLED's core library, [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) maintains `mListeningChannels`, updated by [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L521-L546). By evaluating the complete transitive union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
 
 ### E. De-prioritizing the Theoretical Whisper Trap
 
@@ -150,7 +150,7 @@ However, pragmatically:
 3. **Graceful Degradation on Surprise Voice Packets (UDP & TCP Tunneling)**:
    - If an unexpected cross-channel whisper or sudden voice packet arrives while suspended (either via direct UDP or tunneled over TCP via `Mumble.UDPTunnel` when `forceTCP` or firewalls are active), the cellular modem or Wi-Fi SoC raises a host wake interrupt.
    - The packet unblocks the socket receive thread in [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) or [`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java).
-   - In [`HumlaConnection.onUDPDataReceived(...)`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L745) (the shared entry point for both native UDP packets and TCP `UDPTunnel` frames), incoming voice datagrams immediately signal [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) to re-acquire `mWakeLock`.
+   - In [`HumlaConnection.onUDPDataReceived(...)`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L773) (the shared entry point for both native UDP packets and TCP `UDPTunnel` frames), incoming voice datagrams immediately signal [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) to re-acquire `mWakeLock`.
    - The Speex/Jitter buffer absorbs the $30\text{ to }60\text{ ms}$ wake latency, ensuring zero dropped audio frames regardless of whether transport is UDP or TCP tunneled.
 
 ---
@@ -194,7 +194,7 @@ A critical real-world constraint on modern Android devices is aggressive OEM bac
 
 In Mumla OLED 0.21.7 and earlier, the application was never killed by OEM watchdogs because [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) kept `AudioTrack` continuously in `PLAYSTATE_PLAYING`, constantly rendering digital silence. This perpetual playback functioned as an effective shield against OEM watchdogs.
 
-However, Phase 2 (Release 0.21.9) introduced route-aware `AudioTrack` standby pausing ([`AudioOutput.java#L398-L404`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L398-L404)) after 3 seconds of silence (15 seconds on Bluetooth A2DP). If `HumlaService` were to maintain a continuous `PARTIAL_WAKE_LOCK` during `ActiveCallStandby` while `AudioTrack` enters `pause()` during brief pauses in conversation, the application would immediately satisfy the OEM kill condition and be terminated with `SIGKILL`.
+However, Phase 2 (Release 0.21.9) introduced route-aware `AudioTrack` standby pausing ([`AudioOutput.java#L399-L405`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L399-L405)) after 3 seconds of silence (15 seconds on Bluetooth A2DP). If `HumlaService` were to maintain a continuous `PARTIAL_WAKE_LOCK` during `ActiveCallStandby` while `AudioTrack` enters `pause()` during brief pauses in conversation, the application would immediately satisfy the OEM kill condition and be terminated with `SIGKILL`.
 
 The Lite Track resolves this paradox through **Dual Gating**, coupling `isPlausiblyZeroAudio()` directly to both the wakelock and `AudioOutput`'s standby pause policy:
 
@@ -293,7 +293,7 @@ public boolean isPlausiblyZeroAudio() {
         return false;
     }
     AudioOutput output = getAudioOutput();
-    if (output != null && output.isBluetoothScoActive()) {
+    if (output != null && (output.isBluetoothScoActive() || output.hasActiveVoices())) {
         return false;
     }
     return mModelHandler.isPlausiblyZeroAudio();
@@ -302,7 +302,7 @@ public boolean isPlausiblyZeroAudio() {
 
 > [!NOTE]
 > **Bluetooth Routing Clarification (A2DP vs. SCO)**:
-> In Mumla OLED, standard Bluetooth headphones, earbuds, and car audio systems connect via **A2DP over ACL** (`AudioDeviceInfo.TYPE_BLUETOOTH_A2DP`) or LE Audio (`TYPE_BLE_HEADSET`), for which [`isBluetoothScoActive()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589-L602) returns `false`. These users are **not locked out** of zero-audio optimizations. After Phase 2's conservative 15-second silence grace period ([`STANDBY_TIMEOUT_A2DP_MS = 15000`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L618)), [`AudioTrack`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L401) enters `pause()` and the Application Processor safely enters kernel suspend-to-RAM while the Bluetooth SoC maintains link connectivity in low-power Sniff Mode. The `isBluetoothScoActive()` check serves exclusively as a defensive safeguard for rare carrier/telephony Synchronous Connection-Oriented voice calls.
+> In Mumla OLED, standard Bluetooth headphones, earbuds, and car audio systems connect via **A2DP over ACL** (`AudioDeviceInfo.TYPE_BLUETOOTH_A2DP`) or LE Audio (`TYPE_BLE_HEADSET`), for which [`isBluetoothScoActive()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L590-L603) returns `false`. These users are **not locked out** of zero-audio optimizations. After Phase 2's conservative 15-second silence grace period ([`STANDBY_TIMEOUT_A2DP_MS = 15000`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L62)), [`AudioTrack`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L402) enters `pause()` and the Application Processor safely enters kernel suspend-to-RAM while the Bluetooth SoC maintains link connectivity in low-power Sniff Mode. The `isBluetoothScoActive()` check serves exclusively as a defensive safeguard for rare carrier/telephony Synchronous Connection-Oriented voice calls.
 
 ### Component 2: Pulsed Keepalive Alarm Loop
 
@@ -389,7 +389,8 @@ In [`app/src/main/AndroidManifest.xml`](../../app/src/main/AndroidManifest.xml) 
 * Declare `android.permission.SCHEDULE_EXACT_ALARM`.
 
 In [`libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java):
-* Promote [`isBluetoothScoActive()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589) from package-private to `public` so [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) can query route state across packages.
+* Promote [`isBluetoothScoActive()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L590) from package-private to `public` so [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) can query route state across packages.
+* Expose `public boolean hasActiveVoices()` so standby gating verifies zero active mixing voices before sleeping.
 * Implement `public void setStandbyPauseEnabled(boolean enabled)`: when disabled, immediately unpause `mAudioTrack` if paused, wake the render loop, and inhibit further standby pauses (restoring the 0.21.7 silence shield).
 
 In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
