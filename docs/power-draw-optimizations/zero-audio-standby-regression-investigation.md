@@ -23,8 +23,8 @@ An exhaustive architectural investigation and empirical analysis of the screen-o
    - [B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination](#b-deconstructing-the-0219-flaw-audio-gating-triggers-process-termination)
    - [C. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout](#c-deconstructing-the-02110-flaw-wakelock-release-triggers-murmur-timeout)
 7. [Actionable Remediation Paths](#7-actionable-remediation-paths)
-   - [Path A: Screen-Aware Dynamic Silence Shield Coupling (Recommended)](#path-a-screen-aware-dynamic-silence-shield-coupling-recommended)
-   - [Path B: Complete Restoration of the 0.21.7 Baseline (Maximum Stability)](#path-b-complete-restoration-of-the-0217-baseline-maximum-stability)
+   - [Path B: Complete Restoration of the 0.21.7 Baseline (Recommended)](#path-b-complete-restoration-of-the-0217-baseline-recommended)
+   - [Path A: Screen-Aware Dynamic Silence Shield Coupling (Complex Alternative)](#path-a-screen-aware-dynamic-silence-shield-coupling-complex-alternative)
 
 ---
 
@@ -313,14 +313,27 @@ However, releasing `mWakeLock` collided with Android power management:
 
 A viable architecture must resolve both constraints simultaneously: it must maintain TCP keepalive pings every $< 30$ seconds to satisfy Murmur, while never holding a `PARTIAL_WAKE_LOCK` with `AudioTrack` paused while the screen is off to satisfy OEM watchdogs.
 
-### Path A: Screen-Aware Dynamic Silence Shield Coupling (Recommended)
+### Path B: Complete Restoration of the 0.21.7 Baseline (Recommended)
 
-This hybrid architecture leverages the fact that OEM watchdogs only enforce their kill heuristic when the screen is **off**:
+Restoring the proven, battle-tested 0.21.7 baseline provides absolute code simplicity, immediate regression elimination, and guaranteed operational certainty across all OEM devices:
+
+1. **Restore Perpetual Silence Playback**: Fully revert Phase 2 route-aware `AudioTrack` standby pausing. `AudioOutput` keeps `AudioTrack` continuously in `PLAYSTATE_PLAYING` rendering zero PCM digital silence.
+2. **Restore Monolithic Wakelock**: Keep `PARTIAL_WAKE_LOCK` held continuously in `HumlaService` throughout the connection.
+3. **Restore Native In-Memory Keepalives**: Retain the standard `ScheduledExecutorService` keepalive loop in `HumlaConnection`.
+4. **Transport Hardening in `HumlaTCP.java`**: Add explicit `mDataOutput.flush()` to `HumlaTCP.sendMessage()` to guarantee TLS records leave user space immediately, and enable `setTcpNoDelay(true)` on `mTCPSocket`.
+5. **Architectural Rationale (Why Path B is Recommended)**:
+   - **Zero State-Machine Fragility**: Path B eliminates fragile runtime screen-state tracking (`ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF`), avoiding broadcast receiver lifecycle leaks, threading races during rapid display on/off cycles, and synchronization complexity between the display subsystem, audio sink, and network engine.
+   - **Negligible Return on Screen-On Audio Gating**: Path A attempts to power-gate the audio DSP/DAC ($15\text{ to }30\text{ mW}$) exclusively when the screen is ON. However, when the screen is illuminated, the OLED display panel and Application Processor already consume $300\text{ to }1000\text{ mW}$. Saving $\sim 20\text{ mW}$ only while the user is actively looking at their screen represents a negligible $\sim 2\text{--}5\%$ delta on active power draw, while introducing substantial technical debt and regression risk.
+   - **100% Proven Immunity**: Re-establishing the monolithic silence shield is provably immune to both OEM watchdog termination (`SIGKILL`) and Murmur 30s timeouts across all Android versions and manufacturer skins.
+
+### Path A: Screen-Aware Dynamic Silence Shield Coupling (Complex Alternative)
+
+This hybrid architecture attempts to reclaim $15\text{ to }30\text{ mW}$ of audio DSP/DAC power draw while the screen is on, leveraging the observation that OEM watchdogs only enforce their kill heuristic when the screen is **off**:
 
 1. **Screen-On Behavior (Foreground & Active Interaction)**:
    - When the screen is ON (monitored via `ACTION_SCREEN_ON`), the Android display subsystem holds a display wakelock (`PowerManager.SCREEN_BRIGHT_WAKE_LOCK` or display C0 state).
    - OEM watchdogs **never issue `SIGKILL` while the screen is on**.
-   - Therefore, `AudioOutput.setStandbyPauseEnabled(true)` can be safely permitted, allowing `AudioTrack.pause()` and power-gating the audio DSP/DAC ($15\text{ to }30\text{ mW}$ saved) while the user is using the phone or has the display active.
+   - Therefore, `AudioOutput.setStandbyPauseEnabled(true)` can be permitted, allowing `AudioTrack.pause()` and power-gating the audio DSP/DAC ($15\text{ to }30\text{ mW}$ saved) while the user is actively using the phone.
 2. **Screen-Off Behavior (Background Connected Standby)**:
    - When the screen turns OFF (monitored via `ACTION_SCREEN_OFF`):
      - `HumlaService` must **strictly inhibit audio standby pause** (`AudioOutput.setStandbyPauseEnabled(false)`).
@@ -332,13 +345,5 @@ This hybrid architecture leverages the fact that OEM watchdogs only enforce thei
 3. **Transport Hardening in `HumlaTCP.java`**:
    - Add explicit `mDataOutput.flush()` to `HumlaTCP.sendMessage()` to guarantee TLS records leave user space immediately.
    - Enable `setTcpNoDelay(true)` on `mTCPSocket` to disable Nagle packet coalescing.
-
-### Path B: Complete Restoration of the 0.21.7 Baseline (Maximum Stability)
-
-If total code simplicity and operational certainty across all legacy OEM devices is prioritized:
-
-1. **Restore Perpetual Silence Playback**: Fully revert Phase 2 route-aware `AudioTrack` standby pausing. `AudioOutput` keeps `AudioTrack` continuously in `PLAYSTATE_PLAYING` rendering zero PCM digital silence.
-2. **Restore Monolithic Wakelock**: Keep `PARTIAL_WAKE_LOCK` held continuously in `HumlaService` throughout the connection.
-3. **Restore Native In-Memory Keepalives**: Retain the standard `ScheduledExecutorService` keepalive loop in `HumlaConnection`.
-4. **Trade-Off**: Burns $15\text{ to }30\text{ mW}$ on audio hardware during silence, but is provably immune to both OEM watchdog termination and Murmur timeouts.
+4. **Drawbacks**: Adds a multi-component state machine, creates edge cases with display receiver registration and headset unplugs, and adds architectural maintenance burden for minor power savings achievable only while the display is active.
 
