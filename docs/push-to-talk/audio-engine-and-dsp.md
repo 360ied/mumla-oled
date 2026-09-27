@@ -15,7 +15,7 @@ This document details the low-level digital signal processing (DSP), buffering, 
 
 ## Native Ingestion Pipeline
 
-Audio ingestion runs on a dedicated high-priority thread managed by [`AudioInput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java#L189-L228) (`Process.THREAD_PRIORITY_URGENT_AUDIO`).
+Audio ingestion runs on a dedicated high-priority thread managed by [`AudioInput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java#L189-L228) (`Process.THREAD_PRIORITY_URGENT_AUDIO`).
 
 ```text
 AudioRecord (Mono 16-bit PCM @ 48 kHz)
@@ -28,7 +28,7 @@ NativeAudioInputEngine.processFrame() [JNI]
 AudioInputEngine::processFrame(const int16_t* pcm, size_t sampleCount)
 ```
 
-Inside [`AudioInputEngine::processFrame`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L52-L166), each 10ms frame passes through the following stages:
+Inside [`AudioInputEngine::processFrame`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L52-L166), each 10ms frame passes through the following stages:
 
 ```
 [1. Copy & Zero-Pad] ──► [2. Biquad HPF (<90Hz)] ──► [3. RNNoise Denoiser]
@@ -69,13 +69,13 @@ Inside [`AudioInputEngine::processFrame`](file:///home/bualy/files/devel/mumla_d
 
 ### The Mechanism
 
-In the Mumble protocol ([`MumbleUDP.proto:53`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/MumbleUDP.proto#L53)), the final packet of any voice transmission must carry the flag `is_terminator = true` (or bit 13 in the legacy UDP voice header).
+In the Mumble protocol ([`MumbleUDP.proto:53`](../../libraries/humla/src/MumbleUDP.proto#L53)), the final packet of any voice transmission must carry the flag `is_terminator = true` (or bit 13 in the legacy UDP voice header).
 
-The receiving client's jitter buffer ([`AudioOutputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp)) relies on this flag to perform a graceful 10ms cosine fade-out and cleanly tear down the playback voice slot. If no terminator flag is received, the remote jitter buffer assumes the packet was lost in transit and triggers Packet Loss Concealment (PLC). It continues synthesizing extrapolated audio for up to `DEAD_MISS_FRAMES` (10 frames = 100ms) until declaring the stream dead, generating distinct robotic buzzing or stuttering at the end of every utterance.
+The receiving client's jitter buffer ([`AudioOutputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp)) relies on this flag to perform a graceful 10ms cosine fade-out and cleanly tear down the playback voice slot. If no terminator flag is received, the remote jitter buffer assumes the packet was lost in transit and triggers Packet Loss Concealment (PLC). It continues synthesizing extrapolated audio for up to `DEAD_MISS_FRAMES` (10 frames = 100ms) until declaring the stream dead, generating distinct robotic buzzing or stuttering at the end of every utterance.
 
 ### The Code Flaw
 
-In [`AudioInputEngine.cpp:127-133`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L133):
+In [`AudioInputEngine.cpp:127-133`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L133):
 
 ```cpp
 } else if (m_talking && !shouldTransmit) {
@@ -87,7 +87,7 @@ In [`AudioInputEngine.cpp:127-133`](file:///home/bualy/files/devel/mumla_dev/mum
 }
 ```
 
-Now inspect [`AudioInputEngine::flushAccumulatorLocked`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L168-L173):
+Now inspect [`AudioInputEngine::flushAccumulatorLocked`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L168-L173):
 
 ```cpp
 void AudioInputEngine::flushAccumulatorLocked(bool isTerminator, std::vector<DispatchedPacket>& packetsOut) {
@@ -136,13 +136,13 @@ When `m_accumulatedFrames == 0`:
 
 ### The Mechanism
 
-[`PreSpeechRingBuffer`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.h) maintains an 8-frame (80ms) circular buffer of past PCM samples.
+[`PreSpeechRingBuffer`](../../libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.h) maintains an 8-frame (80ms) circular buffer of past PCM samples.
 
 In Voice Activity Detection (VAD) mode, this lookahead buffer is essential: neural networks and energy detectors require 20–40ms of speech energy to exceed onset thresholds. Flushing the lookahead buffer ensures that leading unvoiced consonants (/p/, /t/, /k/, /s/) are not clipped.
 
 ### The Original Finding
 
-In [`AudioInputEngine.cpp:116-126`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126):
+In [`AudioInputEngine.cpp:116-126`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126):
 
 ```cpp
 if (!m_talking && shouldTransmit) {
@@ -159,7 +159,7 @@ if (!m_talking && shouldTransmit) {
 }
 ```
 
-Crucially, [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157) is continuously fed whenever the client is unmuted:
+Crucially, [`m_ringBuffer.push`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157) is continuously fed whenever the client is unmuted:
 
 ```cpp
 } else if (!m_muted) {
@@ -175,15 +175,15 @@ PTT-05 originally noted that in Push-to-Talk mode, flushing this 80ms buffer cou
 Following thorough review, this behavior was reclassified as **Working as Intended** and marked **Closed (Won't Fix)** for the following architectural and psychoacoustic reasons:
 
 1. **Android Capacitive Touch Latency (~30–60ms)**:
-   Physical touch contact on Android is not instantaneous. Between hardware touch digitizer scanning/debounce, Linux `evdev`, Android `InputDispatcher`, UI Looper/Choreographer dispatch, and JNI bridging into [`AudioInputEngine::setPttTalking`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L240), an unavoidable delay of 30–60ms elapses.
+   Physical touch contact on Android is not instantaneous. Between hardware touch digitizer scanning/debounce, Linux `evdev`, Android `InputDispatcher`, UI Looper/Choreographer dispatch, and JNI bridging into [`AudioInputEngine::setPttTalking`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L240), an unavoidable delay of 30–60ms elapses.
    Because the low-latency Oboe/AAudio recording stream is active continuously, clearing the ring buffer on PTT onset discards all speech captured during this physical touch latency window.
 
 2. **Human Coarticulation & Speech Anticipation**:
    Speakers routinely begin vocalizing simultaneously with or slightly before their finger makes contact with the screen. Discarding the pre-speech buffer in PTT mode guarantees clipping of leading plosives and unvoiced consonants (/p/, /t/, /k/, /s/), causing severe conversational degradation ("...opy that" instead of "Copy that").
 
 3. **Acoustic Mitigation via High-Pass Filtering and Neural Denoising**:
-   - The infrasonic high-pass filter (<90Hz) in [`AudioInputEngine::processPcm`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L77) strips out the sub-bass mechanical chassis thump from touchscreen taps.
-   - [`RNNoise`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L80) processes frames *prior* to [`m_ringBuffer.push`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157), suppressing non-speech transients during silence.
+   - The infrasonic high-pass filter (<90Hz) in [`AudioInputEngine::processPcm`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L77) strips out the sub-bass mechanical chassis thump from touchscreen taps.
+   - [`RNNoise`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L80) processes frames *prior* to [`m_ringBuffer.push`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L154-L157), suppressing non-speech transients during silence.
 
 4. **Privacy & Duration**:
    80ms (0.08s) is less than the duration of an average phoneme or syllable; it is physically impossible to leak intelligible private speech.
@@ -199,7 +199,7 @@ In natural conversation, speakers frequently release a PTT button slightly befor
 
 ### Comparison: VAD vs PTT
 
-In VAD mode, [`HysteresisVad`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/HysteresisVad.h) enforces hangover frames:
+In VAD mode, [`HysteresisVad`](../../libraries/humla/src/main/jni/audio_engine/HysteresisVad.h) enforces hangover frames:
 
 ```cpp
 void AudioInputEngine::setVadHoldFrames(uint32_t holdFrames) {
@@ -225,7 +225,7 @@ The instant `m_pttTalking` becomes false, `shouldTransmit` becomes false. There 
 
 ## VAD Co-Execution & Metering Gaps
 
-In [`AudioInputEngine.cpp:91`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L91):
+In [`AudioInputEngine.cpp:91`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L91):
 
 ```cpp
 case InputMode::PUSH_TO_TALK:
@@ -252,16 +252,16 @@ if (shouldTransmit != m_talking) {
 
 ## Native Test Coverage Assessment (PTT-15)
 
-The native test harness in [`libraries/humla/src/test/cpp/`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/) verifies several isolated DSP primitives:
+The native test harness in [`libraries/humla/src/test/cpp/`](../../libraries/humla/src/test/cpp/) verifies several isolated DSP primitives:
 
 | Test File | Component Tested | Coverage |
 |---|---|---|
-| [`test_adaptive_leveler.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_adaptive_leveler.cpp) | `AdaptiveLeveler` | Attack/decay dynamics, gain clamps |
-| [`test_biquad_filter.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_biquad_filter.cpp) | `BiquadFilter` | Frequency attenuation |
-| [`test_hysteresis_vad.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_hysteresis_vad.cpp) | `HysteresisVad` | Squelch, hold frames, thresholds |
-| [`test_pre_speech_ring_buffer.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_pre_speech_ring_buffer.cpp) | `PreSpeechRingBuffer` | Push, pop, overflow clearing |
-| [`test_soft_limiter.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_soft_limiter.cpp) | `SoftLimiter` | Saturation curves |
-| [`test_audio_output_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_output_engine.cpp) | `AudioOutputEngine` | Jitter, FEC, PLC, mixing |
+| [`test_adaptive_leveler.cpp`](../../libraries/humla/src/test/cpp/test_adaptive_leveler.cpp) | `AdaptiveLeveler` | Attack/decay dynamics, gain clamps |
+| [`test_biquad_filter.cpp`](../../libraries/humla/src/test/cpp/test_biquad_filter.cpp) | `BiquadFilter` | Frequency attenuation |
+| [`test_hysteresis_vad.cpp`](../../libraries/humla/src/test/cpp/test_hysteresis_vad.cpp) | `HysteresisVad` | Squelch, hold frames, thresholds |
+| [`test_pre_speech_ring_buffer.cpp`](../../libraries/humla/src/test/cpp/test_pre_speech_ring_buffer.cpp) | `PreSpeechRingBuffer` | Push, pop, overflow clearing |
+| [`test_soft_limiter.cpp`](../../libraries/humla/src/test/cpp/test_soft_limiter.cpp) | `SoftLimiter` | Saturation curves |
+| [`test_audio_output_engine.cpp`](../../libraries/humla/src/test/cpp/test_audio_output_engine.cpp) | `AudioOutputEngine` | Jitter, FEC, PLC, mixing |
 
 ### Missing Coverage
 

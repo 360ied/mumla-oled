@@ -4,8 +4,8 @@
 **Severity:** high (silent data loss & unhandled crash)  
 **Component:** `app` UI / Channel Management  
 **Files Affected:**
-- [`ChannelEditFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelEditFragment.java) (deleted)
-- [`ChannelMenu.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelMenu.java)
+- [`ChannelEditFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelEditFragment.java) (deleted)
+- [`ChannelMenu.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelMenu.java)
 
 ---
 
@@ -56,4 +56,4 @@ When an authorized user attempts to edit an existing channel via the channel con
 
 ## 4. Resolution
 
-Server administration and channel structural manipulation (channel creation, editing, and deletion) have been designated as out of scope for the Mumla mobile client. `ChannelEditFragment`, its layout resource, and the associated menu actions (`context_channel_add`, `context_channel_edit`, `context_channel_remove`) in [`ChannelMenu.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelMenu.java) have been removed from the application. Channel mutation APIs (`createChannel`, `removeChannel`) have also been pruned from [`IHumlaSession`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java).
+Server administration and channel structural manipulation (channel creation, editing, and deletion) have been designated as out of scope for the Mumla mobile client. `ChannelEditFragment`, its layout resource, and the associated menu actions (`context_channel_add`, `context_channel_edit`, `context_channel_remove`) in [`ChannelMenu.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelMenu.java) have been removed from the application. Channel mutation APIs (`createChannel`, `removeChannel`) have also been pruned from [`IHumlaSession`](../../libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java).

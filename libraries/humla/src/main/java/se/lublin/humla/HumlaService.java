@@ -18,9 +18,13 @@
 
 package se.lublin.humla;
 
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -32,6 +36,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
 
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties;
@@ -80,6 +85,15 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * Requires that {@link #EXTRAS_SERVER} is provided.
      */
     public static final String ACTION_CONNECT = "se.lublin.humla.CONNECT";
+
+    /**
+     * An action broadcast by AlarmManager to wake the device for pulsed keepalive pings during
+     * zero-audio standby.
+     */
+    public static final String ACTION_KEEPALIVE_ALARM = "se.lublin.humla.KEEPALIVE_ALARM";
+    private static final long STANDBY_KEEPALIVE_INTERVAL_MS = 10000L;
+    private static final long STANDBY_KEEPALIVE_WAKELOCK_TIMEOUT_MS = 1000L;
+    private static final long STANDBY_KEEPALIVE_TX_DRAIN_MS = 200L;
 
     /** A {@link Server} specifying the server to connect to. */
     public static final String EXTRAS_SERVER = "server";
@@ -139,7 +153,21 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private WhisperTargetList mWhisperTargetList;
 
     private PowerManager.WakeLock mWakeLock;
+    private volatile boolean mZeroAudioStandby = false;
+    private AlarmManager mAlarmManager;
+    private PowerManager.WakeLock mKeepaliveWakeLock;
+    private PendingIntent mKeepalivePendingIntent;
+    private BroadcastReceiver mKeepaliveReceiver;
+    private BroadcastReceiver mIdleModeReceiver;
     private Handler mHandler;
+    private final Runnable mKeepaliveDrainRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+                mKeepaliveWakeLock.release();
+            }
+        }
+    };
     private HumlaCallbacks mCallbacks;
 
     private HumlaConnection mConnection;
@@ -168,9 +196,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
                 @Override
                 public void onTalkingStateChanged(final boolean talking) {
+                    if (talking && mZeroAudioStandby) {
+                        if (mWakeLock != null && !mWakeLock.isHeld()) {
+                            mWakeLock.acquire();
+                        }
+                    }
                     mHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            if (talking && mZeroAudioStandby) {
+                                exitZeroAudioStandby();
+                            }
                             try {
                                 // If the server session is inactive, ignore this message.
                                 // It's likely that this is leftover from a terminated connection.
@@ -185,6 +221,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
                                 currentUser.setTalkState(talking ? TalkState.TALKING : TalkState.PASSIVE);
                                 mCallbacks.onUserTalkStateUpdated(currentUser);
+                                if (!talking && !mZeroAudioStandby) {
+                                    updateStandbyState();
+                                }
                             } catch (NotSynchronizedException e) {
                                 e.printStackTrace();
                             }
@@ -197,6 +236,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         @Override
         public void onUserTalkStateUpdated(final User user) {
             mCallbacks.onUserTalkStateUpdated(user);
+            if (!mZeroAudioStandby && user != null && user.getTalkState() == TalkState.PASSIVE) {
+                mHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateStandbyState();
+                    }
+                });
+            }
         }
 
         @Override
@@ -262,6 +309,66 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
         mWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService");
         mWakeLock.setReferenceCounted(false);
+        mAlarmManager = (AlarmManager) getSystemService(ALARM_SERVICE);
+        mKeepaliveWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:KeepaliveWakeLock");
+        mKeepaliveWakeLock.setReferenceCounted(false);
+
+        Intent alarmIntent = new Intent(ACTION_KEEPALIVE_ALARM);
+        alarmIntent.setPackage(getPackageName());
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        mKeepalivePendingIntent = PendingIntent.getBroadcast(this, 0, alarmIntent, flags);
+
+        mKeepaliveReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (ACTION_KEEPALIVE_ALARM.equals(intent.getAction())) {
+                    if (mZeroAudioStandby && isConnected() && isSynchronized()) {
+                        if (mKeepaliveWakeLock != null) {
+                            mKeepaliveWakeLock.acquire(STANDBY_KEEPALIVE_WAKELOCK_TIMEOUT_MS);
+                        }
+                        try {
+                            if (mConnection != null) {
+                                mConnection.sendKeepalivePing();
+                            }
+                        } finally {
+                            scheduleKeepaliveAlarm();
+                            if (mHandler != null) {
+                                mHandler.removeCallbacks(mKeepaliveDrainRunnable);
+                                mHandler.postDelayed(mKeepaliveDrainRunnable, STANDBY_KEEPALIVE_TX_DRAIN_MS);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        IntentFilter keepaliveFilter = new IntentFilter(ACTION_KEEPALIVE_ALARM);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(mKeepaliveReceiver, keepaliveFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(mKeepaliveReceiver, keepaliveFilter);
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            mIdleModeReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED.equals(intent.getAction())) {
+                        updateStandbyState();
+                    }
+                }
+            };
+            IntentFilter idleFilter = new IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(mIdleModeReceiver, idleFilter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(mIdleModeReceiver, idleFilter);
+            }
+        }
+
         mHandler = new Handler(getMainLooper());
         mCallbacks = new HumlaCallbacks();
         mAudioBuilder = new AudioHandler.Builder()
@@ -284,9 +391,31 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         super.onDestroy();
         mReconnectAttempts = 0;
         setReconnecting(false);
+        cancelKeepaliveAlarm();
+        mZeroAudioStandby = false;
+        if (mIdleModeReceiver != null) {
+            try {
+                unregisterReceiver(mIdleModeReceiver);
+            } catch (Exception ignored) {}
+            mIdleModeReceiver = null;
+        }
+        if (mKeepaliveReceiver != null) {
+            try {
+                unregisterReceiver(mKeepaliveReceiver);
+            } catch (Exception ignored) {}
+            mKeepaliveReceiver = null;
+        }
+        if (mKeepalivePendingIntent != null) {
+            mKeepalivePendingIntent.cancel();
+            mKeepalivePendingIntent = null;
+        }
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
+        }
+        mKeepaliveWakeLock = null;
     }
 
     public IBinder onBind(Intent intent) {
@@ -304,6 +433,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mConnectionState = ConnectionState.DISCONNECTED;
             mVoiceTargetId = 0;
             mWhisperTargetList.clear();
+            cancelKeepaliveAlarm();
+            mZeroAudioStandby = false;
 
             if (mWakeLock != null) {
                 if (mWakeLock.isHeld()) {
@@ -336,8 +467,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public void disconnect() {
         mReconnectAttempts = 0;
         setReconnecting(false);
+        cancelKeepaliveAlarm();
+        mZeroAudioStandby = false;
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
+        }
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
         }
         if (mConnection != null) {
             mConnection.disconnect();
@@ -407,7 +543,23 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             onConnectionWarning(e.getMessage());
         }
 
+        mModelHandler.setOnPlausibleZeroAudioListener(new ModelHandler.OnPlausibleZeroAudioListener() {
+            @Override
+            public void onPlausibleZeroAudioChanged() {
+                if (mZeroAudioStandby && mWakeLock != null && !mWakeLock.isHeld()) {
+                    mWakeLock.acquire();
+                }
+                mHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateStandbyState();
+                    }
+                });
+            }
+        });
+
         mCallbacks.onConnected();
+        updateStandbyState();
     }
 
     @Override
@@ -428,6 +580,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             setReconnecting(false);
         }
 
+        cancelKeepaliveAlarm();
+        mZeroAudioStandby = false;
+
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
+        }
+
         if (!reconnect) {
             if (mWakeLock != null && mWakeLock.isHeld()) {
                 mWakeLock.release();
@@ -438,12 +597,30 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioHandler.shutdown();
         }
 
+        if (mModelHandler != null) {
+            mModelHandler.setOnPlausibleZeroAudioListener(null);
+        }
         mModelHandler = null;
         mAudioHandler = null;
         mVoiceTargetId = 0;
         mWhisperTargetList.clear();
 
         mCallbacks.onDisconnected(e);
+    }
+
+    @Override
+    public void onIncomingAudioPacket() {
+        if (mZeroAudioStandby) {
+            if (mWakeLock != null && !mWakeLock.isHeld()) {
+                mWakeLock.acquire();
+            }
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    exitZeroAudioStandby();
+                }
+            });
+        }
     }
 
     @Override
@@ -602,6 +779,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioHandler.setProtobufUdp(mConnection.isProtobufUdpSupported());
             mConnection.addTCPMessageHandlers(mAudioHandler);
             mConnection.addUDPMessageHandlers(mAudioHandler);
+            AudioOutput output = getAudioOutput();
+            if (output != null) {
+                output.setStandbyPauseEnabled(mZeroAudioStandby);
+            }
         } catch (NotSynchronizedException e) {
             throw new RuntimeException("Attempted to create audio handler when not synchronized!");
         }
@@ -728,6 +909,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             createAudioHandler();
             Log.i(TAG, "Audio subsystem reloaded after settings change.");
         }
+        updateStandbyState();
         return reconnectNeeded;
     }
 
@@ -973,14 +1155,23 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setTalkingState(boolean talking) {
+        if (talking && mZeroAudioStandby) {
+            exitZeroAudioStandby();
+        }
         mToggleInputMode.setTalkingOn(talking);
         if (mAudioHandler != null) {
             mAudioHandler.setPttTalking(talking);
+        }
+        if (!talking && !mZeroAudioStandby) {
+            updateStandbyState();
         }
     }
 
     @Override
     public void joinChannel(int channel) {
+        if (mZeroAudioStandby) {
+            exitZeroAudioStandby();
+        }
         moveUserToChannel(getSessionId(), channel);
     }
 
@@ -1113,6 +1304,21 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setSelfMuteDeafState(boolean mute, boolean deaf) {
+        boolean wasDeafened = false;
+        boolean wasMuted = false;
+        if (mModelHandler != null && mConnection != null) {
+            try {
+                User self = mModelHandler.getUser(mConnection.getSession());
+                if (self != null) {
+                    wasDeafened = self.isSelfDeafened() || self.isDeafened();
+                    wasMuted = self.isSelfMuted() || self.isMuted() || self.isSuppressed();
+                }
+            } catch (NotSynchronizedException ignored) {
+            }
+        }
+        if (mZeroAudioStandby && shouldExitStandbyOnStateChange(wasDeafened, wasMuted, deaf, mute, mTransmitMode)) {
+            exitZeroAudioStandby();
+        }
         Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
         usb.setSelfMute(mute);
         usb.setSelfDeaf(deaf);
@@ -1247,6 +1453,241 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return ch != null && ch.isListening();
         } catch (NotSynchronizedException e) {
             return false;
+        }
+    }
+
+    /**
+     * @return true if the service is currently in zero-audio standby mode.
+     */
+    public boolean isZeroAudioStandby() {
+        return mZeroAudioStandby;
+    }
+
+    /**
+     * @return The active {@link AudioOutput}, or null if audio is uninitialized.
+     */
+    public AudioOutput getAudioOutput() {
+        if (mAudioHandler != null) {
+            return mAudioHandler.getAudioOutput();
+        }
+        return null;
+    }
+
+    /**
+     * Determines whether the current transmit mode allows standby for the local user.
+     * Standby is allowed if the user is locally muted, self-muted, suppressed, deafened,
+     * or self-deafened (no microphone capture is performed), OR if Push-To-Talk mode is configured
+     * (microphone capture only activates while PTT is pressed). In Continuous or Voice Activity
+     * modes while unmuted, microphone capture is active and cannot survive kernel suspend.
+     *
+     * @param transmitMode The active transmission mode (Constants.TRANSMIT_*).
+     * @param self The local user object.
+     * @return true if transmission mode does not prevent standby.
+     */
+    public static boolean isTransmitModeStandbyEligible(int transmitMode, User self) {
+        if (self == null) {
+            return false;
+        }
+        boolean selfCannotTransmit = self.isMuted() || self.isSelfMuted()
+                || self.isSuppressed() || self.isDeafened() || self.isSelfDeafened();
+        return selfCannotTransmit || transmitMode == Constants.TRANSMIT_PUSH_TO_TALK;
+    }
+
+    /**
+     * Determines whether a transition in self mute/deaf state requires immediately
+     * exiting zero-audio standby.
+     *
+     * Standby exit is required when undeafening (since incoming audio may now be audible)
+     * or unmuting while in Voice Activity mode (since microphone capture is resumed).
+     *
+     * @param wasDeafened previous deafened state
+     * @param wasMuted previous muted state
+     * @param newDeaf new deafened state
+     * @param newMute new muted state
+     * @param transmitMode configured transmission mode
+     * @return true if the transition requires exiting standby
+     */
+    public static boolean shouldExitStandbyOnStateChange(boolean wasDeafened, boolean wasMuted,
+                                                         boolean newDeaf, boolean newMute,
+                                                         int transmitMode) {
+        boolean undeafening = wasDeafened && !newDeaf;
+        boolean unmutingInVad = wasMuted && !newMute && transmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
+        return undeafening || unmutingInVad;
+    }
+
+    /**
+     * Evaluates whether the client can safely enter zero-audio standby.
+     * Standby requires that:
+     * 1. The client is connected and synchronized.
+     * 2. The client is not actively transmitting audio (isTalking() is false and TalkState is PASSIVE).
+     * 3. Transmission mode is Push-To-Talk, OR the local user cannot transmit audio
+     *    (continuous or voice-activity transmission requires active microphone recording
+     *    which cannot survive kernel suspend-to-RAM).
+     * 4. The device is not in Deep Doze (which clamps exact alarms to 15m intervals).
+     * 5. The app is exempt from battery optimizations.
+     * 6. Exact alarms can be scheduled.
+     * 7. Bluetooth SCO is not active (SCO routing requires continuous audio playback).
+     * 8. ModelHandler evaluates that zero audio can plausibly arrive (local user deafened,
+     *    sole user connected, or no unmuted speaking candidates in monitored/linked channels).
+     *
+     * @return true if zero-audio standby is permissible.
+     */
+    public boolean isPlausiblyZeroAudio() {
+        if (!isConnected() || !isSynchronized()) {
+            return false;
+        }
+        if (mModelHandler == null || mConnection == null) {
+            return false;
+        }
+        if (isTalking()) {
+            return false;
+        }
+        try {
+            User self = mModelHandler.getUser(mConnection.getSession());
+            if (self == null || self.getTalkState() != TalkState.PASSIVE) {
+                return false;
+            }
+            if (!isTransmitModeStandbyEligible(mTransmitMode, self)) {
+                return false;
+            }
+        } catch (NotSynchronizedException e) {
+            return false;
+        }
+        if (isDeviceIdleMode()) {
+            return false;
+        }
+        if (!isIgnoringBatteryOptimizations()) {
+            return false;
+        }
+        if (!canScheduleExactAlarms()) {
+            return false;
+        }
+        AudioOutput output = getAudioOutput();
+        if (output != null && (output.isBluetoothScoActive() || output.hasActiveVoices())) {
+            return false;
+        }
+        return mModelHandler.isPlausiblyZeroAudio();
+    }
+
+    private boolean isDeviceIdleMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isDeviceIdleMode();
+        }
+        return false;
+    }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        }
+        return true;
+    }
+
+    private boolean canScheduleExactAlarms() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return mAlarmManager != null && mAlarmManager.canScheduleExactAlarms();
+        }
+        return mAlarmManager != null;
+    }
+
+    /**
+     * Updates the standby state by checking {@link #isPlausiblyZeroAudio()}.
+     */
+    public void updateStandbyState() {
+        boolean shouldStandby = isPlausiblyZeroAudio();
+        if (shouldStandby && !mZeroAudioStandby) {
+            enterZeroAudioStandby();
+        } else if (!shouldStandby && mZeroAudioStandby) {
+            exitZeroAudioStandby();
+        } else if (shouldStandby && mZeroAudioStandby) {
+            if (mWakeLock != null && mWakeLock.isHeld()) {
+                mWakeLock.release();
+            }
+        }
+    }
+
+    private void enterZeroAudioStandby() {
+        if (mZeroAudioStandby) {
+            return;
+        }
+        mZeroAudioStandby = true;
+        Log.d(TAG, "Entering zero-audio standby mode");
+
+        // 1. Release continuous wakelock so AP can enter kernel suspend-to-RAM
+        if (mWakeLock != null && mWakeLock.isHeld()) {
+            mWakeLock.release();
+        }
+
+        // 2. Enable standby pause in AudioOutput, allowing AudioTrack.pause() and DAC power-gating
+        AudioOutput output = getAudioOutput();
+        if (output != null) {
+            output.setStandbyPauseEnabled(true);
+        }
+
+        // 3. Put HumlaConnection into suspended standby mode (pauses ScheduledExecutorService pings)
+        if (mConnection != null) {
+            mConnection.setSuspendedStandbyMode(true);
+        }
+
+        // 4. Arm the first pulsed keepalive alarm
+        scheduleKeepaliveAlarm();
+    }
+
+    private void exitZeroAudioStandby() {
+        if (!mZeroAudioStandby) {
+            return;
+        }
+        mZeroAudioStandby = false;
+        Log.d(TAG, "Exiting zero-audio standby mode");
+
+        // 1. Cancel pending keepalive alarms
+        cancelKeepaliveAlarm();
+
+        // 2. Re-acquire continuous wakelock
+        if (mWakeLock != null && !mWakeLock.isHeld()) {
+            mWakeLock.acquire();
+        }
+
+        // 3. Inhibit standby pause in AudioOutput and unpause AudioTrack (0.21.7 silence shield)
+        AudioOutput output = getAudioOutput();
+        if (output != null) {
+            output.setStandbyPauseEnabled(false);
+        }
+
+        // 4. Resume ScheduledExecutorService adaptive keepalive loop in HumlaConnection
+        if (mConnection != null) {
+            mConnection.setSuspendedStandbyMode(false);
+        }
+    }
+
+    private void scheduleKeepaliveAlarm() {
+        if (mAlarmManager == null || mKeepalivePendingIntent == null || !mZeroAudioStandby) {
+            return;
+        }
+        long triggerAt = SystemClock.elapsedRealtime() + STANDBY_KEEPALIVE_INTERVAL_MS;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, mKeepalivePendingIntent);
+            } else {
+                mAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, mKeepalivePendingIntent);
+            }
+        } catch (SecurityException se) {
+            Log.w(TAG, "Exact alarm scheduling failed; falling back to continuous wakelock", se);
+            exitZeroAudioStandby();
+        }
+    }
+
+    private void cancelKeepaliveAlarm() {
+        if (mHandler != null) {
+            mHandler.removeCallbacks(mKeepaliveDrainRunnable);
+        }
+        if (mAlarmManager != null && mKeepalivePendingIntent != null) {
+            mAlarmManager.cancel(mKeepalivePendingIntent);
+        }
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
         }
     }
 

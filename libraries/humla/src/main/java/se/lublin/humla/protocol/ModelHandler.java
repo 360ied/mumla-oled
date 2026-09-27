@@ -25,8 +25,10 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import se.lublin.humla.R;
@@ -55,15 +57,15 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     private final List<Integer> mLocalIgnoreHistory;
     private final IHumlaObserver mObserver;
     private final HumlaLogger mLogger;
-    private ServerSettings mServerSettings;
-    private int mPermissions;
+    private volatile ServerSettings mServerSettings;
+    private volatile int mPermissions;
     private int mSession;
 
     public ModelHandler(Context context, IHumlaObserver observer, HumlaLogger logger,
                         @Nullable List<Integer> localMuteHistory,
                         @Nullable List<Integer> localIgnoreHistory) {
         mContext = context;
-        mChannels = new HashMap<Integer, Channel>();
+        mChannels = new ConcurrentHashMap<Integer, Channel>();
         mUsers = new ConcurrentHashMap<Integer, User>();
         mLocalMuteHistory = localMuteHistory;
         mLocalIgnoreHistory = localIgnoreHistory;
@@ -81,6 +83,83 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
 
     public ServerSettings getServerSettings() {
         return mServerSettings;
+    }
+
+    public interface OnPlausibleZeroAudioListener {
+        void onPlausibleZeroAudioChanged();
+    }
+
+    private volatile OnPlausibleZeroAudioListener mZeroAudioListener;
+
+    public void setOnPlausibleZeroAudioListener(OnPlausibleZeroAudioListener listener) {
+        mZeroAudioListener = listener;
+    }
+
+    private void checkZeroAudioState() {
+        if (mZeroAudioListener != null) {
+            mZeroAudioListener.onPlausibleZeroAudioChanged();
+        }
+    }
+
+    /**
+     * Evaluates whether the current connected channel and user topology represents
+     * a state where no regular speech can plausibly be received by the local user.
+     *
+     * Returns true if:
+     * 1. The local user is deafened (self-deafened or server-deafened), where Murmur
+     *    drops 100% of voice packets destined for the user.
+     * 2. The local user is the sole user connected to the entire server (mUsers.size() <= 1).
+     * 3. The monitored channel set (current channel + transitive links + listened channels
+     *    + their transitive links) contains zero remote speaking candidates (every peer in
+     *    the monitored set is self-muted, muted, suppressed, self-deafened, or deafened).
+     */
+    public synchronized boolean isPlausiblyZeroAudio() {
+        User self = mUsers.get(mSession);
+        if (self == null) {
+            return false;
+        }
+
+        // 1. Provable: Local user is deafened (Murmur drops 100% of packets)
+        if (self.isDeafened() || self.isSelfDeafened()) {
+            return true;
+        }
+
+        // 2. Provable: Sole user connected to the entire server
+        if (mUsers.size() <= 1) {
+            return true;
+        }
+
+        // 3. Pragmatic: Evaluate Monitored Channel Set
+        Channel currentChannel = self.getChannel();
+        if (currentChannel == null) {
+            return false;
+        }
+
+        Set<Channel> monitoredChannels = new HashSet<Channel>(currentChannel.getAllLinks());
+
+        for (int channelId : self.getListeningChannels()) {
+            Channel listened = mChannels.get(channelId);
+            if (listened != null) {
+                monitoredChannels.addAll(listened.getAllLinks());
+            }
+        }
+
+        // Check for any unmuted speaking candidates in the monitored set
+        for (Channel channel : monitoredChannels) {
+            for (User user : channel.getUsers()) {
+                if (user.getSession() == self.getSession()) {
+                    continue;
+                }
+                boolean isMuted = user.isMuted() || user.isSelfMuted()
+                        || user.isSuppressed() || user.isDeafened()
+                        || user.isSelfDeafened();
+                if (!isMuted) {
+                    return false; // Found an unmuted peer able to speak
+                }
+            }
+        }
+
+        return true; // Zero speaking candidates in all monitored channels
     }
 
     /**
@@ -111,18 +190,27 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         return mPermissions;
     }
 
-    public void clear() {
+    public synchronized void clear() {
         mChannels.clear();
         mUsers.clear();
+        mSession = 0;
+        mPermissions = 0;
+        checkZeroAudioState();
     }
 
     @Override
-    public void messageChannelState(Mumble.ChannelState msg) {
+    public synchronized void messageChannelState(Mumble.ChannelState msg) {
         if(!msg.hasChannelId())
             return;
 
         Channel channel = mChannels.get(msg.getChannelId());
-        Channel parent = mChannels.get(msg.getParent());
+        Channel parent = null;
+        if(msg.hasParent()) {
+            parent = mChannels.get(msg.getParent());
+            if(parent == null) {
+                parent = createStubChannel(msg.getParent());
+            }
+        }
 
         final boolean newChannel = channel == null;
 
@@ -139,10 +227,14 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
 
         if(msg.hasParent()) {
             Channel oldParent = channel.getParent();
-            channel.setParent(parent);
-            parent.addSubchannel(channel);
-            if(oldParent != null) {
-                oldParent.removeSubchannel(channel);
+            if(oldParent != parent) {
+                if(oldParent != null) {
+                    oldParent.removeSubchannel(channel);
+                }
+                channel.setParent(parent);
+                if(parent != null) {
+                    parent.addSubchannel(channel);
+                }
             }
         }
 
@@ -157,27 +249,36 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         }
 
         if(msg.getLinksCount() > 0) {
+            for (Channel linked : new ArrayList<Channel>(channel.getLinks())) {
+                linked.removeLink(channel);
+            }
             channel.clearLinks();
             for(int link : msg.getLinksList()) {
                 Channel linked = mChannels.get(link);
+                if(linked == null) {
+                    linked = createStubChannel(link);
+                }
                 channel.addLink(linked);
-                // Don't add this channel to the other channel's link list- this update occurs on
-                // server synchronization, and we will get a message for the other channels' links
-                // laster.
+                linked.addLink(channel);
             }
         }
 
         if(msg.getLinksRemoveCount() > 0) {
             for(int link : msg.getLinksRemoveList()) {
                 Channel linked = mChannels.get(link);
-                channel.removeLink(linked);
-                linked.removeLink(channel);
+                if(linked != null) {
+                    channel.removeLink(linked);
+                    linked.removeLink(channel);
+                }
             }
         }
 
         if(msg.getLinksAddCount() > 0) {
             for(int link : msg.getLinksAddList()) {
                 Channel linked = mChannels.get(link);
+                if(linked == null) {
+                    linked = createStubChannel(link);
+                }
                 channel.addLink(linked);
                 linked.addLink(channel);
             }
@@ -196,26 +297,33 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             mObserver.onChannelAdded(channel);
         else
             mObserver.onChannelStateUpdated(channel);
+
+        checkZeroAudioState();
     }
 
     @Override
-    public void messageChannelRemove(Mumble.ChannelRemove msg) {
+    public synchronized void messageChannelRemove(Mumble.ChannelRemove msg) {
         final Channel channel = mChannels.get(msg.getChannelId());
         if(channel != null && channel.getId() != 0) {
             for (User u : mUsers.values()) {
                 u.removeListeningChannel(channel.getId());
             }
+            for (Channel linked : new ArrayList<Channel>(channel.getLinks())) {
+                linked.removeLink(channel);
+            }
+            channel.clearLinks();
             mChannels.remove(channel.getId());
             Channel parent = channel.getParent();
             if(parent != null) {
                 parent.removeSubchannel(channel);
             }
             mObserver.onChannelRemoved(channel);
+            checkZeroAudioState();
         }
     }
 
     @Override
-    public void messagePermissionQuery(Mumble.PermissionQuery msg) {
+    public synchronized void messagePermissionQuery(Mumble.PermissionQuery msg) {
         if(msg.getFlush())
             for(Channel channel : mChannels.values())
                 channel.setPermissions(0);
@@ -230,7 +338,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messageUserState(Mumble.UserState msg) {
+    public synchronized void messageUserState(Mumble.UserState msg) {
         User user = mUsers.get(msg.getSession());
         boolean newUser = false;
 
@@ -318,7 +426,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
                 } else {
                     Channel selfChannel = self.getChannel();
                     // If in a linked channel OR the same channel as the current user, notify the user about recording
-                    if(selfChannel != null && (selfChannel.getLinks().contains(selfChannel) || selfChannel.equals(user.getChannel()))) {
+                    if(selfChannel != null && user.getChannel() != null && selfChannel.getAllLinks().contains(user.getChannel())) {
                         if(user.isRecording())
                             mLogger.logInfo(mContext.getString(R.string.chat_notify_user_recording_started, MessageFormatter.highlightString(user.getName())));
                         else
@@ -464,10 +572,11 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             mObserver.onUserConnected(user);
         else
             mObserver.onUserStateUpdated(user);
+        checkZeroAudioState();
     }
 
     @Override
-    public void messageUserRemove(Mumble.UserRemove msg) {
+    public synchronized void messageUserRemove(Mumble.UserRemove msg) {
         final User user = mUsers.get(msg.getSession());
         final User actor = mUsers.get(msg.getActor());
         final String reason = msg.getReason();
@@ -489,6 +598,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         }
         mObserver.onUserRemoved(user, reason);
         mUsers.remove(msg.getSession());
+        checkZeroAudioState();
     }
 
     @Override
@@ -545,11 +655,15 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messageServerSync(Mumble.ServerSync msg) {
+    public synchronized void messageServerSync(Mumble.ServerSync msg) {
         mSession = msg.getSession();
+        if(msg.hasPermissions()) {
+            mPermissions = (int) msg.getPermissions();
+        }
         if(mLogger != null && msg.hasWelcomeText()) {
             mLogger.logInfo(msg.getWelcomeText());
         }
+        checkZeroAudioState();
     }
 
     @Override

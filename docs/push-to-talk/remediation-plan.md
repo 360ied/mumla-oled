@@ -16,20 +16,20 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 > [!NOTE]
 > **Status: COMPLETED**
 >
-> All Phase 1 remediation items (PTT-01 through PTT-04) have been implemented, tested, and merged into `master` (branch `bugfix/ptt-phase1-remediation`, commits [`a372a9a4`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141) through [`36a9c702`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java), merge commit [`f04cb6fd`](file:///home/bualy/files/devel/mumla_dev/mumla-oled)).
+> All Phase 1 remediation items (PTT-01 through PTT-04) have been implemented, tested, and merged into `master` (branch `bugfix/ptt-phase1-remediation`, commits [`a372a9a4`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141) through [`36a9c702`](../../app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java), merge commit `f04cb6fd`).
 
 ### 1.1 Fix Terminator Packet Dropping (PTT-01) — RESOLVED
 
-**Status**: Resolved on `master` in commit [`a372a9a4`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141).
+**Status**: Resolved on `master` in commit [`a372a9a4`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141).
 
-**Component**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141), [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h#L119)
+**Component**: [`AudioInputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L127-L141), [`AudioInputEngine.h`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h#L119)
 
 **Problem**: Releasing PTT when `m_accumulatedFrames == 0` skips terminator packet emission, inducing 100ms of PLC stutter across all remote clients.
 
 **Solution**:
-In the upstream Mumble protocol specification ([`MumbleProtocol.cpp:909-912`](file:///home/bualy/files/devel/mumla_dev/mumble/src/MumbleProtocol.cpp#L909-L912)), packets with empty `opus_data` are rejected as invalid (`Audio packets without audio data are invalid`), and legacy UDP requires at least 1 byte of payload. Therefore, sending a 0-byte packet is not interoperable with upstream desktop clients.
+In the upstream Mumble protocol specification ([`MumbleProtocol.cpp:909-912`](https://github.com/mumble-voip/mumble/blob/master/src/MumbleProtocol.cpp#L909-L912)), packets with empty `opus_data` are rejected as invalid (`Audio packets without audio data are invalid`), and legacy UDP requires at least 1 byte of payload. Therefore, sending a 0-byte packet is not interoperable with upstream desktop clients.
 
-Instead, when speech terminates on an exact packet boundary (`m_accumulatedFrames == 0`), `flushAccumulatorLocked` should pad a single packet of zeros (silence) and encode it through [`OpusVoiceEncoder`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.h) with `isTerminator = true`, matching upstream Mumble's own encoder behavior ([`AudioInput.cpp:1110-1135`](file:///home/bualy/files/devel/mumla_dev/mumble/src/mumble/AudioInput.cpp#L1110-L1135)):
+Instead, when speech terminates on an exact packet boundary (`m_accumulatedFrames == 0`), `flushAccumulatorLocked` should pad a single packet of zeros (silence) and encode it through [`OpusVoiceEncoder`](../../libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.h) with `isTerminator = true`, matching upstream Mumble's own encoder behavior ([`AudioInput.cpp:1110-1135`](https://github.com/mumble-voip/mumble/blob/master/src/mumble/AudioInput.cpp#L1110-L1135)):
 
 ```cpp
 // AudioInputEngine.cpp
@@ -49,15 +49,15 @@ Instead, when speech terminates on an exact packet boundary (`m_accumulatedFrame
 }
 ```
 
-In [`NativeAudioInputEngineJni.cpp:106`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp#L106), ensure array copies check `if (size > 0 && data != nullptr)` defensively before calling `SetByteArrayRegion` to prevent JNI aborts. In [`AudioHandler.java:398-420`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L398-L420), ensure packets with `isTerminator = true` continue to be framed correctly into Protobuf UDP and Legacy UDP messages.
+In [`NativeAudioInputEngineJni.cpp:106`](../../libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp#L106), ensure array copies check `if (size > 0 && data != nullptr)` defensively before calling `SetByteArrayRegion` to prevent JNI aborts. In [`AudioHandler.java:398-420`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L398-L420), ensure packets with `isTerminator = true` continue to be framed correctly into Protobuf UDP and Legacy UDP messages.
 
 ---
 
 ### 1.2 Fix Stuck Microphone on Touch Cancellation (PTT-02) — RESOLVED
 
-**Status**: Resolved on `master` in commits [`c6deeaa2`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L183), [`6d81b96d`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L253-L258), [`968d0cc7`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L464-L474), and [`36a9c702`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java).
+**Status**: Resolved on `master` in commits [`c6deeaa2`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L183), [`6d81b96d`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L253-L258), [`968d0cc7`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L464-L474), and [`36a9c702`](../../app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java).
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L183)
+**Component**: [`ChannelFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L183)
 
 **Problem**: Edge gestures, status bar pull-downs, and scroll intercepts emit `ACTION_CANCEL`, which is unhandled, locking the microphone open.
 
@@ -90,20 +90,20 @@ mTalkButton.setOnTouchListener(new View.OnTouchListener() {
 });
 ```
 
-Expose `void onTalkKeyCancel();` on [`IMumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/IMumlaService.java#L10-L31) and implement it in [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java) (reusing the existing [`onHotCornerCancel()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L213-L220) logic). Additionally, call `mService.onTalkKeyCancel()` in [`MumlaActivity.onPause()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L391-L406) so physical hardware PTT keys held down when the activity is backgrounded do not lock transmission open.
+Expose `void onTalkKeyCancel();` on [`IMumlaService`](../../app/src/main/java/se/lublin/mumla/service/IMumlaService.java#L10-L31) and implement it in [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java) (reusing the existing [`onHotCornerCancel()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L213-L220) logic). Additionally, call `mService.onTalkKeyCancel()` in [`MumlaActivity.onPause()`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L391-L406) so physical hardware PTT keys held down when the activity is backgrounded do not lock transmission open.
 
 ---
 
 ### 1.3 Fix Half-Duplex Preference Bug (PTT-03) — RESOLVED
 
-**Status**: Resolved on `master` in commit [`c0daf3b9`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L699-L705).
+**Status**: Resolved on `master` in commit [`c0daf3b9`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L699-L705).
 
-**Component**: [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L699-L705)
+**Component**: [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L699-L705)
 
 **Problem**: Evaluates `extras.getInt(EXTRAS_TRANSMIT_MODE)` which is missing when only `half_duplex` changes, always disabling half-duplex.
 
 **Solution**:
-Maintain a `private boolean mHalfDuplex;` field in [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) (parallel to `mTransmitMode` at line 135), and re-evaluate half-duplex whenever either setting changes in `configureExtras()`:
+Maintain a `private boolean mHalfDuplex;` field in [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) (parallel to `mTransmitMode` at line 135), and re-evaluate half-duplex whenever either setting changes in `configureExtras()`:
 
 ```java
 // In configureExtras()
@@ -124,9 +124,9 @@ if (extras.containsKey(EXTRAS_HALF_DUPLEX) || extras.containsKey(EXTRAS_TRANSMIT
 
 ### 1.4 Replace Dangerous OS Stream Muting (PTT-04) — RESOLVED
 
-**Status**: Resolved on `master` in commits [`947643b9`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L208-L214) and [`a1e0a80d`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L78).
+**Status**: Resolved on `master` in commits [`947643b9`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L208-L214) and [`a1e0a80d`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L78).
 
-**Component**: [`AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L449-L452)
+**Component**: [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L449-L452)
 
 **Problem**: Calls deprecated `AudioManager.setStreamMute()` on the global OS audio stream, impacting external apps and risking permanent device muting on crash.
 
@@ -138,7 +138,7 @@ if (mHalfDuplex && mOutput != null) {
     mOutput.setHalfDuplexMuted(isTalking);
 }
 ```
-Inside [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), pass the flag to [`AudioOutputEngine::renderMix`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp) to zero the mixed PCM buffer before writing to `AudioTrack`.
+Inside [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java), pass the flag to [`AudioOutputEngine::renderMix`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp) to zero the mixed PCM buffer before writing to `AudioTrack`.
 
 ---
 
@@ -147,13 +147,13 @@ Inside [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/
 > [!NOTE]
 > **Status: COMPLETED**
 >
-> All Phase 2 remediation items (PTT-05, PTT-06, and PTT-15) have been implemented, tested, and resolved (PTT-05 closed as won't fix/working as intended; PTT-06 resolved with 150ms release hangover; PTT-15 resolved with comprehensive native unit tests in [`test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_input_engine.cpp)).
+> All Phase 2 remediation items (PTT-05, PTT-06, and PTT-15) have been implemented, tested, and resolved (PTT-05 closed as won't fix/working as intended; PTT-06 resolved with 150ms release hangover; PTT-15 resolved with comprehensive native unit tests in [`test_audio_input_engine.cpp`](../../libraries/humla/src/test/cpp/test_audio_input_engine.cpp)).
 
 ### 2.1 Retain Pre-Speech Lookahead Ring Buffer in PTT as Latency Compensation (PTT-05) — CLOSED (WON'T FIX)
 
 **Status**: Closed as Won't Fix (Working as Intended).
 
-**Component**: [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126)
+**Component**: [`AudioInputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126)
 
 **Evaluation & Decision**:
 PTT-05 originally proposed clearing `m_ringBuffer` upon speech onset in PTT mode to avoid transmitting pre-trigger mechanical switch clicks or touchscreen tap transients.
@@ -164,7 +164,7 @@ Upon comprehensive review, this proposed change was rejected:
 3. **Existing Acoustic Filtering**: The 90Hz infrasonic high-pass filter and pre-buffering RNNoise neural denoising effectively suppress screen tap thumps and silence transients.
 4. **No Privacy Impact**: 80ms is shorter than a single syllable and cannot leak intelligible private speech.
 
-**Outcome**: No code modifications made to [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126). The 80ms pre-speech lookahead flush is retained across all input modes.
+**Outcome**: No code modifications made to [`AudioInputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L116-L126). The 80ms pre-speech lookahead flush is retained across all input modes.
 
 ---
 
@@ -172,7 +172,7 @@ Upon comprehensive review, this proposed change was rejected:
 
 **Status**: Resolved in branch `bugfix/ptt-phase2-remediation`.
 
-**Component**: [`AudioInputEngine.h`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h), [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L89-L100)
+**Component**: [`AudioInputEngine.h`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h), [`AudioInputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L89-L100)
 
 **Problem**: Releasing PTT cuts off audio with 0ms hangover, clipping trailing syllables.
 
@@ -200,7 +200,7 @@ case InputMode::PUSH_TO_TALK:
 
 **Status**: Resolved in branch `bugfix/ptt-phase2-remediation`.
 
-**Component**: [`libraries/humla/src/test/cpp/test_audio_input_engine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/test/cpp/test_audio_input_engine.cpp), [`scripts/test_native_audio.sh`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/scripts/test_native_audio.sh)
+**Component**: [`libraries/humla/src/test/cpp/test_audio_input_engine.cpp`](../../libraries/humla/src/test/cpp/test_audio_input_engine.cpp), [`scripts/test_native_audio.sh`](../../scripts/test_native_audio.sh)
 
 **Solution**:
 Constructed a dedicated test suite verifying:
@@ -221,13 +221,13 @@ Constructed a dedicated test suite verifying:
 > [!NOTE]
 > **Status: COMPLETED**
 >
-> All Phase 3 remediation items (PTT-08, PTT-09, PTT-10, and PTT-14) have been implemented, tested, and resolved in branch `bugfix/ptt-phase3-remediation` (commit [`a5e77e57`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java)): PTT-08 resolved with density-independent pixel conversion via `calculateButtonHeightPx` and unit tests in [`ChannelFragmentDensityTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/channel/ChannelFragmentDensityTest.java); PTT-09 closed as won't fix/working as intended; PTT-10 resolved by decoupling touch `setPressed` from sustained audio talk state `setActivated`; PTT-14 resolved with low-latency `SoundPool` audio cue feedback on `STREAM_MUSIC`/`STREAM_VOICE_CALL` using upstream Mumble radio chirps on both activation and deactivation with unit tests in [`MumlaServiceTalkKeyTest.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java).
+> All Phase 3 remediation items (PTT-08, PTT-09, PTT-10, and PTT-14) have been implemented, tested, and resolved in branch `bugfix/ptt-phase3-remediation` (commit [`a5e77e57`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java)): PTT-08 resolved with density-independent pixel conversion via `calculateButtonHeightPx` and unit tests in [`ChannelFragmentDensityTest.java`](../../app/src/test/java/se/lublin/mumla/channel/ChannelFragmentDensityTest.java); PTT-09 closed as won't fix/working as intended; PTT-10 resolved by decoupling touch `setPressed` from sustained audio talk state `setActivated`; PTT-14 resolved with low-latency `SoundPool` audio cue feedback on `STREAM_MUSIC`/`STREAM_VOICE_CALL` using upstream Mumble radio chirps on both activation and deactivation with unit tests in [`MumlaServiceTalkKeyTest.java`](../../app/src/test/java/se/lublin/mumla/service/MumlaServiceTalkKeyTest.java).
 
 ### 3.1 Fix PTT Button Height Density Conversion (PTT-08) — RESOLVED
 
 **Status**: Resolved in branch `bugfix/ptt-phase3-remediation`.
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L321-L342)
+**Component**: [`ChannelFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L321-L342)
 
 **Problem**: `settings.getPTTButtonHeight()` returns dp, but `mTalkButton.setLayoutParams(params)` directly assigned the dp integer as raw physical pixels, shrinking the button by $3\times$–$4\times$ on modern high-DPI displays below Google's 48dp accessibility guideline. Furthermore, the legacy preference configuration in `settings_appearance.xml` used bounds (150–1000) intended for raw pixels, which produced excessive heights (up to 3000px) once density scaling was active.
 
@@ -261,7 +261,7 @@ private void configureInput() {
 
 **Status**: Closed as Won't Fix (Working as Intended).
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L323-L333)
+**Component**: [`ChannelFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L323-L333)
 
 **Evaluation & Decision**:
 PTT-09 originally proposed keeping the PTT button visible in a disabled state (`setEnabled(false)`) when muted or suppressed, arguing that setting `View.GONE` caused jarring layout shifts.
@@ -279,7 +279,7 @@ Upon architectural and ergonomic review, this proposal was rejected:
 
 **Status**: Resolved in branch `bugfix/ptt-phase3-remediation`.
 
-**Component**: [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L95-L107), [`ptt_button_tint.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/drawable/ptt_button_tint.xml#L6)
+**Component**: [`ChannelFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L95-L107), [`ptt_button_tint.xml`](../../app/src/main/res/drawable/ptt_button_tint.xml#L6)
 
 **Problem**: Calling `mTalkButton.setPressed(true)` in `onUserTalkStateUpdated` conflicted with Android's touch dispatch pipeline, which automatically clears pressed state upon finger lift (`ACTION_UP`), creating visible flickering in toggle mode.
 
@@ -292,7 +292,7 @@ Use `mTalkButton.setActivated(true)` to represent sustained talking state (activ
 
 **Status**: Resolved in branch `bugfix/ptt-phase3-remediation`.
 
-**Component**: [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L465-L545), [`res/raw/ptt_on.ogg`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/raw/ptt_on.ogg), [`res/raw/ptt_off.ogg`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/raw/ptt_off.ogg)
+**Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L465-L545), [`res/raw/ptt_on.ogg`](../../app/src/main/res/raw/ptt_on.ogg), [`res/raw/ptt_off.ogg`](../../app/src/main/res/raw/ptt_off.ogg)
 
 **Problem**: `AudioManager.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD)` depends on the global Android system setting `Settings.System.SOUND_EFFECTS_ENABLED`, rendering PTT completely silent when typing clicks are turned off, and provided no deactivation cue upon releasing PTT.
 
@@ -308,7 +308,7 @@ Integrated Android's low-latency `SoundPool` with upstream Mumble radio chirps (
 
 ### 4.1 Native Support for Enterprise `KEYCODE_PTT` (PTT-12)
 
-**Component**: [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L449-L464), [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java)
+**Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L449-L464), [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java)
 
 **Solution**:
 Recognize `KeyEvent.KEYCODE_PTT` (286) automatically without requiring manual keycode binding in settings.
@@ -317,7 +317,7 @@ Recognize `KeyEvent.KEYCODE_PTT` (286) automatically without requiring manual ke
 
 ### 4.2 Headset Button & Media Session PTT (PTT-12)
 
-**Component**: [`MumlaConnectionNotification.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaConnectionNotification.java#L202-L215)
+**Component**: [`MumlaConnectionNotification.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaConnectionNotification.java#L202-L215)
 
 **Solution**:
 Implement `MediaSessionCompat.Callback.onMediaButtonEvent()`:
@@ -330,7 +330,7 @@ Implement `MediaSessionCompat.Callback.onMediaButtonEvent()`:
 
 **Status**: Closed as Won't Fix (User Autonomy Policy).
 
-**Component**: [`HumlaTCPMessageListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84), [`HumlaNetworkListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/util/HumlaNetworkListener.java#L156)
+**Component**: [`HumlaTCPMessageListener.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84), [`HumlaNetworkListener.java`](../../libraries/humla/src/main/java/se/lublin/humla/util/HumlaNetworkListener.java#L156)
 
 **Evaluation & Decision**:
 PTT-07 originally proposed parsing `SuggestConfig.push_to_talk` to prompt or nudge the user toward PTT mode when requested by a server administrator.
@@ -338,7 +338,7 @@ PTT-07 originally proposed parsing `SuggestConfig.push_to_talk` to prompt or nud
 Upon architectural review, this was rejected:
 1. **User Agent Primacy**: A user agent represents the user, not the remote server. Remote servers must not be permitted to restrict, override, or harass the user regarding their chosen audio transmission mode.
 2. **Accessibility and Hands-Free Use**: Mobile users often rely on Voice Activity Detection (VAD) or continuous transmission for hands-free scenarios (e.g., cycling, driving, accessibility). Server suggestions imposing PTT degrade usability and safety.
-3. **Intentional No-Op**: Retaining the existing empty stub in [`HumlaTCPMessageListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) safely satisfies the wire protocol while preserving full user autonomy.
+3. **Intentional No-Op**: Retaining the existing empty stub in [`HumlaTCPMessageListener.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) safely satisfies the wire protocol while preserving full user autonomy.
 
 **Outcome**: No code modifications required. The no-op handler is retained as an intentional architectural boundary.
 
@@ -346,7 +346,7 @@ Upon architectural review, this was rejected:
 
 ### 4.4 Resolve README Hot Corner Soft-Keyboard Discrepancy (PTT-13)
 
-**Component**: [`README.md:89`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/README.md#L89) or [`MumlaHotCorner.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java)
+**Component**: [`README.md:89`](../../README.md#L89) or [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java)
 
 **Solution**:
 Either implement an insets / layout bounds listener on `MumlaHotCorner` that dims or hides the corner when display insets indicate IME keyboard expansion, or correct `README.md` to remove the unverified claim.

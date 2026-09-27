@@ -17,9 +17,12 @@
 
 package se.lublin.humla.model;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class Channel implements IChannel, Comparable<Channel> {
     private int mId;
@@ -147,6 +150,7 @@ public final class Channel implements IChannel, Comparable<Channel> {
     }
 
     public void addSubchannel(Channel channel) {
+        if (channel == null || channel == this || mSubchannels.contains(channel)) return;
         for (int i = 0; i < mSubchannels.size(); i++) {
             Channel sc = mSubchannels.get(i);
             if (channel.compareTo(sc) <= 0) {
@@ -166,7 +170,35 @@ public final class Channel implements IChannel, Comparable<Channel> {
         return Collections.unmodifiableList(mLinks);
     }
 
+    /**
+     * Returns the set of all channels transitively linked to this channel,
+     * including this channel itself.
+     * Matches upstream Mumble's Channel::allLinks() traversal.
+     * @return Set of all transitively linked channels.
+     */
+    public Set<Channel> getAllLinks() {
+        Set<Channel> seen = new HashSet<Channel>();
+        seen.add(this);
+        if (mLinks.isEmpty()) {
+            return Collections.unmodifiableSet(seen);
+        }
+        ArrayDeque<Channel> stack = new ArrayDeque<Channel>();
+        stack.push(this);
+        while (!stack.isEmpty()) {
+            Channel ch = stack.pop();
+            for (Channel linked : new ArrayList<Channel>(ch.mLinks)) {
+                if (linked != null && seen.add(linked)) {
+                    stack.push(linked);
+                }
+            }
+        }
+        return Collections.unmodifiableSet(seen);
+    }
+
     public void addLink(Channel channel) {
+        if (channel == null || channel == this || mLinks.contains(channel)) {
+            return;
+        }
         for (int i = 0; i < mLinks.size(); i++) {
             Channel sc = mLinks.get(i);
             if (channel.compareTo(sc) <= 0) {
@@ -271,8 +303,17 @@ public final class Channel implements IChannel, Comparable<Channel> {
 
     @Override
     public int compareTo(Channel another) {
-        if(mPosition != another.getPosition())
-            return ((Integer)mPosition).compareTo(another.getPosition());
-        return mName.compareTo(another.getName());
+        if (mPosition != another.getPosition())
+            return Integer.compare(mPosition, another.getPosition());
+        if (mName == null && another.getName() == null)
+            return Integer.compare(mId, another.getId());
+        if (mName == null)
+            return -1;
+        if (another.getName() == null)
+            return 1;
+        int nameCmp = mName.compareTo(another.getName());
+        if (nameCmp != 0)
+            return nameCmp;
+        return Integer.compare(mId, another.getId());
     }
 }

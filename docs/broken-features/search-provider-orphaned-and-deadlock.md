@@ -4,11 +4,11 @@
 **Severity:** medium-high (orphaned component, potential main thread deadlock)  
 **Component:** `app` Android Integration / Search Provider  
 **Files Affected:**
-- [`AndroidManifest.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/AndroidManifest.xml)
-- [`ChannelSearchProvider.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelSearchProvider.java)
-- [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java)
-- [`searchable.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/searchable.xml)
-- [`build.gradle`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build.gradle)
+- [`AndroidManifest.xml`](../../app/src/main/AndroidManifest.xml)
+- [`ChannelSearchProvider.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelSearchProvider.java)
+- [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java)
+- [`searchable.xml`](../../app/src/main/res/xml/searchable.xml)
+- [`build.gradle`](../../app/build.gradle)
 
 ---
 

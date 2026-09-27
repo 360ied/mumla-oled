@@ -4,8 +4,8 @@
 **Severity:** low-medium (feature parity with upstream Mumble)  
 **Component:** `libraries/humla` Audio Engine / Mixer  
 **Files Affected:**
-- [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
-- [`User.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java)
+- [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
+- [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java)
 
 ---
 

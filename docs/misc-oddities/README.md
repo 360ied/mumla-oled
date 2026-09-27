@@ -23,15 +23,15 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 
 | ID | Category | Severity | Status | Summary | Location |
 |---|---|---|---|---|---|
-| **ODD-01** | **Memory / State** | **High** | **Resolved** | **Disconnected User Memory Leak**: [`ModelHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) never removes disconnected or kicked users from `mUsers`. Departed users accumulate indefinitely in memory, and `getUser(session)` returns orphaned users with `channel = null`. | [`ModelHandler.java:469`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) |
-| **ODD-02** | **Threading / Perf** | **High** | **Resolved** | **UDP Voice Packets Processed on Main UI Thread**: In [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), every incoming UDP datagram allocates a `Runnable` and posts to the main Looper. Protobuf parsing, byte copying, and JNI queueing run on the UI thread, causing UI jank and audio jitter during active chatter. | [`HumlaUDP.java:123`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128) |
-| **ODD-03** | **Network / Memory** | **Medium** | **Resolved** | **Unbounded Outgoing UDP Send Queue**: [`HumlaUDP.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) instantiates `mSendQueue` as an unbounded `LinkedBlockingQueue<DatagramPacket>`. Degraded or blocked cellular connections cause memory bloat and post-reconnect packet bursts. | [`HumlaUDP.java:74`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) |
-| **ODD-04** | **UI / Compatibility** | **Medium** | **Open** | **Deprecated `getIdentifier` Inset Query**: [`MumlaOverlay.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265-L281) queries `"status_bar_height"` and `"navigation_bar_height"` via `Resources.getIdentifier()`, which fails on modern Android display cutouts, camera punch-holes, and gesture bars. | [`MumlaOverlay.java:265`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265-L285) |
-| **ODD-05** | **UI / Window** | **Low** | **Open** | **Hot Corner Disregards Orientation Change**: [`MumlaService.onConfigurationChanged()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) updates overlay HUD coordinates on rotation, but neglects `MumlaHotCorner`, failing to refresh gesture exclusion rects or layout bounds. | [`MumlaService.java:632`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) |
-| **ODD-06** | **UI / Lifecycle** | **Low** | **Open** | **First Run Certificate Dialog Re-spawns**: [`MumlaActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) displays a dialog without a negative button, cancel listener, or `setCancelable(false)`; tapping outside dismisses the dialog without setting `first_run = false`, causing it to reappear on every app launch. | [`MumlaActivity.java:481`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) |
-| **ODD-07** | **Preferences** | **Low** | **Open** | **Inconsistent Reset Key Default Value**: [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`, but [`KeySelectPreferenceDialogFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) sets `mCurrentValue = 0` (`KEYCODE_UNKNOWN`), producing divergent preference states. | [`KeySelectPreferenceDialogFragment.java:35`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) |
-| **ODD-08** | **Code Hygiene** | **Low** | **Open** | **Dead Commented-Out Preferences**: Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers`) remain commented out in [`settings_appearance.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94). | [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94) |
-| **ODD-09** | **Network / Latency** | **Medium** | **Open** | **Bandwidth-Degraded `framesPerPacket` Fails to Scale HumlaUDP Send Queue**: When low server bandwidth triggers `AudioHandler.setMaxBandwidth()` to increase `framesPerPacket` (e.g. from 2 to 4), `HumlaUDP` is not updated, keeping a 10-packet queue ($10 \times 40\text{ ms} = 400\text{ ms}$) and causing latency bloat. | [`AudioHandler.java:266`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272) |
+| **ODD-01** | **Memory / State** | **High** | **Resolved** | **Disconnected User Memory Leak**: [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) never removes disconnected or kicked users from `mUsers`. Departed users accumulate indefinitely in memory, and `getUser(session)` returns orphaned users with `channel = null`. | [`ModelHandler.java:469`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490) |
+| **ODD-02** | **Threading / Perf** | **High** | **Resolved** | **UDP Voice Packets Processed on Main UI Thread**: In [`HumlaUDP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), every incoming UDP datagram allocates a `Runnable` and posts to the main Looper. Protobuf parsing, byte copying, and JNI queueing run on the UI thread, causing UI jank and audio jitter during active chatter. | [`HumlaUDP.java:123`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128) |
+| **ODD-03** | **Network / Memory** | **Medium** | **Resolved** | **Unbounded Outgoing UDP Send Queue**: [`HumlaUDP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) instantiates `mSendQueue` as an unbounded `LinkedBlockingQueue<DatagramPacket>`. Degraded or blocked cellular connections cause memory bloat and post-reconnect packet bursts. | [`HumlaUDP.java:74`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) |
+| **ODD-04** | **UI / Compatibility** | **Medium** | **Open** | **Deprecated `getIdentifier` Inset Query**: [`MumlaOverlay.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265-L281) queries `"status_bar_height"` and `"navigation_bar_height"` via `Resources.getIdentifier()`, which fails on modern Android display cutouts, camera punch-holes, and gesture bars. | [`MumlaOverlay.java:265`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L265-L285) |
+| **ODD-05** | **UI / Window** | **Low** | **Open** | **Hot Corner Disregards Orientation Change**: [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) updates overlay HUD coordinates on rotation, but neglects `MumlaHotCorner`, failing to refresh gesture exclusion rects or layout bounds. | [`MumlaService.java:632`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) |
+| **ODD-06** | **UI / Lifecycle** | **Low** | **Open** | **First Run Certificate Dialog Re-spawns**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) displays a dialog without a negative button, cancel listener, or `setCancelable(false)`; tapping outside dismisses the dialog without setting `first_run = false`, causing it to reappear on every app launch. | [`MumlaActivity.java:481`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) |
+| **ODD-07** | **Preferences** | **Low** | **Open** | **Inconsistent Reset Key Default Value**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`, but [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) sets `mCurrentValue = 0` (`KEYCODE_UNKNOWN`), producing divergent preference states. | [`KeySelectPreferenceDialogFragment.java:35`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) |
+| **ODD-08** | **Code Hygiene** | **Low** | **Open** | **Dead Commented-Out Preferences**: Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers`) remain commented out in [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml#L74-L94). | [`settings_appearance.xml:74-94`](../../app/src/main/res/xml/settings_appearance.xml#L74-L94) |
+| **ODD-09** | **Network / Latency** | **Medium** | **Open** | **Bandwidth-Degraded `framesPerPacket` Fails to Scale HumlaUDP Send Queue**: When low server bandwidth triggers `AudioHandler.setMaxBandwidth()` to increase `framesPerPacket` (e.g. from 2 to 4), `HumlaUDP` is not updated, keeping a 10-packet queue ($10 \times 40\text{ ms} = 400\text{ ms}$) and causing latency bloat. | [`AudioHandler.java:266`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272) |
 
 ---
 
@@ -39,7 +39,7 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 
 ### ODD-01: Disconnected User Leak in ModelHandler
 
-In [`ModelHandler.java:469-490`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490):
+In [`ModelHandler.java:469-490`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L469-L490):
 
 ```java
 @Override
@@ -61,14 +61,14 @@ public void messageUserRemove(Mumble.UserRemove msg) {
 
 Notice that `mUsers.remove(msg.getSession())` is **never executed**.
 - `user.setChannel(null)` detaches the user from the channel tree, but `mUsers` retains the `User` object reference permanently until disconnection.
-- Any subsequent call to `ModelHandler.getUser(session)` returns a non-null `User` instance whose channel is `null`, leaving stale user objects that necessitate defensive null checks (e.g. [`MumlaOverlay.java:51`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L51)) and risk bugs or null pointer dereferences in downstream components expecting active connected users.
+- Any subsequent call to `ModelHandler.getUser(session)` returns a non-null `User` instance whose channel is `null`, leaving stale user objects that necessitate defensive null checks (e.g. [`MumlaOverlay.java:51`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L51)) and risk bugs or null pointer dereferences in downstream components expecting active connected users.
 - On busy servers with high user turnover, memory usage grows monotonically throughout the session.
 
 ---
 
 ### ODD-02: Incoming UDP Audio Processing Dispatched to Main UI Thread
 
-In [`HumlaUDP.java:121-128`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L121-L128):
+In [`HumlaUDP.java:121-128`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L121-L128):
 
 ```java
 if (mListener != null) {
@@ -87,7 +87,7 @@ The Javadoc at line 216 explicitly states:
 `/** onUDPDataReceived is always called on the UDP receive thread. */`
 
 However, line 123 posts every packet to `mCallbackHandler` (the main UI thread).
-In [`HumlaConnection.java:702-725`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L702-L725):
+In [`HumlaConnection.java:702-725`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L702-L725):
 ```java
 MumbleUDP.Audio audioMsg = MumbleUDP.Audio.parseFrom(ByteString.copyFrom(data, 1, data.length - 1));
 for (HumlaUDPMessageListener handler : mUDPHandlers) {
@@ -100,7 +100,7 @@ This entire parsing, protobuf decoding, and JNI queueing pipeline runs on the **
 
 ### ODD-03: Unbounded Outgoing UDP Send Queue
 
-In [`HumlaUDP.java:60, 74`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60):
+In [`HumlaUDP.java:60, 74`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L60):
 
 ```java
 /** Unbounded queue of outgoing packets to be sent. */
@@ -118,7 +118,7 @@ When transmitting audio over poor cellular connections (e.g. train tunnels, elev
 
 ### ODD-04: Deprecated Status/Navigation Bar Insets in Overlay HUD
 
-In [`MumlaOverlay.java:263-285`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L263-L285):
+In [`MumlaOverlay.java:263-285`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L263-L285):
 
 ```java
 private int getTopMargin(DisplayMetrics dm) {
@@ -139,7 +139,7 @@ private int getTopMargin(DisplayMetrics dm) {
 
 ### ODD-05: Hot Corner Overlay Ignores Screen Rotation
 
-In [`MumlaService.java:632-637`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637):
+In [`MumlaService.java:632-637`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637):
 
 ```java
 @Override
@@ -160,7 +160,7 @@ When the device rotates (e.g., portrait to landscape while gaming):
 
 ### ODD-06: First Run Certificate Dialog Re-spawns on Outside Touch
 
-In [`MumlaActivity.java:481-503`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503):
+In [`MumlaActivity.java:481-503`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503):
 
 ```java
 new MaterialAlertDialogBuilder(this)
@@ -183,9 +183,9 @@ If a user taps outside the dialog or presses Back:
 
 ### ODD-07: Keycode Reset Inconsistency (-1 vs 0)
 
-- In [`Settings.java:59`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java#L59):
+- In [`Settings.java:59`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59):
   `public static final Integer DEFAULT_PUSH_KEY = -1;`
-- In [`KeySelectPreferenceDialogFragment.java:35`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35):
+- In [`KeySelectPreferenceDialogFragment.java:35`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35):
   ```java
   builder.setNeutralButton(R.string.reset_key, (dialog, which) -> {
       ...
@@ -201,7 +201,7 @@ An unconfigured key defaults to `-1`, while a reset key is persisted as `0` (`Ke
 
 ### ODD-08: Stale Commented-Out XML Preferences
 
-In [`settings_appearance.xml:74-94`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L74-L94):
+In [`settings_appearance.xml:74-94`](../../app/src/main/res/xml/settings_appearance.xml#L74-L94):
 
 ```xml
     <!--
@@ -233,7 +233,7 @@ These legacy Plumble settings are commented out in XML and should be removed.
 
 ### ODD-09: Bandwidth-Degraded framesPerPacket Fails to Scale UDP Send Queue
 
-In [`AudioHandler.java:266-272`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272):
+In [`AudioHandler.java:266-272`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272):
 
 ```java
 if (HumlaConnection.calculateAudioBandwidth(bitrate, framesPerPacket) > maxBandwidth) {

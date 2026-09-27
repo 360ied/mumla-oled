@@ -225,6 +225,10 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
+    public AudioOutput getAudioOutput() {
+        return mOutput;
+    }
+
     public HumlaUDPMessageType getCodec() {
         return mCodec;
     }

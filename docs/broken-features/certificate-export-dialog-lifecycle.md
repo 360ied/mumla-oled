@@ -4,7 +4,7 @@
 **Severity:** medium (swallows error messages and prevents user troubleshooting)  
 **Component:** `app` Preference / Certificate Management  
 **Files Affected:**
-- [`CertificateExportActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java)
+- [`CertificateExportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java)
 
 ---
 

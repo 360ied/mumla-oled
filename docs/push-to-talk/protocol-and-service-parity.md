@@ -17,7 +17,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 
 | Feature / Behavior | Upstream Mumble C++ Client (`../mumble`) | Mumla OLED Implementation | Parity Status |
 |---|---|---|---|
-| **Server PTT Suggestion** | Parses [`Mumble::Protocol::SuggestConfig`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Messages.cpp#L611-L612), prompts user if server requires/suggests PTT | Netty parses [`MumbleProto.SuggestConfig`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/Mumble.proto#L614-L626); callbacks in [`HumlaTCPMessageListener`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) are intentional no-ops to protect user agent autonomy | **Closed (Won't Fix)** |
+| **Server PTT Suggestion** | Parses [`Mumble::Protocol::SuggestConfig`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Messages.cpp#L611-L612), prompts user if server requires/suggests PTT | Netty parses [`MumbleProto.SuggestConfig`](../../libraries/humla/src/Mumble.proto#L614-L626); callbacks in [`HumlaTCPMessageListener`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) are intentional no-ops to protect user agent autonomy | **Closed (Won't Fix)** |
 | **Talking While Muted Cue** | Detects `bTalkingWhenMuted`, suppresses audio output, plays `qsTxMuteCue` audio beep, emits `doMuteCue()` | Gated in `AudioInputEngine::processFrame`, but completely silent; no audio cue, no toast, no UI warning | **Missing Feedback** |
 | **Whisper / Target State** | Sets `ClientUser::setTalking(Settings::Shouting)` when transmitting to whisper/shout targets | Hardcodes `currentUser.setTalkState(TALKING)`, discarding whisper/shout context | **Degraded** |
 | **Stream Terminator** | Dispatches `isLastFrame = true` on speech offset under all conditions | Only flushes terminator when `m_accumulatedFrames > 0`; drops terminator on exact packet boundaries | **Critical Bug (PTT-01)** |
@@ -27,7 +27,7 @@ This document examines how Push-to-Talk interacts with the Mumble wire protocol,
 
 ## Architectural Evaluation: Server PTT Suggestion Policy (PTT-07)
 
-The Mumble protocol specification defines `SuggestConfig` ([`Mumble.proto:614-626`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/Mumble.proto#L614-L626)):
+The Mumble protocol specification defines `SuggestConfig` ([`Mumble.proto:614-626`](../../libraries/humla/src/Mumble.proto#L614-L626)):
 
 ```protobuf
 message SuggestConfig {
@@ -42,7 +42,7 @@ When a server administrator configures `suggestpushtotalk = true` in `mumble-ser
 
 ### The Implementation in Humla
 
-In [`HumlaConnection.java:825-826, 920`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L825-L826), the message is parsed from the TCP stream and dispatched to the handler:
+In [`HumlaConnection.java:825-826, 920`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L825-L826), the message is parsed from the TCP stream and dispatched to the handler:
 
 ```java
 case SuggestConfig:
@@ -52,7 +52,7 @@ case SuggestConfig:
     handler.messageSuggestConfig((Mumble.SuggestConfig) msg);
 ```
 
-However, [`HumlaTCPMessageListener.java:84`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) and [`HumlaNetworkListener.java:156`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/util/HumlaNetworkListener.java#L156) define only empty default implementations:
+However, [`HumlaTCPMessageListener.java:84`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) and [`HumlaNetworkListener.java:156`](../../libraries/humla/src/main/java/se/lublin/humla/util/HumlaNetworkListener.java#L156) define only empty default implementations:
 
 ```java
 public void messageSuggestConfig(Mumble.SuggestConfig msg) {}
@@ -68,7 +68,7 @@ Following architectural review, this item is **Closed (Won't Fix)** based on the
 
 1. **Primacy of the User Agent**: The client software represents and serves the local user, not the remote host or server administrator. Audio transmission modes (Voice Activity Detection, Continuous Transmission, Push-to-Talk) are chosen deliberately by the user based on their specific hardware, ambient environment, and operational needs.
 2. **Mobile Ergonomics & Accessibility**: On mobile devices, Push-to-Talk demands active physical contact (holding an on-screen button or hardware key). For mobile users driving, cycling, using accessibility tools, or requiring hands-free operation, coercing or nagging the user to switch to PTT severely harms safety and usability.
-3. **Intentional No-Op Design**: The empty stub in [`HumlaTCPMessageListener.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) safely absorbs the incoming wire message without mutating client configuration or displaying intrusive, coercive dialogs.
+3. **Intentional No-Op Design**: The empty stub in [`HumlaTCPMessageListener.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/HumlaTCPMessageListener.java#L84) safely absorbs the incoming wire message without mutating client configuration or displaying intrusive, coercive dialogs.
 
 ---
 
@@ -76,13 +76,13 @@ Following architectural review, this item is **Closed (Won't Fix)** based on the
 
 When a user is muted or suppressed by an administrator, or enters a channel where their certificate lacks Speak permissions (`PermissionDenied`), the server transmits a `UserState` message containing `suppress = true`.
 
-In [`AudioHandler.java:178, 351`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L178):
+In [`AudioHandler.java:178, 351`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L178):
 
 ```java
 setServerMuted(msg.getMute() || msg.getSelfMute() || msg.getSuppress());
 ```
 
-This sets `m_muted = true` in [`AudioInputEngine.cpp:99-101`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L99-L101):
+This sets `m_muted = true` in [`AudioInputEngine.cpp:99-101`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L99-L101):
 
 ```cpp
 if (m_muted) {
@@ -109,7 +109,7 @@ Mumla provides a preference `half_duplex` intended to mute incoming server audio
 
 ### The Preference Propagation Bug
 
-In [`MumlaService.java:672-673`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L672-L673), when the user changes settings while connected:
+In [`MumlaService.java:672-673`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L672-L673), when the user changes settings while connected:
 
 ```java
 case Settings.PREF_HALF_DUPLEX:
@@ -117,7 +117,7 @@ case Settings.PREF_HALF_DUPLEX:
     break;
 ```
 
-`MumlaService` forwards `changedExtras` to [`HumlaService.configureExtras()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702):
+`MumlaService` forwards `changedExtras` to [`HumlaService.configureExtras()`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L698-L702):
 
 ```java
 if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {
@@ -142,7 +142,7 @@ if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {
 
 ## Defect Deep-Dive: Dangerous Global OS Stream Muting (PTT-04)
 
-When half-duplex is enabled, [`AudioHandler.java:450-452`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L450-L452) executes:
+When half-duplex is enabled, [`AudioHandler.java:450-452`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L450-L452) executes:
 
 ```java
 if (mHalfDuplex) {
@@ -159,7 +159,7 @@ if (mHalfDuplex) {
 3. **Mute Leakage on Crash**:
    If Mumla terminates unexpectedly, crashes, or is killed by the Android LMK (Low Memory Killer) while `isTalking == true`, the device's voice call or media stream remains **permanently muted** at the OS level until the user manually adjusts their volume keys or reboots the device.
 4. **Clean Alternative**:
-   Mumla possesses a full in-tree native playback engine ([`AudioOutputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp)). Half-duplex should simply set an internal attenuation factor ($0.0$) in `AudioOutputEngine::renderMix` or pause the local `AudioTrack`, completely isolating the behavior from the Android OS volume subsystem.
+   Mumla possesses a full in-tree native playback engine ([`AudioOutputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp)). Half-duplex should simply set an internal attenuation factor ($0.0$) in `AudioOutputEngine::renderMix` or pause the local `AudioTrack`, completely isolating the behavior from the Android OS volume subsystem.
 
 ---
 
@@ -167,7 +167,7 @@ if (mHalfDuplex) {
 
 ### The Decoupled `isTalking()` Method
 
-In [`HumlaService.java:962-964`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L962-L964):
+In [`HumlaService.java:962-964`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L962-L964):
 
 ```java
 @Override
@@ -176,7 +176,7 @@ public boolean isTalking() {
 }
 ```
 
-`mToggleInputMode.isTalkingOn()` only records the boolean flag set by [`setTalkingState(boolean)`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L967-L972).
+`mToggleInputMode.isTalkingOn()` only records the boolean flag set by [`setTalkingState(boolean)`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L967-L972).
 If the client is muted (`m_muted == true`), `AudioInputEngine` transmits zero packets and remains silent. Yet `HumlaService.isTalking()` returns `true`.
 
 ### Round-Trip Latency of UI Feedback
