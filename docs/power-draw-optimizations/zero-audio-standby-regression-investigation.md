@@ -18,9 +18,14 @@ An exhaustive architectural investigation and empirical analysis of the screen-o
    - [B. The AOSP While-Idle Throttling Deadlock](#b-the-aosp-while-idle-throttling-deadlock)
    - [C. Screen State Asymmetry (Display Wakelock Coupling)](#c-screen-state-asymmetry-display-wakelock-coupling)
 5. [Secondary Pipeline Defect: Unflushed Conscrypt SSL Streams](#5-secondary-pipeline-defect-unflushed-conscrypt-ssl-streams)
-6. [Actionable Remediation Paths](#6-actionable-remediation-paths)
-   - [Option 1: Retain Continuous Network Wakelock, Preserve Audio Power-Gating (Recommended)](#option-1-retain-continuous-network-wakelock-preserve-audio-power-gating-recommended)
-   - [Option 2: Complete Reversion to 0.21.9 Baseline](#option-2-complete-reversion-to-0219-baseline)
+6. [The Core Hardware Paradox: OEM Watchdog SIGKILL (0.21.9) vs. Murmur Timeout (0.21.10)](#6-the-core-hardware-paradox-oem-watchdog-sigkill-0219-vs-murmur-timeout-02110)
+   - [A. The Impossible Triad: Comparative Invariant Matrix](#a-the-impossible-triad-comparative-invariant-matrix)
+   - [B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination](#b-deconstructing-the-0219-flaw-audio-gating-triggers-process-termination)
+   - [C. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout](#c-deconstructing-the-02110-flaw-wakelock-release-triggers-murmur-timeout)
+7. [Actionable Remediation Paths](#7-actionable-remediation-paths)
+   - [Path A: Screen-Aware Dynamic Silence Shield Coupling (Recommended)](#path-a-screen-aware-dynamic-silence-shield-coupling-recommended)
+   - [Path B: Complete Restoration of the 0.21.7 Baseline (Maximum Stability)](#path-b-complete-restoration-of-the-0217-baseline-maximum-stability)
+   - [Path C: User-Configurable Background Profile](#path-c-user-configurable-background-profile)
 
 ---
 
@@ -270,17 +275,78 @@ if (mHandler != null) {
 
 ---
 
-## 6. Actionable Remediation Paths
+## 6. The Core Hardware Paradox: OEM Watchdog SIGKILL (0.21.9) vs. Murmur Timeout (0.21.10)
 
-### Option 1: Retain Continuous Network Wakelock, Preserve Audio Power-Gating (Recommended)
+The root challenge in Mumla OLED's power optimization initiative is governed by a fundamental hardware, operating system, and protocol trilemma:
 
-This approach eliminates the regression immediately while preserving all audio hardware power savings from Phase 2:
+### A. The Impossible Triad: Comparative Invariant Matrix
 
-1. **Re-engage Permanent `mWakeLock`**: In [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), hold `PARTIAL_WAKE_LOCK` continuously while connected.
-2. **Restore In-Memory Keepalive Loop**: Do not put [`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java) into suspended standby mode. Let `ScheduledExecutorService` tick natively every 10–30 seconds.
-3. **Preserve Audio Hardware Power-Gating**: Keep [`AudioOutput.setStandbyPauseEnabled(true)`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L168-L180). Pausing `AudioTrack` during silence cuts $15\text{ to }30\text{ mW}$ of audio DSP/DAC power without touching the network layer.
-4. **Fix SSL Stream Flushing**: Add `mDataOutput.flush()` to [`HumlaTCP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java#L252) and enable `setTcpNoDelay(true)`.
+| Architecture Baseline | `PARTIAL_WAKE_LOCK` State | `AudioTrack` Playback State | Murmur TCP Keepalive (30s) | OEM Watchdog (`SIGKILL`) | Power Footprint | Real-World Operational Outcome |
+|---|---|---|---|---|---|---|
+| **Mumla OLED 0.21.7 (Continuous Silence)** | Held continuously (24/7) | `PLAYSTATE_PLAYING` (Digital silence / zero PCM) | **Sustained** (In-memory loop pings Murmur every 10–30s) | **Immune** (Continuous silence shield active) | High ($35\text{--}60\text{ mA}$ AP + $15\text{--}30\text{ mW}$ Audio DSP) | **100% Stable Connection**: No disconnects, no process kills; burns power rendering silence. |
+| **Mumla OLED 0.21.9 (Hardware Audio Gating)** | Held continuously (24/7) | `PLAYSTATE_PAUSED` (Standby pause after 3s/15s silence) | **Sustained** (In-memory loop pings Murmur every 10–30s) | **FATAL FAILURE (`SIGKILL`)**: Watchdog detects wakelock held without active audio | Moderate ($35\text{--}60\text{ mA}$ AP + $0\text{ mW}$ Audio DSP) | **Process Killed by OS**: Samsung Device Care, Xiaomi MIUI, and Vivo PEM kill app with `SIGKILL`. |
+| **Mumla OLED 0.21.10 (Zero-Audio Standby Lite)** | Released in Zero-Audio Standby | `PLAYSTATE_PAUSED` (Standby pause enabled) | **FATAL FAILURE (TIMEOUT)**: Alarms deferred 37s–104s; Murmur drops socket | **Immune** (No wakelock held while audio is paused) | Low ($5\text{--}10\text{ mA}$ AP theoretical + $0\text{ mW}$ Audio DSP) | **Connection Dropped**: Murmur detects 30s inactivity and terminates session (`EOFException`). |
 
-### Option 2: Complete Reversion to 0.21.9 Baseline
+### B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination
 
-Revert the merge commit `cdc3c5f2` and restore the proven, stable 0.21.9 connection lifecycle.
+In Release **0.21.9**, the audio pipeline introduced route-aware `AudioTrack` standby pausing ([`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)) after 3 seconds of silence (15 seconds on Bluetooth A2DP) to cut the $15\text{ to }30\text{ mW}$ wasted by `AudioFlinger` and the hardware audio DSP/DAC on digital silence.
+
+However, 0.21.9 left the monolithic `PowerManager.PARTIAL_WAKE_LOCK` active in [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java). This combination created a fatal vulnerability:
+
+1. **OEM Watchdog Heuristics**: Proprietary battery management daemons on Samsung (Device Care / OneUI), Xiaomi (MIUI / HyperOS), Huawei (EMUI), and BBK/Vivo (Power Engine Management / PEM) inspect `AudioFlinger` track state alongside active kernel wakelocks.
+2. **The Kill Condition**: When an OEM watchdog detects an application holding an active `PARTIAL_WAKE_LOCK` with the screen off while no `AudioTrack` is in `PLAYSTATE_PLAYING`, the system classifies the process as a rogue background battery abuser.
+3. **Outcome**: The OS terminates the process with `SIGKILL` without warning or ANR dialog.
+
+Any naive recommendation to "simply hold `PARTIAL_WAKE_LOCK` while pausing `AudioTrack`" directly recreates the 0.21.9 defect and guarantees that the process will be murdered by OEM watchdogs within minutes of turning the screen off.
+
+### C. Deconstructing the 0.21.10 Flaw: Wakelock Release Triggers Murmur Timeout
+
+To prevent the 0.21.9 `SIGKILL` termination, 0.21.10 implemented `wakelock-remediation-lite`: whenever `isPlausiblyZeroAudio() == true`, `HumlaService` released `mWakeLock` alongside `AudioTrack.pause()`, ensuring no wakelock was held while audio was paused.
+
+However, releasing `mWakeLock` collided with Android power management:
+1. **Linux Kernel Suspend**: With zero wakelocks held, the Application Processor entered `suspend-to-RAM`.
+2. **AlarmManager Deferral**: Android OS and OEM power managers defer standard `setExact(ELAPSED_REALTIME_WAKEUP)` alarms when the screen is off on battery (empirically observed delays: 37.6s to 104s).
+3. **Murmur Inactivity Drop**: Upstream Murmur disconnects any client that sends zero TCP data for 30 consecutive seconds. Because keepalive alarms failed to fire, Murmur unilaterally severed the connection.
+
+---
+
+## 7. Actionable Remediation Paths
+
+A viable architecture must resolve both constraints simultaneously: it must maintain TCP keepalive pings every $< 30$ seconds to satisfy Murmur, while never holding a `PARTIAL_WAKE_LOCK` with `AudioTrack` paused while the screen is off to satisfy OEM watchdogs.
+
+### Path A: Screen-Aware Dynamic Silence Shield Coupling (Recommended)
+
+This hybrid architecture leverages the fact that OEM watchdogs only enforce their kill heuristic when the screen is **off**:
+
+1. **Screen-On Behavior (Foreground & Active Interaction)**:
+   - When the screen is ON (monitored via `ACTION_SCREEN_ON`), the Android display subsystem holds a display wakelock (`PowerManager.SCREEN_BRIGHT_WAKE_LOCK` or display C0 state).
+   - OEM watchdogs **never issue `SIGKILL` while the screen is on**.
+   - Therefore, `AudioOutput.setStandbyPauseEnabled(true)` can be safely permitted, allowing `AudioTrack.pause()` and power-gating the audio DSP/DAC ($15\text{ to }30\text{ mW}$ saved) while the user is using the phone or has the display active.
+2. **Screen-Off Behavior (Background Connected Standby)**:
+   - When the screen turns OFF (monitored via `ACTION_SCREEN_OFF`):
+     - `HumlaService` must **strictly inhibit audio standby pause** (`AudioOutput.setStandbyPauseEnabled(false)`).
+     - `AudioTrack` enters `PLAYSTATE_PLAYING` rendering zero PCM digital silence (the proven 0.21.7 silence shield).
+     - `HumlaService` maintains `PARTIAL_WAKE_LOCK` and keeps `HumlaConnection`'s in-memory `ScheduledExecutorService` active.
+   - **Result**:
+     - OEM watchdogs inspect `AudioFlinger`, observe an active playback track, classify Mumla OLED as active VoIP media, and **refrain from issuing `SIGKILL`**.
+     - The in-memory keepalive loop continues ticking, dispatching TCP keepalive pings every 10–30 seconds, **preventing Murmur 30s timeouts**.
+3. **Transport Hardening in `HumlaTCP.java`**:
+   - Add explicit `mDataOutput.flush()` to `HumlaTCP.sendMessage()` to guarantee TLS records leave user space immediately.
+   - Enable `setTcpNoDelay(true)` on `mTCPSocket` to disable Nagle packet coalescing.
+
+### Path B: Complete Restoration of the 0.21.7 Baseline (Maximum Stability)
+
+If total code simplicity and operational certainty across all legacy OEM devices is prioritized:
+
+1. **Restore Perpetual Silence Playback**: Fully revert Phase 2 route-aware `AudioTrack` standby pausing. `AudioOutput` keeps `AudioTrack` continuously in `PLAYSTATE_PLAYING` rendering zero PCM digital silence.
+2. **Restore Monolithic Wakelock**: Keep `PARTIAL_WAKE_LOCK` held continuously in `HumlaService` throughout the connection.
+3. **Restore Native In-Memory Keepalives**: Retain the standard `ScheduledExecutorService` keepalive loop in `HumlaConnection`.
+4. **Trade-Off**: Burns $15\text{ to }30\text{ mW}$ on audio hardware during silence, but is provably immune to both OEM watchdog termination and Murmur timeouts.
+
+### Path C: User-Configurable Background Profile
+
+Expose an explicit user setting under Settings > Audio / Power:
+
+1. **"Reliable Background Standby" (Default)**: Employs the silence shield (Path A or Path B) to guarantee connection survival on hostile OEM skins (Samsung, Xiaomi, Vivo, Huawei).
+2. **"Aggressive Battery Saver" (Experimental / AOSP Only)**: Employs the Lite Track zero-audio suspend model for users on clean AOSP, LineageOS, or Google Pixel devices where OEM watchdogs are absent and while-idle alarm clamping or network baseband wake can be individually tuned.
+
