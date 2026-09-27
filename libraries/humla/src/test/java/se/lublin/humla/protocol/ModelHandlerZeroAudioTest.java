@@ -290,4 +290,48 @@ public class ModelHandlerZeroAudioTest extends TestCase {
         handler.messageUserRemove(Mumble.UserRemove.newBuilder().setSession(1).build());
         assertEquals(4, notifications.get());
     }
+
+    public void testForwardChannelLinksCreateStubsAndLinkBidirectionally() {
+        ModelHandler handler = createModelHandler();
+
+        // Channel 1 arrives linking to Channel 2 (which does not exist yet)
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(1)
+                .setName("Ch1")
+                .addLinks(2)
+                .build());
+
+        assertNotNull(handler.getChannel(1));
+        assertNotNull(handler.getChannel(2));
+        assertEquals(1, handler.getChannel(1).getLinks().size());
+        assertEquals(1, handler.getChannel(2).getLinks().size());
+        assertTrue(handler.getChannel(1).getLinks().contains(handler.getChannel(2)));
+        assertTrue(handler.getChannel(2).getLinks().contains(handler.getChannel(1)));
+
+        // Channel 2 arrives later with full state linking back to Channel 1
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(2)
+                .setName("Ch2")
+                .addLinks(1)
+                .build());
+
+        assertEquals("Ch2", handler.getChannel(2).getName());
+        assertEquals(1, handler.getChannel(1).getLinks().size());
+        assertEquals(1, handler.getChannel(2).getLinks().size());
+        assertTrue(handler.getChannel(1).getLinks().contains(handler.getChannel(2)));
+        assertTrue(handler.getChannel(2).getLinks().contains(handler.getChannel(1)));
+    }
+
+    public void testClearResetsSessionAndPermissions() {
+        ModelHandler handler = createModelHandler();
+        handler.messageServerSync(Mumble.ServerSync.newBuilder()
+                .setSession(42)
+                .setPermissions(7)
+                .build());
+
+        assertEquals(7, handler.getPermissions());
+
+        handler.clear();
+        assertEquals(0, handler.getPermissions());
+    }
 }

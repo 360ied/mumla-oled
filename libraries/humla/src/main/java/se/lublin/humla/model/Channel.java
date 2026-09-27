@@ -195,7 +195,7 @@ public final class Channel implements IChannel, Comparable<Channel> {
     }
 
     public void addLink(Channel channel) {
-        if (channel == null) {
+        if (channel == null || mLinks.contains(channel)) {
             return;
         }
         for (int i = 0; i < mLinks.size(); i++) {

@@ -98,4 +98,16 @@ public class ChannelLinksTest extends TestCase {
         assertEquals(0, a.getLinks().size());
         assertEquals(1, a.getAllLinks().size());
     }
+
+    public void testDuplicateLinksAreIgnored() {
+        Channel a = new Channel(1, false);
+        Channel b = new Channel(2, false);
+
+        a.addLink(b);
+        assertEquals(1, a.getLinks().size());
+
+        a.addLink(b);
+        assertEquals(1, a.getLinks().size());
+        assertEquals(2, a.getAllLinks().size());
+    }
 }

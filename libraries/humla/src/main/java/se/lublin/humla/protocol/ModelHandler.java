@@ -193,6 +193,8 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     public synchronized void clear() {
         mChannels.clear();
         mUsers.clear();
+        mSession = 0;
+        mPermissions = 0;
         checkZeroAudioState();
     }
 
@@ -239,15 +241,17 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         }
 
         if(msg.getLinksCount() > 0) {
+            for (Channel linked : new ArrayList<Channel>(channel.getLinks())) {
+                linked.removeLink(channel);
+            }
             channel.clearLinks();
             for(int link : msg.getLinksList()) {
                 Channel linked = mChannels.get(link);
-                if(linked != null) {
-                    channel.addLink(linked);
+                if(linked == null) {
+                    linked = createStubChannel(link);
                 }
-                // Don't add this channel to the other channel's link list- this update occurs on
-                // server synchronization, and we will get a message for the other channels' links
-                // laster.
+                channel.addLink(linked);
+                linked.addLink(channel);
             }
         }
 
@@ -264,10 +268,11 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         if(msg.getLinksAddCount() > 0) {
             for(int link : msg.getLinksAddList()) {
                 Channel linked = mChannels.get(link);
-                if(linked != null) {
-                    channel.addLink(linked);
-                    linked.addLink(channel);
+                if(linked == null) {
+                    linked = createStubChannel(link);
                 }
+                channel.addLink(linked);
+                linked.addLink(channel);
             }
         }
 
@@ -413,7 +418,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
                 } else {
                     Channel selfChannel = self.getChannel();
                     // If in a linked channel OR the same channel as the current user, notify the user about recording
-                    if(selfChannel != null && (selfChannel.getLinks().contains(selfChannel) || selfChannel.equals(user.getChannel()))) {
+                    if(selfChannel != null && user.getChannel() != null && selfChannel.getAllLinks().contains(user.getChannel())) {
                         if(user.isRecording())
                             mLogger.logInfo(mContext.getString(R.string.chat_notify_user_recording_started, MessageFormatter.highlightString(user.getName())));
                         else
@@ -644,6 +649,9 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     @Override
     public synchronized void messageServerSync(Mumble.ServerSync msg) {
         mSession = msg.getSession();
+        if(msg.hasPermissions()) {
+            mPermissions = (int) msg.getPermissions();
+        }
         if(mLogger != null && msg.hasWelcomeText()) {
             mLogger.logInfo(msg.getWelcomeText());
         }
