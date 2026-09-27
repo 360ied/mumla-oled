@@ -67,7 +67,7 @@ By taking into account Mumble 1.4+ **Channel Listeners** and **Channel Links**, 
 
 ### A. State 1: Local User is Deafened (Self or Server Deafened)
 
-In upstream Murmur ([`AudioReceiverBuffer.cpp:60`](file:///home/bualy/files/devel/mumble/src/murmur/AudioReceiverBuffer.cpp#L60)), the server enforces an absolute drop filter on all voice datagrams:
+In upstream Murmur ([`AudioReceiverBuffer.cpp:60`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/AudioReceiverBuffer.cpp#L60)), the server enforces an absolute drop filter on all voice datagrams:
 
 ```cpp
 // Upstream Murmur: AudioReceiverBuffer.cpp:60
@@ -106,7 +106,7 @@ To formalize this state safely without ignoring Mumble's channel features, we de
 ```
 
 Where:
-- $C_{\text{current}}$ is the channel where the local user currently resides ([`User.getChannel()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java)).
+- $C_{\text{current}}$ is the channel where the local user currently resides ([`User.getChannel()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java#L72)).
 - $\text{Links}(C_{\text{current}})$ is the set of channels linked to $C_{\text{current}}$ ([`Channel.getLinks()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L164-L167)).
 - $\text{ListenedChannels}(U_{\text{self}})$ is the set of channels the local user is actively listening to via Mumble 1.4+ Channel Listeners ([`User.getListeningChannels()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/User.java#L261-L263)).
 
@@ -190,7 +190,7 @@ stateDiagram-v2
 
 ### OEM Watchdog Defense: Dual Gating & 0.21.7 Silence Shield Coupling
 
-A critical real-world constraint on modern Android devices is aggressive OEM background task killers (Samsung Device Care / OneUI, Xiaomi MIUI / HyperOS, Huawei EMUI, BBK ColorOS / OxygenOS). As analyzed in Section 4 of [`wakelock-remediation.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation.md#4), these watchdogs enforce a strict heuristic: if an app holds an active `PowerManager.PARTIAL_WAKE_LOCK` with the screen off while no media audio is actively playing through `AudioTrack`, the OS forcefully terminates the process (`SIGKILL`).
+A critical real-world constraint on modern Android devices is aggressive OEM background task killers (Samsung Device Care / OneUI, Xiaomi MIUI / HyperOS, Huawei EMUI, BBK ColorOS / OxygenOS). As analyzed in Section 4 of [`wakelock-remediation.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation.md#4-the-real-world-oem-watchdog--on-device-power-paradox), these watchdogs enforce a strict heuristic: if an app holds an active `PowerManager.PARTIAL_WAKE_LOCK` with the screen off while no media audio is actively playing through `AudioTrack`, the OS forcefully terminates the process (`SIGKILL`).
 
 In Mumla OLED 0.21.7 and earlier, the application was never killed by OEM watchdogs because [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) kept `AudioTrack` continuously in `PLAYSTATE_PLAYING`, constantly rendering digital silence. This perpetual playback functioned as an effective shield against OEM watchdogs.
 
@@ -202,12 +202,12 @@ The Lite Track resolves this paradox through **Dual Gating**, coupling `isPlausi
    - `mWakeLock` is held continuously.
    - `AudioOutput`'s standby pause is **strictly inhibited** (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring the historical 0.21.7 continuous playback shield.
    - Because `AudioTrack` remains continuously in `PLAYSTATE_PLAYING`, OEM watchdogs classify Mumla OLED as an active VoIP session and never issue `SIGKILL` during conversational lulls.
-   - Power footprint: $\approx 35\text{ to }60\text{ mA}$ AP awake $+ 15\text{ to }30\text{ mW}$ Audio DSP (standard VoIP call power).
+   - Power footprint: $\approx 35\text{ to }60\text{ mA}$ AP awake + $15\text{ to }30\text{ mW}$ Audio DSP (standard VoIP call power).
 2. **Zero-Audio Standby (`isPlausiblyZeroAudio() == true`)**:
    - `mWakeLock` is **released** (`mWakeLock.release()`), allowing the Application Processor to enter Linux kernel `suspend-to-RAM`.
    - `AudioOutput`'s standby pause is **permitted** (`mAudioOutput.setStandbyPauseEnabled(true)`), calling `mAudioTrack.pause()` and power-gating the audio DSP/DAC ($15\text{ to }30\text{ mW}$ saved).
    - Because `mWakeLock` is released, OEM watchdogs have no trigger to fire (their kill heuristic requires an unreleased wakelock).
-   - Power footprint: $\approx 5\text{ to }10\text{ mA}$ AP pulsed keepalive $+ 0\text{ mW}$ Audio DSP ($80\%\text{ to }90\%$ idle savings).
+   - Power footprint: $\approx 5\text{ to }10\text{ mA}$ AP pulsed keepalive + $0\text{ mW}$ Audio DSP ($80\%\text{ to }90\%$ idle savings).
 
 ### Component 1: Plausible Zero-Audio Evaluator
 
@@ -276,13 +276,13 @@ public boolean isPlausiblyZeroAudio() {
 
 > [!NOTE]
 > **Bluetooth Routing Clarification (A2DP vs. SCO)**:
-> In Mumla OLED, standard Bluetooth headphones, earbuds, and car audio systems connect via **A2DP over ACL** (`AudioDeviceInfo.TYPE_BLUETOOTH_A2DP`) or LE Audio (`TYPE_BLE_HEADSET`), for which [`isBluetoothScoActive()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589-L602) returns `false`. These users are **not locked out** of zero-audio optimizations. After Phase 2's conservative 15-second silence grace period ([`STANDBY_TIMEOUT_A2DP_MS = 15000`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L618)), [`AudioTrack`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) enters `pause()` and the Application Processor safely enters kernel suspend-to-RAM while the Bluetooth SoC maintains link connectivity in low-power Sniff Mode. The `isBluetoothScoActive()` check serves exclusively as a defensive safeguard for rare carrier/telephony Synchronous Connection-Oriented voice calls.
+> In Mumla OLED, standard Bluetooth headphones, earbuds, and car audio systems connect via **A2DP over ACL** (`AudioDeviceInfo.TYPE_BLUETOOTH_A2DP`) or LE Audio (`TYPE_BLE_HEADSET`), for which [`isBluetoothScoActive()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589-L602) returns `false`. These users are **not locked out** of zero-audio optimizations. After Phase 2's conservative 15-second silence grace period ([`STANDBY_TIMEOUT_A2DP_MS = 15000`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L618)), [`AudioTrack`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L401) enters `pause()` and the Application Processor safely enters kernel suspend-to-RAM while the Bluetooth SoC maintains link connectivity in low-power Sniff Mode. The `isBluetoothScoActive()` check serves exclusively as a defensive safeguard for rare carrier/telephony Synchronous Connection-Oriented voice calls.
 
 ### Component 2: Pulsed Keepalive Alarm Loop
 
 When entering `ZeroAudioStandby`, standard Java user-space timers (`ScheduledExecutorService`) will freeze as the Application Processor enters Linux kernel `suspend-to-RAM`.
 
-To prevent Murmur's 30-second TCP timeout ([`Server.cpp:1843`](file:///home/bualy/files/devel/mumble/src/murmur/Server.cpp#L1843)):
+To prevent Murmur's 30-second TCP timeout ([`Server.cpp:1843`](file:///home/bualy/files/devel/mumla_dev/mumble/src/murmur/Server.cpp#L1843)):
 1. Cancel `mPingTask` on `mPingExecutorService`.
 2. Arm an exact wakeup alarm using Android's `AlarmManager`:
    ```java
@@ -336,6 +336,10 @@ In [`libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`](fi
 
 ### Step L3: Dynamic Wakelock & Audio Standby Gating in HumlaService
 
+In [`libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java):
+* Promote [`isBluetoothScoActive()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589) from package-private to `public` so [`HumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) can query route state across packages.
+* Implement `public void setStandbyPauseEnabled(boolean enabled)`: when disabled, immediately unpause `mAudioTrack` if paused and inhibit further standby pauses.
+
 In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
 * On `onPlausibleZeroAudioChanged(true)`:
   * If `mWakeLock.isHeld()`, release it.
@@ -343,7 +347,7 @@ In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///h
   * Delegate `setSuspendedStandbyMode(true)` to `HumlaConnection`.
 * On `onPlausibleZeroAudioChanged(false)`:
   * If `!mWakeLock.isHeld()`, acquire it.
-  * Disable audio standby pause in [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring continuous playback (`AudioTrack.play()`) and engaging the 0.21.7 silence shield to protect the held wakelock from OEM watchdog termination.
+  * Disable audio standby pause in [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring continuous playback (`mAudioTrack.play()`) and engaging the 0.21.7 silence shield to protect the held wakelock from OEM watchdog termination.
   * Delegate `setSuspendedStandbyMode(false)` to `HumlaConnection`.
 * In [`HumlaUDP`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) packet receive callback:
   * If `isPlausiblyZeroAudio()` is true when a packet arrives, immediately wake [`HumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), acquire `mWakeLock`, and disable audio standby pausing.
@@ -380,6 +384,6 @@ The Lite Track provides a clean, pragmatic path that addresses real-world batter
 By releasing the monolithic partial wakelock whenever:
 1. The local user is **deafened**, OR
 2. The local user is **alone on the server**, OR
-3. All **monitored channels** ($\mathcal{C}_{\text{monitored}}$, covering current, linked, and listened channels) contain zero unmuted peers:
+3. All **monitored channels** ($\mathcal{C}_{\text{monitored}}$, covering current, linked, and listened channels) contain zero unmuted peers,
 
 Mumla OLED achieves **$\approx 80\text{ to }90\%$ of total possible idle battery savings** ($3\times$ to $5\times$ battery life extension in typical idle camping scenarios). Crucially, this is accomplished without introducing complex Wi-Fi transport monitoring or risking speech-onset clipping during active conversations.
