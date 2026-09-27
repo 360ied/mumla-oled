@@ -25,7 +25,6 @@ An exhaustive architectural investigation and empirical analysis of the screen-o
 7. [Actionable Remediation Paths](#7-actionable-remediation-paths)
    - [Path A: Screen-Aware Dynamic Silence Shield Coupling (Recommended)](#path-a-screen-aware-dynamic-silence-shield-coupling-recommended)
    - [Path B: Complete Restoration of the 0.21.7 Baseline (Maximum Stability)](#path-b-complete-restoration-of-the-0217-baseline-maximum-stability)
-   - [Path C: User-Configurable Background Profile](#path-c-user-configurable-background-profile)
 
 ---
 
@@ -342,11 +341,4 @@ If total code simplicity and operational certainty across all legacy OEM devices
 2. **Restore Monolithic Wakelock**: Keep `PARTIAL_WAKE_LOCK` held continuously in `HumlaService` throughout the connection.
 3. **Restore Native In-Memory Keepalives**: Retain the standard `ScheduledExecutorService` keepalive loop in `HumlaConnection`.
 4. **Trade-Off**: Burns $15\text{ to }30\text{ mW}$ on audio hardware during silence, but is provably immune to both OEM watchdog termination and Murmur timeouts.
-
-### Path C: User-Configurable Background Profile
-
-Expose an explicit user setting under Settings > Audio / Power:
-
-1. **"Reliable Background Standby" (Default)**: Employs the silence shield (Path A or Path B) to guarantee connection survival on hostile OEM skins (Samsung, Xiaomi, Vivo, Huawei).
-2. **"Aggressive Battery Saver" (Experimental / AOSP Only)**: Employs the Lite Track zero-audio suspend model for users on clean AOSP, LineageOS, or Google Pixel devices where OEM watchdogs are absent and while-idle alarm clamping or network baseband wake can be individually tuned.
 
