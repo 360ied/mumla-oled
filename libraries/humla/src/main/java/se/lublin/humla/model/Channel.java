@@ -150,6 +150,7 @@ public final class Channel implements IChannel, Comparable<Channel> {
     }
 
     public void addSubchannel(Channel channel) {
+        if (channel == null || channel == this || mSubchannels.contains(channel)) return;
         for (int i = 0; i < mSubchannels.size(); i++) {
             Channel sc = mSubchannels.get(i);
             if (channel.compareTo(sc) <= 0) {

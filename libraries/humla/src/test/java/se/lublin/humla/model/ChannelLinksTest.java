@@ -117,4 +117,26 @@ public class ChannelLinksTest extends TestCase {
         assertEquals(0, a.getLinks().size());
         assertEquals(1, a.getAllLinks().size());
     }
+
+    public void testAddNullSubchannelIsSafelyIgnored() {
+        Channel a = new Channel(1, false);
+        a.addSubchannel(null);
+        assertEquals(0, a.getSubchannels().size());
+    }
+
+    public void testDuplicateSubchannelIsIgnored() {
+        Channel a = new Channel(1, false);
+        Channel b = new Channel(2, false);
+        a.addSubchannel(b);
+        assertEquals(1, a.getSubchannels().size());
+
+        a.addSubchannel(b);
+        assertEquals(1, a.getSubchannels().size());
+    }
+
+    public void testAddSelfSubchannelIsSafelyIgnored() {
+        Channel a = new Channel(1, false);
+        a.addSubchannel(a);
+        assertEquals(0, a.getSubchannels().size());
+    }
 }

@@ -20,8 +20,8 @@ package se.lublin.humla.model;
 import com.google.protobuf.ByteString;
 
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 public class User implements IUser, Comparable<User> {
 
@@ -48,7 +48,7 @@ public class User implements IUser, Comparable<User> {
 
     private volatile TalkState mTalkState = TalkState.PASSIVE;
 
-    private final Set<Integer> mListeningChannels = new HashSet<Integer>();
+    private final Set<Integer> mListeningChannels = new CopyOnWriteArraySet<Integer>();
 
     // Local state
     private volatile boolean mLocalMuted;
@@ -289,11 +289,24 @@ public class User implements IUser, Comparable<User> {
 
     @Override
     public int hashCode() {
-        return mId;
+        return mSession;
     }
 
     @Override
     public int compareTo(User another) {
-        return getName().toLowerCase().compareTo(another.getName().toLowerCase());
+        if (mName == null && another.getName() == null) {
+            return Integer.compare(mSession, another.getSession());
+        }
+        if (mName == null) {
+            return -1;
+        }
+        if (another.getName() == null) {
+            return 1;
+        }
+        int nameCmp = mName.compareToIgnoreCase(another.getName());
+        if (nameCmp != 0) {
+            return nameCmp;
+        }
+        return Integer.compare(mSession, another.getSession());
     }
 }

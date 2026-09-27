@@ -1316,9 +1316,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             } catch (NotSynchronizedException ignored) {
             }
         }
-        boolean undeafening = wasDeafened && !deaf;
-        boolean unmutingInVad = wasMuted && !mute && mTransmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
-        if ((undeafening || unmutingInVad) && mZeroAudioStandby) {
+        if (mZeroAudioStandby && shouldExitStandbyOnStateChange(wasDeafened, wasMuted, deaf, mute, mTransmitMode)) {
             exitZeroAudioStandby();
         }
         Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
@@ -1496,6 +1494,28 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Determines whether a transition in self mute/deaf state requires immediately
+     * exiting zero-audio standby.
+     *
+     * Standby exit is required when undeafening (since incoming audio may now be audible)
+     * or unmuting while in Voice Activity mode (since microphone capture is resumed).
+     *
+     * @param wasDeafened previous deafened state
+     * @param wasMuted previous muted state
+     * @param newDeaf new deafened state
+     * @param newMute new muted state
+     * @param transmitMode configured transmission mode
+     * @return true if the transition requires exiting standby
+     */
+    public static boolean shouldExitStandbyOnStateChange(boolean wasDeafened, boolean wasMuted,
+                                                         boolean newDeaf, boolean newMute,
+                                                         int transmitMode) {
+        boolean undeafening = wasDeafened && !newDeaf;
+        boolean unmutingInVad = wasMuted && !newMute && transmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
+        return undeafening || unmutingInVad;
+    }
+
+    /**
      * Evaluates whether the client can safely enter zero-audio standby.
      * Standby requires that:
      * 1. The client is connected and synchronized.
@@ -1569,7 +1589,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             return mAlarmManager != null && mAlarmManager.canScheduleExactAlarms();
         }
-        return true;
+        return mAlarmManager != null;
     }
 
     /**

@@ -89,7 +89,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         void onPlausibleZeroAudioChanged();
     }
 
-    private OnPlausibleZeroAudioListener mZeroAudioListener;
+    private volatile OnPlausibleZeroAudioListener mZeroAudioListener;
 
     public void setOnPlausibleZeroAudioListener(OnPlausibleZeroAudioListener listener) {
         mZeroAudioListener = listener;

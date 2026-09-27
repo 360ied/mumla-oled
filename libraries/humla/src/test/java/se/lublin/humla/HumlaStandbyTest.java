@@ -114,21 +114,21 @@ public class HumlaStandbyTest extends TestCase {
         boolean newMute = true;
         boolean newDeaf = false;
 
-        boolean undeafening = wasDeafened && !newDeaf;
-        boolean unmutingInVad = wasMuted && !newMute && transmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
-
-        // Muting while already undeafened must NOT trigger standby exit.
-        assertFalse(undeafening);
-        assertFalse(unmutingInVad);
+        assertFalse(HumlaService.shouldExitStandbyOnStateChange(
+                wasDeafened, wasMuted, newDeaf, newMute, transmitMode));
     }
 
     public void testUndeafeningTriggersStandbyExit() {
         // Simulates a deafened user in standby undeafening (deaf=false).
         boolean wasDeafened = true;
+        boolean wasMuted = false;
+        int transmitMode = Constants.TRANSMIT_PUSH_TO_TALK;
+
+        boolean newMute = false;
         boolean newDeaf = false;
 
-        boolean undeafening = wasDeafened && !newDeaf;
-        assertTrue(undeafening);
+        assertTrue(HumlaService.shouldExitStandbyOnStateChange(
+                wasDeafened, wasMuted, newDeaf, newMute, transmitMode));
     }
 
     public void testUnmutingInVadTriggersStandbyExit() {
@@ -140,11 +140,8 @@ public class HumlaStandbyTest extends TestCase {
         boolean newMute = false;
         boolean newDeaf = false;
 
-        boolean undeafening = wasDeafened && !newDeaf;
-        boolean unmutingInVad = wasMuted && !newMute && transmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
-
-        assertFalse(undeafening);
-        assertTrue(unmutingInVad);
+        assertTrue(HumlaService.shouldExitStandbyOnStateChange(
+                wasDeafened, wasMuted, newDeaf, newMute, transmitMode));
     }
 
     public void testUnmutingInPttDoesNotTriggerStandbyExit() {
@@ -157,10 +154,7 @@ public class HumlaStandbyTest extends TestCase {
         boolean newMute = false;
         boolean newDeaf = false;
 
-        boolean undeafening = wasDeafened && !newDeaf;
-        boolean unmutingInVad = wasMuted && !newMute && transmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
-
-        assertFalse(undeafening);
-        assertFalse(unmutingInVad);
+        assertFalse(HumlaService.shouldExitStandbyOnStateChange(
+                wasDeafened, wasMuted, newDeaf, newMute, transmitMode));
     }
 }

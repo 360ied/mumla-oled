@@ -77,13 +77,14 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     // Authentication
     private byte[] mCertificate;
     private String mCertificatePassword;
-    public static final int BOOTSTRAP_PING_INTERVAL_SECONDS = 5;
-    public static final int STEADY_STATE_PING_INTERVAL_SECONDS = 10;
-    public static final long BOOTSTRAP_DURATION_MICROS = 30_000_000L; // 30 seconds
-
     private String mTrustStorePath;
     private String mTrustStorePassword;
     private String mTrustStoreFormat;
+
+    // Keepalive constants
+    public static final int BOOTSTRAP_PING_INTERVAL_SECONDS = 5;
+    public static final int STEADY_STATE_PING_INTERVAL_SECONDS = 10;
+    public static final long BOOTSTRAP_DURATION_MICROS = 30_000_000L; // 30 seconds
 
     // Threading
     private ScheduledExecutorService mPingExecutorService;
