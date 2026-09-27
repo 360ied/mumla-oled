@@ -16,13 +16,14 @@ A focused, low-risk engineering specification for eliminating the permanent `Pow
    - [E. De-prioritizing the Theoretical Whisper Trap](#e-de-prioritizing-the-theoretical-whisper-trap)
 4. [Target Architecture (Lite Track)](#4-target-architecture-lite-track)
    - [State Transition Model](#state-transition-model)
+   - [OEM Watchdog Defense: Dual Gating & 0.21.7 Silence Shield Coupling](#oem-watchdog-defense-dual-gating--0217-silence-shield-coupling)
    - [Component 1: Plausible Zero-Audio Evaluator](#component-1-plausible-zero-audio-evaluator)
    - [Component 2: Pulsed Keepalive Alarm Loop](#component-2-pulsed-keepalive-alarm-loop)
    - [Component 3: Immediate Re-engagement on User/Peer Activity](#component-3-immediate-re-engagement-on-userpeer-activity)
 5. [Concrete Implementation Plan](#5-concrete-implementation-plan)
    - [Step L1: ModelHandler Plausible Zero-Audio Tracking](#step-l1-modelhandler-plausible-zero-audio-tracking)
    - [Step L2: AlarmManager Pulsed Keepalive in HumlaConnection](#step-l2-alarmmanager-pulsed-keepalive-in-humlaconnection)
-   - [Step L3: Dynamic Wakelock Gating in HumlaService](#step-l3-dynamic-wakelock-gating-in-humlaservice)
+   - [Step L3: Dynamic Wakelock & Audio Standby Gating in HumlaService](#step-l3-dynamic-wakelock--audio-standby-gating-in-humlaservice)
 6. [Edge Cases, Invariants & Verification Matrix](#6-edge-cases-invariants--verification-matrix)
 7. [Conclusion](#7-conclusion)
 
@@ -49,7 +50,7 @@ By taking into account Mumble 1.4+ **Channel Listeners** and **Channel Links**, 
 | Dimension | Full Architectural Overhaul ([`wakelock-remediation.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation.md)) | Pragmatic Lite Track ([`wakelock-remediation-lite.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation-lite.md)) |
 |---|---|---|
 | **Primary Scope** | Universal: sleeps AP between spoken words in active channels | Targeted: sleeps AP **when audio is provably or plausibly absent** |
-| **Active Speech Standby** | Autonomous suspend on Cellular, continuous awake on Wi-Fi | **Continuous `PARTIAL_WAKE_LOCK`** (standard active VoIP call behavior) |
+| **Active Speech Standby** | Autonomous suspend on Cellular, continuous awake on Wi-Fi | **Continuous `PARTIAL_WAKE_LOCK`** with continuous `AudioTrack` playback (restoring 0.21.7 silence shield to prevent OEM watchdog `SIGKILL` during conversational pauses) |
 | **Deafened / Solo Standby** | Autonomous suspend with exact keepalive alarms | **Kernel Suspend-to-RAM** with exact keepalive alarms |
 | **Quiet Monitored Channels** | Micro-sleeps between utterances with transport gating | **Kernel Suspend-to-RAM** while monitored channels remain quiet |
 | **Channel Topology Scope** | Global server graph evaluation | **Monitored Channel Set**: Current channel, Links, and Listened channels |
@@ -179,13 +180,34 @@ stateDiagram-v2
 
     state ActiveCallStandby {
         HoldWakelock: Hold Continuous PARTIAL_WAKE_LOCK
-        ReadyAudio: AudioTrack Ready / Playing
+        InhibitPause: Inhibit AudioTrack Standby Pause (0.21.7 Silence Shield Active)
         InternalPacing: ScheduledExecutorService Keepalive Loop
     }
 
     ZeroAudioStandby --> ActiveCallStandby: Undeafens OR Peer Unmutes/Joins C_monitored OR Packet Arrives
     ActiveCallStandby --> ZeroAudioStandby: Deafens OR Last Candidate Mutes/Leaves C_monitored
 ```
+
+### OEM Watchdog Defense: Dual Gating & 0.21.7 Silence Shield Coupling
+
+A critical real-world constraint on modern Android devices is aggressive OEM background task killers (Samsung Device Care / OneUI, Xiaomi MIUI / HyperOS, Huawei EMUI, BBK ColorOS / OxygenOS). As analyzed in Section 4 of [`wakelock-remediation.md`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/docs/power-draw-optimizations/wakelock-remediation.md#4), these watchdogs enforce a strict heuristic: if an app holds an active `PowerManager.PARTIAL_WAKE_LOCK` with the screen off while no media audio is actively playing through `AudioTrack`, the OS forcefully terminates the process (`SIGKILL`).
+
+In Mumla OLED 0.21.7 and earlier, the application was never killed by OEM watchdogs because [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) kept `AudioTrack` continuously in `PLAYSTATE_PLAYING`, constantly rendering digital silence. This perpetual playback functioned as an effective shield against OEM watchdogs.
+
+However, Phase 2 (Release 0.21.9) introduced route-aware `AudioTrack` standby pausing ([`AudioOutput.java#L398-L404`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L398-L404)) after 3 seconds of silence (15 seconds on Bluetooth A2DP). If `HumlaService` were to maintain a continuous `PARTIAL_WAKE_LOCK` during `ActiveCallStandby` while `AudioTrack` enters `pause()` during brief pauses in conversation, the application would immediately satisfy the OEM kill condition and be terminated with `SIGKILL`.
+
+The Lite Track resolves this paradox through **Dual Gating**, coupling `isPlausiblyZeroAudio()` directly to both the wakelock and `AudioOutput`'s standby pause policy:
+
+1. **Active Call Standby (`isPlausiblyZeroAudio() == false`)**:
+   - `mWakeLock` is held continuously.
+   - `AudioOutput`'s standby pause is **strictly inhibited** (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring the historical 0.21.7 continuous playback shield.
+   - Because `AudioTrack` remains continuously in `PLAYSTATE_PLAYING`, OEM watchdogs classify Mumla OLED as an active VoIP session and never issue `SIGKILL` during conversational lulls.
+   - Power footprint: $\approx 35\text{ to }60\text{ mA}$ AP awake $+ 15\text{ to }30\text{ mW}$ Audio DSP (standard VoIP call power).
+2. **Zero-Audio Standby (`isPlausiblyZeroAudio() == true`)**:
+   - `mWakeLock` is **released** (`mWakeLock.release()`), allowing the Application Processor to enter Linux kernel `suspend-to-RAM`.
+   - `AudioOutput`'s standby pause is **permitted** (`mAudioOutput.setStandbyPauseEnabled(true)`), calling `mAudioTrack.pause()` and power-gating the audio DSP/DAC ($15\text{ to }30\text{ mW}$ saved).
+   - Because `mWakeLock` is released, OEM watchdogs have no trigger to fire (their kill heuristic requires an unreleased wakelock).
+   - Power footprint: $\approx 5\text{ to }10\text{ mA}$ AP pulsed keepalive $+ 0\text{ mW}$ Audio DSP ($80\%\text{ to }90\%$ idle savings).
 
 ### Component 1: Plausible Zero-Audio Evaluator
 
@@ -285,9 +307,9 @@ Whenever the plausible zero-audio condition ceases to hold:
 
 The transition immediately:
 - Acquires the continuous `mWakeLock`.
+- Inhibits standby pause in [`AudioOutput`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring continuous playback (`mAudioTrack.play()`) to re-engage the 0.21.7 silence shield against OEM task killers.
 - Cancels `AlarmManager` keepalive alarms.
 - Restores the adaptive keepalive loop (10-second steady-state via `scheduleNextPing`) in [`HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java).
-- Unpauses [`AudioTrack`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) ready for instantaneous voice reception.
 
 ---
 
@@ -312,17 +334,19 @@ In [`libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`](fi
   * When `true`: Pause executor-based ping loop and arm exact wakeup alarms via `AlarmManager.setExactAndAllowWhileIdle()`.
   * When `false`: Cancel pending alarms and resume adaptive keepalive scheduling via `scheduleNextPing(10)`.
 
-### Step L3: Dynamic Wakelock Gating in HumlaService
+### Step L3: Dynamic Wakelock & Audio Standby Gating in HumlaService
 
 In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
 * On `onPlausibleZeroAudioChanged(true)`:
   * If `mWakeLock.isHeld()`, release it.
+  * Enable audio standby pause in [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(true)`), allowing `AudioTrack` to pause and power-gate the audio DSP/DAC.
   * Delegate `setSuspendedStandbyMode(true)` to `HumlaConnection`.
 * On `onPlausibleZeroAudioChanged(false)`:
   * If `!mWakeLock.isHeld()`, acquire it.
+  * Disable audio standby pause in [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring continuous playback (`AudioTrack.play()`) and engaging the 0.21.7 silence shield to protect the held wakelock from OEM watchdog termination.
   * Delegate `setSuspendedStandbyMode(false)` to `HumlaConnection`.
 * In [`HumlaUDP`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) packet receive callback:
-  * If `isPlausiblyZeroAudio()` is true when a packet arrives, immediately wake [`HumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) and acquire `mWakeLock`.
+  * If `isPlausiblyZeroAudio()` is true when a packet arrives, immediately wake [`HumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), acquire `mWakeLock`, and disable audio standby pausing.
 
 ---
 
@@ -337,7 +361,7 @@ In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///h
 | **Channel Links** | Channel A is linked to Channel B | $B \in \text{Links}(A)$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
 | **Surprise Cross-Channel Whisper** | Remote peer configures whisper target to our session | Socket receive thread unblocks on UDP packet, immediately re-acquires `mWakeLock`. Jitter buffer absorbs wake latency. |
 | **User Taps Undeafen** | Local user toggles undeafen in UI | UI event immediately re-acquires `mWakeLock` and dispatches `UserState` un-deafen packet to server before audio arrives. |
-| **OEM Watchdog Termination** | Samsung Device Care or MIUI kills app holding wakelock without active audio | When silent/quiet, `mWakeLock` is completely released, removing the OEM watchdog target. When active, track is active. |
+| **OEM Watchdog Termination** | Samsung Device Care or MIUI kills app holding wakelock without active audio playback during conversational pauses | Dual gating: When in `ActiveCallStandby` (`isPlausiblyZeroAudio() == false`), `AudioTrack` standby pause is inhibited, maintaining `PLAYSTATE_PLAYING` (the 0.21.7 continuous silence workaround) so OEM watchdogs classify the app as active VoIP playback. When in `ZeroAudioStandby` (`isPlausiblyZeroAudio() == true`), `mWakeLock` is completely released before `AudioTrack.pause()` is permitted, eliminating the wakelock condition that triggers watchdogs. |
 | **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
 | **Battery Optimization Non-Exempt Standby** | Device lacks `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, causing Doze to restrict network access upon wakelock release | Verify `pm.isIgnoringBatteryOptimizations()`; fall back to continuous wakelock if non-exempt. |
 | **Bluetooth SCO Link Drop** | Audio HAL pauses track while on active Bluetooth SCO call | Preserve Phase 2 invariant: `isBluetoothScoActive()` strictly inhibits zero-audio standby and retains continuous wakelock (does not affect standard A2DP headphones). |
