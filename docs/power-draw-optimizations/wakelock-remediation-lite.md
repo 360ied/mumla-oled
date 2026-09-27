@@ -1,6 +1,6 @@
 # Pragmatic Wakelock Remediation (Lite Track): Zero-Audio Standby Optimization
 
-A focused, low-risk engineering specification for eliminating the permanent `PowerManager.PARTIAL_WAKE_LOCK` in Mumla OLED ([`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L301-L306)) specifically during states where inbound audio reception is **provably impossible, explicitly disabled, or plausibly absent**.
+A focused, low-risk engineering specification for eliminating the permanent `PowerManager.PARTIAL_WAKE_LOCK` in Mumla OLED ([`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L310-L311)) specifically during states where inbound audio reception is **provably impossible, explicitly disabled, or plausibly absent**.
 
 ---
 
@@ -138,7 +138,7 @@ A naive empty-channel check that only inspects $C_{\text{current}}$ or immediate
 1. **Transitive Channel Links**: In upstream Murmur ([`src/Channel.cpp:210`](https://github.com/mumble-voip/mumble/blob/master/src/Channel.cpp#L210), [`src/murmur/Server.cpp:1222`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1222)), channel link topologies are transitive and cyclic (`Channel::allLinks()`). If Channel A is linked to Channel B, and Channel B is linked to Channel C, Murmur routes audio across all three channels. Inspecting only direct links via `getLinks()` would omit Channel C and incorrectly enter zero-audio standby while peers speak in C. Mumla OLED resolves this by implementing DFS transitive link resolution in [`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L178-L195).
 2. **Channel Listeners with Linked Topology**: Introduced in Mumble 1.4 (`listening_channel_add` and `listening_channel_remove` in `Mumble.proto:UserState`), users can listen to arbitrary remote channels without moving their avatar into them. Crucially, upstream Murmur ([`src/murmur/Server.cpp:1230`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1230)) delivers speech to listeners from any channel linked to the listened channel. Therefore, each listened channel must also be expanded via $\text{AllLinks}(l)$.
 
-In Mumla OLED's core library, [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) maintains `mListeningChannels`, updated by [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L526-L550). By evaluating the complete transitive union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
+In Mumla OLED's core library, [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) maintains `mListeningChannels`, updated by [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L534-L558). By evaluating the complete transitive union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
 
 ### E. De-prioritizing the Theoretical Whisper Trap
 
@@ -458,8 +458,8 @@ When `isDeviceIdleMode() == false` and `isPlausiblyZeroAudio() == true`:
 ##### 2. Mode B: Stationary Desk Standby (Continuous Silence-Shielded Wakelock)
 When the user sets their phone on a table and leaves it motionless for $> 30\text{ minutes}$, Android's Device Idle controller transitions into Deep Doze:
 1. Android broadcasts `PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED`.
-2. [`mIdleModeReceiver`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L352) intercepts this broadcast and triggers `updateStandbyState()`.
-3. In [`HumlaService.isPlausiblyZeroAudio()`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1511):
+2. [`mIdleModeReceiver`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L356-L370) intercepts this broadcast and triggers `updateStandbyState()`.
+3. In [`HumlaService.isPlausiblyZeroAudio()`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1535):
    ```java
    if (isDeviceIdleMode()) {
        return false; // Inhibit alarm standby while in Deep Doze!
