@@ -73,6 +73,7 @@ public class AudioOutput implements Runnable,
     private volatile boolean mRunning = false;
     private volatile boolean mHalfDuplexMuted = false;
     private boolean mHasIncomingAudio = false;
+    private volatile boolean mStandbyPauseEnabled = true;
 
     public AudioOutput(AudioOutputListener listener) {
         this(null, listener);
@@ -371,8 +372,8 @@ public class AudioOutput implements Runnable,
 
                             // Two-tier standby: wait up to standbyTimeout ms with track playing.
                             // If timeout expires with zero voices and no incoming audio, pause AudioTrack
-                            // (unless Bluetooth SCO is active, which requires continuous output to maintain link).
-                            if (!scoActive && standbyTimeout > 0) {
+                            // (unless Bluetooth SCO is active, standby pause is inhibited, or standbyTimeout <= 0).
+                            if (!scoActive && mStandbyPauseEnabled && standbyTimeout > 0) {
                                 long waitStart = SystemClock.elapsedRealtime();
                                 while (mRunning && !mHasIncomingAudio) {
                                     long elapsed = SystemClock.elapsedRealtime() - waitStart;
@@ -395,7 +396,7 @@ public class AudioOutput implements Runnable,
                                 // If timeout expired with zero voices and no incoming audio, pause track
                                 engine = mEngine;
                                 boolean stillNoVoices = (engine == null || !engine.hasActiveVoices());
-                                if (mRunning && !mHasIncomingAudio && stillNoVoices) {
+                                if (mRunning && !mHasIncomingAudio && stillNoVoices && mStandbyPauseEnabled && !isBluetoothScoActive()) {
                                     try {
                                         if (mAudioTrack != null && mAudioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) {
                                             mAudioTrack.pause();
@@ -418,7 +419,7 @@ public class AudioOutput implements Runnable,
                                     }
                                 }
                             } else {
-                                // Bluetooth SCO is active, or standbyTimeout <= 0: keep AudioTrack playing and sleep indefinitely
+                                // Bluetooth SCO is active, standby pause is inhibited, or standbyTimeout <= 0: keep AudioTrack playing and sleep indefinitely
                                 while (mRunning && !mHasIncomingAudio) {
                                     engine = mEngine;
                                     if (engine != null && engine.hasActiveVoices()) {
@@ -586,7 +587,7 @@ public class AudioOutput implements Runnable,
         }
     }
 
-    boolean isBluetoothScoActive() {
+    public boolean isBluetoothScoActive() {
         if (mAudioManager == null) return false;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -599,6 +600,31 @@ public class AudioOutput implements Runnable,
         } catch (Exception ignored) {
         }
         return false;
+    }
+
+    /**
+     * Controls whether AudioTrack is permitted to enter standby pause when idle.
+     * When disabled, AudioTrack is immediately unpaused (if paused) and kept continuously
+     * playing digital silence, preserving the 0.21.7 OEM watchdog silence shield.
+     * @param enabled true to allow standby pause; false to inhibit standby pause and force playback.
+     */
+    public void setStandbyPauseEnabled(boolean enabled) {
+        synchronized (mInactiveLock) {
+            mStandbyPauseEnabled = enabled;
+            if (!enabled) {
+                if (mAudioTrack != null && mAudioTrack.getPlayState() == AudioTrack.PLAYSTATE_PAUSED) {
+                    try {
+                        mAudioTrack.play();
+                    } catch (IllegalStateException ignored) {
+                    }
+                }
+                mInactiveLock.notifyAll();
+            }
+        }
+    }
+
+    public boolean isStandbyPauseEnabled() {
+        return mStandbyPauseEnabled;
     }
 
     long getStandbyTimeoutMs() {

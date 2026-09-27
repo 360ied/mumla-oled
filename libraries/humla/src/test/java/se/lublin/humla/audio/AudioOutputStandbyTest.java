@@ -45,4 +45,13 @@ public class AudioOutputStandbyTest extends TestCase {
         assertEquals(3000L, AudioOutput.STANDBY_TIMEOUT_DEFAULT_MS);
         assertEquals(15000L, AudioOutput.STANDBY_TIMEOUT_A2DP_MS);
     }
+
+    public void testStandbyPauseEnabledToggle() {
+        AudioOutput output = new AudioOutput(new DummyListener());
+        assertTrue(output.isStandbyPauseEnabled());
+        output.setStandbyPauseEnabled(false);
+        assertFalse(output.isStandbyPauseEnabled());
+        output.setStandbyPauseEnabled(true);
+        assertTrue(output.isStandbyPauseEnabled());
+    }
 }
