@@ -160,6 +160,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private BroadcastReceiver mKeepaliveReceiver;
     private BroadcastReceiver mIdleModeReceiver;
     private Handler mHandler;
+    private final Runnable mKeepaliveDrainRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+                mKeepaliveWakeLock.release();
+            }
+        }
+    };
     private HumlaCallbacks mCallbacks;
 
     private HumlaConnection mConnection;
@@ -327,14 +335,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                             }
                         } finally {
                             scheduleKeepaliveAlarm();
-                            mHandler.postDelayed(new Runnable() {
-                                @Override
-                                public void run() {
-                                    if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
-                                        mKeepaliveWakeLock.release();
-                                    }
-                                }
-                            }, STANDBY_KEEPALIVE_TX_DRAIN_MS);
+                            if (mHandler != null) {
+                                mHandler.removeCallbacks(mKeepaliveDrainRunnable);
+                                mHandler.postDelayed(mKeepaliveDrainRunnable, STANDBY_KEEPALIVE_TX_DRAIN_MS);
+                            }
                         }
                     }
                 }
@@ -1656,6 +1660,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     private void cancelKeepaliveAlarm() {
+        if (mHandler != null) {
+            mHandler.removeCallbacks(mKeepaliveDrainRunnable);
+        }
         if (mAlarmManager != null && mKeepalivePendingIntent != null) {
             mAlarmManager.cancel(mKeepalivePendingIntent);
         }

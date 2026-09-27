@@ -24,6 +24,7 @@ import junit.framework.TestCase;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import se.lublin.humla.model.Channel;
 import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.util.HumlaLogger;
 import se.lublin.humla.util.HumlaObserver;
@@ -333,5 +334,72 @@ public class ModelHandlerZeroAudioTest extends TestCase {
 
         handler.clear();
         assertEquals(0, handler.getPermissions());
+    }
+
+    public void testForwardParentReferenceCreatesStubAndAdoptsChild() {
+        ModelHandler handler = createModelHandler();
+
+        // Channel 2 arrives with parent 1 (where Channel 1 has not yet been received)
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(2)
+                .setName("Child")
+                .setParent(1)
+                .build());
+
+        // Stub for parent Channel 1 must exist
+        Channel parentStub = handler.getChannel(1);
+        Channel child = handler.getChannel(2);
+        assertNotNull(parentStub);
+        assertNotNull(child);
+        assertEquals(parentStub, child.getParent());
+        assertEquals(1, parentStub.getSubchannels().size());
+        assertTrue(parentStub.getSubchannels().contains(child));
+
+        // Parent arrives later with full state
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(1)
+                .setName("Root")
+                .build());
+
+        assertEquals("Root", handler.getChannel(1).getName());
+        assertEquals(1, handler.getChannel(1).getSubchannels().size());
+        assertTrue(handler.getChannel(1).getSubchannels().contains(child));
+        assertEquals(handler.getChannel(1), child.getParent());
+    }
+
+    public void testReentrantChannelStateDoesNotDuplicateSubchannels() {
+        ModelHandler handler = createModelHandler();
+
+        // Root channel
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(0)
+                .setName("Root")
+                .build());
+
+        // Child channel
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(1)
+                .setName("Sub")
+                .setParent(0)
+                .build());
+
+        assertEquals(1, handler.getChannel(0).getSubchannels().size());
+
+        // Re-entrant ChannelState updates with same parent
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(1)
+                .setName("SubRenamed")
+                .setParent(0)
+                .build());
+
+        handler.messageChannelState(Mumble.ChannelState.newBuilder()
+                .setChannelId(1)
+                .setDescription("A description update")
+                .setParent(0)
+                .build());
+
+        // Must still have exactly 1 subchannel, no duplicate entries
+        assertEquals(1, handler.getChannel(0).getSubchannels().size());
+        assertEquals("SubRenamed", handler.getChannel(0).getSubchannels().get(0).getName());
     }
 }

@@ -35,8 +35,10 @@ public class AudioOutputStandbyTest extends TestCase {
         }
     }
 
+    private static final DummyListener DUMMY_LISTENER = new DummyListener();
+
     public void testStandbyTimeoutDefaultsWithoutContext() {
-        AudioOutput output = new AudioOutput(new DummyListener());
+        AudioOutput output = new AudioOutput(DUMMY_LISTENER);
         assertEquals(AudioOutput.STANDBY_TIMEOUT_DEFAULT_MS, output.getStandbyTimeoutMs());
         assertFalse(output.isBluetoothScoActive());
     }
@@ -47,7 +49,7 @@ public class AudioOutputStandbyTest extends TestCase {
     }
 
     public void testStandbyPauseEnabledToggle() {
-        AudioOutput output = new AudioOutput(new DummyListener());
+        AudioOutput output = new AudioOutput(DUMMY_LISTENER);
         assertTrue(output.isStandbyPauseEnabled());
         output.setStandbyPauseEnabled(false);
         assertFalse(output.isStandbyPauseEnabled());
@@ -56,7 +58,7 @@ public class AudioOutputStandbyTest extends TestCase {
     }
 
     public void testHasActiveVoicesDefault() {
-        AudioOutput output = new AudioOutput(new DummyListener());
+        AudioOutput output = new AudioOutput(DUMMY_LISTENER);
         assertFalse(output.hasActiveVoices());
     }
 }

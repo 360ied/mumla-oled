@@ -57,7 +57,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     private final List<Integer> mLocalIgnoreHistory;
     private final IHumlaObserver mObserver;
     private final HumlaLogger mLogger;
-    private ServerSettings mServerSettings;
+    private volatile ServerSettings mServerSettings;
     private volatile int mPermissions;
     private int mSession;
 
@@ -204,7 +204,13 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             return;
 
         Channel channel = mChannels.get(msg.getChannelId());
-        Channel parent = mChannels.get(msg.getParent());
+        Channel parent = null;
+        if(msg.hasParent()) {
+            parent = mChannels.get(msg.getParent());
+            if(parent == null) {
+                parent = createStubChannel(msg.getParent());
+            }
+        }
 
         final boolean newChannel = channel == null;
 
@@ -221,12 +227,14 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
 
         if(msg.hasParent()) {
             Channel oldParent = channel.getParent();
-            channel.setParent(parent);
-            if(parent != null) {
-                parent.addSubchannel(channel);
-            }
-            if(oldParent != null) {
-                oldParent.removeSubchannel(channel);
+            if(oldParent != parent) {
+                if(oldParent != null) {
+                    oldParent.removeSubchannel(channel);
+                }
+                channel.setParent(parent);
+                if(parent != null) {
+                    parent.addSubchannel(channel);
+                }
             }
         }
 
@@ -315,7 +323,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messagePermissionQuery(Mumble.PermissionQuery msg) {
+    public synchronized void messagePermissionQuery(Mumble.PermissionQuery msg) {
         if(msg.getFlush())
             for(Channel channel : mChannels.values())
                 channel.setPermissions(0);
