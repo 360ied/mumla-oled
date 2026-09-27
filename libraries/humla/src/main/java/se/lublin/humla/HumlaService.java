@@ -152,7 +152,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private WhisperTargetList mWhisperTargetList;
 
     private PowerManager.WakeLock mWakeLock;
-    private boolean mZeroAudioStandby = false;
+    private volatile boolean mZeroAudioStandby = false;
     private AlarmManager mAlarmManager;
     private PowerManager.WakeLock mKeepaliveWakeLock;
     private PendingIntent mKeepalivePendingIntent;
@@ -526,6 +526,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mModelHandler.setOnPlausibleZeroAudioListener(new ModelHandler.OnPlausibleZeroAudioListener() {
             @Override
             public void onPlausibleZeroAudioChanged() {
+                if (mZeroAudioStandby && mWakeLock != null && !mWakeLock.isHeld()) {
+                    mWakeLock.acquire();
+                }
                 mHandler.post(new Runnable() {
                     @Override
                     public void run() {
@@ -1514,6 +1517,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             enterZeroAudioStandby();
         } else if (!shouldStandby && mZeroAudioStandby) {
             exitZeroAudioStandby();
+        } else if (shouldStandby && mZeroAudioStandby) {
+            if (mWakeLock != null && mWakeLock.isHeld()) {
+                mWakeLock.release();
+            }
         }
     }
 

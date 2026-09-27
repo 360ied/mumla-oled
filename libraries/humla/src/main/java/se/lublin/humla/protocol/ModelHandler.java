@@ -113,7 +113,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
      *    + their transitive links) contains zero remote speaking candidates (every peer in
      *    the monitored set is self-muted, muted, suppressed, self-deafened, or deafened).
      */
-    public boolean isPlausiblyZeroAudio() {
+    public synchronized boolean isPlausiblyZeroAudio() {
         User self = mUsers.get(mSession);
         if (self == null) {
             return false;
@@ -190,14 +190,14 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         return mPermissions;
     }
 
-    public void clear() {
+    public synchronized void clear() {
         mChannels.clear();
         mUsers.clear();
         checkZeroAudioState();
     }
 
     @Override
-    public void messageChannelState(Mumble.ChannelState msg) {
+    public synchronized void messageChannelState(Mumble.ChannelState msg) {
         if(!msg.hasChannelId())
             return;
 
@@ -281,7 +281,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messageChannelRemove(Mumble.ChannelRemove msg) {
+    public synchronized void messageChannelRemove(Mumble.ChannelRemove msg) {
         final Channel channel = mChannels.get(msg.getChannelId());
         if(channel != null && channel.getId() != 0) {
             for (User u : mUsers.values()) {
@@ -313,7 +313,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messageUserState(Mumble.UserState msg) {
+    public synchronized void messageUserState(Mumble.UserState msg) {
         User user = mUsers.get(msg.getSession());
         boolean newUser = false;
 
@@ -551,7 +551,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messageUserRemove(Mumble.UserRemove msg) {
+    public synchronized void messageUserRemove(Mumble.UserRemove msg) {
         final User user = mUsers.get(msg.getSession());
         final User actor = mUsers.get(msg.getActor());
         final String reason = msg.getReason();
@@ -630,7 +630,7 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     }
 
     @Override
-    public void messageServerSync(Mumble.ServerSync msg) {
+    public synchronized void messageServerSync(Mumble.ServerSync msg) {
         mSession = msg.getSession();
         if(mLogger != null && msg.hasWelcomeText()) {
             mLogger.logInfo(msg.getWelcomeText());

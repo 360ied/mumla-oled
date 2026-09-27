@@ -185,7 +185,7 @@ public final class Channel implements IChannel, Comparable<Channel> {
         stack.push(this);
         while (!stack.isEmpty()) {
             Channel ch = stack.pop();
-            for (Channel linked : ch.mLinks) {
+            for (Channel linked : new ArrayList<Channel>(ch.mLinks)) {
                 if (linked != null && seen.add(linked)) {
                     stack.push(linked);
                 }
