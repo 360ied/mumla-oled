@@ -34,7 +34,7 @@
     - **Context & Motivation**: Why the change is needed and what problem it solves.
     - **Technical Approach**: Architectural decisions, algorithmic details, and notable changes across components.
     - **Edge Cases & Impact**: Handled boundary conditions, defensive checks, or protocol parity considerations.
-- **Public Repository & Sensitive Information**: This is a publicly accessible repository. Never commit sensitive information, secrets, credentials, API tokens, personal data, or physical hardware identifiers (such as device serial numbers, MAC addresses, or private IPs) to Git history or documentation.
+- **Public Repository & Sensitive Information**: This is a publicly accessible repository. Never commit sensitive information, secrets, credentials, API tokens, personal data, physical hardware identifiers (such as device serial numbers, MAC addresses, or private IPs), or local machine paths (such as `/home/...` or `file:///...`) to Git history or documentation.
 - **Forward-Only History**: Never rewrite, rebase, squash, amend, or force-push commits — pushed or not. Fix mistakes with a new commit.
 
 ## Verification
@@ -67,6 +67,7 @@
 ## Documentation & Markdown Standards
 - **Application Naming Convention**: The name of the application is ALWAYS "Mumla OLED", never "Mumla" in isolation. It is a hard fork of Mumla which has yet to be comprehensively rebranded.
 - **GitHub Flavored Markdown (GFM)**: All documentation (`docs/`, `README.md`, skills, guidelines) must target GFM as rendered by GitHub's web interface (KaTeX math engine).
+- **No Absolute Local Paths (`file:///` or Local Filesystem Hierarchies)**: Documentation files (`docs/`, `README.md`, skills) MUST NEVER contain absolute local machine paths or `file:///` URIs (such as `file:///home/...` or `/home/<user>/...`). In-tree file references must use portable relative Markdown links (e.g., `../../libraries/humla/...`). References to external upstream projects (such as Mumble) must use canonical web URLs (e.g., `https://github.com/mumble-voip/mumble/blob/master/...`) or plain-text code references, never local developer filesystem paths. Never confuse conversational assistant link formatting (`file:///...`) with version-controlled documentation.
 - **Math Block Delimiters**: Use GitHub's fenced ```` ```math ```` code block syntax for display equations; avoid ambiguous `$$ ... $$` delimiters.
 - **Blank Line Isolation**: Always isolate math blocks with blank lines before and after. Never place math blocks directly adjacent to text paragraphs or within lists without blank line separation (CommonMark paragraph rules will fold them into inline text, unescaping LaTeX `\\` newlines into `\` and corrupting KaTeX parsing).
 - **Inline Math**: Use `$ ... $` with no internal padding whitespace (e.g., `$x$` rather than `$ x $`).
