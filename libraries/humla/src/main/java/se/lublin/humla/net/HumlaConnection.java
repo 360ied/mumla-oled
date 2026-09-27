@@ -93,6 +93,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     private HumlaTCP mTCP;
     private volatile HumlaUDP mUDP;
     private volatile ScheduledFuture<?> mPingTask;
+    private volatile boolean mSuspendedStandbyMode = false;
     private volatile boolean mUsingUDP = true;
     private boolean mForceTCP;
     private volatile boolean mConnected;
@@ -303,8 +304,26 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         return STEADY_STATE_PING_INTERVAL_SECONDS;
     }
 
+    public synchronized void setSuspendedStandbyMode(boolean enabled) {
+        if (mSuspendedStandbyMode == enabled) {
+            return;
+        }
+        mSuspendedStandbyMode = enabled;
+        if (enabled) {
+            if (mPingTask != null && !mPingTask.isDone()) {
+                mPingTask.cancel(false);
+            }
+        } else {
+            scheduleNextPing(getNextPingIntervalSeconds());
+        }
+    }
+
+    public boolean isSuspendedStandbyMode() {
+        return mSuspendedStandbyMode;
+    }
+
     synchronized void scheduleNextPing(int delaySeconds) {
-        if (!mConnected || mPingExecutorService == null || mPingExecutorService.isShutdown()) {
+        if (!mConnected || mSuspendedStandbyMode || mPingExecutorService == null || mPingExecutorService.isShutdown()) {
             return;
         }
         if (mPingTask != null && !mPingTask.isDone()) {
@@ -317,44 +336,53 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         }
     }
 
+    public void sendKeepalivePing() {
+        // In microseconds
+        long t = getElapsed();
+
+        if (!shouldForceTCP()) {
+            if (isProtobufUdpSupported()) {
+                MumbleUDP.Ping.Builder pb = MumbleUDP.Ping.newBuilder();
+                pb.setTimestamp(t);
+                byte[] pingBytes = pb.build().toByteArray();
+                byte[] packet = new byte[1 + pingBytes.length];
+                packet[0] = 0x01; // Protobuf Ping type
+                System.arraycopy(pingBytes, 0, packet, 1, pingBytes.length);
+                sendUDPMessage(packet, packet.length, true);
+            } else {
+                byte[] pingBuffer = new byte[10];
+                pingBuffer[0] = (byte) ((HumlaUDPMessageType.UDPPing.ordinal() << 5) & 0xFF);
+                PacketBuffer pb = new PacketBuffer(pingBuffer, 10);
+                pb.skip(1);
+                pb.writeLong(t);
+                sendUDPMessage(pingBuffer, pb.size(), true);
+            }
+        }
+
+        Mumble.Ping.Builder pb = Mumble.Ping.newBuilder();
+        pb.setTimestamp(t);
+        pb.setGood(mCryptState.mUiGood);
+        pb.setLate(mCryptState.mUiLate);
+        pb.setLost(mCryptState.mUiLost);
+        pb.setResync(mCryptState.mUiResync);
+        // TODO accumulate stats and send with ping
+        sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
+    }
+
     private Runnable mPingRunnable = new Runnable() {
         @Override
         public void run() {
+            if (mSuspendedStandbyMode) {
+                return;
+            }
             try {
-                // In microseconds
-                long t = getElapsed();
-
-                if (!shouldForceTCP()) {
-                    if (isProtobufUdpSupported()) {
-                        MumbleUDP.Ping.Builder pb = MumbleUDP.Ping.newBuilder();
-                        pb.setTimestamp(t);
-                        byte[] pingBytes = pb.build().toByteArray();
-                        byte[] packet = new byte[1 + pingBytes.length];
-                        packet[0] = 0x01; // Protobuf Ping type
-                        System.arraycopy(pingBytes, 0, packet, 1, pingBytes.length);
-                        sendUDPMessage(packet, packet.length, true);
-                    } else {
-                        byte[] pingBuffer = new byte[10];
-                        pingBuffer[0] = (byte) ((HumlaUDPMessageType.UDPPing.ordinal() << 5) & 0xFF);
-                        PacketBuffer pb = new PacketBuffer(pingBuffer, 10);
-                        pb.skip(1);
-                        pb.writeLong(t);
-                        sendUDPMessage(pingBuffer, pb.size(), true);
-                    }
-                }
-
-                Mumble.Ping.Builder pb = Mumble.Ping.newBuilder();
-                pb.setTimestamp(t);
-                pb.setGood(mCryptState.mUiGood);
-                pb.setLate(mCryptState.mUiLate);
-                pb.setLost(mCryptState.mUiLost);
-                pb.setResync(mCryptState.mUiResync);
-                // TODO accumulate stats and send with ping
-                sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
+                sendKeepalivePing();
             } catch (Exception e) {
                 Log.w(TAG, "Error during keepalive ping execution: " + e.getMessage());
             } finally {
-                scheduleNextPing(getNextPingIntervalSeconds());
+                if (!mSuspendedStandbyMode) {
+                    scheduleNextPing(getNextPingIntervalSeconds());
+                }
             }
         }
     };
@@ -748,6 +776,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         if (isProtobufUdpSupported()) {
             int msgType = data[0] & 0xFF;
             if (msgType == 0) { // MumbleUDP.Audio
+                if (mListener != null) {
+                    mListener.onIncomingAudioPacket();
+                }
                 try {
                     MumbleUDP.Audio audioMsg = MumbleUDP.Audio.parseFrom(ByteString.copyFrom(data, 1, data.length - 1));
                     for (HumlaUDPMessageListener handler : mUDPHandlers) {
@@ -774,6 +805,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         int dataType = data[0] >> 5 & 0x7;
         if(dataType < 0 || dataType > HumlaUDPMessageType.values().length - 1) return; // Discard invalid data types
         HumlaUDPMessageType udpDataType = HumlaUDPMessageType.values()[dataType];
+        if (udpDataType != HumlaUDPMessageType.UDPPing && mListener != null) {
+            mListener.onIncomingAudioPacket();
+        }
 
         for(HumlaUDPMessageListener handler : mUDPHandlers) {
             broadcastUDPMessage(handler, data, udpDataType);
@@ -1035,5 +1069,11 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
          * @param warning A user-readable warning.
          */
         public void onConnectionWarning(String warning);
+
+        /**
+         * Called when an incoming voice audio packet arrives (Protobuf UDP or legacy/tunnel).
+         * Used to immediately re-engage continuous wakelock if the client was in zero-audio standby.
+         */
+        default void onIncomingAudioPacket() {}
     }
 }
