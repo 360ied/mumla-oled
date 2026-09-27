@@ -154,7 +154,7 @@ This mathematical inequality constitutes the core platform deadlock:
 - Murmur drops the connection after **30 seconds** of silence.
 - Android Deep Doze only permits background CPU wakeups every **540 to 900 seconds**.
 - Therefore, on a standard non-whitelisted Android device, **a VoIP client cannot sustain an active TCP Mumble session in Deep Doze without battery optimization exemption**.
-- Furthermore, because `AlarmManagerService`'s 60-second / 15-minute rate-limiting constants apply system-wide (even to apps on the power whitelist), **a client cannot sustain 10-second keepalives via `setExactAndAllowWhileIdle` while fully unheld in stationary Deep Doze**. Instead, battery optimization exemption enables two critical privileges: **unrestricted background network access** and the **permission to hold partial wakelocks during Doze**. A viable architecture must therefore decouple active screen-off suspend-to-RAM from stationary Deep Doze defense.
+- Furthermore, because `AlarmManagerService`'s 60-second / 15-minute rate-limiting constants apply system-wide (even to apps on the power whitelist), **a client cannot sustain 10-second keepalives via `setExactAndAllowWhileIdle` while fully unheld in stationary Deep Doze**. Instead, battery optimization exemption enables two critical privileges: **unrestricted background network access** and the **permission to hold partial wakelocks during Doze**. A viable architecture must therefore decouple active screen-off suspend-to-RAM from stationary Deep Doze defense (see the comprehensive Bimodal Keepalive Engine in [`wakelock-remediation-lite.md`](wakelock-remediation-lite.md#component-2-the-aosp-alarm-throttling-paradox--the-bimodal-keepalive-engine)).
 
 ---
 
