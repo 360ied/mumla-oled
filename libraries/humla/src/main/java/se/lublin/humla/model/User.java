@@ -46,7 +46,7 @@ public class User implements IUser, Comparable<User> {
 
     private Channel mChannel;
 
-    private TalkState mTalkState = TalkState.PASSIVE;
+    private volatile TalkState mTalkState = TalkState.PASSIVE;
 
     private final Set<Integer> mListeningChannels = new HashSet<Integer>();
 

@@ -110,4 +110,11 @@ public class ChannelLinksTest extends TestCase {
         assertEquals(1, a.getLinks().size());
         assertEquals(2, a.getAllLinks().size());
     }
+
+    public void testAddSelfLinkIsSafelyIgnored() {
+        Channel a = new Channel(1, false);
+        a.addLink(a);
+        assertEquals(0, a.getLinks().size());
+        assertEquals(1, a.getAllLinks().size());
+    }
 }

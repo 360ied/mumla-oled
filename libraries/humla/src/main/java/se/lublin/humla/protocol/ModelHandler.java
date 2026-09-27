@@ -58,14 +58,14 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
     private final IHumlaObserver mObserver;
     private final HumlaLogger mLogger;
     private ServerSettings mServerSettings;
-    private int mPermissions;
+    private volatile int mPermissions;
     private int mSession;
 
     public ModelHandler(Context context, IHumlaObserver observer, HumlaLogger logger,
                         @Nullable List<Integer> localMuteHistory,
                         @Nullable List<Integer> localIgnoreHistory) {
         mContext = context;
-        mChannels = new HashMap<Integer, Channel>();
+        mChannels = new ConcurrentHashMap<Integer, Channel>();
         mUsers = new ConcurrentHashMap<Integer, User>();
         mLocalMuteHistory = localMuteHistory;
         mLocalIgnoreHistory = localIgnoreHistory;

@@ -122,7 +122,7 @@ When a single packet is sent over cellular:
 ### 3.1. Permanent `PARTIAL_WAKE_LOCK` in `HumlaService`
 
 #### Exact Source Location
-[`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)
+[`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)
 ```java
 // Line 396-401
 Log.v(TAG, "Connected");
@@ -160,9 +160,9 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 ### 3.2. Unconditional AudioRecord & 100 Hz RNNoise Neural Inference
 
 #### Exact Source Locations
-- `AudioHandler.java`: [`libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L172-L175)
-- `AudioInputEngine.cpp`: [`libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L76-L121)
-- `HysteresisVad.cpp`: [`libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp#L63-L75)
+- `AudioHandler.java`: [`libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L172-L175)
+- `AudioInputEngine.cpp`: [`libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp#L76-L121)
+- `HysteresisVad.cpp`: [`libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp`](../../libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp#L63-L75)
 
 #### The Defect
 1. **Unconditional `AudioRecord` Capture**:
@@ -217,7 +217,7 @@ Upon receiving `ServerSync` (`onConnectionSynchronized()`), `HumlaService` acqui
 ### 3.3. 50 Hz Render Thread Polling & AudioTrack Idle Power
 
 #### Exact Source Location
-[`libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L341-L360)
+[`libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L341-L360)
 ```java
 // Line 341-360
 } else {
@@ -262,7 +262,7 @@ Whenever an audio packet arrives from the network (`queueVoiceData` or `queuePro
 ### 3.4. Cellular Radio Tail Lock from 5-Second Dual Pings
 
 #### Exact Source Location
-[`libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
+[`libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L138)
 ```java
 // Line 138
 mPingTask = mPingExecutorService.scheduleAtFixedRate(mPingRunnable, 0, 5, TimeUnit.SECONDS);
@@ -310,7 +310,7 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
        }
    }
    ```
-   In Mumla OLED, [`HumlaUDP.java:206-208`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L206-L208) enforces the exact same 5-second check.
+   In Mumla OLED, [`HumlaUDP.java:206-208`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L206-L208) enforces the exact same 5-second check.
    - If UDP pings are spaced beyond 10 seconds, `tLastGood` remains permanently expired during idle standby. A single corrupted datagram or stray network probe will immediately trigger a cascading `CryptSetup` resync storm over TCP.
    - **Protocol Constraint**: UDP pings must remain strictly bounded between **7.0 and 10.0 seconds** (never $> 10\text{s}$).
 5. **Initial 20-Second TCP Fallback Trap (`HumlaConnection.java:240-249`)**:
@@ -328,7 +328,7 @@ sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
 ### 3.5. Java GC Allocation Churn & Crypto JNI Overhead in OCB2-AES
 
 #### Exact Source Location
-[`libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java#L240-L283)
+[`libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java#L240-L283)
 ```java
 // Line 240-260 (ocbDecrypt)
 final byte[] tmp = new byte[AES_BLOCK_SIZE];
@@ -358,7 +358,7 @@ while (len > AES_BLOCK_SIZE) {
 
 ### 3.6. Compiler SIMD Vectorization Audit
 
-An audit of the native build system ([`Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk) and [`Application.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Application.mk)) with pinned NDK `r25c` (`25.1.8937393`) and `APP_PLATFORM := android-21` confirms the following:
+An audit of the native build system ([`Android.mk`](../../libraries/humla/src/main/jni/Android.mk) and [`Application.mk`](../../libraries/humla/src/main/jni/Application.mk)) with pinned NDK `r25c` (`25.1.8937393`) and `APP_PLATFORM := android-21` confirms the following:
 - In Clang (NDK r19+), ARM NEON is enabled by default for both `armeabi-v7a` and `arm64-v8a`. The preprocessor definitions `__ARM_NEON` and `__ARM_NEON__` are automatically emitted.
 - In `rnnoise/src/vec.h`, the check `#elif (defined(__ARM_NEON__) || defined(__ARM_NEON)) && !defined(DISABLE_NEON)` successfully evaluates to true, including `vec_neon.h`.
 - Disassembly of compiled `nnet.o` objects confirms that 128-bit NEON instructions (`vmla.f32`, `vldmia`) are generated across all ARM targets.
@@ -369,7 +369,7 @@ An audit of the native build system ([`Android.mk`](file:///home/bualy/files/dev
 ### 3.7. Unoptimized Opus Encoder Settings (Complexity 10)
 
 #### Exact Source Location
-[`libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp#L34-L50)
+[`libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp`](../../libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp#L34-L50)
 ```cpp
 // Line 39, 46
 opus_encoder_ctl(m_encoder, OPUS_SET_COMPLEXITY(10));
@@ -403,7 +403,7 @@ opus_encoder_ctl(m_encoder, OPUS_SET_DTX(0));
 ### 3.8. UI Main-Thread Avatar Decompression Churn
 
 #### Exact Source Location
-[`app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java#L367-L376)
+[`app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java#L367-L376)
 ```java
 // Line 367-376 (getTalkStateDrawable)
 } else {
@@ -439,16 +439,16 @@ Mumla OLED specifically targets OLED/AMOLED display hardware. Unlike LCD display
 When an OLED pixel displays true black (`#000000` / RGB $(0, 0, 0)$), the subpixels are completely powered down, consuming **zero emission power** ($0.0 \text{ mA}$).
 
 ### Theme Audit in `values-night/themes.xml`
-In [`app/src/main/res/values-night/themes.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/values-night/themes.xml#L36-L58):
+In [`app/src/main/res/values-night/themes.xml`](../../app/src/main/res/values-night/themes.xml#L36-L58):
 - `Theme.Mumla.Oled` correctly overrides `android:windowBackground`, `android:colorBackground`, `colorSurface`, `cardBackgroundColor` to `#000000`.
 - Compared to the standard `Theme.Mumla` dark theme (which uses dark grey cards `#202020` and surface colors `#121212`), true OLED black reduces display panel emission power by **35% to 50%** at 50% display brightness (saving $\sim 150 \text{ to } 300 \text{ mW}$ when the screen is on).
 
 ### Identified UI/Display Recommendations
 1. **Maintain True Black Surfaces**: Preserve the `#000000` background across all custom dialogs, popups, and drawer panels.
 2. **Proximity Sensor Integration**:
-   [`MumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L809-L818) uses `PROXIMITY_SCREEN_OFF_WAKE_LOCK` for handset mode. When the user holds the phone to their ear, the proximity sensor immediately disables the display. Ensure the proximity lock is active **only** when handset mode is selected and audio routing is directed to the earpiece.
+   [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L809-L818) uses `PROXIMITY_SCREEN_OFF_WAKE_LOCK` for handset mode. When the user holds the phone to their ear, the proximity sensor immediately disables the display. Ensure the proximity lock is active **only** when handset mode is selected and audio routing is directed to the earpiece.
 3. **Avoid Unnecessary View Invalidation**:
-   In [`ChannelListFragment.java:125-129`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelListFragment.java#L125-L129):
+   In [`ChannelListFragment.java:125-129`](../../app/src/main/java/se/lublin/mumla/channel/ChannelListFragment.java#L125-L129):
    ```java
    public void onUserStateUpdated(IUser user) {
        mChannelListAdapter.updateUserStates(user, mChannelView);
