@@ -4,9 +4,9 @@
 **Severity:** medium  
 **Component:** `libraries/humla` Protocol / Model  
 **Files Affected:**
-- [`WhisperTargetUsers.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/model/WhisperTargetUsers.java)
-- [`AudioOutput.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
-- [`ChannelListAdapter.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java)
+- [`WhisperTargetUsers.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/WhisperTargetUsers.java)
+- [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
+- [`ChannelListAdapter.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.java)
 
 ---
 

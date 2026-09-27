@@ -57,10 +57,10 @@ Because this remediation represents the **single largest engineering lift** acro
 
 ### Source Location
 
-[`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L520-L525`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L520-L525):
+[`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L527-L532`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L527-L532):
 
 ```java
-// HumlaService.java:520-525
+// HumlaService.java:527-532
 Log.v(TAG, "Connected");
 if (mWakeLock != null) {
     if (mWakeLock.isHeld()) {

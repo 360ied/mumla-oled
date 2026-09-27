@@ -4,12 +4,12 @@
 **Severity:** Low (Obsolescence / Technical Debt)  
 **Component:** `libraries/humla` Audio Engine / Codecs  
 **Files Affected:**
-- [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
-- [`AudioOutputSpeech.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java)
-- [`Settings.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/Settings.java)
-- [`settings_audio.xml`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_audio.xml)
-- [`libraries/humla/src/main/jni/Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk)
-- [`.gitmodules`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/.gitmodules)
+- [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
+- [`AudioOutputSpeech.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutputSpeech.java)
+- [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java)
+- [`settings_audio.xml`](../../app/src/main/res/xml/settings_audio.xml)
+- [`libraries/humla/src/main/jni/Android.mk`](../../libraries/humla/src/main/jni/Android.mk)
+- [`.gitmodules`](../../.gitmodules)
 
 ---
 

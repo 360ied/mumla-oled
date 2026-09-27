@@ -4,10 +4,10 @@
 **Severity:** high (breaks core authentication feature)  
 **Component:** `app` Security / Certificate Management  
 **Files Affected:**
-- [`CertificateImportActivity.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java)
-- [`MumlaDatabase.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/db/MumlaDatabase.java)
-- [`MumlaSQLiteDatabase.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java)
-- [`ServerConnectTask.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java)
+- [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java)
+- [`MumlaDatabase.java`](../../app/src/main/java/se/lublin/mumla/db/MumlaDatabase.java)
+- [`MumlaSQLiteDatabase.java`](../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java)
+- [`ServerConnectTask.java`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java)
 
 ---
 

@@ -4,8 +4,8 @@
 **Severity:** medium  
 **Component:** `libraries/humla` Protocol / Server Administration  
 **Files Affected:**
-- [`HumlaService.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
-- [`IHumlaSession.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java)
+- [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
+- [`IHumlaSession.java`](../../libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java)
 
 ---
 
@@ -52,4 +52,4 @@ These methods were declared during the initial architecture of the `humla` libra
 
 ## 4. Resolution
 
-Full server administration has been formally designated as out of scope for the Mumla mobile client. The unused, crashing stubs `requestBanList()` and `requestUserList()` have been completely deleted from [`IHumlaSession`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java) and [`HumlaService`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), eliminating dead APIs and potential crash vectors.
+Full server administration has been formally designated as out of scope for the Mumla mobile client. The unused, crashing stubs `requestBanList()` and `requestUserList()` have been completely deleted from [`IHumlaSession`](../../libraries/humla/src/main/java/se/lublin/humla/IHumlaSession.java) and [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), eliminating dead APIs and potential crash vectors.

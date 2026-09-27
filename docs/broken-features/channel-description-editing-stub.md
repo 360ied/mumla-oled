@@ -4,8 +4,8 @@
 **Severity:** low-medium  
 **Component:** `app` Channel Management  
 **Files Affected:**
-- [`ChannelDescriptionFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/comment/ChannelDescriptionFragment.java)
-- [`AbstractCommentFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java)
+- [`ChannelDescriptionFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/ChannelDescriptionFragment.java)
+- [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java)
 
 ---
 

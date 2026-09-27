@@ -448,7 +448,7 @@ In [`app/src/main/res/values-night/themes.xml`](../../app/src/main/res/values-ni
 2. **Proximity Sensor Integration**:
    [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L809-L818) uses `PROXIMITY_SCREEN_OFF_WAKE_LOCK` for handset mode. When the user holds the phone to their ear, the proximity sensor immediately disables the display. Ensure the proximity lock is active **only** when handset mode is selected and audio routing is directed to the earpiece.
 3. **Avoid Unnecessary View Invalidation**:
-   In [`ChannelListFragment.java:125-129`](../../app/src/main/java/se/lublin/mumla/channel/ChannelListFragment.java#L125-L129):
+   In [`ChannelListFragment.java:132-136`](../../app/src/main/java/se/lublin/mumla/channel/ChannelListFragment.java#L132-L136):
    ```java
    public void onUserStateUpdated(IUser user) {
        mChannelListAdapter.updateUserStates(user, mChannelView);

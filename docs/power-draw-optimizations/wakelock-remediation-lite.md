@@ -331,11 +331,10 @@ The keepalive problem is governed by two conflicting, immutable constraints:
    In AOSP [`AlarmManagerService.java`](https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/services/core/java/com/android/server/alarm/AlarmManagerService.java), all alarms tagged with `FLAG_ALLOW_WHILE_IDLE` (dispatched via `setExactAndAllowWhileIdle()` or `setAndAllowWhileIdle()`) are subject to mandatory framework rate-limiting:
 
 ```math
-T_{\text{while-idle-short}} = 60\text{ s} \quad \text{(outside Doze)}
-```
-
-```math
-T_{\text{while-idle-long}} = 900\text{ s} = 15\text{ minutes} \quad \text{(inside Deep Doze)}
+\begin{aligned}
+T_{\text{while-idle-short}} &= 60\text{ s} \quad \text{(outside Doze)} \\
+T_{\text{while-idle-long}} &= 900\text{ s} = 15\text{ minutes} \quad \text{(inside Deep Doze)}
+\end{aligned}
 ```
 
 This yields the fundamental platform deadlock:

@@ -4,7 +4,7 @@
 **Severity:** high (causes eventual `EMFILE: Too many open files` network failure)  
 **Component:** `app` Networking / Favourite Server List  
 **Files Affected:**
-- [`ServerInfoTask.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.java)
+- [`ServerInfoTask.java`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.java)
 
 ---
 

@@ -17,7 +17,7 @@ This document details the user interface components, touch event handling, syste
 
 ## In-App Push-to-Talk Button
 
-The main on-screen PTT button is defined in [`fragment_channel.xml:68-87`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/layout/fragment_channel.xml#L68-L87) and managed by [`ChannelFragment.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java).
+The main on-screen PTT button is defined in [`fragment_channel.xml:68-87`](../../app/src/main/res/layout/fragment_channel.xml#L68-L87) and managed by [`ChannelFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java).
 
 ```xml
 <LinearLayout
@@ -44,7 +44,7 @@ The main on-screen PTT button is defined in [`fragment_channel.xml:68-87`](file:
 
 ### The Bug in `ChannelFragment.java`
 
-In [`ChannelFragment.java:160-178`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L178):
+In [`ChannelFragment.java:160-178`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L160-L178):
 
 ```java
 mTalkButton.setOnTouchListener(new View.OnTouchListener() {
@@ -84,7 +84,7 @@ When `ACTION_CANCEL` is received:
 - `getService().onTalkKeyUp()` is **never called**.
 - The microphone remains **stuck in active transmission indefinitely**, broadcasting the user's ambient audio and private conversations to the entire channel until the user notices and taps the button again.
 
-*(Contrast this with [`MumlaHotCorner.java:126-132`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L126-L132), where `ACTION_CANCEL` was explicitly implemented and handled).*
+*(Contrast this with [`MumlaHotCorner.java:126-132`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L126-L132), where `ACTION_CANCEL` was explicitly implemented and handled).*
 
 ---
 
@@ -92,7 +92,7 @@ When `ACTION_CANCEL` is received:
 
 ### Preference Specification vs Runtime Execution
 
-In [`settings_appearance.xml:62-72`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/xml/settings_appearance.xml#L62-L72), the PTT button height preference is defined with explicit `dp` units:
+In [`settings_appearance.xml:62-72`](../../app/src/main/res/xml/settings_appearance.xml#L62-L72), the PTT button height preference is defined with explicit `dp` units:
 
 ```xml
 <se.lublin.mumla.preference.SeekBarDialogPreference
@@ -107,7 +107,7 @@ In [`settings_appearance.xml:62-72`](file:///home/bualy/files/devel/mumla_dev/mu
 
 The default value is $15 \times 10 = 150\text{ dp}$.
 
-Now examine [`ChannelFragment.java:309-311`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L309-L311):
+Now examine [`ChannelFragment.java:309-311`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L309-L311):
 
 ```java
 ViewGroup.LayoutParams params = mTalkView.getLayoutParams();
@@ -131,7 +131,7 @@ mTalkButton.setLayoutParams(params);
 
 ## Architectural Evaluation: PTT Button Collapse on Mute (PTT-09)
 
-In [`ChannelFragment.java:313-328`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L313-L328):
+In [`ChannelFragment.java:313-328`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L313-L328):
 
 ```java
 boolean muted = false;
@@ -170,7 +170,7 @@ Following product and ergonomic review, this behavior is classified as **Working
 
 ## Visual State Inconsistency: `setPressed` vs `setActivated` (PTT-10)
 
-In [`ChannelFragment.java:98-107`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L98-L107):
+In [`ChannelFragment.java:98-107`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L98-L107):
 
 ```java
 switch (user.getTalkState()) {
@@ -193,7 +193,7 @@ switch (user.getTalkState()) {
   2. Lifting the finger dispatches `ACTION_UP`, causing Android to automatically reset `mTalkButton.setPressed(false)`.
   3. 30ms later, `onUserTalkStateUpdated()` fires from the audio engine and forcefully calls `mTalkButton.setPressed(true)`.
   4. This creates a visible **flicker / stutter** in button styling.
-- The drawable selector [`ptt_button_tint.xml:6`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/res/drawable/ptt_button_tint.xml#L6) explicitly defines an activated state for sticky mode:
+- The drawable selector [`ptt_button_tint.xml:6`](../../app/src/main/res/drawable/ptt_button_tint.xml#L6) explicitly defines an activated state for sticky mode:
   ```xml
   <!-- Color when PTT button is in sticky mode, and activate -->
   <item android:state_activated="true" android:color="?attr/pttPressed" />
@@ -206,13 +206,13 @@ switch (user.getTalkState()) {
 
 ### The Repository Claim
 
-The project [`README.md:89`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/README.md#L89) states:
+The project [`README.md:89`](../../README.md#L89) states:
 
 > **Re-Engineered PTT Hot Corner**: Latency-optimized push-to-talk corner with soft-keyboard awareness (automatically hides when typing) and vivid visual state feedback.
 
 ### The Source Code Reality
 
-Inspecting the complete source of [`MumlaHotCorner.java`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java) reveals:
+Inspecting the complete source of [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java) reveals:
 - There is **no `WindowInsetsAnimation.Callback`**, no `ViewTreeObserver.OnGlobalLayoutListener`, and no `InputMethodManager` integration.
 - There are no window flags (`FLAG_ALT_FOCUSABLE_IM`) or visibility toggles responding to IME keyboard visibility.
 - When an on-screen keyboard opens (such as Gboard, SwiftKey, or Samsung Keyboard), the hot corner overlay **remains anchored on top of the keyboard**, obscuring key inputs (Enter, Backspace, or punctuation, depending on chosen corner gravity).
@@ -223,7 +223,7 @@ Inspecting the complete source of [`MumlaHotCorner.java`](file:///home/bualy/fil
 
 ### 1. Foreground-Only Key Capture (PTT-11)
 
-Hardware keys are intercepted solely in [`MumlaActivity.java:448-464`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L448-L464):
+Hardware keys are intercepted solely in [`MumlaActivity.java:448-464`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L448-L464):
 
 ```java
 @Override
@@ -250,18 +250,18 @@ Mumla contains **zero references** to `KEYCODE_PTT`. Users on enterprise devices
 
 Many users communicate using wired or Bluetooth headsets with inline call/play buttons (`KEYCODE_HEADSETHOOK` / `KEYCODE_MEDIA_PLAY_PAUSE`).
 
-In [`MumlaConnectionNotification.java:202-215`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaConnectionNotification.java#L202-L215), `MediaSessionCompat` handles custom actions (`ACTION_MUTE`, `ACTION_DEAFEN`), but does **not override `onMediaButtonEvent()`**. Headset buttons cannot trigger PTT while backgrounded.
+In [`MumlaConnectionNotification.java:202-215`](../../app/src/main/java/se/lublin/mumla/service/MumlaConnectionNotification.java#L202-L215), `MediaSessionCompat` handles custom actions (`ACTION_MUTE`, `ACTION_DEAFEN`), but does **not override `onMediaButtonEvent()`**. Headset buttons cannot trigger PTT while backgrounded.
 
 ### 4. Handset Mode (Proximity Sensor) Conflict
 
-In [`MumlaService.java:711-720`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L711-L720), handset mode acquires `PROXIMITY_SCREEN_OFF_WAKE_LOCK`. When the device is brought to the user's ear, the display powers off.
+In [`MumlaService.java:711-720`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L711-L720), handset mode acquires `PROXIMITY_SCREEN_OFF_WAKE_LOCK`. When the device is brought to the user's ear, the display powers off.
 Because the display is off and `MumlaActivity` lacks window focus, all touch input and foreground key dispatch are terminated. PTT is impossible to use in Handset Mode unless engaged prior to raising the device.
 
 ---
 
 ## Audio Feedback Deficiencies (PTT-14)
 
-In [`MumlaService.java:458-464`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/service/MumlaService.java#L458-L464):
+In [`MumlaService.java:458-464`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L458-L464):
 
 ```java
 if (isConnectionEstablished() &&

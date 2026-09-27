@@ -3,7 +3,7 @@
 > [!WARNING]
 > **Outdated Analysis**: This report reflects the binary footprint of **Mumla OLED 0.18.4** and is currently outdated. Package compositions, bytecode retention, native library sizes, and asset payloads may differ in subsequent releases.
 
-This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED 0.18.4** ([`mumla-foss-release.apk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build/outputs/apk/foss/release/mumla-foss-release.apk)).
+This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED 0.18.4** ([`mumla-foss-release.apk`](../../app/build/outputs/apk/foss/release/mumla-foss-release.apk)).
 
 ---
 
@@ -38,7 +38,7 @@ flowchart TD
 | **Installed / Unpacked Size (Uncompressed)** | `12,723,793 bytes` | **12.13 MiB** (~12.7 MB) | Sum of all internal uncompressed payload streams |
 | **Overall Compression Ratio** | `57.46%` | — | Ratio of compressed to uncompressed contents |
 | **Total Files Inside Archive** | `1,003 files` | — | Includes classes, shared objects, resources, metadata |
-| **Target Application ID** | `se.lublin.mumla.oled15` | — | Configured in [`app/build.gradle`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build.gradle#L102) |
+| **Target Application ID** | `se.lublin.mumla.oled15` | — | Configured in [`app/build.gradle`](../../app/build.gradle#L102) |
 | **DEX Compilation Strategy** | Single DEX (`classes.dex`) | — | Single DEX 035 archive; no multidex split |
 | **Target ABIs** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | — | Multi-architecture universal FOSS APK |
 
@@ -77,7 +77,7 @@ The archive contents break down across six primary functional categories:
 
 ## 3. Deep Dive: Asset Storage & RNNoise Model Payload
 
-The single largest entry inside the entire APK is [`assets/rnnoise_model.bin`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/assets/rnnoise_model.bin), accounting for **38.02%** of the entire APK file size.
+The single largest entry inside the entire APK is [`assets/rnnoise_model.bin`](../../libraries/humla/src/main/assets/rnnoise_model.bin), accounting for **38.02%** of the entire APK file size.
 
 ```math
 \text{Asset Footprint Ratio} = \frac{\text{Compressed Size of } \texttt{assets/rnnoise\_model.bin}}{\text{Total Compressed APK Size}} = \frac{2,779,776}{7,311,002} \approx 38.02\%
@@ -94,7 +94,7 @@ The single largest entry inside the entire APK is [`assets/rnnoise_model.bin`](f
 ### Architecture & Format of `rnnoise_model.bin`
 
 1. **Custom Binary Container Format (`DNNw`)**:
-   - The neural model is converted from upstream C code by [`libraries/humla/tools/dump_rnnoise_blob.py`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/tools/dump_rnnoise_blob.py) into an 8-bit quantized binary blob.
+   - The neural model is converted from upstream C code by [`libraries/humla/tools/dump_rnnoise_blob.py`](../../libraries/humla/tools/dump_rnnoise_blob.py) into an 8-bit quantized binary blob.
    - Each tensor is serialized with a 64-byte structured header:
      - 4-byte magic: `b'DNNw'`
      - 4-byte version integer: `0`
@@ -125,15 +125,15 @@ The single largest entry inside the entire APK is [`assets/rnnoise_model.bin`](f
 ```
 
 - **Asset Extraction Strategy**:
-  In [`libraries/humla/src/main/jni/Android.mk`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/Android.mk#L79), the build defines `-DUSE_WEIGHTS_FILE`. This wraps the weight table in `rnnoise_data.c` in `#ifndef USE_WEIGHTS_FILE`, completely stripping the static weights from the compiled `.so` binaries.
+  In [`libraries/humla/src/main/jni/Android.mk`](../../libraries/humla/src/main/jni/Android.mk#L79), the build defines `-DUSE_WEIGHTS_FILE`. This wraps the weight table in `rnnoise_data.c` in `#ifndef USE_WEIGHTS_FILE`, completely stripping the static weights from the compiled `.so` binaries.
 - **Runtime Loading**:
-  Instead, [`NativeAudioInputEngine.loadRnnoiseModel()`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.java#L47-L62) reads `rnnoise_model.bin` from Android assets once into a cached byte buffer in memory, passing it across JNI during `AudioInputEngine` initialization. This single optimization saved over **7 MB** of compressed APK overhead.
+  Instead, [`NativeAudioInputEngine.loadRnnoiseModel()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.java#L47-L62) reads `rnnoise_model.bin` from Android assets once into a cached byte buffer in memory, passing it across JNI during `AudioInputEngine` initialization. This single optimization saved over **7 MB** of compressed APK overhead.
 
 ---
 
 ## 4. Deep Dive: Dalvik Executable Bytecode (`classes.dex`)
 
-[`classes.dex`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build/intermediates/dex/fossRelease/minifyFossReleaseWithR8/classes.dex) represents the second largest component of the APK at **2.11 MiB** compressed (30.20%) and **4.82 MiB** uncompressed (39.74%).
+[`classes.dex`](../../app/build/intermediates/dex/fossRelease/minifyFossReleaseWithR8/classes.dex) represents the second largest component of the APK at **2.11 MiB** compressed (30.20%) and **4.82 MiB** uncompressed (39.74%).
 
 ```mermaid
 pie title classes.dex Retained Class Census (5,303 Total Retained Classes)
@@ -188,7 +188,7 @@ R8 minification and tree shaking (`minifyEnabled = true`) reduced the codebase t
 
 Bouncy Castle dominates bytecode size due to reflection-based provider instantiation.
 
-In [`app/proguard-rules.pro`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/proguard-rules.pro#L22-L27), the build specifies:
+In [`app/proguard-rules.pro`](../../app/proguard-rules.pro#L22-L27), the build specifies:
 
 ```pro
 # Preserve BouncyCastle Security Providers, certificate builders, and crypto engines
@@ -199,7 +199,7 @@ In [`app/proguard-rules.pro`](file:///home/bualy/files/devel/mumla_dev/mumla-ole
 -dontwarn org.bouncycastle.**
 ```
 
-Because [`BouncyCastleProvider`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L81) registers dozens of cryptographic Service Provider Interfaces (SPIs) dynamically using string keys, R8 cannot statically verify reachability. The wildcard rule forces R8 to retain:
+Because [`BouncyCastleProvider`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L81) registers dozens of cryptographic Service Provider Interfaces (SPIs) dynamically using string keys, R8 cannot statically verify reachability. The wildcard rule forces R8 to retain:
 
 - `org.bouncycastle.jcajce.provider.*`: **1,669 classes**
 - `org.bouncycastle.asn1.*`: **328 classes**
@@ -210,13 +210,13 @@ Because [`BouncyCastleProvider`](file:///home/bualy/files/devel/mumla_dev/mumla-
 - `org.bouncycastle.jce.*`: **107 classes**
 - `org.bouncycastle.math.*`: **107 classes**
 
-Mumla OLED only uses BouncyCastle for X.509 client certificate generation in [`HumlaCertificateGenerator`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.java) and PKCS#12 keystore parsing in [`CertificateImportActivity`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java). The remaining cryptographic engines (PQC, Camellia, GOST, ElGamal, Blowfish, CAST, Twofish, etc.) are dead weight preserved solely by the broad `-keep` directive.
+Mumla OLED only uses BouncyCastle for X.509 client certificate generation in [`HumlaCertificateGenerator`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.java) and PKCS#12 keystore parsing in [`CertificateImportActivity`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java). The remaining cryptographic engines (PQC, Camellia, GOST, ElGamal, Blowfish, CAST, Twofish, etc.) are dead weight preserved solely by the broad `-keep` directive.
 
 ---
 
 ## 5. Deep Dive: Native Shared Libraries (`lib/`)
 
-Native binaries represent **1.11 MiB** compressed (15.86%) and **2.21 MiB** uncompressed (18.23%). The application targets three Application Binary Interfaces (ABIs) configured via `ndk.abiFilters` in [`app/build.gradle`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build.gradle#L84-L86).
+Native binaries represent **1.11 MiB** compressed (15.86%) and **2.21 MiB** uncompressed (18.23%). The application targets three Application Binary Interfaces (ABIs) configured via `ndk.abiFilters` in [`app/build.gradle`](../../app/build.gradle#L84-L86).
 
 ```mermaid
 flowchart LR
@@ -251,17 +251,17 @@ flowchart LR
 ### Component Analysis
 
 1. **`libjniopus.so`**:
-   - Compiled from upstream Opus submodule ([`libraries/humla/src/main/jni/opus`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/opus)).
+   - Compiled from upstream Opus submodule ([`libraries/humla/src/main/jni/opus`](../../libraries/humla/src/main/jni/opus)).
    - Represents **74.5%** of all native code in the APK.
    - Built with `-O3 -fvisibility=hidden` and target-specific vector extensions (ARM Neon on `arm64-v8a`, AVX/SSE on `x86_64`).
 2. **`libhumlaaudio.so`**:
-   - Compiles the modernized C++ audio pipeline from [`libraries/humla/src/main/jni/audio_engine`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine):
-     - [`AudioInputEngine.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp) (Oboe/AAudio audio stream processor)
-     - [`RnnoiseProcessor.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/RnnoiseProcessor.cpp) (GRU neural network denoiser)
-     - [`PreSpeechRingBuffer.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.cpp) (80ms lookahead FIFO)
-     - [`HysteresisVad.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp) (Dual-threshold speech probability state machine)
-     - [`SoftLimiter.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/SoftLimiter.cpp) and [`AdaptiveLeveler.cpp`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp)
-     - [`jitter.c`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/libraries/humla/src/main/jni/audio_engine/jitter/jitter.c) (Adaptive jitter buffer)
+   - Compiles the modernized C++ audio pipeline from [`libraries/humla/src/main/jni/audio_engine`](../../libraries/humla/src/main/jni/audio_engine):
+     - [`AudioInputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp) (Oboe/AAudio audio stream processor)
+     - [`RnnoiseProcessor.cpp`](../../libraries/humla/src/main/jni/audio_engine/RnnoiseProcessor.cpp) (GRU neural network denoiser)
+     - [`PreSpeechRingBuffer.cpp`](../../libraries/humla/src/main/jni/audio_engine/PreSpeechRingBuffer.cpp) (80ms lookahead FIFO)
+     - [`HysteresisVad.cpp`](../../libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp) (Dual-threshold speech probability state machine)
+     - [`SoftLimiter.cpp`](../../libraries/humla/src/main/jni/audio_engine/SoftLimiter.cpp) and [`AdaptiveLeveler.cpp`](../../libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp)
+     - [`jitter.c`](../../libraries/humla/src/main/jni/audio_engine/jitter/jitter.c) (Adaptive jitter buffer)
    - Highly compact (~76–112 KB compressed per ABI) due to symbol stripping and weight externalization.
 
 ---
@@ -273,7 +273,7 @@ flowchart LR
 - **Size**: `654,304 bytes` (638.97 KiB), uncompressed ($8.95\%$ of total APK).
 - Android packaging requires `resources.arsc` to be stored uncompressed (`Stored` mode) in APK archives so that `AssetManager` can mmap resource tables directly from disk without inflator decompression overhead.
 - **Language Pruning Effect**:
-  [`app/build.gradle`](file:///home/bualy/files/devel/mumla_dev/mumla-oled/app/build.gradle#L82) defines:
+  [`app/build.gradle`](../../app/build.gradle#L82) defines:
   ```groovy
   resourceConfigurations += ["en", "fr", "zh-rCN"]
   ```
