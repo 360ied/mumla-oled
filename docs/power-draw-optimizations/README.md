@@ -485,6 +485,7 @@ To address these inefficiencies systematically without compromising audio qualit
 4. **Decoupled Dedicated Tracks: Partial Wakelock & Deep Doze**:
    - **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)**: Targeted low-risk specification for eliminating wakelocks during provably zero-audio states (deafened or solo standby), capturing ~80% of real-world idle savings with zero audio risk.
    - **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)**: Universal conversational standby suspend across active channels, navigating baseband IRQs, router packet buffers, and autonomous transport adaptation.
+   - **[Zero-Audio Standby Regression Investigation (0.21.10)](zero-audio-standby-regression-investigation.md)**: Empirical hardware audit and root cause analysis of screen-off keepalive deferrals and Murmur 30s timeouts.
 
 ---
 
