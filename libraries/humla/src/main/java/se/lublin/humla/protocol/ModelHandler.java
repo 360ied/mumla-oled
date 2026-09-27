@@ -220,7 +220,9 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         if(msg.hasParent()) {
             Channel oldParent = channel.getParent();
             channel.setParent(parent);
-            parent.addSubchannel(channel);
+            if(parent != null) {
+                parent.addSubchannel(channel);
+            }
             if(oldParent != null) {
                 oldParent.removeSubchannel(channel);
             }
@@ -240,7 +242,9 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             channel.clearLinks();
             for(int link : msg.getLinksList()) {
                 Channel linked = mChannels.get(link);
-                channel.addLink(linked);
+                if(linked != null) {
+                    channel.addLink(linked);
+                }
                 // Don't add this channel to the other channel's link list- this update occurs on
                 // server synchronization, and we will get a message for the other channels' links
                 // laster.
@@ -250,16 +254,20 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
         if(msg.getLinksRemoveCount() > 0) {
             for(int link : msg.getLinksRemoveList()) {
                 Channel linked = mChannels.get(link);
-                channel.removeLink(linked);
-                linked.removeLink(channel);
+                if(linked != null) {
+                    channel.removeLink(linked);
+                    linked.removeLink(channel);
+                }
             }
         }
 
         if(msg.getLinksAddCount() > 0) {
             for(int link : msg.getLinksAddList()) {
                 Channel linked = mChannels.get(link);
-                channel.addLink(linked);
-                linked.addLink(channel);
+                if(linked != null) {
+                    channel.addLink(linked);
+                    linked.addLink(channel);
+                }
             }
         }
 
@@ -287,6 +295,10 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             for (User u : mUsers.values()) {
                 u.removeListeningChannel(channel.getId());
             }
+            for (Channel linked : new ArrayList<Channel>(channel.getLinks())) {
+                linked.removeLink(channel);
+            }
+            channel.clearLinks();
             mChannels.remove(channel.getId());
             Channel parent = channel.getParent();
             if(parent != null) {

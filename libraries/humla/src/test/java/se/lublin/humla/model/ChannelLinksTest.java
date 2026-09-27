@@ -91,4 +91,11 @@ public class ChannelLinksTest extends TestCase {
         assertTrue(links.contains(b));
         assertTrue(links.contains(c));
     }
+
+    public void testAddNullLinkIsSafelyIgnored() {
+        Channel a = new Channel(1, false);
+        a.addLink(null);
+        assertEquals(0, a.getLinks().size());
+        assertEquals(1, a.getAllLinks().size());
+    }
 }
