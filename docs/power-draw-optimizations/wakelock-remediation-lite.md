@@ -1,6 +1,6 @@
 # Pragmatic Wakelock Remediation (Lite Track): Zero-Audio Standby Optimization
 
-A focused, low-risk engineering specification for eliminating the permanent `PowerManager.PARTIAL_WAKE_LOCK` in Mumla OLED ([`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L396-L401)) specifically during states where inbound audio reception is **provably impossible, explicitly disabled, or plausibly absent**.
+A focused, low-risk engineering specification for eliminating the permanent `PowerManager.PARTIAL_WAKE_LOCK` in Mumla OLED ([`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L301-L306)) specifically during states where inbound audio reception is **provably impossible, explicitly disabled, or plausibly absent**.
 
 ---
 
