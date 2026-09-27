@@ -178,7 +178,7 @@ Caused by: java.io.EOFException
 2. The first 10-second alarm was delayed by 12.4 seconds, firing late at `14:50:05.377` (22.4 seconds after standby entry).
 3. The next alarm (scheduled for `14:50:15`) was deferred completely by the OS.
 4. From `14:50:05.377` to `14:50:42.990`, exactly **37.613 seconds** elapsed without any packets leaving the client.
-5. Murmur's 30-second timer expired, Murmur closed the socket, and Text-to-Speech announced *"Disconnected"*.
+5. Murmur's 30-second inactivity timer expired at +30.0s, and Murmur's periodic watchdog (`qtTimeout`, ticking every 15.5 seconds) caught the expired session at +37.6s, closing the socket and prompting Text-to-Speech to announce *"Disconnected"*.
 
 ### The USB Tethering Masking Effect
 
@@ -193,7 +193,7 @@ During initial testing with `adb logcat` over USB:
 
 ### A. The Fatal Assumption: Standard `setExact()` vs. Screen-Off Deferral
 
-In [`docs/power-draw-optimizations/wakelock-remediation-lite.md`](wakelock-remediation-lite.md#component-2-the-aosp-alarm-throttling-paradox--the-bimodal-keepalive-engine), the implementation rationale stated:
+In [`wakelock-remediation-lite.md`](wakelock-remediation-lite.md#component-2-the-aosp-alarm-throttling-paradox--the-bimodal-keepalive-engine), the implementation rationale stated:
 
 > *"The critical insight lies in the behavioral divergence of standard AlarmManager.setExact(ELAPSED_REALTIME_WAKEUP, ...) (without the AllowWhileIdle flag): In State I (Active Mobility / Pocket Standby)... standard exact wakeup alarms are not tagged with FLAG_ALLOW_WHILE_IDLE and are not subject to ALLOW_WHILE_IDLE_SHORT_TIME = 60000 throttling... waking the CPU at the exact requested millisecond."*
 
@@ -232,7 +232,7 @@ When the phone screen is **on**:
 In addition to alarm deferral, the TCP keepalive transmission pipeline contains a concurrency race condition:
 
 ### Missing `flush()` on `SSLSocket`
-In [`HumlaTCP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java#L248-L256):
+In [`HumlaTCP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java#L242-L258):
 
 ```java
 public void sendMessage(final MessageLite message, final HumlaTCPMessageType messageType) {
@@ -257,7 +257,7 @@ public void sendMessage(final MessageLite message, final HumlaTCPMessageType mes
 - Furthermore, `mTCPSocket` does not enable `TCP_NODELAY` (`setTcpNoDelay(true)`), subjecting transmissions to Nagle's algorithm.
 
 ### The 200 ms Drain Race
-In [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L338-L342):
+In [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L337-L341):
 
 ```java
 scheduleKeepaliveAlarm();
@@ -282,8 +282,8 @@ The root challenge in Mumla OLED's power optimization initiative is governed by 
 
 | Architecture Baseline | `PARTIAL_WAKE_LOCK` State | `AudioTrack` Playback State | Murmur TCP Keepalive (30s) | OEM Watchdog (`SIGKILL`) | Power Footprint | Real-World Operational Outcome |
 |---|---|---|---|---|---|---|
-| **Mumla OLED 0.21.7 (Continuous Silence)** | Held continuously (24/7) | `PLAYSTATE_PLAYING` (Digital silence / zero PCM) | **Sustained** (In-memory loop pings Murmur every 10–30s) | **Immune** (Continuous silence shield active) | High ($35\text{--}60\text{ mA}$ AP + $15\text{--}30\text{ mW}$ Audio DSP) | **100% Stable Connection**: No disconnects, no process kills; burns power rendering silence. |
-| **Mumla OLED 0.21.9 (Hardware Audio Gating)** | Held continuously (24/7) | `PLAYSTATE_PAUSED` (Standby pause after 3s/15s silence) | **Sustained** (In-memory loop pings Murmur every 10–30s) | **FATAL FAILURE (`SIGKILL`)**: Watchdog detects wakelock held without active audio | Moderate ($35\text{--}60\text{ mA}$ AP + $0\text{ mW}$ Audio DSP) | **Process Killed by OS**: Samsung Device Care, Xiaomi MIUI, and Vivo PEM kill app with `SIGKILL`. |
+| **Mumla OLED 0.21.7 (Continuous Silence)** | Held continuously (24/7) | `PLAYSTATE_PLAYING` (Digital silence / zero PCM) | **Sustained** (In-memory loop pings Murmur every 5s) | **Immune** (Continuous silence shield active) | High ($35\text{--}60\text{ mA}$ AP + $15\text{--}30\text{ mW}$ Audio DSP) | **100% Stable Connection**: No disconnects, no process kills; burns power rendering silence. |
+| **Mumla OLED 0.21.9 (Hardware Audio Gating)** | Held continuously (24/7) | `PLAYSTATE_PAUSED` (Standby pause after 3s/15s silence) | **Sustained** (In-memory loop pings Murmur every 5–10s) | **FATAL FAILURE (`SIGKILL`)**: Watchdog detects wakelock held without active audio | Moderate ($35\text{--}60\text{ mA}$ AP + $0\text{ mW}$ Audio DSP) | **Process Killed by OS**: Samsung Device Care, Xiaomi MIUI, and Vivo PEM kill app with `SIGKILL`. |
 | **Mumla OLED 0.21.10 (Zero-Audio Standby Lite)** | Released in Zero-Audio Standby | `PLAYSTATE_PAUSED` (Standby pause enabled) | **FATAL FAILURE (TIMEOUT)**: Alarms deferred 37s–104s; Murmur drops socket | **Immune** (No wakelock held while audio is paused) | Low ($5\text{--}10\text{ mA}$ AP theoretical + $0\text{ mW}$ Audio DSP) | **Connection Dropped**: Murmur detects 30s inactivity and terminates session (`EOFException`). |
 
 ### B. Deconstructing the 0.21.9 Flaw: Audio Gating Triggers Process Termination
