@@ -102,12 +102,12 @@ In day-to-day Mumble usage, users frequently sit in an empty channel on a busy s
 To formalize this state safely without ignoring Mumble's channel features, we define the **Monitored Channel Set** $\mathcal{C}_{\text{monitored}}$:
 
 ```math
-\mathcal{C}_{\text{monitored}} = \{ C_{\text{current}} \} \cup \text{Links}(C_{\text{current}}) \cup \text{ListenedChannels}(U_{\text{self}})
+\mathcal{C}_{\text{monitored}} = \text{AllLinks}(C_{\text{current}}) \cup \bigcup_{l \in \text{ListenedChannels}(U_{\text{self}})} \text{AllLinks}(l)
 ```
 
 Where:
 - $C_{\text{current}}$ is the channel where the local user currently resides ([`User.getChannel()`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L72)).
-- $\text{Links}(C_{\text{current}})$ is the set of channels linked to $C_{\text{current}}$ ([`Channel.getLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L164-L167)).
+- $\text{AllLinks}(c)$ is the reflexive transitive closure of channels linked to $c$ ([`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L173-L191)), matching upstream Mumble's `Channel::allLinks()` traversal.
 - $\text{ListenedChannels}(U_{\text{self}})$ is the set of channels the local user is actively listening to via Mumble 1.4+ Channel Listeners ([`User.getListeningChannels()`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L261-L263)).
 
 We define a **Speaking Candidate** as any remote user $u \neq U_{\text{self}}$ present in any channel $c \in \mathcal{C}_{\text{monitored}}$ who is currently able to speak:
@@ -127,13 +127,13 @@ If $\mathcal{S}_{\text{candidates}} = \emptyset$:
 - Under normal communication dynamics, **zero voice packets can arrive**.
 - The Application Processor can safely enter Linux kernel `suspend-to-RAM`.
 
-### D. Channel Listeners (Mumble 1.4+) and Channel Links
+### D. Channel Listeners (Mumble 1.4+) and Transitive Channel Links
 
-A naive empty-channel check that only inspects $C_{\text{current}}$ would fail in modern Mumble configurations:
-1. **Channel Links**: Murmur automatically routes and mixes audio across linked channels ([`Channel.getLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L164-L167)). If Channel A is linked to Channel B, a user in Channel A can hear anyone speaking in Channel B.
-2. **Channel Listeners**: Introduced in Mumble 1.4 (`listening_channel_add` and `listening_channel_remove` in `Mumble.proto:UserState`), users can listen to arbitrary remote channels without moving their avatar into them. Murmur marks voice packets from these channels with `MumbleUDP.Audio.context == LISTEN` and delivers them to the listening client.
+A naive empty-channel check that only inspects $C_{\text{current}}$ or immediate 1-hop links would fail in modern Mumble configurations:
+1. **Transitive Channel Links**: In upstream Murmur ([`src/Channel.cpp:210`](https://github.com/mumble-voip/mumble/blob/master/src/Channel.cpp#L210), [`src/murmur/Server.cpp:1222`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1222)), channel link topologies are transitive and cyclic (`Channel::allLinks()`). If Channel A is linked to Channel B, and Channel B is linked to Channel C, Murmur routes audio across all three channels. Inspecting only direct links via `getLinks()` would omit Channel C and incorrectly enter zero-audio standby while peers speak in C. Mumla OLED resolves this by implementing DFS transitive link resolution in [`Channel.getAllLinks()`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java#L173-L191).
+2. **Channel Listeners with Linked Topology**: Introduced in Mumble 1.4 (`listening_channel_add` and `listening_channel_remove` in `Mumble.proto:UserState`), users can listen to arbitrary remote channels without moving their avatar into them. Crucially, upstream Murmur ([`src/murmur/Server.cpp:1230`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1230)) delivers speech to listeners from any channel linked to the listened channel. Therefore, each listened channel must also be expanded via $\text{AllLinks}(l)$.
 
-In Mumla OLED's core library, [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) already maintains `mListeningChannels`, updated by [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L426-L442). By evaluating the complete union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
+In Mumla OLED's core library, [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java#L260-L276) maintains `mListeningChannels`, updated by [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java#L442-L460). By evaluating the complete transitive union $\mathcal{C}_{\text{monitored}}$, Mumla OLED fully respects both channel links and channel listeners while still gaining the ability to sleep when those monitored channels are quiet.
 
 ### E. De-prioritizing the Theoretical Whisper Trap
 
@@ -211,20 +211,12 @@ The Lite Track resolves this paradox through **Dual Gating**, coupling `isPlausi
 
 ### Component 1: Plausible Zero-Audio Evaluator
 
-Inside [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), evaluate the zero-audio invariant upon connection synchronization and whenever user or channel states change:
+Inside [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java), evaluate the zero-audio invariant upon connection synchronization and whenever user or channel states change:
 
 ```java
 public boolean isPlausiblyZeroAudio() {
-    if (!isConnected() || mModelHandler == null || mConnection == null) {
-        return false;
-    }
-    User self = mModelHandler.getUser(mConnection.getSession());
+    User self = mUsers.get(mSession);
     if (self == null) {
-        return false;
-    }
-
-    // 0. Route Invariant: Bluetooth SCO requires active audio routing to maintain link
-    if (mAudioOutput != null && mAudioOutput.isBluetoothScoActive()) {
         return false;
     }
 
@@ -234,7 +226,7 @@ public boolean isPlausiblyZeroAudio() {
     }
 
     // 2. Provable: Sole user connected to the entire server
-    if (mModelHandler.getUsers().size() <= 1) {
+    if (mUsers.size() <= 1) {
         return true;
     }
 
@@ -244,14 +236,12 @@ public boolean isPlausiblyZeroAudio() {
         return false;
     }
 
-    Set<Channel> monitoredChannels = new HashSet<>();
-    monitoredChannels.add(currentChannel);
-    monitoredChannels.addAll(currentChannel.getLinks());
+    Set<Channel> monitoredChannels = new HashSet<Channel>(currentChannel.getAllLinks());
 
     for (int channelId : self.getListeningChannels()) {
-        Channel listened = mModelHandler.getChannel(channelId);
+        Channel listened = mChannels.get(channelId);
         if (listened != null) {
-            monitoredChannels.add(listened);
+            monitoredChannels.addAll(listened.getAllLinks());
         }
     }
 
@@ -274,6 +264,42 @@ public boolean isPlausiblyZeroAudio() {
 }
 ```
 
+In [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), the system coordinator layers hardware routing, battery optimization, exact alarm permissions, and Deep Doze checks onto the model evaluation:
+
+```java
+public boolean isPlausiblyZeroAudio() {
+    if (!isConnected() || !isSynchronized() || mModelHandler == null || mConnection == null) {
+        return false;
+    }
+    if (isTalking()) {
+        return false;
+    }
+    try {
+        User self = mModelHandler.getUser(mConnection.getSession());
+        if (self != null && self.getTalkState() != TalkState.PASSIVE) {
+            return false;
+        }
+    } catch (NotSynchronizedException e) {
+        return false;
+    }
+    // Deep Doze clamps AllowWhileIdle alarms to 15m; retain continuous wakelock during Doze
+    if (isDeviceIdleMode()) {
+        return false;
+    }
+    if (!isIgnoringBatteryOptimizations()) {
+        return false;
+    }
+    if (!canScheduleExactAlarms()) {
+        return false;
+    }
+    AudioOutput output = getAudioOutput();
+    if (output != null && output.isBluetoothScoActive()) {
+        return false;
+    }
+    return mModelHandler.isPlausiblyZeroAudio();
+}
+```
+
 > [!NOTE]
 > **Bluetooth Routing Clarification (A2DP vs. SCO)**:
 > In Mumla OLED, standard Bluetooth headphones, earbuds, and car audio systems connect via **A2DP over ACL** (`AudioDeviceInfo.TYPE_BLUETOOTH_A2DP`) or LE Audio (`TYPE_BLE_HEADSET`), for which [`isBluetoothScoActive()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589-L602) returns `false`. These users are **not locked out** of zero-audio optimizations. After Phase 2's conservative 15-second silence grace period ([`STANDBY_TIMEOUT_A2DP_MS = 15000`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L618)), [`AudioTrack`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L401) enters `pause()` and the Application Processor safely enters kernel suspend-to-RAM while the Bluetooth SoC maintains link connectivity in low-power Sniff Mode. The `isBluetoothScoActive()` check serves exclusively as a defensive safeguard for rare carrier/telephony Synchronous Connection-Oriented voice calls.
@@ -283,20 +309,33 @@ public boolean isPlausiblyZeroAudio() {
 When entering `ZeroAudioStandby`, standard Java user-space timers (`ScheduledExecutorService`) will freeze as the Application Processor enters Linux kernel `suspend-to-RAM`.
 
 To prevent Murmur's 30-second TCP timeout ([`Server.cpp:1843`](https://github.com/mumble-voip/mumble/blob/master/src/murmur/Server.cpp#L1843)):
-1. Cancel `mPingTask` on `mPingExecutorService`.
-2. Arm an exact wakeup alarm using Android's `AlarmManager`:
-   ```java
-   alarmManager.setExactAndAllowWhileIdle(
-       AlarmManager.ELAPSED_REALTIME_WAKEUP,
-       SystemClock.elapsedRealtime() + (10 * 1000L),
-       mKeepalivePendingIntent
-   );
-   ```
-3. When the alarm triggers:
-   - Acquire a transient keepalive wakelock with a hard safety cap: `mKeepaliveWakeLock.acquire(1000)`.
-   - Synchronously transmit UDP and TCP pings via [`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java).
-   - Re-arm the next 10-second alarm.
-   - Release `mKeepaliveWakeLock` in a `finally` block, allowing the SoC to immediately re-enter suspend-to-RAM.
+
+> [!IMPORTANT]
+> **AOSP Alarm Throttling Ground Reality (`ALLOW_WHILE_IDLE_SHORT_TIME`)**:
+> In AOSP `AlarmManagerService.java`, all alarms carrying `FLAG_ALLOW_WHILE_IDLE` (from `setExactAndAllowWhileIdle()`) are hard-throttled to `ALLOW_WHILE_IDLE_SHORT_TIME = 60000` (60 seconds) outside Doze and `ALLOW_WHILE_IDLE_LONG_TIME = 900000` (15 minutes) inside Doze. Being exempt via `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` does **not** lift this 60s/15m throttle.
+> Because Murmur drops connections after 30 seconds of inactivity, attempting to schedule `setExactAndAllowWhileIdle()` every 10 seconds causes subsequent alarms to be delayed to 60s, terminating the connection with a timeout.
+>
+> **Ground Reality Resolution**:
+> 1. **Outside Deep Doze (`isDeviceIdleMode() == false`)**:
+>    Use standard exact wakeup alarms:
+>    ```java
+>    mAlarmManager.setExact(
+>        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+>        SystemClock.elapsedRealtime() + (10 * 1000L),
+>        mKeepalivePendingIntent
+>    );
+>    ```
+>    Standard `ELAPSED_REALTIME_WAKEUP` alarms program the kernel hardware RTC to wake the Application Processor from normal suspend-to-RAM (screen off) without `ALLOW_WHILE_IDLE_SHORT_TIME` throttling (requiring `android.permission.SCHEDULE_EXACT_ALARM` on Android 12+).
+> 2. **Inside Deep Doze (`isDeviceIdleMode() == true`)**:
+>    Because Deep Doze postpones non-while-idle alarms and clamps while-idle alarms to 15 minutes, `HumlaService` detects Doze transitions via `ACTION_DEVICE_IDLE_MODE_CHANGED` and **retains the continuous `mWakeLock` and silence shield**. Under `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, holding the continuous partial wakelock in Doze is fully permitted and ensures the user-space ping executor continues maintaining the 30-second socket invariant while stationary on a desk.
+> 3. **Non-Exempt Fallback**:
+>    If `canScheduleExactAlarms()` is false or `isIgnoringBatteryOptimizations()` is false, `HumlaService` safely falls back to holding the continuous `mWakeLock`.
+
+When the keepalive alarm triggers in [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
+1. Acquire a transient keepalive wakelock with a hard safety cap: `mKeepaliveWakeLock.acquire(1000)`.
+2. Dispatch synchronous UDP and TCP keepalive pings via [`HumlaConnection.sendKeepalivePing()`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java).
+3. Re-arm the next 10-second exact alarm via `scheduleKeepaliveAlarm()`.
+4. Release `mKeepaliveWakeLock` after a 200 ms post-dispatch delay on `mHandler` (allowing background single-threaded send executors to complete socket transmission before the SoC re-enters suspend-to-RAM).
 
 ### Component 3: Immediate Re-engagement on User/Peer Activity
 
@@ -315,42 +354,60 @@ The transition immediately:
 
 ## 5. Concrete Implementation Plan
 
-### Step L1: ModelHandler Plausible Zero-Audio Tracking
+### Step L1: ModelHandler Plausible Zero-Audio Tracking & Transitive Links
+
+In [`libraries/humla/src/main/java/se/lublin/humla/model/Channel.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.java):
+* Implement `public Set<Channel> getAllLinks()`:
+  * Performs DFS traversal across channel links matching upstream Mumble's `Channel::allLinks()` algorithm.
+  * Handles cyclic links and self-references cleanly.
 
 In [`libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java):
-* Expose a listener callback `onPlausibleZeroAudioChanged(boolean isZeroAudio)`:
-  * Triggered when `self.isSelfDeafened()` or `self.isDeafened()` toggles in `handleUserState`.
-  * Triggered when `mUsers.size()` transitions in `handleUserState` (user creation / `onUserAdded`) or `handleUserRemove`.
-  * Triggered when any user in $\mathcal{C}_{\text{monitored}}$ changes mute/deafen status in `handleUserState`.
-  * Triggered when any user moves into or out of $\mathcal{C}_{\text{monitored}}$ in `handleUserState` (`msg.hasChannelId()`).
-  * Triggered when `ChannelState` updates channel links (`msg.getLinksAddList()`, `msg.getLinksRemoveList()`).
-  * Triggered when `listening_channel_add` or `listening_channel_remove` is updated on the self user.
+* Implement `isPlausiblyZeroAudio()` evaluating local deafen state, sole-user server count, and zero speaking candidates across `getAllLinks()` of current and listened channels.
+* Expose a listener callback `onPlausibleZeroAudioChanged()` on `OnPlausibleZeroAudioListener`:
+  * Triggered when `self.isSelfDeafened()` or `self.isDeafened()` toggles in `messageUserState`.
+  * Triggered when `mUsers.size()` transitions in `messageUserState` (user creation / `onUserAdded`) or `messageUserRemove`.
+  * Triggered when any user in $\mathcal{C}_{\text{monitored}}$ changes mute/deafen status in `messageUserState`.
+  * Triggered when any user moves into or out of $\mathcal{C}_{\text{monitored}}$ in `messageUserState` (`msg.hasChannelId()`).
+  * Triggered when `messageChannelState` updates channel links (`msg.getLinksAddList()`, `msg.getLinksRemoveList()`).
+  * Triggered when `listening_channel_add` or `listening_channel_remove` is updated on the self user in `messageUserState`.
+  * Triggered upon `messageServerSync` and `clear()`.
 
-### Step L2: AlarmManager Pulsed Keepalive in HumlaConnection
+### Step L2: Suspended Standby & Keepalive Ping in HumlaConnection
 
 In [`libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java):
-* Declare `android.permission.SCHEDULE_EXACT_ALARM` in [`app/src/main/AndroidManifest.xml`](../../app/src/main/AndroidManifest.xml).
 * Implement `setSuspendedStandbyMode(boolean enabled)`:
-  * When `true`: Pause executor-based ping loop and arm exact wakeup alarms via `AlarmManager.setExactAndAllowWhileIdle()`.
-  * When `false`: Cancel pending alarms and resume adaptive keepalive scheduling via `scheduleNextPing(10)`.
+  * When `true`: Pauses `ScheduledExecutorService` keepalive ping loop.
+  * When `false`: Resumes adaptive keepalive scheduling via `scheduleNextPing(10)`.
+* Implement `public void sendKeepalivePing()`:
+  * Constructs and dispatches synchronous UDP/TCP ping packets to keep the connection alive during standby wake pulses.
+* Add `onIncomingAudioPacket()` to `HumlaConnectionListener`:
+  * Fired in `onUDPDataReceived(...)` on both UDP and TCP `UDPTunnel` voice datagrams.
 
 ### Step L3: Dynamic Wakelock & Audio Standby Gating in HumlaService
 
+In [`app/src/main/AndroidManifest.xml`](../../app/src/main/AndroidManifest.xml) and [`libraries/humla/src/main/AndroidManifest.xml`](../../libraries/humla/src/main/AndroidManifest.xml):
+* Declare `android.permission.SCHEDULE_EXACT_ALARM`.
+
 In [`libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java):
 * Promote [`isBluetoothScoActive()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L589) from package-private to `public` so [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) can query route state across packages.
-* Implement `public void setStandbyPauseEnabled(boolean enabled)`: when disabled, immediately unpause `mAudioTrack` if paused and inhibit further standby pauses.
+* Implement `public void setStandbyPauseEnabled(boolean enabled)`: when disabled, immediately unpause `mAudioTrack` if paused, wake the render loop, and inhibit further standby pauses (restoring the 0.21.7 silence shield).
 
 In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java):
-* On `onPlausibleZeroAudioChanged(true)`:
-  * If `mWakeLock.isHeld()`, release it.
-  * Enable audio standby pause in [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(true)`), allowing `AudioTrack` to pause and power-gate the audio DSP/DAC.
+* Register an `OnPlausibleZeroAudioListener` on `ModelHandler` and an `ACTION_DEVICE_IDLE_MODE_CHANGED` receiver for Deep Doze state transitions.
+* Implement `enterZeroAudioStandby()`:
+  * If `mWakeLock.isHeld()`, release it so the AP can enter kernel suspend-to-RAM.
+  * Enable audio standby pause in [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`output.setStandbyPauseEnabled(true)`), allowing `AudioTrack` to pause and power-gate the audio DSP/DAC.
   * Delegate `setSuspendedStandbyMode(true)` to `HumlaConnection`.
-* On `onPlausibleZeroAudioChanged(false)`:
-  * If `!mWakeLock.isHeld()`, acquire it.
-  * Disable audio standby pause in [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`mAudioOutput.setStandbyPauseEnabled(false)`), restoring continuous playback (`mAudioTrack.play()`) and engaging the 0.21.7 silence shield to protect the held wakelock from OEM watchdog termination.
+  * Arm exact keepalive alarm via `AlarmManager.setExact(ELAPSED_REALTIME_WAKEUP, ...)`.
+* Implement `exitZeroAudioStandby()`:
+  * Cancel pending keepalive alarms.
+  * Re-acquire continuous `mWakeLock`.
+  * Disable audio standby pause in [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java) (`output.setStandbyPauseEnabled(false)`), restoring continuous playback (`mAudioTrack.play()`) and engaging the 0.21.7 silence shield to protect the held wakelock from OEM watchdog termination.
   * Delegate `setSuspendedStandbyMode(false)` to `HumlaConnection`.
-* In [`HumlaConnection.onUDPDataReceived(...)`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L745) (shared audio entry point for both [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java) packets and [`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java) `UDPTunnel` messages):
-  * If `isPlausiblyZeroAudio()` is true when an audio packet arrives, immediately wake [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java), acquire `mWakeLock`, and disable audio standby pausing.
+* Implement `onIncomingAudioPacket()`:
+  * On surprise voice datagram, immediately acquire `mWakeLock` and post `exitZeroAudioStandby()`.
+* Immediate re-engagement hooks:
+  * Call `exitZeroAudioStandby()` in `setSelfMuteDeafState` on undeafen, in `setTalkingState` on talk, in `onTalkingStateChanged` on VAD speech, and in `joinChannel`.
 
 ---
 
@@ -358,15 +415,15 @@ In [`libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`](../../lib
 
 | Failure Mode / Edge Case | Mechanism | Mitigation / Defense (Lite Track) |
 |---|---|---|
-| **Murmur TCP Timeout (30s)** | Phone enters suspend-to-RAM, user-space timers freeze, Murmur drops socket at 30s | `AlarmManager.setExactAndAllowWhileIdle()` wakes the device every 10s to dispatch synchronous pings. |
+| **Murmur TCP Timeout (30s)** | Phone enters suspend-to-RAM, user-space timers freeze, Murmur drops socket at 30s | Outside Deep Doze, `AlarmManager.setExact(ELAPSED_REALTIME_WAKEUP, ...)` wakes the device every 10s to dispatch keepalive pings without `ALLOW_WHILE_IDLE_SHORT_TIME` throttling. In Deep Doze (`isDeviceIdleMode()`), `HumlaService` retains continuous `mWakeLock` and silence shield. |
 | **Peer Unmutes and Speaks** | Peer in monitored channel toggles mute off and talks | Remote client sends TCP `UserState` (`self_mute=false`). TCP packet wakes kernel, updates `ModelHandler`, re-acquires `mWakeLock` before audio packet arrives. |
 | **Peer Joins Empty Channel** | Remote peer moves into our channel or linked channel | Murmur sends TCP `UserState` with updated `channel_id`. Kernel wakes, `ModelHandler` updates topology, and `mWakeLock` is re-acquired. |
-| **Channel Listener Monitoring** | User listens to Channel B while sitting in Channel A | $B \in \text{ListenedChannels}(U_{\text{self}})$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
-| **Channel Links** | Channel A is linked to Channel B | $B \in \text{Links}(A)$. If an unmuted user is in Channel B, zero-audio evaluator returns `false`; continuous wakelock is held. |
-| **Surprise Cross-Channel Whisper** | Remote peer configures whisper target to our session | Socket receive thread unblocks on incoming UDP or TCP-tunneled (`UDPTunnel`) packet in `HumlaConnection.onUDPDataReceived()`, immediately re-acquiring `mWakeLock`. Jitter buffer absorbs wake latency regardless of transport. |
-| **User Taps Undeafen** | Local user toggles undeafen in UI | UI event immediately re-acquires `mWakeLock` and dispatches `UserState` un-deafen packet to server before audio arrives. |
+| **Channel Listener Monitoring** | User listens to Channel B while sitting in Channel A | $B \in \text{ListenedChannels}(U_{\text{self}})$. Evaluates $\text{AllLinks}(B)$. If an unmuted user is in the listened channel or any of its linked channels, zero-audio evaluator returns `false`; continuous wakelock is held. |
+| **Transitive Channel Links** | Channel A is linked to Channel B, B is linked to C | Murmur routes audio across $\text{AllLinks}(A)$. DFS traversal in `Channel.getAllLinks()` inspects the full transitive link closure; continuous wakelock is held if unmuted peers speak in C. |
+| **Surprise Cross-Channel Whisper** | Remote peer configures whisper target to our session | Socket receive thread unblocks on incoming UDP or TCP-tunneled (`UDPTunnel`) packet in `HumlaConnection.onUDPDataReceived()`, triggering `onIncomingAudioPacket()`, immediately re-acquiring `mWakeLock`. Jitter buffer absorbs wake latency regardless of transport. |
+| **User Taps Undeafen** | Local user toggles undeafen in UI | UI event immediately re-acquires `mWakeLock`, exits standby, and dispatches `UserState` un-deafen packet to server before audio arrives. |
 | **OEM Watchdog Termination** | Samsung Device Care or MIUI kills app holding wakelock without active audio playback during conversational pauses | Dual gating: When in `ActiveCallStandby` (`isPlausiblyZeroAudio() == false`), `AudioTrack` standby pause is inhibited, maintaining `PLAYSTATE_PLAYING` (the 0.21.7 continuous silence workaround) so OEM watchdogs classify the app as active VoIP playback. When in `ZeroAudioStandby` (`isPlausiblyZeroAudio() == true`), `mWakeLock` is completely released before `AudioTrack.pause()` is permitted, eliminating the wakelock condition that triggers watchdogs. |
-| **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain defensive keepalive wakelock (permitted under exemption) while stationary Deep Doze is active. |
+| **Deep Doze Alarm Clamping (15m)** | AOSP `AlarmManagerService` clamps `setExactAndAllowWhileIdle` to 15m in Deep Doze regardless of exemption | Monitor `isDeviceIdleMode()` via `ACTION_DEVICE_IDLE_MODE_CHANGED`; retain continuous keepalive wakelock and silence shield (permitted under exemption) while stationary Deep Doze is active. |
 | **Battery Optimization Non-Exempt Standby** | Device lacks `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, causing Doze to restrict network access upon wakelock release | Verify `pm.isIgnoringBatteryOptimizations()`; fall back to continuous wakelock if non-exempt. |
 | **Bluetooth SCO Link Drop** | Audio HAL pauses track while on active Bluetooth SCO call | Preserve Phase 2 invariant: `isBluetoothScoActive()` strictly inhibits zero-audio standby and retains continuous wakelock (does not affect standard A2DP headphones). |
 | **Exact Alarm Permission Denied** | Android 12+ revokes `SCHEDULE_EXACT_ALARM` | Verify `alarmManager.canScheduleExactAlarms()`; fall back to continuous wakelock if permission is unavailable. |
