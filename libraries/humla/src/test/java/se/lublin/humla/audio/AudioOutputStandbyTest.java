@@ -54,4 +54,9 @@ public class AudioOutputStandbyTest extends TestCase {
         output.setStandbyPauseEnabled(true);
         assertTrue(output.isStandbyPauseEnabled());
     }
+
+    public void testHasActiveVoicesDefault() {
+        AudioOutput output = new AudioOutput(new DummyListener());
+        assertFalse(output.hasActiveVoices());
+    }
 }

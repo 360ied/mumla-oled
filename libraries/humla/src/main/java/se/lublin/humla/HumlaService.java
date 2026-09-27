@@ -222,6 +222,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         @Override
         public void onUserTalkStateUpdated(final User user) {
             mCallbacks.onUserTalkStateUpdated(user);
+            if (!mZeroAudioStandby && user != null && user.getTalkState() == TalkState.PASSIVE) {
+                mHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        updateStandbyState();
+                    }
+                });
+            }
         }
 
         @Override
@@ -1479,7 +1487,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return false;
         }
         AudioOutput output = getAudioOutput();
-        if (output != null && output.isBluetoothScoActive()) {
+        if (output != null && (output.isBluetoothScoActive() || output.hasActiveVoices())) {
             return false;
         }
         return mModelHandler.isPlausiblyZeroAudio();
@@ -1584,16 +1592,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         long triggerAt = SystemClock.elapsedRealtime() + STANDBY_KEEPALIVE_INTERVAL_MS;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, mKeepalivePendingIntent);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                 mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, mKeepalivePendingIntent);
             } else {
                 mAlarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, mKeepalivePendingIntent);
             }
         } catch (SecurityException se) {
             Log.w(TAG, "Exact alarm scheduling failed; falling back to continuous wakelock", se);
-            updateStandbyState();
+            exitZeroAudioStandby();
         }
     }
 

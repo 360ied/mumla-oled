@@ -405,7 +405,7 @@ public class AudioOutput implements Runnable,
                                     }
 
                                     // Indefinite sleep until next incoming audio packet, voice, or shutdown
-                                    while (mRunning && !mHasIncomingAudio) {
+                                    while (mRunning && !mHasIncomingAudio && mStandbyPauseEnabled && !isBluetoothScoActive()) {
                                         engine = mEngine;
                                         if (engine != null && engine.hasActiveVoices()) {
                                             break;
@@ -420,7 +420,7 @@ public class AudioOutput implements Runnable,
                                 }
                             } else {
                                 // Bluetooth SCO is active, standby pause is inhibited, or standbyTimeout <= 0: keep AudioTrack playing and sleep indefinitely
-                                while (mRunning && !mHasIncomingAudio) {
+                                while (mRunning && !mHasIncomingAudio && (!mStandbyPauseEnabled || isBluetoothScoActive() || standbyTimeout <= 0)) {
                                     engine = mEngine;
                                     if (engine != null && engine.hasActiveVoices()) {
                                         break;
@@ -603,6 +603,15 @@ public class AudioOutput implements Runnable,
     }
 
     /**
+     * Checks whether the native audio output engine currently has any active voices.
+     * @return true if one or more voices are active in the mixing engine.
+     */
+    public boolean hasActiveVoices() {
+        NativeAudioOutputEngine engine = mEngine;
+        return engine != null && engine.hasActiveVoices();
+    }
+
+    /**
      * Controls whether AudioTrack is permitted to enter standby pause when idle.
      * When disabled, AudioTrack is immediately unpaused (if paused) and kept continuously
      * playing digital silence, preserving the 0.21.7 OEM watchdog silence shield.
@@ -618,8 +627,8 @@ public class AudioOutput implements Runnable,
                     } catch (IllegalStateException ignored) {
                     }
                 }
-                mInactiveLock.notifyAll();
             }
+            mInactiveLock.notifyAll();
         }
     }
 
