@@ -468,6 +468,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
+        }
         if (mConnection != null) {
             mConnection.disconnect();
         }
@@ -575,6 +578,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
         cancelKeepaliveAlarm();
         mZeroAudioStandby = false;
+
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
+        }
 
         if (!reconnect) {
             if (mWakeLock != null && mWakeLock.isHeld()) {
@@ -1293,7 +1300,21 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setSelfMuteDeafState(boolean mute, boolean deaf) {
-        if (!deaf && mZeroAudioStandby) {
+        boolean wasDeafened = false;
+        boolean wasMuted = false;
+        if (mModelHandler != null && mConnection != null) {
+            try {
+                User self = mModelHandler.getUser(mConnection.getSession());
+                if (self != null) {
+                    wasDeafened = self.isSelfDeafened() || self.isDeafened();
+                    wasMuted = self.isSelfMuted() || self.isMuted() || self.isSuppressed();
+                }
+            } catch (NotSynchronizedException ignored) {
+            }
+        }
+        boolean undeafening = wasDeafened && !deaf;
+        boolean unmutingInVad = wasMuted && !mute && mTransmitMode != Constants.TRANSMIT_PUSH_TO_TALK;
+        if ((undeafening || unmutingInVad) && mZeroAudioStandby) {
             exitZeroAudioStandby();
         }
         Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
@@ -1451,15 +1472,38 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Determines whether the current transmit mode allows standby for the local user.
+     * Standby is allowed if the user is locally muted, self-muted, suppressed, deafened,
+     * or self-deafened (no microphone capture is performed), OR if Push-To-Talk mode is configured
+     * (microphone capture only activates while PTT is pressed). In Continuous or Voice Activity
+     * modes while unmuted, microphone capture is active and cannot survive kernel suspend.
+     *
+     * @param transmitMode The active transmission mode (Constants.TRANSMIT_*).
+     * @param self The local user object.
+     * @return true if transmission mode does not prevent standby.
+     */
+    public static boolean isTransmitModeStandbyEligible(int transmitMode, User self) {
+        if (self == null) {
+            return false;
+        }
+        boolean selfCannotTransmit = self.isMuted() || self.isSelfMuted()
+                || self.isSuppressed() || self.isDeafened() || self.isSelfDeafened();
+        return selfCannotTransmit || transmitMode == Constants.TRANSMIT_PUSH_TO_TALK;
+    }
+
+    /**
      * Evaluates whether the client can safely enter zero-audio standby.
      * Standby requires that:
      * 1. The client is connected and synchronized.
-     * 2. The client is not actively transmitting audio.
-     * 3. The device is not in Deep Doze (which clamps exact alarms to 15m intervals).
-     * 4. The app is exempt from battery optimizations.
-     * 5. Exact alarms can be scheduled.
-     * 6. Bluetooth SCO is not active (SCO routing requires continuous audio playback).
-     * 7. ModelHandler evaluates that zero audio can plausibly arrive (local user deafened,
+     * 2. The client is not actively transmitting audio (isTalking() is false and TalkState is PASSIVE).
+     * 3. Transmission mode is Push-To-Talk, OR the local user cannot transmit audio
+     *    (continuous or voice-activity transmission requires active microphone recording
+     *    which cannot survive kernel suspend-to-RAM).
+     * 4. The device is not in Deep Doze (which clamps exact alarms to 15m intervals).
+     * 5. The app is exempt from battery optimizations.
+     * 6. Exact alarms can be scheduled.
+     * 7. Bluetooth SCO is not active (SCO routing requires continuous audio playback).
+     * 8. ModelHandler evaluates that zero audio can plausibly arrive (local user deafened,
      *    sole user connected, or no unmuted speaking candidates in monitored/linked channels).
      *
      * @return true if zero-audio standby is permissible.
@@ -1476,7 +1520,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         try {
             User self = mModelHandler.getUser(mConnection.getSession());
-            if (self != null && self.getTalkState() != TalkState.PASSIVE) {
+            if (self == null || self.getTalkState() != TalkState.PASSIVE) {
+                return false;
+            }
+            if (!isTransmitModeStandbyEligible(mTransmitMode, self)) {
                 return false;
             }
         } catch (NotSynchronizedException e) {
@@ -1611,6 +1658,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private void cancelKeepaliveAlarm() {
         if (mAlarmManager != null && mKeepalivePendingIntent != null) {
             mAlarmManager.cancel(mKeepalivePendingIntent);
+        }
+        if (mKeepaliveWakeLock != null && mKeepaliveWakeLock.isHeld()) {
+            mKeepaliveWakeLock.release();
         }
     }
 
