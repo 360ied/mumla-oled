@@ -67,18 +67,18 @@ public class CryptState {
     private volatile long mNativeHandle = 0;
     private final int[] mStatsBuffer = new int[4];
 
-    byte[] mEncryptIV = new byte[AES_BLOCK_SIZE];
-    byte[] mDecryptIV = new byte[AES_BLOCK_SIZE];
+    private final byte[] mEncryptIV = new byte[AES_BLOCK_SIZE];
+    private final byte[] mDecryptIV = new byte[AES_BLOCK_SIZE];
     volatile int mUiGood = 0;
-    volatile int mUiLate = 0;
-    volatile int mUiLost = 0;
-    volatile int mUiResync = 0;
+    private volatile int mUiLate = 0;
+    private volatile int mUiLost = 0;
+    private volatile int mUiResync = 0;
     volatile int mUiRemoteGood = 0;
     volatile int mUiRemoteLate = 0;
     volatile int mUiRemoteLost = 0;
     volatile int mUiRemoteResync = 0;
-    volatile long mLastGoodStart;
-    volatile long mLastRequestStart;
+    private volatile long mLastGoodStart;
+    private volatile long mLastRequestStart;
     volatile boolean mInit = false;
 
     public CryptState() {
@@ -153,24 +153,17 @@ public class CryptState {
     }
 
     public synchronized boolean setDecryptIV(final byte[] div) {
-        if (div != null && div.length == AES_BLOCK_SIZE) {
+        if (div != null && div.length == AES_BLOCK_SIZE && mNativeHandle != 0) {
             System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
-            if (mNativeHandle != 0) {
-                return nativeSetDecryptIV(mNativeHandle, div);
-            }
-            mUiResync++;
-            return true;
+            return nativeSetDecryptIV(mNativeHandle, div);
         }
         return false;
     }
 
     public synchronized boolean setEncryptIV(final byte[] eiv) {
-        if (eiv != null && eiv.length == AES_BLOCK_SIZE) {
+        if (eiv != null && eiv.length == AES_BLOCK_SIZE && mNativeHandle != 0) {
             System.arraycopy(eiv, 0, mEncryptIV, 0, AES_BLOCK_SIZE);
-            if (mNativeHandle != 0) {
-                return nativeSetEncryptIV(mNativeHandle, eiv);
-            }
-            return true;
+            return nativeSetEncryptIV(mNativeHandle, eiv);
         }
         return false;
     }
@@ -180,9 +173,6 @@ public class CryptState {
                 rkey.length != AES_BLOCK_SIZE || eiv.length != AES_BLOCK_SIZE || div.length != AES_BLOCK_SIZE) {
             throw new InvalidKeyException("Keys and IVs must be 16 bytes");
         }
-
-        mEncryptIV = new byte[AES_BLOCK_SIZE];
-        mDecryptIV = new byte[AES_BLOCK_SIZE];
 
         System.arraycopy(eiv, 0, mEncryptIV, 0, AES_BLOCK_SIZE);
         System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
@@ -217,7 +207,7 @@ public class CryptState {
      * @param length The length of the source array.
      */
     public byte[] decrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
-        if (length < 4 || !mInit || source == null || length > source.length) return null;
+        if (source == null || length < 4 || !mInit || length > source.length) return null;
 
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {
@@ -231,7 +221,7 @@ public class CryptState {
     }
 
     public int decryptInPlace(final byte[] data, final int offset, final int length) {
-        if (data == null || length < 4 || offset < 0 || (long) offset + length > data.length) {
+        if (!mInit || data == null || length < 4 || offset < 0 || (long) offset + length > data.length) {
             return -1;
         }
         final long nativeHandle = mNativeHandle;
@@ -246,7 +236,7 @@ public class CryptState {
     }
 
     public byte[] encrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
-        if (!mInit || source == null || length < 0 || length > source.length) return null;
+        if (source == null || length < 0 || !mInit || length > source.length) return null;
 
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {

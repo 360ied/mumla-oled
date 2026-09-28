@@ -89,21 +89,37 @@ elif command -v javac >/dev/null 2>&1; then
     fi
 fi
 
-if [[ -n "$JAVA_INC" ]]; then
-    JNI_MD_INC="$JAVA_INC/linux"
-    if [[ ! -d "$JNI_MD_INC" && -d "$JAVA_INC/darwin" ]]; then
-        JNI_MD_INC="$JAVA_INC/darwin"
-    fi
-    SO_EXT="so"
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        SO_EXT="dylib"
-    fi
-    "$CXX" -std=c++17 -O2 -fPIC -shared -Wall -Wextra -Werror -UNDEBUG \
-        -I "$CRYPTO_DIR" \
-        -I "$JAVA_INC" \
-        -I "$JNI_MD_INC" \
-        "$CRYPTO_DIR/CryptStateOCB2.cpp" \
-        "$CRYPTO_DIR/NativeCryptStateJni.cpp" \
-        -lpthread \
-        -o "$BUILD_DIR/libhumlaaudio.${SO_EXT}"
+if [[ -z "$JAVA_INC" ]]; then
+    echo "test_native_audio.sh: error: could not locate JDK include directory for JNI compilation (check JAVA_HOME)" >&2
+    exit 1
 fi
+
+case "$(uname -s)" in
+    Linux*)
+        JNI_MD_INC="$JAVA_INC/linux"
+        SO_EXT="so"
+        ;;
+    Darwin*)
+        JNI_MD_INC="$JAVA_INC/darwin"
+        SO_EXT="dylib"
+        ;;
+    *)
+        echo "test_native_audio.sh: error: unsupported host operating system: $(uname -s)" >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -d "$JNI_MD_INC" ]]; then
+    echo "test_native_audio.sh: error: platform-specific JNI header directory not found: $JNI_MD_INC" >&2
+    exit 1
+fi
+
+"$CXX" -std=c++17 -O2 -fPIC -shared -Wall -Wextra -Werror -UNDEBUG \
+    -I "$CRYPTO_DIR" \
+    -I "$JAVA_INC" \
+    -I "$JNI_MD_INC" \
+    "$CRYPTO_DIR/CryptStateOCB2.cpp" \
+    "$CRYPTO_DIR/NativeCryptStateJni.cpp" \
+    -lpthread \
+    -o "$BUILD_DIR/libhumlaaudio.${SO_EXT}"
+
