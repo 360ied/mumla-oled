@@ -58,9 +58,6 @@ public class AudioOutput implements Runnable,
     /** 20 ms render quantum at 48 kHz: bounds batching delay on first audio. */
     private static final int RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 2;
 
-    public static final long STANDBY_TIMEOUT_DEFAULT_MS = 3000L;
-    public static final long STANDBY_TIMEOUT_A2DP_MS = 15000L;
-
     private final Object mInactiveLock = new Object();
     private final Handler mMainHandler;
     private final AudioOutputListener mListener;
@@ -73,7 +70,6 @@ public class AudioOutput implements Runnable,
     private volatile boolean mRunning = false;
     private volatile boolean mHalfDuplexMuted = false;
     private boolean mHasIncomingAudio = false;
-    private volatile boolean mStandbyPauseEnabled = true;
 
     public AudioOutput(AudioOutputListener listener) {
         this(null, listener);
@@ -367,70 +363,21 @@ public class AudioOutput implements Runnable,
                         engine = mEngine;
                         boolean hasVoices = (engine != null && engine.hasActiveVoices());
                         if (!hasVoices) {
-                            long standbyTimeout = getStandbyTimeoutMs();
-                            boolean scoActive = isBluetoothScoActive();
-
-                            // Two-tier standby: wait up to standbyTimeout ms with track playing.
-                            // If timeout expires with zero voices and no incoming audio, pause AudioTrack
-                            // (unless Bluetooth SCO is active, standby pause is inhibited, or standbyTimeout <= 0).
-                            if (!scoActive && mStandbyPauseEnabled && standbyTimeout > 0) {
-                                long waitStart = SystemClock.elapsedRealtime();
-                                while (mRunning && !mHasIncomingAudio && mStandbyPauseEnabled && !isBluetoothScoActive()) {
-                                    long elapsed = SystemClock.elapsedRealtime() - waitStart;
-                                    long remaining = standbyTimeout - elapsed;
-                                    if (remaining <= 0) {
-                                        break;
-                                    }
-                                    try {
-                                        mInactiveLock.wait(remaining);
-                                    } catch (InterruptedException e) {
-                                        Thread.currentThread().interrupt();
-                                        break renderLoop;
-                                    }
-                                    engine = mEngine;
-                                    if (engine != null && engine.hasActiveVoices()) {
-                                        break;
-                                    }
+                            // When nobody is speaking and zero voices are registered in the
+                            // native engine, wait indefinitely to eliminate the 50 Hz CPU spin
+                            // and allow cores to enter deep C-states. AudioTrack remains continuously
+                            // in PLAYSTATE_PLAYING, rendering zero-PCM digital silence to maintain
+                            // the silence shield against OEM watchdog SIGKILL terminations.
+                            while (mRunning && !mHasIncomingAudio) {
+                                try {
+                                    mInactiveLock.wait();
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    break renderLoop;
                                 }
-
-                                // If timeout expired with zero voices and no incoming audio, pause track
                                 engine = mEngine;
-                                boolean stillNoVoices = (engine == null || !engine.hasActiveVoices());
-                                if (mRunning && !mHasIncomingAudio && stillNoVoices && mStandbyPauseEnabled && !isBluetoothScoActive()) {
-                                    try {
-                                        if (mAudioTrack != null && mAudioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) {
-                                            mAudioTrack.pause();
-                                        }
-                                    } catch (IllegalStateException ignored) {
-                                    }
-
-                                    // Indefinite sleep until next incoming audio packet, voice, or shutdown
-                                    while (mRunning && !mHasIncomingAudio && mStandbyPauseEnabled && !isBluetoothScoActive()) {
-                                        engine = mEngine;
-                                        if (engine != null && engine.hasActiveVoices()) {
-                                            break;
-                                        }
-                                        try {
-                                            mInactiveLock.wait();
-                                        } catch (InterruptedException e) {
-                                            Thread.currentThread().interrupt();
-                                            break renderLoop;
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Bluetooth SCO is active, standby pause is inhibited, or standbyTimeout <= 0: keep AudioTrack playing and sleep indefinitely
-                                while (mRunning && !mHasIncomingAudio && (!mStandbyPauseEnabled || isBluetoothScoActive() || standbyTimeout <= 0)) {
-                                    engine = mEngine;
-                                    if (engine != null && engine.hasActiveVoices()) {
-                                        break;
-                                    }
-                                    try {
-                                        mInactiveLock.wait();
-                                    } catch (InterruptedException e) {
-                                        Thread.currentThread().interrupt();
-                                        break renderLoop;
-                                    }
+                                if (engine != null && engine.hasActiveVoices()) {
+                                    break;
                                 }
                             }
                         } else {
@@ -612,64 +559,19 @@ public class AudioOutput implements Runnable,
     }
 
     /**
-     * Controls whether AudioTrack is permitted to enter standby pause when idle.
-     * When disabled, AudioTrack is immediately unpaused (if paused) and kept continuously
-     * playing digital silence, preserving the 0.21.7 OEM watchdog silence shield.
-     * @param enabled true to allow standby pause; false to inhibit standby pause and force playback.
+     * Legacy standby pause toggle. AudioTrack is continuously kept in PLAYSTATE_PLAYING
+     * to preserve the continuous silence shield against OEM watchdog terminations.
+     *
+     * @param enabled Ignored.
      */
+    @Deprecated
     public void setStandbyPauseEnabled(boolean enabled) {
-        synchronized (mInactiveLock) {
-            mStandbyPauseEnabled = enabled;
-            if (!enabled) {
-                if (mAudioTrack != null && mAudioTrack.getPlayState() == AudioTrack.PLAYSTATE_PAUSED) {
-                    try {
-                        mAudioTrack.play();
-                    } catch (IllegalStateException ignored) {
-                    }
-                }
-            }
-            mInactiveLock.notifyAll();
-        }
+        // No-op: AudioTrack is continuously kept in PLAYSTATE_PLAYING to maintain the silence shield.
     }
 
+    @Deprecated
     public boolean isStandbyPauseEnabled() {
-        return mStandbyPauseEnabled;
-    }
-
-    long getStandbyTimeoutMs() {
-        if (mAudioManager == null) {
-            return STANDBY_TIMEOUT_DEFAULT_MS;
-        }
-        try {
-            // Check for A2DP connected devices. We intentionally err on the side of a conservative
-            // 15-second standby timeout whenever an A2DP device is connected to prevent clipping
-            // or Bluetooth stack underruns if audio routing transitions dynamically.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                AudioDeviceInfo[] devices = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
-                if (devices != null) {
-                    for (AudioDeviceInfo device : devices) {
-                        int type = device.getType();
-                        if (type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP) {
-                            return STANDBY_TIMEOUT_A2DP_MS;
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            if (type == AudioDeviceInfo.TYPE_BLE_HEADSET || type == AudioDeviceInfo.TYPE_BLE_SPEAKER) {
-                                return STANDBY_TIMEOUT_A2DP_MS;
-                            }
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            if (type == AudioDeviceInfo.TYPE_HEARING_AID) {
-                                return STANDBY_TIMEOUT_A2DP_MS;
-                            }
-                        }
-                    }
-                }
-            } else if (mAudioManager.isBluetoothA2dpOn()) {
-                return STANDBY_TIMEOUT_A2DP_MS;
-            }
-        } catch (Exception ignored) {
-        }
-        return STANDBY_TIMEOUT_DEFAULT_MS;
+        return false;
     }
 
     /**
