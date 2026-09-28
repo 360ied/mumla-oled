@@ -188,13 +188,17 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
                     if(key.size() == CryptState.AES_BLOCK_SIZE &&
                             clientNonce.size() == CryptState.AES_BLOCK_SIZE &&
-                            serverNonce.size() == CryptState.AES_BLOCK_SIZE)
+                            serverNonce.size() == CryptState.AES_BLOCK_SIZE) {
                         mCryptState.setKeys(key.toByteArray(), clientNonce.toByteArray(), serverNonce.toByteArray());
+                    } else {
+                        throw new InvalidKeyException("Invalid key or nonce size in CryptSetup message");
+                    }
                 } else if(msg.hasServerNonce()) {
                     ByteString serverNonce = msg.getServerNonce();
                     if(serverNonce.size() == CryptState.AES_BLOCK_SIZE) {
-                        mCryptState.mUiResync++;
                         mCryptState.setDecryptIV(serverNonce.toByteArray());
+                    } else {
+                        throw new InvalidKeyException("Invalid server nonce size in CryptSetup message");
                     }
                 } else {
                     Mumble.CryptSetup.Builder csb = Mumble.CryptSetup.newBuilder();
@@ -238,15 +242,16 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             long elapsed = getElapsed();
             mLastTCPPing = elapsed-msg.getTimestamp();
 
-            if(((mCryptState.mUiRemoteGood == 0) || (mCryptState.mUiGood == 0)) && mUsingUDP && elapsed > 20000000) {
+            int localGood = mCryptState.getGood();
+            if(((mCryptState.mUiRemoteGood == 0) || (localGood == 0)) && mUsingUDP && elapsed > 20000000) {
                 mUsingUDP = false;
                 enableForceTCP();
                 Log.i(TAG, "Switching to TCP mode (remoteGood=" + mCryptState.mUiRemoteGood +
-                        ", localGood=" + mCryptState.mUiGood + ")");
-            } else if (!mUsingUDP && (mCryptState.mUiRemoteGood > 3) && (mCryptState.mUiGood > 3)) {
+                        ", localGood=" + localGood + ")");
+            } else if (!mUsingUDP && (mCryptState.mUiRemoteGood > 3) && (localGood > 3)) {
                 mUsingUDP = true;
                 Log.i(TAG, "Switching back to UDP mode (remoteGood=" + mCryptState.mUiRemoteGood +
-                        ", localGood=" + mCryptState.mUiGood + ")");
+                        ", localGood=" + localGood + ")");
             }
         }
     };
@@ -297,7 +302,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             return BOOTSTRAP_PING_INTERVAL_SECONDS;
         }
         if (!shouldForceTCP() && mUsingUDP) {
-            if (mCryptState.mUiRemoteGood <= 3 || mCryptState.mUiGood <= 3) {
+            if (mCryptState.mUiRemoteGood <= 3 || mCryptState.getGood() <= 3) {
                 return BOOTSTRAP_PING_INTERVAL_SECONDS;
             }
         }
@@ -343,10 +348,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
         Mumble.Ping.Builder pb = Mumble.Ping.newBuilder();
         pb.setTimestamp(t);
-        pb.setGood(mCryptState.mUiGood);
-        pb.setLate(mCryptState.mUiLate);
-        pb.setLost(mCryptState.mUiLost);
-        pb.setResync(mCryptState.mUiResync);
+        pb.setGood(mCryptState.getGood());
+        pb.setLate(mCryptState.getLate());
+        pb.setLost(mCryptState.getLost());
+        pb.setResync(mCryptState.getResync());
         // TODO accumulate stats and send with ping
         sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
     }
@@ -582,6 +587,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         mTCP = null;
         mUDP = null;
         mPingTask = null;
+        if (mCryptState != null) {
+            mCryptState.destroy();
+        }
     }
 
     /**

@@ -63,7 +63,8 @@ LOCAL_C_INCLUDES := $(ROOT)/opus/include $(ROOT)/opus/celt $(ROOT)/opus/silk \
                     $(ROOT)/rnnoise/include $(ROOT)/rnnoise/src \
                     $(ROOT)/rnnoise-build $(ROOT)/rnnoise-build/generated \
                     $(ROOT)/audio_engine \
-                    $(ROOT)/audio_engine/jitter
+                    $(ROOT)/audio_engine/jitter \
+                    $(ROOT)/crypto
 LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    rnnoise/src/rnnoise_tables.c \
                    rnnoise/src/rnn.c \
@@ -85,7 +86,9 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    audio_engine/OpusVoiceDecoder.cpp \
                    audio_engine/AudioOutputEngine.cpp \
                    audio_engine/NativeAudioOutputEngineJni.cpp \
-                   audio_engine/jitter/jitter.c
+                   audio_engine/jitter/jitter.c \
+                   crypto/CryptStateOCB2.cpp \
+                   crypto/NativeCryptStateJni.cpp
 LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 -fno-math-errno -fvectorize $(COMMON_CFLAGS) -DVAR_ARRAYS -Wno-\#warnings
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus

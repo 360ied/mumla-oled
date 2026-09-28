@@ -71,7 +71,44 @@ public class CryptStateTest extends TestCase {
         byte[] decrypted = receiver.decrypt(encrypted, encrypted.length);
         assertNotNull(decrypted);
         assertTrue(Arrays.equals(plain, decrypted));
-        assertEquals(1, receiver.mUiGood);
+        assertEquals(1, receiver.getGood());
+    }
+
+    public void testDestroyResetsValidity() throws Exception {
+        CryptState cs = new CryptState();
+        cs.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
+        assertTrue(cs.isValid());
+        cs.destroy();
+        assertFalse(cs.isValid());
+    }
+
+    public void testDecryptInPlace() throws Exception {
+        CryptState sender = new CryptState();
+        sender.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
+
+        CryptState receiver = new CryptState();
+        receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
+
+        byte[] plain = "In-Place Decryption Test Payload".getBytes();
+        byte[] encrypted = sender.encrypt(plain, plain.length);
+        assertNotNull(encrypted);
+
+        // Allocate a buffer with pre and post padding
+        byte[] buffer = new byte[encrypted.length + 32];
+        int offset = 16;
+        System.arraycopy(encrypted, 0, buffer, offset, encrypted.length);
+
+        int plainLen = receiver.decryptInPlace(buffer, offset, encrypted.length);
+        assertEquals(plain.length, plainLen);
+
+        byte[] decrypted = new byte[plainLen];
+        System.arraycopy(buffer, offset, decrypted, 0, plainLen);
+        assertTrue(Arrays.equals(plain, decrypted));
+
+        // Invalid bounds check
+        assertEquals(-1, receiver.decryptInPlace(buffer, -1, encrypted.length));
+        assertEquals(-1, receiver.decryptInPlace(buffer, offset, buffer.length));
+        assertEquals(-1, receiver.decryptInPlace(null, 0, 10));
     }
 
     public void testSetDecryptIVClearsHistory() throws Exception {
@@ -91,9 +128,31 @@ public class CryptStateTest extends TestCase {
         receiver.setDecryptIV(newNonce);
 
         assertTrue(Arrays.equals(newNonce, receiver.getDecryptIV()));
+        assertEquals(1, receiver.getResync());
         for (int i = 0; i < 256; i++) {
             assertEquals(0, receiver.mDecryptHistory[i]);
         }
+    }
+
+    public void testBoundsValidation() throws Exception {
+        CryptState sender = new CryptState();
+        sender.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
+
+        CryptState receiver = new CryptState();
+        receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
+
+        byte[] plain = "Bounds Test Payload".getBytes();
+        byte[] enc = sender.encrypt(plain, plain.length);
+
+        // Encrypt bounds checks
+        assertNull(sender.encrypt(plain, -1));
+        assertNull(sender.encrypt(plain, plain.length + 5));
+        assertNull(sender.encrypt(null, 10));
+
+        // Decrypt bounds checks
+        assertNull(receiver.decrypt(enc, 3)); // Less than 4
+        assertNull(receiver.decrypt(enc, enc.length + 5)); // Longer than array
+        assertNull(receiver.decrypt(null, 10));
     }
 
     public void testReplayDetectionRejectsDuplicate() throws Exception {
@@ -167,11 +226,27 @@ public class CryptStateTest extends TestCase {
         byte[] plain = "Lost packets test".getBytes();
         byte[] enc = sender.encrypt(plain, plain.length);
 
-        receiver.mUiLost = 0;
-        byte[] decrypted = receiver.decrypt(enc, enc.length);
-        assertNotNull(decrypted);
+        receiver.decrypt(enc, enc.length);
+        assertEquals(5, receiver.getLost());
+    }
 
-        // ivbyte = 136, mDecryptIV[0] = 130 -> lost = 136 - 130 - 1 = 5
-        assertEquals(5, receiver.mUiLost);
+    public void testSetKeysResetsStatistics() throws Exception {
+        CryptState sender = new CryptState();
+        sender.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
+
+        CryptState receiver = new CryptState();
+        receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
+
+        byte[] plain = "Stats test packet".getBytes();
+        byte[] enc = sender.encrypt(plain, plain.length);
+        receiver.decrypt(enc, enc.length);
+        assertEquals(1, receiver.getGood());
+
+        // Re-keying must reset all statistics
+        receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
+        assertEquals(0, receiver.getGood());
+        assertEquals(0, receiver.getLost());
+        assertEquals(0, receiver.getLate());
+        assertEquals(0, receiver.getResync());
     }
 }
