@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENGINE_DIR="$ROOT_DIR/libraries/humla/src/main/jni/audio_engine"
 TEST_DIR="$ROOT_DIR/libraries/humla/src/test/cpp"
+CRYPTO_DIR="$ROOT_DIR/libraries/humla/src/main/jni/crypto"
 for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$ENGINE_DIR/SoftLimiter.cpp" \
          "$ENGINE_DIR/PreSpeechRingBuffer.cpp" \
@@ -27,7 +28,11 @@ for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$TEST_DIR/test_jitter_buffer.cpp" \
          "$TEST_DIR/test_audio_input_engine.cpp" \
          "$TEST_DIR/test_audio_output_engine.cpp" \
-         "$TEST_DIR/run_audio_tests.cpp"; do
+         "$TEST_DIR/run_audio_tests.cpp" \
+         "$CRYPTO_DIR/Aes128.h" \
+         "$CRYPTO_DIR/CryptStateOCB2.h" \
+         "$CRYPTO_DIR/CryptStateOCB2.cpp" \
+         "$TEST_DIR/test_crypt_state.cpp"; do
     if [[ ! -f "$f" ]]; then
         echo "test_native_audio.sh: missing required file: $f" >&2
         exit 1
@@ -62,3 +67,12 @@ CXX="${CXX:-g++}"
     -o "$BUILD_DIR/test_audio_engine"
 
 "$BUILD_DIR/test_audio_engine"
+
+"$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -UNDEBUG \
+    -I "$CRYPTO_DIR" \
+    "$CRYPTO_DIR/CryptStateOCB2.cpp" \
+    "$TEST_DIR/test_crypt_state.cpp" \
+    -lpthread \
+    -o "$BUILD_DIR/test_crypt_state"
+
+"$BUILD_DIR/test_crypt_state"

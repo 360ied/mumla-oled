@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2026 Brian Zhu
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,18 +30,36 @@ import javax.crypto.ShortBufferException;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Based off of the official Mumble project's 'CryptState.h' and 'CryptState.cpp' files.
+ * Cryptographic state machine for Mumble OCB2-AES128 authenticated encryption,
+ * IV synchronization, packet loss tracking, and replay detection.
  *
- * This code implements the patented OCB-AES128 cipher mode of operation.
- * Until recently, this would've posed a problem- Humla is licensed under Apache v2, and the patent was only licensed for use with GPL software without authorization.
- * As of January 2013, the author has given a free license for any open source software certified by the OSI (Apache v2 included)
- * http://www.cs.ucdavis.edu/~rogaway/ocb/license.htm
- *
- * Created by andrew on 24/06/13.
+ * Backed by a native C++ engine (libhumlaaudio.so) with hardware SIMD acceleration
+ * (ARMv8 Crypto Extensions / Intel AES-NI) when available on Android, with a pure
+ * Java fallback for host JVM unit test environments.
  */
 public class CryptState {
     public static final int AES_BLOCK_SIZE = 16;
     private static final String AES_TRANSFORMATION = "AES/ECB/NoPadding";
+
+    private static final boolean sNativeAvailable;
+    static {
+        boolean loaded = false;
+        try {
+            System.loadLibrary("jniopus");
+            System.loadLibrary("humlaaudio");
+            loaded = nativeIsSupported();
+        } catch (Throwable t) {
+            loaded = false;
+        }
+        sNativeAvailable = loaded;
+    }
+
+    public static boolean isNativeAvailable() {
+        return sNativeAvailable;
+    }
+
+    private long mNativeHandle = 0;
+    private final int[] mStatsBuffer = new int[4];
 
     byte[] mRawKey = new byte[AES_BLOCK_SIZE];
     byte[] mEncryptIV = new byte[AES_BLOCK_SIZE];
@@ -60,6 +79,28 @@ public class CryptState {
     volatile long mLastRequestStart;
     volatile boolean mInit = false;
 
+    public CryptState() {
+        if (sNativeAvailable) {
+            mNativeHandle = nativeCreate();
+        }
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            destroy();
+        } finally {
+            super.finalize();
+        }
+    }
+
+    public synchronized void destroy() {
+        if (mNativeHandle != 0) {
+            nativeDestroy(mNativeHandle);
+            mNativeHandle = 0;
+        }
+    }
+
     public boolean isValid() {
         return mInit;
     }
@@ -68,6 +109,10 @@ public class CryptState {
      * @return The time since the last good decrypt in microseconds.
      */
     public long getLastGoodElapsed() {
+        if (mNativeHandle != 0) {
+            long us = nativeGetLastGoodElapsedUs(mNativeHandle);
+            if (us >= 0) return us;
+        }
         return (System.nanoTime() - mLastGoodStart) / 1000;
     }
 
@@ -86,10 +131,16 @@ public class CryptState {
     }
 
     public byte[] getEncryptIV() {
+        if (mNativeHandle != 0) {
+            nativeGetEncryptIV(mNativeHandle, mEncryptIV);
+        }
         return mEncryptIV;
     }
 
     public byte[] getDecryptIV() {
+        if (mNativeHandle != 0) {
+            nativeGetDecryptIV(mNativeHandle, mDecryptIV);
+        }
         return mDecryptIV;
     }
 
@@ -97,35 +148,45 @@ public class CryptState {
         if (div != null && div.length == AES_BLOCK_SIZE) {
             System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
             Arrays.fill(mDecryptHistory, (byte) 0);
+            if (mNativeHandle != 0) {
+                return nativeSetDecryptIV(mNativeHandle, div);
+            }
             return true;
         }
         return false;
     }
 
     public synchronized void setKeys(final byte[] rkey, final byte[] eiv, final byte[] div) throws InvalidKeyException {
-        try {
-            mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
-            mDecryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
-        } catch (final NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return;
-        } catch (final NoSuchPaddingException e) {
-            e.printStackTrace();
-            return;
+        if (rkey == null || eiv == null || div == null ||
+                rkey.length != AES_BLOCK_SIZE || eiv.length != AES_BLOCK_SIZE || div.length != AES_BLOCK_SIZE) {
+            throw new InvalidKeyException("Keys and IVs must be 16 bytes");
         }
 
-        final SecretKeySpec cryptKey = new SecretKeySpec(rkey, "AES");
-        mRawKey = new byte[rkey.length];
+        mRawKey = new byte[AES_BLOCK_SIZE];
+        mEncryptIV = new byte[AES_BLOCK_SIZE];
+        mDecryptIV = new byte[AES_BLOCK_SIZE];
+
         System.arraycopy(rkey, 0, mRawKey, 0, AES_BLOCK_SIZE);
-        mEncryptIV = new byte[eiv.length];
         System.arraycopy(eiv, 0, mEncryptIV, 0, AES_BLOCK_SIZE);
         System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
         Arrays.fill(mDecryptHistory, (byte) 0);
 
-        mEncryptCipher.init(Cipher.ENCRYPT_MODE, cryptKey);
-        mDecryptCipher.init(Cipher.DECRYPT_MODE, cryptKey);
+        if (mNativeHandle != 0) {
+            mInit = nativeSetKeys(mNativeHandle, rkey, eiv, div);
+        } else {
+            try {
+                mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
+                mDecryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
+            } catch (final NoSuchAlgorithmException | NoSuchPaddingException e) {
+                e.printStackTrace();
+                return;
+            }
 
-        mInit = true;
+            final SecretKeySpec cryptKey = new SecretKeySpec(rkey, "AES");
+            mEncryptCipher.init(Cipher.ENCRYPT_MODE, cryptKey);
+            mDecryptCipher.init(Cipher.DECRYPT_MODE, cryptKey);
+            mInit = true;
+        }
     }
 
     /**
@@ -134,7 +195,16 @@ public class CryptState {
      * @param length The length of the source array.
      */
     public synchronized byte[] decrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
-        if (length < 4) return null;
+        if (length < 4 || !mInit || source == null) return null;
+
+        if (mNativeHandle != 0) {
+            byte[] decrypted = nativeDecrypt(mNativeHandle, source, length);
+            if (decrypted != null) {
+                syncStatsFromNative();
+                mLastGoodStart = System.nanoTime();
+            }
+            return decrypted;
+        }
 
         final int plainLength = length - 4;
         byte[] dst = new byte[plainLength];
@@ -213,10 +283,7 @@ public class CryptState {
             }
         }
 
-        final byte[] tagShiftedDst = new byte[plainLength];
-        System.arraycopy(source, 4, tagShiftedDst, 0, plainLength);
-
-        ocbDecrypt(tagShiftedDst, dst, mDecryptIV, tag);
+        ocbDecrypt(source, 4, dst, 0, plainLength, mDecryptIV, tag);
 
         if (tag[0] != source[1] || tag[1] != source[2] || tag[2] != source[3]) {
             System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
@@ -235,54 +302,93 @@ public class CryptState {
         return dst;
     }
 
+    public synchronized int decryptInPlace(final byte[] data, final int offset, final int length) {
+        if (mNativeHandle != 0) {
+            int plainLength = nativeDecryptInPlace(mNativeHandle, data, offset, length);
+            if (plainLength >= 0) {
+                syncStatsFromNative();
+                mLastGoodStart = System.nanoTime();
+            }
+            return plainLength;
+        }
+        return -1;
+    }
+
     public void ocbDecrypt(byte[] encrypted, byte[] plain, byte[] nonce, byte[] tag) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
+        ocbDecrypt(encrypted, 0, plain, 0, encrypted.length, nonce, tag);
+    }
+
+    public void ocbDecrypt(byte[] encrypted, int encOffset, byte[] plain, int plainOffset, int len, byte[] nonce, byte[] tag) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
         final byte[] checksum = new byte[AES_BLOCK_SIZE];
         final byte[] tmp = new byte[AES_BLOCK_SIZE];
+        final byte[] buffer = new byte[AES_BLOCK_SIZE];
 
         final byte[] delta = mEncryptCipher.doFinal(nonce);
 
         int offset = 0;
-        int len = encrypted.length;
-        while (len > AES_BLOCK_SIZE) {
-            final byte[] buffer = new byte[AES_BLOCK_SIZE];
+        int remaining = len;
+        while (remaining > AES_BLOCK_SIZE) {
             CryptSupport.S2(delta);
-            System.arraycopy(encrypted, offset, buffer, 0, AES_BLOCK_SIZE);
+            System.arraycopy(encrypted, encOffset + offset, buffer, 0, AES_BLOCK_SIZE);
 
             CryptSupport.XOR(tmp, delta, buffer);
             mDecryptCipher.doFinal(tmp, 0, AES_BLOCK_SIZE, tmp);
 
             CryptSupport.XOR(buffer, delta, tmp);
-            System.arraycopy(buffer, 0, plain, offset, AES_BLOCK_SIZE);
+            System.arraycopy(buffer, 0, plain, plainOffset + offset, AES_BLOCK_SIZE);
 
             CryptSupport.XOR(checksum, checksum, buffer);
-            len -= AES_BLOCK_SIZE;
+            remaining -= AES_BLOCK_SIZE;
             offset += AES_BLOCK_SIZE;
         }
 
         CryptSupport.S2(delta);
         CryptSupport.ZERO(tmp);
 
-        final long num = len * 8;
+        final long num = remaining * 8;
         tmp[AES_BLOCK_SIZE - 2] = (byte) ((num >> 8) & 0xFF);
         tmp[AES_BLOCK_SIZE - 1] = (byte) (num & 0xFF);
         CryptSupport.XOR(tmp, tmp, delta);
 
         final byte[] pad = mEncryptCipher.doFinal(tmp);
         CryptSupport.ZERO(tmp);
-        System.arraycopy(encrypted, offset, tmp, 0, len);
+        System.arraycopy(encrypted, encOffset + offset, tmp, 0, remaining);
 
         CryptSupport.XOR(tmp, tmp, pad);
         CryptSupport.XOR(checksum, checksum, tmp);
 
-        System.arraycopy(tmp, 0, plain, offset, len);
+        System.arraycopy(tmp, 0, plain, plainOffset + offset, remaining);
 
-        CryptSupport.S3(delta);
+        // Counter-cryptanalysis ePrint 2019/311
+        boolean xexMatch = true;
+        for (int i = 0; i < AES_BLOCK_SIZE - 1; i++) {
+            if (tmp[i] != delta[i]) {
+                xexMatch = false;
+                break;
+            }
+        }
+
+        S3(delta);
         CryptSupport.XOR(tmp, delta, checksum);
 
         mEncryptCipher.doFinal(tmp, 0, AES_BLOCK_SIZE, tag);
+
+        if (xexMatch) {
+            tag[0] = (byte) ~tag[0]; // invalidate tag on XEX* attack
+        }
     }
 
     public synchronized byte[] encrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
+        if (!mInit || source == null) return null;
+
+        if (mNativeHandle != 0) {
+            byte[] encrypted = nativeEncrypt(mNativeHandle, source, length);
+            if (encrypted != null) {
+                mEncryptIV[0] = encrypted[0];
+            }
+            return encrypted;
+        }
+
         final byte[] tag = new byte[AES_BLOCK_SIZE];
 
         // First, increase our IV.
@@ -293,9 +399,8 @@ public class CryptState {
         }
 
         final byte[] dst = new byte[length + 4];
-        ocbEncrypt(source, dst, length, mEncryptIV, tag);
+        ocbEncrypt(source, 0, dst, 4, length, mEncryptIV, tag);
 
-        System.arraycopy(dst, 0, dst, 4, length);
         dst[0] = mEncryptIV[0];
         dst[1] = tag[0];
         dst[2] = tag[1];
@@ -305,50 +410,84 @@ public class CryptState {
     }
 
     public void ocbEncrypt(byte[] plain, byte[] encrypted, int plainLength, byte[] nonce, byte[] tag) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
+        ocbEncrypt(plain, 0, encrypted, 0, plainLength, nonce, tag);
+    }
+
+    public void ocbEncrypt(byte[] plain, int plainOffset, byte[] encrypted, int encOffset, int plainLength, byte[] nonce, byte[] tag) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
         final byte[] checksum = new byte[AES_BLOCK_SIZE];
         final byte[] tmp = new byte[AES_BLOCK_SIZE];
+        final byte[] buffer = new byte[AES_BLOCK_SIZE];
 
         final byte[] delta = mEncryptCipher.doFinal(nonce);
 
         int offset = 0;
-        int len = plainLength;
-        while (len > AES_BLOCK_SIZE) {
-            final byte[] buffer = new byte[AES_BLOCK_SIZE];
+        int remaining = plainLength;
+        while (remaining > AES_BLOCK_SIZE) {
+            boolean flipABit = false;
+            if (remaining - AES_BLOCK_SIZE <= AES_BLOCK_SIZE) {
+                int sum = 0;
+                for (int i = 0; i < AES_BLOCK_SIZE - 1; ++i) {
+                    sum |= plain[plainOffset + offset + i];
+                }
+                if (sum == 0) {
+                    flipABit = true;
+                }
+            }
+
             CryptSupport.S2(delta);
-            System.arraycopy(plain, offset, buffer, 0, AES_BLOCK_SIZE);
+            System.arraycopy(plain, plainOffset + offset, buffer, 0, AES_BLOCK_SIZE);
             CryptSupport.XOR(checksum, checksum, buffer);
             CryptSupport.XOR(tmp, delta, buffer);
+
+            if (flipABit) {
+                tmp[0] ^= 1;
+                checksum[0] ^= 1;
+            }
 
             mEncryptCipher.doFinal(tmp, 0, AES_BLOCK_SIZE, tmp);
 
             CryptSupport.XOR(buffer, delta, tmp);
-            System.arraycopy(buffer, 0, encrypted, offset, AES_BLOCK_SIZE);
-            len -= AES_BLOCK_SIZE;
+            System.arraycopy(buffer, 0, encrypted, encOffset + offset, AES_BLOCK_SIZE);
+            remaining -= AES_BLOCK_SIZE;
             offset += AES_BLOCK_SIZE;
         }
 
         CryptSupport.S2(delta);
         CryptSupport.ZERO(tmp);
-        final long num = len * 8;
+        final long num = remaining * 8;
         tmp[AES_BLOCK_SIZE - 2] = (byte) ((num >> 8) & 0xFF);
         tmp[AES_BLOCK_SIZE - 1] = (byte) (num & 0xFF);
         CryptSupport.XOR(tmp, tmp, delta);
 
         final byte[] pad = mEncryptCipher.doFinal(tmp);
 
-        System.arraycopy(plain, offset, tmp, 0, len);
-        System.arraycopy(pad, len, tmp, len, AES_BLOCK_SIZE - len);
+        System.arraycopy(plain, plainOffset + offset, tmp, 0, remaining);
+        System.arraycopy(pad, remaining, tmp, remaining, AES_BLOCK_SIZE - remaining);
         CryptSupport.XOR(checksum, checksum, tmp);
         CryptSupport.XOR(tmp, pad, tmp);
 
-        System.arraycopy(tmp, 0, encrypted, offset, len);
+        System.arraycopy(tmp, 0, encrypted, encOffset + offset, remaining);
         CryptSupport.S3(delta);
         CryptSupport.XOR(tmp, delta, checksum);
         mEncryptCipher.doFinal(tmp, 0, AES_BLOCK_SIZE, tag);
     }
 
+    private void syncStatsFromNative() {
+        if (mNativeHandle != 0) {
+            nativeGetStats(mNativeHandle, mStatsBuffer);
+            mUiGood = mStatsBuffer[0];
+            mUiLate = mStatsBuffer[1];
+            mUiLost = mStatsBuffer[2];
+            mUiResync = mStatsBuffer[3];
+        }
+    }
+
+    private static void S3(final byte[] block) {
+        CryptSupport.S3(block);
+    }
+
     /**
-     * Some functions that provide helpful cryptographic support, like being able to XOR a byte array.
+     * Helper mathematical functions for OCB Galois field arithmetic.
      */
     private static class CryptSupport {
 
@@ -380,4 +519,19 @@ public class CryptState {
             Arrays.fill(block, (byte) 0);
         }
     }
+
+    private static native boolean nativeIsSupported();
+    private native long nativeCreate();
+    private native void nativeDestroy(long handle);
+    private native void nativeGenKey(long handle);
+    private native boolean nativeSetKeys(long handle, byte[] rkey, byte[] eiv, byte[] div);
+    private native boolean nativeSetDecryptIV(long handle, byte[] div);
+    private native boolean nativeSetEncryptIV(long handle, byte[] eiv);
+    private native boolean nativeGetEncryptIV(long handle, byte[] out);
+    private native boolean nativeGetDecryptIV(long handle, byte[] out);
+    private native byte[] nativeEncrypt(long handle, byte[] source, int length);
+    private native byte[] nativeDecrypt(long handle, byte[] source, int length);
+    private native int nativeDecryptInPlace(long handle, byte[] buffer, int offset, int cryptedLength);
+    private native void nativeGetStats(long handle, int[] statsOut);
+    private native long nativeGetLastGoodElapsedUs(long handle);
 }
