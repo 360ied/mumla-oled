@@ -33,12 +33,12 @@ namespace humla::crypto {
 #if defined(__LP64__)
 #define BLOCKSIZE 2
 #define SHIFTBITS 63
-typedef uint64_t subblock;
+typedef uint64_t __attribute__((aligned(1))) subblock;
 #define SWAPPED(x) __builtin_bswap64(x)
 #else
 #define BLOCKSIZE 4
 #define SHIFTBITS 31
-typedef uint32_t subblock;
+typedef uint32_t __attribute__((aligned(1))) subblock;
 #define SWAPPED(x) __builtin_bswap32(x)
 #endif
 
@@ -100,6 +100,10 @@ void CryptStateOCB2::genKey() {
         for (int i = 0; i < AES_BLOCK_SIZE; i++) decrypt_iv[i] = static_cast<uint8_t>(rd());
     }
     memset(decrypt_history, 0, 0x100);
+    m_hasLastGood.store(false);
+    m_statGood.store(0);
+    m_statLate.store(0);
+    m_statLost.store(0);
     aesKey.set_key(raw_key);
     bInit = true;
 }
@@ -111,6 +115,10 @@ bool CryptStateOCB2::setKey(const uint8_t *rkey, const uint8_t *eiv, const uint8
     memcpy(encrypt_iv, eiv, AES_BLOCK_SIZE);
     memcpy(decrypt_iv, div, AES_BLOCK_SIZE);
     memset(decrypt_history, 0, 0x100);
+    m_hasLastGood.store(false);
+    m_statGood.store(0);
+    m_statLate.store(0);
+    m_statLost.store(0);
     aesKey.set_key(raw_key);
     bInit = true;
     return true;
@@ -187,6 +195,13 @@ bool CryptStateOCB2::decrypt(const uint8_t *source, uint8_t *dst, uint32_t crypt
 bool CryptStateOCB2::decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t crypted_length) {
     if (crypted_length < 4 || !bInit.load() || !source || !dst) return false;
     uint32_t plain_length = crypted_length - 4;
+
+    // Reject partially overlapping buffers (exact in-place source == dst is permitted)
+    uintptr_t s = reinterpret_cast<uintptr_t>(source);
+    uintptr_t d = reinterpret_cast<uintptr_t>(dst);
+    if (source != dst && s < d + plain_length && d < s + crypted_length) {
+        return false;
+    }
 
     uint8_t saveiv[AES_BLOCK_SIZE];
     uint8_t ivbyte = source[0];
@@ -276,8 +291,6 @@ bool CryptStateOCB2::decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32
     m_statGood++;
     if (late > 0) {
         m_statLate += late;
-    } else if (static_cast<int>(m_statLate.load()) >= std::abs(late)) {
-        m_statLate -= std::abs(late);
     }
 
     if (lost > 0) {

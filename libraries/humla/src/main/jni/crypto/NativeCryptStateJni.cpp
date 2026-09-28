@@ -18,16 +18,12 @@
 #include "CryptStateOCB2.h"
 
 #include <jni.h>
-#include <android/log.h>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
-
-#define LOG_TAG "NativeCryptState"
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 using namespace humla::crypto;
 
@@ -56,11 +52,15 @@ Java_se_lublin_humla_net_CryptState_nativeIsSupported(JNIEnv *, jclass) {
 
 JNIEXPORT jlong JNICALL
 Java_se_lublin_humla_net_CryptState_nativeCreate(JNIEnv *, jobject) {
-    auto cs = std::make_shared<CryptStateOCB2>();
-    jlong handle = g_nextHandle.fetch_add(1);
-    std::lock_guard lock(g_registryMutex);
-    g_registry[handle] = std::move(cs);
-    return handle;
+    try {
+        auto cs = std::make_shared<CryptStateOCB2>();
+        jlong handle = g_nextHandle.fetch_add(1);
+        std::lock_guard lock(g_registryMutex);
+        g_registry[handle] = std::move(cs);
+        return handle;
+    } catch (...) {
+        return 0;
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -107,6 +107,7 @@ Java_se_lublin_humla_net_CryptState_nativeSetKeys(
     bool ok = cs->setKey(reinterpret_cast<const uint8_t *>(rkeyBuf),
                          reinterpret_cast<const uint8_t *>(eivBuf),
                          reinterpret_cast<const uint8_t *>(divBuf));
+    memset(rkeyBuf, 0, sizeof(rkeyBuf));
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -125,6 +126,24 @@ Java_se_lublin_humla_net_CryptState_nativeSetDecryptIV(
     env->GetByteArrayRegion(div, 0, AES_BLOCK_SIZE, divBuf);
 
     bool ok = cs->setDecryptIV(reinterpret_cast<const uint8_t *>(divBuf));
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_net_CryptState_nativeSetEncryptIV(
+        JNIEnv *env,
+        jobject,
+        jlong handle,
+        jbyteArray eiv) {
+    auto cs = getCryptState(handle);
+    if (!cs || !eiv || env->GetArrayLength(eiv) != AES_BLOCK_SIZE) {
+        return JNI_FALSE;
+    }
+
+    jbyte eivBuf[AES_BLOCK_SIZE];
+    env->GetByteArrayRegion(eiv, 0, AES_BLOCK_SIZE, eivBuf);
+
+    bool ok = cs->setEncryptIV(reinterpret_cast<const uint8_t *>(eivBuf));
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -290,7 +309,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
     uint8_t *data = reinterpret_cast<uint8_t *>(bufPtr) + offset;
     bool ok = cs->decryptUnlocked(data, data, static_cast<uint32_t>(cryptedLength));
 
-    env->ReleasePrimitiveArrayCritical(buffer, bufPtr, 0);
+    env->ReleasePrimitiveArrayCritical(buffer, bufPtr, ok ? 0 : JNI_ABORT);
     lock.unlock();
 
     if (!ok) {

@@ -158,6 +158,17 @@ public class CryptState {
         return false;
     }
 
+    public synchronized boolean setEncryptIV(final byte[] eiv) {
+        if (eiv != null && eiv.length == AES_BLOCK_SIZE) {
+            System.arraycopy(eiv, 0, mEncryptIV, 0, AES_BLOCK_SIZE);
+            if (mNativeHandle != 0) {
+                return nativeSetEncryptIV(mNativeHandle, eiv);
+            }
+            return true;
+        }
+        return false;
+    }
+
     public synchronized void setKeys(final byte[] rkey, final byte[] eiv, final byte[] div) throws InvalidKeyException {
         if (rkey == null || eiv == null || div == null ||
                 rkey.length != AES_BLOCK_SIZE || eiv.length != AES_BLOCK_SIZE || div.length != AES_BLOCK_SIZE) {
@@ -179,14 +190,6 @@ public class CryptState {
 
         if (mNativeHandle != 0) {
             mInit = nativeSetKeys(mNativeHandle, rkey, eiv, div);
-            try {
-                mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
-                mDecryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
-                final SecretKeySpec cryptKey = new SecretKeySpec(rkey, "AES");
-                mEncryptCipher.init(Cipher.ENCRYPT_MODE, cryptKey);
-                mDecryptCipher.init(Cipher.DECRYPT_MODE, cryptKey);
-            } catch (final Exception ignored) {
-            }
         } else {
             try {
                 mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
@@ -221,7 +224,6 @@ public class CryptState {
             if (decrypted != null) {
                 mLastGoodStart = System.nanoTime();
             }
-            syncStatsFromNative();
             return decrypted;
         }
 
@@ -319,8 +321,6 @@ public class CryptState {
             mUiGood++;
             if (late > 0) {
                 mUiLate += late;
-            } else if (mUiLate >= Math.abs(late)) {
-                mUiLate -= Math.abs(late);
             }
 
             if (lost > 0) {
@@ -341,7 +341,6 @@ public class CryptState {
             if (plainLength >= 0) {
                 mLastGoodStart = System.nanoTime();
             }
-            syncStatsFromNative();
             return plainLength;
         }
         return -1;
@@ -576,6 +575,7 @@ public class CryptState {
     private native void nativeDestroy(long handle);
     private native boolean nativeSetKeys(long handle, byte[] rkey, byte[] eiv, byte[] div);
     private native boolean nativeSetDecryptIV(long handle, byte[] div);
+    private native boolean nativeSetEncryptIV(long handle, byte[] eiv);
     private native boolean nativeGetEncryptIV(long handle, byte[] out);
     private native boolean nativeGetDecryptIV(long handle, byte[] out);
     private native byte[] nativeEncrypt(long handle, byte[] source, int length);

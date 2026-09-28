@@ -263,6 +263,9 @@ public class HumlaUDP implements Runnable {
 
         try {
             byte[] encryptedData = mCryptState.encrypt(data, length);
+            if (encryptedData == null) {
+                return;
+            }
             final DatagramPacket packet = new DatagramPacket(encryptedData, encryptedData.length);
             packet.setAddress(resolvedHost);
             packet.setPort(mPort);

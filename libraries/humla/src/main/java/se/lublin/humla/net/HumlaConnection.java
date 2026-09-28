@@ -238,15 +238,16 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             long elapsed = getElapsed();
             mLastTCPPing = elapsed-msg.getTimestamp();
 
-            if(((mCryptState.mUiRemoteGood == 0) || (mCryptState.mUiGood == 0)) && mUsingUDP && elapsed > 20000000) {
+            int localGood = mCryptState.getGood();
+            if(((mCryptState.mUiRemoteGood == 0) || (localGood == 0)) && mUsingUDP && elapsed > 20000000) {
                 mUsingUDP = false;
                 enableForceTCP();
                 Log.i(TAG, "Switching to TCP mode (remoteGood=" + mCryptState.mUiRemoteGood +
-                        ", localGood=" + mCryptState.mUiGood + ")");
-            } else if (!mUsingUDP && (mCryptState.mUiRemoteGood > 3) && (mCryptState.mUiGood > 3)) {
+                        ", localGood=" + localGood + ")");
+            } else if (!mUsingUDP && (mCryptState.mUiRemoteGood > 3) && (localGood > 3)) {
                 mUsingUDP = true;
                 Log.i(TAG, "Switching back to UDP mode (remoteGood=" + mCryptState.mUiRemoteGood +
-                        ", localGood=" + mCryptState.mUiGood + ")");
+                        ", localGood=" + localGood + ")");
             }
         }
     };
@@ -297,7 +298,7 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
             return BOOTSTRAP_PING_INTERVAL_SECONDS;
         }
         if (!shouldForceTCP() && mUsingUDP) {
-            if (mCryptState.mUiRemoteGood <= 3 || mCryptState.mUiGood <= 3) {
+            if (mCryptState.mUiRemoteGood <= 3 || mCryptState.getGood() <= 3) {
                 return BOOTSTRAP_PING_INTERVAL_SECONDS;
             }
         }
