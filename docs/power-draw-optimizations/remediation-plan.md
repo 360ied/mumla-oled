@@ -363,8 +363,12 @@ Following the implementation of `-O3 -fno-math-errno -fvectorize` in [`Android.m
 **Resolution**: The `-fno-math-errno -fvectorize` flags are retained in [`Android.mk`](../../libraries/humla/src/main/jni/Android.mk) as harmless hygiene, but Item 3.1 is formally closed as an **empirical no-op**. True Phase 3 power draw and CPU optimizations reside entirely in **Item 3.2 (Native In-Place OCB2-AES Cryptographic Engine)**.
 
 ### 3.2. Native In-Place OCB2-AES Cryptographic Engine
+
+👉 **[Detailed Architecture & Pre-Implementation Notes](native-ocb2-crypto.md)**
+
 - **Target**: [`CryptState.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) and native JNI
 - **Change**:
   - Migrate OCB2-AES encryption and decryption into native C++ (e.g. leveraging ARMv8 Cryptographic Extensions `arm_neon.h` / OpenSSL AES-NI).
   - Encrypt and decrypt directly inside the UDP datagram buffers with zero intermediate Java heap allocations.
 - **Benefit**: Eliminates per-packet garbage collection churn and reduces cryptographic CPU overhead by $5\times$ to $10\times$.
+
