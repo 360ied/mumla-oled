@@ -15,7 +15,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
    - [2.2 AudioTrack Standby Pause (Guarded against Bluetooth SCO) — RESOLVED](#22-audiotrack-standby-pause-guarded-against-bluetooth-sco--resolved)
    - [2.3 Adaptive Keepalive Pinging & CryptSetup Compliance — RESOLVED](#23-adaptive-keepalive-pinging--cryptsetup-compliance--resolved)
 4. [Phase 3: Deep Architectural Modernization](#phase-3-deep-architectural-modernization)
-   - [3.1 Compiler Vectorization Tuning (Safe Math Flags)](#31-compiler-vectorization-tuning-safe-math-flags)
+   - [3.1 Compiler Vectorization Tuning (Safe Math Flags) — CLOSED (Empirical No-Op)](#31-compiler-vectorization-tuning-safe-math-flags--closed-empirical-no-op)
    - [3.2 Native In-Place OCB2-AES Cryptographic Engine](#32-native-in-place-ocb2-aes-cryptographic-engine)
 5. [Decoupled Tracks: Partial Wakelock & Deep Doze (Lite Track & Full Overhaul)](wakelock-remediation-lite.md)
 
@@ -344,12 +344,23 @@ int getNextPingIntervalSeconds() {
 > 👉 **[Zero-Audio Standby Regression Investigation (0.21.10)](zero-audio-standby-regression-investigation.md)** *(Root cause analysis of screen-off keepalive deferrals and watchdog kills)*  
 > 👉 **[Zero-Audio Standby Remediation Plan (0.21.11)](zero-audio-standby-remediation-plan.md)** *(Completed restoration of continuous silence shield baseline)*
 
-### 3.1. Compiler Vectorization Tuning (Safe Math Flags)
-- **Target**: [`Android.mk`](../../libraries/humla/src/main/jni/Android.mk)
-- **Change**:
-  - Add `-O3 -fno-math-errno -fvectorize` to `humlaaudio` CFLAGS to optimize NEON vector loop generation across both 32-bit and 64-bit ARM architectures.
-  - **Avoid `-ffast-math` / `-ffinite-math-only`**: Fast-math optimizes away `celt_isnan(x) ((x) != (x))` in `rnnoise/src/arch.h:173`. Disabling NaN validation risks permanent NaN poisoning of RNNoise's recurrent GRU hidden state if a floating-point denormal occurs.
-- **Benefit**: Maximizes vector SIMD throughput across RNNoise GRU and audio DSP routines without risking floating-point state corruption.
+### 3.1. Compiler Vectorization Tuning (Safe Math Flags) — CLOSED (Empirical No-Op)
+
+**Status**: Closed / Verified on branch `feature/compiler-vectorization-tuning` (commit `43ba36db`).
+
+**Target**: [`Android.mk`](../../libraries/humla/src/main/jni/Android.mk)
+
+**Problem**: The roadmap hypothesized that adding `-fno-math-errno -fvectorize` to `-O3` in `LOCAL_CFLAGS` would unlock additional loop auto-vectorization across RNNoise's recurrent GRU and audio DSP filtering routines by preventing math `errno` from blocking vectorization, while avoiding `-ffast-math` / `-ffinite-math-only` to preserve `celt_isnan` validation in `rnnoise/src/arch.h:173`.
+
+**Empirical Audit & Finding (Byte-for-Byte Identical Machine Code)**:
+Following the implementation of `-O3 -fno-math-errno -fvectorize` in [`Android.mk`](../../libraries/humla/src/main/jni/Android.mk), an exhaustive binary diff was performed across all compiled object files (`.o`) against the baseline `-O3` build across all three target ABIs (`armeabi-v7a`, `arm64-v8a`, and `x86_64`):
+- **458 of 458 object files (100%) were bit-for-bit identical** (matching SHA-256 digests across all `.o` files, including `nnet.o`, `denoise.o`, `rnn.o`, `pitch.o`, `HysteresisVad.o`, `AdaptiveLeveler.o`, `SoftLimiter.o`, and `AudioOutputEngine.o`).
+- **Root Cause Analysis**:
+  1. **Clang Vectorizers Active by Default at `-O3`**: Clang 14.0.6 (NDK `r25c`) automatically passes `-vectorize-loops` and `-vectorize-slp` to the `-cc1` backend whenever `-O3` is specified (verified via `clang -O3 -###`). Explicitly passing `-fvectorize` is a complete no-op.
+  2. **RNNoise Already Uses Hand-Crafted NEON Intrinsics**: RNNoise author Jean-Marc Valin had already hand-vectorized the recurrent GRU, activation functions, and matrix kernels using explicit ARM NEON intrinsics ([`rnnoise/src/vec_neon.h`](../../libraries/humla/src/main/jni/rnnoise/src/vec_neon.h)). Activations use rational minimax polynomials (`sigmoid4_approx`, `tanh4_approx`) and fast base-2 exponents (`exp4_approx`) operating directly on 128-bit `float32x4_t` NEON registers (`vmlaq_f32`, `vrecpeq_f32`), completely bypassing scalar `libm` calls. Clang never needed to auto-vectorize them, and `errno` was never a factor.
+  3. **C++ Audio DSP Functions Call `libm` Outside Inner Loops**: In [`AdaptiveLeveler.cpp`](../../libraries/humla/src/main/jni/audio_engine/AdaptiveLeveler.cpp) and [`HysteresisVad.cpp`](../../libraries/humla/src/main/jni/audio_engine/HysteresisVad.cpp), math functions like `std::sqrt` are invoked once per 10 ms frame (to compute the final root-mean-square after summing 480 samples), never inside the per-sample accumulation loops.
+
+**Resolution**: The `-fno-math-errno -fvectorize` flags are retained in [`Android.mk`](../../libraries/humla/src/main/jni/Android.mk) as harmless hygiene, but Item 3.1 is formally closed as an **empirical no-op**. True Phase 3 power draw and CPU optimizations reside entirely in **Item 3.2 (Native In-Place OCB2-AES Cryptographic Engine)**.
 
 ### 3.2. Native In-Place OCB2-AES Cryptographic Engine
 - **Target**: [`CryptState.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) and native JNI
