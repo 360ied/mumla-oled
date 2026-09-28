@@ -153,6 +153,7 @@ public class HumlaTCP extends HumlaNetworkThread {
             }
 
             mTCPSocket.setKeepAlive(true);
+            mTCPSocket.setTcpNoDelay(true);
             mTCPSocket.setSoTimeout(CONNECT_TIMEOUT);
             mTCPSocket.startHandshake();
 
@@ -249,6 +250,7 @@ public class HumlaTCP extends HumlaNetworkThread {
                     mDataOutput.writeShort(messageType.ordinal());
                     mDataOutput.writeInt(message.getSerializedSize());
                     message.writeTo(mDataOutput);
+                    mDataOutput.flush();
                 } catch (IOException e) {
                     e.printStackTrace();
                     // TODO handle
@@ -273,6 +275,7 @@ public class HumlaTCP extends HumlaNetworkThread {
                     mDataOutput.writeShort(messageType.ordinal());
                     mDataOutput.writeInt(length);
                     mDataOutput.write(copy, 0, length);
+                    mDataOutput.flush();
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
