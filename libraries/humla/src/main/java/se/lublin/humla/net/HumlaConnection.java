@@ -196,7 +196,6 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
                 } else if(msg.hasServerNonce()) {
                     ByteString serverNonce = msg.getServerNonce();
                     if(serverNonce.size() == CryptState.AES_BLOCK_SIZE) {
-                        mCryptState.mUiResync++;
                         mCryptState.setDecryptIV(serverNonce.toByteArray());
                     } else {
                         throw new InvalidKeyException("Invalid server nonce size in CryptSetup message");

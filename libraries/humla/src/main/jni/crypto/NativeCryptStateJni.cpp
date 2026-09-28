@@ -107,7 +107,7 @@ Java_se_lublin_humla_net_CryptState_nativeSetKeys(
     bool ok = cs->setKey(reinterpret_cast<const uint8_t *>(rkeyBuf),
                          reinterpret_cast<const uint8_t *>(eivBuf),
                          reinterpret_cast<const uint8_t *>(divBuf));
-    memset(rkeyBuf, 0, sizeof(rkeyBuf));
+    secure_zero(rkeyBuf, sizeof(rkeyBuf));
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 

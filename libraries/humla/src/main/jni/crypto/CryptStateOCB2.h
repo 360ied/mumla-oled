@@ -38,6 +38,10 @@ class CryptStateOCB2 {
 public:
     CryptStateOCB2();
     ~CryptStateOCB2();
+    CryptStateOCB2(const CryptStateOCB2 &) = delete;
+    CryptStateOCB2 &operator=(const CryptStateOCB2 &) = delete;
+    CryptStateOCB2(CryptStateOCB2 &&) = delete;
+    CryptStateOCB2 &operator=(CryptStateOCB2 &&) = delete;
 
     bool isValid() const;
     void genKey();

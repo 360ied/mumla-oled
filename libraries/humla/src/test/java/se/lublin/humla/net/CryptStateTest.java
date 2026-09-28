@@ -128,9 +128,31 @@ public class CryptStateTest extends TestCase {
         receiver.setDecryptIV(newNonce);
 
         assertTrue(Arrays.equals(newNonce, receiver.getDecryptIV()));
+        assertEquals(1, receiver.getResync());
         for (int i = 0; i < 256; i++) {
             assertEquals(0, receiver.mDecryptHistory[i]);
         }
+    }
+
+    public void testBoundsValidation() throws Exception {
+        CryptState sender = new CryptState();
+        sender.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
+
+        CryptState receiver = new CryptState();
+        receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
+
+        byte[] plain = "Bounds Test Payload".getBytes();
+        byte[] enc = sender.encrypt(plain, plain.length);
+
+        // Encrypt bounds checks
+        assertNull(sender.encrypt(plain, -1));
+        assertNull(sender.encrypt(plain, plain.length + 5));
+        assertNull(sender.encrypt(null, 10));
+
+        // Decrypt bounds checks
+        assertNull(receiver.decrypt(enc, 3)); // Less than 4
+        assertNull(receiver.decrypt(enc, enc.length + 5)); // Longer than array
+        assertNull(receiver.decrypt(null, 10));
     }
 
     public void testReplayDetectionRejectsDuplicate() throws Exception {

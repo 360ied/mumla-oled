@@ -96,6 +96,10 @@ public class CryptState {
 
     public synchronized void destroy() {
         mInit = false;
+        Arrays.fill(mRawKey, (byte) 0);
+        Arrays.fill(mEncryptIV, (byte) 0);
+        Arrays.fill(mDecryptIV, (byte) 0);
+        Arrays.fill(mDecryptHistory, (byte) 0);
         if (mNativeHandle != 0) {
             long handle = mNativeHandle;
             mNativeHandle = 0;
@@ -153,6 +157,7 @@ public class CryptState {
             if (mNativeHandle != 0) {
                 return nativeSetDecryptIV(mNativeHandle, div);
             }
+            mUiResync++;
             return true;
         }
         return false;
@@ -225,7 +230,7 @@ public class CryptState {
      * @param length The length of the source array.
      */
     public byte[] decrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
-        if (length < 4 || !mInit || source == null) return null;
+        if (length < 4 || !mInit || source == null || length > source.length) return null;
 
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {
@@ -344,7 +349,7 @@ public class CryptState {
     }
 
     public int decryptInPlace(final byte[] data, final int offset, final int length) {
-        if (data == null || length < 4 || offset < 0 || offset + length > data.length) {
+        if (data == null || length < 4 || offset < 0 || (long) offset + length > data.length) {
             return -1;
         }
         final long nativeHandle = mNativeHandle;
@@ -434,7 +439,7 @@ public class CryptState {
     }
 
     public byte[] encrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
-        if (!mInit || source == null) return null;
+        if (!mInit || source == null || length < 0 || length > source.length) return null;
 
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {
@@ -536,6 +541,7 @@ public class CryptState {
                 mUiGood = mStatsBuffer[0];
                 mUiLate = mStatsBuffer[1];
                 mUiLost = mStatsBuffer[2];
+                mUiResync = mStatsBuffer[3];
             }
         }
     }
@@ -590,7 +596,24 @@ public class CryptState {
     }
 
     public int getResync() {
+        syncStatsFromNative();
         return mUiResync;
+    }
+
+    public int getRemoteGood() {
+        return mUiRemoteGood;
+    }
+
+    public int getRemoteLate() {
+        return mUiRemoteLate;
+    }
+
+    public int getRemoteLost() {
+        return mUiRemoteLost;
+    }
+
+    public int getRemoteResync() {
+        return mUiRemoteResync;
     }
 
     private static native boolean nativeIsSupported();

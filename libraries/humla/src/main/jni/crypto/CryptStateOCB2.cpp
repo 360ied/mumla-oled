@@ -33,12 +33,12 @@ namespace humla::crypto {
 #if defined(__LP64__)
 #define BLOCKSIZE 2
 #define SHIFTBITS 63
-typedef uint64_t __attribute__((aligned(1))) subblock;
+typedef uint64_t __attribute__((aligned(1), may_alias)) subblock;
 #define SWAPPED(x) __builtin_bswap64(x)
 #else
 #define BLOCKSIZE 4
 #define SHIFTBITS 31
-typedef uint32_t __attribute__((aligned(1))) subblock;
+typedef uint32_t __attribute__((aligned(1), may_alias)) subblock;
 #define SWAPPED(x) __builtin_bswap32(x)
 #endif
 
@@ -77,10 +77,10 @@ CryptStateOCB2::CryptStateOCB2() {
 }
 
 CryptStateOCB2::~CryptStateOCB2() {
-    memset(raw_key, 0, sizeof(raw_key));
-    memset(encrypt_iv, 0, sizeof(encrypt_iv));
-    memset(decrypt_iv, 0, sizeof(decrypt_iv));
-    memset(decrypt_history, 0, sizeof(decrypt_history));
+    secure_zero(raw_key, sizeof(raw_key));
+    secure_zero(encrypt_iv, sizeof(encrypt_iv));
+    secure_zero(decrypt_iv, sizeof(decrypt_iv));
+    secure_zero(decrypt_history, sizeof(decrypt_history));
 }
 
 bool CryptStateOCB2::isValid() const {

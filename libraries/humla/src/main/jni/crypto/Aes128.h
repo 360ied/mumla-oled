@@ -100,6 +100,15 @@ static inline uint8_t gmul(uint8_t a, uint8_t b) {
     return p;
 }
 
+static inline void secure_zero(void *s, size_t n) {
+    if (!s || n == 0) return;
+    volatile uint8_t *p = static_cast<volatile uint8_t *>(s);
+    while (n--) *p++ = 0;
+#if defined(__GNUC__) || defined(__clang__)
+    asm volatile("" : : "r"(s) : "memory");
+#endif
+}
+
 struct Aes128Key {
     alignas(16) uint8_t round_keys[176];     // 11 * 16 bytes
     alignas(16) uint8_t inv_round_keys[176]; // 11 * 16 bytes for equivalent inverse cipher / AES-NI
@@ -108,8 +117,8 @@ struct Aes128Key {
 
     Aes128Key() = default;
     ~Aes128Key() {
-        memset(round_keys, 0, sizeof(round_keys));
-        memset(inv_round_keys, 0, sizeof(inv_round_keys));
+        secure_zero(round_keys, sizeof(round_keys));
+        secure_zero(inv_round_keys, sizeof(inv_round_keys));
     }
 
     void set_key(const uint8_t key[16]);
@@ -162,6 +171,7 @@ inline void aes128_key_expansion(const uint8_t key[16], Aes128Key *k) {
         }
     }
 
+    secure_zero(w, sizeof(w));
     k->is_initialized = true;
 
 #if defined(__x86_64__)
