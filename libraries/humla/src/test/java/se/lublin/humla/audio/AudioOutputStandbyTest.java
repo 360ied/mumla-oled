@@ -42,12 +42,6 @@ public class AudioOutputStandbyTest extends TestCase {
         assertFalse(output.isBluetoothScoActive());
     }
 
-    public void testStandbyPauseInhibitedByDefault() {
-        AudioOutput output = new AudioOutput(DUMMY_LISTENER);
-        assertFalse(output.isStandbyPauseEnabled());
-        output.setStandbyPauseEnabled(true);
-        assertFalse(output.isStandbyPauseEnabled());
-    }
 
     public void testHasActiveVoicesDefault() {
         AudioOutput output = new AudioOutput(DUMMY_LISTENER);

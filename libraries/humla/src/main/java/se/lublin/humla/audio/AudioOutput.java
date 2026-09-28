@@ -558,21 +558,7 @@ public class AudioOutput implements Runnable,
         return engine != null && engine.hasActiveVoices();
     }
 
-    /**
-     * Legacy standby pause toggle. AudioTrack is continuously kept in PLAYSTATE_PLAYING
-     * to preserve the continuous silence shield against OEM watchdog terminations.
-     *
-     * @param enabled Ignored.
-     */
-    @Deprecated
-    public void setStandbyPauseEnabled(boolean enabled) {
-        // No-op: AudioTrack is continuously kept in PLAYSTATE_PLAYING to maintain the silence shield.
-    }
 
-    @Deprecated
-    public boolean isStandbyPauseEnabled() {
-        return false;
-    }
 
     /**
      * Manages render-lead pacing against the AudioTrack playback head.
