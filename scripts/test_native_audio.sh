@@ -77,3 +77,33 @@ CXX="${CXX:-g++}"
     -o "$BUILD_DIR/test_crypt_state"
 
 "$BUILD_DIR/test_crypt_state"
+
+# Compile host JNI shared library for host JVM unit tests
+JAVA_INC=""
+if [[ -n "${JAVA_HOME:-}" && -d "$JAVA_HOME/include" ]]; then
+    JAVA_INC="$JAVA_HOME/include"
+elif command -v javac >/dev/null 2>&1; then
+    DETECTED_JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which javac)")")")"
+    if [[ -d "$DETECTED_JAVA_HOME/include" ]]; then
+        JAVA_INC="$DETECTED_JAVA_HOME/include"
+    fi
+fi
+
+if [[ -n "$JAVA_INC" ]]; then
+    JNI_MD_INC="$JAVA_INC/linux"
+    if [[ ! -d "$JNI_MD_INC" && -d "$JAVA_INC/darwin" ]]; then
+        JNI_MD_INC="$JAVA_INC/darwin"
+    fi
+    SO_EXT="so"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        SO_EXT="dylib"
+    fi
+    "$CXX" -std=c++17 -O2 -fPIC -shared -Wall -Wextra -Werror -UNDEBUG \
+        -I "$CRYPTO_DIR" \
+        -I "$JAVA_INC" \
+        -I "$JNI_MD_INC" \
+        "$CRYPTO_DIR/CryptStateOCB2.cpp" \
+        "$CRYPTO_DIR/NativeCryptStateJni.cpp" \
+        -lpthread \
+        -o "$BUILD_DIR/libhumlaaudio.${SO_EXT}"
+fi

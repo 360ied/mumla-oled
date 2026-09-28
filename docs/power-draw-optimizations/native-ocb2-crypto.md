@@ -334,30 +334,18 @@ Because the host JVM does not have Android's Bionic C runtime or Android NDK `.s
 - [`HumlaUDPReceiveThreadTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPReceiveThreadTest.java)
 - [`HumlaUDPSendQueueTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPSendQueueTest.java)
 
-### Dual-Engine Strategy
+### Host JNI Shared Library Strategy
 
-To ensure seamless host test execution while achieving full native acceleration on Android devices:
+To ensure seamless host test execution while maintaining a single, unified native cryptographic engine across both host tests and Android production:
 
-1. **Graceful Native Detection in `CryptState.java`**:
-   ```java
-   private static final boolean sNativeAvailable;
-   static {
-       boolean loaded = false;
-       try {
-           System.loadLibrary("jniopus");
-           System.loadLibrary("humlaaudio");
-           loaded = nativeIsSupported();
-       } catch (Throwable t) {
-           loaded = false;
-       }
-       sNativeAvailable = loaded;
-   }
-   ```
-2. **Optimized Java Fallback for Host JVM**:
-   - When running under host JVM unit tests (`!sNativeAvailable`), [`CryptState.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) executes a clean Java fallback.
-   - The Java fallback will also be optimized to replace inner-loop allocations (`new byte[16]`) with pre-allocated scratch fields.
+1. **Host JNI Shared Library Compilation in `scripts/test_native_audio.sh`**:
+   - `scripts/test_native_audio.sh` compiles `CryptStateOCB2.cpp` and `NativeCryptStateJni.cpp` into a host shared library (`libhumlaaudio.so` / `libhumlaaudio.dylib`) under `build/test-native/` using host `$CXX` and JDK JNI headers from `$JAVA_HOME/include`.
+   - `libraries/humla/build.gradle` injects `-Djava.library.path=${project.rootDir}/build/test-native` into all `Test` tasks.
+2. **Pure JNI Binding in `CryptState.java`**:
+   - [`CryptState.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) acts as a clean, thin JNI wrapper over `libhumlaaudio.so`.
+   - The legacy Java OCB2 cipher, Galois field arithmetic, and software fallback loops are eliminated completely, ensuring zero divergence between test and production environments.
 3. **Dedicated Native C++ Host Test Suite**:
-   - A standalone C++ test runner ([`test_crypt_state.cpp`](../../libraries/humla/src/test/cpp/test_crypt_state.cpp)) will be added to [`scripts/test_native_audio.sh`](../../scripts/test_native_audio.sh).
+   - A standalone C++ test runner ([`test_crypt_state.cpp`](../../libraries/humla/src/test/cpp/test_crypt_state.cpp)) runs in [`scripts/test_native_audio.sh`](../../scripts/test_native_audio.sh).
    - This compiles directly on the host using `g++ -std=c++17` and executes:
      - Official `draft-krovetz-ocb-00.txt` test vectors.
      - Inoue-Minematsu XEX* attack validation.
@@ -390,8 +378,8 @@ flowchart LR
    - Add new source files to `LOCAL_SRC_FILES` in `libraries/humla/src/main/jni/Android.mk` under `humlaaudio`.
    - Add `$(ROOT)/crypto` to `LOCAL_C_INCLUDES` and `-march=armv8-a+crypto` under `arm64-v8a` in `Android.mk`.
 5. **Java Transport Integration**:
-   - Update `libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java` to route through native JNI on Android with in-place buffer execution and fallback to Java on host.
+   - Update `libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java` to route through native JNI on Android and host tests with in-place buffer execution.
    - Synchronize packet counters (`mUiGood`, `mUiRemoteGood`) and timestamp tracking (`getLastGoodElapsed()`) with the native engine for `AdaptiveKeepalive` and crypt resync compatibility.
-   - Clean up inner-loop allocations in Java fallback.
+   - Eliminate legacy Java OCB2 cipher, Galois arithmetic, and software fallback loops.
 6. **Pre-Completion Verification**:
    - Run `./scripts/check.sh` inside the worktree to verify both host native tests and Gradle test suites pass without regression.
