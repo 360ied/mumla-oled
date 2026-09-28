@@ -40,13 +40,19 @@ Java_se_lublin_humla_net_CryptState_nativeIsSupported(JNIEnv *, jclass) {
 
 JNIEXPORT jlong JNICALL
 Java_se_lublin_humla_net_CryptState_nativeCreate(JNIEnv *, jobject) {
-    return reinterpret_cast<jlong>(new CryptStateOCB2());
+    CryptStateOCB2 *cs = new (std::nothrow) CryptStateOCB2();
+    return reinterpret_cast<jlong>(cs);
 }
 
 JNIEXPORT void JNICALL
 Java_se_lublin_humla_net_CryptState_nativeDestroy(JNIEnv *, jobject, jlong handle) {
     CryptStateOCB2 *cs = getCryptState(handle);
-    delete cs;
+    if (cs) {
+        {
+            std::scoped_lock lock(cs->getEncryptMutex(), cs->getDecryptMutex());
+        }
+        delete cs;
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -182,6 +188,8 @@ Java_se_lublin_humla_net_CryptState_nativeEncrypt(
         return nullptr;
     }
 
+    std::unique_lock lock(cs->getEncryptMutex());
+
     jbyte *srcPtr = static_cast<jbyte *>(env->GetPrimitiveArrayCritical(source, nullptr));
     if (!srcPtr) {
         return nullptr;
@@ -193,12 +201,13 @@ Java_se_lublin_humla_net_CryptState_nativeEncrypt(
         return nullptr;
     }
 
-    bool ok = cs->encrypt(reinterpret_cast<const uint8_t *>(srcPtr),
-                          reinterpret_cast<uint8_t *>(dstPtr),
-                          static_cast<uint32_t>(length));
+    bool ok = cs->encryptUnlocked(reinterpret_cast<const uint8_t *>(srcPtr),
+                                  reinterpret_cast<uint8_t *>(dstPtr),
+                                  static_cast<uint32_t>(length));
 
     env->ReleasePrimitiveArrayCritical(dst, dstPtr, 0);
     env->ReleasePrimitiveArrayCritical(source, srcPtr, JNI_ABORT);
+    lock.unlock();
 
     if (!ok) {
         return nullptr;
@@ -229,6 +238,8 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         return nullptr;
     }
 
+    std::unique_lock lock(cs->getDecryptMutex());
+
     jbyte *srcPtr = static_cast<jbyte *>(env->GetPrimitiveArrayCritical(source, nullptr));
     if (!srcPtr) {
         return nullptr;
@@ -240,12 +251,13 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         return nullptr;
     }
 
-    bool ok = cs->decrypt(reinterpret_cast<const uint8_t *>(srcPtr),
-                          reinterpret_cast<uint8_t *>(dstPtr),
-                          static_cast<uint32_t>(length));
+    bool ok = cs->decryptUnlocked(reinterpret_cast<const uint8_t *>(srcPtr),
+                                  reinterpret_cast<uint8_t *>(dstPtr),
+                                  static_cast<uint32_t>(length));
 
     env->ReleasePrimitiveArrayCritical(dst, dstPtr, 0);
     env->ReleasePrimitiveArrayCritical(source, srcPtr, JNI_ABORT);
+    lock.unlock();
 
     if (!ok) {
         return nullptr;
@@ -271,15 +283,18 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
         return -1;
     }
 
+    std::unique_lock lock(cs->getDecryptMutex());
+
     jbyte *bufPtr = static_cast<jbyte *>(env->GetPrimitiveArrayCritical(buffer, nullptr));
     if (!bufPtr) {
         return -1;
     }
 
     uint8_t *data = reinterpret_cast<uint8_t *>(bufPtr) + offset;
-    bool ok = cs->decrypt(data, data, static_cast<uint32_t>(cryptedLength));
+    bool ok = cs->decryptUnlocked(data, data, static_cast<uint32_t>(cryptedLength));
 
     env->ReleasePrimitiveArrayCritical(buffer, bufPtr, 0);
+    lock.unlock();
 
     if (!ok) {
         return -1;

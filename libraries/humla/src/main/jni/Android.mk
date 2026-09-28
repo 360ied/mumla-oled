@@ -90,9 +90,6 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    crypto/CryptStateOCB2.cpp \
                    crypto/NativeCryptStateJni.cpp
 LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 -fno-math-errno -fvectorize $(COMMON_CFLAGS) -DVAR_ARRAYS -Wno-\#warnings
-ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
-LOCAL_CFLAGS += -march=armv8-a+crypto
-endif
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus
 LOCAL_LDLIBS := -llog

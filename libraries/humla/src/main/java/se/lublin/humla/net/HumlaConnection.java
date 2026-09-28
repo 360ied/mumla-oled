@@ -582,6 +582,9 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
         mTCP = null;
         mUDP = null;
         mPingTask = null;
+        if (mCryptState != null) {
+            mCryptState.destroy();
+        }
     }
 
     /**

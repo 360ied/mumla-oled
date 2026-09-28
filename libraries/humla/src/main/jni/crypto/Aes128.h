@@ -26,8 +26,18 @@
 #include <cpuid.h>
 #endif
 
-#if defined(__ARM_NEON) || defined(__aarch64__)
+#if defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__linux__) || defined(__ANDROID__)
+#include <sys/auxv.h>
+#include <asm/hwcap.h>
+#ifndef HWCAP_AES
+#define HWCAP_AES (1 << 0)
+#endif
+#endif
 #endif
 
 namespace humla::crypto {
@@ -91,8 +101,8 @@ static inline uint8_t gmul(uint8_t a, uint8_t b) {
 }
 
 struct Aes128Key {
-    uint8_t round_keys[176];     // 11 * 16 bytes
-    uint8_t inv_round_keys[176]; // 11 * 16 bytes for equivalent inverse cipher / AES-NI
+    alignas(16) uint8_t round_keys[176];     // 11 * 16 bytes
+    alignas(16) uint8_t inv_round_keys[176]; // 11 * 16 bytes for equivalent inverse cipher / AES-NI
     bool is_initialized = false;
     bool has_hw_aes = false;
 
@@ -151,8 +161,15 @@ inline void aes128_key_expansion(const uint8_t key[16], Aes128Key *k) {
 #if defined(__x86_64__) || defined(_M_X64)
     unsigned int eax, ebx, ecx, edx;
     k->has_hw_aes = (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & (1 << 25)));
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__linux__) || defined(__ANDROID__)
+    unsigned long hwcap = getauxval(AT_HWCAP);
+    k->has_hw_aes = (hwcap & HWCAP_AES) != 0;
 #elif defined(__ARM_FEATURE_CRYPTO) || defined(__ARM_FEATURE_AES)
     k->has_hw_aes = true;
+#else
+    k->has_hw_aes = false;
+#endif
 #else
     k->has_hw_aes = false;
 #endif
@@ -260,15 +277,23 @@ static inline void aes128_decrypt_ni(const uint8_t in[16], uint8_t out[16], cons
 }
 #endif
 
-#if defined(__ARM_FEATURE_CRYPTO) || defined(__ARM_FEATURE_AES)
+#if defined(__aarch64__) || defined(_M_ARM64)
 static inline void aes128_encrypt_arm(const uint8_t in[16], uint8_t out[16], const Aes128Key *key) {
     uint8x16_t m = vld1q_u8(in);
     const uint8_t *rk = key->round_keys;
     for (int i = 0; i < 9; i++) {
-        m = vaeseq_u8(m, vld1q_u8(rk + i * 16));
-        m = vaesmcq_u8(m);
+        uint8x16_t k = vld1q_u8(rk + i * 16);
+        asm(".arch armv8-a+crypto\n\t"
+            "aese %0.16b, %1.16b\n\t"
+            "aesmc %0.16b, %0.16b"
+            : "+w"(m)
+            : "w"(k));
     }
-    m = vaeseq_u8(m, vld1q_u8(rk + 9 * 16));
+    uint8x16_t k9 = vld1q_u8(rk + 9 * 16);
+    asm(".arch armv8-a+crypto\n\t"
+        "aese %0.16b, %1.16b"
+        : "+w"(m)
+        : "w"(k9));
     m = veorq_u8(m, vld1q_u8(rk + 10 * 16));
     vst1q_u8(out, m);
 }
@@ -277,10 +302,18 @@ static inline void aes128_decrypt_arm(const uint8_t in[16], uint8_t out[16], con
     uint8x16_t m = vld1q_u8(in);
     const uint8_t *irk = key->inv_round_keys;
     for (int i = 0; i < 9; i++) {
-        m = vaesdq_u8(m, vld1q_u8(irk + i * 16));
-        m = vaesimcq_u8(m);
+        uint8x16_t k = vld1q_u8(irk + i * 16);
+        asm(".arch armv8-a+crypto\n\t"
+            "aesd %0.16b, %1.16b\n\t"
+            "aesimc %0.16b, %0.16b"
+            : "+w"(m)
+            : "w"(k));
     }
-    m = vaesdq_u8(m, vld1q_u8(irk + 9 * 16));
+    uint8x16_t k9 = vld1q_u8(irk + 9 * 16);
+    asm(".arch armv8-a+crypto\n\t"
+        "aesd %0.16b, %1.16b"
+        : "+w"(m)
+        : "w"(k9));
     m = veorq_u8(m, vld1q_u8(irk + 10 * 16));
     vst1q_u8(out, m);
 }
@@ -292,7 +325,7 @@ inline void aes128_encrypt_block(const uint8_t in[16], uint8_t out[16], const Ae
         aes128_encrypt_ni(in, out, key);
         return;
     }
-#elif defined(__ARM_FEATURE_CRYPTO) || defined(__ARM_FEATURE_AES)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     if (key->has_hw_aes) {
         aes128_encrypt_arm(in, out, key);
         return;
@@ -307,7 +340,7 @@ inline void aes128_decrypt_block(const uint8_t in[16], uint8_t out[16], const Ae
         aes128_decrypt_ni(in, out, key);
         return;
     }
-#elif defined(__ARM_FEATURE_CRYPTO) || defined(__ARM_FEATURE_AES)
+#elif defined(__aarch64__) || defined(_M_ARM64)
     if (key->has_hw_aes) {
         aes128_decrypt_arm(in, out, key);
         return;

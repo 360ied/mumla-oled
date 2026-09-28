@@ -82,16 +82,18 @@ bool CryptStateOCB2::isValid() const {
 
 void CryptStateOCB2::genKey() {
     std::scoped_lock lock(m_encryptMutex, m_decryptMutex);
-    int fd = open("/dev/urandom", O_RDONLY);
+    int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+    bool readOk = false;
     if (fd >= 0) {
         ssize_t r1 = read(fd, raw_key, AES_KEY_SIZE_BYTES);
         ssize_t r2 = read(fd, encrypt_iv, AES_BLOCK_SIZE);
         ssize_t r3 = read(fd, decrypt_iv, AES_BLOCK_SIZE);
         close(fd);
-        (void)r1;
-        (void)r2;
-        (void)r3;
-    } else {
+        if (r1 == AES_KEY_SIZE_BYTES && r2 == AES_BLOCK_SIZE && r3 == AES_BLOCK_SIZE) {
+            readOk = true;
+        }
+    }
+    if (!readOk) {
         std::random_device rd;
         for (int i = 0; i < AES_KEY_SIZE_BYTES; i++) raw_key[i] = static_cast<uint8_t>(rd());
         for (int i = 0; i < AES_BLOCK_SIZE; i++) encrypt_iv[i] = static_cast<uint8_t>(rd());
@@ -145,9 +147,18 @@ void CryptStateOCB2::getRawKey(uint8_t out[16]) const {
 }
 
 bool CryptStateOCB2::encrypt(const uint8_t *source, uint8_t *dst, uint32_t plain_length) {
-    if (!bInit || !source || !dst) return false;
-    uint8_t tag[AES_BLOCK_SIZE];
     std::lock_guard lock(m_encryptMutex);
+    return encryptUnlocked(source, dst, plain_length);
+}
+
+bool CryptStateOCB2::encryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t plain_length) {
+    if (!bInit.load() || !source || !dst) return false;
+    // Reject invalid overlapping buffers
+    if (source < dst + 4 && dst < source + plain_length) {
+        return false;
+    }
+
+    uint8_t tag[AES_BLOCK_SIZE];
 
     for (int i = 0; i < AES_BLOCK_SIZE; i++) {
         if (++encrypt_iv[i])
@@ -166,7 +177,12 @@ bool CryptStateOCB2::encrypt(const uint8_t *source, uint8_t *dst, uint32_t plain
 }
 
 bool CryptStateOCB2::decrypt(const uint8_t *source, uint8_t *dst, uint32_t crypted_length) {
-    if (crypted_length < 4 || !bInit || !source || !dst) return false;
+    std::lock_guard lock(m_decryptMutex);
+    return decryptUnlocked(source, dst, crypted_length);
+}
+
+bool CryptStateOCB2::decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t crypted_length) {
+    if (crypted_length < 4 || !bInit.load() || !source || !dst) return false;
     uint32_t plain_length = crypted_length - 4;
 
     uint8_t saveiv[AES_BLOCK_SIZE];
@@ -177,7 +193,6 @@ bool CryptStateOCB2::decrypt(const uint8_t *source, uint8_t *dst, uint32_t crypt
     int lost = 0;
     int late = 0;
 
-    std::lock_guard lock(m_decryptMutex);
     memcpy(saveiv, decrypt_iv, AES_BLOCK_SIZE);
 
     if (((decrypt_iv[0] + 1) & 0xFF) == ivbyte) {
@@ -236,12 +251,12 @@ bool CryptStateOCB2::decrypt(const uint8_t *source, uint8_t *dst, uint32_t crypt
 
     bool ocb_success;
     if (source == dst) {
-        ocb_success = ocb_decrypt(source + 4, const_cast<uint8_t *>(source) + 4, plain_length, decrypt_iv, tag);
+        ocb_success = ocb_decrypt(source + 4, dst + 4, plain_length, decrypt_iv, tag);
         if (!ocb_success || memcmp(tag, source + 1, 3) != 0) {
             memcpy(decrypt_iv, saveiv, AES_BLOCK_SIZE);
             return false;
         }
-        memmove(const_cast<uint8_t *>(dst), source + 4, plain_length);
+        memmove(dst, source + 4, plain_length);
     } else {
         ocb_success = ocb_decrypt(source + 4, dst, plain_length, decrypt_iv, tag);
         if (!ocb_success || memcmp(tag, source + 1, 3) != 0) {
@@ -393,6 +408,8 @@ int32_t CryptStateOCB2::getLost() const { return m_statLost.load(); }
 int32_t CryptStateOCB2::getResync() const { return m_statResync.load(); }
 
 int64_t CryptStateOCB2::getLastGoodElapsedUs() const {
+    if (!m_hasLastGood.load()) return -1;
+    std::lock_guard lock(m_decryptMutex);
     if (!m_hasLastGood.load()) return -1;
     auto now = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::microseconds>(now - m_lastGoodTime).count();

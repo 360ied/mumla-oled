@@ -52,6 +52,12 @@ public:
     bool encrypt(const uint8_t *source, uint8_t *dst, uint32_t plain_length);
     bool decrypt(const uint8_t *source, uint8_t *dst, uint32_t crypted_length);
 
+    bool encryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t plain_length);
+    bool decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t crypted_length);
+
+    std::mutex &getEncryptMutex() const { return m_encryptMutex; }
+    std::mutex &getDecryptMutex() const { return m_decryptMutex; }
+
     bool ocb_encrypt(const uint8_t *plain, uint8_t *encrypted, uint32_t len, const uint8_t *nonce,
                      uint8_t *tag, bool modifyPlainOnXEXStarAttack = true);
     bool ocb_decrypt(const uint8_t *encrypted, uint8_t *plain, uint32_t len, const uint8_t *nonce,
@@ -81,7 +87,7 @@ private:
 
     std::chrono::steady_clock::time_point m_lastGoodTime;
     std::atomic<bool> m_hasLastGood{false};
-    bool bInit = false;
+    std::atomic<bool> bInit{false};
 };
 
 } // namespace humla::crypto

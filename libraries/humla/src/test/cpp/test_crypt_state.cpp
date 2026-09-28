@@ -259,44 +259,161 @@ static void test_iv_recovery_and_replay_detection() {
     printf("  [PASS] IV recovery, packet loss tracking, and replay detection\n");
 }
 
-static void test_concurrency_stress() {
-    printf("Testing concurrent multi-threaded encrypt and decrypt stress...\n");
+static void test_wraparound_and_replay_stress() {
+    printf("Testing 256+ packet wraparound, unrecoverable drift, and 512-packet replay...\n");
 
-    const uint8_t rawkey[AES_BLOCK_SIZE] = {
+    CryptStateOCB2 enc, dec;
+    enc.genKey();
+
+    uint8_t rawkey[AES_BLOCK_SIZE];
+    uint8_t eiv[AES_BLOCK_SIZE];
+    uint8_t div[AES_BLOCK_SIZE];
+    enc.getRawKey(rawkey);
+    enc.getEncryptIV(eiv);
+    enc.getDecryptIV(div);
+
+    // dec uses enc's encrypt_iv as its decrypt_iv, and vice versa
+    dec.setKey(rawkey, div, eiv);
+
+    const uint8_t secret[10] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 0};
+    uint8_t crypted[512][14];
+    uint8_t decr[10];
+
+    // Extensive replay test: encrypt 512 packets
+    for (int i = 0; i < 512; i++) {
+        assert(enc.encrypt(secret, crypted[i], 10));
+    }
+    // Decrypt all 512 packets in order
+    for (int i = 0; i < 512; i++) {
+        assert(dec.decrypt(crypted[i], decr, 14));
+        assert(memcmp(secret, decr, 10) == 0);
+    }
+    // Replay attack: attempting to replay all 512 packets must be rejected
+    for (int i = 0; i < 512; i++) {
+        assert(!dec.decrypt(crypted[i], decr, 14));
+    }
+
+    // Wraparound test: 128 cycles of 15 packets lost, recovering correctly
+    for (int i = 0; i < 128; i++) {
+        uint8_t pkt[14];
+        for (int j = 0; j < 15; j++) {
+            assert(enc.encrypt(secret, pkt, 10));
+        }
+        assert(dec.decrypt(pkt, decr, 14));
+        assert(memcmp(secret, decr, 10) == 0);
+    }
+
+    uint8_t enc_iv[AES_BLOCK_SIZE], dec_iv[AES_BLOCK_SIZE];
+    enc.getEncryptIV(enc_iv);
+    dec.getDecryptIV(dec_iv);
+    assert(memcmp(enc_iv, dec_iv, AES_BLOCK_SIZE) == 0);
+
+    // Wrap too far (> 256 packets skipped without resync)
+    uint8_t drift_pkt[14];
+    for (int i = 0; i < 257; i++) {
+        assert(enc.encrypt(secret, drift_pkt, 10));
+    }
+    // Must fail to decrypt due to excessive IV drift
+    assert(!dec.decrypt(drift_pkt, decr, 14));
+
+    // Resynchronize decrypt IV to match sender's encrypt IV
+    enc.getEncryptIV(enc_iv);
+    assert(dec.setDecryptIV(enc_iv));
+
+    // After resync, next packet decrypts successfully
+    assert(enc.encrypt(secret, drift_pkt, 10));
+    assert(dec.decrypt(drift_pkt, decr, 14));
+    assert(memcmp(secret, decr, 10) == 0);
+
+    printf("  [PASS] 256+ packet wraparound, drift detection, and 512-packet replay\n");
+}
+
+static void test_concurrency_stress() {
+    printf("Testing concurrent full-duplex multi-threaded encrypt and decrypt on single instance...\n");
+
+    const uint8_t key1[AES_BLOCK_SIZE] = {
         0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
         0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44
     };
+    const uint8_t iv1[AES_BLOCK_SIZE] = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
+    };
+    const uint8_t iv2[AES_BLOCK_SIZE] = {
+        0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+        0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0
+    };
 
-    CryptStateOCB2 client, server;
-    client.setKey(rawkey, rawkey, rawkey);
-    server.setKey(rawkey, rawkey, rawkey);
+    // 'local' represents the full-duplex client.
+    // Outbound uses key1, encrypt_iv = iv1.
+    // Inbound uses key1, decrypt_iv = iv2.
+    CryptStateOCB2 local;
+    local.setKey(key1, iv1, iv2);
 
-    std::atomic<bool> stop{false};
-    constexpr int NUM_PACKETS = 500;
+    // 'remote' is the peer talking to 'local'.
+    // remote outbound uses encrypt_iv = iv2, decrypt_iv = iv1.
+    CryptStateOCB2 remote;
+    remote.setKey(key1, iv2, iv1);
 
-    // Sender thread: client encrypts packets
-    std::vector<std::vector<uint8_t>> client_to_server(NUM_PACKETS);
+    constexpr int NUM_PACKETS = 1000;
+    constexpr int PAYLOAD_LEN = 48;
+
+    // Pre-encrypt 1000 packets from remote to feed into local.decrypt concurrently
+    std::vector<std::vector<uint8_t>> incoming_packets(NUM_PACKETS, std::vector<uint8_t>(PAYLOAD_LEN + 4));
+    for (int i = 0; i < NUM_PACKETS; i++) {
+        uint8_t plain[PAYLOAD_LEN];
+        memset(plain, static_cast<uint8_t>(i & 0xff), PAYLOAD_LEN);
+        bool ok = remote.encrypt(plain, incoming_packets[i].data(), PAYLOAD_LEN);
+        assert(ok);
+    }
+
+    std::vector<std::vector<uint8_t>> outbound_packets(NUM_PACKETS, std::vector<uint8_t>(PAYLOAD_LEN + 4));
+    std::atomic<bool> start_gate{false};
+
+    // Thread 1: Outbound transmit - encrypts on local concurrently
     std::thread sender([&]() {
-        uint8_t payload[48];
-        memset(payload, 0x3c, sizeof(payload));
+        while (!start_gate.load()) {
+            std::this_thread::yield();
+        }
+        uint8_t mic_sample[PAYLOAD_LEN];
         for (int i = 0; i < NUM_PACKETS; i++) {
-            client_to_server[i].resize(sizeof(payload) + 4);
-            bool ok = client.encrypt(payload, client_to_server[i].data(), sizeof(payload));
+            memset(mic_sample, static_cast<uint8_t>(i ^ 0x5a), PAYLOAD_LEN);
+            bool ok = local.encrypt(mic_sample, outbound_packets[i].data(), PAYLOAD_LEN);
             assert(ok);
         }
     });
 
+    // Thread 2: Inbound receive - decrypts on local concurrently
+    std::thread receiver([&]() {
+        while (!start_gate.load()) {
+            std::this_thread::yield();
+        }
+        uint8_t recv_buf[PAYLOAD_LEN];
+        for (int i = 0; i < NUM_PACKETS; i++) {
+            bool ok = local.decrypt(incoming_packets[i].data(), recv_buf, incoming_packets[i].size());
+            assert(ok);
+            assert(recv_buf[0] == static_cast<uint8_t>(i & 0xff));
+        }
+    });
+
+    // Release both threads simultaneously
+    start_gate.store(true);
+
     sender.join();
+    receiver.join();
 
-    // Receiver thread: server decrypts client packets
+    assert(local.getGood() == NUM_PACKETS);
+
+    // Verify remote peer can decrypt all outbound packets produced concurrently by local
     for (int i = 0; i < NUM_PACKETS; i++) {
-        uint8_t plain[48];
-        bool ok = server.decrypt(client_to_server[i].data(), plain, client_to_server[i].size());
+        uint8_t decoded[PAYLOAD_LEN];
+        bool ok = remote.decrypt(outbound_packets[i].data(), decoded, outbound_packets[i].size());
         assert(ok);
+        assert(decoded[0] == static_cast<uint8_t>(i ^ 0x5a));
     }
-    assert(server.getGood() == NUM_PACKETS);
+    assert(remote.getGood() == NUM_PACKETS);
 
-    printf("  [PASS] Concurrent stress and decoupled encrypt/decrypt mutexes\n");
+    printf("  [PASS] Concurrent full-duplex stress on single CryptStateOCB2 instance (%d packets)\n", NUM_PACKETS);
 }
 
 int main() {
@@ -306,6 +423,7 @@ int main() {
     test_authcrypt_roundtrip_and_inplace();
     test_xex_star_attack_mitigation();
     test_iv_recovery_and_replay_detection();
+    test_wraparound_and_replay_stress();
     test_concurrency_stress();
     printf("=== All CryptStateOCB2 Native Tests Passed! ===\n");
     return 0;

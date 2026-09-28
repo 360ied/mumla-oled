@@ -96,8 +96,10 @@ public class CryptState {
 
     public synchronized void destroy() {
         if (mNativeHandle != 0) {
-            nativeDestroy(mNativeHandle);
+            long handle = mNativeHandle;
             mNativeHandle = 0;
+            mInit = false;
+            nativeDestroy(handle);
         }
     }
 
@@ -173,6 +175,14 @@ public class CryptState {
 
         if (mNativeHandle != 0) {
             mInit = nativeSetKeys(mNativeHandle, rkey, eiv, div);
+            try {
+                mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
+                mDecryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
+                final SecretKeySpec cryptKey = new SecretKeySpec(rkey, "AES");
+                mEncryptCipher.init(Cipher.ENCRYPT_MODE, cryptKey);
+                mDecryptCipher.init(Cipher.DECRYPT_MODE, cryptKey);
+            } catch (final Exception ignored) {
+            }
         } else {
             try {
                 mEncryptCipher = Cipher.getInstance(AES_TRANSFORMATION);
@@ -187,6 +197,10 @@ public class CryptState {
             mDecryptCipher.init(Cipher.DECRYPT_MODE, cryptKey);
             mInit = true;
         }
+
+        if (mInit) {
+            mLastGoodStart = System.nanoTime();
+        }
     }
 
     /**
@@ -194,11 +208,12 @@ public class CryptState {
      * @param source The encoded audio data.
      * @param length The length of the source array.
      */
-    public synchronized byte[] decrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
+    public byte[] decrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
         if (length < 4 || !mInit || source == null) return null;
 
-        if (mNativeHandle != 0) {
-            byte[] decrypted = nativeDecrypt(mNativeHandle, source, length);
+        final long nativeHandle = mNativeHandle;
+        if (nativeHandle != 0) {
+            byte[] decrypted = nativeDecrypt(nativeHandle, source, length);
             if (decrypted != null) {
                 syncStatsFromNative();
                 mLastGoodStart = System.nanoTime();
@@ -206,105 +221,119 @@ public class CryptState {
             return decrypted;
         }
 
-        final int plainLength = length - 4;
-        byte[] dst = new byte[plainLength];
+        synchronized (this) {
+            if (!mInit) return null;
 
-        final byte[] saveiv = new byte[AES_BLOCK_SIZE];
-        final short ivbyte = (short) (source[0] & 0xFF);
-        boolean restore = false;
-        final byte[] tag = new byte[AES_BLOCK_SIZE];
+            final int plainLength = length - 4;
+            byte[] dst = new byte[plainLength];
 
-        int lost = 0;
-        int late = 0;
+            final byte[] saveiv = new byte[AES_BLOCK_SIZE];
+            final short ivbyte = (short) (source[0] & 0xFF);
+            boolean restore = false;
+            final byte[] tag = new byte[AES_BLOCK_SIZE];
 
-        System.arraycopy(mDecryptIV, 0, saveiv, 0, AES_BLOCK_SIZE);
+            int lost = 0;
+            int late = 0;
 
-        if (((mDecryptIV[0] + 1) & 0xFF) == ivbyte) {
-            // In order as expected.
-            if (ivbyte > (mDecryptIV[0] & 0xFF)) {
-                mDecryptIV[0] = (byte) ivbyte;
-            } else if (ivbyte < (mDecryptIV[0] & 0xFF)) {
-                mDecryptIV[0] = (byte) ivbyte;
-                for (int i = 1; i < AES_BLOCK_SIZE; i++) {
-                    if ((++mDecryptIV[i]) != 0) {
-                        break;
+            System.arraycopy(mDecryptIV, 0, saveiv, 0, AES_BLOCK_SIZE);
+
+            if (((mDecryptIV[0] + 1) & 0xFF) == ivbyte) {
+                // In order as expected.
+                if (ivbyte > (mDecryptIV[0] & 0xFF)) {
+                    mDecryptIV[0] = (byte) ivbyte;
+                } else if (ivbyte < (mDecryptIV[0] & 0xFF)) {
+                    mDecryptIV[0] = (byte) ivbyte;
+                    for (int i = 1; i < AES_BLOCK_SIZE; i++) {
+                        if ((++mDecryptIV[i]) != 0) {
+                            break;
+                        }
                     }
+                } else {
+                    return null;
                 }
             } else {
-                return null;
-            }
-        } else {
-            // This is either out of order or a repeat.
-            int diff = ivbyte - (mDecryptIV[0] & 0xFF);
-            if (diff > 128) {
-                diff = diff - 256;
-            } else if (diff < -128) {
-                diff = diff + 256;
+                // This is either out of order or a repeat.
+                int diff = ivbyte - (mDecryptIV[0] & 0xFF);
+                if (diff > 128) {
+                    diff = diff - 256;
+                } else if (diff < -128) {
+                    diff = diff + 256;
+                }
+
+                if ((ivbyte < (mDecryptIV[0] & 0xFF)) && (diff > -30) && (diff < 0)) {
+                    // Late packet, but no wraparound.
+                    late = 1;
+                    lost = -1;
+                    mDecryptIV[0] = (byte) ivbyte;
+                    restore = true;
+                } else if ((ivbyte > (mDecryptIV[0] & 0xFF)) && (diff > -30) &&
+                        (diff < 0)) {
+                    // Last was 0x02, here comes 0xff from last round
+                    late = 1;
+                    lost = -1;
+                    mDecryptIV[0] = (byte) ivbyte;
+                    for (int i = 1; i < AES_BLOCK_SIZE; i++) {
+                        if ((mDecryptIV[i]--) != 0) {
+                            break;
+                        }
+                    }
+                    restore = true;
+                } else if ((ivbyte > (mDecryptIV[0] & 0xFF)) && (diff > 0)) {
+                    // Lost a few packets, but beyond that we're good.
+                    lost = ivbyte - (mDecryptIV[0] & 0xFF) - 1;
+                    mDecryptIV[0] = (byte) ivbyte;
+                } else if ((ivbyte < (mDecryptIV[0] & 0xFF)) && (diff > 0)) {
+                    // Lost a few packets, and wrapped around
+                    lost = 256 - (mDecryptIV[0] & 0xFF) + ivbyte - 1;
+                    mDecryptIV[0] = (byte) ivbyte;
+                    for (int i = 1; i < AES_BLOCK_SIZE; i++) {
+                        if ((++mDecryptIV[i]) != 0) {
+                            break;
+                        }
+                    }
+                } else {
+                    return null;
+                }
+
+                if (mDecryptHistory[mDecryptIV[0] & 0xFF] == mDecryptIV[1]) {
+                    System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
+                    return null;
+                }
             }
 
-            if ((ivbyte < (mDecryptIV[0] & 0xFF)) && (diff > -30) && (diff < 0)) {
-                // Late packet, but no wraparound.
-                late = 1;
-                lost = -1;
-                mDecryptIV[0] = (byte) ivbyte;
-                restore = true;
-            } else if ((ivbyte > (mDecryptIV[0] & 0xFF)) && (diff > -30) &&
-                    (diff < 0)) {
-                // Last was 0x02, here comes 0xff from last round
-                late = 1;
-                lost = -1;
-                mDecryptIV[0] = (byte) ivbyte;
-                for (int i = 1; i < AES_BLOCK_SIZE; i++) {
-                    if ((mDecryptIV[i]--) != 0) {
-                        break;
-                    }
-                }
-                restore = true;
-            } else if ((ivbyte > (mDecryptIV[0] & 0xFF)) && (diff > 0)) {
-                // Lost a few packets, but beyond that we're good.
-                lost = ivbyte - (mDecryptIV[0] & 0xFF) - 1;
-                mDecryptIV[0] = (byte) ivbyte;
-            } else if ((ivbyte < (mDecryptIV[0] & 0xFF)) && (diff > 0)) {
-                // Lost a few packets, and wrapped around
-                lost = 256 - (mDecryptIV[0] & 0xFF) + ivbyte - 1;
-                mDecryptIV[0] = (byte) ivbyte;
-                for (int i = 1; i < AES_BLOCK_SIZE; i++) {
-                    if ((++mDecryptIV[i]) != 0) {
-                        break;
-                    }
-                }
-            } else {
-                return null;
-            }
+            ocbDecrypt(source, 4, dst, 0, plainLength, mDecryptIV, tag);
 
-            if (mDecryptHistory[mDecryptIV[0] & 0xFF] == mDecryptIV[1]) {
+            if (tag[0] != source[1] || tag[1] != source[2] || tag[2] != source[3]) {
                 System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
                 return null;
             }
+            mDecryptHistory[mDecryptIV[0] & 0xff] = mDecryptIV[1];
+
+            if (restore)
+                System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
+
+            mUiGood++;
+            if (late > 0) {
+                mUiLate += late;
+            } else if (mUiLate > Math.abs(late)) {
+                mUiLate -= Math.abs(late);
+            }
+
+            if (lost > 0) {
+                mUiLost += lost;
+            } else if (mUiLost > Math.abs(lost)) {
+                mUiLost -= Math.abs(lost);
+            }
+
+            mLastGoodStart = System.nanoTime();
+            return dst;
         }
-
-        ocbDecrypt(source, 4, dst, 0, plainLength, mDecryptIV, tag);
-
-        if (tag[0] != source[1] || tag[1] != source[2] || tag[2] != source[3]) {
-            System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
-            return null;
-        }
-        mDecryptHistory[mDecryptIV[0] & 0xff] = mDecryptIV[1];
-
-        if (restore)
-            System.arraycopy(saveiv, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
-
-        mUiGood++;
-        mUiLate += late;
-        mUiLost += lost;
-
-        mLastGoodStart = System.nanoTime();
-        return dst;
     }
 
-    public synchronized int decryptInPlace(final byte[] data, final int offset, final int length) {
-        if (mNativeHandle != 0) {
-            int plainLength = nativeDecryptInPlace(mNativeHandle, data, offset, length);
+    public int decryptInPlace(final byte[] data, final int offset, final int length) {
+        final long nativeHandle = mNativeHandle;
+        if (nativeHandle != 0) {
+            int plainLength = nativeDecryptInPlace(nativeHandle, data, offset, length);
             if (plainLength >= 0) {
                 syncStatsFromNative();
                 mLastGoodStart = System.nanoTime();
@@ -368,7 +397,7 @@ public class CryptState {
             }
         }
 
-        S3(delta);
+        CryptSupport.S3(delta);
         CryptSupport.XOR(tmp, delta, checksum);
 
         mEncryptCipher.doFinal(tmp, 0, AES_BLOCK_SIZE, tag);
@@ -378,35 +407,40 @@ public class CryptState {
         }
     }
 
-    public synchronized byte[] encrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
+    public byte[] encrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
         if (!mInit || source == null) return null;
 
-        if (mNativeHandle != 0) {
-            byte[] encrypted = nativeEncrypt(mNativeHandle, source, length);
+        final long nativeHandle = mNativeHandle;
+        if (nativeHandle != 0) {
+            byte[] encrypted = nativeEncrypt(nativeHandle, source, length);
             if (encrypted != null) {
                 mEncryptIV[0] = encrypted[0];
             }
             return encrypted;
         }
 
-        final byte[] tag = new byte[AES_BLOCK_SIZE];
+        synchronized (this) {
+            if (!mInit) return null;
 
-        // First, increase our IV.
-        for (int i = 0; i < AES_BLOCK_SIZE; i++) {
-            if ((++mEncryptIV[i]) != 0) {
-                break;
+            final byte[] tag = new byte[AES_BLOCK_SIZE];
+
+            // First, increase our IV.
+            for (int i = 0; i < AES_BLOCK_SIZE; i++) {
+                if ((++mEncryptIV[i]) != 0) {
+                    break;
+                }
             }
+
+            final byte[] dst = new byte[length + 4];
+            ocbEncrypt(source, 0, dst, 4, length, mEncryptIV, tag);
+
+            dst[0] = mEncryptIV[0];
+            dst[1] = tag[0];
+            dst[2] = tag[1];
+            dst[3] = tag[2];
+
+            return dst;
         }
-
-        final byte[] dst = new byte[length + 4];
-        ocbEncrypt(source, 0, dst, 4, length, mEncryptIV, tag);
-
-        dst[0] = mEncryptIV[0];
-        dst[1] = tag[0];
-        dst[2] = tag[1];
-        dst[3] = tag[2];
-
-        return dst;
     }
 
     public void ocbEncrypt(byte[] plain, byte[] encrypted, int plainLength, byte[] nonce, byte[] tag) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
@@ -473,17 +507,15 @@ public class CryptState {
     }
 
     private void syncStatsFromNative() {
-        if (mNativeHandle != 0) {
-            nativeGetStats(mNativeHandle, mStatsBuffer);
-            mUiGood = mStatsBuffer[0];
-            mUiLate = mStatsBuffer[1];
-            mUiLost = mStatsBuffer[2];
-            mUiResync = mStatsBuffer[3];
+        final long nativeHandle = mNativeHandle;
+        if (nativeHandle != 0) {
+            synchronized (mStatsBuffer) {
+                nativeGetStats(nativeHandle, mStatsBuffer);
+                mUiGood = mStatsBuffer[0];
+                mUiLate = mStatsBuffer[1];
+                mUiLost = mStatsBuffer[2];
+            }
         }
-    }
-
-    private static void S3(final byte[] block) {
-        CryptSupport.S3(block);
     }
 
     /**
