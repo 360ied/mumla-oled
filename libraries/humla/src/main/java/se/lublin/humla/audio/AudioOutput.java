@@ -20,7 +20,6 @@ package se.lublin.humla.audio;
 
 import android.content.Context;
 import android.media.AudioAttributes;
-import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
@@ -28,7 +27,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
-import android.os.SystemClock;
 import android.util.Log;
 
 import java.nio.BufferUnderflowException;
@@ -61,8 +59,6 @@ public class AudioOutput implements Runnable,
     private final Object mInactiveLock = new Object();
     private final Handler mMainHandler;
     private final AudioOutputListener mListener;
-    private final Context mContext;
-    private final AudioManager mAudioManager;
 
     private volatile NativeAudioOutputEngine mEngine;
     private AudioTrack mAudioTrack;
@@ -77,8 +73,6 @@ public class AudioOutput implements Runnable,
 
     public AudioOutput(Context context, AudioOutputListener listener) {
         mListener = listener;
-        mContext = context != null ? context.getApplicationContext() : null;
-        mAudioManager = mContext != null ? (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE) : null;
         mMainHandler = new Handler(Looper.getMainLooper());
     }
 
@@ -534,20 +528,6 @@ public class AudioOutput implements Runnable,
         }
     }
 
-    public boolean isBluetoothScoActive() {
-        if (mAudioManager == null) return false;
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                AudioDeviceInfo commDevice = mAudioManager.getCommunicationDevice();
-                if (commDevice != null) {
-                    return commDevice.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
-                }
-            }
-            return mAudioManager.isBluetoothScoOn();
-        } catch (Exception ignored) {
-        }
-        return false;
-    }
 
     /**
      * Checks whether the native audio output engine currently has any active voices.

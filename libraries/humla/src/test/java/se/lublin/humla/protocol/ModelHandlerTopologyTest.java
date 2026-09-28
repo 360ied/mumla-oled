@@ -23,6 +23,7 @@ import android.content.res.Resources;
 import junit.framework.TestCase;
 
 import se.lublin.humla.model.Channel;
+import se.lublin.humla.model.User;
 import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.util.HumlaLogger;
 import se.lublin.humla.util.HumlaObserver;
@@ -183,5 +184,43 @@ public class ModelHandlerTopologyTest extends TestCase {
         // Must still have exactly 1 subchannel, no duplicate entries
         assertEquals(1, handler.getChannel(0).getSubchannels().size());
         assertEquals("SubRenamed", handler.getChannel(0).getSubchannels().get(0).getName());
+    }
+
+    public void testChannelListeningStateTracking() {
+        ModelHandler handler = createModelHandler();
+        handler.messageServerSync(Mumble.ServerSync.newBuilder().setSession(1).build());
+
+        // Channel 1 & 2
+        handler.messageChannelState(Mumble.ChannelState.newBuilder().setChannelId(1).setName("Ch1").build());
+        handler.messageChannelState(Mumble.ChannelState.newBuilder().setChannelId(2).setName("Ch2").build());
+
+        // Self user in Ch1
+        handler.messageUserState(Mumble.UserState.newBuilder()
+                .setSession(1)
+                .setName("Self")
+                .setChannelId(1)
+                .build());
+
+        User self = handler.getUser(1);
+        assertNotNull(self);
+        assertFalse(self.isListeningTo(2));
+
+        // Add listening channel 2
+        handler.messageUserState(Mumble.UserState.newBuilder()
+                .setSession(1)
+                .addListeningChannelAdd(2)
+                .build());
+
+        assertTrue(self.isListeningTo(2));
+        assertTrue(self.getListeningChannels().contains(2));
+
+        // Remove listening channel 2
+        handler.messageUserState(Mumble.UserState.newBuilder()
+                .setSession(1)
+                .addListeningChannelRemove(2)
+                .build());
+
+        assertFalse(self.isListeningTo(2));
+        assertFalse(self.getListeningChannels().contains(2));
     }
 }

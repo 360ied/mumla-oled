@@ -21,9 +21,9 @@ import junit.framework.TestCase;
 import se.lublin.humla.model.User;
 
 /**
- * Unit tests verifying AudioOutput standby timeout and route detection defaults.
+ * Unit tests verifying AudioOutput defaults.
  */
-public class AudioOutputStandbyTest extends TestCase {
+public class AudioOutputTest extends TestCase {
 
     private static class DummyListener implements AudioOutput.AudioOutputListener {
         @Override
@@ -36,12 +36,6 @@ public class AudioOutputStandbyTest extends TestCase {
     }
 
     private static final DummyListener DUMMY_LISTENER = new DummyListener();
-
-    public void testBluetoothScoDefaultWithoutContext() {
-        AudioOutput output = new AudioOutput(DUMMY_LISTENER);
-        assertFalse(output.isBluetoothScoActive());
-    }
-
 
     public void testHasActiveVoicesDefault() {
         AudioOutput output = new AudioOutput(DUMMY_LISTENER);

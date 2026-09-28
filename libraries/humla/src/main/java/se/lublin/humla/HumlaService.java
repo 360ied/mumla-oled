@@ -32,7 +32,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
-import android.os.SystemClock;
 import android.util.Log;
 
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties;
@@ -386,7 +385,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
         // TODO hackish, but this seems to happen?!
         if (mModelHandler == null) {
-            Log.e(TAG, "onConnectionSynchronized: mAudioHandler is null");
+            Log.e(TAG, "onConnectionSynchronized: mModelHandler is null");
             return;
         }
 
@@ -1252,15 +1251,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
     }
 
-    /**
-     * @return The active {@link AudioOutput}, or null if audio is uninitialized.
-     */
-    public AudioOutput getAudioOutput() {
-        if (mAudioHandler != null) {
-            return mAudioHandler.getAudioOutput();
-        }
-        return null;
-    }
 
     /**
      * The current connection state of the service.
