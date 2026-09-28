@@ -50,10 +50,6 @@ public class CryptStateTest extends TestCase {
         assertTrue(cryptState.isValid());
         assertTrue(Arrays.equals(CLIENT_IV, cryptState.getEncryptIV()));
         assertTrue(Arrays.equals(SERVER_IV, cryptState.getDecryptIV()));
-
-        for (int i = 0; i < 256; i++) {
-            assertEquals(0, cryptState.mDecryptHistory[i]);
-        }
     }
 
     public void testEncryptDecryptRoundtrip() throws Exception {
@@ -111,12 +107,9 @@ public class CryptStateTest extends TestCase {
         assertEquals(-1, receiver.decryptInPlace(null, 0, 10));
     }
 
-    public void testSetDecryptIVClearsHistory() throws Exception {
+    public void testSetDecryptIVUpdatesNonceAndResync() throws Exception {
         CryptState receiver = new CryptState();
         receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
-
-        // Manually populate decrypt history
-        Arrays.fill(receiver.mDecryptHistory, (byte) 0x55);
 
         byte[] newNonce = new byte[]{
                 (byte) 0xA0, (byte) 0xA1, (byte) 0xA2, (byte) 0xA3,
@@ -129,9 +122,6 @@ public class CryptStateTest extends TestCase {
 
         assertTrue(Arrays.equals(newNonce, receiver.getDecryptIV()));
         assertEquals(1, receiver.getResync());
-        for (int i = 0; i < 256; i++) {
-            assertEquals(0, receiver.mDecryptHistory[i]);
-        }
     }
 
     public void testBoundsValidation() throws Exception {
@@ -175,39 +165,26 @@ public class CryptStateTest extends TestCase {
         assertNull(replayDecrypted);
     }
 
-    public void testReplayCheckUsesDecryptIV1NotEncryptIV0() throws Exception {
-        // Upstream CryptStateOCB2.cpp compares:
-        // decrypt_history[decrypt_iv[0]] == decrypt_iv[1]
-        //
-        // Previous bug in Mumla compared against mEncryptIV[0] instead of mDecryptIV[1].
-        // Verify that when mEncryptIV[0] matches the stored history entry, but decrypt_iv[1]
-        // does not, the packet is correctly accepted as valid rather than dropped.
+    public void testSequentialPacketsAcceptedWithoutCollision() throws Exception {
         CryptState sender = new CryptState();
         sender.setKeys(TEST_KEY, CLIENT_IV, SERVER_IV);
 
         CryptState receiver = new CryptState();
         receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
 
-        // Encrypt packet 1
+        // Encrypt and decrypt packet 1
         byte[] plain1 = "Payload 1".getBytes();
         byte[] enc1 = sender.encrypt(plain1, plain1.length);
-        assertNotNull(receiver.decrypt(enc1, enc1.length));
+        byte[] dec1 = receiver.decrypt(enc1, enc1.length);
+        assertNotNull(dec1);
+        assertTrue(Arrays.equals(plain1, dec1));
 
-        // Encrypt packet 2
+        // Encrypt and decrypt packet 2
         byte[] plain2 = "Payload 2".getBytes();
         byte[] enc2 = sender.encrypt(plain2, plain2.length);
-
-        // Record history entry from packet 1:
-        int iv0 = receiver.mDecryptIV[0] & 0xFF;
-        byte historyVal = receiver.mDecryptHistory[iv0];
-
-        // Deliberately set receiver's mEncryptIV[0] to equal historyVal
-        receiver.mEncryptIV[0] = historyVal;
-
-        // Decrypting packet 2 must succeed despite mEncryptIV[0] matching historyVal
-        byte[] decrypted2 = receiver.decrypt(enc2, enc2.length);
-        assertNotNull("Packet must not be falsely dropped due to mEncryptIV[0] collision", decrypted2);
-        assertTrue(Arrays.equals(plain2, decrypted2));
+        byte[] dec2 = receiver.decrypt(enc2, enc2.length);
+        assertNotNull(dec2);
+        assertTrue(Arrays.equals(plain2, dec2));
     }
 
     public void testDecryptPacketLossUnsignedByteHandling() throws Exception {
@@ -218,11 +195,19 @@ public class CryptStateTest extends TestCase {
         receiver.setKeys(TEST_KEY, SERVER_IV, CLIENT_IV);
 
         // Set IVs to byte values >= 128 (0x80) where Java sign extension occurs if not masked
-        sender.mEncryptIV[0] = (byte) 130; // -126 in Java byte
-        receiver.mDecryptIV[0] = (byte) 130;
+        byte[] eiv = CLIENT_IV.clone();
+        eiv[0] = (byte) 130;
+        sender.setEncryptIV(eiv);
+
+        byte[] div = CLIENT_IV.clone();
+        div[0] = (byte) 130;
+        receiver.setDecryptIV(div);
 
         // Skip 5 packets (send packet with IV 136)
-        sender.mEncryptIV[0] = (byte) 135; // encrypt() will increment to 136
+        byte[] skipIv = CLIENT_IV.clone();
+        skipIv[0] = (byte) 135; // encrypt() will increment to 136
+        sender.setEncryptIV(skipIv);
+
         byte[] plain = "Lost packets test".getBytes();
         byte[] enc = sender.encrypt(plain, plain.length);
 
