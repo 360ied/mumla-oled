@@ -95,10 +95,10 @@ public class CryptState {
     }
 
     public synchronized void destroy() {
+        mInit = false;
         if (mNativeHandle != 0) {
             long handle = mNativeHandle;
             mNativeHandle = 0;
-            mInit = false;
             nativeDestroy(handle);
         }
     }
@@ -132,18 +132,18 @@ public class CryptState {
         mLastRequestStart = System.nanoTime();
     }
 
-    public byte[] getEncryptIV() {
+    public synchronized byte[] getEncryptIV() {
         if (mNativeHandle != 0) {
             nativeGetEncryptIV(mNativeHandle, mEncryptIV);
         }
-        return mEncryptIV;
+        return mEncryptIV.clone();
     }
 
-    public byte[] getDecryptIV() {
+    public synchronized byte[] getDecryptIV() {
         if (mNativeHandle != 0) {
             nativeGetDecryptIV(mNativeHandle, mDecryptIV);
         }
-        return mDecryptIV;
+        return mDecryptIV.clone();
     }
 
     public synchronized boolean setDecryptIV(final byte[] div) {
@@ -183,6 +183,15 @@ public class CryptState {
         System.arraycopy(eiv, 0, mEncryptIV, 0, AES_BLOCK_SIZE);
         System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
         Arrays.fill(mDecryptHistory, (byte) 0);
+
+        mUiGood = 0;
+        mUiLate = 0;
+        mUiLost = 0;
+        mUiResync = 0;
+        mUiRemoteGood = 0;
+        mUiRemoteLate = 0;
+        mUiRemoteLost = 0;
+        mUiRemoteResync = 0;
 
         if (sNativeAvailable && mNativeHandle == 0) {
             mNativeHandle = nativeCreate();
@@ -335,6 +344,9 @@ public class CryptState {
     }
 
     public int decryptInPlace(final byte[] data, final int offset, final int length) {
+        if (data == null || length < 4 || offset < 0 || offset + length > data.length) {
+            return -1;
+        }
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {
             int plainLength = nativeDecryptInPlace(nativeHandle, data, offset, length);
@@ -343,7 +355,18 @@ public class CryptState {
             }
             return plainLength;
         }
-        return -1;
+        try {
+            byte[] input = new byte[length];
+            System.arraycopy(data, offset, input, 0, length);
+            byte[] decrypted = decrypt(input, length);
+            if (decrypted == null) {
+                return -1;
+            }
+            System.arraycopy(decrypted, 0, data, offset, decrypted.length);
+            return decrypted.length;
+        } catch (Exception e) {
+            return -1;
+        }
     }
 
     public void ocbDecrypt(byte[] encrypted, byte[] plain, byte[] nonce, byte[] tag) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {

@@ -21,16 +21,16 @@
 #include <cstdint>
 #include <cstring>
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
 #include <wmmintrin.h>
 #include <cpuid.h>
 #endif
 
-#if defined(__ARM_NEON) || defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__ARM_NEON) || defined(__aarch64__)
 #include <arm_neon.h>
 #endif
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__)
 #if defined(__linux__) || defined(__ANDROID__)
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
@@ -106,6 +106,12 @@ struct Aes128Key {
     bool is_initialized = false;
     bool has_hw_aes = false;
 
+    Aes128Key() = default;
+    ~Aes128Key() {
+        memset(round_keys, 0, sizeof(round_keys));
+        memset(inv_round_keys, 0, sizeof(inv_round_keys));
+    }
+
     void set_key(const uint8_t key[16]);
 };
 
@@ -158,10 +164,10 @@ inline void aes128_key_expansion(const uint8_t key[16], Aes128Key *k) {
 
     k->is_initialized = true;
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
     unsigned int eax, ebx, ecx, edx;
     k->has_hw_aes = (__get_cpuid(1, &eax, &ebx, &ecx, &edx) && (ecx & (1 << 25)));
-#elif defined(__aarch64__) || defined(_M_ARM64)
+#elif defined(__aarch64__)
 #if defined(__linux__) || defined(__ANDROID__)
     unsigned long hwcap = getauxval(AT_HWCAP);
     k->has_hw_aes = (hwcap & HWCAP_AES) != 0;
@@ -179,7 +185,7 @@ inline void Aes128Key::set_key(const uint8_t key[16]) {
     aes128_key_expansion(key, this);
 }
 
-// Portable constant software AES-128
+// Portable software AES-128 fallback
 static inline void aes128_encrypt_sw(const uint8_t in[16], uint8_t out[16], const Aes128Key *key) {
     uint8_t state[16];
     for (int i = 0; i < 16; i++) state[i] = in[i] ^ key->round_keys[i];
@@ -251,7 +257,7 @@ static inline void aes128_decrypt_sw(const uint8_t in[16], uint8_t out[16], cons
     memcpy(out, state, 16);
 }
 
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
 __attribute__((target("aes,sse2")))
 static inline void aes128_encrypt_ni(const uint8_t in[16], uint8_t out[16], const Aes128Key *key) {
     __m128i m = _mm_loadu_si128(reinterpret_cast<const __m128i *>(in));
@@ -277,7 +283,7 @@ static inline void aes128_decrypt_ni(const uint8_t in[16], uint8_t out[16], cons
 }
 #endif
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__)
 static inline void aese_aesmc(uint8x16_t &data, uint8x16_t key) {
     asm(".arch armv8-a+crypto\n\t"
         "aese %0.16b, %1.16b\n\t"
@@ -332,12 +338,12 @@ static inline void aes128_decrypt_arm(const uint8_t in[16], uint8_t out[16], con
 #endif
 
 inline void aes128_encrypt_block(const uint8_t in[16], uint8_t out[16], const Aes128Key *key) {
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
     if (key->has_hw_aes) {
         aes128_encrypt_ni(in, out, key);
         return;
     }
-#elif defined(__aarch64__) || defined(_M_ARM64)
+#elif defined(__aarch64__)
     if (key->has_hw_aes) {
         aes128_encrypt_arm(in, out, key);
         return;
@@ -347,12 +353,12 @@ inline void aes128_encrypt_block(const uint8_t in[16], uint8_t out[16], const Ae
 }
 
 inline void aes128_decrypt_block(const uint8_t in[16], uint8_t out[16], const Aes128Key *key) {
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(__x86_64__)
     if (key->has_hw_aes) {
         aes128_decrypt_ni(in, out, key);
         return;
     }
-#elif defined(__aarch64__) || defined(_M_ARM64)
+#elif defined(__aarch64__)
     if (key->has_hw_aes) {
         aes128_decrypt_arm(in, out, key);
         return;

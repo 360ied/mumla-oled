@@ -76,6 +76,13 @@ CryptStateOCB2::CryptStateOCB2() {
     memset(decrypt_history, 0, 0x100);
 }
 
+CryptStateOCB2::~CryptStateOCB2() {
+    memset(raw_key, 0, sizeof(raw_key));
+    memset(encrypt_iv, 0, sizeof(encrypt_iv));
+    memset(decrypt_iv, 0, sizeof(decrypt_iv));
+    memset(decrypt_history, 0, sizeof(decrypt_history));
+}
+
 bool CryptStateOCB2::isValid() const {
     return bInit;
 }
@@ -104,6 +111,7 @@ void CryptStateOCB2::genKey() {
     m_statGood.store(0);
     m_statLate.store(0);
     m_statLost.store(0);
+    m_statResync.store(0);
     aesKey.set_key(raw_key);
     bInit = true;
 }
@@ -119,6 +127,7 @@ bool CryptStateOCB2::setKey(const uint8_t *rkey, const uint8_t *eiv, const uint8
     m_statGood.store(0);
     m_statLate.store(0);
     m_statLost.store(0);
+    m_statResync.store(0);
     aesKey.set_key(raw_key);
     bInit = true;
     return true;
@@ -129,6 +138,7 @@ bool CryptStateOCB2::setDecryptIV(const uint8_t *div) {
     std::lock_guard lock(m_decryptMutex);
     memcpy(decrypt_iv, div, AES_BLOCK_SIZE);
     memset(decrypt_history, 0, 0x100);
+    m_statResync++;
     return true;
 }
 

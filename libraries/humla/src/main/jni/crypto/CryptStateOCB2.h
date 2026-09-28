@@ -37,7 +37,7 @@ constexpr int AES_KEY_SIZE_BYTES = 16;
 class CryptStateOCB2 {
 public:
     CryptStateOCB2();
-    ~CryptStateOCB2() = default;
+    ~CryptStateOCB2();
 
     bool isValid() const;
     void genKey();

@@ -32,6 +32,7 @@ for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$CRYPTO_DIR/Aes128.h" \
          "$CRYPTO_DIR/CryptStateOCB2.h" \
          "$CRYPTO_DIR/CryptStateOCB2.cpp" \
+         "$CRYPTO_DIR/NativeCryptStateJni.cpp" \
          "$TEST_DIR/test_crypt_state.cpp"; do
     if [[ ! -f "$f" ]]; then
         echo "test_native_audio.sh: missing required file: $f" >&2
