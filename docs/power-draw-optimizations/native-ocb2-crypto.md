@@ -12,7 +12,7 @@ This document details the architectural analysis, cryptographic constraints, har
    - [The Android NDK OpenSSL/BoringSSL Boundary](#the-android-ndk-opensslboringssl-boundary)
    - [Hardware Acceleration Strategy by Target ABI](#hardware-acceleration-strategy-by-target-abi)
 4. [Upstream Protocol & Cryptographic Parity](#upstream-protocol--cryptographic-parity)
-   - [Inoue-Minematsu Attack Countermeasures (CVE-2019-311)](#inoue-minematsu-attack-countermeasures-cve-2019-311)
+   - [Inoue-Minematsu Attack Countermeasures (IACR ePrint 2019/311)](#inoue-minematsu-attack-countermeasures-iacr-eprint-2019311)
    - [Wire Format & Replay Protection Invariants](#wire-format--replay-protection-invariants)
    - [Official Test Vectors & Reference Verification](#official-test-vectors--reference-verification)
 5. [Zero-Allocation In-Place Datagram Architecture](#zero-allocation-in-place-datagram-architecture)
@@ -102,9 +102,9 @@ flowchart TD
     
     Engine --> CheckArch{"Target Architecture"}
     
-    CheckArch -->|arm64-v8a| ARM64["ARMv8 Cryptographic Extensions<br/><code>vaeseq_u8</code>, <code>vaesdq_u8</code>, <code>vaesmcq_u8</code><br/>(~10-15 cycles/block)"]
-    CheckArch -->|x86_64| X86["Intel AES-NI Intrinsics<br/><code>_mm_aesenc_si128</code>, <code>_mm_aesdec_si128</code><br/>(~10-15 cycles/block)"]
-    CheckArch -->|armeabi-v7a / Fallback| Portable["Constant-Time Software S-Box Fallback<br/>(Cache-timing resistant, ~200 lines C++)"]
+    CheckArch -->|arm64-v8a| ARM64["ARMv8 Cryptographic Extensions (vaeseq_u8, vaesdq_u8, vaesmcq_u8)<br/>(~10-15 cycles/block)"]
+    CheckArch -->|x86_64| X86["Intel AES-NI Intrinsics (_mm_aesenc_si128, _mm_aesdec_si128)<br/>(~10-15 cycles/block)"]
+    CheckArch -->|armeabi-v7a / Fallback| Portable["Portable Software AES-128 Fallback<br/>(Self-contained C++, ~200 lines)"]
 ```
 
 1. **ARM64 (`arm64-v8a`)**:
@@ -116,20 +116,23 @@ flowchart TD
      - `vaesimcq_u8`: InvMixColumns.
    - 10-round AES-128 executes in ~10–15 CPU cycles per 16-byte block.
    - While optional in the original ARMv8.0-A specification, the Android Compatibility Definition Document (CDD) effectively mandates ARMv8 crypto instructions on all 64-bit consumer devices for hardware-backed storage encryption.
+   - **NDK Compiler Flags**: In Android NDK Clang (`r25c`), target `arm64-v8a` defaults to standard ARMv8.0-A without crypto extensions. Compiling `vaeseq_u8` requires `-march=armv8-a+crypto` (or `+aes`) in `Android.mk`.
 2. **x86_64 (`x86_64`)**:
    - Utilizes Intel AES-NI intrinsics via `<wmmintrin.h>`.
    - `_mm_aesenc_si128`, `_mm_aesenclast_si128`, `_mm_aesdec_si128`, `_mm_aesdeclast_si128`.
    - Supported by virtually all modern x86_64 CPUs, ensuring near-instantaneous execution in Android emulators and host development environments.
+   - **Host Compiler Flags**: Compiling with `g++` in host test environments requires `-maes` (or runtime target attribute `#pragma GCC target("aes")`).
 3. **ARMv7 (`armeabi-v7a`) & Software Fallback**:
-   - For 32-bit ARM cores without cryptographic extensions (or host test environments lacking CPU flags), a self-contained, constant-time software AES-128 implementation ensures 100% portability without external library dependencies.
+   - For 32-bit ARM cores without cryptographic extensions (or host test environments lacking CPU flags), a self-contained, portable software AES-128 implementation ensures 100% portability without external library dependencies.
+   - *Timing Side-Channel Note*: Standard S-box table lookups are subject to CPU cache-timing side channels. For 32-bit fallback where hardware extensions are absent, a compact table implementation suffices for ephemeral session audio, or a bitsliced implementation (e.g. BearSSL `ct64`) can be utilized if constant-time execution without hardware crypto is strictly required.
 
 ---
 
 ## Upstream Protocol & Cryptographic Parity
 
-### Inoue-Minematsu Attack Countermeasures (CVE-2019-311)
+### Inoue-Minematsu Attack Countermeasures (IACR ePrint 2019/311)
 
-In 2019, Akiko Inoue and Kazuhiko Minematsu published a practical attack against OCB2 ([IACR ePrint 2019/311](https://eprint.iacr.org/2019/311)), demonstrating that Rogaway's OCB2 is vulnerable to universal forgery and plaintext recovery.
+In 2019, Akiko Inoue and Kazuhiko Minematsu published a practical attack against OCB2 ([IACR ePrint 2019/311](https://eprint.iacr.org/2019/311), referred to as the XEX* attack), demonstrating that Rogaway's OCB2 is vulnerable to universal forgery and plaintext recovery.
 
 Upstream Mumble implemented specific counter-cryptanalysis defenses in [`CryptStateOCB2.cpp:305-326, 401-408`](https://github.com/mumble-voip/mumble/blob/master/src/crypto/CryptStateOCB2.cpp):
 
@@ -191,11 +194,11 @@ The Mumble UDP datagram layout must remain byte-for-byte identical to the wire s
    - `decrypt_history` is a 256-byte array indexed by `decrypt_iv[0]`.
    - On successful decryption of packet `iv0`, `decrypt_history[iv0]` is set to `decrypt_iv[1]`.
    - If an incoming out-of-order packet arrives where `decrypt_history[decrypt_iv[0]] == decrypt_iv[1]`, the packet is dropped as a replay.
-   - *Historical Note*: Mumla historically suffered from a typo comparing against `mEncryptIV[0]` instead of `mDecryptIV[1]`, resolved in 0.21.6. The native implementation must maintain the correct `decrypt_history[decrypt_iv[0]] == decrypt_iv[1]` invariant.
+   - *Historical Note*: Upstream Mumla before the OLED fork historically suffered from a typo comparing against `mEncryptIV[0]` instead of `mDecryptIV[1]`, resolved in 0.21.6. The native implementation must maintain the correct `decrypt_history[decrypt_iv[0]] == decrypt_iv[1]` invariant.
 3. **Out-of-Order Recovery Window**:
    - `diff = ivbyte - decrypt_iv[0]` (wrapped modulo 256).
-   - Late packets are accepted if `diff > -30 && diff < 0` without advancing the base IV.
-   - Lost packets jump forward if `diff > 0`, updating lost count metrics.
+   - Late packets are accepted if `diff > -30 && diff < 0` without advancing the base IV. When `ivbyte > decrypt_iv[0]`, rollover has occurred across the 0x00/0xFF boundary and higher bytes of `decrypt_iv` must be decremented (`decrypt_iv[i]--`) before decryption, then restored.
+   - Lost packets jump forward if `diff > 0`, incrementing higher bytes (`++decrypt_iv[i]`) if wrapped (`ivbyte < decrypt_iv[0]`) and updating lost count metrics.
 
 ### Official Test Vectors & Reference Verification
 
@@ -208,6 +211,7 @@ Upstream Mumble verifies its implementation using test vectors from `draft-krove
      `BF 31 08 13 07 73 AD 5E C7 0E C6 9E 78 75 A7 B0`
 2. **40-Byte Plaintext (`0x00` through `0x27`)**:
    - Key: `{ 0x00, 0x01, ..., 0x0f }`
+   - Nonce: `{ 0x00, 0x01, ..., 0x0f }`
    - Expected 16-byte Tag:
      `9D B0 CD F8 80 F7 3E 3E 10 D4 EB 32 17 76 66 88`
    - Expected Ciphertext:
@@ -266,13 +270,17 @@ By accumulating `checksum` before writing `encrypted`, encryption can also opera
 ### Datagram Buffer Flow in Network Transport
 
 In [`HumlaUDP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java):
-1. **Receive Path**:
+1. **Receive Path & Offset Alignment**:
    - `mUDPSocket.receive(packet)` writes incoming bytes directly into `packet.getData()`.
    - The native decrypt method accepts the underlying `byte[]` and length, decrypts the ciphertext in-place starting at offset 4, verifies the 24-bit tag, and returns the plaintext length.
-   - Zero intermediate arrays are allocated on the Java heap.
-2. **Send Path**:
-   - The audio encoder reserves a 4-byte header margin at the beginning of the transmission buffer.
-   - The native encrypt method encrypts the payload in-place, writes the IV byte and 3-byte tag into indices `[0..3]`, and passes the packet directly to the outgoing UDP datagram socket.
+   - **Header Realignment**: Because the plaintext begins at offset 4 while downstream packet dispatch in [`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L750-L786) (`onUDPDataReceived`) expects packet headers at index `0`, the native layer executes `memmove(data, data + 4, plainLength)` before returning to Java (or provides an offset-aware signature).
+   - **Zero-Copy JNI Access**: The JNI bridge (`NativeCryptStateJni.cpp`) uses `GetPrimitiveArrayCritical` / `ReleasePrimitiveArrayCritical` to eliminate intermediate memory copies and JNI pinning overhead.
+   - *Allocation Scope*: Eliminates all 12 ephemeral object allocations per packet within `CryptState`. (Downstream protobuf parsing and audio queueing in Java will be decoupled in subsequent transport optimizations).
+2. **Send Path & Asynchronous Queue Thread Safety**:
+   - Unlike synchronous socket writes, [`HumlaUDP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L265-L276) pushes outgoing packets onto an asynchronous `mSendQueue` (`LinkedBlockingQueue<DatagramPacket>`) drained by `OutgoingConsumer`.
+   - Reusing a single transmission buffer in-place inside `AudioHandler` would introduce race conditions with queued packets waiting for socket transmission.
+   - Send path optimization therefore employs a bounded buffer pool for `mSendQueue` where transmission buffers allocate a 4-byte header margin, allowing native encryption to write `[IV: 1B][Tag: 3B]` directly into indices `[0..3]` and encrypt payload bytes in-place without copying.
+   - Ping datagrams (`pingBuffer` in `HumlaConnection.java`) allocate a 14-byte buffer (4-byte header + 10-byte payload) to enable in-place encryption.
 
 ---
 
@@ -282,13 +290,14 @@ The cryptographic engine participates in multiple concurrent threads:
 
 ```mermaid
 sequenceDiagram
-    participant Netty as TCP Thread (CryptSetup)
+    participant TCP as HumlaTCP Thread (CryptSetup)
     participant Capture as Audio Send Thread
     participant Receiver as UDP Receive Thread
     participant Ping as Keepalive Ping Thread
     participant Native as Native CryptState Engine
 
-    Netty->>Native: setKeys() / setDecryptIV() [Exclusive Lock]
+    TCP->>Native: setKeys() [Exclusive std::scoped_lock]
+    TCP->>Native: setDecryptIV() [m_decryptMutex]
     Capture->>Native: encrypt() [m_encryptMutex]
     Receiver->>Native: decrypt() [m_decryptMutex]
     Ping->>Native: getPacketStats() [Atomic Reads]
@@ -296,13 +305,18 @@ sequenceDiagram
 
 To eliminate lock contention:
 - **Decoupled Encryption & Decryption Mutexes**:
-  - `m_encryptMutex`: Guards `encrypt_iv`, `enc_ctx_ocb_enc`, and outgoing encryption operations.
-  - `m_decryptMutex`: Guards `decrypt_iv`, `decrypt_history`, `dec_ctx_ocb_dec`, and incoming decryption operations.
+  - `m_encryptMutex`: Guards `encrypt_iv` and outgoing encryption operations.
+  - `m_decryptMutex`: Guards `decrypt_iv`, `decrypt_history`, and incoming decryption operations.
+  - SIMD/software AES block operations are stateless pure functions with no shared context pointers.
   - Sending microphone audio and receiving speaker audio proceed concurrently with **zero mutex contention**.
-- **Exclusive Key Setup**:
-  - `setKeys()` and `setDecryptIV()` acquire both mutexes simultaneously to ensure atomic rekeying without data races.
-- **Lock-Free Statistics**:
-  - Packet statistics (`good`, `late`, `lost`, `resync`) are maintained using `std::atomic<uint32_t>`, allowing `HumlaConnection`'s keepalive ping timer to inspect packet health without locking the audio pipeline.
+- **Granular Key & IV Setup**:
+  - `setKeys()` acquires both mutexes simultaneously using `std::scoped_lock(m_encryptMutex, m_decryptMutex)` to ensure atomic rekeying without data races or ABBA deadlocks.
+  - `setDecryptIV()` only acquires `m_decryptMutex`. Because it only modifies `decrypt_iv` and resets `decrypt_history`, outgoing microphone transmission on `m_encryptMutex` is never blocked during server-initiated decrypt resyncs.
+- **Lock-Free Statistics & Underflow Guards**:
+  - Packet statistics (`good`, `late`, `lost`, `resync`) are maintained using `std::atomic<int32_t>`, allowing `HumlaConnection`'s keepalive ping timer to inspect packet health without locking the audio pipeline.
+  - When late packets arrive (`diff > -30 && diff < 0`), `lost` is decremented by 1 (`lost = -1`) to reconcile speculative loss counts. Unsigned underflow guards (`if (lost > 0) ...`) are enforced to prevent `lost` wrapping to $2^{32}-1$.
+- **Java State Machine Synchronization**:
+  - `CryptState.java` synchronizes packet statistics (`mUiGood`, `mUiRemoteGood`) and timestamp accessors (`getLastGoodElapsed()`, `resetLastRequestTime()`) with the native engine to maintain seamless integration with `AdaptiveKeepalive` and crypt resync triggers in `HumlaConnection`.
 
 ---
 
@@ -367,15 +381,17 @@ flowchart LR
    - Create a dedicated worktree using `./scripts/worktree.py add feature/native-ocb2-crypto master`.
 2. **Native Cryptographic Engine**:
    - Create `libraries/humla/src/main/jni/crypto/Aes128.h` (portable AES-128 with ARMv8 Crypto Extensions, x86 AES-NI, and software fallback).
-   - Create `libraries/humla/src/main/jni/crypto/CryptStateOCB2.{h,cpp}` implementing the Mumble OCB2 protocol, replay detection, and CVE-2019-311 mitigations.
+   - Create `libraries/humla/src/main/jni/crypto/CryptStateOCB2.{h,cpp}` implementing the Mumble OCB2 protocol, replay detection, underflow-safe statistics, and IACR ePrint 2019/311 (XEX* attack) mitigations.
 3. **Host Native Test Suite**:
    - Create `libraries/humla/src/test/cpp/test_crypt_state.cpp`.
-   - Wire into `scripts/test_native_audio.sh` and confirm all cryptographic test vectors pass on the host.
+   - Wire into `scripts/test_native_audio.sh` with `-maes` for x86_64 host compilation and confirm all cryptographic test vectors pass on the host.
 4. **JNI Bridge & Build System**:
-   - Create `libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp`.
+   - Create `libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp` using `GetPrimitiveArrayCritical` / `ReleasePrimitiveArrayCritical` for zero-copy buffer access and in-place header alignment.
    - Add new source files to `LOCAL_SRC_FILES` in `libraries/humla/src/main/jni/Android.mk` under `humlaaudio`.
+   - Add `$(ROOT)/crypto` to `LOCAL_C_INCLUDES` and `-march=armv8-a+crypto` under `arm64-v8a` in `Android.mk`.
 5. **Java Transport Integration**:
    - Update `libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java` to route through native JNI on Android with in-place buffer execution and fallback to Java on host.
+   - Synchronize packet counters (`mUiGood`, `mUiRemoteGood`) and timestamp tracking (`getLastGoodElapsed()`) with the native engine for `AdaptiveKeepalive` and crypt resync compatibility.
    - Clean up inner-loop allocations in Java fallback.
 6. **Pre-Completion Verification**:
    - Run `./scripts/check.sh` inside the worktree to verify both host native tests and Gradle test suites pass without regression.
