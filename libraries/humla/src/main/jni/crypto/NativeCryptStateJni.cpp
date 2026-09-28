@@ -19,17 +19,33 @@
 
 #include <jni.h>
 #include <android/log.h>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 
 #define LOG_TAG "NativeCryptState"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 using namespace humla::crypto;
 
-static inline CryptStateOCB2 *getCryptState(jlong handle) {
-    return reinterpret_cast<CryptStateOCB2 *>(handle);
+namespace {
+std::mutex g_registryMutex;
+std::unordered_map<jlong, std::shared_ptr<CryptStateOCB2>> g_registry;
+std::atomic<jlong> g_nextHandle{1};
+
+static inline std::shared_ptr<CryptStateOCB2> getCryptState(jlong handle) {
+    if (handle <= 0) return nullptr;
+    std::lock_guard lock(g_registryMutex);
+    auto it = g_registry.find(handle);
+    if (it != g_registry.end()) {
+        return it->second;
+    }
+    return nullptr;
 }
+} // namespace
 
 extern "C" {
 
@@ -40,27 +56,25 @@ Java_se_lublin_humla_net_CryptState_nativeIsSupported(JNIEnv *, jclass) {
 
 JNIEXPORT jlong JNICALL
 Java_se_lublin_humla_net_CryptState_nativeCreate(JNIEnv *, jobject) {
-    CryptStateOCB2 *cs = new (std::nothrow) CryptStateOCB2();
-    return reinterpret_cast<jlong>(cs);
+    auto cs = std::make_shared<CryptStateOCB2>();
+    jlong handle = g_nextHandle.fetch_add(1);
+    std::lock_guard lock(g_registryMutex);
+    g_registry[handle] = std::move(cs);
+    return handle;
 }
 
 JNIEXPORT void JNICALL
 Java_se_lublin_humla_net_CryptState_nativeDestroy(JNIEnv *, jobject, jlong handle) {
-    CryptStateOCB2 *cs = getCryptState(handle);
-    if (cs) {
-        {
-            std::scoped_lock lock(cs->getEncryptMutex(), cs->getDecryptMutex());
+    std::shared_ptr<CryptStateOCB2> cs;
+    {
+        std::lock_guard lock(g_registryMutex);
+        auto it = g_registry.find(handle);
+        if (it != g_registry.end()) {
+            cs = std::move(it->second);
+            g_registry.erase(it);
         }
-        delete cs;
     }
-}
-
-JNIEXPORT void JNICALL
-Java_se_lublin_humla_net_CryptState_nativeGenKey(JNIEnv *, jobject, jlong handle) {
-    CryptStateOCB2 *cs = getCryptState(handle);
-    if (cs) {
-        cs->genKey();
-    }
+    // Instance is destroyed safely when all in-flight references drop to 0
 }
 
 JNIEXPORT jboolean JNICALL
@@ -71,7 +85,7 @@ Java_se_lublin_humla_net_CryptState_nativeSetKeys(
         jbyteArray rkey,
         jbyteArray eiv,
         jbyteArray div) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !rkey || !eiv || !div) {
         return JNI_FALSE;
     }
@@ -102,7 +116,7 @@ Java_se_lublin_humla_net_CryptState_nativeSetDecryptIV(
         jobject,
         jlong handle,
         jbyteArray div) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !div || env->GetArrayLength(div) != AES_BLOCK_SIZE) {
         return JNI_FALSE;
     }
@@ -114,23 +128,6 @@ Java_se_lublin_humla_net_CryptState_nativeSetDecryptIV(
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
-JNIEXPORT jboolean JNICALL
-Java_se_lublin_humla_net_CryptState_nativeSetEncryptIV(
-        JNIEnv *env,
-        jobject,
-        jlong handle,
-        jbyteArray eiv) {
-    CryptStateOCB2 *cs = getCryptState(handle);
-    if (!cs || !eiv || env->GetArrayLength(eiv) != AES_BLOCK_SIZE) {
-        return JNI_FALSE;
-    }
-
-    jbyte eivBuf[AES_BLOCK_SIZE];
-    env->GetByteArrayRegion(eiv, 0, AES_BLOCK_SIZE, eivBuf);
-
-    bool ok = cs->setEncryptIV(reinterpret_cast<const uint8_t *>(eivBuf));
-    return ok ? JNI_TRUE : JNI_FALSE;
-}
 
 JNIEXPORT jboolean JNICALL
 Java_se_lublin_humla_net_CryptState_nativeGetEncryptIV(
@@ -138,7 +135,7 @@ Java_se_lublin_humla_net_CryptState_nativeGetEncryptIV(
         jobject,
         jlong handle,
         jbyteArray out) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !out || env->GetArrayLength(out) < AES_BLOCK_SIZE) {
         return JNI_FALSE;
     }
@@ -155,7 +152,7 @@ Java_se_lublin_humla_net_CryptState_nativeGetDecryptIV(
         jobject,
         jlong handle,
         jbyteArray out) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !out || env->GetArrayLength(out) < AES_BLOCK_SIZE) {
         return JNI_FALSE;
     }
@@ -173,7 +170,7 @@ Java_se_lublin_humla_net_CryptState_nativeEncrypt(
         jlong handle,
         jbyteArray source,
         jint length) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !source || length < 0) {
         return nullptr;
     }
@@ -222,7 +219,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         jlong handle,
         jbyteArray source,
         jint length) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !source || length < 4) {
         return nullptr;
     }
@@ -273,13 +270,13 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
         jbyteArray buffer,
         jint offset,
         jint cryptedLength) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !buffer || cryptedLength < 4 || offset < 0) {
         return -1;
     }
 
     jint bufLen = env->GetArrayLength(buffer);
-    if (offset + cryptedLength > bufLen) {
+    if (static_cast<int64_t>(offset) + cryptedLength > bufLen) {
         return -1;
     }
 
@@ -308,7 +305,7 @@ Java_se_lublin_humla_net_CryptState_nativeGetStats(
         jobject,
         jlong handle,
         jintArray statsOut) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs || !statsOut || env->GetArrayLength(statsOut) < 4) {
         return;
     }
@@ -327,7 +324,7 @@ Java_se_lublin_humla_net_CryptState_nativeGetLastGoodElapsedUs(
         JNIEnv *,
         jobject,
         jlong handle) {
-    CryptStateOCB2 *cs = getCryptState(handle);
+    auto cs = getCryptState(handle);
     if (!cs) {
         return -1;
     }

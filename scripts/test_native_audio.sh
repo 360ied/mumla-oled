@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/test_native_audio.sh: Compile and execute the native C++ audio engine test suite.
+# scripts/test_native_audio.sh: Compile and execute the native C++ audio engine and crypto test suites.
 #
 # This host build is hermetic: the output-engine tests use a FakeDecoder, so
 # no libopus is linked here. The Android NDK build (libraries/humla/src/main/jni,

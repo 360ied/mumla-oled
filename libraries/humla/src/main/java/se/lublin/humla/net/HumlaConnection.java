@@ -343,10 +343,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
 
         Mumble.Ping.Builder pb = Mumble.Ping.newBuilder();
         pb.setTimestamp(t);
-        pb.setGood(mCryptState.mUiGood);
-        pb.setLate(mCryptState.mUiLate);
-        pb.setLost(mCryptState.mUiLost);
-        pb.setResync(mCryptState.mUiResync);
+        pb.setGood(mCryptState.getGood());
+        pb.setLate(mCryptState.getLate());
+        pb.setLost(mCryptState.getLost());
+        pb.setResync(mCryptState.getResync());
         // TODO accumulate stats and send with ping
         sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping);
     }

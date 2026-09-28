@@ -58,7 +58,7 @@ public class CryptState {
         return sNativeAvailable;
     }
 
-    private long mNativeHandle = 0;
+    private volatile long mNativeHandle = 0;
     private final int[] mStatsBuffer = new int[4];
 
     byte[] mRawKey = new byte[AES_BLOCK_SIZE];
@@ -173,6 +173,10 @@ public class CryptState {
         System.arraycopy(div, 0, mDecryptIV, 0, AES_BLOCK_SIZE);
         Arrays.fill(mDecryptHistory, (byte) 0);
 
+        if (sNativeAvailable && mNativeHandle == 0) {
+            mNativeHandle = nativeCreate();
+        }
+
         if (mNativeHandle != 0) {
             mInit = nativeSetKeys(mNativeHandle, rkey, eiv, div);
             try {
@@ -215,9 +219,9 @@ public class CryptState {
         if (nativeHandle != 0) {
             byte[] decrypted = nativeDecrypt(nativeHandle, source, length);
             if (decrypted != null) {
-                syncStatsFromNative();
                 mLastGoodStart = System.nanoTime();
             }
+            syncStatsFromNative();
             return decrypted;
         }
 
@@ -315,13 +319,13 @@ public class CryptState {
             mUiGood++;
             if (late > 0) {
                 mUiLate += late;
-            } else if (mUiLate > Math.abs(late)) {
+            } else if (mUiLate >= Math.abs(late)) {
                 mUiLate -= Math.abs(late);
             }
 
             if (lost > 0) {
                 mUiLost += lost;
-            } else if (mUiLost > Math.abs(lost)) {
+            } else if (mUiLost >= Math.abs(lost)) {
                 mUiLost -= Math.abs(lost);
             }
 
@@ -335,9 +339,9 @@ public class CryptState {
         if (nativeHandle != 0) {
             int plainLength = nativeDecryptInPlace(nativeHandle, data, offset, length);
             if (plainLength >= 0) {
-                syncStatsFromNative();
                 mLastGoodStart = System.nanoTime();
             }
+            syncStatsFromNative();
             return plainLength;
         }
         return -1;
@@ -412,11 +416,7 @@ public class CryptState {
 
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {
-            byte[] encrypted = nativeEncrypt(nativeHandle, source, length);
-            if (encrypted != null) {
-                mEncryptIV[0] = encrypted[0];
-            }
-            return encrypted;
+            return nativeEncrypt(nativeHandle, source, length);
         }
 
         synchronized (this) {
@@ -552,13 +552,30 @@ public class CryptState {
         }
     }
 
+    public int getGood() {
+        syncStatsFromNative();
+        return mUiGood;
+    }
+
+    public int getLate() {
+        syncStatsFromNative();
+        return mUiLate;
+    }
+
+    public int getLost() {
+        syncStatsFromNative();
+        return mUiLost;
+    }
+
+    public int getResync() {
+        return mUiResync;
+    }
+
     private static native boolean nativeIsSupported();
     private native long nativeCreate();
     private native void nativeDestroy(long handle);
-    private native void nativeGenKey(long handle);
     private native boolean nativeSetKeys(long handle, byte[] rkey, byte[] eiv, byte[] div);
     private native boolean nativeSetDecryptIV(long handle, byte[] div);
-    private native boolean nativeSetEncryptIV(long handle, byte[] eiv);
     private native boolean nativeGetEncryptIV(long handle, byte[] out);
     private native boolean nativeGetDecryptIV(long handle, byte[] out);
     private native byte[] nativeEncrypt(long handle, byte[] source, int length);

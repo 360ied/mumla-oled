@@ -35,7 +35,7 @@
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
 #ifndef HWCAP_AES
-#define HWCAP_AES (1 << 0)
+#define HWCAP_AES (1 << 3)
 #endif
 #endif
 #endif
@@ -278,22 +278,43 @@ static inline void aes128_decrypt_ni(const uint8_t in[16], uint8_t out[16], cons
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+static inline void aese_aesmc(uint8x16_t &data, uint8x16_t key) {
+    asm(".arch armv8-a+crypto\n\t"
+        "aese %0.16b, %1.16b\n\t"
+        "aesmc %0.16b, %0.16b"
+        : "+w"(data)
+        : "w"(key));
+}
+
+static inline void aese_last(uint8x16_t &data, uint8x16_t key) {
+    asm(".arch armv8-a+crypto\n\t"
+        "aese %0.16b, %1.16b"
+        : "+w"(data)
+        : "w"(key));
+}
+
+static inline void aesd_aesimc(uint8x16_t &data, uint8x16_t key) {
+    asm(".arch armv8-a+crypto\n\t"
+        "aesd %0.16b, %1.16b\n\t"
+        "aesimc %0.16b, %0.16b"
+        : "+w"(data)
+        : "w"(key));
+}
+
+static inline void aesd_last(uint8x16_t &data, uint8x16_t key) {
+    asm(".arch armv8-a+crypto\n\t"
+        "aesd %0.16b, %1.16b"
+        : "+w"(data)
+        : "w"(key));
+}
+
 static inline void aes128_encrypt_arm(const uint8_t in[16], uint8_t out[16], const Aes128Key *key) {
     uint8x16_t m = vld1q_u8(in);
     const uint8_t *rk = key->round_keys;
     for (int i = 0; i < 9; i++) {
-        uint8x16_t k = vld1q_u8(rk + i * 16);
-        asm(".arch armv8-a+crypto\n\t"
-            "aese %0.16b, %1.16b\n\t"
-            "aesmc %0.16b, %0.16b"
-            : "+w"(m)
-            : "w"(k));
+        aese_aesmc(m, vld1q_u8(rk + i * 16));
     }
-    uint8x16_t k9 = vld1q_u8(rk + 9 * 16);
-    asm(".arch armv8-a+crypto\n\t"
-        "aese %0.16b, %1.16b"
-        : "+w"(m)
-        : "w"(k9));
+    aese_last(m, vld1q_u8(rk + 9 * 16));
     m = veorq_u8(m, vld1q_u8(rk + 10 * 16));
     vst1q_u8(out, m);
 }
@@ -302,18 +323,9 @@ static inline void aes128_decrypt_arm(const uint8_t in[16], uint8_t out[16], con
     uint8x16_t m = vld1q_u8(in);
     const uint8_t *irk = key->inv_round_keys;
     for (int i = 0; i < 9; i++) {
-        uint8x16_t k = vld1q_u8(irk + i * 16);
-        asm(".arch armv8-a+crypto\n\t"
-            "aesd %0.16b, %1.16b\n\t"
-            "aesimc %0.16b, %0.16b"
-            : "+w"(m)
-            : "w"(k));
+        aesd_aesimc(m, vld1q_u8(irk + i * 16));
     }
-    uint8x16_t k9 = vld1q_u8(irk + 9 * 16);
-    asm(".arch armv8-a+crypto\n\t"
-        "aesd %0.16b, %1.16b"
-        : "+w"(m)
-        : "w"(k9));
+    aesd_last(m, vld1q_u8(irk + 9 * 16));
     m = veorq_u8(m, vld1q_u8(irk + 10 * 16));
     vst1q_u8(out, m);
 }

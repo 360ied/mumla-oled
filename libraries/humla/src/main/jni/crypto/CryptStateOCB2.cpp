@@ -153,8 +153,11 @@ bool CryptStateOCB2::encrypt(const uint8_t *source, uint8_t *dst, uint32_t plain
 
 bool CryptStateOCB2::encryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t plain_length) {
     if (!bInit.load() || !source || !dst) return false;
+
     // Reject invalid overlapping buffers
-    if (source < dst + 4 && dst < source + plain_length) {
+    uintptr_t s = reinterpret_cast<uintptr_t>(source);
+    uintptr_t d = reinterpret_cast<uintptr_t>(dst);
+    if (s < d + plain_length + 4 && d < s + plain_length) {
         return false;
     }
 
@@ -273,13 +276,13 @@ bool CryptStateOCB2::decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32
     m_statGood++;
     if (late > 0) {
         m_statLate += late;
-    } else if (static_cast<int>(m_statLate.load()) > std::abs(late)) {
+    } else if (static_cast<int>(m_statLate.load()) >= std::abs(late)) {
         m_statLate -= std::abs(late);
     }
 
     if (lost > 0) {
         m_statLost += lost;
-    } else if (static_cast<int>(m_statLost.load()) > std::abs(lost)) {
+    } else if (static_cast<int>(m_statLost.load()) >= std::abs(lost)) {
         m_statLost -= std::abs(lost);
     }
 
