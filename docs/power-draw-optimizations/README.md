@@ -479,7 +479,7 @@ To address these inefficiencies systematically without compromising audio qualit
    - **Adaptive Keepalive Pinging**: Synchronized UDP/TCP keepalives bounded to 8.0–10.0s with an initial 30s 5s bootstrap; empty server `CryptSetup` nonce resync compliance already verified. *(Resolved)*
 
 3. **[Phase 3: Deep Architectural Modernization](remediation-plan.md#phase-3-deep-architectural-modernization)**:
-   - **Compiler Vectorization Tuning**: Enable `-O3 -fno-math-errno -fvectorize` while strictly avoiding `-ffast-math` / `-ffinite-math-only` to preserve `celt_isnan` validation in RNNoise.
+   - **Compiler Vectorization Tuning**: Enable `-O3 -fno-math-errno -fvectorize` while strictly avoiding `-ffast-math` / `-ffinite-math-only` to preserve `celt_isnan` validation in RNNoise. *(Resolved)*
    - **Native In-Place OCB2-AES Cryptographic Engine**: Eliminate Java heap GC allocation churn by moving packet crypto to native C++ SIMD routines.
 
 4. **Decoupled Dedicated Tracks: Partial Wakelock & Deep Doze**:

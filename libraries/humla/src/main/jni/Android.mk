@@ -86,7 +86,7 @@ LOCAL_SRC_FILES := rnnoise-build/generated/rnnoise_data.c \
                    audio_engine/AudioOutputEngine.cpp \
                    audio_engine/NativeAudioOutputEngineJni.cpp \
                    audio_engine/jitter/jitter.c
-LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 $(COMMON_CFLAGS) -DVAR_ARRAYS -Wno-\#warnings
+LOCAL_CFLAGS := -I$(ROOT)/rnnoise-build -DHAVE_CONFIG_H -DUSE_WEIGHTS_FILE -O3 -fno-math-errno -fvectorize $(COMMON_CFLAGS) -DVAR_ARRAYS -Wno-\#warnings
 LOCAL_CPP_FEATURES := exceptions
 LOCAL_SHARED_LIBRARIES := jniopus
 LOCAL_LDLIBS := -llog
