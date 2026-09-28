@@ -346,3 +346,7 @@ Restoring the proven, battle-tested 0.21.7 baseline provides absolute code simpl
    - **Negligible Return on Screen-On Audio Gating**: Attempting to power-gate the audio DSP/DAC ($15\text{ to }30\text{ mW}$) exclusively when the screen is ON yields negligible real-world benefit. When the screen is illuminated, the OLED display panel and Application Processor already consume $300\text{ to }1000\text{ mW}$. Saving $\sim 20\text{ mW}$ only while the user is actively looking at their screen represents a marginal $\sim 2\text{--}5\%$ delta on active power draw, while introducing substantial technical debt and regression risk.
    - **100% Proven Immunity**: Re-establishing the monolithic silence shield is provably immune to both OEM watchdog termination (`SIGKILL`) and Murmur 30s timeouts across all Android versions and manufacturer skins.
 
+> [!NOTE]
+> **Implementation & Release Status (Mumla OLED 0.21.11)**:
+> This remediation was fully implemented on branch `bugfix/restore-silence-shield`, verified through `./scripts/check.sh`, merged into `master` via commit [`8c0883c8`](https://github.com/360ied/mumla-oled/commit/8c0883c8678e31fc6568713bbe314820df8fe091), and published in release **`0.21.11`**. For the concrete architectural blueprint, atomic commit sequence, and verification protocol, see [`zero-audio-standby-remediation-plan.md`](zero-audio-standby-remediation-plan.md).
+

@@ -2,6 +2,10 @@
 
 An engineering implementation plan to eliminate the screen-off connection drop regression in **Mumla OLED 0.21.10** by fully restoring the proven **0.21.7 continuous silence shield baseline** alongside targeted transport hardening. This document builds upon the empirical evidence and architectural analysis in [`zero-audio-standby-regression-investigation.md`](zero-audio-standby-regression-investigation.md) and defines a surgical, phased remediation roadmap vetted against Android power management and upstream Mumble protocol invariants.
 
+> [!NOTE]
+> **Status: COMPLETED & RELEASED (0.21.11)**  
+> This remediation plan was implemented on branch `bugfix/restore-silence-shield`, passed full `./scripts/check.sh` verification, was merged into `master` via commit [`8c0883c8`](https://github.com/360ied/mumla-oled/commit/8c0883c8678e31fc6568713bbe314820df8fe091), and released in pre-release **`0.21.11`**.
+
 ---
 
 ## Table of Contents
@@ -217,36 +221,49 @@ In [`libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`](../.
 
 ---
 
-## 4. Atomic Commit Sequence & Worktree Roadmap
+## 4. Atomic Commit Sequence & Landed History
 
-All development must be conducted in a dedicated Git worktree created via `./scripts/worktree.py add bugfix/restore-silence-shield master`. Code changes must be organized into single logical commits using `python3 scripts/commit.py -m "<subject>"`:
+This plan was implemented on dedicated branch `bugfix/restore-silence-shield`, verified via `./scripts/check.sh`, merged into `master` via commit [`8c0883c8`](https://github.com/360ied/mumla-oled/commit/8c0883c8678e31fc6568713bbe314820df8fe091), and published in release **`0.21.11`**.
 
-### Commit 1: `net: harden HumlaTCP socket and flush Conscrypt streams`
+### Commit 1: `net: harden HumlaTCP socket and flush Conscrypt` ([`1b3330b2`](https://github.com/360ied/mumla-oled/commit/1b3330b2a4b6cfc060b8c93ac4d66b53edd1a3fc))
 * **Scope**: `libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.java`
 * **Changes**: Add `mDataOutput.flush()` to both `sendMessage()` overloads; add `mTCPSocket.setTcpNoDelay(true)`.
 * **Description**: Ensure TLS records leave user space immediately and disable Nagle's algorithm for control messages.
 
-### Commit 2: `audio: restore continuous AudioTrack silence playback`
+### Commit 2: `audio: restore continuous AudioTrack silence` ([`8ef3adcf`](https://github.com/360ied/mumla-oled/commit/8ef3adcfe621998f35d5a25cae32067276bd332e))
 * **Scope**: `libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`
 * **Changes**: Remove standby pause timing, route detection, and `AudioTrack.pause()`; restore Phase 1 indefinite wait on zero voices while keeping `AudioTrack` playing.
 * **Description**: Re-establish the continuous silence shield masquerade to protect the process from OEM watchdog `SIGKILL` termination.
 
-### Commit 3: `humla: restore monolithic wakelock and in-memory keepalives`
+### Commit 3: `humla: restore monolithic wakelock and keepalives` ([`1d3883f3`](https://github.com/360ied/mumla-oled/commit/1d3883f3b4257006066afb8b2d59657c7bec0c6a))
 * **Scope**:
   - `libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`
   - `libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java`
-* **Changes**: Acquire `PARTIAL_WAKE_LOCK` continuously upon synchronization; purge `AlarmManager` pulsed keepalive infrastructure; remove `setSuspendedStandbyMode` and `onIncomingAudioPacket`.
+  - `libraries/humla/src/test/java/se/lublin/humla/net/AdaptiveKeepaliveTest.java`
+  - `libraries/humla/src/test/java/se/lublin/humla/HumlaStandbyTest.java` (deleted)
+* **Changes**: Acquire `PARTIAL_WAKE_LOCK` continuously upon synchronization; purge `AlarmManager` pulsed keepalive infrastructure; remove `setSuspendedStandbyMode`.
 * **Description**: Eliminate screen-off alarm deferrals by maintaining uninterrupted in-memory keepalive execution while connected.
 
-### Commit 4: `humla: purge zero-audio model evaluator and exact alarm permissions`
+### Commit 4: `humla: purge zero-audio evaluator and alarms` ([`2f299297`](https://github.com/360ied/mumla-oled/commit/2f299297bf8fd8a6023f9cc68e144fa55957b9a9))
 * **Scope**:
   - `libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java`
-  - `libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java`
   - `app/src/main/AndroidManifest.xml`
   - `libraries/humla/src/main/AndroidManifest.xml`
-  - Test files (`HumlaStandbyTest.java`, `ModelHandlerZeroAudioTest.java`, `AudioOutputStandbyTest.java`)
-* **Changes**: Remove `isPlausiblyZeroAudio` evaluator and listeners; remove `SCHEDULE_EXACT_ALARM` permissions; retire obsolete unit tests.
+  - `libraries/humla/src/test/java/se/lublin/humla/protocol/ModelHandlerTopologyTest.java`
+* **Changes**: Remove `isPlausiblyZeroAudio` evaluator and listeners; remove `SCHEDULE_EXACT_ALARM` permissions; refactor `ModelHandlerZeroAudioTest` into `ModelHandlerTopologyTest`.
 * **Description**: Clean up dead standby evaluation code, reduce manifest permission footprint, and align unit test suite.
+
+### Commit 5: `humla: clean up standby residue and dead code` ([`c7aefe55`](https://github.com/360ied/mumla-oled/commit/c7aefe55ffcf70c675c90b63fb4e9a3809dfb32f))
+* **Scope**:
+  - `libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java`
+  - `libraries/humla/src/main/java/se/lublin/humla/HumlaService.java`
+  - `libraries/humla/src/test/java/se/lublin/humla/audio/AudioOutputTest.java`
+  - `libraries/humla/src/test/java/se/lublin/humla/protocol/ModelHandlerTopologyTest.java`
+* **Changes**: Remove uncalled `isBluetoothScoActive()` and `getAudioOutput()`; remove unused `SystemClock` and `AudioDeviceInfo` imports; fix pre-existing log typo in `HumlaService`; add channel listening test.
+* **Description**: Clean up dead residue identified in pedantic code review and rename `AudioOutputStandbyTest` to `AudioOutputTest`.
+
+### Merge Commit: `chore: merge branch 'bugfix/restore-silence-shield'` ([`8c0883c8`](https://github.com/360ied/mumla-oled/commit/8c0883c8678e31fc6568713bbe314820df8fe091))
+* **Scope**: Merged into `master` with full tripartite merge commit. Tagged and released in **`0.21.11`**.
 
 ---
 

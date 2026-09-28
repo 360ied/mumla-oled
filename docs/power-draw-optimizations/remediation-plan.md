@@ -292,9 +292,10 @@ if (!scoActive && standbyTimeout > 0) {
 
 **Benefit**: Powers down the audio DSP, DAC, and power amplifiers into low-power standby during conversational pauses, saving $15\text{ to }30\text{ mW}$ with zero audible pops or Bluetooth disconnects.
 
-> [!NOTE]
-> **Sidenote & Counter-Perspective (AudioTrack Standby on Built-in Speaker vs Bluetooth)**:
-> While a 15-second inactivity timeout is essential on Bluetooth SCO and A2DP to prevent link teardown and re-pairing delay, on built-in phone speakers or wired 3.5mm/USB-C headphones, modern Android HALs handle track pause and resumption with $< 10\text{ ms}$ latency. On non-Bluetooth routes, the standby threshold is safely shortened to 3 seconds without audible penalty, allowing the audio DSP and DAC to power-gate much earlier during conversational pauses.
+> [!IMPORTANT]
+> **Superseded in 0.21.11 (Continuous Silence Shield Restoration)**:
+> While route-aware `AudioTrack` standby pausing was merged in `0.21.9`, hardware investigations revealed that pausing `AudioTrack` while holding a CPU wakelock triggered OEM battery watchdog terminations (`SIGKILL` on Samsung Device Care, Xiaomi MIUI/HyperOS, and Vivo PEM), while releasing the wakelock (in `0.21.10`) caused kernel `suspend-to-RAM` keepalive deferrals past Murmur's 30-second timeout.
+> In `0.21.11`, `AudioTrack` standby pausing was superseded by fully restoring the **0.21.7 continuous silence shield baseline**: `AudioTrack` remains continuously in `PLAYSTATE_PLAYING` (rendering zero PCM digital silence via AudioFlinger) alongside an indefinite monitor wait in the render thread on zero voices and a continuous `PARTIAL_WAKE_LOCK`. See [`zero-audio-standby-regression-investigation.md`](zero-audio-standby-regression-investigation.md) and [`zero-audio-standby-remediation-plan.md`](zero-audio-standby-remediation-plan.md).
 
 ---
 
@@ -338,8 +339,10 @@ int getNextPingIntervalSeconds() {
 > **Decoupling Notice: Partial Wakelock, Kernel Suspend & Deep Doze**:
 > The permanent partial wakelock and Deep Doze remediation, originally proposed as item 3.1 of Phase 3, has been decoupled from this roadmap due to its extensive architectural footprint, kernel-to-user-space timer complexities, and cellular/Wi-Fi hardware wake asymmetries. To manage engineering risk and provide immediate low-hanging fruit, it is decoupled into two complementary tracks:
 >
-> 👉 **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)** *(Low-risk, high-yield: optimizes provable zero-audio states like deafened and solo standby)*
-> 👉 **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)** *(Universal plan for conversational standby suspend across active channels)*
+> 👉 **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)** *(Low-risk, high-yield: optimizes provable zero-audio states like deafened and solo standby)*  
+> 👉 **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)** *(Universal plan for conversational standby suspend across active channels)*  
+> 👉 **[Zero-Audio Standby Regression Investigation (0.21.10)](zero-audio-standby-regression-investigation.md)** *(Root cause analysis of screen-off keepalive deferrals and watchdog kills)*  
+> 👉 **[Zero-Audio Standby Remediation Plan (0.21.11)](zero-audio-standby-remediation-plan.md)** *(Completed restoration of continuous silence shield baseline)*
 
 ### 3.1. Compiler Vectorization Tuning (Safe Math Flags)
 - **Target**: [`Android.mk`](../../libraries/humla/src/main/jni/Android.mk)

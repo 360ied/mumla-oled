@@ -475,7 +475,7 @@ To address these inefficiencies systematically without compromising audio qualit
 
 2. **[Phase 2: Core Subsystem Gating — COMPLETED](remediation-plan.md#phase-2-core-subsystem-gating--completed)** (Released in `0.21.9`):
    - **AudioRecord Gating (Mute) & DSP Gating (PTT Idle)**: Stop recording on self-mute with explicit synchronous terminator dispatch before capture halt; unconditionally bypass RNNoise/leveler on PTT idle while preserving lookahead ring buffer continuity. *(Resolved)*
-   - **AudioTrack Standby Pause**: Reconcile Phase 1 indefinite wait with timed pause after 15s consecutive silence (guarded against Bluetooth SCO link teardown; shortened to 3–5s on non-Bluetooth routes). *(Resolved)*
+   - **AudioTrack Standby Pause**: Introduced in `0.21.9`; superseded in `0.21.11` by the continuous silence shield restoration (retaining continuous `PLAYSTATE_PLAYING` silence rendering to eliminate OEM watchdog `SIGKILL` terminations). *(Superseded in 0.21.11)*
    - **Adaptive Keepalive Pinging**: Synchronized UDP/TCP keepalives bounded to 8.0–10.0s with an initial 30s 5s bootstrap; empty server `CryptSetup` nonce resync compliance already verified. *(Resolved)*
 
 3. **[Phase 3: Deep Architectural Modernization](remediation-plan.md#phase-3-deep-architectural-modernization)**:
@@ -486,6 +486,7 @@ To address these inefficiencies systematically without compromising audio qualit
    - **[Pragmatic Lite Track: Zero-Audio Standby Optimization](wakelock-remediation-lite.md)**: Targeted low-risk specification for eliminating wakelocks during provably zero-audio states (deafened or solo standby), capturing ~80% of real-world idle savings with zero audio risk.
    - **[Full Architectural Track: Wakelock & Deep Doze](wakelock-remediation.md)**: Universal conversational standby suspend across active channels, navigating baseband IRQs, router packet buffers, and autonomous transport adaptation.
    - **[Zero-Audio Standby Regression Investigation (0.21.10)](zero-audio-standby-regression-investigation.md)**: Empirical hardware audit and root cause analysis of screen-off keepalive deferrals and Murmur 30s timeouts.
+   - **[Zero-Audio Standby Remediation Plan (0.21.11)](zero-audio-standby-remediation-plan.md)**: Architectural blueprint and implementation history for restoring the 0.21.7 continuous silence shield, eliminating `AlarmManager` pulsed keepalives, and hardening Conscrypt TLS socket flushes.
 
 ---
 
