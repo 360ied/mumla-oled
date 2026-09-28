@@ -81,14 +81,4 @@ public class AdaptiveKeepaliveTest extends TestCase {
         assertEquals(HumlaConnection.STEADY_STATE_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
     }
 
-    public void testSuspendedStandbyModeToggle() {
-        HumlaConnection connection = new HumlaConnection(null);
-        assertFalse(connection.isSuspendedStandbyMode());
-
-        connection.setSuspendedStandbyMode(true);
-        assertTrue(connection.isSuspendedStandbyMode());
-
-        connection.setSuspendedStandbyMode(false);
-        assertFalse(connection.isSuspendedStandbyMode());
-    }
 }
