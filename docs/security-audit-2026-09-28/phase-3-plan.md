@@ -56,14 +56,17 @@ the `LOCAL_SHARED_LIBRARIES` line and the three
 worktree as a single review unit; two owners here is a guaranteed
 broken-link conflict.
 
-### C3 — M11 `model_version` is a filename key, not a digest
+### C3 — M11: the filename key already IS the digest — just check it
 
 `libraries/humla/src/main/jni/rnnoise/model_version` (`5e78411…5a09d`,
 65 bytes with trailing newline) selects the tarball name at
 `humla/build.gradle:107-113`; nothing verifies the bytes before
-`tarTree(tarGz)` at `:119-127`. The fix vendors a real SHA-256 of the
-archive (new file alongside `model_version`, e.g. `model_sha256`),
-verified in `doLast` before unpack, fail closed. `scripts/worktree.py:99-141`
+`tarTree(tarGz)` at `:119-127`. Fresh download confirms the file hashes
+to exactly that string — no new value to vendor, the fix only adds the
+check. The digest file must live in our tree (e.g.
+`libraries/humla/model_sha256`), NOT alongside `model_version` (that
+file is inside the rnnoise submodule, pin `d983458`). Verified in
+`doLast` before unpack, fail closed. `scripts/worktree.py:99-141`
 copies tarballs + generated sources across worktrees — update the copy
 path if a new digest file is added, or fresh worktrees cannot verify
 offline.
@@ -71,11 +74,10 @@ offline.
 ### C4 — M15 is last: toolchain change invalidates native verification
 
 NDK pin is duplicated (`flake.nix:39` + `humla/build.gradle:57`,
-`25.1.8937393`, must match); the nix store currently provides only
-`25.1`. Bumping to 27 LTS needs a `flake.lock` move (currently
-`d6524aa…`) plus an `androidenv.composeAndroidPackages` support check.
-Land M15 after the opus/H10 native work so `test_native_audio.sh` and
-the NDK build verify once against the final toolchain.
+`25.1.8937393`, must match). NDK `27.2.12479018` (r27c) composes on the
+current `flake.lock` (`d6524aa`) — no lock move needed. Land M15 after
+the opus/H10 native work so `test_native_audio.sh` and the NDK build
+verify once against the final toolchain.
 
 ### C5 — H10 fix is a copy of the `nativeRender` pattern, plus Java
 
@@ -88,14 +90,20 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
 
 ## 2. Prerequisites (close before coding, not during)
 
-- **P1 — capture the RNNoise digest.** No tarball is cached
-  (`libraries/humla/build/model_cache/` absent; generated
-  `rnnoise-build/generated/rnnoise_data.{c,h}` exists, 15 MB `.c`).
-  Download once from
-  `https://media.xiph.org/rnnoise/models/rnnoise_data-<hash>.tar.gz`,
-  record SHA-256, vendor it in-repo. Fresh worktrees download on first
-  build, so the verify-before-`tarTree` path is exercised by deleting
-  the cache, not by the steady-state skip at `build.gradle:104-106`.
+- **P1 — RNNoise digest captured (closed 2026-09-29).** Fresh download
+  of `rnnoise_data-5e78411….tar.gz` hashes to
+  `5e7841199cf2947fc32f6eeaf6faffab5c2dd3da69e6a6e4830625a10285a09d`
+  — byte-identical to `model_version`. The filename key already IS the
+  SHA-256; the fix only adds the check, no new value to vendor. Wrinkle:
+  `model_version` lives inside the rnnoise submodule (pin `d983458`;
+  upstream HEAD has moved to `70f1d25`), so the digest file must live
+  in our tree (e.g. `libraries/humla/model_sha256`), not next to
+  `model_version`. Verify the whole `.tar.gz` before `tarTree`
+  (archive holds 6 files, we unpack 2). Decided: keep download+verify,
+  do NOT commit the 15 MB generated `.c` — smaller repo, and the check
+  runs every clean build. Exercise the verify path by deleting
+  `build/model_cache/`, not via the steady-state skip at
+  `build.gradle:104-106`.
 - **P2 — target Opus tree build lists inspected (closed 2026-09-29).**
   1.6.1 keeps the same `.mk` structure (`celt_sources.mk` /
   `silk_sources.mk` / `opus_sources.mk`), so `Android.mk:24-47` needs
@@ -117,9 +125,13 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
   `opus/celt`, `opus/silk` at `Android.mk:62`); update the load-order
   comments at `:49-56`; remove the defensive `jniopus` load in
   `CryptState.java:43` with the other two sites.
-- **P4 — NDK 27 availability in nixpkgs androidenv.** Confirm the
-  composed SDK offers an NDK 27 LTS revision before editing
-  `flake.nix`/`build.gradle`; keep the two pins in sync.
+- **P4 — NDK 27 composes on current lock (closed 2026-09-29).** NDK
+  `27.2.12479018` (r27c) resolves via `composeAndroidPackages` on the
+  current `flake.lock` (`d6524aa`) — NO lock move needed (corrects the
+  earlier "needs lock bump" claim). Pin that revision in `flake.nix:39`
+  + `humla/build.gradle:57`, keep the two in sync. Still slice C's call:
+  `APP_PLATFORM android-21` keep-vs-raise, and flag placement in
+  `Android.mk:20-21`.
 - **P5 — voice-interop + fuzz harness shape (closed 2026-09-29).**
   `scripts/test_native_audio.sh:4-8` is hermetic (`FakeDecoder`, no
   libopus linked) — confirmed gap. Slice B adds a host test linking
@@ -136,7 +148,7 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
 |---|---|---|---|---|
 | A | `phase3-rnnoise-digest` | M11 | `humla/build.gradle:88-135`, new digest file, `scripts/worktree.py` copy path | digest-mismatch fails closed |
 | B | `phase3-opus-native` | H12+H11+M12+H10 | `jni/opus` pin, `Android.mk`, `Application.mk`, `jniopus.cpp`, `humla/build.gradle:39`, `proguard-rules.pro:18-20`, `tools/jnigen.sh`, `tools/javacpp-0.7.jar`, `OpusVoiceDecoder.cpp`, `NativeAudioInputEngineJni.cpp`, `NativeAudioInputEngine.java`, loadLibrary sites | interop regression + `decodeFloat` fuzz (new) |
-| C | `phase3-ndk-hardening` | M15 | `flake.nix:39` + `flake.lock`, `humla/build.gradle:57`, `Android.mk:20-21`, `Application.mk:2-4` | NDK build on 27, `test_native_audio.sh` |
+| C | `phase3-ndk-hardening` | M15 | `flake.nix:39`, `humla/build.gradle:57`, `Android.mk:20-21`, `Application.mk:2-4` | NDK build on 27, `test_native_audio.sh` |
 
 Each worktree forks `master`; land order A, B, C (C last per C4).
 Slice B is one worktree because H12/H11 share `Android.mk` (C2); H10
@@ -144,10 +156,12 @@ rides along (disjoint files, same native review).
 
 ### Slice A — RNNoise digest (M11)
 
-- Vendor SHA-256 alongside `model_version`; `doLast` verifies the
-  tarball before `tarTree`, fail closed (throw on mismatch, no
-  fallback URL). Optionally commit generated `rnnoise_data.c/h`
-  instead of fetching — either way the bytes are pinned.
+- Vendor `libraries/humla/model_sha256` containing
+  `5e7841199cf2947fc32f6eeaf6faffab5c2dd3da69e6a6e4830625a10285a09d`
+  (P1: identical to `model_version`, kept as a separate in-tree file
+  because `model_version` lives in the submodule); `doLast` verifies the
+  whole tarball before `tarTree`, fail closed (throw on mismatch, no
+  fallback URL). Keep download+verify, do NOT commit generated sources.
 - Update `scripts/worktree.py:99-141` so the digest file travels with
   the tarball/generated-source copy.
 - Accept: digest mismatch fails the build; clean-cache build verifies
@@ -182,8 +196,9 @@ rides along (disjoint files, same native review).
 
 ### Slice C — NDK + hardening flags (M15)
 
-- NDK 27 LTS in `flake.nix` + `humla/build.gradle` (keep in sync),
-  `flake.lock` move; explicit `-fstack-protector-strong
+- Pin NDK `27.2.12479018` (r27c, P4: composes on current lock, no lock
+  move) in `flake.nix` + `humla/build.gradle` (keep in sync);
+  explicit `-fstack-protector-strong
   -D_FORTIFY_SOURCE=2 -Wl,-z,RelRO,-z,Now` in `Android.mk:20-21`
   (`COMMON_CFLAGS`/`COMMON_LDFLAGS`); decide `APP_PLATFORM android-21`
   (`Application.mk:4`) stance (keep vs raise with minSdk 21).
