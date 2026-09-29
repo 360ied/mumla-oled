@@ -19,10 +19,12 @@ No new dialogs. Behavior changes:
   in-app WebView.
 - Comment WebView stops loading remote images unless the existing
   external-images setting is on (default off). Other schemes blocked.
-- Chat images change first-layout to pop-in: empty placeholder first,
-  decoded bitmap appears via the existing `OnImageLoadedListener` /
-  `notifyDataSetChanged` path. Same for large avatars if the slice
-  goes async.
+- Chat images stay sync-bounded, no pop-in (decided, slice C): data-URI
+  decode stays on the UI thread but capped (4096 px / 16 MP two-pass);
+  URL fetch already runs on `mExecutor` with bounded decode; avatars stay
+  sync on the bind path (512 px two-pass) because `ChannelAdapter:122`
+  and `ChannelListAdapter:381` require `Bitmap` synchronously. No layout
+  or signature change.
 - Comment remote-image gating follows the same setting; no per-message
   origin surfacing in this change.
 - TTS actor names truncated and stripped of control characters; message
@@ -143,8 +145,10 @@ Each worktree forks `master`; no cross-slice file touches.
   `calculateInSampleSize` helper; chat longest-side ~4096 / ~16 MP
   cap, avatar ~512. `LruCache` (`MumbleImageGetter.java:112`) is
   touched from UI + background threads — synchronize or document.
-- Accept: SSRF/decode-bomb unit cases covered (classifier + sampler
-  pure tests); `./scripts/check.sh` green.
+- Decided: sync-bounded everywhere (no signature change, no pop-in).
+  Rationale: adapter bind paths require `Bitmap` synchronously; bounding
+  alone kills the OOM primitive without an async migration. Residual:
+  worst-case bounded-decode jank on the UI thread for data-URIs.
 
 ### Slice D — ping + TTS/notifications (L3+L5)
 
@@ -187,6 +191,10 @@ Each worktree forks `master`; no cross-slice file touches.
 ## 6. Residuals and non-goals (explicit, not overlooked)
 
 - M5 DNS TOCTOU (C3) — accepted, documented here.
+- M6/M7 async decode declined (slice C): sync-bounded keeps
+  `getDrawable`/`AvatarCache.get` signatures; worst-case bounded jank
+  accepted over pop-in plumbing. Revisit only with adapter
+  invalidation work.
 - Secrets at rest (former C1, H6–H8, L1) out of scope per
   [secrets-at-rest-plan.md](secrets-at-rest-plan.md).
 - No `customtabs` dependency, no per-message remote-origin surfacing,
