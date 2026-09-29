@@ -1,7 +1,6 @@
 # Security audit — Mumla OLED — 2026-09-28
 
-Read-only audit of Mumla OLED (`app/` + `libraries/humla/`, JNI, manifests, Gradle build).
-No code changed, nothing committed. `plans/` is gitignored.
+Audit of Mumla OLED (`app/` + `libraries/humla/`, JNI, manifests, Gradle build).
 
 - [findings.md](findings.md) — deduplicated findings with evidence, impact, fix.
 - [notes.md](notes.md) — scope, method, verification log, non-findings, gaps, roadmap.
