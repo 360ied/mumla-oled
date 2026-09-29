@@ -22,10 +22,10 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-import se.lublin.humla.net.HandshakeFailure;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.net.HandshakeFailure;
 
 /**
  * A composite wrapper around Humla observers to easily broadcast to each observer.
@@ -68,9 +68,9 @@ public class HumlaCallbacks implements IHumlaObserver {
     }
 
     @Override
-    public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure) {
+    public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onTLSHandshakeFailed(chain, failure);
+            observer.onTLSHandshakeFailed(chain, failure, verifiedHost);
         }
     }
 

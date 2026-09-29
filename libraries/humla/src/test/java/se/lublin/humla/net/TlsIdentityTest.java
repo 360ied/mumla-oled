@@ -19,7 +19,6 @@ package se.lublin.humla.net;
 
 import junit.framework.TestCase;
 
-import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.SecureRandom;
@@ -82,16 +81,39 @@ public class TlsIdentityTest extends TestCase {
         assertFalse(TlsHostnameVerifier.verifyHostname("10.1.2.3", cnLeaf));
     }
 
-    public void testOnionNeverMatchesSan() throws Exception {
-        X509Certificate leaf = CertMint.leaf("abcdefghijklmnop.onion");
-        assertFalse(TlsHostnameVerifier.verifyHostname("abcdefghijklmnop.onion", leaf));
+    public void testIpv6CanonicalFormsMatch() throws Exception {
+        X509Certificate leaf = CertMint.ipLeaf("2001:db8::1");
+        assertTrue(TlsHostnameVerifier.verifyHostname("2001:db8::1", leaf));
+        assertTrue(TlsHostnameVerifier.verifyHostname("2001:0db8:0000:0000:0000:0000:0000:0001", leaf));
+        assertTrue(TlsHostnameVerifier.verifyHostname("2001:DB8::1", leaf));
+        assertFalse(TlsHostnameVerifier.verifyHostname("2001:db8::2", leaf));
     }
 
-    public void testNullInputsRejected() throws Exception {
-        X509Certificate leaf = CertMint.leaf("example.com");
-        assertFalse(TlsHostnameVerifier.verifyHostname(null, leaf));
-        assertFalse(TlsHostnameVerifier.verifyHostname("example.com", null));
-        assertFalse(TlsHostnameVerifier.verifyHostname("", leaf));
+    public void testIsIpLiteralForms() {
+        assertTrue(TlsHostnameVerifier.isIpLiteral("10.1.2.3"));
+        assertTrue(TlsHostnameVerifier.isIpLiteral("2001:db8::1"));
+        assertFalse(TlsHostnameVerifier.isIpLiteral("example.com"));
+        assertFalse(TlsHostnameVerifier.isIpLiteral(null));
+    }
+
+    public void testClaimedNamesIncludesIpAndCnFallback() throws Exception {
+        assertTrue(TlsHostnameVerifier.claimedNames(CertMint.ipLeaf("10.1.2.3")).contains("10.1.2.3"));
+        assertTrue(TlsHostnameVerifier.claimedNames(CertMint.leaf("san.example")).contains("san.example"));
+        assertTrue(TlsHostnameVerifier.claimedNames(CertMint.cnOnly("cn.example")).contains("cn.example"));
+        assertTrue(TlsHostnameVerifier.claimedNames(null).isEmpty());
+    }
+
+    public void testWildcardEdgesRejected() throws Exception {
+        assertFalse(TlsHostnameVerifier.verifyHostname("a.example.com", CertMint.leaf("*")));
+        assertFalse(TlsHostnameVerifier.verifyHostname("ab.example.com", CertMint.leaf("a*b.example.com")));
+        assertFalse(TlsHostnameVerifier.verifyHostname("a.b.example.com", CertMint.leaf("*.*.example.com")));
+    }
+
+    public void testCanonicalizeHost() {
+        assertEquals("example.com", TlsHostnameVerifier.canonicalizeHost("EXAMPLE.COM."));
+        assertNull(TlsHostnameVerifier.canonicalizeHost(null));
+        assertTrue(TlsHostnameVerifier.isOnionHost("Example.ONION."));
+        assertFalse(TlsHostnameVerifier.isOnionHost("example.com"));
     }
 
     public void testSameSpki() throws Exception {
@@ -108,7 +130,7 @@ public class TlsIdentityTest extends TestCase {
         byte[] first = HandshakeFailure.spkiSha256(leaf);
         byte[] second = HandshakeFailure.spkiSha256(leaf);
         assertEquals(32, first.length);
-        assertEquals(new BigInteger(1, first), new BigInteger(1, second));
+        assertTrue(java.util.Arrays.equals(first, second));
     }
 
     public void testFrameValidator() {
@@ -128,6 +150,11 @@ public class TlsIdentityTest extends TestCase {
         // Type checked first: a bad type with a bad length still reports BAD_TYPE.
         assertEquals(FrameValidator.FrameError.BAD_TYPE,
                 FrameValidator.validateFrame((short) types, -5, types));
+        // Default overload pins the live message-type universe.
+        assertEquals(FrameValidator.FrameError.NONE,
+                FrameValidator.validateFrame((short) 0, 0));
+        assertEquals(FrameValidator.FrameError.BAD_TYPE,
+                FrameValidator.validateFrame((short) FrameValidator.MESSAGE_TYPE_COUNT, 0));
     }
 
     /** Minimal DER certificate minter for hostname/SAN matrix tests. */

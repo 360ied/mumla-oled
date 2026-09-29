@@ -152,7 +152,7 @@
     <string name="certificate_identity_mismatch">Server Identity Mismatch</string>
     <string name="certificate_identity_mismatch_body">Mumla OLED refused to connect to %1$s.\n\nThe server presented a valid certificate, but it is issued for a different name: %2$s.\n\nThis can mean a misconfigured server — or someone intercepting the connection. Connect using the server’s own hostname, or ask the server operator to fix the certificate. The connection was not retried.</string>
     <string name="certificate_changed_title">Server Certificate Changed</string>
-    <string name="certificate_changed_body">%1$s presented a different certificate than the one you previously trusted.\n\nPreviously trusted (SHA-256):\n%2$s\n\nPresented now (SHA-256):\n%3$s\n\nReplace the stored certificate only if you expected this change (for example, the operator renewed it).</string>
+    <string name="certificate_changed_body">%1$s presented a different certificate key than the one you previously trusted.\n\nPreviously trusted (SHA-256):\n%2$s\n\nPresented now (SHA-256):\n%3$s\n\nReplace the stored certificate only if you expected this change (for example, the operator generated a new key).</string>
     <string name="untrusted_certificate_body">The certificate for %1$s is not issued by a known authority. Only trust it if you verified the fingerprint with the server operator out of band. Trusting pins this certificate to this server only.</string>
     <string name="replace_certificate">Replace</string>
     <string name="allow">Allow</string>

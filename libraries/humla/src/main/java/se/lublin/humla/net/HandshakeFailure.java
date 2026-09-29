@@ -38,6 +38,10 @@ public enum HandshakeFailure {
     /** No failure; handshake identity checks passed. */
     NONE;
 
+    /**
+     * SHA-256 of the leaf's SubjectPublicKeyInfo. Null leaves throw; use
+     * {@link #sameSpki} for the null-tolerant comparison.
+     */
     public static byte[] spkiSha256(X509Certificate leaf)
             throws CertificateEncodingException {
         try {
@@ -48,6 +52,7 @@ public enum HandshakeFailure {
         }
     }
 
+    /** Null-tolerant SPKI comparison; null either side returns false. */
     public static boolean sameSpki(X509Certificate a, X509Certificate b) {
         if (a == null || b == null) {
             return false;
@@ -55,7 +60,6 @@ public enum HandshakeFailure {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] first = digest.digest(a.getPublicKey().getEncoded());
-            digest.reset();
             byte[] second = digest.digest(b.getPublicKey().getEncoded());
             if (first.length != second.length) {
                 return false;

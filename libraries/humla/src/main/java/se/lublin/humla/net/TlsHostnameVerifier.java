@@ -36,6 +36,31 @@ public final class TlsHostnameVerifier {
     private TlsHostnameVerifier() {
     }
 
+    /**
+     * Canonical form for pin aliases and comparisons: lowercase, no trailing
+     * dot. Both the pin write path (activity) and lookup path (factory) must
+     * use this so the same host spelled differently hits one alias.
+     */
+    public static String canonicalizeHost(String host) {
+        if (host == null) {
+            return null;
+        }
+        return stripTrailingDot(host).toLowerCase(Locale.US);
+    }
+
+    /** Whether the host is a Tor onion address (pin-or-nothing identity). */
+    public static boolean isOnionHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        return stripTrailingDot(host).toLowerCase(Locale.US).endsWith(".onion");
+    }
+
+    /**
+     * Whether the string is an IP literal. Callers pass a bare host (no port);
+     * anything containing a colon is treated as IPv6 and fails closed on the
+     * IP-SAN path if it does not parse.
+     */
     public static boolean isIpLiteral(String host) {
         if (host == null || host.isEmpty()) {
             return false;
@@ -72,18 +97,13 @@ public final class TlsHostnameVerifier {
         if (host == null || leaf == null) {
             return false;
         }
-        String normalized = stripTrailingDot(host).toLowerCase(Locale.US);
-        if (normalized.isEmpty()) {
+        String normalized = canonicalizeHost(host);
+        if (normalized == null || normalized.isEmpty()) {
             return false;
-        }
-        Collection<List<?>> sans;
-        try {
-            sans = leaf.getSubjectAlternativeNames();
-        } catch (Exception e) {
-            sans = null;
         }
         List<String> dnsSans = new ArrayList<>();
         List<String> ipSans = new ArrayList<>();
+        Collection<List<?>> sans = subjectAlternativeNames(leaf);
         if (sans != null) {
             for (List<?> san : sans) {
                 if (san == null || san.size() < 2 || !(san.get(0) instanceof Integer)) {
@@ -101,9 +121,19 @@ public final class TlsHostnameVerifier {
                 }
             }
         }
+        // SANs present but unparseable is a hard failure: RFC 6125 forbids CN
+        // fallback when SANs exist, and failing closed beats trusting blindly.
+        if (sans != null && !sans.isEmpty() && dnsSans.isEmpty() && ipSans.isEmpty()) {
+            return false;
+        }
         if (isIpLiteral(normalized)) {
+            byte[] hostBytes = addressBytes(normalized);
+            if (hostBytes == null) {
+                return false;
+            }
             for (String ipSan : ipSans) {
-                if (normalized.equals(stripTrailingDot(ipSan).toLowerCase(Locale.US))) {
+                byte[] sanBytes = addressBytes(ipSan);
+                if (sanBytes != null && java.util.Arrays.equals(hostBytes, sanBytes)) {
                     return true;
                 }
             }
@@ -128,22 +158,33 @@ public final class TlsHostnameVerifier {
         return false;
     }
 
+    private static Collection<List<?>> subjectAlternativeNames(X509Certificate leaf) {
+        try {
+            return leaf.getSubjectAlternativeNames();
+        } catch (java.security.cert.CertificateParsingException e) {
+            return null;
+        }
+    }
+
+    private static byte[] addressBytes(String ip) {
+        try {
+            return java.net.InetAddress.getByName(stripTrailingDot(ip)).getAddress();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /**
-     * Human-readable names the leaf claims to identify (dNSName SANs, or CN
-     * fallback). Used in the mismatch dialog so the user sees what the cert
-     * is actually valid for.
+     * Human-readable names the leaf claims to identify (dNSName and iPAddress
+     * SANs, or CN fallback). Used in the mismatch dialog so the user sees
+     * what the cert is actually valid for.
      */
     public static List<String> claimedNames(X509Certificate leaf) {
         List<String> names = new ArrayList<>();
         if (leaf == null) {
             return names;
         }
-        Collection<List<?>> sans;
-        try {
-            sans = leaf.getSubjectAlternativeNames();
-        } catch (Exception e) {
-            sans = null;
-        }
+        Collection<List<?>> sans = subjectAlternativeNames(leaf);
         if (sans != null) {
             for (List<?> san : sans) {
                 if (san == null || san.size() < 2 || !(san.get(0) instanceof Integer)) {

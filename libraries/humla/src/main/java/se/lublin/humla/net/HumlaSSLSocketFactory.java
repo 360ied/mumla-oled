@@ -96,9 +96,16 @@ public class HumlaSSLSocketFactory {
             plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
             SSLSocket sslSocket =
                     (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
-            SSLParameters params = sslSocket.getSSLParameters();
-            params.setEndpointIdentificationAlgorithm("HTTPS");
-            sslSocket.setSSLParameters(params);
+            // Defense-in-depth only: the authoritative check is the manual
+            // TlsHostnameVerifier pass in HumlaTCP, which honors TOFU pins and
+            // the .onion pin-or-nothing path. Endpoint identification must not
+            // run for .onion hosts — no public CA can vouch for them, and the
+            // handshake would die before the pin check ever runs.
+            if (!TlsHostnameVerifier.isOnionHost(host)) {
+                SSLParameters params = sslSocket.getSSLParameters();
+                params.setEndpointIdentificationAlgorithm("HTTPS");
+                sslSocket.setSSLParameters(params);
+            }
             return sslSocket;
         } catch (IOException e) {
             try {
@@ -120,16 +127,25 @@ public class HumlaSSLSocketFactory {
     /**
      * Why the last handshake failed identity verification. Valid after
      * {@code checkServerTrusted} throws; {@link HandshakeFailure#NONE} if the
-     * last handshake passed. The {@code onTLSHandshakeFailed} listener
-     * signature is unchanged — the reason travels via this accessor.
+     * last handshake passed. Consumed by the {@code onTLSHandshakeFailed}
+     * listener's explicit {@code HandshakeFailure} parameter.
      */
     public HandshakeFailure getLastHandshakeFailure() {
         return mTrustWrapper.getLastHandshakeFailure();
     }
 
+    /**
+     * Whether the presented leaf's key matches the pin stored for the expected
+     * host. Lets the post-handshake identity check honor TOFU pins without
+     * demanding a SAN match on the pin path.
+     */
+    public boolean isPinnedLeaf(X509Certificate leaf) {
+        return mTrustWrapper.isPinnedLeaf(leaf);
+    }
+
     /** Records the handshake failure reason (e.g. post-handshake hostname mismatch). */
     public void setLastHandshakeFailure(HandshakeFailure failure) {
-        mTrustWrapper.setLastHandshakeFailure(failure);
+        mTrustWrapper.setLastHandshakeFailure(java.util.Objects.requireNonNull(failure));
     }
 
     /**
@@ -145,7 +161,7 @@ public class HumlaSSLSocketFactory {
         private X509TrustManager mDefaultTrustManager;
         private X509TrustManager mTrustManager;
         private KeyStore mPinnedStore;
-        private X509Certificate[] mServerChain;
+        private volatile X509Certificate[] mServerChain;
         private String mExpectedHost;
         private HandshakeFailure mLastHandshakeFailure = HandshakeFailure.NONE;
 
@@ -209,12 +225,13 @@ public class HumlaSSLSocketFactory {
          * Returns the certificate pinned for the expected host, or null when no
          * pin exists. The pinned store keys {@code alias = hostname}; only that
          * alias is ever consulted, so a pin for host A never authorizes host B.
+         * Both sides canonicalize identically (lowercase, strip trailing dot).
          * Callers compare by SPKI, so re-issuance with the same key survives.
          */
         private X509Certificate expectedPin(X509Certificate leaf) {
             String host;
             synchronized (this) {
-                host = mExpectedHost;
+                host = TlsHostnameVerifier.canonicalizeHost(mExpectedHost);
             }
             if (mPinnedStore == null || host == null || leaf == null) {
                 return null;
@@ -228,6 +245,12 @@ public class HumlaSSLSocketFactory {
             } catch (KeyStoreException e) {
                 return null;
             }
+        }
+
+        /** Whether the leaf's SPKI matches the expected host's stored pin. */
+        private boolean isPinnedLeaf(X509Certificate leaf) {
+            X509Certificate pinned = expectedPin(leaf);
+            return pinned != null && HandshakeFailure.sameSpki(pinned, leaf);
         }
 
         @Override

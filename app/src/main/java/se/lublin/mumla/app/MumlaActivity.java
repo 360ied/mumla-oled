@@ -62,10 +62,15 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.jetbrains.annotations.NotNull;
 
+import android.text.TextUtils;
+
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -126,6 +131,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
+    private AlertDialog mCertDialog;
 
     /**
      * List of fragments to be notified about service state changes.
@@ -201,16 +207,22 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
 
         @Override
-        public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure) {
+        public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
             if (chain == null || chain.length == 0 || chain[0] == null) {
                 return;
             }
-            final Server lastServer = getService().getTargetServer();
-            if (lastServer == null) {
+            if (getService() == null || getService().getTargetServer() == null) {
                 return;
             }
+            final Server lastServer = getService().getTargetServer();
             final X509Certificate x509 = chain[0];
-            String host = lastServer.getHost();
+            // Pins and verification both key on the post-SRV host; the dialog
+            // shows that same host so mismatch copy names what was checked.
+            String host = verifiedHost != null ? verifiedHost : lastServer.getHost();
+            host = TlsHostnameVerifier.canonicalizeHost(host);
+            if (host == null) {
+                return;
+            }
             if (failure == HandshakeFailure.HOSTNAME_MISMATCH) {
                 showMismatchDialog(host, x509);
                 return;
@@ -226,12 +238,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         /** CA-valid cert for the wrong host: no Allow, no pinning — disconnect only. */
         private void showMismatchDialog(String host, X509Certificate x509) {
             List<String> claimed = TlsHostnameVerifier.claimedNames(x509);
-            String names = claimed.isEmpty() ? getString(R.string.unknown) : android.text.TextUtils.join(", ", claimed);
+            String names = claimed.isEmpty() ? getString(R.string.unknown) : TextUtils.join(", ", claimed);
             View layout = getLayoutInflater().inflate(R.layout.certificate_info, null);
             TextView textView = layout.findViewById(R.id.certificate_info_text);
             textView.setText(getString(R.string.certificate_identity_mismatch_body, host, names)
                     + "\n\n" + certificateDetails(x509));
-            new MaterialAlertDialogBuilder(MumlaActivity.this)
+            dismissCertDialog();
+            mCertDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                     .setTitle(R.string.certificate_identity_mismatch)
                     .setView(layout)
                     .setPositiveButton(android.R.string.ok, null)
@@ -244,7 +257,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             TextView textView = layout.findViewById(R.id.certificate_info_text);
             textView.setText(getString(R.string.untrusted_certificate_body, host)
                     + "\n\n" + certificateDetails(x509));
-            new MaterialAlertDialogBuilder(MumlaActivity.this)
+            dismissCertDialog();
+            mCertDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                     .setTitle(R.string.untrusted_certificate)
                     .setView(layout)
                     .setPositiveButton(R.string.allow, (dialog, which) -> pinAndReconnect(server, host, x509))
@@ -259,7 +273,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             String oldPrint = pinned != null ? sha256Fingerprint(pinned) : getString(R.string.unknown);
             textView.setText(getString(R.string.certificate_changed_body, host, oldPrint, sha256Fingerprint(presented))
                     + "\n\n" + certificateDetails(presented));
-            new MaterialAlertDialogBuilder(MumlaActivity.this)
+            dismissCertDialog();
+            mCertDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                     .setTitle(R.string.certificate_changed_title)
                     .setView(layout)
                     .setPositiveButton(R.string.replace_certificate, (dialog, which) -> pinAndReconnect(server, host, presented))
@@ -271,13 +286,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             try {
                 KeyStore trustStore = MumlaTrustStore.getTrustStore(MumlaActivity.this);
                 if (host != null && trustStore.containsAlias(host)) {
-                    java.security.cert.Certificate pinned = trustStore.getCertificate(host);
+                    Certificate pinned = trustStore.getCertificate(host);
                     if (pinned instanceof X509Certificate) {
                         return (X509Certificate) pinned;
                     }
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (CertificateException | IOException | KeyStoreException | NoSuchAlgorithmException e) {
+                Log.e(TAG, "Could not read trust store", e);
             }
             return null;
         }
@@ -289,42 +304,48 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 MumlaTrustStore.saveTrustStore(MumlaActivity.this, trustStore);
                 Toast.makeText(MumlaActivity.this, R.string.trust_added, Toast.LENGTH_LONG).show();
                 connectToServer(server);
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (CertificateException | IOException | KeyStoreException | NoSuchAlgorithmException e) {
+                Log.e(TAG, "Could not write trust store", e);
                 Toast.makeText(MumlaActivity.this, R.string.trust_add_failed, Toast.LENGTH_LONG).show();
             }
         }
 
         private String certificateDetails(X509Certificate x509) {
             try {
-                MessageDigest digest1 = MessageDigest.getInstance("SHA-1");
-                MessageDigest digest2 = MessageDigest.getInstance("SHA-256");
-                String hexDigest1 = bytesToHex(digest1.digest(x509.getEncoded()))
-                        .replaceAll("(..)", "$1:");
-                String hexDigest2 = bytesToHex(digest2.digest(x509.getEncoded()))
-                        .replaceAll("(..)", "$1:");
+                String hexDigest1 = colonHex(MessageDigest.getInstance("SHA-1").digest(x509.getEncoded()));
+                String hexDigest2 = colonHex(MessageDigest.getInstance("SHA-256").digest(x509.getEncoded()));
 
                 return getString(R.string.certificate_info,
-                        x509.getSubjectDN().getName(),
+                        x509.getSubjectX500Principal().getName(),
                         x509.getNotBefore().toString(),
                         x509.getNotAfter().toString(),
-                        hexDigest1.substring(0, hexDigest1.length() - 1),
-                        hexDigest2.substring(0, hexDigest2.length() - 1));
+                        hexDigest1,
+                        hexDigest2);
             } catch (NoSuchAlgorithmException | CertificateException e) {
-                e.printStackTrace();
+                Log.e(TAG, "Could not fingerprint certificate", e);
                 return x509.toString();
             }
         }
 
         private String sha256Fingerprint(X509Certificate x509) {
             try {
-                MessageDigest digest = MessageDigest.getInstance("SHA-256");
-                String hex = bytesToHex(digest.digest(x509.getEncoded())).replaceAll("(..)", "$1:");
-                return hex.substring(0, hex.length() - 1);
+                return colonHex(MessageDigest.getInstance("SHA-256").digest(x509.getEncoded()));
             } catch (NoSuchAlgorithmException | CertificateException e) {
-                e.printStackTrace();
+                Log.e(TAG, "Could not fingerprint certificate", e);
                 return getString(R.string.unknown);
             }
+        }
+
+        private String colonHex(byte[] bytes) {
+            String hex = bytesToHex(bytes);
+            StringBuilder out = new StringBuilder(hex.length() + hex.length() / 2);
+            for (int i = 0; i < hex.length(); i += 2) {
+                if (i > 0) {
+                    out.append(':');
+                }
+                out.append(hex, i, Math.min(i + 2, hex.length()));
+            }
+            return out.toString();
         }
 
         @Override
@@ -335,6 +356,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     .show();
         }
     };
+
+    private void dismissCertDialog() {
+        if (mCertDialog != null) {
+            mCertDialog.dismiss();
+            mCertDialog = null;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -471,6 +499,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mErrorDialog.dismiss();
         if (mConnectingDialog != null)
             mConnectingDialog.dismiss();
+        dismissCertDialog();
 
         if (mService != null) {
             mService.onTalkKeyCancel();

@@ -19,10 +19,10 @@ package se.lublin.humla.util;
 
 import java.security.cert.X509Certificate;
 
-import se.lublin.humla.net.HandshakeFailure;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.net.HandshakeFailure;
 
 /**
  * Created by andrew on 18/10/15.
@@ -34,7 +34,7 @@ public interface IHumlaObserver {
 
     void onDisconnected(HumlaException e);
 
-    void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure);
+    void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost);
 
     void onChannelAdded(IChannel channel);
 

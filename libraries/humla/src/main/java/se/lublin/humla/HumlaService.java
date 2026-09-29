@@ -413,8 +413,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
-    public void onConnectionHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure) {
-        mCallbacks.onTLSHandshakeFailed(chain, failure);
+    public void onConnectionHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
+        mCallbacks.onTLSHandshakeFailed(chain, failure, verifiedHost);
     }
 
     @Override

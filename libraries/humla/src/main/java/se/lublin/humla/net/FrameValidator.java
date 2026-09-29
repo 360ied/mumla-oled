@@ -26,7 +26,10 @@ package se.lublin.humla.net;
 public final class FrameValidator {
     /** Maximum accepted TCP protobuf frame payload, matching upstream Mumble. */
     public static final int MAX_FRAME_BYTES = 0x7fffff;
+    /** Message-type universe size, hoisted out of the per-frame hot path. */
+    public static final int MESSAGE_TYPE_COUNT = HumlaTCPMessageType.values().length;
 
+    /** Validation outcome; callers abort the connection on anything but NONE. */
     public enum FrameError {
         NONE,
         BAD_TYPE,
@@ -37,6 +40,11 @@ public final class FrameValidator {
     private FrameValidator() {
     }
 
+    /**
+     * Validates a frame header before payload allocation. Type range is
+     * checked first ({@code readShort} is signed), then length bounds, so a
+     * bad type with a bad length still reports BAD_TYPE.
+     */
     public static FrameError validateFrame(short messageType, int messageLength, int messageTypeCount) {
         if (messageType < 0 || messageType >= messageTypeCount) {
             return FrameError.BAD_TYPE;
@@ -51,6 +59,6 @@ public final class FrameValidator {
     }
 
     public static FrameError validateFrame(short messageType, int messageLength) {
-        return validateFrame(messageType, messageLength, HumlaTCPMessageType.values().length);
+        return validateFrame(messageType, messageLength, MESSAGE_TYPE_COUNT);
     }
 }
