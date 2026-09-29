@@ -251,3 +251,4 @@ rides along (disjoint files, same native review).
 - No autonomous merging, pushing, or deletion (per `AGENTS.md`): leave
   branches and worktrees intact and unpushed, report for review.
 - Suggested review/merge order: digest, opus-native, NDK last.
+- Parallelization (2026-09-29): slice A may run parallel with slice B (disjoint `build.gradle` hunks; land A first so B inherits `model_sha256` + the `worktree.py` copy path). Slice C MUST wait for B: C edits `COMMON_CFLAGS/LDFLAGS` assuming B's folded single-module `Android.mk`, and C's all-ABI link acceptance only proves the final tree. Three-way parallel is unsafe (same-file conflict + invalid premise + gradle contention).
