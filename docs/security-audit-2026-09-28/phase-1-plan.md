@@ -7,6 +7,31 @@ prerequisites to close before coding, then the work breakdown (two atomic
 commits). Implementation itself MUST happen in a dedicated worktree
 (`./scripts/worktree.py add <branch>`); this file is docs-only on `master`.
 
+## 0. User-visible changes (UX contract — read first)
+
+The single "Untrusted Certificate" Allow/Cancel dialog
+(`MumlaActivity.java:202-251`, strings `untrusted_certificate`, `allow`,
+`certificate_info`) becomes three distinct states. Reason shown in every
+state; failure reasons never share copy or buttons.
+
+| State | Trigger | Title / body | Buttons |
+|---|---|---|---|
+| `HOSTNAME_MISMATCH` | CA-valid cert, wrong host | "Server identity mismatch": names the expected host and what the cert is valid for; states the connection was refused, not retried | Disconnect (primary) + Details. No Allow, no pinning — one-click trust of a wrong-host cert is the attack |
+| `UNTRUSTED_ISSUER` | Self-signed/unknown CA, no pin for host | Current Allow flow, copy clarified: cert is not issued by a known authority; SHA-256 fingerprint prominent; Allow pins to this host only | Allow / Cancel (unchanged), then existing `connectToServer` reconnect |
+| `PIN_CHANGED` | Pinned host presents different SPKI (new) | "Server certificate changed" warning: old-vs-new SHA-256 fingerprints side by side; explicit acknowledgment required before Allow replaces the pin | Replace pin (explicit) / Cancel |
+
+Behavior changes with no new dialog:
+
+- IP-literal connections to DNS-named certs now fail closed (previously
+  silently accepted). Affected users reconnect using the server's DNS name;
+  there is intentionally no pin bypass on the `HOSTNAME_MISMATCH` path.
+- Existing self-signed pins keep working with no re-prompt (pin path skips
+  SAN matching per C2; SPKI compare, same BKS store, no migration).
+- H2 oversize/invalid frame aborts the connection via the existing
+  connection-failed path — no new UI, only a distinct logged/disconnect
+  reason so it is distinguishable from a network drop.
+- New strings ship English-only initially (no translations in this change).
+
 ## 1. Corrections to remediation-plan.md (read first)
 
 ### C1 — H1: socket creation path must be unified before endpoint verification
@@ -131,11 +156,11 @@ single review unit.
 
 ### `MumlaActivity.java` (`onTLSHandshakeFailed`, `:202-251`)
 
-- Dialog shows the failure reason (`HOSTNAME_MISMATCH` vs `UNTRUSTED_ISSUER`
-  vs `PIN_CHANGED`), and when a pin exists for the host, old-vs-new SHA-256
-  fingerprints. Allow writes the pin (same-host overwrite only, now explicit);
-  Cancel aborts. No auto-reconnect on Allow beyond the existing
-  `connectToServer` call.
+- Dialog per the §0 contract: reason-specific title/body/buttons
+  (`HOSTNAME_MISMATCH` has no Allow; `PIN_CHANGED` shows old-vs-new SHA-256
+  fingerprints and requires explicit Replace). Allow writes the pin
+  (same-host overwrite only, now explicit); Cancel aborts. No auto-reconnect
+  on Allow beyond the existing `connectToServer` call.
 
 ### New pure helpers (`se.lublin.humla.net`, zero `android.*` imports)
 
