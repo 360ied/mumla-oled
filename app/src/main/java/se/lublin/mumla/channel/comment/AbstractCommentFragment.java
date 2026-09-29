@@ -146,9 +146,9 @@ public abstract class AbstractCommentFragment extends DialogFragment {
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                // Subframe (e.g. <iframe>) and automatic navigations never
-                // leave the WebView, so hostile HTML cannot pop an external
-                // browser without a tap on main-frame content.
+                // Subframe loads (e.g. <iframe>) never leave the WebView, so
+                // embedded hostile HTML cannot pop an external browser.
+                // Main-frame navigations open externally via handleCommentUrl.
                 if (request == null || !request.isForMainFrame()) return true;
                 return handleCommentUrl(request.getUrl() == null ? null : request.getUrl().toString());
             }
