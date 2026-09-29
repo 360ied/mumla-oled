@@ -19,7 +19,7 @@ chooses one reviewer or a single batched fan-out of slice reviewers.
 ## 1. Identify Review Target
 
 Identify the target directory and scope:
-- **Default scope**: Everything the active worktree touches against `master` (all branch commits against `master`, staged and unstaged modifications, and any untracked files). Identify the active worktree path (e.g., `.worktrees/<branch-name>`).
+- **Default scope**: Everything the active worktree touches against its fork-point from `master` (all branch commits since `git merge-base master HEAD`, staged and unstaged modifications, and any untracked files). Identify the active worktree path (e.g., `.worktrees/<branch-name>`). NEVER diff directly against `master` tip — `master` is a moving target and that produces "phantom deletions" for upstream changes made after the worktree branched.
 - **Narrowed scope**: A specific file, diff, or commit range explicitly requested by the user.
 
 ## 2. Enumerate Changes and Size the Review
@@ -27,10 +27,11 @@ Identify the target directory and scope:
 Before spawning reviewers, compute the changed-file set inside the worktree:
 
 ```bash
-git diff master --name-only
+git diff master...HEAD --name-only
 git status --porcelain
-git diff master --stat
+git diff master...HEAD --stat
 ```
+(`master...HEAD` three-dot form diffs against the fork-point, i.e. `git merge-base master HEAD`.)
 
 Evaluate the correct number of reviewers from the result:
 
@@ -53,7 +54,7 @@ Perform an exhaustive, line-by-line pedantic code review of <target-description-
 Instructions:
 - Inspect enclosing files and callers rather than viewing diff hunks in isolation.
 - "See something, say something": if you stumble upon pre-existing defects, latent bugs, or hazards in surrounding code (even if not caused by the current changes), flag them as incidental findings.
-- Check both committed changes (`git diff master`) and untracked/modified working tree files.
+- Check both committed changes (`git diff master...HEAD`) and untracked/modified working tree files.
 - For Mumble protocol, audio pipeline, or connection changes, verify behavioral parity against upstream reference code in `../mumble` (or `../../mumble` from within a worktree).
 - This is a strictly read-only review: do not edit files, stage commits, or attempt fixes; your sole purpose is to identify and report issues.
 - Do not fabricate issues or report false positives. If no issues exist within a category, explicitly state that none were identified.
@@ -74,7 +75,7 @@ bracketed placeholders):
 ```text
 Perform an exhaustive, line-by-line pedantic code review of the following
 slice of <target-description> in worktree <worktree-path>. Your slice owns
-these files: <slice-file-list> (full diff: `git diff master -- <slice-files>`).
+these files: <slice-file-list> (full diff: `git diff master...HEAD -- <slice-files>`).
 
 Instructions:
 - Your slice owns the files above, but inspect enclosing files and callers
@@ -84,7 +85,7 @@ Instructions:
 - "See something, say something": if you stumble upon pre-existing defects,
   latent bugs, or hazards in surrounding code (even if not caused by the
   current changes), flag them as incidental findings.
-- Check both committed changes (`git diff master -- <slice-files>`) and
+- Check both committed changes (`git diff master...HEAD -- <slice-files>`) and
   untracked/modified working tree files in your slice.
 - For Mumble protocol, audio pipeline, or connection changes, verify
   behavioral parity against upstream reference code in `../mumble`
