@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- H8: mumble.db holds server passwords, access tokens, and client
+         PKCS#12 blobs + passwords in plaintext. mumla-store.bks holds TOFU
+         pins. Exclude secrets from backup; settings still restore. -->
+    <exclude domain="database" path="mumble.db" />
+    <exclude domain="database" path="mumble.db-journal" />
+    <exclude domain="database" path="mumble.db-shm" />
+    <exclude domain="database" path="mumble.db-wal" />
+    <exclude domain="file" path="mumla-store.bks" />
+</full-backup-content>
