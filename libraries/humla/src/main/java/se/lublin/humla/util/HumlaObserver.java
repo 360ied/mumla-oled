@@ -22,6 +22,7 @@ import java.security.cert.X509Certificate;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.net.HandshakeFailure;
 
 /**
  * Stub class for Humla service observation.
@@ -44,7 +45,7 @@ public class HumlaObserver implements IHumlaObserver {
     }
 
     @Override
-    public void onTLSHandshakeFailed(X509Certificate[] chain) {
+    public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
 
     }
 

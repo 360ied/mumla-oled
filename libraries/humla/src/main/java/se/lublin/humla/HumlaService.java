@@ -59,6 +59,7 @@ import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.User;
 import se.lublin.humla.model.WhisperTarget;
 import se.lublin.humla.model.WhisperTargetList;
+import se.lublin.humla.net.HandshakeFailure;
 import se.lublin.humla.net.HumlaConnection;
 import se.lublin.humla.net.HumlaTCPMessageType;
 import se.lublin.humla.net.HumlaUDPMessageType;
@@ -412,8 +413,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
-    public void onConnectionHandshakeFailed(X509Certificate[] chain) {
-        mCallbacks.onTLSHandshakeFailed(chain);
+    public void onConnectionHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
+        mCallbacks.onTLSHandshakeFailed(chain, failure, verifiedHost);
     }
 
     @Override

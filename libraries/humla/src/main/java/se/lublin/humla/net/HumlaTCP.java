@@ -17,8 +17,6 @@
 
 package se.lublin.humla.net;
 
-import android.net.SSLCertificateSocketFactory;
-import android.os.Build;
 import android.util.Log;
 import android.util.Patterns;
 import com.google.protobuf.MessageLite;
@@ -36,6 +34,7 @@ import java.net.SocketException;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -45,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSocket;
 
 import se.lublin.humla.Constants;
@@ -57,6 +57,15 @@ import se.lublin.humla.util.HumlaException;
 public class HumlaTCP extends HumlaNetworkThread {
     private static final String TAG = HumlaTCP.class.getName();
     public static final int CONNECT_TIMEOUT = 10000;
+    /**
+     * Read timeout for the established connection. The keepalive ping loop
+     * (5 s bootstrap, 10 s steady state, server Ping reply to every client
+     * Ping) keeps healthy connections fed well inside this window, so expiry
+     * means the connection stopped producing frames past three steady-state
+     * ping intervals — a stalled or malicious server, but also sleep, radio
+     * stalls, or an overloaded server.
+     */
+    public static final int READ_TIMEOUT_MS = 30000;
 
     private final HumlaSSLSocketFactory mSocketFactory;
     private String mHost;
@@ -99,7 +108,7 @@ public class HumlaTCP extends HumlaNetworkThread {
         mRunning = true;
         try {
             if (mPort == 0) {
-                if (!Patterns.IP_ADDRESS.matcher(mHost).matches() && !mHost.contains(":") && !mHost.endsWith(".onion")) {
+                if (!Patterns.IP_ADDRESS.matcher(mHost).matches() && !mHost.contains(":") && !TlsHostnameVerifier.isOnionHost(mHost)) {
                     try {
                         final String lookup = "_mumble._tcp." + mHost;
                         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -145,24 +154,24 @@ public class HumlaTCP extends HumlaNetworkThread {
 
             Log.i(TAG, "Connecting to " + mHost + ":" + mPort);
 
+            mSocketFactory.setExpectedHost(mHost);
             mTCPSocket = mSocketFactory.createSocket(mHost, mPort, CONNECT_TIMEOUT);
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) { // SNI support requires at least API 17
-                SSLCertificateSocketFactory scsf = (SSLCertificateSocketFactory) SSLCertificateSocketFactory.getDefault(0);
-                scsf.setHostname(mTCPSocket, mHost);
-            }
 
             mTCPSocket.setKeepAlive(true);
             mTCPSocket.setTcpNoDelay(true);
             mTCPSocket.setSoTimeout(CONNECT_TIMEOUT);
             mTCPSocket.startHandshake();
+            Log.v(TAG, "Handshake completed; verifying server identity");
 
-            Log.v(TAG, "Started handshake");
+            if (!verifyServerIdentity()) {
+                return;
+            }
+
 
             mDataInput = new DataInputStream(mTCPSocket.getInputStream());
             mDataOutput = new DataOutputStream(mTCPSocket.getOutputStream());
 
-            mTCPSocket.setSoTimeout(0);
+            mTCPSocket.setSoTimeout(READ_TIMEOUT_MS);
 
             Log.v(TAG, "Now listening");
             mConnected = true;
@@ -179,13 +188,18 @@ public class HumlaTCP extends HumlaNetworkThread {
             while(mConnected) {
                 final short messageType = mDataInput.readShort();
                 final int messageLength = mDataInput.readInt();
+                // Validate before allocating: a malicious server controls both
+                // fields. Violations abort the connection — the stream position
+                // is mid-frame, so skipping would desync the parser.
+                FrameValidator.FrameError frameError = FrameValidator.validateFrame(messageType, messageLength);
+                if (frameError != FrameValidator.FrameError.NONE) {
+                    Log.w(TAG, "Dropping connection on invalid frame: type=" + messageType
+                            + " length=" + messageLength + " error=" + frameError);
+                    error("Server sent an invalid protocol frame (" + frameError + ")", null);
+                    return;
+                }
                 final byte[] data = new byte[messageLength];
                 mDataInput.readFully(data);
-
-                if (messageType < 0 || messageType > (HumlaTCPMessageType.values().length - 1)) {
-                    Log.w(TAG, "Got unsupported messageType: " + messageType);
-                    continue;
-                }
 
                 final HumlaTCPMessageType tcpMessageType = HumlaTCPMessageType.values()[messageType];
                 if (mListener != null) {
@@ -203,10 +217,13 @@ public class HumlaTCP extends HumlaNetworkThread {
             // Try and verify certificate manually.
             if(mSocketFactory.getServerChain() != null && mListener != null) {
                 if(!mRunning) return;
+                final HandshakeFailure recorded = mSocketFactory.getLastHandshakeFailure();
+                final HandshakeFailure failure = classifyHandshakeFailure(recorded);
+                final String verifiedHost = mHost;
                 executeOnMainThread(new Runnable() {
                     @Override
                     public void run() {
-                        mListener.onTLSHandshakeFailed(mSocketFactory.getServerChain());
+                        mListener.onTLSHandshakeFailed(mSocketFactory.getServerChain(), failure, verifiedHost);
                     }
                 });
             } else {
@@ -330,9 +347,106 @@ public class HumlaTCP extends HumlaNetworkThread {
             });
     }
 
+    /**
+     * Verifies the presented leaf identifies the post-SRV host. A TOFU pin
+     * match establishes identity without a SAN check (private servers commonly
+     * use SAN-less self-signed certs); otherwise CA trust from the handshake
+     * plus a SAN/CN match is required. `.onion` hosts skip SAN matching and
+     * rely on pins alone. Returns false after dispatching the failure path;
+     * the caller must return without reading any frames. Note the
+     * {@code finally} block in {@code run()} still delivers
+     * {@code onTCPConnectionDisconnect} afterwards (pre-existing double
+     * delivery, also true of the {@code SSLHandshakeException} path).
+     */
+    private boolean verifyServerIdentity() {
+        X509Certificate leaf = presentedLeaf();
+        if (leaf == null) {
+            Log.w(TAG, "No server certificate available; refusing connection");
+            error("Could not verify server identity", null);
+            closeSocket();
+            return false;
+        }
+        String host = mHost;
+        if (TlsHostnameVerifier.isOnionHost(host)) {
+            return true;
+        }
+        if (mSocketFactory.isPinnedLeaf(leaf)) {
+            return true;
+        }
+        if (TlsHostnameVerifier.verifyHostname(host, leaf)) {
+            return true;
+        }
+        mSocketFactory.setLastHandshakeFailure(HandshakeFailure.HOSTNAME_MISMATCH);
+        Log.w(TAG, "TLS hostname mismatch for " + host + "; refusing connection");
+        closeSocket();
+        if (mListener != null) {
+            final String verifiedHost = mHost;
+            executeOnMainThread(new Runnable() {
+                @Override
+                public void run() {
+                    mListener.onTLSHandshakeFailed(mSocketFactory.getServerChain(),
+                            HandshakeFailure.HOSTNAME_MISMATCH, verifiedHost);
+                }
+            });
+        }
+        return false;
+    }
+
+    /** Best-effort leaf: wrapper chain first, then session peer certificates. */
+    private X509Certificate presentedLeaf() {
+        X509Certificate[] chain = mSocketFactory.getServerChain();
+        if (chain != null && chain.length > 0 && chain[0] != null) {
+            return chain[0];
+        }
+        try {
+            if (mTCPSocket != null && mTCPSocket.getSession() != null) {
+                java.security.cert.Certificate[] peers = mTCPSocket.getSession().getPeerCertificates();
+                if (peers != null) {
+                    for (java.security.cert.Certificate peer : peers) {
+                        if (peer instanceof X509Certificate) {
+                            return (X509Certificate) peer;
+                        }
+                    }
+                }
+            }
+        } catch (SSLPeerUnverifiedException e) {
+            return null;
+        }
+        return null;
+    }
+
+    private void closeSocket() {
+        try {
+            if (mTCPSocket != null) {
+                mTCPSocket.close();
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * Maps a recorded trust-manager outcome to the dialog reason. A CA-valid
+     * leaf that fails the SAN check (e.g. platform endpoint-ID rejection, or a
+     * handshake that never reached the post-handshake verifier) is a
+     * HOSTNAME_MISMATCH with no pin bypass — never an Allow-and-pin prompt.
+     */
+    private HandshakeFailure classifyHandshakeFailure(HandshakeFailure recorded) {
+        if (recorded != null && recorded != HandshakeFailure.NONE) {
+            return recorded;
+        }
+        X509Certificate[] chain = mSocketFactory.getServerChain();
+        X509Certificate leaf = chain != null && chain.length > 0 ? chain[0] : null;
+        if (leaf != null && !TlsHostnameVerifier.isOnionHost(mHost)
+                && !TlsHostnameVerifier.verifyHostname(mHost, leaf)) {
+            mSocketFactory.setLastHandshakeFailure(HandshakeFailure.HOSTNAME_MISMATCH);
+            return HandshakeFailure.HOSTNAME_MISMATCH;
+        }
+        return HandshakeFailure.UNTRUSTED_ISSUER;
+    }
+
     public interface TCPConnectionListener {
         public void onTCPConnectionEstablished();
-        public void onTLSHandshakeFailed(X509Certificate[] chain);
+        public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost);
         public void onTCPConnectionFailed(HumlaException e);
         public void onTCPConnectionDisconnect();
         public void onTCPMessageReceived(HumlaTCPMessageType type, int length, byte[] data);

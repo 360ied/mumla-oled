@@ -735,10 +735,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     }
 
     @Override
-    public void onTLSHandshakeFailed(X509Certificate[] chain) {
+    public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
         disconnect();
         if(mListener != null) {
-            mListener.onConnectionHandshakeFailed(chain);
+            mListener.onConnectionHandshakeFailed(chain, failure, verifiedHost);
             mListener.onConnectionDisconnected(null);
         }
     }
@@ -1033,8 +1033,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
          * Typically you would use this callback to prompt the user to authorize the certificate.
          * Note that {@link #onConnectionDisconnected(HumlaException)} will still be called.
          * @param chain The certificate chain which failed verification.
+         * @param failure Why verification failed; drives the distinct UI states.
+         * @param verifiedHost The post-SRV hostname verification ran against.
          */
-        public void onConnectionHandshakeFailed(X509Certificate[] chain);
+        public void onConnectionHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost);
 
         /**
          * Called when the connection was lost. If the connection was terminated due to an error,
