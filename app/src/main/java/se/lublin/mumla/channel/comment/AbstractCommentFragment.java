@@ -146,6 +146,10 @@ public abstract class AbstractCommentFragment extends DialogFragment {
 
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // Subframe (e.g. <iframe>) and automatic navigations never
+                // leave the WebView, so hostile HTML cannot pop an external
+                // browser without a tap on main-frame content.
+                if (request == null || !request.isForMainFrame()) return true;
                 return handleCommentUrl(request.getUrl() == null ? null : request.getUrl().toString());
             }
         });
@@ -165,12 +169,15 @@ public abstract class AbstractCommentFragment extends DialogFragment {
      * true so the WebView itself never navigates anywhere.
      */
     private boolean handleCommentUrl(String url) {
+        // Navigation callbacks can race dialog teardown; Fragment.startActivity
+        // throws IllegalStateException when detached, so bail out first.
+        if (!isAdded()) return true;
         if (url != null && (url.regionMatches(true, 0, "http://", 0, 7)
                 || url.regionMatches(true, 0, "https://", 0, 8))) {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             intent.addCategory(Intent.CATEGORY_BROWSABLE);
             try {
-                startActivity(Intent.createChooser(intent, url));
+                startActivity(Intent.createChooser(intent, getString(R.string.comment_open_link)));
             } catch (ActivityNotFoundException ignored) {
             }
         }
