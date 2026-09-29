@@ -89,17 +89,16 @@ High/Critical claim below against the tree before writing `findings.md`.
 
 ## Fix roadmap (suggested work order)
 
-1. Secrets at rest + backup: C1, H6, H7, H8, L1 (KeyStore/SQLCipher/EncryptedPrefs,
-   `allowBackup=false` or exclusion rules, per-host pins).
-2. Network identity: H1, M1, M2 (endpoint identification, TLS 1.2+ floor, per-host TOFU).
-3. IPC: H3, H4, H5, M9 (unexport or permission-guard services/receiver, handle-based
+1. Network identity: H1, M1, M2 (endpoint identification, TLS 1.2+ floor, per-host TOFU).
+   (Secrets at rest C1, H6, H7, H8, L1 withdrawn as noise — see secrets-at-rest-plan.md.)
+2. IPC: H3, H4, H5, M9 (unexport or permission-guard services/receiver, handle-based
    secret passing).
-4. Protocol DoS: H2, L2, L3 (frame cap, timeouts, socket/stream close, ping length guard).
-5. Native/supply chain: H10, H11, H12, M11, M12, M15 (overflow-safe checks, delete
+3. Protocol DoS: H2, L2, L3 (frame cap, timeouts, socket/stream close, ping length guard).
+4. Native/supply chain: H10, H11, H12, M11, M12, M15 (overflow-safe checks, delete
    JavaCPP shims, Opus rebase, RNNoise digest pin, NDK 27).
-6. Remote-input rendering: M3–M7, L5 (URL allowlist, WebView hardening, bounded decode,
+5. Remote-input rendering: M3–M7, L5 (URL allowlist, WebView hardening, bounded decode,
    TTS stripping).
-7. Hygiene: H9, M8, M10, M13, M14, M16, L4, L6, I2 (SAF-only export, char[] passwords,
+6. Hygiene: H9, M8, M10, M13, M14, M16, L4, L6, I2 (SAF-only export, char[] passwords,
    notification visibility, dep refresh, fail-closed signing, deep-link confirmation,
    legacy-storage removal, FLAG_SECURE if in threat model).
 

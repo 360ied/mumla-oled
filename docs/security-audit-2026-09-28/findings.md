@@ -7,54 +7,13 @@ Conventions: severity Critical / High / Medium / Low / Info. Confidence
 verified (directly read) / likely / possible. CWE IDs where applicable.
 `[INFERENCE]` marks unobserved consequences. All paths repo-relative.
 
-Count: 1 Critical, 12 High, 16 Medium, 6 Low, 2 Info. Backup exfil (H8) and cert
-export (H9) were reported by multiple slices — deduplicated here.
-
----
-
-## Critical
-
-### C1 — Client private keys + PKCS#12 passwords in plaintext SQLite — Critical, verified
-
-Files:
-
-- `app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java:100-111` (schema),
-  `390-398` (`addCertificate`), `420-445` (data/password getters)
-- `app/src/main/java/se/lublin/mumla/db/MumlaDatabase.java:55-84` (interface)
-
-Evidence:
-
-```java
-"`" + COLUMN_CERTIFICATES_DATA + "` BLOB NOT NULL,"
-"`" + COLUMN_CERTIFICATES_PASSWORD + "` TEXT"
-// write:
-values.put(COLUMN_CERTIFICATES_PASSWORD, password);
-// read:
-new String[] { COLUMN_CERTIFICATES_PASSWORD } ... cursor.getString(0)
-```
-
-No encryption layer anywhere in the DB path. `mumble.db` is unencrypted SQLite.
-
-Impact: any reader of `/data/data/<pkg>/databases/mumble.db` (root, `adb backup` /
-cloud auto-backup given `allowBackup=true`, malware with backup affordance)
-recovers the client identity with one query:
-
-```sql
-SELECT data, password FROM certificates;
-```
-
-Key and passphrase sit side-by-side, so protection is nil even for imported
-password-protected `.p12` files.
-
-Fix: stop storing PKCS#12 passwords; move keys into AndroidKeyStore (non-exportable)
-or EncryptedFile, prompt per use; at minimum SQLCipher / EncryptedSharedPreferences-backed
-key. Zero `char[]` after use; never persist as `String`. Pair with H8 backup exclusion.
-CWE-312, CWE-922, CWE-798.
+Count: 0 Critical, 8 High, 16 Medium, 5 Low, 2 Info. C1, H6, H7, H8, L1
+withdrawn as noise — see [secrets-at-rest-plan.md](secrets-at-rest-plan.md) ("do not
+fix"). Cert export (H9) was reported by multiple slices — deduplicated here.
 
 ---
 
 ## High
-
 ### H1 — Missing TLS hostname verification on SSLSocket — High, verified
 
 Files:
@@ -198,70 +157,6 @@ while connected. Silent unmute is a voice-privacy violation; mute is a DoS on sp
 Fix: `RECEIVER_NOT_EXPORTED` or signature permission; verify sender in `onReceive`.
 CWE-862.
 
-### H6 — Server passwords + access tokens in plaintext SQLite — High, verified
-
-File: `app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java:42-50` (server),
-`62-71` (tokens), `209-235,278-293` (read/write)
-
-Evidence:
-
-```java
-"`" + SERVER_PASSWORD + "` TEXT"
-"TOKENS_VALUE TEXT NOT NULL"
-values.put(SERVER_PASSWORD, server.getPassword()); ... tokens.add(cursor.getString(0));
-```
-
-Impact: same backup/root read path as C1. Tokens are bearer credentials replayable
-against the server. `removeServer` leaves certificates behind (lingering secret).
-
-Fix: AndroidKeyStore + EncryptedSharedPreferences/SQLCipher, or don't persist server
-passwords by default (explicit opt-in). Wipe related secrets on server removal.
-CWE-312, CWE-922.
-
-### H7 — Generated client certificates stored with empty PKCS#12 password — High, verified
-
-Files:
-
-- `libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.java:68-70`
-- `app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.java:52-62`
-
-Evidence:
-
-```java
-keyStore.setKeyEntry("Mumble Identity", keyPair.getPrivate(), "".toCharArray(), ...);
-keyStore.store(output, "".toCharArray());
-// caller:
-HumlaCertificateGenerator.generateCertificate(baos); ... database.addCertificate(fileName, baos.toByteArray());
-```
-
-RSA-2048 + `SecureRandom` strength OK; at-rest encryption missing.
-
-Impact: whoever reads the DB blob owns the identity with no password to guess.
-Exports as effectively plaintext key (see H9).
-
-Fix: generate into AndroidKeyStore (non-exportable) or prompt for a real PBE password;
-document unencrypted-at-rest until then. CWE-312, CWE-326.
-
-### H8 — Cloud/adb backup includes unencrypted secret database — High, verified
-
-Files:
-
-- `app/src/main/AndroidManifest.xml:47-48` (`allowBackup="true"`, no rules)
-- `libraries/humla/src/main/AndroidManifest.xml:28` (same)
-- Secret stores: C1/H6 locations + `app/src/main/java/se/lublin/mumla/util/MumlaTrustStore.java:37-60`
-
-Evidence: `android:allowBackup="true"` in both manifests; grep for
-`fullBackupContent` / `dataExtractionRules` empty. No exclusions for `mumble.db`,
-`mumla-store.bks`, `shared_prefs` (holds `certificateId` default-cert pointer).
-
-Impact: `adb backup` / cloud auto-backup copies all auth secrets offline for anyone
-with backup access or an unlocked device. Multiplies C1/H6/H7 from root-only to
-backup-accessible.
-
-Fix: `allowBackup=false`, or `fullBackupContent` + `dataExtractionRules` excluding
-databases, trust store, prefs; consider D2D-transfer opt-out for secrets.
-CWE-312, CWE-922. (Reported by three slices; counted once.)
-
 ### H9 — Private-key export to shared/external storage without re-auth — High, verified
 
 File: `app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java:127-190`
@@ -281,7 +176,7 @@ any user-picked URI. No re-authentication, no re-encryption with a fresh passwor
 Cert name used verbatim as filename (see L6).
 
 Impact: private key lands world-readable to storage/media-permission holders, survives
-uninstall; empty-password generated certs (H7) export as effectively plaintext keys.
+uninstall; self-signed generated certs (no PBE password) export as effectively plaintext keys.
 User intent likely present (export is explicit) but consequence (key material to shared
 storage, unencrypted) is not conveyed or gated.
 
@@ -592,24 +487,6 @@ missing); document expectations. CWE-798.
 
 ## Low
 
-### L1 — TOFU trust store uses hardcoded empty password — Low, verified
-
-File: `app/src/main/java/se/lublin/mumla/util/MumlaTrustStore.java:37-60,81-83`
-
-```java
-private static final String STORE_FILE = "mumla-store.bks";
-private static final String STORE_PASS = "";
-...
-store.load(fis, STORE_PASS.toCharArray()); store.store(fos, STORE_PASS.toCharArray());
-public static String getTrustStorePassword() { return STORE_PASS; }
-```
-
-File itself is `MODE_PRIVATE` (good, no `WORLD_*` found) — integrity rests solely on
-filesystem perms. Anyone obtaining the file (root/backup path H8) rewrites trust
-anchors offline; one mistaken Allow (M2) persists until `clearTrust`. CWE-259, CWE-312.
-
-Fix: random store password in AndroidKeyStore, or TOFU pins as hashed fingerprint list.
-
 ### L2 — Unclosed trust-store / ping sockets and streams — Low, verified
 
 Files:
@@ -675,8 +552,7 @@ notification text as plain stripped text. CWE-20.
   cert name used verbatim as filename — sanitize (path separators, reserved names).
 - `app/src/main/AndroidManifest.xml:52`: `requestLegacyExternalStorage="true"` on a
   target-36 app + `WRITE/READ_EXTERNAL_STORAGE` (maxSdk 29/32) — drop legacy flag/path.
-- `android:allowBackup` permissive defaults counted under H8; this item is the leftover
-  manifest hygiene, not a second count.
+- `android:allowBackup` is permissive with no exclusion rules — withdrawn with H8, see secrets-at-rest-plan.md.
 
 ---
 
@@ -706,7 +582,7 @@ CWE-200.
 
 | Attacker | Paths |
 |---|---|
-| Backup/root reader | C1, H6, H7, H8, L1 |
+| Root/physical reader | withdrawn (former C1, H6, H7, H8, L1 — see secrets-at-rest-plan.md) |
 | Network (any valid CA cert) | H1, M1, M2, I1 |
 | Malicious server | H2, M3–M7, L3, L5 |
 | Malicious local app | H3, H4, H5, M9, L4 |
