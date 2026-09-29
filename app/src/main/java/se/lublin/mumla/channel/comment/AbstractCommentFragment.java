@@ -19,10 +19,15 @@ package se.lublin.mumla.channel.comment;
 
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.TabHost;
 
@@ -32,6 +37,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import se.lublin.humla.IHumlaService;
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 import se.lublin.mumla.util.HumlaServiceProvider;
 
 /**
@@ -69,6 +75,7 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         View view = inflater.inflate(R.layout.dialog_comment, null, false);
 
         mCommentView = (WebView) view.findViewById(R.id.comment_view);
+        hardenCommentWebView();
         mCommentEdit = (EditText) view.findViewById(R.id.comment_edit);
 
         mTabHost = (TabHost) view.findViewById(R.id.comment_tabhost);
@@ -120,6 +127,54 @@ public abstract class AbstractCommentFragment extends DialogFragment {
                     .setNegativeButton(R.string.close, null)
                     .create();
         }
+    }
+
+    /**
+     * Locks down the comment WebView against hostile server-supplied HTML.
+     * Both the received comment ({@link #loadComment}) and the edit-preview
+     * path in {@link #onCreateDialog} render through {@code mCommentView},
+     * so hardening here covers both. Remote images follow the existing
+     * external-images setting (default off).
+     */
+    private void hardenCommentWebView() {
+        mCommentView.setWebViewClient(new WebViewClient() {
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleCommentUrl(url);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleCommentUrl(request.getUrl() == null ? null : request.getUrl().toString());
+            }
+        });
+        mCommentView.getSettings().setJavaScriptEnabled(false);
+        mCommentView.getSettings().setAllowFileAccess(false);
+        mCommentView.getSettings().setAllowContentAccess(false);
+        mCommentView.getSettings().setAllowFileAccessFromFileURLs(false);
+        mCommentView.getSettings().setAllowUniversalAccessFromFileURLs(false);
+        boolean loadExternalImages = Settings.getInstance(getActivity()).shouldLoadExternalImages();
+        mCommentView.getSettings().setBlockNetworkImage(!loadExternalImages);
+        mCommentView.getSettings().setBlockNetworkLoads(!loadExternalImages);
+    }
+
+    /**
+     * Opens http(s) links externally via the system chooser and blocks every
+     * other scheme (javascript:, file:, intent:, tel:, ...). Always returns
+     * true so the WebView itself never navigates anywhere.
+     */
+    private boolean handleCommentUrl(String url) {
+        if (url != null && (url.regionMatches(true, 0, "http://", 0, 7)
+                || url.regionMatches(true, 0, "https://", 0, 8))) {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addCategory(Intent.CATEGORY_BROWSABLE);
+            try {
+                startActivity(Intent.createChooser(intent, url));
+            } catch (ActivityNotFoundException ignored) {
+            }
+        }
+        return true;
     }
 
     protected void loadComment(String comment) {
