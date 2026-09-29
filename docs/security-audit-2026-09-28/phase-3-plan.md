@@ -148,7 +148,7 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
 | Slice | Branch | Findings | Files owned | Tests owned |
 |---|---|---|---|---|
 | A | `phase3-rnnoise-digest` | M11 | `humla/build.gradle:88-135`, new digest file, `scripts/worktree.py` copy path | digest-mismatch fails closed |
-| B | `phase3-opus-native` | H12+H11+M12+H10 | `jni/opus` pin, `Android.mk`, `jniopus.cpp`, `humla/build.gradle:39`, `proguard-rules.pro:18-20`, `tools/jnigen.sh`, `tools/javacpp-0.7.jar`, `OpusVoiceDecoder.cpp`, `NativeAudioInputEngineJni.cpp`, `NativeAudioInputEngine.java`, loadLibrary sites | interop regression + `decodeFloat` fuzz (new) |
+| B | `phase3-opus-native` | H12+H11+M12+H10 | `jni/opus` pin, `Android.mk`, `jniopus.cpp`, `humla/build.gradle:39`, `app/proguard-rules.pro:18-20`, `app/build.gradle:130` javacpp exclude, `libraries/humla/tools/jnigen.sh`, `libraries/humla/tools/javacpp-0.7.jar`, `OpusVoiceDecoder.cpp`, `NativeAudioInputEngineJni.cpp`, `NativeAudioInputEngine.java`, loadLibrary sites | interop regression + `decodeFloat` fuzz (new) |
 | C | `phase3-ndk-hardening` | M15 | `flake.nix:39`, `humla/build.gradle:57`, `Android.mk:20-21`, `Application.mk:2-4` | NDK build on 27, `test_native_audio.sh` |
 
 Each worktree forks `master`; land order A, B, C (C last per C4).
@@ -172,21 +172,24 @@ rides along (disjoint files, same native review).
 
 - Rebase the `opus` submodule to v1.6.1 `22244de5` (C1), keep the
   exact-SHA pin; no version file to update (1.6.x drops `version.mk`,
-  C1) — record tag + SHA in the commit message. Reconcile
-  `Android.mk:24-47` per P2: add the new `OPUS_SOURCES` entries, update
-  the `CELT_SOURCES_ARM` block to the RTCD/NEON vars, skip
-  `lpcnet_sources.mk`, keep `-DVAR_ARRAYS -DFIXED_POINT
-  -DHAVE_LRINTF=1` with `SILK_SOURCES_FIXED` + `OPUS_SOURCES_FLOAT`.
-  Delete the stale phase-inversion comment (`OpusVoiceDecoder.cpp:59-61`),
-  default stays.
+  C1) — record tag + SHA in the commit message. Fetch the 1.6.1 tree
+  first and confirm the P2 deltas before editing `Android.mk:24-47`:
+  add the new `OPUS_SOURCES` entries, update the `CELT_SOURCES_ARM`
+  block to the RTCD/NEON vars, skip `lpcnet_sources.mk`, keep
+  `-DVAR_ARRAYS -DFIXED_POINT -DHAVE_LRINTF=1` with
+  `SILK_SOURCES_FIXED` + `OPUS_SOURCES_FLOAT`. Delete the stale
+  phase-inversion comment (`OpusVoiceDecoder.cpp:59-61`), default stays.
 - Delete `jniopus.cpp` (1367 lines, machine-generated, exports only
-  `Java_com_googlecode_javacpp_*` — zero `Java_se_lublin_*`; repo grep
-  for `javacpp|bytedeco` in Java returns no hits), the `jniopus` module
-  stanza, `javacpp:0.7` dep, ProGuard keeps at
-  `proguard-rules.pro:18-20`, `tools/jnigen.sh` +
-  `tools/javacpp-0.7.jar`; fold codec sources into `humlaaudio` per C2
-  (drop `LOCAL_SHARED_LIBRARIES`, keep `LOCAL_C_INCLUDES`); update the
-  three `loadLibrary("jniopus")` sites
+  `Java_com_googlecode_javacpp_*` + `Java_se_lublin_humla_audio_javacpp_Opus_*`
+  glue — no live `Java_se_lublin_*` codec entry points; repo grep
+  for `javacpp|bytedeco` in Java returns no hits and no `**/javacpp/**`
+  Java package exists), the `jniopus` module stanza, `javacpp:0.7` dep,
+  ProGuard keeps at `app/proguard-rules.pro:18-20`, the javacpp packaging
+  exclude at `app/build.gradle:130`,
+  `libraries/humla/tools/jnigen.sh` +
+  `libraries/humla/tools/javacpp-0.7.jar`; fold codec sources into
+  `humlaaudio` per C2 (drop `LOCAL_SHARED_LIBRARIES`, keep
+  `LOCAL_C_INCLUDES`); update the three `loadLibrary("jniopus")` sites
   (`NativeAudioInputEngine.java:41`,
   `NativeAudioOutputEngine.java:44`, `CryptState.java:43`).
 - H10: int64 `end` check in `nativeProcessFrame` (copy `nativeRender`
