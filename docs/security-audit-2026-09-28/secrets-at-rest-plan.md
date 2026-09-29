@@ -1,14 +1,16 @@
-# Secrets at rest: do not fix
+# Secrets at rest: C1/H6/H7/L1 do not fix, H8 open
 
 Companion to [findings.md](findings.md) (C1, H6, H7, H8, L1) and
 [notes.md](notes.md). Investigation/plan only; no code changed on master.
 
 Supersedes all previous revisions of this plan (full-column encryption,
 trust-store re-passwording + remember-password checkbox, and
-backup-exclusion-only — all 2026-09-28). None will be revived without a
-new at-rest vector or a policy demand.
+backup-exclusion-only — all 2026-09-28) for C1/H6/H7/L1. None of those
+will be revived without a new at-rest vector or a policy demand. H8
+remains open; the backup-exclusion attempt is abandoned and will not be
+merged.
 
-## Decision: do not fix
+## Decision
 
 - C1 (client keys + PKCS#12 passwords in `mumble.db`): do not fix.
   Tier-3 single-server voice identity behind `MODE_PRIVATE`; reaching it
@@ -18,17 +20,16 @@ new at-rest vector or a policy demand.
   browser-saved passwords behind OS lock.
 - H7 (empty PBE password on generated certs): do not fix. Duplicate of
   C1; it only matters after the DB is already read.
-- H8 (backup includes secret DB): do not fix. The only at-rest vector
-  without root/physical, but Auto Backup is E2EE, `adb` backup needs
-  unlocked-physical tap-through — and the cheap exclusion did not close
-  the `adb` path on the tested build (next section).
+- H8 (backup includes secret DB): OPEN, not accepted. No working fix
+  yet — the exclusion attempt below did not close the `adb` path on the
+  tested build, and the branch will not be merged.
 - L1 (empty trust-store password): do not fix (Info). Integrity-only
   once `MODE_PRIVATE` holds; KeyStore backing is disproportionate for
   per-host TOFU pins.
 
 `findings.md` stays untouched as the point-in-time record; the downgrade
-(C1/H6/H7 to Low, H8 to Low-but-accepted, L1 to Info) and this decision
-live here.
+(C1/H6/H7 to Low, L1 to Info) lives here. H8 keeps its severity and
+stays open.
 
 ## Reassessment: over-scored, wrong fix shape
 
@@ -60,8 +61,8 @@ bug-report/Binder/heap coverage.
 
 ## What was tried: backup exclusion did not close `adb backup`
 
-An experimental `backup-exclusion` branch (unmerged, abandoned) added
-`res/xml/backup_rules.xml` and `res/xml/data_extraction_rules.xml`
+An experimental `backup-exclusion` branch (unmerged, will not be merged)
+added `res/xml/backup_rules.xml` and `res/xml/data_extraction_rules.xml`
 (cloud + device-transfer) excluding `databases/mumble.db` (+
 journal/WAL) and `files/mumla-store.bks`, wired via `fullBackupContent`
 and `dataExtractionRules` with `allowBackup=true` kept. The merged
@@ -71,20 +72,21 @@ files.
 Device check on an SDK 36 device with a debuggable FOSS build: an `adb
 backup` payload still contained `db/mumble.db` and `f/mumla-store.bks`,
 and canary server password/token rows seeded in the live DB read back
-out of the payload DB. So the "10-line" fix is ineffective on the tested
-configuration. Debuggable-build behavior may differ from release, but no
-release/cloud-transfer retest is planned — that chase is exactly the
-disproportionate cost this decision rejects. Canary rows were deleted
+out of the payload DB. So that branch is dead — it will not be merged.
+Cause undetermined on the tested configuration (debuggable build vs
+release, `adb`-backup vs Auto-Backup semantics); no retest is planned
+under this plan. If H8 is picked up later, that track starts from this
+observation, not from the abandoned branch. Canary rows were deleted
 from the device DB afterwards and no payload files were kept.
 
 ## Threat model
 
-Fixes: none.
-Accepted residual: `adb`/cloud backup readers (H8); root or
-unlocked-physical file read of the `MODE_PRIVATE` sandbox (platform
-control, out of scope); live-process memory, Binder parcels to the
-exported `HumlaService`, bug-report scrapes (the M9 track, untouched by
-anything here).
+Fixes: none in this plan.
+Open: `adb`/cloud backup readers (H8 — not accepted, separate track).
+Accepted residual: root or unlocked-physical file read of the
+`MODE_PRIVATE` sandbox (platform control, out of scope); live-process
+memory, Binder parcels to the exported `HumlaService`, bug-report
+scrapes (the M9 track, untouched by anything here).
 
 ## Explicit non-goals
 
@@ -93,8 +95,8 @@ anything here).
 - No remember-password checkbox — server passwords keep persisting as
   today behind OS lock, which is proportionate for shared low-entropy
   server passwords.
-- No merge of the `backup-exclusion` branch and no release/cloud
-  retest of its rules.
+- The `backup-exclusion` branch will not be merged; no release/cloud
+  retest of its rules under this plan.
 - No `exported=false` or TALK-receiver changes — `se.lublin.mumla.action.TALK`
   is a documented Tasker/Automate surface, separate track with its own
   release note.
