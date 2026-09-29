@@ -68,12 +68,6 @@ public class ChatLinkPolicyTest extends TestCase {
         assertFalse(ChatLinkPolicy.isAllowedUrl("example.com/no-scheme"));
     }
 
-    public void testShouldInterceptIsNegation() {
-        assertTrue(ChatLinkPolicy.shouldIntercept("javascript:alert(1)"));
-        assertTrue(ChatLinkPolicy.shouldIntercept(null));
-        assertFalse(ChatLinkPolicy.shouldIntercept("https://example.com/"));
-    }
-
     public void testHandleClickReturnsHrefWhenAllowed() {
         assertEquals("https://example.com/real",
                 ChatLinkPolicy.handleClick("https://example.com/real"));
@@ -90,7 +84,7 @@ public class ChatLinkPolicyTest extends TestCase {
                 ChatLinkPolicy.handleClick("  https://example.com/  "));
     }
 
-    public void testHttpLookalikePrefixBlocked() {
+    public void testSchemePrefixStrictness() {
         // "https:evil.com" parses with an https scheme, so it is allowed.
         assertTrue(ChatLinkPolicy.isAllowedUrl("https:evil.com"));
         // But near-miss schemes and scheme-less hosts stay inert.

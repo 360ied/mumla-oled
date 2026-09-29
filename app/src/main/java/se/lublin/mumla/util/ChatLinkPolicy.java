@@ -30,9 +30,7 @@ import java.util.Locale;
  * {@code file:}, {@code tel:}, {@code data:}, ...) is inert.
  *
  * <p>Pure JVM helper: no {@code android.*} imports so it stays unit
- * testable. Callers replace {@code URLSpan}s (or gate a custom
- * {@code MovementMethod}) using {@link #shouldIntercept} /
- * {@link #handleClick}.
+ * testable. Callers replace {@code URLSpan}s using {@link #handleClick}.
  */
 public final class ChatLinkPolicy {
     private ChatLinkPolicy() {
@@ -63,15 +61,6 @@ public final class ChatLinkPolicy {
         }
         scheme = scheme.toLowerCase(Locale.ROOT);
         return "http".equals(scheme) || "https".equals(scheme);
-    }
-
-    /**
-     * Returns true when a link must be rendered inert (the negation of
-     * {@link #isAllowedUrl}), suitable for span replacement or a custom
-     * {@code MovementMethod}.
-     */
-    public static boolean shouldIntercept(String url) {
-        return !isAllowedUrl(url);
     }
 
     /**
