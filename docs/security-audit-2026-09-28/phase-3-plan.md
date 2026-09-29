@@ -29,9 +29,10 @@ Latest stable is v1.6.1 (commit
 `22244de5a79bd1d6d623c32e72bf1954b56235be`, supersedes v1.6). Rebase
 the `opus` submodule (`libraries/humla/src/main/jni/opus`, current
 pin `65471dd5`) to that SHA and keep the exact-SHA pin. Note: 1.6.x
-drops `version.mk` (version moves to `package_version`/autogen), so
-the "update `version.mk`" step becomes confirming the version via the
-new file. `OPUS_SET_PHASE_INVERSION_DISABLED` exists in 1.6.1
+has no `version.mk` (version comes from the `update_version`-generated
+`package_version`, which our `Android.mk` flow never runs) — there is no
+version file to edit; record tag + SHA in the commit message instead.
+`OPUS_SET_PHASE_INVERSION_DISABLED` exists in 1.6.1
 (`include/opus_defines.h:757`, handled in `celt/celt_{en,de}coder.c`);
 it concerns stereo phase inversion and our output is mono
 (`OpusVoiceDecoder.h:42`), so slice B deletes the stale
@@ -147,7 +148,7 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
 | Slice | Branch | Findings | Files owned | Tests owned |
 |---|---|---|---|---|
 | A | `phase3-rnnoise-digest` | M11 | `humla/build.gradle:88-135`, new digest file, `scripts/worktree.py` copy path | digest-mismatch fails closed |
-| B | `phase3-opus-native` | H12+H11+M12+H10 | `jni/opus` pin, `Android.mk`, `Application.mk`, `jniopus.cpp`, `humla/build.gradle:39`, `proguard-rules.pro:18-20`, `tools/jnigen.sh`, `tools/javacpp-0.7.jar`, `OpusVoiceDecoder.cpp`, `NativeAudioInputEngineJni.cpp`, `NativeAudioInputEngine.java`, loadLibrary sites | interop regression + `decodeFloat` fuzz (new) |
+| B | `phase3-opus-native` | H12+H11+M12+H10 | `jni/opus` pin, `Android.mk`, `jniopus.cpp`, `humla/build.gradle:39`, `proguard-rules.pro:18-20`, `tools/jnigen.sh`, `tools/javacpp-0.7.jar`, `OpusVoiceDecoder.cpp`, `NativeAudioInputEngineJni.cpp`, `NativeAudioInputEngine.java`, loadLibrary sites | interop regression + `decodeFloat` fuzz (new) |
 | C | `phase3-ndk-hardening` | M15 | `flake.nix:39`, `humla/build.gradle:57`, `Android.mk:20-21`, `Application.mk:2-4` | NDK build on 27, `test_native_audio.sh` |
 
 Each worktree forks `master`; land order A, B, C (C last per C4).
@@ -170,8 +171,8 @@ rides along (disjoint files, same native review).
 ### Slice B — Opus rebase + jniopus deletion + H10 (H12, H11, M12, H10)
 
 - Rebase the `opus` submodule to v1.6.1 `22244de5` (C1), keep the
-  exact-SHA pin; 1.6.x drops `version.mk`, so confirm the version via
-  the new `package_version`/autogen file instead. Reconcile
+  exact-SHA pin; no version file to update (1.6.x drops `version.mk`,
+  C1) — record tag + SHA in the commit message. Reconcile
   `Android.mk:24-47` per P2: add the new `OPUS_SOURCES` entries, update
   the `CELT_SOURCES_ARM` block to the RTCD/NEON vars, skip
   `lpcnet_sources.mk`, keep `-DVAR_ARRAYS -DFIXED_POINT
