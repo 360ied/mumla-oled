@@ -27,6 +27,7 @@ import static androidx.core.content.ContextCompat.checkSelfPermission;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -37,8 +38,13 @@ import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.Html;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextWatcher;
 import android.text.method.LinkMovementMethod;
+import android.text.style.ClickableSpan;
+import android.text.style.URLSpan;
 import android.util.Base64;
 import android.util.Log;
 import android.view.Gravity;
@@ -92,6 +98,7 @@ import se.lublin.humla.util.IHumlaObserver;
 import se.lublin.mumla.R;
 import se.lublin.mumla.service.IChatMessage;
 import se.lublin.mumla.util.BitmapUtils;
+import se.lublin.mumla.util.ChatLinkPolicy;
 import se.lublin.mumla.util.HumlaServiceFragment;
 import se.lublin.mumla.util.MumbleImageGetter;
 
@@ -621,8 +628,8 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                     messageText.setGravity(Gravity.LEFT);
                 }
             });
-            timeText.setText(mDateFormat.format(new Date(message.getReceivedTime())));
-            messageText.setText(HtmlCompat.fromHtml(message.getBody(), HtmlCompat.FROM_HTML_MODE_LEGACY, mImageGetter, null));
+            Spanned rendered = HtmlCompat.fromHtml(message.getBody(), HtmlCompat.FROM_HTML_MODE_LEGACY, mImageGetter, null);
+            messageText.setText(sanitizeChatLinks(rendered));
             messageText.setMovementMethod(LinkMovementMethod.getInstance());
 
             return v;
@@ -636,6 +643,35 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
         @Override
         public boolean isEnabled(int position) {
             return false; // Makes links clickable.
+        }
+
+        /**
+         * Replaces URLSpans from server-controlled HTML: http(s) links open
+         * via an ACTION_VIEW chooser, every other scheme becomes inert text.
+         * Opens the actual href, never the display text.
+         */
+        private static Spannable sanitizeChatLinks(Spanned rendered) {
+            Spannable spannable = new SpannableString(rendered);
+            URLSpan[] urlSpans = spannable.getSpans(0, spannable.length(), URLSpan.class);
+            for (URLSpan span : urlSpans) {
+                int start = spannable.getSpanStart(span);
+                int end = spannable.getSpanEnd(span);
+                int flags = spannable.getSpanFlags(span);
+                spannable.removeSpan(span);
+                final String target = ChatLinkPolicy.handleClick(span.getURL());
+                if (target == null) {
+                    continue;
+                }
+                spannable.setSpan(new ClickableSpan() {
+                    @Override
+                    public void onClick(View widget) {
+                        Context context = widget.getContext();
+                        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+                        context.startActivity(Intent.createChooser(intent, null));
+                    }
+                }, start, end, flags);
+            }
+            return spannable;
         }
     }
 }
