@@ -53,6 +53,7 @@
     <string name="comment_view">View</string>
     <string name="comment_edit_source">Edit source</string>
     <string name="comment_view_source">View source</string>
+    <string name="comment_open_link">Open link</string>
 
     <!-- Server Info Fragment -->
     <string name="control_channel">Control channel</string>
