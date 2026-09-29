@@ -15,7 +15,6 @@
 -keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
     public void onTalkStateChanged(int, int);
 }
--dontwarn org.apache.maven.plugin.**
 
 # Preserve Protobuf Lite generated message classes
 -keep class se.lublin.humla.protobuf.Mumble** { *; }

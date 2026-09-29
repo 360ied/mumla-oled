@@ -23,6 +23,8 @@ for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$ENGINE_DIR/AudioInputEngine.cpp" \
          "$ENGINE_DIR/AudioOutputEngine.cpp" \
          "$ENGINE_DIR/HysteresisVad.cpp" \
+         "$ENGINE_DIR/OpusVoiceEncoder.cpp" \
+         "$ENGINE_DIR/OpusVoiceDecoder.cpp" \
          "$TEST_DIR/test_biquad_filter.cpp" \
          "$TEST_DIR/test_soft_limiter.cpp" \
          "$TEST_DIR/test_pre_speech_ring_buffer.cpp" \
@@ -49,10 +51,12 @@ mkdir -p "$BUILD_DIR"
 
 CXX="${CXX:-g++}"
 
-# Opus 1.6.1 host sources: same lists and flags as Android.mk
+# Opus 1.6.1 host sources: same lists and defines as Android.mk
 # (CELT + SILK + SILK_FIXED + OPUS + OPUS_FLOAT), excluding the
 # arch-specific variants (x86 RTCD/SSE/AVX2, ARM RTCD/NEON/NE10, .s asm)
 # and the opt-in lpcnet_sources.mk (deep PLC/DRED, fixed-point conflict).
+# Host uses -O2 while the NDK build uses -O3; the flag delta is deliberate
+# (host test speed) and does not affect codec behavior under test.
 OPUS_SRCS=""
 for mk in celt_sources.mk silk_sources.mk opus_sources.mk; do
     list=$(sed -n '/^CELT_SOURCES =/,/[^\\]$/p;/^SILK_SOURCES =/,/[^\\]$/p;/^SILK_SOURCES_FIXED =/,/[^\\]$/p;/^OPUS_SOURCES =/,/[^\\]$/p;/^OPUS_SOURCES_FLOAT =/,/[^\\]$/p' "$OPUS_DIR/$mk" \
@@ -63,6 +67,13 @@ for mk in celt_sources.mk silk_sources.mk opus_sources.mk; do
         OPUS_SRCS="$OPUS_SRCS $OPUS_DIR/$f"
     done
 done
+# shellcheck disable=SC2086
+# (empty OPUS_SRCS means the .mk parse found nothing, e.g. OPUS_DIR moved:
+# fail here instead of a cryptic downstream link failure)
+if [[ -z "${OPUS_SRCS// }" ]]; then
+    echo "test_native_audio.sh: no opus sources collected (check OPUS_DIR=$OPUS_DIR)" >&2
+    exit 1
+fi
 for f in $OPUS_SRCS; do
     if [[ ! -f "$f" ]]; then
         echo "test_native_audio.sh: missing opus source: $f" >&2

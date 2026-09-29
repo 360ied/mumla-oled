@@ -49,9 +49,9 @@ constexpr int kMaxPacketBytes = 1275; // Opus maximum packet size
 constexpr int kMaxDecoded = 5760; // 120 ms @ 48 kHz (decoder max)
 
 // Deterministic 440 Hz sine frame so encode output is stable across runs.
-void fillSine(int16_t* pcm, int n, int phaseOffset = 0) {
+void fillSine(int16_t* pcm, int n) {
     for (int i = 0; i < n; ++i) {
-        const double t = static_cast<double>(i + phaseOffset) / kSampleRate;
+        const double t = static_cast<double>(i) / kSampleRate;
         pcm[i] = static_cast<int16_t>(20000.0 * std::sin(2.0 * M_PI * 440.0 * t));
     }
 }
@@ -83,8 +83,10 @@ void testEncodeDecodeRoundTrip() {
     const int decoded = decoder.decodeFloat(packet.data(), static_cast<size_t>(encoded),
                                             out.data(), kMaxDecoded, 0);
     TEST_ASSERT_EQ(decoded, kFrame);
-    // Decoded output must be finite audio, not garbage or silence-shaped
-    // constants: mean absolute amplitude well above zero, no NaN/Inf.
+    // Decoded output must be finite audio with real energy: the 440 Hz
+    // source at amplitude 20000/32768 has mean-abs ~0.39 (2/pi of peak),
+    // so 0.1 keeps 4x margin for Opus lossiness while catching severe
+    // distortion or heavy attenuation a nonzero-check would miss.
     double sumAbs = 0.0;
     bool allFinite = true;
     for (int i = 0; i < decoded; ++i) {
@@ -95,7 +97,7 @@ void testEncodeDecodeRoundTrip() {
         sumAbs += std::fabs(out[i]);
     }
     TEST_ASSERT_TRUE(allFinite);
-    TEST_ASSERT_TRUE(decoded > 0 && sumAbs / decoded > 0.01);
+    TEST_ASSERT_TRUE(decoded > 0 && sumAbs / decoded > 0.1);
 
     std::cout << "  [PASS] testEncodeDecodeRoundTrip" << std::endl;
 }
@@ -117,9 +119,15 @@ void testSilenceRoundTrip() {
     const int decoded = decoder.decodeFloat(packet.data(), static_cast<size_t>(encoded),
                                             out.data(), kMaxDecoded, 0);
     TEST_ASSERT_EQ(decoded, static_cast<int>(pcm.size()));
+    // Silence in must stay near silence out: mean-abs must be tiny, not
+    // just finite, so a decoder echoing the 1.0f prefill (or loud garbage)
+    // fails. Bound is 0.01 — loose against the Opus comfort-noise floor.
+    double sumAbs = 0.0;
     for (int i = 0; i < decoded; ++i) {
         TEST_ASSERT_TRUE(std::isfinite(out[i]));
+        sumAbs += std::fabs(out[i]);
     }
+    TEST_ASSERT_TRUE(decoded > 0 && sumAbs / decoded < 0.01);
     std::cout << "  [PASS] testSilenceRoundTrip" << std::endl;
 }
 
@@ -165,9 +173,12 @@ void testDecodeTruncatedPacketNoCrash() {
         encoder.encode(pcm.data(), kFrame, packet.data(), packet.size());
     TEST_ASSERT_TRUE(encoded > 1);
 
-    // Every truncation length must either decode to a non-negative count
-    // within the output bound or return a libopus error — never crash,
-    // never overflow the output buffer.
+    // Every truncation length must either decode to a count within the
+    // output bound or return a libopus error — never crash, never overflow
+    // the output buffer. packetSampleCount inspects only the ToC/frame-count
+    // bytes, so a header-valid truncation (e.g. ToC-only len=1) yields
+    // span > 0 while decodeFloat correctly returns OPUS_INVALID_PACKET for
+    // the short body: negative r is allowed even when span > 0.
     std::vector<float> out(kMaxDecoded, 0.0f);
     for (int len = 1; len < encoded; ++len) {
         const int r = decoder.decodeFloat(packet.data(), static_cast<size_t>(len),
@@ -176,12 +187,58 @@ void testDecodeTruncatedPacketNoCrash() {
         const int span = OpusVoiceDecoder::packetSampleCount(
             packet.data(), static_cast<size_t>(len));
         TEST_ASSERT_TRUE(span <= kMaxDecoded);
-        // span <= 0 is the drop contract AudioOutputEngine enforces.
-        if (span > 0) {
-            TEST_ASSERT_TRUE(r >= 0);
-        }
     }
     std::cout << "  [PASS] testDecodeTruncatedPacketNoCrash" << std::endl;
+}
+
+void testDecodeFecRecovery() {
+    g_testCount++;
+    OpusVoiceEncoder encoder;
+    OpusVoiceDecoder decoder;
+    if (!encoder.isValid() || !decoder.isValid()) {
+        TEST_ASSERT_TRUE(false);
+        return;
+    }
+    // Frame chain so later packets carry in-band LBRR for the previous
+    // frame (encoder sets INBAND_FEC + PACKET_LOSS_PERC 10). The loss
+    // sequence mirrors AudioOutputEngine exactly: decode packets 0..1 to
+    // build decoder state, drop packet 2, then decode packet 3 twice —
+    // first with decodeFec=1 (recovers frame 2 from packet 3's LBRR, the
+    // AudioOutputEngine.cpp debt-recovery call), then with decodeFec=0
+    // (current frame, the normal path). FEC must return exactly kFrame
+    // with finite audio; the follow-up normal decode must still yield
+    // the full current frame.
+    constexpr int kChain = 5;
+    std::vector<std::vector<uint8_t>> packets(kChain,
+                                              std::vector<uint8_t>(kMaxPacketBytes));
+    std::vector<int> lens(kChain, 0);
+    for (int f = 0; f < kChain; ++f) {
+        std::vector<int16_t> pcm(kFrame);
+        fillSine(pcm.data(), kFrame);
+        lens[f] = encoder.encode(pcm.data(), kFrame, packets[f].data(),
+                                 packets[f].size());
+        TEST_ASSERT_TRUE(lens[f] > 0);
+    }
+    std::vector<float> out(kMaxDecoded, 0.0f);
+    for (int f = 0; f < 2; ++f) {
+        const int decoded = decoder.decodeFloat(packets[f].data(),
+                                                static_cast<size_t>(lens[f]),
+                                                out.data(), kMaxDecoded, 0);
+        TEST_ASSERT_EQ(decoded, kFrame);
+    }
+    // Packet 2 is "lost": never decoded. Recover it from packet 3's LBRR.
+    const int fec = decoder.decodeFloat(packets[3].data(),
+                                        static_cast<size_t>(lens[3]),
+                                        out.data(), kFrame, 1);
+    TEST_ASSERT_EQ(fec, kFrame);
+    for (int i = 0; i < fec; ++i) {
+        TEST_ASSERT_TRUE(std::isfinite(out[i]));
+    }
+    const int decoded = decoder.decodeFloat(packets[3].data(),
+                                            static_cast<size_t>(lens[3]),
+                                            out.data(), kMaxDecoded, 0);
+    TEST_ASSERT_EQ(decoded, kFrame);
+    std::cout << "  [PASS] testDecodeFecRecovery" << std::endl;
 }
 
 void testDecodeOversizedPacketNoCrash() {
@@ -273,6 +330,7 @@ void run_opus_interop_tests() {
     testSilenceRoundTrip();
     testDecodeEmptyPacketIsSane();
     testDecodeTruncatedPacketNoCrash();
+    testDecodeFecRecovery();
     testDecodeOversizedPacketNoCrash();
     testDecodeFuzzFixedSeed();
 }

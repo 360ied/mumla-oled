@@ -32,7 +32,7 @@ namespace audio {
 /**
  * Native Opus Voice Encoder with Mandatory Hard Constant Bitrate (CBR).
  *
- * Configures libopus in VOIP application mode with complexity 10, voice signal
+ * Configures libopus in VOIP application mode with complexity 6, voice signal
  * weighting, in-band forward error correction (FEC), and strictly enforced
  * Hard Constant Bitrate (VBR=0) to prevent packet-length side-channel attacks.
  */

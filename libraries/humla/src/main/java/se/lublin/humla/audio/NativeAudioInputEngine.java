@@ -110,7 +110,8 @@ public class NativeAudioInputEngine {
 
     public void processFrame(short[] pcm, int offset, int length) {
         long handle = mNativeHandle;
-        if (handle != 0 && pcm != null && length > 0 && offset >= 0) {
+        if (handle != 0 && pcm != null && offset >= 0 && length > 0
+                && offset <= pcm.length && length <= pcm.length - offset) {
             nativeProcessFrame(handle, pcm, offset, length);
         }
     }
