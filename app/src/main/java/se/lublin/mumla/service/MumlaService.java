@@ -70,6 +70,7 @@ import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
 import se.lublin.mumla.service.ipc.TalkBroadcastReceiver;
 import se.lublin.mumla.util.HtmlUtils;
+import se.lublin.mumla.util.NotificationSanitizer;
 
 /**
  * An extension of the Humla service with some added Mumla-exclusive non-standard Mumble features.
@@ -405,7 +406,7 @@ public class MumlaService extends HumlaService implements
             }
 
             String formattedTtsMessage = getString(R.string.notification_message,
-                    message.getActorName(), ttsMessage);
+                    NotificationSanitizer.sanitizeActor(message.getActorName()), ttsMessage);
 
             // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened
             if (formattedTtsMessage.length() <= TTS_THRESHOLD &&

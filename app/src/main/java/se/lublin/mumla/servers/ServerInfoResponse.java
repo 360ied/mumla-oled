@@ -47,6 +47,10 @@ public class ServerInfoResponse {
      * @see http://mumble.sourceforge.net/Protocol
      */
     public ServerInfoResponse(Server server, byte[] response, int latency) {
+        if (response == null || response.length < 24) {
+            throw new IllegalArgumentException("UDP ping response too short: " +
+                    (response == null ? 0 : response.length) + " bytes");
+        }
         ByteBuffer buffer = ByteBuffer.wrap(response);
         mVersion = buffer.getInt();
         mIdentifier = buffer.getLong();

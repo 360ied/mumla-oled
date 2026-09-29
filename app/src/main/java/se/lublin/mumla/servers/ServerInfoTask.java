@@ -50,26 +50,31 @@ public class ServerInfoTask extends AsyncTask<Server, Void, ServerInfoResponse> 
                     InetAddress.getByName(server.getSrvHost()), server.getSrvPort());
 
             // Send packet and wait for response
-            DatagramSocket socket = new DatagramSocket();
-            socket.setSoTimeout(1000);
-            socket.setReceiveBufferSize(1024);
+            try (DatagramSocket socket = new DatagramSocket()) {
+                socket.setSoTimeout(1000);
+                socket.setReceiveBufferSize(1024);
 
-            long startTime = System.nanoTime();
+                long startTime = System.nanoTime();
 
-            socket.send(requestPacket);
+                socket.send(requestPacket);
 
-            byte[] responseBuffer = new byte[24];
-            DatagramPacket responsePacket = new DatagramPacket(responseBuffer, responseBuffer.length);
-            socket.receive(responsePacket);
+                byte[] responseBuffer = new byte[24];
+                DatagramPacket responsePacket = new DatagramPacket(responseBuffer, responseBuffer.length);
+                socket.receive(responsePacket);
 
-            int latencyInMs = (int) ((System.nanoTime()-startTime)/1000000);
+                if (responsePacket.getLength() < 24) {
+                    return new ServerInfoResponse(); // Spoofed/short reply: dummy
+                }
 
-            ServerInfoResponse response = new ServerInfoResponse(server, responseBuffer, latencyInMs);
+                int latencyInMs = (int) ((System.nanoTime()-startTime)/1000000);
 
-            Log.d(TAG, "Server version: " + response.getVersionString()
-                    + " Users: " + response.getCurrentUsers() + "/" + response.getMaximumUsers());
+                ServerInfoResponse response = new ServerInfoResponse(server, responseBuffer, latencyInMs);
 
-            return response;
+                Log.d(TAG, "Server version: " + response.getVersionString()
+                        + " Users: " + response.getCurrentUsers() + "/" + response.getMaximumUsers());
+
+                return response;
+            }
 
         } catch (Exception e) {
 //            e.printStackTrace();

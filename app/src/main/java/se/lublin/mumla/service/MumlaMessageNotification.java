@@ -41,6 +41,7 @@ import se.lublin.humla.model.IMessage;
 import se.lublin.mumla.R;
 import se.lublin.mumla.app.DrawerAdapter;
 import se.lublin.mumla.app.MumlaActivity;
+import se.lublin.mumla.util.NotificationSanitizer;
 
 /**
  * A notification indicating that new messages have been received.
@@ -71,7 +72,9 @@ public class MumlaMessageNotification {
         NotificationCompat.InboxStyle style = new NotificationCompat.InboxStyle();
         style.setBigContentTitle(mContext.getResources().getQuantityString(R.plurals.notification_unread_many, mUnreadMessages.size(), mUnreadMessages.size()));
         for (IMessage m : mUnreadMessages) {
-            String line = mContext.getString(R.string.notification_message, m.getActorName(), m.getMessage());
+            String line = mContext.getString(R.string.notification_message,
+                    NotificationSanitizer.sanitizeActor(m.getActorName()),
+                    NotificationSanitizer.sanitizeBody(m.getMessage()));
             style.addLine(line);
         }
 
@@ -97,8 +100,8 @@ public class MumlaMessageNotification {
                 .setSmallIcon(R.drawable.ic_stat_notify)
                 .setContentIntent(pendingIntent)
                 .setAutoCancel(true)
-                .setContentTitle(message.getActorName())
-                .setContentText(message.getMessage())
+                .setContentTitle(NotificationSanitizer.sanitizeActor(message.getActorName()))
+                .setContentText(NotificationSanitizer.sanitizeBody(message.getMessage()))
                 .setVibrate(VIBRATION_PATTERN)
                 .setStyle(style);
 
