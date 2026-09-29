@@ -108,6 +108,8 @@ def copy_rnnoise_model(repo_root: Path, wt_path: Path) -> None:
 
     root_ver_file = repo_root / "libraries" / "humla" / "src" / "main" / "jni" / "rnnoise" / "model_version"
     wt_ver_file = wt_path / "libraries" / "humla" / "src" / "main" / "jni" / "rnnoise" / "model_version"
+    src_digest = repo_root / "libraries" / "humla" / "model_sha256"
+    dst_digest = wt_path / "libraries" / "humla" / "model_sha256"
 
     if root_ver_file.is_file() and wt_ver_file.is_file():
         root_ver = "".join(root_ver_file.read_text().split())
@@ -117,23 +119,43 @@ def copy_rnnoise_model(repo_root: Path, wt_path: Path) -> None:
             return
 
     copied = False
+    # Backfill a missing digest pin (e.g. worktrees cut from pre-merge master)
+    # but never clobber the worktree's tracked file: git already materializes
+    # the branch's own model_sha256. A digest-only copy transfers no model
+    # bytes, so it leaves `copied` untouched.
+    if src_digest.is_file() and not dst_digest.is_file():
+        dst_digest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_digest, dst_digest)
+    root_digest = "".join(src_digest.read_text().split()).lower() if src_digest.is_file() else ""
+    wt_digest = "".join(dst_digest.read_text().split()).lower() if dst_digest.is_file() else ""
     c_file = src_gen_dir / "rnnoise_data.c"
     h_file = src_gen_dir / "rnnoise_data.h"
+    stamp_file = src_gen_dir / ".model_digest"
     if c_file.is_file() and h_file.is_file() and src_asset.is_file():
-        print("Copying existing RNNoise model weights from root repository...")
-        dst_gen_dir.mkdir(parents=True, exist_ok=True)
-        dst_asset_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(c_file, dst_gen_dir / "rnnoise_data.c")
-        shutil.copy2(h_file, dst_gen_dir / "rnnoise_data.h")
-        shutil.copy2(src_asset, dst_asset_dir / "rnnoise_model.bin")
-        copied = True
+        if root_digest and wt_digest and root_digest != wt_digest:
+            print("Notice: RNNoise digest mismatch (root vs worktree). Skipping stale generated-source copy.")
+        else:
+            print("Copying existing RNNoise model weights from root repository...")
+            dst_gen_dir.mkdir(parents=True, exist_ok=True)
+            dst_asset_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(c_file, dst_gen_dir / "rnnoise_data.c")
+            shutil.copy2(h_file, dst_gen_dir / "rnnoise_data.h")
+            shutil.copy2(src_asset, dst_asset_dir / "rnnoise_model.bin")
+            if stamp_file.is_file():
+                shutil.copy2(stamp_file, dst_gen_dir / ".model_digest")
+            copied = True
 
     tarballs = sorted(src_cache_dir.glob("rnnoise_data-*.tar.gz"))
     if tarballs:
-        dst_cache_dir.mkdir(parents=True, exist_ok=True)
-        for tb in tarballs:
-            shutil.copy2(tb, dst_cache_dir / tb.name)
-        copied = True
+        # Tarballs are keyed by digest in their filename; stale ones for a
+        # rotated digest would never be read by the build, so leave them.
+        if root_digest and wt_digest and root_digest != wt_digest:
+            print("Notice: RNNoise digest mismatch (root vs worktree). Skipping stale tarball copy.")
+        else:
+            dst_cache_dir.mkdir(parents=True, exist_ok=True)
+            for tb in tarballs:
+                shutil.copy2(tb, dst_cache_dir / tb.name)
+            copied = True
 
     if copied:
         print("RNNoise model files copied successfully.")

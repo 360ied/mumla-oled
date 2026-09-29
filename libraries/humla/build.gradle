@@ -88,23 +88,44 @@ android {
     // Prepare RNNoise pre-trained model weights from official upstream model archive
     task prepareRnnoiseModel {
         def versionFile = file('src/main/jni/rnnoise/model_version')
+        def digestFile = file('model_sha256')
         def outputDir = file('src/main/jni/rnnoise-build/generated')
         def dataC = file('src/main/jni/rnnoise-build/generated/rnnoise_data.c')
         def dataH = file('src/main/jni/rnnoise-build/generated/rnnoise_data.h')
+        def stampFile = file('src/main/jni/rnnoise-build/generated/.model_digest')
         def modelBin = file('src/main/assets/rnnoise_model.bin')
         def dumpScript = file('tools/dump_rnnoise_blob.py')
-
         inputs.file(versionFile).optional()
+        inputs.file(digestFile)
         inputs.file(dumpScript).optional()
         outputs.file(dataC)
         outputs.file(dataH)
+        outputs.file(stampFile)
         outputs.file(modelBin)
 
         doLast {
-            if (dataC.exists() && dataH.exists() && modelBin.exists()) {
+            // M11: expected digest first so every path below (including the
+            // steady-state skip) is gated on it. Missing model_version falls
+            // back to the vendored digest; no second hardcoded hash to rot.
+            if (!digestFile.exists()) {
+                throw new GradleException("RNNoise model_sha256 is missing; refusing to download unverified weights.")
+            }
+            def expectedDigest = digestFile.text.trim().toLowerCase()
+            if (!expectedDigest.matches('[0-9a-f]{64}')) {
+                throw new GradleException("RNNoise model_sha256 is malformed (expected 64 lowercase hex chars); refusing to download.")
+            }
+            def modelHash = versionFile.exists() ? versionFile.text.trim() : expectedDigest
+            if (!modelHash.toLowerCase().equals(expectedDigest)) {
+                throw new GradleException("RNNoise model version/digest drift: model_version (${modelHash}) does not match model_sha256 (${expectedDigest}); update both.")
+            }
+            // Steady-state skip: valid only when the stamp proves the outputs
+            // were generated from this exact digest. Existence alone is not
+            // enough (a digest rotation must regenerate), and the tarball
+            // name rotates with the digest so its absence proves nothing.
+            if (dataC.exists() && dataH.exists() && modelBin.exists()
+                    && stampFile.exists() && stampFile.text.trim().toLowerCase().equals(expectedDigest)) {
                 return
             }
-            def modelHash = versionFile.exists() ? versionFile.text.trim() : '5e7841199cf2947fc32f6eeaf6faffab5c2dd3da69e6a6e4830625a10285a09d'
             def cacheDir = file("${project.buildDir}/model_cache")
             cacheDir.mkdirs()
             def tarGz = file("${cacheDir}/rnnoise_data-${modelHash}.tar.gz")
@@ -114,6 +135,22 @@ android {
                 modelUrl.withInputStream { ins ->
                     tarGz.withOutputStream { outs -> outs << ins }
                 }
+            }
+            // M11: verify the whole tarball against the vendored digest
+            // before unpacking. Fail closed on mismatch; no fallback URL.
+            def md = java.security.MessageDigest.getInstance("SHA-256")
+            tarGz.withInputStream { ins ->
+                byte[] buf = new byte[8192]
+                int n
+                while ((n = ins.read(buf)) != -1) {
+                    md.update(buf, 0, n)
+                }
+            }
+            def actualDigest = md.digest().encodeHex().toString().toLowerCase()
+            if (!actualDigest.equals(expectedDigest)) {
+                def deleted = tarGz.delete()
+                def cleanup = deleted ? "Deleted corrupt archive" : "Failed to delete corrupt archive at ${tarGz.absolutePath}; remove it manually"
+                throw new GradleException("RNNoise model digest mismatch for ${tarGz.name}: expected ${expectedDigest}, got ${actualDigest}. ${cleanup}; re-run the build to re-download.")
             }
             outputDir.mkdirs()
             copy {
@@ -131,6 +168,7 @@ android {
             exec {
                 commandLine 'python3', dumpScript.absolutePath, dataC.absolutePath, modelBin.absolutePath
             }
+            stampFile.text = expectedDigest + '\n'
         }
     }
     preBuild.dependsOn prepareRnnoiseModel
