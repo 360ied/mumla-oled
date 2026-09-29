@@ -37,8 +37,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URL;
 import java.net.URLConnection;
+import java.net.UnknownHostException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
@@ -59,6 +61,22 @@ public class MumbleImageGetter implements Html.ImageGetter {
 
     /** The maximum image size in bytes to load. */
     private static final int MAX_LENGTH = 10 * 1024 * 1024;
+
+    /**
+     * Receive-side decode caps for chat images. The send path already caps
+     * outgoing images at 1600 px, so 4096 px / ~16 MP comfortably covers
+     * interop without handing the decoder an unbounded allocation.
+     */
+    public static final int CHAT_MAX_DIMENSION = 4096;
+    public static final int CHAT_MAX_PIXELS = 16 * 1024 * 1024;
+
+    /**
+     * Absolute rejection ceiling applied before the sampled decode. Anything
+     * past this is a compressed bomb, never a photo: refuse outright instead
+     * of downsampling.
+     */
+    public static final int ABSOLUTE_MAX_DIMENSION = 32768;
+    public static final long ABSOLUTE_MAX_PIXELS = 64L * 1024 * 1024;
 
     /** Estimated total horizontal padding/margin around chat message text in dp. */
     private static final int HORIZONTAL_PADDING_DP = 48;
@@ -81,6 +99,11 @@ public class MumbleImageGetter implements Html.ImageGetter {
 
     private final Context mContext;
     private final Settings mSettings;
+    // android.util.LruCache synchronizes get/put internally, so UI-thread
+    // reads (getDrawable) racing background-thread writes
+    // (fetchURLImageAsync) are memory-safe. Check-then-act sequences
+    // (get-then-put) are not atomic, but the worst case is a redundant
+    // decode, never corruption.
     private final LruCache<String, Bitmap> mBitmapCache;
     private final Set<String> mPendingDownloads;
     private final Set<String> mFailedDownloads;
@@ -400,54 +423,192 @@ public class MumbleImageGetter implements Html.ImageGetter {
         if (src == null) {
             return null;
         }
+        return decodeBoundedImage(src, CHAT_MAX_DIMENSION, CHAT_MAX_PIXELS);
+    }
+
+    /**
+     * Pure power-of-two sampler: smallest sample size keeping both sides
+     * within maxDim and total pixels within maxPixels. Invalid inputs fail
+     * closed (sample size 1 lets the absolute-rejection gate decide).
+     */
+    public static int calculateInSampleSize(
+            int width, int height, int maxDim, long maxPixels) {
+        if (width <= 0 || height <= 0 || maxDim <= 0 || maxPixels <= 0) {
+            return 1;
+        }
+        int sampleSize = 1;
+        while (width / sampleSize > maxDim
+                || height / sampleSize > maxDim
+                || (long) (width / sampleSize) * (height / sampleSize) > maxPixels) {
+            sampleSize *= 2;
+        }
+        return sampleSize;
+    }
+
+    /** True when raw dimensions exceed the absolute rejection ceiling. */
+    public static boolean isOversize(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return true;
+        }
+        return width > ABSOLUTE_MAX_DIMENSION
+                || height > ABSOLUTE_MAX_DIMENSION
+                || (long) width * height > ABSOLUTE_MAX_PIXELS;
+    }
+
+    /**
+     * Two-pass bounded decode: reads dimensions first via
+     * inJustDecodeBounds, rejects bombs past the absolute ceiling, then
+     * downsamples to the chat caps (4096 px / ~16 MP) before the full
+     * decode. Synchronous by design: getDrawable runs base64 decode on the
+     * UI thread and fetchURLImage already runs on mExecutor, so no
+     * signature change or pop-in is needed. Returns null on rejection.
+     */
+    public static Bitmap decodeBoundedImage(byte[] data, int maxDim, long maxPixels) {
+        if (data == null || data.length == 0 || data.length > MAX_LENGTH) {
+            return null;
+        }
         try {
-            return BitmapFactory.decodeByteArray(src, 0, src.length);
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+            int width = bounds.outWidth;
+            int height = bounds.outHeight;
+            if (width <= 0 || height <= 0 || isOversize(width, height)) {
+                Log.w(TAG, "rejecting oversize image: " + width + "x" + height);
+                return null;
+            }
+            BitmapFactory.Options decode = new BitmapFactory.Options();
+            decode.inSampleSize = calculateInSampleSize(width, height, maxDim, maxPixels);
+            return BitmapFactory.decodeByteArray(data, 0, data.length, decode);
         } catch (OutOfMemoryError e) {
-            Log.w(TAG, "OOM decoding base64 image: " + e.toString());
+            Log.w(TAG, "OOM decoding bounded image: " + e.toString());
             return null;
         }
     }
 
     private Bitmap fetchURLImage(String source) {
-        HttpURLConnection httpConn = null;
         try {
             URL url = new URL(source);
-            String protocol = url.getProtocol();
-            if (protocol == null || (!protocol.equalsIgnoreCase("http") && !protocol.equalsIgnoreCase("https"))) {
-                Log.w(TAG, "Refusing to load image with non-HTTP protocol: " + protocol);
-                return null;
-            }
-
-            URLConnection conn = url.openConnection();
-            if (conn instanceof HttpURLConnection) {
-                httpConn = (HttpURLConnection) conn;
-                httpConn.setInstanceFollowRedirects(true);
-            }
-            conn.setConnectTimeout(NETWORK_TIMEOUT_MS);
-            conn.setReadTimeout(NETWORK_TIMEOUT_MS);
-
-            int contentLength = conn.getContentLength();
-            if (contentLength > MAX_LENGTH) {
-                return null;
-            }
-
-            try (InputStream is = conn.getInputStream()) {
-                byte[] data = readStreamWithLimit(is, MAX_LENGTH);
-                if (data == null || data.length == 0) {
+            int redirectsFollowed = 0;
+            while (true) {
+                FetchResult result = fetchOneUrl(url);
+                if (!result.redirect) {
+                    return result.bitmap;
+                }
+                if (!SsrfHostPolicy.shouldFollowRedirect(
+                        redirectsFollowed, result.status, result.location)) {
+                    Log.w(TAG, "stopping redirect chain");
                     return null;
                 }
-                return BitmapFactory.decodeByteArray(data, 0, data.length);
+                redirectsFollowed++;
+                url = new URL(url, result.location);
             }
         } catch (IOException e) {
             Log.w(TAG, "failed to load URL image: " + e.toString());
         } catch (OutOfMemoryError e) {
             Log.w(TAG, "OOM decoding URL image: " + e.toString());
-        } finally {
-            if (httpConn != null) {
-                httpConn.disconnect();
-            }
         }
         return null;
+    }
+
+    /** Outcome of one fetch hop: either a decoded bitmap or a redirect. */
+    private static final class FetchResult {
+        final Bitmap bitmap;
+        final boolean redirect;
+        final int status;
+        final String location;
+
+        FetchResult(Bitmap bitmap) {
+            this.bitmap = bitmap;
+            this.redirect = false;
+            this.status = -1;
+            this.location = null;
+        }
+
+        FetchResult(int status, String location) {
+            this.bitmap = null;
+            this.redirect = true;
+            this.status = status;
+            this.location = location;
+        }
+    }
+
+    /**
+     * Fetches a single URL without following redirects. Every hop
+     * re-applies the scheme, userinfo, and SSRF host checks, so a
+     * redirect to a private IP or a non-http(s) scheme is refused.
+     */
+    private FetchResult fetchOneUrl(URL url) throws IOException {
+        if (!isSchemeAllowed(url) || SsrfHostPolicy.hasUserinfo(url)) {
+            Log.w(TAG, "Refusing to load image with disallowed URL");
+            return new FetchResult(null);
+        }
+        if (isHostBlocked(url)) {
+            Log.w(TAG, "Refusing to load image from blocked host");
+            return new FetchResult(null);
+        }
+
+        URLConnection conn = url.openConnection();
+        if (!(conn instanceof HttpURLConnection)) {
+            return new FetchResult(null);
+        }
+        HttpURLConnection httpConn = (HttpURLConnection) conn;
+        try {
+            httpConn.setInstanceFollowRedirects(false);
+            httpConn.setConnectTimeout(NETWORK_TIMEOUT_MS);
+            httpConn.setReadTimeout(NETWORK_TIMEOUT_MS);
+            int status = httpConn.getResponseCode();
+            if (SsrfHostPolicy.isRedirect(status)) {
+                return new FetchResult(status, httpConn.getHeaderField("Location"));
+            }
+
+            int contentLength = httpConn.getContentLength();
+            if (contentLength > MAX_LENGTH) {
+                return new FetchResult(null);
+            }
+
+            try (InputStream is = httpConn.getInputStream()) {
+                byte[] data = readStreamWithLimit(is, MAX_LENGTH);
+                if (data == null || data.length == 0) {
+                    return new FetchResult(null);
+                }
+                return new FetchResult(
+                        decodeBoundedImage(data, CHAT_MAX_DIMENSION, CHAT_MAX_PIXELS));
+            }
+        } finally {
+            httpConn.disconnect();
+        }
+    }
+
+    static boolean isSchemeAllowed(URL url) {
+        if (url == null) {
+            return false;
+        }
+        String protocol = url.getProtocol();
+        return protocol != null
+                && (protocol.equalsIgnoreCase("http") || protocol.equalsIgnoreCase("https"));
+    }
+
+    /**
+     * Best-effort pre-connect SSRF check: literals that look like IPs are
+     * classified without DNS; everything else (hostnames plus exotic
+     * numeric forms) is resolved and rejected when any address is
+     * blocked. DNS failures and empty hosts fail closed.
+     */
+    private static boolean isHostBlocked(URL url) {
+        String host = url.getHost();
+        if (host == null || host.isEmpty()) {
+            return true;
+        }
+        if (SsrfHostPolicy.looksLikeIpLiteral(host)) {
+            return SsrfHostPolicy.isLiteralBlocked(host);
+        }
+        try {
+            return SsrfHostPolicy.isAnyAddressBlocked(
+                    InetAddress.getAllByName(SsrfHostPolicy.normalizeHost(host)));
+        } catch (UnknownHostException e) {
+            return true;
+        }
     }
 
     private static byte[] readStreamWithLimit(InputStream is, int maxBytes) throws IOException {

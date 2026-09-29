@@ -25,16 +25,34 @@ import androidx.annotation.VisibleForTesting;
 import androidx.collection.LruCache;
 
 import se.lublin.humla.model.IUser;
+import se.lublin.mumla.util.MumbleImageGetter;
 
 /**
  * Memory-bounded LRU cache for user avatars, keyed by user session and texture cache key.
  *
  * Sized in kilobytes based on Bitmap heap footprint rather than raw entry count to prevent
  * OutOfMemory errors on devices with many users or large avatars.
+ *
+ * Thread-safety: androidx.collection.LruCache synchronizes get/put
+ * internally, so RecyclerView bind-path reads racing talk-state updates
+ * on the UI thread are memory-safe. Decode stays synchronous on the
+ * caller (UI) thread: avatars render as small icons and the bounded
+ * 512 px two-pass decode caps the allocation, so no async pop-in is
+ * needed (bind paths ChannelAdapter/ChannelListAdapter require Bitmap
+ * synchronously). Check-then-act (get-then-put) is not atomic; the worst
+ * case is a redundant decode, never corruption.
  */
 public class AvatarCache {
     /** Default 4 MB maximum heap allocation for decoded avatars. */
     public static final int DEFAULT_MAX_SIZE_KB = 4 * 1024;
+
+    /**
+     * Avatar decode target: avatars render as small talk-state icons, so
+     * 512 px longest-side is ample. Shared absolute ceiling lives in
+     * MumbleImageGetter.ABSOLUTE_MAX_DIMENSION.
+     */
+    public static final int AVATAR_MAX_DIMENSION = 512;
+    public static final long AVATAR_MAX_PIXELS = 512L * 512;
 
     public static final class Entry {
         final int cacheKey;
@@ -105,7 +123,7 @@ public class AvatarCache {
         if (user.hasTexture()) {
             byte[] texture = user.getTexture();
             if (texture != null && texture.length > 0) {
-                Bitmap bitmap = BitmapFactory.decodeByteArray(texture, 0, texture.length);
+                Bitmap bitmap = decodeBoundedAvatar(texture);
                 if (bitmap != null) {
                     mCache.put(session, new Entry(key, bitmap));
                     return bitmap;
@@ -119,6 +137,34 @@ public class AvatarCache {
 
         mCache.remove(session);
         return null;
+    }
+
+    /**
+     * Two-pass bounded avatar decode via the shared chat-image sampler:
+     * inJustDecodeBounds first, reject past the absolute ceiling, then
+     * downsample to the 512 px avatar target. Pure sampler math is covered
+     * by JVM tests; BitmapFactory itself is stubbed on the JVM.
+     */
+    @Nullable
+    private static Bitmap decodeBoundedAvatar(byte[] texture) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(texture, 0, texture.length, bounds);
+            int width = bounds.outWidth;
+            int height = bounds.outHeight;
+            if (width <= 0
+                    || height <= 0
+                    || MumbleImageGetter.isOversize(width, height)) {
+                return null;
+            }
+            BitmapFactory.Options decode = new BitmapFactory.Options();
+            decode.inSampleSize = MumbleImageGetter.calculateInSampleSize(
+                    width, height, AVATAR_MAX_DIMENSION, AVATAR_MAX_PIXELS);
+            return BitmapFactory.decodeByteArray(texture, 0, texture.length, decode);
+        } catch (OutOfMemoryError e) {
+            return null;
+        }
     }
 
     public void remove(int session) {
