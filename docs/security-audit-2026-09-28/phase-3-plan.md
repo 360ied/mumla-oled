@@ -193,16 +193,19 @@ rides along (disjoint files, same native review).
   pattern), Java `offset >= 0` guard.
 - Accept: no `javacpp` references remain (`grep -rn javacpp` +
   `bytedeco` clean); voice interop regression passes; `decodeFloat`
-  fuzz runs; `./scripts/check.sh` green.
+  fuzz runs (fixed seed corpus: empty, truncated, oversized, random
+  bytes × 10k iterations, deterministic seed); `./scripts/check.sh`
+  green.
 
 ### Slice C — NDK + hardening flags (M15)
 
 - Pin NDK `27.2.12479018` (r27c, P4: composes on current lock, no lock
-  move) in `flake.nix` + `humla/build.gradle` (keep in sync);
-  explicit `-fstack-protector-strong
-  -D_FORTIFY_SOURCE=2 -Wl,-z,RelRO,-z,Now` in `Android.mk:20-21`
-  (`COMMON_CFLAGS`/`COMMON_LDFLAGS`); decide `APP_PLATFORM android-21`
-  (`Application.mk:4`) stance (keep vs raise with minSdk 21).
+  move) in `flake.nix` + `humla/build.gradle` (keep in sync); append
+  `-fstack-protector-strong -D_FORTIFY_SOURCE=2` to `COMMON_CFLAGS`
+  and `-Wl,-z,RelRO,-z,Now` to `COMMON_LDFLAGS` (`Android.mk:20-21`,
+  both modules inherit them). Keep `APP_PLATFORM android-21`
+  (`Application.mk:4`) and minSdk 21 — raising breaks old devices for
+  zero security gain; revisit only if the NDK 27 build errors force it.
 - Accept: full NDK build on 27 for all ABIs
   (`armeabi-v7a arm64-v8a x86_64`); `./scripts/check.sh` green.
 
@@ -213,7 +216,7 @@ rides along (disjoint files, same native review).
 | RNNoise tarball with wrong bytes | build fails closed before unpack |
 | Clean-cache build (no `model_cache/`) | downloads, verifies, unpacks |
 | Opus voice interop (old ↔ new codec) | decodes, no regression |
-| `decodeFloat` / `packetSampleCount` fuzz | no crash / OOB |
+| `decodeFloat` / `packetSampleCount` fuzz (10k iters, fixed seed) | no crash / OOB |
 | `grep -rn javacpp\|bytedeco` tree-wide | no hits outside this plan doc |
 | `nativeProcessFrame` hostile offset+length | dropped, no OOB read |
 | NDK 27 full build, all ABIs | single `libhumlaaudio` links, loads |
@@ -232,8 +235,8 @@ rides along (disjoint files, same native review).
   (audit notes gap 1); untouched by this phase.
 - Secrets at rest (former C1, H6–H8, L1) out of scope per
   [secrets-at-rest-plan.md](secrets-at-rest-plan.md).
-- No `APP_PLATFORM`/minSdk raise unless slice C decides it; no
-  `customtabs` or unrelated dep refreshes (M13/M14 are Phase 4).
+- No minSdk raise (kept at 21, slice C); no `customtabs` or unrelated
+  dep refreshes (M13/M14 are Phase 4).
 
 ## 6. Execution (worktree + commit + merge order)
 
