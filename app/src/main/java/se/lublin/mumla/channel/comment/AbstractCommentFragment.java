@@ -129,6 +129,17 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         }
     }
 
+    @Override
+    public void onDestroyView() {
+        // Release the WebView's native peer; otherwise the renderer and its
+        // host Activity stay reachable via mCommentView after dismissal.
+        if (mCommentView != null) {
+            mCommentView.destroy();
+            mCommentView = null;
+        }
+        super.onDestroyView();
+    }
+
     /**
      * Locks down the comment WebView against hostile server-supplied HTML.
      * Both the received comment ({@link #loadComment}) and the edit-preview
