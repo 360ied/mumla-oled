@@ -9,7 +9,8 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2)
 4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
-6. [Verification & Test Strategy](#verification--test-strategy)
+6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
+7. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
 
@@ -436,6 +437,66 @@ Wire a listener or feedback mechanism from `AudioHandler` to `HumlaConnection.se
 
 ---
 
+## Phase 6: Comment Dialog Hardening Follow-Ups (P3)
+
+Residual low-severity items in `AbstractCommentFragment` surfaced by the phase2-comment-webview pedantic reviews. All latent or cosmetic; no live crash or leak.
+
+### 6.1 Guard Comment Dialog Arguments (ODD-13)
+
+**Status**: Open
+
+**Component**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L56-L58)
+
+**Problem**:
+`onCreate()` and `isEditing()` dereference `getArguments()` without a null check. Both production callers always supply a bundle, so a no-args instantiation is the only crash path.
+
+**Solution**:
+Switch both sites to `requireArguments()`.
+
+---
+
+### 6.2 Modernize Comment Dialog Attachment (ODD-14)
+
+**Status**: Open
+
+**Component**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68)
+
+**Problem**:
+Overrides the deprecated `onAttach(Activity)` overload, and the rethrown `RuntimeException` drops the `ClassCastException` cause.
+
+**Solution**:
+Override `onAttach(Context)` and chain the cause in the rethrow.
+
+---
+
+### 6.3 Complete Comment Dialog View Teardown (ODD-15)
+
+**Status**: Open
+
+**Component**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141)
+
+**Problem**:
+`onDestroyView()` nulls `mCommentView` but leaves `mTabHost`/`mCommentEdit` reachable; the tab listener dereferences `mCommentView` unguarded.
+
+**Solution**:
+Null all three view fields in `onDestroyView()` and null-guard the listener's `mCommentView` deref.
+
+---
+
+### 6.4 Translate Comment Chooser Title (ODD-16)
+
+**Status**: Open
+
+**Component**: [`strings.xml`](../../app/src/main/res/values/strings.xml#L56)
+
+**Problem**:
+`comment_open_link` has no `values-fr`/`values-zh-rCN` translations; those locales fall back to English.
+
+**Solution**:
+Add the two translations on the next strings pass.
+
+---
+
 ## Verification & Test Strategy
 
 To ensure zero regressions across all phases, each change must be accompanied by targeted unit and integration tests:
@@ -451,3 +512,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 4** | **ODD-04** | Overlay insets unit test comparing modern `WindowMetrics` against legacy fallback. | Test overlay positioning on punch-hole and notch devices in portrait and landscape. |
 | **Phase 4** | **ODD-08** | Gradle build and resource compilation check (`assembleFossDebug`). | Verify settings appearance screen loads and renders without XML inflation warnings. |
 | **Phase 5** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
+| **Phase 6** | **ODD-13** | Unit test instantiating the comment fragment without arguments, verifying `IllegalStateException` instead of NPE. | Open user/channel comment dialogs; verify they render. |
+| **Phase 6** | **ODD-14** | Lint check (`Deprecated` warning) confirming no `onAttach(Activity)` override remains. | Open comment dialogs; verify provider binding works. |
+| **Phase 6** | **ODD-15** | Gradle build and resource compilation check (`assembleFossDebug`). | Open and dismiss comment dialogs repeatedly; inspect heap for retained view hierarchies. |
+| **Phase 6** | **ODD-16** | Lint `MissingTranslation` check on `comment_open_link`. | Switch to French/Chinese locales; open a comment link chooser and verify the title is translated. |
