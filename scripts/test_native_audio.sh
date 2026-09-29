@@ -2,10 +2,12 @@
 #
 # scripts/test_native_audio.sh: Compile and execute the native C++ audio engine and crypto test suites.
 #
-# This host build is hermetic: the output-engine tests use a FakeDecoder, so
-# no libopus is linked here. The Android NDK build (libraries/humla/src/main/jni,
-# libhumlaaudio.so + libjniopus.so) must be verified separately; this script
-# does not cover it.
+# The engine unit tests use FakeDecoder/FakeVoiceEncoder (hermetic), and the
+# Opus interop + fuzz suite below links the real Opus sources from the pinned
+# submodule (same CELT/SILK/Opus lists, flags and fixed-point mode as
+# libraries/humla/src/main/jni/Android.mk, minus the NEON intrinsics which
+# need no extra flags on arm64 but are x86-hostile). The full Android NDK
+# build (single libhumlaaudio.so) must still be verified separately.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +15,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENGINE_DIR="$ROOT_DIR/libraries/humla/src/main/jni/audio_engine"
 TEST_DIR="$ROOT_DIR/libraries/humla/src/test/cpp"
 CRYPTO_DIR="$ROOT_DIR/libraries/humla/src/main/jni/crypto"
+OPUS_DIR="$ROOT_DIR/libraries/humla/src/main/jni/opus"
 for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$ENGINE_DIR/SoftLimiter.cpp" \
          "$ENGINE_DIR/PreSpeechRingBuffer.cpp" \
@@ -28,6 +31,7 @@ for f in "$ENGINE_DIR/jitter/jitter.c" \
          "$TEST_DIR/test_jitter_buffer.cpp" \
          "$TEST_DIR/test_audio_input_engine.cpp" \
          "$TEST_DIR/test_audio_output_engine.cpp" \
+         "$TEST_DIR/test_opus_interop.cpp" \
          "$TEST_DIR/run_audio_tests.cpp" \
          "$CRYPTO_DIR/Aes128.h" \
          "$CRYPTO_DIR/CryptStateOCB2.h" \
@@ -45,6 +49,31 @@ mkdir -p "$BUILD_DIR"
 
 CXX="${CXX:-g++}"
 
+# Opus 1.6.1 host sources: same lists and flags as Android.mk
+# (CELT + SILK + SILK_FIXED + OPUS + OPUS_FLOAT), excluding the
+# arch-specific variants (x86 RTCD/SSE/AVX2, ARM RTCD/NEON/NE10, .s asm)
+# and the opt-in lpcnet_sources.mk (deep PLC/DRED, fixed-point conflict).
+OPUS_SRCS=""
+for mk in celt_sources.mk silk_sources.mk opus_sources.mk; do
+    list=$(sed -n '/^CELT_SOURCES =/,/[^\\]$/p;/^SILK_SOURCES =/,/[^\\]$/p;/^SILK_SOURCES_FIXED =/,/[^\\]$/p;/^OPUS_SOURCES =/,/[^\\]$/p;/^OPUS_SOURCES_FLOAT =/,/[^\\]$/p' "$OPUS_DIR/$mk" \
+        | sed -e 's/^[A-Z_]* = *//' -e 's/\\$//' -e 's/#.*//')
+    # shellcheck disable=SC2086
+    # (word-splitting intended: one file per token)
+    for f in $list; do
+        OPUS_SRCS="$OPUS_SRCS $OPUS_DIR/$f"
+    done
+done
+for f in $OPUS_SRCS; do
+    if [[ ! -f "$f" ]]; then
+        echo "test_native_audio.sh: missing opus source: $f" >&2
+        exit 1
+    fi
+done
+OPUS_FLAGS="-DOPUS_BUILD -DVAR_ARRAYS -DFIXED_POINT -DHAVE_LRINTF=1 -O2 -Wno-error=maybe-uninitialized"
+OPUS_INC="-I $OPUS_DIR/include -I $OPUS_DIR/celt -I $OPUS_DIR/silk -I $OPUS_DIR/silk/float -I $OPUS_DIR/silk/fixed"
+
+# shellcheck disable=SC2086
+# ($OPUS_SRCS/$OPUS_FLAGS/$OPUS_INC expand to multiple words by design)
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -UNDEBUG \
     -I "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine" \
     -I "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/jitter" \
@@ -64,7 +93,12 @@ CXX="${CXX:-g++}"
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_jitter_buffer.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_audio_input_engine.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/test_audio_output_engine.cpp" \
+    "$ROOT_DIR/libraries/humla/src/test/cpp/test_opus_interop.cpp" \
     "$ROOT_DIR/libraries/humla/src/test/cpp/run_audio_tests.cpp" \
+    "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/OpusVoiceEncoder.cpp" \
+    "$ROOT_DIR/libraries/humla/src/main/jni/audio_engine/OpusVoiceDecoder.cpp" \
+    $OPUS_SRCS \
+    $OPUS_FLAGS $OPUS_INC \
     -o "$BUILD_DIR/test_audio_engine"
 
 "$BUILD_DIR/test_audio_engine"

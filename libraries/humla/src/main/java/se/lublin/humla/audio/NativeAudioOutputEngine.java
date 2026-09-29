@@ -41,7 +41,6 @@ public class NativeAudioOutputEngine {
     static {
         Throwable error = null;
         try {
-            System.loadLibrary("jniopus");
             System.loadLibrary("humlaaudio");
         } catch (Throwable t) {
             error = t;

@@ -21,6 +21,7 @@
 
 #include <jni.h>
 #include <android/log.h>
+#include <cstdint>
 #include <memory>
 
 #define LOG_TAG "NativeAudioInputEngine"
@@ -179,7 +180,13 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeProcessFrame(
     if (ctx == nullptr || ctx->engine == nullptr || pcmArray == nullptr || length <= 0 || offset < 0) return;
 
     jsize arrayLen = env->GetArrayLength(pcmArray);
-    if (offset + length > arrayLen) return;
+    if (arrayLen <= 0) return;
+    // Overflow-safe window check: promote to 64 bits before adding so a
+    // hostile offset+length pair cannot wrap past the array end (mirrors
+    // nativeRender in NativeAudioOutputEngineJni.cpp).
+    const int64_t end =
+        static_cast<int64_t>(offset) + static_cast<int64_t>(length);
+    if (end > static_cast<int64_t>(arrayLen)) return;
 
     jshort* pcmPtr = env->GetShortArrayElements(pcmArray, nullptr);
     if (pcmPtr != nullptr) {

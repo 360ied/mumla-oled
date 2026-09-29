@@ -127,7 +127,6 @@ android {
     packaging {
         resources {
             excludes += [
-                'com/googlecode/javacpp/properties/**',
                 'google/protobuf/**',
                 '**/*.proto',
                 'META-INF/CHANGES',
