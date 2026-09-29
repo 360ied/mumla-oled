@@ -108,6 +108,7 @@ public final class SsrfHostPolicy {
         if (address.isAnyLocalAddress()
                 || address.isLoopbackAddress()
                 || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress()
                 || address.isMulticastAddress()) {
             return true;
         }
@@ -132,7 +133,7 @@ public final class SsrfHostPolicy {
         if (normalized == null || normalized.isEmpty()) {
             return true;
         }
-        if (!looksLikeIpLiteral(normalized)) {
+        if (!isLiteralNormalized(normalized)) {
             return false;
         }
         try {
@@ -167,10 +168,10 @@ public final class SsrfHostPolicy {
      * overblocking.
      */
     public static boolean looksLikeIpLiteral(String host) {
-        if (host == null) {
-            return false;
-        }
-        String normalized = normalizeHost(host);
+        return isLiteralNormalized(normalizeHost(host));
+    }
+
+    private static boolean isLiteralNormalized(String normalized) {
         if (normalized == null || normalized.isEmpty()) {
             return false;
         }
@@ -185,12 +186,22 @@ public final class SsrfHostPolicy {
         }
         return true;
     }
+
     private static boolean isBlockedIPv4(byte[] addr) {
         int b0 = addr[0] & 0xFF;
         int b1 = addr[1] & 0xFF;
         int b2 = addr[2] & 0xFF;
         if (b0 == 0) {
             return true; // 0.0.0.0/8 ("this network")
+        }
+        if (b0 == 127) {
+            return true; // 127.0.0.0/8 loopback (embedded forms bypass InetAddress predicates)
+        }
+        if (b0 == 169 && b1 == 254) {
+            return true; // 169.254.0.0/16 link-local (embedded forms bypass InetAddress predicates)
+        }
+        if ((b0 & 0xF0) == 0xE0) {
+            return true; // 224.0.0.0/4 multicast (embedded forms bypass InetAddress predicates)
         }
         if (b0 == 10) {
             return true; // 10.0.0.0/8
@@ -232,8 +243,15 @@ public final class SsrfHostPolicy {
         if (isIPv4Compatible(addr)) {
             return isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
         }
+        if (isNat64(addr)) {
+            // NAT64 64:ff9b::/96 embeds the IPv4 target in the last 32 bits.
+            return isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
+        }
         int b0 = addr[0] & 0xFF;
         int b1 = addr[1] & 0xFF;
+        if (b0 == 0xFE && (b1 & 0xC0) == 0xC0) {
+            return true; // fec0::/10 deprecated site-local
+        }
         if ((b0 & 0xFE) == 0xFC) {
             return true; // fc00::/7 unique-local
         }
@@ -254,6 +272,21 @@ public final class SsrfHostPolicy {
             }
         }
         return addr[10] == (byte) 0xFF && addr[11] == (byte) 0xFF;
+    }
+
+    private static boolean isNat64(byte[] addr) {
+        return addr[0] == 0x00
+                && addr[1] == 0x64
+                && addr[2] == (byte) 0xFF
+                && addr[3] == (byte) 0x9B
+                && addr[4] == 0x00
+                && addr[5] == 0x00
+                && addr[6] == 0x00
+                && addr[7] == 0x00
+                && addr[8] == 0x00
+                && addr[9] == 0x00
+                && addr[10] == 0x00
+                && addr[11] == 0x00;
     }
 
     private static boolean isIPv4Compatible(byte[] addr) {

@@ -276,4 +276,26 @@ public class MumbleImageGetterTest extends TestCase {
         assertFalse(b1.equals("other"));
         assertEquals("ImageBounds{100x200}", b1.toString());
     }
+
+    public void testSamplerMath() {
+        assertTrue(MumbleImageGetter.calculateInSampleSize(
+                8000, 8000,
+                MumbleImageGetter.CHAT_MAX_DIMENSION,
+                MumbleImageGetter.CHAT_MAX_PIXELS) >= 2);
+        assertEquals(1, MumbleImageGetter.calculateInSampleSize(
+                800, 600,
+                MumbleImageGetter.CHAT_MAX_DIMENSION,
+                MumbleImageGetter.CHAT_MAX_PIXELS));
+        assertTrue(MumbleImageGetter.calculateInSampleSize(
+                1024, 1024, 512, 512L * 512) >= 2);
+    }
+
+    public void testOversizeRejection() {
+        assertTrue(MumbleImageGetter.isOversize(40000, 10));
+        assertTrue(MumbleImageGetter.isOversize(100000, 100000));
+        assertTrue(MumbleImageGetter.isOversize(0, 100));
+        assertTrue(MumbleImageGetter.isOversize(-1, 100));
+        assertFalse(MumbleImageGetter.isOversize(8000, 8000));
+        assertFalse(MumbleImageGetter.isOversize(4096, 4096));
+    }
 }

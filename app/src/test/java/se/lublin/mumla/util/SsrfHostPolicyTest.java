@@ -110,25 +110,16 @@ public class SsrfHostPolicyTest extends TestCase {
         assertFalse(SsrfHostPolicy.shouldFollowRedirect(0, 404, "http://example.com/next"));
     }
 
-    public void testSamplerMath() {
-        assertTrue(MumbleImageGetter.calculateInSampleSize(
-                8000, 8000,
-                MumbleImageGetter.CHAT_MAX_DIMENSION,
-                MumbleImageGetter.CHAT_MAX_PIXELS) >= 2);
-        assertEquals(1, MumbleImageGetter.calculateInSampleSize(
-                800, 600,
-                MumbleImageGetter.CHAT_MAX_DIMENSION,
-                MumbleImageGetter.CHAT_MAX_PIXELS));
-        assertTrue(MumbleImageGetter.calculateInSampleSize(
-                1024, 1024, 512, 512L * 512) >= 2);
+    public void testSiteLocalBlocked() throws Exception {
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("fec0::1")));
+        assertTrue(SsrfHostPolicy.isLiteralBlocked("[fec0::1]"));
+        assertTrue(SsrfHostPolicy.isLiteralBlocked("[FEC0::1]"));
     }
 
-    public void testOversizeRejection() {
-        assertTrue(MumbleImageGetter.isOversize(40000, 10));
-        assertTrue(MumbleImageGetter.isOversize(100000, 100000));
-        assertTrue(MumbleImageGetter.isOversize(0, 100));
-        assertTrue(MumbleImageGetter.isOversize(-1, 100));
-        assertFalse(MumbleImageGetter.isOversize(8000, 8000));
-        assertFalse(MumbleImageGetter.isOversize(4096, 4096));
+    public void testNat64EmbeddedPrivateBlocked() throws Exception {
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("64:ff9b::a00:1")));
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("64:ff9b::7f00:1")));
+        assertTrue(SsrfHostPolicy.isLiteralBlocked("[64:ff9b::a00:1]"));
+        assertFalse(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("64:ff9b::808:808")));
     }
 }
