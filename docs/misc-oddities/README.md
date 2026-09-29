@@ -15,6 +15,10 @@ This directory catalogs defects, architectural inconsistencies, performance bott
    - [ODD-07: Keycode Reset Inconsistency (-1 vs 0)](#odd-07-keycode-reset-inconsistency--1-vs-0)
    - [ODD-08: Stale Commented-Out XML Preferences](#odd-08-stale-commented-out-xml-preferences)
    - [ODD-09: Bandwidth-Degraded framesPerPacket Fails to Scale UDP Send Queue](#odd-09-bandwidth-degraded-framesperpacket-fails-to-scale-udp-send-queue)
+   - [ODD-10: DNS Rebinding TOCTOU in Image SSRF Check](#odd-10-dns-rebinding-toctou-in-image-ssrf-check)
+   - [ODD-11: Incomplete IPv6 Transition-Mechanism Coverage in SSRF Policy](#odd-11-incomplete-ipv6-transition-mechanism-coverage-in-ssrf-policy)
+   - [ODD-12: Thin SSRF Regression Test Layering](#odd-12-thin-ssrf-regression-test-layering)
+
 3. [Remediation Roadmap](remediation-plan.md)
 
 ---
@@ -32,6 +36,9 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-07** | **Preferences** | **Low** | **Open** | **Inconsistent Reset Key Default Value**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`, but [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) sets `mCurrentValue = 0` (`KEYCODE_UNKNOWN`), producing divergent preference states. | [`KeySelectPreferenceDialogFragment.java:35`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) |
 | **ODD-08** | **Code Hygiene** | **Low** | **Open** | **Dead Commented-Out Preferences**: Obsolete XML preferences (`channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers`) remain commented out in [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml#L74-L94). | [`settings_appearance.xml:74-94`](../../app/src/main/res/xml/settings_appearance.xml#L74-L94) |
 | **ODD-09** | **Network / Latency** | **Medium** | **Open** | **Bandwidth-Degraded `framesPerPacket` Fails to Scale HumlaUDP Send Queue**: When low server bandwidth triggers `AudioHandler.setMaxBandwidth()` to increase `framesPerPacket` (e.g. from 2 to 4), `HumlaUDP` is not updated, keeping a 10-packet queue ($10 \times 40\text{ ms} = 400\text{ ms}$) and causing latency bloat. | [`AudioHandler.java:266`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272) |
+| **ODD-10** | **Security / SSRF** | **Medium** | **Open** | **DNS Rebinding TOCTOU in Image SSRF Check**: [`MumbleImageGetter.isHostBlocked()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) resolves via `getAllByName` but `HttpURLConnection` reconnects by hostname, so a rebind between check and `connect()` defeats the policy. | [`MumbleImageGetter.java:598`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) |
+| **ODD-11** | **Security / SSRF** | **Low** | **Open** | **Incomplete IPv6 Transition-Mechanism Coverage**: [`SsrfHostPolicy.isBlockedIPv6()`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) unwraps only the well-known NAT64 `/96`; RFC 6052 variable-length and operator NAT64 prefixes plus Teredo/ISATAP are unhandled. | [`SsrfHostPolicy.java:239`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) |
+| **ODD-12** | **Testing** | **Low** | **Open** | **Thin SSRF Regression Test Layering**: `testSiteLocalBlocked` passes via either the `isSiteLocalAddress` gate or the explicit `fec0::/10` branch, and embedded `169.254`/`224` branches lack direct literal tests. | [`SsrfHostPolicyTest.java:113`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L124) |
 
 ---
 
@@ -253,6 +260,40 @@ However, neither `HumlaConnection` nor `HumlaUDP` is notified of this adjusted p
 - `HumlaUDP.mSendQueueCapacity` remains at 10 packets (calculated for standard 20ms audio).
 - With 40ms packets, a 10-packet queue buffers $10 \times 40\text{ ms} = 400\text{ ms}$ of audio—double the target latency ceiling of ~200ms.
 - The send queue should dynamically scale down to 5 packets for 40ms audio to preserve real-time interactivity.
+
+---
+
+### ODD-10: DNS Rebinding TOCTOU in Image SSRF Check
+
+In [`MumbleImageGetter.java:598-611`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611):
+
+```java
+try {
+    return SsrfHostPolicy.isAnyAddressBlocked(
+            InetAddress.getAllByName(SsrfHostPolicy.normalizeHost(host)));
+} catch (UnknownHostException e) {
+    return true;
+}
+```
+
+The pre-connect DNS check in `isHostBlocked()` is best-effort: [`fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L549) validates the hostname, then `HttpURLConnection` reconnects by hostname in `getResponseCode()`, so a DNS rebind between the check and `connect()` (TOCTOU) defeats the policy. The manual redirect loop (no auto-follow, per-hop re-check, 5-hop cap) narrows but does not eliminate the window. Already disclosed as an accepted residual in [`SsrfHostPolicy.java:34-38`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L34-L38) (phase-2 plan C3). Closing it requires connecting to the checked IP directly (pinned socket or custom `SocketFactory`) with manual TLS hostname verification — a larger change than the policy itself.
+
+---
+
+### ODD-11: Incomplete IPv6 Transition-Mechanism Coverage in SSRF Policy
+
+In [`SsrfHostPolicy.java:239-266`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266), `isBlockedIPv6()` unwraps IPv4-mapped, IPv4-compatible, 6to4, and the well-known NAT64 `64:ff9b::/96` into `isBlockedIPv4()`, with explicit `fec0::/10`, `fc00::/7`, and `2001:db8::/32` branches. Unhandled: RFC 6052 variable-length NAT64 prefixes (`/32`–`/64`, where the IPv4 bits sit at non-`/96` offsets and need prefix-length-dependent extraction), operator-specific NAT64 prefixes, Teredo `2001::/32`, and ISATAP. Consistent with the existing rigor boundary, but an open bypass class on exotic networks. Recorded as accepted residual in the phase2-image-pipeline round-2 review.
+
+---
+
+### ODD-12: Thin SSRF Regression Test Layering
+
+In [`SsrfHostPolicyTest.java:113-124`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L124):
+
+- `testSiteLocalBlocked` passes via either the `isSiteLocalAddress()` gate in `isBlockedAddress()` or the explicit `fec0::/10` branch in `isBlockedIPv6()` on desktop JVMs, so it pins the blocking outcome but not the defense-in-depth layer.
+- Embedded `169.254`/`224` branches in `isBlockedIPv4()` are exercised only indirectly; `127` is covered via `64:ff9b::7f00:1`, but there are no direct `::ffff:169.254.x.x` / `::ffff:224.0.0.1` literal tests.
+
+Coverage gap, not a code bug. Recorded in the phase2-image-pipeline round-2 review.
 
 ---
 
