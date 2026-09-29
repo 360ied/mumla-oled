@@ -1,82 +1,131 @@
-# Secrets at rest: zero-UX fix plan
+# Secrets at rest: proportionate fix plan
 
-Companion to [findings.md](findings.md) (C1, H6, H7, H8, M8, M9, L1) and
+Companion to [findings.md](findings.md) (C1, H6, H7, H8, L1) and
 [notes.md](notes.md). Investigation/plan only; no code changed.
+
+Supersedes the previous zero-UX full-column-encryption revision of this
+plan (2026-09-28). That design is deferred — see
+[Why not full-column encryption](#why-not-full-column-encryption) — because
+the finding is over-scored relative to its cheapest fix.
+
+## Reassessment: over-scored, wrong fix shape
+
+`mumble.db` is `MODE_PRIVATE`, no `MODE_WORLD_*` anywhere, sandbox +
+SELinux deny cross-app reads. Reaching the plaintext needs root,
+unlocked-physical `adb` tap-through, or Google-account + device PIN
+(Auto Backup has been E2EE since Pie). Not remotely reachable, not
+Critical. This plan treats C1 as High, H6 as Medium (Mumble server
+passwords/tokens are shared, low-entropy, single-server revocable —
+not bank keys), H7 as a duplicate of C1 (the empty PBE password only
+matters once the DB is already read), H8 as the one actionable vector,
+and L1 as cheap to fix alongside. `findings.md` stays untouched as the
+point-in-time record; the downgrade lives here.
+
+Column encryption would not even cover the live paths: `ServerConnectTask`
+parcels the `Server` (password included), the full PKCS#12, its password,
+and the tokens into the exported `HumlaService`
+(`app/.../app/ServerConnectTask.java:53-101`), and `Server.writeToParcel`
+keeps the password (`libraries/humla/.../model/Server.java:84-90`). M9
+stays fully open under any at-rest scheme, so no plan here may claim
+bug-report/Binder/heap coverage.
 
 ## Goal
 
-Encrypt all at-rest secrets — client PKCS#12 blobs + passphrases, server passwords,
-access tokens, TOFU trust-store password — with zero change to user-visible flows.
-No new prompts, no re-entry, same screens. Only exception: restore onto a new device
-re-prompts once (fail-closed, rare).
+Kill the backup-exfil path and shrink persisted secrets with no crypto,
+no DB migration, no new prompts in normal flows. Rare-path costs only:
+new-device restore re-adds servers and re-imports certs once; users who
+relied on silently-saved server passwords re-enter once via the opt-in
+below.
 
 ## Threat model
 
-Fixes: `adb`/cloud backup readers, file readers, bug-report scrapes.
-Does NOT fix: root with live key-use oracle, live-process memory dump. State this in
-any user-facing wording; zero-UX changes cannot achieve those.
+Fixes: `adb`/cloud backup readers (H8 — the only at-rest vector
+reachable without root or unlocked-physical access).
+Accepted residual: root or unlocked-physical file read of the
+`MODE_PRIVATE` sandbox (platform control, out of scope); live-process
+memory, Binder parcels to the exported `HumlaService`, bug-report
+scrapes (the M9 track, untouched by anything here).
 
-## Design
+## Phase 1 design (this plan — no crypto)
 
-- New `db/SecretStore.java` (~150 LOC, no new dependency): AES-256-GCM key in
-  AndroidKeyStore, e.g. alias `mumla-secrets`,
-  `KeyGenParameterSpec(PURPOSE_ENCRYPT | PURPOSE_DECRYPT, GCM, NONE)` with
-  `setUserAuthenticationRequired(false)` (mandatory — `true` means a biometric
-  prompt, which is a UX change; reject), `setRandomizedEncryptionRequired(true)`,
-  12-byte random IV per value, wire format `IV || ciphertext` (base64) stored in
-  the existing `TEXT`/`BLOB` columns.
-- Hand-rolled over `androidx.security`: no APK bloat, auditable, avoids the
-  API-23-only `EncryptedSharedPreferences` trap. Tradeoff: ~150 LOC owned in-tree.
-  Accept.
-- API 21–22 fallback: KeyStore AES needs API 23+. Fallback is an RSA KeyStore key
-  (`KeyPairGeneratorSpec`) wrapping a random AES key held in `MODE_PRIVATE`
-  prefs. If that complexity bites, the alternative is a minSdk bump — a
-  UX/device-drop decision, not to be snuck in here.
-- Encrypt inside `MumlaSQLiteDatabase` only, so callers are untouched:
-  `addServer`/`updateServer`/`getServers` (`SERVER_PASSWORD`),
-  `addAccessToken`/`getAccessTokens` (`TOKENS_VALUE`),
-  `addCertificate`/`getCertificateData`/`getCertificatePassword`
-  (`COLUMN_CERTIFICATES_DATA`, `COLUMN_CERTIFICATES_PASSWORD`). Schema unchanged;
-  `ServerConnectTask`, `HumlaService`, cert activities keep working. Non-secret
-  columns (host, name) stay plaintext so lists render even if the key is
-  temporarily unavailable.
-- Generated certs (H7): migrate transparently — generate a random 32-char PBE
-  password, re-`store()` the PKCS#12, persist the password via the encrypted
-  column. Removes the empty-`""` password
-  (`libraries/humla/.../net/HumlaCertificateGenerator.java`) with zero user
-  visibility. RSA-2048 + `SecureRandom` strength is already fine.
-- Trust store (L1): generate a random 32-byte `STORE_PASS` on first access,
-  persist it in `SecretStore`-encrypted prefs; keep the
-  `getTrustStorePassword()` signature unchanged. Re-`store()` the existing
-  `mumla-store.bks` (`app/.../util/MumlaTrustStore.java`) under the new password
-  during migration. File stays `MODE_PRIVATE`.
-- Backup: keep `allowBackup=true` (preserves restore UX). Ciphertext in a backup
-  is safe — the KeyStore key never backs up. On restore to a new device, decrypt
-  fails, secrets read as null, user re-enters once. Better than excluding
-  `mumble.db`, which would also wipe the server list and favourites.
-- Migration (`onUpgrade` to DB version 10, single transaction): read each secret
-  row, encrypt, update in place, `VACUUM`. An old plaintext backup restored over
-  the new app re-encrypts on next `open()`. Corrupt/lost KeyStore fails closed:
-  wipe ciphertext rows, regenerate the key, log and continue (one-time re-entry,
-  not a brick).
-- Memory/IPC hygiene, all invisible: stop putting PKCS#12 bytes/password in
-  `onSaveInstanceState` (`CertificateImportActivity` — re-read the file on
-  rotation), drop `exported=true` on the services/TALK receiver, stop parcelling
-  passwords (`humla/.../model/Server.java`, `ServerConnectTask`) — pass certs by
-  handle later. Keep the public `MumlaDatabase` returning `String` for now; push
-  `char[]` + wipe inward where cheap. No UI change.
+1. Backup exclusion (~10 lines): add `res/xml/backup_rules.xml`
+   (`fullBackupContent`, API ≤ 30) and
+   `res/xml/data_extraction_rules.xml` (API 31+; required now that
+   `targetSdk` is 36) excluding `databases/mumble.db` (+ journal/WAL),
+   `files/mumla-store.bks`, and the secret prefs file from item 3.
+   Wire both attributes into the `:app` manifest; keep
+   `allowBackup=true` so settings and non-secret state still restore.
+   The `:humla` manifest's `allowBackup=true` merges harmlessly.
+2. Server passwords opt-in: add a "remember password" checkbox to
+   `dialog_server_edit.xml` (default unchecked). In
+   `MumlaActivity.onServerEdited`, persist the password for ADD/EDIT
+   only when checked; CONNECT_ACTION passes the typed password through
+   for the session without storing. The edit dialog keeps prefilling
+   the field from the stored value, so existing passwords decay
+   naturally (saving with the box unchecked clears them) — no forced
+   wipe, no upgrade surprise. Existing stored passwords stay
+   sandbox-local in the meantime, which the threat model accepts.
+3. Trust store (L1): generate a random 32-byte `STORE_PASS` via
+   `SecureRandom` on first access, persist it in a dedicated
+   `MODE_PRIVATE` prefs file excluded from backup, and re-`store()` the
+   existing `mumla-store.bks` (`app/.../util/MumlaTrustStore.java`)
+   under it. `getTrustStorePassword()` gains a `Context` parameter
+   (the no-arg form cannot reach prefs/KeyStore — clean cutover at the
+   `ServerConnectTask` call site). If the secret file is missing
+   (new-device restore), regenerate and re-init an empty store:
+   re-TOFU once, fail-closed, nothing irreplaceable lost.
+4. Tokens and cert blobs: unchanged locally, backup-excluded with the
+   DB. No encryption, no schema change, no `onUpgrade` version bump.
 
-## Explicit non-goals (phase 2 or rejected)
+## Explicit non-goals
 
-- No biometric/device-credential gate (UX change).
-- No `allowBackup=false` (would wipe server list/favourites on restore).
-- No SQLCipher full-DB encryption (APK size + migration risk + query churn).
-- No non-exportable KeyStore cert entries yet (breaks the export flow — visible
-  UX, defer).
+- No `SecretStore`/KeyStore column encryption (deferred, next section).
+- No `exported=false` or TALK-receiver changes — `se.lublin.mumla.action.TALK`
+  is a documented Tasker/Automate surface, separate track with its own
+  release note.
+- No generated-cert re-passwording — a random PBE password the user
+  doesn't know breaks `CertificateExportActivity` (exports a file the
+  user can't open).
+- No destructive wipe of cert blobs on any failure — the
+  `certificates.data` column is `BLOB NOT NULL`; wiping is irreversible
+  identity loss, worse than the backup-only threat.
+- No SQLCipher, no `allowBackup=false` (exclusion is granular; settings
+  restore keeps working).
+
+## Why not full-column encryption
+
+Record of the earlier design's blockers, so it is not re-proposed
+unmodified. Revive only if a new at-rest vector appears or policy
+demands it.
+
+- `removeAccessToken` deletes `WHERE value=?`, which never matches
+  under a randomized IV — needs read-decrypt-delete-by-`TOKENS_ID`
+  (`MumlaSQLiteDatabase.java:324-325`, `AccessTokenFragment.java:162`).
+- Ciphertext needs version markers (`v1:` + Base64 for `TEXT`, magic
+  byte + raw bytes — not Base64 — for the cert `BLOB`) plus pinned
+  null-vs-`""` semantics, or re-encryption double-encrypts and restores
+  misfire.
+- `VACUUM` cannot run inside the migration transaction; the helper
+  needs a stored `Context` for the store; GCM parameters (128-bit tag,
+  12-byte `SecureRandom` IV, `NO_WRAP`, auth-required `false`) must be
+  pinned in the spec, not left to the implementer.
+- `minSdk 21` makes the API 21–22 RSA-wrap fallback real: it must spec
+  OAEP, wrapped-blob storage, and backup exclusion of the wrapping key,
+  or ciphertext in backups is theater.
+- Generated-cert PBE belongs in the app layer
+  (`MumlaCertificateGenerateTask`), not in pure-JVM `humla/`.
+- It leaves M9 live exposure identical — the threat-model wording must
+  say so upfront.
 
 ## Verification
 
-- Unit test: plaintext-to-ciphertext migration round-trips every secret column.
-- `adb backup` then `strings | grep` for a known password/token: must miss.
-- Restore on a new device fails closed (secrets null, app usable, one re-entry).
-- Manual once: connect, TOFU allow, cert import/export/generate flows unchanged.
+- `adb backup` / backup-rules inspector with a known
+  password/token/cert password: all strings and all three secret files
+  absent from the payload.
+- New-device restore: app usable, server list/certs absent
+  (documented), re-add once.
+- Existing-device upgrade: connect, TOFU allow, cert
+  import/export/generate flows unchanged; saved-password users
+  unaffected until their next server edit.
+- No new unit tests (no crypto or migration logic added); existing
+  suite must pass.
