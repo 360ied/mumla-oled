@@ -88,13 +88,14 @@ android {
     // Prepare RNNoise pre-trained model weights from official upstream model archive
     task prepareRnnoiseModel {
         def versionFile = file('src/main/jni/rnnoise/model_version')
+        def digestFile = file('model_sha256')
         def outputDir = file('src/main/jni/rnnoise-build/generated')
         def dataC = file('src/main/jni/rnnoise-build/generated/rnnoise_data.c')
         def dataH = file('src/main/jni/rnnoise-build/generated/rnnoise_data.h')
         def modelBin = file('src/main/assets/rnnoise_model.bin')
         def dumpScript = file('tools/dump_rnnoise_blob.py')
-
         inputs.file(versionFile).optional()
+        inputs.file(digestFile)
         inputs.file(dumpScript).optional()
         outputs.file(dataC)
         outputs.file(dataH)
@@ -114,6 +115,22 @@ android {
                 modelUrl.withInputStream { ins ->
                     tarGz.withOutputStream { outs -> outs << ins }
                 }
+            }
+            // M11: verify the whole tarball against the vendored digest
+            // before unpacking. Fail closed on mismatch; no fallback URL.
+            def expectedDigest = digestFile.text.trim().toLowerCase()
+            def md = java.security.MessageDigest.getInstance("SHA-256")
+            tarGz.withInputStream { ins ->
+                byte[] buf = new byte[8192]
+                int n
+                while ((n = ins.read(buf)) != -1) {
+                    md.update(buf, 0, n)
+                }
+            }
+            def actualDigest = md.digest().encodeHex().toString().toLowerCase()
+            if (!actualDigest.equals(expectedDigest)) {
+                tarGz.delete()
+                throw new GradleException("RNNoise model digest mismatch for ${tarGz.name}: expected ${expectedDigest}, got ${actualDigest}. Deleted corrupt archive; re-run the build to re-download.")
             }
             outputDir.mkdirs()
             copy {

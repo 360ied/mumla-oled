@@ -108,6 +108,8 @@ def copy_rnnoise_model(repo_root: Path, wt_path: Path) -> None:
 
     root_ver_file = repo_root / "libraries" / "humla" / "src" / "main" / "jni" / "rnnoise" / "model_version"
     wt_ver_file = wt_path / "libraries" / "humla" / "src" / "main" / "jni" / "rnnoise" / "model_version"
+    src_digest = repo_root / "libraries" / "humla" / "model_sha256"
+    dst_digest = wt_path / "libraries" / "humla" / "model_sha256"
 
     if root_ver_file.is_file() and wt_ver_file.is_file():
         root_ver = "".join(root_ver_file.read_text().split())
@@ -133,6 +135,10 @@ def copy_rnnoise_model(repo_root: Path, wt_path: Path) -> None:
         dst_cache_dir.mkdir(parents=True, exist_ok=True)
         for tb in tarballs:
             shutil.copy2(tb, dst_cache_dir / tb.name)
+        copied = True
+    if src_digest.is_file():
+        dst_digest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_digest, dst_digest)
         copied = True
 
     if copied:
