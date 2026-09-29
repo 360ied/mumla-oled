@@ -30,7 +30,7 @@ public final class NotificationSanitizer {
     /** Maximum actor name length after sanitizing. */
     public static final int MAX_ACTOR_LENGTH = 64;
 
-    private static final Pattern CONTROL_CHARS = Pattern.compile("[\\p{Cntrl}]");
+    private static final Pattern CONTROL_FORMAT_CHARS = Pattern.compile("[\\p{Cntrl}\\p{Cf}]");
     private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
 
     private NotificationSanitizer() {
@@ -38,21 +38,23 @@ public final class NotificationSanitizer {
 
     /**
      * Sanitizes a server-provided actor name: HTML-stripped, single-line,
-     * control-character free, trimmed, and capped at {@link #MAX_ACTOR_LENGTH}.
+     * control- and format-character free, trimmed, and capped at
+     * {@link #MAX_ACTOR_LENGTH} code points.
      * Never returns null.
      */
     public static String sanitizeActor(String actor) {
         String clean = stripToSingleLine(actor);
-        if (clean.length() > MAX_ACTOR_LENGTH) {
-            clean = clean.substring(0, MAX_ACTOR_LENGTH).trim();
+        if (clean.codePointCount(0, clean.length()) > MAX_ACTOR_LENGTH) {
+            int end = clean.offsetByCodePoints(0, MAX_ACTOR_LENGTH);
+            clean = clean.substring(0, end).trim();
         }
         return clean;
     }
 
     /**
      * Sanitizes a server-provided message body: HTML-stripped, single-line,
-     * control-character free, and trimmed. Not length-capped; callers gate
-     * spoken length separately (e.g. TTS threshold).
+     * control- and format-character free, and trimmed. Not length-capped;
+     * callers gate spoken length separately (e.g. TTS threshold).
      * Never returns null.
      */
     public static String sanitizeBody(String body) {
@@ -65,7 +67,7 @@ public final class NotificationSanitizer {
         }
         String text = Jsoup.parseBodyFragment(raw).text();
         text = text.replace('\r', ' ').replace('\n', ' ');
-        text = CONTROL_CHARS.matcher(text).replaceAll("");
+        text = CONTROL_FORMAT_CHARS.matcher(text).replaceAll("");
         return WHITESPACE_RUN.matcher(text).replaceAll(" ").trim();
     }
 }

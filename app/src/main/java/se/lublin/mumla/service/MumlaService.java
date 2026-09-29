@@ -406,7 +406,8 @@ public class MumlaService extends HumlaService implements
             }
 
             String formattedTtsMessage = getString(R.string.notification_message,
-                    NotificationSanitizer.sanitizeActor(message.getActorName()), ttsMessage);
+                    NotificationSanitizer.sanitizeActor(message.getActorName()),
+                    NotificationSanitizer.sanitizeBody(ttsMessage));
 
             // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened
             if (formattedTtsMessage.length() <= TTS_THRESHOLD &&

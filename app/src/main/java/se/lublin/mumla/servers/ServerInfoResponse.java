@@ -44,6 +44,7 @@ public class ServerInfoResponse {
     /**
      * Creates a ServerInfoResponse object with the bytes obtained from the server.
      * @param response The response to the UDP pings sent by the server.
+     * @throws IllegalArgumentException if response is null or shorter than 24 bytes.
      * @see http://mumble.sourceforge.net/Protocol
      */
     public ServerInfoResponse(Server server, byte[] response, int latency) {

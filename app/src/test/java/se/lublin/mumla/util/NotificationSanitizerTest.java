@@ -93,4 +93,20 @@ public class NotificationSanitizerTest extends TestCase {
     public void testSanitizeBody_EmptyGivesEmpty() {
         assertEquals("", NotificationSanitizer.sanitizeBody(""));
     }
+
+    public void testSanitizeActor_StripsBidiOverrides() {
+        assertEquals("alice", NotificationSanitizer.sanitizeActor("a\u202Elic\u202Ce"));
+    }
+
+    public void testSanitizeActor_TruncatesWithoutSplittingSurrogate() {
+        StringBuilder name = new StringBuilder();
+        for (int i = 0; i < 63; i++) {
+            name.append('a');
+        }
+        name.append("\uD83D\uDE00"); // U+1F600, one code point, two chars
+        name.append('b');
+        String actor = NotificationSanitizer.sanitizeActor(name.toString());
+        assertEquals(NotificationSanitizer.MAX_ACTOR_LENGTH, actor.codePointCount(0, actor.length()));
+        assertEquals(0x1F600, actor.codePointBefore(actor.length()));
+    }
 }
