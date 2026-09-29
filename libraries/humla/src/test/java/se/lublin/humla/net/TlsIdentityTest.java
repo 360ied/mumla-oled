@@ -111,6 +111,25 @@ public class TlsIdentityTest extends TestCase {
         assertEquals(new BigInteger(1, first), new BigInteger(1, second));
     }
 
+    public void testFrameValidator() {
+        int types = HumlaTCPMessageType.values().length;
+        assertEquals(FrameValidator.FrameError.NONE,
+                FrameValidator.validateFrame((short) 0, 0, types));
+        assertEquals(FrameValidator.FrameError.NONE,
+                FrameValidator.validateFrame((short) 3, FrameValidator.MAX_FRAME_BYTES, types));
+        assertEquals(FrameValidator.FrameError.BAD_TYPE,
+                FrameValidator.validateFrame((short) -1, 10, types));
+        assertEquals(FrameValidator.FrameError.BAD_TYPE,
+                FrameValidator.validateFrame((short) types, 10, types));
+        assertEquals(FrameValidator.FrameError.NEGATIVE_LENGTH,
+                FrameValidator.validateFrame((short) 0, -1, types));
+        assertEquals(FrameValidator.FrameError.OVERLARGE_LENGTH,
+                FrameValidator.validateFrame((short) 0, FrameValidator.MAX_FRAME_BYTES + 1, types));
+        // Type checked first: a bad type with a bad length still reports BAD_TYPE.
+        assertEquals(FrameValidator.FrameError.BAD_TYPE,
+                FrameValidator.validateFrame((short) types, -5, types));
+    }
+
     /** Minimal DER certificate minter for hostname/SAN matrix tests. */
     static final class CertMint {
         private CertMint() {

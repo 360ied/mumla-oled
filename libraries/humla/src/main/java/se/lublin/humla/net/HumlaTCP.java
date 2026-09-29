@@ -55,6 +55,13 @@ import se.lublin.humla.util.HumlaException;
 public class HumlaTCP extends HumlaNetworkThread {
     private static final String TAG = HumlaTCP.class.getName();
     public static final int CONNECT_TIMEOUT = 10000;
+    /**
+     * Read timeout for the established connection. The keepalive ping loop
+     * (5 s bootstrap, 10 s steady state, with a server Ping reply to every
+     * client Ping) keeps healthy connections fed well inside this window, so
+     * expiry means a stalled or malicious server.
+     */
+    public static final int READ_TIMEOUT_MS = 30000;
 
     private final HumlaSSLSocketFactory mSocketFactory;
     private String mHost;
@@ -160,7 +167,7 @@ public class HumlaTCP extends HumlaNetworkThread {
             mDataInput = new DataInputStream(mTCPSocket.getInputStream());
             mDataOutput = new DataOutputStream(mTCPSocket.getOutputStream());
 
-            mTCPSocket.setSoTimeout(0);
+            mTCPSocket.setSoTimeout(READ_TIMEOUT_MS);
 
             Log.v(TAG, "Now listening");
             mConnected = true;
@@ -177,13 +184,18 @@ public class HumlaTCP extends HumlaNetworkThread {
             while(mConnected) {
                 final short messageType = mDataInput.readShort();
                 final int messageLength = mDataInput.readInt();
+                // Validate before allocating: a malicious server controls both
+                // fields. Violations abort the connection — the stream position
+                // is mid-frame, so skipping would desync the parser.
+                FrameValidator.FrameError frameError = FrameValidator.validateFrame(messageType, messageLength);
+                if (frameError != FrameValidator.FrameError.NONE) {
+                    Log.w(TAG, "Dropping connection on invalid frame: type=" + messageType
+                            + " length=" + messageLength + " error=" + frameError);
+                    error("Server sent an invalid protocol frame (" + frameError + ")", null);
+                    return;
+                }
                 final byte[] data = new byte[messageLength];
                 mDataInput.readFully(data);
-
-                if (messageType < 0 || messageType > (HumlaTCPMessageType.values().length - 1)) {
-                    Log.w(TAG, "Got unsupported messageType: " + messageType);
-                    continue;
-                }
 
                 final HumlaTCPMessageType tcpMessageType = HumlaTCPMessageType.values()[messageType];
                 if (mListener != null) {
