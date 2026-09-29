@@ -23,18 +23,21 @@ None. No UI, no strings, no behavior change on the happy path:
 
 ## 1. Corrections to remediation-plan.md (read first)
 
-### C1 — H12 target version decided: 1.6.x
+### C1 — H12 target decided: v1.6.1 (`22244de5`)
 
-The remediation plan says "1.5.x", but the vendored submodule
-(`libraries/humla/src/main/jni/opus`, pin `65471dd5`, `version.mk:2`
-`1.1-beta`) already carries tags through `v1.6.1` (including `v1.5`,
-`v1.5.1`, `v1.5.2`, `v1.6`, `v1.6.1`). Decided: rebase to latest
-1.6.x. Keeps the exact-SHA submodule pin (good hygiene, stays). The
-`OpusVoiceDecoder.cpp:59-61` phase-inversion comment is gated on this
-rebase — re-evaluate `OPUS_SET_PHASE_INVERSION_DISABLED` availability
-in the 1.6.x tree before deleting or keeping the comment.
+Latest stable is v1.6.1 (commit
+`22244de5a79bd1d6d623c32e72bf1954b56235be`, supersedes v1.6). Rebase
+the `opus` submodule (`libraries/humla/src/main/jni/opus`, current
+pin `65471dd5`) to that SHA and keep the exact-SHA pin. Note: 1.6.x
+drops `version.mk` (version moves to `package_version`/autogen), so
+the "update `version.mk`" step becomes confirming the version via the
+new file. `OPUS_SET_PHASE_INVERSION_DISABLED` exists in 1.6.1
+(`include/opus_defines.h:757`, handled in `celt/celt_{en,de}coder.c`);
+it concerns stereo phase inversion and our output is mono
+(`OpusVoiceDecoder.h:42`), so slice B deletes the stale
+`OpusVoiceDecoder.cpp:59-61` comment and leaves the default alone.
 
-### C2 — H11/M12 deletion is coupled to H12 via `Android.mk`
+### C2 — H11/M12 deletion is coupled to H12 via `Android.mk` (decided: fold into `humlaaudio`)
 
 `humlaaudio` links the Opus codec out of the `jniopus` module
 (`libraries/humla/src/main/jni/Android.mk:49-56,94`:
@@ -43,9 +46,13 @@ in the 1.6.x tree before deleting or keeping the comment.
 `NativeAudioOutputEngine.java:44`). Deleting `jniopus.cpp` + the
 `jniopus` module without a replacement leaves `OpusVoiceDecoder.cpp`
 and `OpusVoiceEncoder.cpp` (`#include <opus.h>`) with no codec to link.
-Decide the opus disposition before coding (see P3): fold the
-CELT/SILK/Opus sources into `humlaaudio`, or keep a clean `libopus`
-module with no JavaCPP payload. H12 and H11/M12 MUST land in one
+Decided: fold the CELT/SILK/Opus sources straight into `humlaaudio`
+(one library, no new module) — only two files include `opus.h`, the
+`jniopus.cpp` exports are 100% JavaCPP glue with zero app callers, and
+a separate `libopus` module re-creates the load-order headache. Slice B
+deletes the module stanza, adds the source lists to `humlaaudio`, drops
+the `LOCAL_SHARED_LIBRARIES` line and the three
+`loadLibrary("jniopus")` calls. H12 and H11/M12 MUST land in one
 worktree as a single review unit; two owners here is a guaranteed
 broken-link conflict.
 
@@ -89,24 +96,39 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
   record SHA-256, vendor it in-repo. Fresh worktrees download on first
   build, so the verify-before-`tarTree` path is exercised by deleting
   the cache, not by the steady-state skip at `build.gradle:104-106`.
-- **P2 — inspect the target Opus tree's build lists.** `Android.mk:24-47`
-  uses 1.1-era `celt_sources.mk` / `silk_sources.mk` / `opus_sources.mk`
-  plus `-DVAR_ARRAYS -DFIXED_POINT -DHAVE_LRINTF=1`. Diff these lists
-  and flags against the 1.6.x tree before rebasing; the
-  source renames alone can break the NDK build.
-- **P3 — opus disposition after `jniopus` deletion (C2).** Fold vs
-  clean-module decision, including `LOCAL_C_INCLUDES` (`opus/include`,
-  `opus/celt`, `opus/silk` at `Android.mk:62`) and the load-order
-  comments at `:49-56`. `CryptState.java:43` also loads `jniopus`
-  defensively — update or remove with the rest.
+- **P2 — target Opus tree build lists inspected (closed 2026-09-29).**
+  1.6.1 keeps the same `.mk` structure (`celt_sources.mk` /
+  `silk_sources.mk` / `opus_sources.mk`), so `Android.mk:24-47` needs
+  edits, not a rewrite. Deltas: new `OPUS_SOURCES` entries
+  (`extensions.c`, `opus_projection_{encoder,decoder}.c`,
+  `mapping_matrix.c`); CELT arch vars renamed (old `CELT_SOURCES_ARM`
+  is now `CELT_SOURCES_ARM_RTCD` + NEON variants — the
+  `Android.mk:32-35` ARM block must be updated); SILK gained
+  arch-specific fixed/float variants. New `lpcnet_sources.mk` (`dnn/`,
+  deep PLC + DRED) is opt-in, defaults off, and conflicts with
+  fixed-point — do NOT include it. Flags `-DVAR_ARRAYS -DFIXED_POINT
+  -DHAVE_LRINTF=1` still exist upstream; keep them with
+  `SILK_SOURCES_FIXED` + `OPUS_SOURCES_FLOAT` as today. Every Opus API
+  we call (create/destroy/encode/decode/ctls, VBR, complexity, FEC,
+  DTX, bitrate, reset) is present in 1.6.1 — no encoder/decoder code
+  changes needed; wire format unchanged (48 kHz mono), interop safe.
+- **P3 — opus disposition decided (closed 2026-09-29, see C2).** Fold
+  into `humlaaudio`. Keep `LOCAL_C_INCLUDES` (`opus/include`,
+  `opus/celt`, `opus/silk` at `Android.mk:62`); update the load-order
+  comments at `:49-56`; remove the defensive `jniopus` load in
+  `CryptState.java:43` with the other two sites.
 - **P4 — NDK 27 availability in nixpkgs androidenv.** Confirm the
   composed SDK offers an NDK 27 LTS revision before editing
   `flake.nix`/`build.gradle`; keep the two pins in sync.
-- **P5 — voice-interop + fuzz harness does not exist yet.**
+- **P5 — voice-interop + fuzz harness shape (closed 2026-09-29).**
   `scripts/test_native_audio.sh:4-8` is hermetic (`FakeDecoder`, no
-  libopus linked). The `decodeFloat` / `packetSampleCount` fuzz and the
-  interop regression (`OpusVoiceDecoder.cpp:71-90`) must be built as
-  part of slice B, not assumed present.
+  libopus linked) — confirmed gap. Slice B adds a host test linking
+  the real 1.6.1 sources: encode→decode round trip (interop), then
+  fuzz `decodeFloat` / `packetSampleCount`
+  (`OpusVoiceDecoder.cpp:71-90`) with garbage/truncated/oversized
+  packets asserting no-crash + sane returns. `AudioOutputEngine`
+  already drops `span <= 0` (`AudioOutputEngine.cpp:415-418`), so the
+  fuzz asserts that contract holds.
 
 ## 3. Work split — three worktrees, ordered
 
@@ -133,16 +155,23 @@ rides along (disjoint files, same native review).
 
 ### Slice B — Opus rebase + jniopus deletion + H10 (H12, H11, M12, H10)
 
-- Rebase the `opus` submodule to latest 1.6.x (C1), keep the
-  exact-SHA pin; update `version.mk`, reconcile `Android.mk:24-47`
-  source lists/flags (P2).
+- Rebase the `opus` submodule to v1.6.1 `22244de5` (C1), keep the
+  exact-SHA pin; 1.6.x drops `version.mk`, so confirm the version via
+  the new `package_version`/autogen file instead. Reconcile
+  `Android.mk:24-47` per P2: add the new `OPUS_SOURCES` entries, update
+  the `CELT_SOURCES_ARM` block to the RTCD/NEON vars, skip
+  `lpcnet_sources.mk`, keep `-DVAR_ARRAYS -DFIXED_POINT
+  -DHAVE_LRINTF=1` with `SILK_SOURCES_FIXED` + `OPUS_SOURCES_FLOAT`.
+  Delete the stale phase-inversion comment (`OpusVoiceDecoder.cpp:59-61`),
+  default stays.
 - Delete `jniopus.cpp` (1367 lines, machine-generated, exports only
   `Java_com_googlecode_javacpp_*` — zero `Java_se_lublin_*`; repo grep
   for `javacpp|bytedeco` in Java returns no hits), the `jniopus` module
   stanza, `javacpp:0.7` dep, ProGuard keeps at
   `proguard-rules.pro:18-20`, `tools/jnigen.sh` +
-  `tools/javacpp-0.7.jar`; re-home the codec per P3; update the three
-  `loadLibrary("jniopus")` sites
+  `tools/javacpp-0.7.jar`; fold codec sources into `humlaaudio` per C2
+  (drop `LOCAL_SHARED_LIBRARIES`, keep `LOCAL_C_INCLUDES`); update the
+  three `loadLibrary("jniopus")` sites
   (`NativeAudioInputEngine.java:41`,
   `NativeAudioOutputEngine.java:44`, `CryptState.java:43`).
 - H10: int64 `end` check in `nativeProcessFrame` (copy `nativeRender`
@@ -171,7 +200,7 @@ rides along (disjoint files, same native review).
 | `decodeFloat` / `packetSampleCount` fuzz | no crash / OOB |
 | `grep -rn javacpp\|bytedeco` tree-wide | no hits outside this plan doc |
 | `nativeProcessFrame` hostile offset+length | dropped, no OOB read |
-| NDK 27 full build, all ABIs | `libhumlaaudio` (+ `libopus` if split) links, loads |
+| NDK 27 full build, all ABIs | single `libhumlaaudio` links, loads |
 | Existing suite | `./scripts/check.sh` green from each worktree |
 
 ## 5. Residuals and non-goals (explicit, not overlooked)
