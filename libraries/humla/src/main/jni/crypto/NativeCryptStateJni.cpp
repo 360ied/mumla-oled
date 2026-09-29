@@ -108,6 +108,8 @@ Java_se_lublin_humla_net_CryptState_nativeSetKeys(
                          reinterpret_cast<const uint8_t *>(eivBuf),
                          reinterpret_cast<const uint8_t *>(divBuf));
     secure_zero(rkeyBuf, sizeof(rkeyBuf));
+    secure_zero(eivBuf, sizeof(eivBuf));
+    secure_zero(divBuf, sizeof(divBuf));
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -126,6 +128,7 @@ Java_se_lublin_humla_net_CryptState_nativeSetDecryptIV(
     env->GetByteArrayRegion(div, 0, AES_BLOCK_SIZE, divBuf);
 
     bool ok = cs->setDecryptIV(reinterpret_cast<const uint8_t *>(divBuf));
+    secure_zero(divBuf, sizeof(divBuf));
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -144,6 +147,7 @@ Java_se_lublin_humla_net_CryptState_nativeSetEncryptIV(
     env->GetByteArrayRegion(eiv, 0, AES_BLOCK_SIZE, eivBuf);
 
     bool ok = cs->setEncryptIV(reinterpret_cast<const uint8_t *>(eivBuf));
+    secure_zero(eivBuf, sizeof(eivBuf));
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -162,6 +166,7 @@ Java_se_lublin_humla_net_CryptState_nativeGetEncryptIV(
     uint8_t iv[AES_BLOCK_SIZE];
     cs->getEncryptIV(iv);
     env->SetByteArrayRegion(out, 0, AES_BLOCK_SIZE, reinterpret_cast<const jbyte *>(iv));
+    secure_zero(iv, sizeof(iv));
     return JNI_TRUE;
 }
 
@@ -179,6 +184,7 @@ Java_se_lublin_humla_net_CryptState_nativeGetDecryptIV(
     uint8_t iv[AES_BLOCK_SIZE];
     cs->getDecryptIV(iv);
     env->SetByteArrayRegion(out, 0, AES_BLOCK_SIZE, reinterpret_cast<const jbyte *>(iv));
+    secure_zero(iv, sizeof(iv));
     return JNI_TRUE;
 }
 
