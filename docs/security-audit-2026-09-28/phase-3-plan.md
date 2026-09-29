@@ -23,17 +23,16 @@ None. No UI, no strings, no behavior change on the happy path:
 
 ## 1. Corrections to remediation-plan.md (read first)
 
-### C1 — H12 target version needs a decision: 1.5.x vs 1.6.x
+### C1 — H12 target version decided: 1.6.x
 
-The plan says "1.5.x", but the vendored submodule
+The remediation plan says "1.5.x", but the vendored submodule
 (`libraries/humla/src/main/jni/opus`, pin `65471dd5`, `version.mk:2`
 `1.1-beta`) already carries tags through `v1.6.1` (including `v1.5`,
-`v1.5.1`, `v1.5.2`, `v1.6`, `v1.6.1`). Decide before rebasing: latest
-supported 1.5.x per the plan, or current 1.6.x. Either keeps the
-exact-SHA submodule pin (good hygiene, stays). The
+`v1.5.1`, `v1.5.2`, `v1.6`, `v1.6.1`). Decided: rebase to latest
+1.6.x. Keeps the exact-SHA submodule pin (good hygiene, stays). The
 `OpusVoiceDecoder.cpp:59-61` phase-inversion comment is gated on this
 rebase — re-evaluate `OPUS_SET_PHASE_INVERSION_DISABLED` availability
-in the chosen tree before deleting or keeping the comment.
+in the 1.6.x tree before deleting or keeping the comment.
 
 ### C2 — H11/M12 deletion is coupled to H12 via `Android.mk`
 
@@ -93,7 +92,7 @@ offset `0` — local bug-class, no remote path; keep the change minimal.
 - **P2 — inspect the target Opus tree's build lists.** `Android.mk:24-47`
   uses 1.1-era `celt_sources.mk` / `silk_sources.mk` / `opus_sources.mk`
   plus `-DVAR_ARRAYS -DFIXED_POINT -DHAVE_LRINTF=1`. Diff these lists
-  and flags against the chosen 1.5.x/1.6.x tree before rebasing; the
+  and flags against the 1.6.x tree before rebasing; the
   source renames alone can break the NDK build.
 - **P3 — opus disposition after `jniopus` deletion (C2).** Fold vs
   clean-module decision, including `LOCAL_C_INCLUDES` (`opus/include`,
@@ -134,7 +133,7 @@ rides along (disjoint files, same native review).
 
 ### Slice B — Opus rebase + jniopus deletion + H10 (H12, H11, M12, H10)
 
-- Rebase the `opus` submodule to the decided version (C1), keep the
+- Rebase the `opus` submodule to latest 1.6.x (C1), keep the
   exact-SHA pin; update `version.mk`, reconcile `Android.mk:24-47`
   source lists/flags (P2).
 - Delete `jniopus.cpp` (1367 lines, machine-generated, exports only

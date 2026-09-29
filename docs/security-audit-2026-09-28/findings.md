@@ -183,7 +183,7 @@ Files:
 Impact: ~13 years of upstream correctness/security fixes missing, on a decoder fed
 attacker-controlled voice packets. Treat remote Opus input as untrusted until rebased.
 
-Fix: rebase to supported 1.5.x, keep exact-SHA pin, regression-test voice interop;
+Fix: rebase to latest 1.6.x, keep exact-SHA pin, regression-test voice interop;
 fuzz `decodeFloat` / `packetSampleCount` paths meanwhile. CWE-1104, CWE-937.
 
 ### M2 — User-pinned server cert trusted for any host — Medium, verified

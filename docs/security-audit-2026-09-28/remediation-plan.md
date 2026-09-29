@@ -53,7 +53,7 @@ Build-time code injection first, then dead-code removal and hygiene.
 
 - M11: vendor SHA-256 for the RNNoise archive, verify before `tarTree`,
   fail closed (`humla/build.gradle:88-135`).
-- H12: rebase vendored Opus 1.1-beta to supported 1.5.x, keep exact-SHA
+- H12: rebase vendored Opus 1.1-beta to latest 1.6.x, keep exact-SHA
   pin, voice-interop regression + `decodeFloat` fuzz
   (`jni/opus/version.mk:2`, `OpusVoiceDecoder.cpp:71-78`).
 - H11 + M12: delete `jniopus` shims + `javacpp:0.7` dep and dead
