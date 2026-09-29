@@ -17,8 +17,6 @@
 
 package se.lublin.humla.net;
 
-import android.net.SSLCertificateSocketFactory;
-import android.os.Build;
 import android.util.Log;
 import android.util.Patterns;
 import com.google.protobuf.MessageLite;
@@ -145,17 +143,17 @@ public class HumlaTCP extends HumlaNetworkThread {
 
             Log.i(TAG, "Connecting to " + mHost + ":" + mPort);
 
+            mSocketFactory.setExpectedHost(mHost);
             mTCPSocket = mSocketFactory.createSocket(mHost, mPort, CONNECT_TIMEOUT);
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) { // SNI support requires at least API 17
-                SSLCertificateSocketFactory scsf = (SSLCertificateSocketFactory) SSLCertificateSocketFactory.getDefault(0);
-                scsf.setHostname(mTCPSocket, mHost);
-            }
 
             mTCPSocket.setKeepAlive(true);
             mTCPSocket.setTcpNoDelay(true);
             mTCPSocket.setSoTimeout(CONNECT_TIMEOUT);
             mTCPSocket.startHandshake();
+
+            if (!verifyServerIdentity()) {
+                return;
+            }
 
             Log.v(TAG, "Started handshake");
 
@@ -203,10 +201,12 @@ public class HumlaTCP extends HumlaNetworkThread {
             // Try and verify certificate manually.
             if(mSocketFactory.getServerChain() != null && mListener != null) {
                 if(!mRunning) return;
+                final HandshakeFailure failure = mSocketFactory.getLastHandshakeFailure();
                 executeOnMainThread(new Runnable() {
                     @Override
                     public void run() {
-                        mListener.onTLSHandshakeFailed(mSocketFactory.getServerChain());
+                        mListener.onTLSHandshakeFailed(mSocketFactory.getServerChain(),
+                                failure == HandshakeFailure.NONE ? HandshakeFailure.UNTRUSTED_ISSUER : failure);
                     }
                 });
             } else {
@@ -330,9 +330,48 @@ public class HumlaTCP extends HumlaNetworkThread {
             });
     }
 
+    /**
+     * Verifies the presented leaf identifies the post-SRV host. CA trust was
+     * already established by the handshake; this is the H1 hostname check.
+     * `.onion` hosts skip SAN matching (no public CA can vouch for them) and
+     * rely on TOFU pins instead. Returns false after dispatching the mismatch
+     * dialog path; the caller must return without reading any frames.
+     */
+    private boolean verifyServerIdentity() {
+        X509Certificate[] chain = mSocketFactory.getServerChain();
+        if (chain == null || chain.length == 0 || chain[0] == null) {
+            return true;
+        }
+        String host = mHost;
+        if (host != null && host.toLowerCase(java.util.Locale.US).endsWith(".onion")) {
+            return true;
+        }
+        if (TlsHostnameVerifier.verifyHostname(host, chain[0])) {
+            return true;
+        }
+        mSocketFactory.setLastHandshakeFailure(HandshakeFailure.HOSTNAME_MISMATCH);
+        Log.w(TAG, "TLS hostname mismatch for " + host + "; refusing connection");
+        try {
+            if (mTCPSocket != null) {
+                mTCPSocket.close();
+            }
+        } catch (IOException ignored) {
+        }
+        if (mListener != null) {
+            executeOnMainThread(new Runnable() {
+                @Override
+                public void run() {
+                    mListener.onTLSHandshakeFailed(mSocketFactory.getServerChain(),
+                            HandshakeFailure.HOSTNAME_MISMATCH);
+                }
+            });
+        }
+        return false;
+    }
+
     public interface TCPConnectionListener {
         public void onTCPConnectionEstablished();
-        public void onTLSHandshakeFailed(X509Certificate[] chain);
+        public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure);
         public void onTCPConnectionFailed(HumlaException e);
         public void onTCPConnectionDisconnect();
         public void onTCPMessageReceived(HumlaTCPMessageType type, int length, byte[] data);

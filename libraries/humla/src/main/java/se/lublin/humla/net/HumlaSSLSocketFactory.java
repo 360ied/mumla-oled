@@ -21,7 +21,6 @@ import android.util.Log;
 
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.security.KeyManagementException;
@@ -35,6 +34,7 @@ import java.security.cert.X509Certificate;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
@@ -52,21 +52,35 @@ public class HumlaSSLSocketFactory {
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("X509");
         kmf.init(keystore, keystorePassword != null ? keystorePassword.toCharArray() : new char[0]);
 
+        X509TrustManager pinnedTrustManager = null;
+        KeyStore pinnedStore = null;
         if(trustStorePath != null) {
             KeyStore trustStore = KeyStore.getInstance(trustStoreFormat);
-            FileInputStream fis = new FileInputStream(trustStorePath);
-            trustStore.load(fis, trustStorePassword.toCharArray());
+            try (FileInputStream fis = new FileInputStream(trustStorePath)) {
+                trustStore.load(fis, trustStorePassword.toCharArray());
+            }
 
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             tmf.init(trustStore);
-            mTrustWrapper = new HumlaTrustManagerWrapper((X509TrustManager) tmf.getTrustManagers()[0]);
+            pinnedTrustManager = (X509TrustManager) tmf.getTrustManagers()[0];
+            pinnedStore = trustStore;
             Log.i(TAG, "Using custom trust store " + trustStorePath + " with system trust store");
         } else {
-            mTrustWrapper = new HumlaTrustManagerWrapper(null);
             Log.i(TAG, "Using system trust store");
         }
+        mTrustWrapper = new HumlaTrustManagerWrapper(pinnedTrustManager, pinnedStore);
 
         mContext.init(kmf.getKeyManagers(), new TrustManager[] { mTrustWrapper }, null);
+    }
+
+    /**
+     * Sets the hostname the next handshake is expected to identify. The factory
+     * is created per {@link HumlaConnection#connect} call, so callers set this
+     * once from {@link HumlaTCP} before {@code startHandshake()}.
+     */
+    public void setExpectedHost(String host) {
+        mTrustWrapper.setExpectedHost(host);
+        mTrustWrapper.setLastHandshakeFailure(HandshakeFailure.NONE);
     }
 
     public SSLSocket createSocket(String host, int port) throws IOException {
@@ -74,13 +88,18 @@ public class HumlaSSLSocketFactory {
     }
 
     public SSLSocket createSocket(String host, int port, int timeoutMs) throws IOException {
-        if (timeoutMs <= 0) {
-            return (SSLSocket) mContext.getSocketFactory().createSocket(InetAddress.getByName(host), port);
-        }
+        // Always layer TLS over a connected plain socket so the hostname survives
+        // for SNI and post-handshake verification on both paths. A direct
+        // createSocket(InetAddress, port) would verify against the IP literal.
         Socket plainSocket = new Socket();
         try {
-            plainSocket.connect(new InetSocketAddress(host, port), timeoutMs);
-            return (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+            plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
+            SSLSocket sslSocket =
+                    (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+            SSLParameters params = sslSocket.getSSLParameters();
+            params.setEndpointIdentificationAlgorithm("HTTPS");
+            sslSocket.setSSLParameters(params);
+            return sslSocket;
         } catch (IOException e) {
             try {
                 plainSocket.close();
@@ -99,20 +118,55 @@ public class HumlaSSLSocketFactory {
     }
 
     /**
+     * Why the last handshake failed identity verification. Valid after
+     * {@code checkServerTrusted} throws; {@link HandshakeFailure#NONE} if the
+     * last handshake passed. The {@code onTLSHandshakeFailed} listener
+     * signature is unchanged — the reason travels via this accessor.
+     */
+    public HandshakeFailure getLastHandshakeFailure() {
+        return mTrustWrapper.getLastHandshakeFailure();
+    }
+
+    /** Records the handshake failure reason (e.g. post-handshake hostname mismatch). */
+    public void setLastHandshakeFailure(HandshakeFailure failure) {
+        mTrustWrapper.setLastHandshakeFailure(failure);
+    }
+
+    /**
      * Wraps around a custom trust manager and stores the certificate chains that did not validate.
      * We can then send the chain to the user for manual validation.
+     *
+     * <p>The pinned trust store is scoped to the expected host: a certificate
+     * pinned for host A is never accepted for host B. Acceptance on the pin
+     * path compares the leaf SPKI so re-issuance with the same key survives.
      */
     private static class HumlaTrustManagerWrapper implements X509TrustManager {
 
         private X509TrustManager mDefaultTrustManager;
         private X509TrustManager mTrustManager;
+        private KeyStore mPinnedStore;
         private X509Certificate[] mServerChain;
+        private String mExpectedHost;
+        private HandshakeFailure mLastHandshakeFailure = HandshakeFailure.NONE;
 
-        public HumlaTrustManagerWrapper(X509TrustManager trustManager) throws NoSuchAlgorithmException, KeyStoreException {
+        public HumlaTrustManagerWrapper(X509TrustManager trustManager, KeyStore pinnedStore) throws NoSuchAlgorithmException, KeyStoreException {
             TrustManagerFactory dmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             dmf.init((KeyStore) null);
             mDefaultTrustManager = (X509TrustManager) dmf.getTrustManagers()[0];
             mTrustManager = trustManager;
+            mPinnedStore = pinnedStore;
+        }
+
+        public synchronized void setExpectedHost(String host) {
+            mExpectedHost = host;
+        }
+
+        public synchronized void setLastHandshakeFailure(HandshakeFailure failure) {
+            mLastHandshakeFailure = failure;
+        }
+
+        public synchronized HandshakeFailure getLastHandshakeFailure() {
+            return mLastHandshakeFailure;
         }
 
         @Override
@@ -130,9 +184,49 @@ public class HumlaSSLSocketFactory {
             mServerChain = chain;
             try {
                 mDefaultTrustManager.checkServerTrusted(chain, authType);
-            } catch (CertificateException e) {
-                if(mTrustManager != null) mTrustManager.checkServerTrusted(chain, authType);
-                else throw e;
+                setLastHandshakeFailure(HandshakeFailure.NONE);
+                return;
+            } catch (CertificateException defaultFailure) {
+                if (mTrustManager == null || chain == null || chain.length == 0) {
+                    setLastHandshakeFailure(HandshakeFailure.UNTRUSTED_ISSUER);
+                    throw defaultFailure;
+                }
+                X509Certificate pinned = expectedPin(chain[0]);
+                if (pinned == null) {
+                    setLastHandshakeFailure(HandshakeFailure.UNTRUSTED_ISSUER);
+                    throw defaultFailure;
+                }
+                if (HandshakeFailure.sameSpki(pinned, chain[0])) {
+                    setLastHandshakeFailure(HandshakeFailure.NONE);
+                    return;
+                }
+                setLastHandshakeFailure(HandshakeFailure.PIN_CHANGED);
+                throw new CertificateException("Pinned certificate changed for host", defaultFailure);
+            }
+        }
+
+        /**
+         * Returns the certificate pinned for the expected host, or null when no
+         * pin exists. The pinned store keys {@code alias = hostname}; only that
+         * alias is ever consulted, so a pin for host A never authorizes host B.
+         * Callers compare by SPKI, so re-issuance with the same key survives.
+         */
+        private X509Certificate expectedPin(X509Certificate leaf) {
+            String host;
+            synchronized (this) {
+                host = mExpectedHost;
+            }
+            if (mPinnedStore == null || host == null || leaf == null) {
+                return null;
+            }
+            try {
+                if (!mPinnedStore.containsAlias(host)) {
+                    return null;
+                }
+                java.security.cert.Certificate pinned = mPinnedStore.getCertificate(host);
+                return pinned instanceof X509Certificate ? (X509Certificate) pinned : null;
+            } catch (KeyStoreException e) {
+                return null;
             }
         }
 
