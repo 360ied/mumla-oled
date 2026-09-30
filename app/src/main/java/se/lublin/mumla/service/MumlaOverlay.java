@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service;
 
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Insets;
 import android.graphics.PixelFormat;
@@ -50,6 +51,20 @@ public class MumlaOverlay {
 
     /** Extra padding between the pinned overlay and the system bars. */
     private static final int EDGE_GUTTER_DP = 8;
+    /** Horizontal offset of the pinned overlay from the screen edge. */
+    private static final int SIDE_MARGIN_DP = 16;
+    /** Fallback pinned top margin when no status-bar height is known. */
+    private static final int DEFAULT_TOP_MARGIN_DP = 40;
+    /** Fallback pinned bottom margin when no navigation-bar height is known. */
+    private static final int DEFAULT_BOTTOM_MARGIN_DP = 56;
+    /** Default floating-overlay position used when nothing is stored yet. */
+    private static final int DEFAULT_POS_X_DP = 24;
+    /** Default floating-overlay position used when nothing is stored yet. */
+    private static final int DEFAULT_POS_Y_DP = 80;
+    /** Size estimate used to clamp stored floating positions before layout. */
+    private static final int ESTIMATED_WIDTH_DP = 120;
+    /** Size estimate used to clamp stored floating positions before layout. */
+    private static final int ESTIMATED_HEIGHT_DP = 60;
 
     private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
@@ -96,7 +111,7 @@ public class MumlaOverlay {
                 return;
             }
 
-            if (mChannelAdapter != null) {
+            if (mChannelAdapter != null && user != null) {
                 if (user.getSession() == selfSession) {
                     mChannelAdapter.setChannel(mService.getSessionChannel());
                 } else if (mService.getSessionChannel() != null && (
@@ -207,8 +222,8 @@ public class MumlaOverlay {
                             int newY = (int) (mInitialParamY + deltaY);
 
                             DisplayMetrics dm = mService.getResources().getDisplayMetrics();
-                            int viewWidth = mOverlayView.getWidth() > 0 ? mOverlayView.getWidth() : (int) (120 * dm.density);
-                            int viewHeight = mOverlayView.getHeight() > 0 ? mOverlayView.getHeight() : (int) (60 * dm.density);
+                            int viewWidth = mOverlayView.getWidth() > 0 ? mOverlayView.getWidth() : (int) (ESTIMATED_WIDTH_DP * dm.density);
+                            int viewHeight = mOverlayView.getHeight() > 0 ? mOverlayView.getHeight() : (int) (ESTIMATED_HEIGHT_DP * dm.density);
                             int maxX = Math.max(0, dm.widthPixels - viewWidth);
                             int maxY = Math.max(0, dm.heightPixels - viewHeight);
 
@@ -254,13 +269,14 @@ public class MumlaOverlay {
             mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             mOverlayParams.gravity = mSettings.getOverlayGravity();
-            int marginX = (int) (16 * dm.density);
             String placement = mSettings.getOverlayPlacement();
+            // Single WindowMetrics query per layout pass; the snapshot is shared by
+            // all margin resolvers below instead of re-querying per edge.
+            Insets insets = getSystemBarInsets();
+            mOverlayParams.x = getSideMargin(dm, insets, placement);
             boolean isTop = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
                     || Settings.OVERLAY_PLACEMENT_TOP_RIGHT.equals(placement);
-            int marginY = isTop ? getTopMargin(dm) : getBottomMargin(dm);
-            mOverlayParams.x = marginX;
-            mOverlayParams.y = marginY;
+            mOverlayParams.y = isTop ? getTopMargin(dm, insets) : getBottomMargin(dm, insets);
         } else {
             mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                     | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
@@ -270,57 +286,98 @@ public class MumlaOverlay {
         }
     }
 
+    @TargetApi(Build.VERSION_CODES.R)
     private Insets getSystemBarInsets() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
+            // Ignoring visibility (rather than getInsets) bakes hidden bars into the
+            // pinned margins so the overlay never slides under a transient system bar
+            // when bars reappear (e.g. swipe-in gesture navigation).
             return metrics.getWindowInsets().getInsetsIgnoringVisibility(
                     WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
         }
         return null;
     }
 
-    private int getTopMargin(DisplayMetrics dm) {
-        Insets insets = getSystemBarInsets();
-        if (insets != null && insets.top > 0) {
-            return insets.top + (int) (EDGE_GUTTER_DP * dm.density);
+    /**
+     * Pure margin resolution, extracted for unit testing without a {@link WindowManager}.
+     *
+     * @param insetPx live system-bar inset for the edge, or 0 when unavailable
+     * @param barHeightPx legacy resource height ({@code status_bar_height} /
+     *     {@code navigation_bar_height}), or 0 when unknown
+     * @param defaultDp hardcoded fallback when neither source yields a height
+     * @param density display density
+     */
+    static int resolveEdgeMarginPx(int insetPx, int barHeightPx, int defaultDp, float density) {
+        if (insetPx > 0) {
+            return insetPx + (int) (EDGE_GUTTER_DP * density);
+        }
+        if (barHeightPx > 0) {
+            return barHeightPx + (int) (EDGE_GUTTER_DP * density);
+        }
+        return (int) (defaultDp * density);
+    }
+
+    /**
+     * Pure side-margin resolution: keeps the pinned overlay clear of side cutouts
+     * and gesture bars on either edge instead of using a fixed offset.
+     *
+     * @param sideInsetPx live left/right inset for the pinned side, or 0
+     * @param density display density
+     */
+    static int resolveSideMarginPx(int sideInsetPx, float density) {
+        if (sideInsetPx > 0) {
+            return sideInsetPx + (int) (EDGE_GUTTER_DP * density);
+        }
+        return (int) (SIDE_MARGIN_DP * density);
+    }
+
+    private int getSideMargin(DisplayMetrics dm, Insets insets, String placement) {
+        int sideInset = 0;
+        if (insets != null) {
+            boolean isLeft = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
+                    || Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT.equals(placement);
+            sideInset = isLeft ? insets.left : insets.right;
+        }
+        return resolveSideMarginPx(Math.max(0, sideInset), dm.density);
+    }
+
+    private int getTopMargin(DisplayMetrics dm, Insets insets) {
+        int insetTop = insets != null ? Math.max(0, insets.top) : 0;
+        if (insetTop > 0) {
+            return resolveEdgeMarginPx(insetTop, 0, DEFAULT_TOP_MARGIN_DP, dm.density);
         }
         int statusBarHeight = 0;
         int resourceId = mService.getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (resourceId > 0) {
             statusBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
         }
-        if (statusBarHeight > 0) {
-            return statusBarHeight + (int) (EDGE_GUTTER_DP * dm.density);
-        }
-        return (int) (40 * dm.density);
+        return resolveEdgeMarginPx(0, statusBarHeight, DEFAULT_TOP_MARGIN_DP, dm.density);
     }
 
-    private int getBottomMargin(DisplayMetrics dm) {
-        Insets insets = getSystemBarInsets();
-        if (insets != null && insets.bottom > 0) {
-            return insets.bottom + (int) (EDGE_GUTTER_DP * dm.density);
+    private int getBottomMargin(DisplayMetrics dm, Insets insets) {
+        int insetBottom = insets != null ? Math.max(0, insets.bottom) : 0;
+        if (insetBottom > 0) {
+            return resolveEdgeMarginPx(insetBottom, 0, DEFAULT_BOTTOM_MARGIN_DP, dm.density);
         }
         int navBarHeight = 0;
         int resourceId = mService.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
         if (resourceId > 0) {
             navBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
         }
-        if (navBarHeight > 0) {
-            return navBarHeight + (int) (EDGE_GUTTER_DP * dm.density);
-        }
-        return (int) (56 * dm.density);
+        return resolveEdgeMarginPx(0, navBarHeight, DEFAULT_BOTTOM_MARGIN_DP, dm.density);
     }
 
     private void restorePosition() {
         DisplayMetrics dm = mService.getResources().getDisplayMetrics();
-        int defaultX = (int) (24 * dm.density);
-        int defaultY = (int) (80 * dm.density);
+        int defaultX = (int) (DEFAULT_POS_X_DP * dm.density);
+        int defaultY = (int) (DEFAULT_POS_Y_DP * dm.density);
 
         int savedX = mSettings.getOverlayPosX(defaultX);
         int savedY = mSettings.getOverlayPosY(defaultY);
 
-        int maxX = Math.max(0, dm.widthPixels - (int) (120 * dm.density));
-        int maxY = Math.max(0, dm.heightPixels - (int) (60 * dm.density));
+        int maxX = Math.max(0, dm.widthPixels - (int) (ESTIMATED_WIDTH_DP * dm.density));
+        int maxY = Math.max(0, dm.heightPixels - (int) (ESTIMATED_HEIGHT_DP * dm.density));
 
         mOverlayParams.x = Math.max(0, Math.min(savedX, maxX));
         mOverlayParams.y = Math.max(0, Math.min(savedY, maxY));

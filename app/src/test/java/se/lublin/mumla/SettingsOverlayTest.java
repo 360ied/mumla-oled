@@ -17,149 +17,11 @@
 
 package se.lublin.mumla;
 
-import android.content.SharedPreferences;
 import android.view.Gravity;
 
 import junit.framework.TestCase;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
-
 public class SettingsOverlayTest extends TestCase {
-
-    private static class FakeEditor implements SharedPreferences.Editor {
-        private final Map<String, Object> mValues;
-        private final Map<String, Object> mTemp = new HashMap<>();
-
-        FakeEditor(Map<String, Object> values) {
-            mValues = values;
-        }
-
-        @Override
-        public SharedPreferences.Editor putString(String key, String value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putStringSet(String key, Set<String> values) {
-            mTemp.put(key, values);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putInt(String key, int value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putLong(String key, long value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putFloat(String key, float value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putBoolean(String key, boolean value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor remove(String key) {
-            mTemp.remove(key);
-            mValues.remove(key);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor clear() {
-            mTemp.clear();
-            mValues.clear();
-            return this;
-        }
-
-        @Override
-        public boolean commit() {
-            mValues.putAll(mTemp);
-            mTemp.clear();
-            return true;
-        }
-
-        @Override
-        public void apply() {
-            commit();
-        }
-    }
-
-    private static class FakeSharedPreferences implements SharedPreferences {
-        private final Map<String, Object> mValues = new HashMap<>();
-
-        @Override
-        public Map<String, ?> getAll() {
-            return new HashMap<>(mValues);
-        }
-
-        @Override
-        public String getString(String key, String defValue) {
-            Object val = mValues.get(key);
-            return val instanceof String ? (String) val : defValue;
-        }
-
-        @Override
-        @SuppressWarnings("unchecked")
-        public Set<String> getStringSet(String key, Set<String> defValues) {
-            Object val = mValues.get(key);
-            return val instanceof Set ? (Set<String>) val : defValues;
-        }
-
-        @Override
-        public int getInt(String key, int defValue) {
-            Object val = mValues.get(key);
-            return val instanceof Integer ? (Integer) val : defValue;
-        }
-
-        @Override
-        public long getLong(String key, long defValue) {
-            Object val = mValues.get(key);
-            return val instanceof Long ? (Long) val : defValue;
-        }
-
-        @Override
-        public float getFloat(String key, float defValue) {
-            Object val = mValues.get(key);
-            return val instanceof Float ? (Float) val : defValue;
-        }
-
-        @Override
-        public boolean getBoolean(String key, boolean defValue) {
-            Object val = mValues.get(key);
-            return val instanceof Boolean ? (Boolean) val : defValue;
-        }
-
-        @Override
-        public boolean contains(String key) {
-            return mValues.containsKey(key);
-        }
-
-        @Override
-        public Editor edit() {
-            return new FakeEditor(mValues);
-        }
-
-        @Override
-        public void registerOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {}
-
-        @Override
-        public void unregisterOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {}
-    }
 
     public void testOverlayConstants() {
         assertEquals("overlay_shown", Settings.PREF_OVERLAY_SHOWN);
@@ -389,8 +251,8 @@ public class SettingsOverlayTest extends TestCase {
         Settings settings = new Settings(prefs);
 
         prefs.edit().putString(Settings.PREF_HOT_CORNER_KEY, "sideways").apply();
-        // NOTE: isHotCornerEnabled() is lax (anything but "none" counts as enabled);
-        // out of scope here, but gravity defensively resolves to 0.
+        assertFalse("Corrupted hot-corner value must not enable the hot corner",
+                settings.isHotCornerEnabled());
         assertEquals(0, settings.getHotCornerGravity());
     }
 
