@@ -456,8 +456,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 Server server = MumbleURLParser.parseURL(url);
 
                 // Open a dialog prompting the user to connect to the Mumble server.
+                // Flag a password embedded in the link so the dialog can warn (not block).
+                boolean urlPassword = server.getPassword() != null && !server.getPassword().isEmpty();
                 DialogFragment fragment = ServerEditFragment.createServerEditDialog(
-                        MumlaActivity.this, server, ServerEditFragment.Action.CONNECT_ACTION, true);
+                        MumlaActivity.this, server, ServerEditFragment.Action.CONNECT_ACTION, true, urlPassword);
                 fragment.show(getSupportFragmentManager(), "url_edit");
             } catch (MalformedURLException e) {
                 Toast.makeText(this, getString(R.string.mumble_url_parse_failed), Toast.LENGTH_LONG).show();

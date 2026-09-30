@@ -218,4 +218,6 @@
 • Add some translations, thank you all translators!\n</string>
     <string name="app_news_items_v3_7_3">• Make PTT hot corner visible on Android 12 and later, and on dark and light background\n
 • Make the Back-button ask to disconnect from server again on Android 16+\n</string>
+
+    <string name="server_edit_url_password_warning">This link contained a password. Only connect if you trust the sender.</string>
 </resources>
