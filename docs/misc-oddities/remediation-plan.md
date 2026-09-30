@@ -200,7 +200,14 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 > [!NOTE]
 > **Status: RESOLVED on branch `bugfix/oddities-phase3-remediation` (pending review/merge)**
 >
-> All Phase 3 items have been implemented and verified in the branch `bugfix/oddities-phase3-remediation` (commits `2e999f0c`, `cb11911d`, `bda21ffc`): ODD-06 by adding explicit Cancel/back-dismissal handling to the first-run certificate dialog so `first_run` is always cleared and the startup action always runs; ODD-07 by unifying the no-PTT-key sentinel on `Settings.DEFAULT_PUSH_KEY` (`-1`) with a `pttKey > 0` activation guard in `MumlaActivity` and coverage in `SettingsPushKeyTest`; ODD-05 by adding `MumlaHotCorner.refreshGestureExclusion()` and invoking it from `MumlaService.onConfigurationChanged()`.
+> All Phase 3 items have been implemented and verified in the branch `bugfix/oddities-phase3-remediation` (commits `2e999f0c`, `cb11911d`, `bda21ffc`; review-hardening in `8d8dd97d`). ODD-06: explicit Cancel/back-dismissal handling on the first-run certificate dialog so `first_run` is always cleared and the startup action always runs. ODD-07: no-PTT-key sentinel unified on `Settings.DEFAULT_PUSH_KEY` (`-1`) with a `pttKey > 0` activation guard in `MumlaActivity`, covered by `SettingsPushKeyTest`. ODD-05: `MumlaHotCorner.refreshGestureExclusion()` invoked from `MumlaService.onConfigurationChanged()`.
+>
+> **Accepted trade-offs** (pedantic review of the branch):
+>
+> - **Backgrounded/trust-flow dismissal leaves `first_run` pending.** The first-run prompt is tracked in `mCertDialog`, so `onPause()` (backgrounding) and the trust/certificate-mismatch dialogs can dismiss it via `dismissCertDialog()` without firing the cancel listener. Neither `setFirstRun(false)` nor the startup action runs in that moment; because the prompt only shows on a fresh launch (`savedInstanceState == null`), it simply reappears on the next cold launch. Accepted as the more predictable outcome versus the previous behavior, where the prompt also skipped the startup action and re-showed indefinitely.
+> - **Dead defensive null check.** `MumlaHotCorner.refreshGestureExclusion()` includes an unreachable `mView == null` guard (`mView` is assigned in the constructor and never nulled); retained deliberately as defense-in-depth.
+> - **Guard test is a tripwire.** `SettingsPushKeyTest.testPttGuardSemantics_AgainstLegacyZeroAndUnknown` re-implements the `pttKey > 0 && keyCode == pttKey` expression rather than exercising `MumlaActivity` directly (the project's JVM-only test setup lacks Robolectric); a regression deleting the activity-side guard would still pass this test. A lint or Robolectric-based contract test remains a follow-up.
+> - **Plan snippets are a historical record.** The Solution snippets below reflect the proposals at planning time and drift slightly from the shipped implementation (e.g. the shipped `updateValueView` uses the equivalent `mCurrentValue <= 0` form; the shipped dialog is tracked in `mCertDialog`).
 
 Phase 3 resolves UX annoyances, preference state divergence, and overlay rotation inconsistencies.
 
