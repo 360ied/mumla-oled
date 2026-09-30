@@ -131,7 +131,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
+    // Also hosts the first-run certificate guide (not only certificate errors);
+    // dismissCertDialog() in onPause must therefore dismiss it as well.
     private AlertDialog mCertDialog;
+    // True while the first-run certificate generation task owns StartupAction.
+    private boolean mFirstRunGenerateInFlight = false;
 
     /**
      * List of fragments to be notified about service state changes.
@@ -619,10 +623,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 .setTitle(R.string.first_run_generate_certificate_title)
                 .setMessage(msg)
                 .setPositiveButton(R.string.generate, (DialogInterface dialog, int which) -> {
+                    mFirstRunGenerateInFlight = true;
                     MumlaCertificateGenerateTask generateTask = new MumlaCertificateGenerateTask(MumlaActivity.this) {
                         @Override
                         protected void onPostExecute(DatabaseCertificate result) {
                             super.onPostExecute(result);
+                            mFirstRunGenerateInFlight = false;
                             if (result != null) mSettings.setDefaultCertificateId(result.getId());
                             // The news dialog shows from this activity's window token; skip
                             // it if the activity died while generation was in flight.
@@ -634,13 +640,15 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     generateTask.execute();
                     mSettings.setFirstRun(false);
                 })
-                // Mark the first-run flag regardless of dismissal path so the prompt does not
-                // reappear on every subsequent launch (ODD-06).
+                // The dismiss listener below owns the flag-clear/StartupAction path,
+                // so every dismissal (button, back-press, outside-tap, onPause)
+                // converges there instead of each path duplicating it (ODD-06).
                 .setNegativeButton(android.R.string.cancel, (DialogInterface dialog, int which) -> {
                     mSettings.setFirstRun(false);
-                    new StartupAction().execute(MumlaActivity.this);
                 })
-                .setOnCancelListener(dialogInterface -> {
+                .setOnDismissListener(dialogInterface -> {
+                    // The generate path owns StartupAction via onPostExecute.
+                    if (mFirstRunGenerateInFlight) return;
                     mSettings.setFirstRun(false);
                     new StartupAction().execute(MumlaActivity.this);
                 });
