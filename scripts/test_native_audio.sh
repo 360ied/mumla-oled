@@ -4,10 +4,11 @@
 #
 # The engine unit tests use FakeDecoder/FakeVoiceEncoder (hermetic), and the
 # Opus interop + fuzz suite below links the real Opus sources from the pinned
-# submodule (same CELT/SILK/Opus lists, flags and fixed-point mode as
-# libraries/humla/src/main/jni/Android.mk, minus the NEON intrinsics which
-# need no extra flags on arm64 but are x86-hostile). The full Android NDK
-# build (single libhumlaaudio.so) must still be verified separately.
+# submodule (same CELT/SILK/Opus lists, defines and fixed-point mode as
+# libraries/humla/src/main/jni/Android.mk modulo the -O2/-O3 delta noted
+# below, minus the NEON intrinsics which need no extra flags on arm64 but
+# are x86-hostile). The full Android NDK build (single libhumlaaudio.so)
+# must still be verified separately.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

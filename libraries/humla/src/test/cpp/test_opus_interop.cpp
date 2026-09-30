@@ -32,6 +32,7 @@
 #include "OpusVoiceEncoder.h"
 #include "TestHarness.h"
 
+#include <opus.h> // opus_packet_has_lbrr (FEC test LBRR discrimination).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -205,10 +206,13 @@ void testDecodeFecRecovery() {
     // build decoder state, drop packet 2, then decode packet 3 twice —
     // first with decodeFec=1 (recovers frame 2 from packet 3's LBRR, the
     // AudioOutputEngine.cpp debt-recovery call), then with decodeFec=0
-    // (current frame, the normal path). FEC must return exactly kFrame
-    // with finite audio; the follow-up normal decode must still yield
+    // (current frame, the normal path). The LBRR assert below is what
+    // distinguishes true FEC recovery from the PLC fallback: the
+    // decode_fec path returns kFrame either way (opus_decoder.c runs
+    // concealment when no FEC is present), so without it the EQ would
+    // pass on PLC alone. The follow-up normal decode must still yield
     // the full current frame.
-    constexpr int kChain = 5;
+    constexpr int kChain = 4;
     std::vector<std::vector<uint8_t>> packets(kChain,
                                               std::vector<uint8_t>(kMaxPacketBytes));
     std::vector<int> lens(kChain, 0);
@@ -226,7 +230,10 @@ void testDecodeFecRecovery() {
                                                 out.data(), kMaxDecoded, 0);
         TEST_ASSERT_EQ(decoded, kFrame);
     }
-    // Packet 2 is "lost": never decoded. Recover it from packet 3's LBRR.
+    // Packet 2 is "lost": never decoded. Packet 3 must carry its LBRR —
+    // otherwise the FEC decode below would exercise PLC, not recovery.
+    TEST_ASSERT_TRUE(opus_packet_has_lbrr(packets[3].data(),
+                                          static_cast<opus_int32>(lens[3])) == 1);
     const int fec = decoder.decodeFloat(packets[3].data(),
                                         static_cast<size_t>(lens[3]),
                                         out.data(), kFrame, 1);

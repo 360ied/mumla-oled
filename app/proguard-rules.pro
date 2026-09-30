@@ -20,9 +20,10 @@
 -keep class se.lublin.humla.protobuf.Mumble** { *; }
 -keep class com.google.protobuf.GeneratedMessageLite { *; }
 
-# MiniDNS & GuardianProject Netcipher
+# MiniDNS
 -keep class org.minidns.** { *; }
--dontwarn info.guardianproject.netcipher.**
+
+# jsoup (used by MumlaService, NotificationSanitizer)
 -dontwarn org.jsoup.**
 
 # Preserve Parcelable CREATOR fields
