@@ -19,6 +19,7 @@
 
 #include <jni.h>
 #include <atomic>
+#include <climits>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -205,6 +206,9 @@ Java_se_lublin_humla_net_CryptState_nativeEncrypt(
         return nullptr;
     }
 
+    if (length > INT_MAX - 4) {
+        return nullptr;
+    }
     jbyteArray dst = env->NewByteArray(length + 4);
     if (!dst) {
         return nullptr;

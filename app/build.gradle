@@ -140,6 +140,19 @@ android {
     }
 }
 
+// M16: fail closed at execution time when a release assemble runs without
+// app/signing.gradle. This MUST stay inside taskGraph.whenReady: a
+// configuration-time throw would break every build (including debug/CI)
+// on machines without the intentionally uncommitted local signing file.
+// Debug builds never enter this branch and are unaffected.
+gradle.taskGraph.whenReady { graph ->
+    def wantsReleaseAssemble = graph.allTasks.any { it.name ==~ /assemble.*Release/ }
+    def hasReleaseSigning = android.hasProperty("signingConfigs") && android.signingConfigs.hasProperty("release")
+    if (wantsReleaseAssemble && !hasReleaseSigning) {
+        throw new GradleException('Release build requires app/signing.gradle defining signingConfigs.release (local file, intentionally uncommitted — see findings M16). Debug builds are unaffected.')
+    }
+}
+
 dependencies {
     implementation project(":libraries:humla")
     implementation 'androidx.appcompat:appcompat:1.7.1'
