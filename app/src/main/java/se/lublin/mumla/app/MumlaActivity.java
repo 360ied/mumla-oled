@@ -575,7 +575,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (mService != null && keyCode == mSettings.getPushToTalkKey()) {
+        if (mService != null && mSettings.getPushToTalkKey() > 0 && keyCode == mSettings.getPushToTalkKey()) {
             mService.onTalkKeyDown();
             return true;
         }
@@ -584,7 +584,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (mService != null && keyCode == mSettings.getPushToTalkKey()) {
+        if (mService != null && mSettings.getPushToTalkKey() > 0 && keyCode == mSettings.getPushToTalkKey()) {
             mService.onTalkKeyUp();
             return true;
         }
@@ -609,10 +609,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         // Prompt the user to generate a certificate.
         if (mSettings.isUsingCertificate()) {
             mSettings.setFirstRun(false);
+            new StartupAction().execute(this);
             return;
         }
         String msg = getString(R.string.first_run_generate_certificate);
-        new MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.first_run_generate_certificate_title)
                 .setMessage(msg)
                 .setPositiveButton(R.string.generate, (DialogInterface dialog, int which) -> {
@@ -621,12 +622,24 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         protected void onPostExecute(DatabaseCertificate result) {
                             super.onPostExecute(result);
                             if (result != null) mSettings.setDefaultCertificateId(result.getId());
+                            new StartupAction().execute(MumlaActivity.this);
                         }
                     };
                     generateTask.execute();
                     mSettings.setFirstRun(false);
                 })
-                .show();
+                // Mark the first-run flag regardless of dismissal path so the prompt does not
+                // reappear on every subsequent launch (ODD-06).
+                .setNegativeButton(android.R.string.cancel, (DialogInterface dialog, int which) -> {
+                    mSettings.setFirstRun(false);
+                    new StartupAction().execute(MumlaActivity.this);
+                })
+                .setOnCancelListener(dialogInterface -> {
+                    mSettings.setFirstRun(false);
+                    new StartupAction().execute(MumlaActivity.this);
+                });
+        mCertDialog = builder.create();
+        mCertDialog.show();
     }
 
     /**
