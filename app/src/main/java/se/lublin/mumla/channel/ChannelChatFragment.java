@@ -628,6 +628,7 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
                     messageText.setGravity(Gravity.LEFT);
                 }
             });
+            timeText.setText(mDateFormat.format(new Date(message.getReceivedTime())));
             Spanned rendered = HtmlCompat.fromHtml(message.getBody(), HtmlCompat.FROM_HTML_MODE_LEGACY, mImageGetter, null);
             messageText.setText(sanitizeChatLinks(rendered));
             messageText.setMovementMethod(LinkMovementMethod.getInstance());
