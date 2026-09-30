@@ -32,6 +32,7 @@ class TestWorktreeCLI(unittest.TestCase):
             self.assertIn("Usage:", proc.stdout)
             self.assertIn("add", proc.stdout)
             self.assertIn("remove", proc.stdout)
+            self.assertIn("cleanup", proc.stdout)
 
     def test_no_args_exits_one(self):
         proc = subprocess.run(
@@ -408,6 +409,135 @@ class TestWorktreeUnit(unittest.TestCase):
         master_pos = proc.stdout.find("master")
         self.assertGreater(header_pos, -1, "Header 'Active Git Worktrees' not found")
         self.assertGreater(master_pos, header_pos, "Header must precede worktree entries")
+
+
+class TestWorktreeCleanup(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo_dir = os.path.join(self.temp_dir.name, "repo")
+        os.makedirs(self.repo_dir)
+        subprocess.run(["git", "init", "-b", "master", self.repo_dir], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", self.repo_dir, "config", "user.name", "Test Agent"], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "config", "user.email", "agent@example.com"], check=True)
+        with open(os.path.join(self.repo_dir, "README.md"), "w") as f:
+            f.write("# Mock Repo\n")
+        subprocess.run(["git", "-C", self.repo_dir, "add", "."], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "init"], check=True, stdout=subprocess.DEVNULL)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _commit_on_branch(self, branch, filename, content, message):
+        subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", branch], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(os.path.join(self.repo_dir, filename), "w") as f:
+            f.write(content)
+        subprocess.run(["git", "-C", self.repo_dir, "add", "."], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", message], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", self.repo_dir, "checkout", "master"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _add_worktree(self, branch):
+        proc = subprocess.run(
+            [SCRIPT_PATH, "add", branch],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        return os.path.join(self.repo_dir, ".worktrees", branch)
+
+    def _run_cleanup(self, *args):
+        return subprocess.run(
+            [SCRIPT_PATH, "cleanup", *args],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+    def _branch_exists(self, branch):
+        return subprocess.run(
+            ["git", "-C", self.repo_dir, "show-ref", "--verify", f"refs/heads/{branch}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+
+    def test_cleanup_removes_merged_clean(self):
+        self._commit_on_branch("feature/merged", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/merged", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/merged")
+        proc = self._run_cleanup()
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("removed", proc.stdout)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertTrue(self._branch_exists("feature/merged"))
+
+    def test_cleanup_preserves_unmerged_by_default(self):
+        self._commit_on_branch("feature/unmerged", "feat.txt", "unmerged\n", "feat")
+        wt = self._add_worktree("feature/unmerged")
+        proc = self._run_cleanup()
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("preserved", proc.stdout)
+        self.assertTrue(os.path.isdir(wt))
+        # Opt-in flag removes it; branch is still preserved.
+        proc2 = self._run_cleanup("--include-unmerged")
+        self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertTrue(self._branch_exists("feature/unmerged"))
+
+    def test_cleanup_explicit_unmerged_target_fails_without_flag(self):
+        self._commit_on_branch("feature/unmerged2", "feat.txt", "unmerged\n", "feat")
+        wt = self._add_worktree("feature/unmerged2")
+        proc = self._run_cleanup("feature/unmerged2")
+        self.assertEqual(proc.returncode, 1)
+        self.assertTrue(os.path.isdir(wt))
+        proc2 = self._run_cleanup("--include-unmerged", "feature/unmerged2")
+        self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
+        self.assertFalse(os.path.isdir(wt))
+
+    def test_cleanup_dirty_needs_force(self):
+        self._commit_on_branch("feature/dirty-merged", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/dirty-merged", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/dirty-merged")
+        with open(os.path.join(wt, "dirty.txt"), "w") as f:
+            f.write("untracked\n")
+        proc = self._run_cleanup()
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("preserved", proc.stdout)
+        self.assertTrue(os.path.isdir(wt))
+        proc2 = self._run_cleanup("--force")
+        self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
+        self.assertFalse(os.path.isdir(wt))
+
+    def test_cleanup_dirty_unmerged_needs_both_flags(self):
+        self._commit_on_branch("feature/dirty-unmerged", "feat.txt", "unmerged\n", "feat")
+        wt = self._add_worktree("feature/dirty-unmerged")
+        with open(os.path.join(wt, "dirty.txt"), "w") as f:
+            f.write("untracked\n")
+        self.assertEqual(self._run_cleanup().returncode, 0)
+        self.assertTrue(os.path.isdir(wt))
+        self.assertEqual(self._run_cleanup("--include-unmerged").returncode, 0)
+        self.assertTrue(os.path.isdir(wt))
+        self.assertEqual(self._run_cleanup("--force").returncode, 0)
+        self.assertTrue(os.path.isdir(wt))
+        proc = self._run_cleanup("--include-unmerged", "--force")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertTrue(self._branch_exists("feature/dirty-unmerged"))
+
+    def test_cleanup_dry_run_is_noop(self):
+        self._commit_on_branch("feature/dry", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/dry", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/dry")
+        proc = self._run_cleanup("--dry-run")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("would remove", proc.stdout)
+        self.assertTrue(os.path.isdir(wt))
+
+    def test_cleanup_unknown_target_fails(self):
+        proc = self._run_cleanup("nonexistent-branch")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Could not find worktree", proc.stderr)
+
+    def test_cleanup_no_secondary_worktrees(self):
+        proc = self._run_cleanup()
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("No secondary worktrees", proc.stdout)
 
 
 if __name__ == "__main__":

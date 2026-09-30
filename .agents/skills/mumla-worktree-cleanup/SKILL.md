@@ -1,164 +1,65 @@
 ---
 name: mumla-worktree-cleanup
 description: >-
-  Safely clean up and teardown Git worktrees for the Mumla OLED repository:
-  inventory active worktrees, inspect uncommitted changes and branch merge status,
-  solicit explicit clarification via the `ask` tool before discarding any unmerged
-  or uncommitted work, execute worktree teardown via scripts/worktree.py, prune
-  stale metadata, and remove leftover directories. CRITICAL: ONLY use when the
-  user EXPLICITLY asks to clean up or remove worktrees. NEVER invoke this skill
-  autonomously or as part of task completion.
+  Safely clean up and teardown Git worktrees for the Mumla OLED repository
+  via scripts/worktree.py cleanup: preview with --dry-run, remove only
+  clean worktrees merged into master by default, opt in to unmerged or dirty
+  removal with explicit flags. CRITICAL: ONLY use when the user EXPLICITLY
+  asks to clean up or remove worktrees. NEVER invoke this skill autonomously
+  or as part of task completion.
 ---
 
 # Mumla OLED: Worktree Cleanup
 
-This skill guides safe teardown and cleanup of Git worktrees in the Mumla OLED
-repository.
+This skill covers safe teardown and cleanup of Git worktrees in the Mumla OLED
+repository via the non-interactive `cleanup` subcommand.
 
 > [!CAUTION]
-> **DO NOT RUN AUTONOMOUSLY.** Worktree teardown must be **explicitly requested by the user** (e.g., "clean up worktrees", "remove the worktree for branch X"). Agents must NEVER autonomously delete worktrees upon completing a feature, bugfix, or test suite. Task completion ends when commits and verification (`./scripts/check.sh`) are done inside the dedicated worktree; always leave the branch and worktree intact, report completion, and wait for review. Furthermore, never force-remove worktrees containing uncommitted modifications, untracked changes, or unmerged branch commits without explicit user confirmation via the `ask` tool.
+> **DO NOT RUN AUTONOMOUSLY.** Worktree teardown must be **explicitly requested by the user** (e.g., "clean up worktrees", "remove the worktree for branch X"). Agents must NEVER autonomously delete worktrees upon completing a feature, bugfix, or test suite. Task completion ends when commits and verification (`./scripts/check.sh`) are done inside the dedicated worktree; always leave the branch and worktree intact, report completion, and wait for review.
 
 Worktrees allow isolated development on dedicated branches without touching
 the primary repository tree (which stays permanently checked out on `master`).
-Worktree removal never deletes underlying Git branches.
+Worktree removal never deletes underlying Git branches. The primary root
+worktree (`master`) must **never** be removed.
 
----
+## 1. Preview (always run first)
 
-## 1. Inventory Active Worktrees
+```bash
+./scripts/worktree.py cleanup --dry-run
+```
 
-List all current worktrees from the repository root:
+This inventories all secondary worktrees (typically `.worktrees/<branch-name>`)
+and classifies each as merged/unmerged × clean/dirty without deleting anything.
+If no secondary worktrees exist it reports that only the root worktree exists.
+
+## 2. Remove (flag-driven, non-interactive)
+
+There is no interactive prompt. Destructive scope is controlled entirely by
+explicit flags:
+
+```bash
+./scripts/worktree.py cleanup                                  # clean & merged only (default, lossless)
+./scripts/worktree.py cleanup --include-unmerged               # also remove clean worktrees with unmerged commits
+./scripts/worktree.py cleanup --force                          # also remove worktrees with uncommitted changes
+./scripts/worktree.py cleanup --include-unmerged --force       # remove dirty AND unmerged (requires both flags)
+./scripts/worktree.py cleanup --dry-run <branch-or-path>...    # preview specific worktrees
+./scripts/worktree.py cleanup <branch-or-path>...              # target specific worktrees
+```
+
+Rules:
+
+- Default removes only **clean worktrees whose branch is fully merged** into local `master` (`git merge-base --is-ancestor <branch> master`).
+- An explicitly named worktree that is skipped under the given flags exits non-zero; bulk mode preserves skipped worktrees and exits zero.
+- A dirty AND unmerged worktree requires **both** `--include-unmerged` and `--force`.
+- Locked worktrees are always preserved (unlock first). The worktree you are currently inside is never removed.
+- Local branches are always preserved; delete merged ones afterwards with `git branch -d <branch-name>`.
+- The command prunes worktree metadata and sweeps leftover empty directories under `.worktrees/` automatically.
+
+## 3. Verify & report
 
 ```bash
 ./scripts/worktree.py list
+git status
 ```
 
-Alternatively inspect porcelain output:
-
-```bash
-git worktree list --porcelain
-```
-
-Identify all secondary worktrees (typically located in `.worktrees/<branch-name>`).
-The primary root worktree (`master`) must **never** be removed.
-
-If no secondary worktrees are present, report that only the root worktree exists
-and terminate early.
-
----
-
-## 2. Inspect Status & Changes
-
-For each secondary worktree discovered:
-
-### A. Identify Checked-Out Branch
-```bash
-git -C "<worktree-path>" rev-parse --abbrev-ref HEAD
-```
-
-### B. Check Merge Status against `master`
-Check if the branch has already landed on `master`:
-```bash
-git merge-base --is-ancestor "<branch>" master
-```
-- If exit code is `0`, the branch is **merged**.
-- If exit code is non-zero, the branch has unmerged commits. Review them:
-  ```bash
-  git log master..<branch> --oneline
-  ```
-
-### C. Check Working Tree Status
-Inspect whether the worktree has staged, unstaged, or untracked changes:
-```bash
-git -C "<worktree-path>" status --porcelain
-```
-- Check whether diffs are in tracked project source code or submodules:
-  ```bash
-  git -C "<worktree-path>" diff
-  ```
-
----
-
-## 3. Categorize & Prompt for Clarification
-
-Classify each secondary worktree into one of three states:
-1. **Clean & Merged**: Branch is fully merged into `master`, with no uncommitted source changes.
-2. **Clean & Unmerged**: Working tree is clean, but branch has commits not yet merged into `master`.
-3. **Dirty / In-Progress**: Working tree contains uncommitted edits or untracked files.
-
-### Clarification Gate
-
-- **If ALL secondary worktrees are Clean & Merged**:
-  Proceed directly to Step 4 (safe removal).
-
-- **If ANY worktree is Unmerged or Dirty**:
-  **STOP.** Do NOT run `./scripts/worktree.py remove --force` autonomously.
-  Call the `ask` tool to solicit explicit guidance from the user:
-  - Mention specific worktree branches and link modified files using Markdown links (e.g. `[AudioDeviceManager.java](file:///path/to/...)`).
-  - Outline which worktrees are merged vs. unmerged.
-  - Provide distinct user response options formatted from the user's perspective, such as:
-    - `(Recommended) Remove only merged worktrees, preserving unmerged/in-progress worktrees`
-    - `Commit changes in in-progress worktree first, then remove all worktrees`
-    - `Force-remove both worktrees (discards uncommitted working tree changes)`
-
-Wait for the user's decision before proceeding with destructive actions.
-
----
-
-## 4. Teardown Worktrees
-
-Execute removal using the project worktree manager for each confirmed worktree:
-
-```bash
-./scripts/worktree.py remove "<branch-or-path>"
-```
-
-### Handling Submodules and Force Flags
-- Git prohibits removing worktrees with submodules unless `--force` is passed.
-  `./scripts/worktree.py remove` internally checks `git status --porcelain` to ensure
-  safety before invoking `git worktree remove --force`.
-- If dirty submodules or uncommitted changes were reviewed and explicitly approved
-  for deletion by the user, pass `--force` to the script:
-  ```bash
-  ./scripts/worktree.py remove "<branch-or-path>" --force
-  ```
-
-### Prune Metadata & Residual Directories
-After removing worktrees:
-
-1. Prune dangling worktree metadata:
-   ```bash
-   git worktree prune
-   ```
-
-2. Clean up leftover build artifacts or empty directories:
-   Tools like Gradle may leave behind empty directory structures (e.g., `.gradle/`)
-   inside `.worktrees/` that Git does not track. If `.worktrees/` only contains
-   empty directories, remove them:
-   ```bash
-   find .worktrees -type d -empty -delete 2>/dev/null || true
-   rmdir .worktrees 2>/dev/null || true
-   ```
-   If any non-worktree files remain, inspect them before deletion.
-
----
-
-## 5. Verification & Reporting
-
-1. Verify remaining worktrees:
-   ```bash
-   ./scripts/worktree.py list
-   ```
-   Ensure only the root `master` worktree remains active (or any worktrees intentionally preserved).
-
-2. Confirm root working tree cleanliness:
-   ```bash
-   git status
-   ```
-
-3. Report status to the user:
-   - Detail which worktrees were removed.
-   - Note which local Git branches remain preserved in history.
-   - Provide the command to delete local branches if they are merged and no longer needed:
-     ```bash
-     git branch -d <branch-name>
-     ```
+Report which worktrees were removed, which were intentionally preserved (and why), and note that local branches remain in history.

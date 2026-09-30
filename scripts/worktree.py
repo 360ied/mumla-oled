@@ -27,7 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import List, Optional, TextIO
+from typing import Dict, List, Optional, TextIO, Tuple
 
 # Configure unbuffered/line-buffered I/O so CLI output and child process
 # output maintain strict ordering even when piped or redirected.
@@ -50,6 +50,7 @@ def print_usage(stream: TextIO) -> None:
   {prog} add <branch-name> [base-ref] [-p <custom-path>]
   {prog} list
   {prog} remove <branch-name-or-path> [--force]
+  {prog} cleanup [--dry-run] [--include-unmerged] [--force] [<branch-or-path>...]
 
 Commands:
   add       Create a new worktree under .worktrees/<branch-name> (or custom path)
@@ -58,12 +59,21 @@ Commands:
   list      List all active worktrees and their checked-out branches.
   remove    Safely remove a worktree. Refuses if there are uncommitted changes
             unless --force is specified. Never deletes the git branch.
+  cleanup   Remove secondary worktrees in bulk. Non-interactive and flag-driven:
+            by default removes only clean worktrees whose branch is fully merged
+            into 'master'. Add --include-unmerged to also remove clean worktrees
+            with unmerged commits, and --force to also remove worktrees with
+            uncommitted changes. Removing a dirty AND unmerged worktree requires
+            both flags. Never deletes git branches. Use --dry-run to preview.
 
 Examples:
   {prog} add feature/vad-tuning
   {prog} add bugfix/opus-resampler master
   {prog} list
-  {prog} remove feature/vad-tuning""", file=stream)
+  {prog} remove feature/vad-tuning
+  {prog} cleanup --dry-run
+  {prog} cleanup --include-unmerged
+  {prog} cleanup --include-unmerged --force""", file=stream)
 
 
 def get_repo_root(cwd: Optional[Path] = None) -> Path:
@@ -387,13 +397,112 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
     branch_name = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
 
     print(f"Removing worktree at '{wt_path}'...")
-    # Always pass --force to git worktree remove because Git forbids removing
-    # worktrees with submodules otherwise. The status check above guarantees safety.
+    rc = remove_worktree_dir(repo_root, wt_path)
+    if rc != 0:
+        return rc
+
+    print("Worktree removed successfully.")
+    if branch_name and branch_name != "HEAD":
+        print("")
+        print(f"Note: Local branch '{branch_name}' has been preserved.")
+        print("To delete it when fully merged, run:")
+        print(f"  git branch -d {branch_name}")
+    return 0
+
+
+def parse_worktrees(repo_root: Path) -> List[Dict[str, object]]:
+    """Parse `git worktree list --porcelain` into worktree records.
+
+    Each record has keys: path (Path), branch (str | None, None when
+    detached), detached (bool), locked (bool).
+    """
+    proc = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    entries: List[Dict[str, object]] = []
+    if proc.returncode != 0:
+        return entries
+    current: Optional[Dict[str, object]] = None
+    for raw in proc.stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            if current is not None:
+                entries.append(current)
+                current = None
+            continue
+        if line.startswith("worktree "):
+            if current is not None:
+                entries.append(current)
+            current = {
+                "path": Path(line.split(" ", 1)[1].strip()),
+                "branch": None,
+                "detached": False,
+                "locked": False,
+            }
+        elif current is not None:
+            if line.startswith("branch "):
+                ref = line.split(" ", 1)[1].strip()
+                if ref.startswith("refs/heads/"):
+                    current["branch"] = ref[len("refs/heads/"):]
+                else:
+                    current["branch"] = ref
+            elif line == "detached":
+                current["detached"] = True
+            elif line.startswith("locked"):
+                current["locked"] = True
+    if current is not None:
+        entries.append(current)
+    return entries
+
+
+def is_branch_merged(branch: Optional[str], repo_root: Path) -> bool:
+    """Check whether <branch> is fully merged into local 'master'."""
+    if not branch:
+        return False
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", branch, "master"],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def is_worktree_dirty(wt_path: Path) -> Tuple[bool, str]:
+    """Check for staged/unstaged/untracked changes (ignored files excluded)."""
+    proc = subprocess.run(
+        ["git", "-C", str(wt_path), "status", "--porcelain"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    out = proc.stdout if proc.returncode == 0 else ""
+    return (bool(out.strip()), out)
+
+
+def remove_worktree_dir(repo_root: Path, wt_path: Path) -> int:
+    """Remove one worktree dir; prune metadata and sweep empty parents.
+
+    Always passes --force to `git worktree remove` because Git otherwise
+    refuses worktrees containing submodules. Callers enforce the safety
+    policy (clean/merged checks) before invoking this helper.
+    """
     try:
-        subprocess.run(["git", "worktree", "remove", "--force", str(wt_path)], cwd=repo_root, check=True)
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(wt_path)],
+            cwd=repo_root,
+            check=True,
+        )
         subprocess.run(["git", "worktree", "prune"], cwd=repo_root, check=True)
 
-        # Clean up empty parent directories inside .worktrees/ if applicable
+        # Clean up empty parent directories inside .worktrees/ if applicable.
         worktrees_dir = (repo_root / ".worktrees").resolve()
         try:
             wt_path.relative_to(worktrees_dir)
@@ -410,16 +519,207 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
                 pass
         except ValueError:
             pass
-
-        print("Worktree removed successfully.")
-        if branch_name and branch_name != "HEAD":
-            print("")
-            print(f"Note: Local branch '{branch_name}' has been preserved.")
-            print("To delete it when fully merged, run:")
-            print(f"  git branch -d {branch_name}")
         return 0
     except subprocess.CalledProcessError as e:
         return e.returncode
+
+
+def sweep_empty_worktrees_dir(repo_root: Path) -> None:
+    """Remove leftover empty dirs under .worktrees/ (e.g. Gradle residue)."""
+    worktrees_dir = repo_root / ".worktrees"
+    if not worktrees_dir.is_dir():
+        return
+    # Bottom-up: delete empty dirs, tracking only; never delete non-empty.
+    for dirpath, dirnames, filenames in os.walk(worktrees_dir, topdown=False):
+        if not dirnames and not filenames:
+            try:
+                Path(dirpath).rmdir()
+            except OSError:
+                pass
+    try:
+        worktrees_dir.rmdir()
+    except OSError:
+        pass
+
+
+def cmd_cleanup(args: List[str], repo_root: Path) -> int:
+    dry_run = False
+    include_unmerged = False
+    force = False
+    targets: List[str] = []
+
+    idx = 0
+    while idx < len(args):
+        arg = args[idx]
+        if arg in ("-n", "--dry-run"):
+            dry_run = True
+            idx += 1
+        elif arg == "--include-unmerged":
+            include_unmerged = True
+            idx += 1
+        elif arg in ("-f", "--force"):
+            force = True
+            idx += 1
+        elif arg in ("-h", "--help"):
+            print_usage(sys.stdout)
+            return 0
+        elif arg.startswith("-"):
+            sys.stderr.write(f"Error: Unexpected argument '{arg}'.\n")
+            return 1
+        else:
+            targets.append(arg)
+            idx += 1
+
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        cwd = None
+
+    # Resolve candidate set.
+    candidates: List[Dict[str, object]] = []
+    if targets:
+        seen: set = set()
+        for target in targets:
+            wt_path = find_worktree_path(repo_root, target)
+            if not wt_path or not wt_path.is_dir():
+                sys.stderr.write(f"Error: Could not find worktree for '{target}'.\n")
+                return 1
+            resolved = str(wt_path)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if wt_path == repo_root:
+                sys.stderr.write("Error: Cannot remove the primary root worktree!\n")
+                return 1
+            branch_proc = subprocess.run(
+                ["git", "-C", str(wt_path), "rev-parse", "--abbrev-ref", "HEAD"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+            if branch == "HEAD":
+                candidates.append({
+                    "path": wt_path, "branch": None,
+                    "detached": True, "locked": False,
+                })
+            else:
+                candidates.append({
+                    "path": wt_path, "branch": branch or None,
+                    "detached": False, "locked": False,
+                })
+        # Fill in locked flags from porcelain when targets were explicit.
+        for entry in parse_worktrees(repo_root):
+            for cand in candidates:
+                try:
+                    if Path(str(entry["path"])).resolve() == Path(str(cand["path"])).resolve():
+                        cand["locked"] = entry["locked"]
+                        if cand.get("branch") is None and entry.get("branch"):
+                            cand["branch"] = entry["branch"]
+                except OSError:
+                    pass
+    else:
+        for entry in parse_worktrees(repo_root):
+            try:
+                if Path(str(entry["path"])).resolve() == repo_root:
+                    continue
+            except OSError:
+                continue
+            candidates.append(entry)
+
+    if not candidates:
+        print("No secondary worktrees found. Only the root worktree exists.")
+        return 0
+
+    removed: List[str] = []
+    preserved: List[str] = []
+    failed: List[str] = []
+    explicit = bool(targets)
+
+    for cand in candidates:
+        wt_path = Path(str(cand["path"]))
+        branch = cand.get("branch")
+        branch = str(branch) if branch else None
+        label = branch or str(wt_path)
+        detached = bool(cand.get("detached"))
+        locked = bool(cand.get("locked"))
+
+        if cwd is not None:
+            try:
+                cwd.relative_to(wt_path.resolve())
+                msg = f"{label}: preserved (cannot remove the worktree you are currently inside)"
+                print(msg)
+                preserved.append(label)
+                if explicit:
+                    failed.append(label)
+                continue
+            except ValueError:
+                pass
+            except OSError:
+                pass
+
+        if locked:
+            msg = f"{label}: preserved (worktree is locked; unlock first)"
+            print(msg)
+            preserved.append(label)
+            if explicit:
+                failed.append(label)
+            continue
+
+        merged = is_branch_merged(branch, repo_root)
+        dirty, _ = is_worktree_dirty(wt_path)
+        state = f"{'merged' if merged else 'unmerged'},{'dirty' if dirty else 'clean'}"
+        if detached and not branch:
+            state += ",detached"
+
+        allowed = (merged or include_unmerged) and (not dirty or force)
+        if not allowed:
+            reasons = []
+            if not merged and not include_unmerged:
+                reasons.append("unmerged (add --include-unmerged)")
+            if dirty and not force:
+                reasons.append("dirty (add --force)")
+            print(f"{label}: preserved ({state}; {'; '.join(reasons)})")
+            preserved.append(label)
+            if explicit:
+                failed.append(label)
+            continue
+
+        if dry_run:
+            print(f"{label}: would remove ({state})")
+            continue
+
+        print(f"Removing worktree at '{wt_path}'... ({state})")
+        rc = remove_worktree_dir(repo_root, wt_path)
+        if rc == 0:
+            print(f"{label}: removed ({state}); branch preserved")
+            removed.append(label)
+        else:
+            sys.stderr.write(f"Error: Failed to remove worktree at '{wt_path}'.\n")
+            failed.append(label)
+
+    if not dry_run:
+        subprocess.run(["git", "worktree", "prune"], cwd=repo_root, check=False)
+        sweep_empty_worktrees_dir(repo_root)
+
+    print("")
+    if dry_run:
+        print("Dry run: no worktrees removed.")
+    else:
+        print(f"Removed {len(removed)} worktree(s).", end="")
+        if removed:
+            print(f" [{', '.join(removed)}]", end="")
+        print()
+        if preserved and not explicit:
+            print(f"Preserved {len(preserved)} worktree(s): [{', '.join(preserved)}]")
+        if removed:
+            print("Note: Local branches were preserved. Delete merged ones with:")
+            print("  git branch -d <branch-name>")
+
+    if failed:
+        return 1
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -446,6 +746,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif subcmd in ("remove", "rm"):
         repo_root = get_repo_root()
         return cmd_remove(rest, repo_root)
+    elif subcmd in ("cleanup", "clean"):
+        repo_root = get_repo_root()
+        return cmd_cleanup(rest, repo_root)
     else:
         sys.stderr.write(f"Error: Unknown command '{subcmd}'.\n")
         print_usage(sys.stderr)
