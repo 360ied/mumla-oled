@@ -162,6 +162,8 @@ Or run directly without entering the interactive shell:
 nix develop --command ./gradlew assembleFossRelease
 ```
 
+Release builds (`assemble`, `bundle`, `package` or `install` for a release variant, including a plain `./gradlew build`) fail unless a local, uncommitted `app/signing.gradle` defines `signingConfigs.release`. Debug builds are unaffected.
+
 Release APK output will be located at:
 `app/build/outputs/apk/foss/release/mumla-foss-release.apk`
 
