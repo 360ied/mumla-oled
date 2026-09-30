@@ -17,8 +17,8 @@
 
 ROOT := $(call my-dir)
 
-COMMON_CFLAGS := -ffunction-sections -fdata-sections -fvisibility=hidden
-COMMON_LDFLAGS := -Wl,-z,max-page-size=16384 -Wl,--gc-sections -Wl,--exclude-libs,ALL
+COMMON_CFLAGS := -ffunction-sections -fdata-sections -fvisibility=hidden -fstack-protector-strong -D_FORTIFY_SOURCE=2
+COMMON_LDFLAGS := -Wl,-z,max-page-size=16384 -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,-z,relro,-z,now
 
 # Opus Voice Codec (linked into humlaaudio; see below).
 # The opus submodule is pinned to upstream v1.6.1

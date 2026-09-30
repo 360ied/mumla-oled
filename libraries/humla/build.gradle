@@ -53,7 +53,7 @@ android {
     namespace = 'se.lublin.humla'
 
     compileSdk = 36
-    ndkVersion = '25.1.8937393' // Must match ndkVersion in flake.nix
+    ndkVersion = '27.2.12479018' // Must match ndkVersion in flake.nix
     //buildToolsVersion '29.0.3'
 
     compileOptions {
