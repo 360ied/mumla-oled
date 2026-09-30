@@ -18,6 +18,7 @@
 package se.lublin.mumla;
 
 import android.content.SharedPreferences;
+import android.view.KeyEvent;
 
 import junit.framework.TestCase;
 
@@ -188,14 +189,15 @@ public class SettingsPushKeyTest extends TestCase {
     public void testGetPushToTalkKey_BoundKeyRoundTrip() {
         FakeSharedPreferences prefs = new FakeSharedPreferences();
         Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, 57 /* arbitrary valid keycode */).commit();
-        assertEquals(57, settings.getPushToTalkKey());
+        prefs.edit().putInt(Settings.PREF_PUSH_KEY, KeyEvent.KEYCODE_VOLUME_UP).commit();
+        assertEquals(KeyEvent.KEYCODE_VOLUME_UP, settings.getPushToTalkKey());
     }
 
     public void testGetPushToTalkKey_LegacyZeroReset_StaysStored() {
         // A client version before ODD-07 may have persisted 0 via the old Reset
-        // path. The stored value is preserved (no migration), but the
-        // activity-side guard (pttKey > 0) treats it as unbound.
+        // path. The stored value is preserved (no migration), but
+        // Settings.isPttKeyBound treats it as unbound, and the dialog
+        // normalizes it to -1 on load so storage converges on next edit.
         FakeSharedPreferences prefs = new FakeSharedPreferences();
         Settings settings = Settings.createForTesting(prefs);
         prefs.edit().putInt(Settings.PREF_PUSH_KEY, 0).commit();
@@ -222,10 +224,16 @@ public class SettingsPushKeyTest extends TestCase {
                     Settings.isPttKeyBound(pttKey, keyCode));
         }
 
-        // A real key must still match.
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, 57).commit();
+        // A real key must still match, and only its exact code.
+        prefs.edit().putInt(Settings.PREF_PUSH_KEY, KeyEvent.KEYCODE_VOLUME_UP).commit();
         int pttKey = settings.getPushToTalkKey();
-        assertTrue(Settings.isPttKeyBound(pttKey, 57));
-        assertFalse(Settings.isPttKeyBound(pttKey, 58));
+        assertTrue(Settings.isPttKeyBound(pttKey, KeyEvent.KEYCODE_VOLUME_UP));
+        assertFalse(Settings.isPttKeyBound(pttKey, KeyEvent.KEYCODE_VOLUME_DOWN));
+        assertFalse("Unrelated stored key must not match sentinel press",
+                Settings.isPttKeyBound(pttKey, Settings.DEFAULT_PUSH_KEY));
+        assertFalse("Sentinel store must not match unknown press",
+                Settings.isPttKeyBound(Settings.DEFAULT_PUSH_KEY, 0));
+        assertFalse("Legacy zero store must not match real key press",
+                Settings.isPttKeyBound(0, KeyEvent.KEYCODE_VOLUME_UP));
     }
 }

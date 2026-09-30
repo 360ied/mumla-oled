@@ -56,8 +56,11 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
 
         mValueView = view.findViewById(R.id.key_select_value_view);
         KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
-        mCurrentValue = requireNonNull(preference.getSharedPreferences())
+        int stored = requireNonNull(preference.getSharedPreferences())
                 .getInt(preference.getKey(), Settings.DEFAULT_PUSH_KEY);
+        // Normalize the legacy pre-ODD-07 reset value (0) to the -1 sentinel on
+        // load, so pressing OK re-persists -1 and storage converges (round-2 D4).
+        mCurrentValue = stored <= KeyEvent.KEYCODE_UNKNOWN ? Settings.DEFAULT_PUSH_KEY : stored;
         updateValueView();
     }
 
