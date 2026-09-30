@@ -10,7 +10,8 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
-7. [Verification & Test Strategy](#verification--test-strategy)
+7. [Phase 7: Phase-4 Integration Review Residuals (P3)](#phase-7-phase-4-integration-review-residuals-p3)
+8. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
 
@@ -497,6 +498,46 @@ Add the two translations on the next strings pass.
 
 ---
 
+## Phase 7: Phase-4 Integration Review Residuals (P3)
+
+Pedantic items left over from the `phase4-integration` review after all defects were fixed. None change behavior; details are in ODD-17 through ODD-20 in the [README](README.md).
+
+### 7.1 Native and TLS Hygiene (ODD-17)
+
+**Status**: Open
+
+**Solution**:
+Name the crypt-header constant, move the overflow guard next to the other argument checks, relocate `filterTlsProtocols`, and add a `createSocket` test through an injectable socket factory.
+
+---
+
+### 7.2 Certificate Import/Export Hygiene (ODD-18)
+
+**Status**: Open
+
+**Solution**:
+Make `mPendingCertBytes` a local, give password zeroing a single owner, switch remaining `printStackTrace` calls to `Log`, document the trust-store password constant, move the certificate read off the main thread, and modernize the sanitizer test.
+
+---
+
+### 7.3 Server Edit Dialog, Strings and TALK Receiver Polish (ODD-19)
+
+**Status**: Open
+
+**Solution**:
+Style and make the URL-password warning accessible, add fr/zh translations, document or remove the redundant overload parameter, harden `TalkBroadcastReceiver` (ignore unknown actions/status, honor transmit mode), and get an explicit decision on the default-on TALK broadcast.
+
+---
+
+### 7.4 Settings, Manifest and Build Script Hygiene (ODD-20)
+
+**Status**: Open
+
+**Solution**:
+Use primitive `boolean` defaults, align naming, factor the shared signing condition in `app/build.gradle`, tidy string placement/naming, restore the `READ_EXTERNAL_STORAGE` comment, and decide on `allowBackup` exclusions.
+
+---
+
 ## Verification & Test Strategy
 
 To ensure zero regressions across all phases, each change must be accompanied by targeted unit and integration tests:
@@ -516,3 +557,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 6** | **ODD-14** | Lint check (`Deprecated` warning) confirming no `onAttach(Activity)` override remains. | Open comment dialogs; verify provider binding works. |
 | **Phase 6** | **ODD-15** | Gradle build and resource compilation check (`assembleFossDebug`). | Open and dismiss comment dialogs repeatedly; inspect heap for retained view hierarchies. |
 | **Phase 6** | **ODD-16** | Lint `MissingTranslation` check on `comment_open_link`. | Switch to French/Chinese locales; open a comment link chooser and verify the title is translated. |
+| **Phase 7** | **ODD-17** | JVM test of `createSocket` fail-closed behavior via an injectable socket factory; native crypt test for the length guard. | None. |
+| **Phase 7** | **ODD-18** | Existing certificate import/export unit tests continue to pass. | Import a password-protected PKCS#12 with a wrong then right password; rotate mid-dialog; export and re-import. |
+| **Phase 7** | **ODD-19** | Lint `MissingTranslation` for the new strings; receiver unit test for unknown action/status. | Open a `mumble://` link with an embedded password in a right-to-left, large-font, landscape configuration. |
+| **Phase 7** | **ODD-20** | Gradle configuration check (`assembleFossDebug`) and lint. | None. |
