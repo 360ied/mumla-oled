@@ -195,25 +195,24 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 
 ---
 
-## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH
+## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — COMPLETED & RELEASED (0.21.19)
 
 > [!NOTE]
-> **Status: RESOLVED on branch `bugfix/oddities-phase3-remediation` (pending review/merge)**
+> **Status: COMPLETED & RELEASED (0.21.19)**
 >
-> All Phase 3 items have been implemented and verified in the branch `bugfix/oddities-phase3-remediation` (commits `2e999f0c`, `cb11911d`, `bda21ffc`; review-hardening in `8d8dd97d`). ODD-06: explicit Cancel/back-dismissal handling on the first-run certificate dialog so `first_run` is always cleared and the startup action always runs. ODD-07: no-PTT-key sentinel unified on `Settings.DEFAULT_PUSH_KEY` (`-1`) with a `pttKey > 0` activation guard in `MumlaActivity`, covered by `SettingsPushKeyTest`. ODD-05: `MumlaHotCorner.refreshGestureExclusion()` invoked from `MumlaService.onConfigurationChanged()`.
+> All Phase 3 items were implemented on branch `bugfix/oddities-phase3-remediation`, merged into `master` via commit `dd6becad`, and released in pre-release `0.21.19`. ODD-06: all first-run certificate dialog dismissal paths converge on a lifecycle-guarded dismiss listener in a dedicated dialog field, so `first_run` is always cleared and the startup action runs on a live instance. ODD-07: no-PTT-key sentinel unified on `Settings.DEFAULT_PUSH_KEY` (`-1`) behind `Settings.isPttKeyBound`, with key-capture rejection of unknown keys and legacy-`0` normalization on dialog load, covered by `SettingsPushKeyTest`. ODD-05: `MumlaHotCorner.refreshGestureExclusionDeferred()` invoked from `MumlaService.onConfigurationChanged()` (posted past the rotation layout) and after re-show.
 >
-> **Accepted trade-offs** (pedantic review of the branch):
+> **Accepted trade-offs** (pedantic review of the branch, updated for the round-2 follow-ups):
 >
-> - **Backgrounded/trust-flow dismissal leaves `first_run` pending.** The first-run prompt is tracked in `mCertDialog`, so `onPause()` (backgrounding) and the trust/certificate-mismatch dialogs can dismiss it via `dismissCertDialog()` without firing the cancel listener. Neither `setFirstRun(false)` nor the startup action runs in that moment; because the prompt only shows on a fresh launch (`savedInstanceState == null`), it simply reappears on the next cold launch. Accepted as the more predictable outcome versus the previous behavior, where the prompt also skipped the startup action and re-showed indefinitely.
-> - **Dead defensive null check.** `MumlaHotCorner.refreshGestureExclusion()` includes an unreachable `mView == null` guard (`mView` is assigned in the constructor and never nulled); retained deliberately as defense-in-depth.
-> - **Guard test is a tripwire.** `SettingsPushKeyTest.testPttGuardSemantics_AgainstLegacyZeroAndUnknown` re-implements the `pttKey > 0 && keyCode == pttKey` expression rather than exercising `MumlaActivity` directly (the project's JVM-only test setup lacks Robolectric); a regression deleting the activity-side guard would still pass this test. A lint or Robolectric-based contract test remains a follow-up.
-> - **Plan snippets are a historical record.** The Solution snippets below reflect the proposals at planning time and drift slightly from the shipped implementation (e.g. the shipped `updateValueView` uses the equivalent `mCurrentValue <= 0` form; the shipped dialog is tracked in `mCertDialog`).
+> - **Backgrounded/rotating dismissal skips the startup action.** The dismiss listener still clears `first_run` on every path, but skips the startup action when the instance is finishing, destroyed, or rotating; a rotated instance therefore shows no news dialog (same as the pre-branch behavior, minus the crash and the re-prompt loop).
+> - **Guard test covers the helper, not the call sites.** `SettingsPushKeyTest` now exercises the production `Settings.isPttKeyBound` helper rather than duplicating its expression, but nothing verifies that `MumlaActivity` keeps calling it (the project's JVM-only test setup lacks Robolectric).
+> - **Plan snippets are a historical record.** The Solution snippets below reflect the proposals at planning time and drift slightly from the shipped implementation (e.g. the shipped refresh is the deferred post-layout variant; the shipped guide lives in a dedicated dialog field).
 
 Phase 3 resolves UX annoyances, preference state divergence, and overlay rotation inconsistencies.
 
 ### 3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06) — RESOLVED
 
-**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `2e999f0c`.
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase3-remediation`, commit `2e999f0c`, follow-ups through `16d9b625`; merge commit `dd6becad`), released in `0.21.19`.
 
 **Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L610-L652)
 
@@ -267,7 +266,7 @@ private void showFirstRunGuide() {
 
 ### 3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07) — RESOLVED
 
-**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `cb11911d`.
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase3-remediation`, commit `cb11911d`, follow-ups through `af2a5ad2` and `16d9b625`; merge commit `dd6becad`), released in `0.21.19`.
 
 **Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L577-L593)
 
@@ -321,7 +320,7 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
 
 ### 3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05) — RESOLVED
 
-**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `bda21ffc`.
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase3-remediation`, commit `bda21ffc`, follow-ups through `91b92e67` and `c42b7244`; merge commit `dd6becad`), released in `0.21.19`.
 
 **Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652-L660), [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
 
