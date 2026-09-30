@@ -80,10 +80,8 @@ public class Server implements Parcelable {
         readFromParcel(in);
     }
 
-    // M9 (bounded per phase-4 C5): the server password stays a String in the parcel and
-    // the certificate password stays a String extra to the same-UID service. Parcel contents
-    // remain visible to system_server/root; no Parcelable/extra shape change here. The import
-    // path keeps char[] through KeyStore.load so no additional copies are made at this handoff.
+    // The server password is written to the parcel as a String. Parcel contents remain
+    // visible to system_server/root, so this is not a confidentiality boundary.
     @Override
     public void writeToParcel(Parcel parcel, int i) {
         parcel.writeLong(mId);

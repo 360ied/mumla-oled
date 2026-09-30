@@ -17,45 +17,66 @@
 
 package se.lublin.humla.net;
 
-import junit.framework.TestCase;
+import org.junit.Test;
 
-import java.util.Arrays;
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
 
 /**
- * Tests for the Phase 4 M1 TLS protocol floor helper.
+ * Tests for the TLS protocol floor helper.
  * Pure array in/out, no sockets, no Android APIs.
  */
-public class HumlaSSLSocketFactoryTest extends TestCase {
+public class HumlaSSLSocketFactoryTest {
 
-    public void testModernRuntimeKeeps12And13() {
+    @Test
+    public void modernRuntimeKeeps12And13() {
         String[] supported = {"TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"};
-        assertTrue(Arrays.equals(
-                new String[]{"TLSv1.2", "TLSv1.3"},
-                HumlaSSLSocketFactory.filterTlsProtocols(supported)));
+        assertArrayEquals(new String[]{"TLSv1.2", "TLSv1.3"},
+                HumlaSSLSocketFactory.filterTlsProtocols(supported));
     }
 
-    public void testPre29RuntimeKeeps12() {
+    @Test
+    public void pre29RuntimeKeeps12() {
         String[] supported = {"TLSv1", "TLSv1.1", "TLSv1.2"};
-        assertTrue(Arrays.equals(
-                new String[]{"TLSv1.2"},
-                HumlaSSLSocketFactory.filterTlsProtocols(supported)));
+        assertArrayEquals(new String[]{"TLSv1.2"},
+                HumlaSSLSocketFactory.filterTlsProtocols(supported));
     }
 
-    public void testLegacyOnlyYieldsEmpty() {
-        String[] supported = {"TLSv1", "TLSv1.1"};
+    @Test
+    public void onlyTls13Supported() {
+        assertArrayEquals(new String[]{"TLSv1.3"},
+                HumlaSSLSocketFactory.filterTlsProtocols(new String[]{"TLSv1.3"}));
+    }
+
+    @Test
+    public void legacyOnlyYieldsEmpty() {
+        String[] supported = {"SSLv3", "TLSv1", "TLSv1.1"};
         assertEquals(0, HumlaSSLSocketFactory.filterTlsProtocols(supported).length);
     }
 
-    public void testNullAndEmptyYieldEmpty() {
+    @Test
+    public void nullAndEmptyYieldEmpty() {
         assertEquals(0, HumlaSSLSocketFactory.filterTlsProtocols(null).length);
         assertEquals(0, HumlaSSLSocketFactory.filterTlsProtocols(new String[0]).length);
     }
 
-    public void testResultFollowsPreferredOrder() {
+    @Test
+    public void duplicateSupportedEntriesAreNotRepeated() {
+        String[] supported = {"TLSv1.2", "TLSv1.2", "TLSv1.3", "TLSv1.3"};
+        assertArrayEquals(new String[]{"TLSv1.2", "TLSv1.3"},
+                HumlaSSLSocketFactory.filterTlsProtocols(supported));
+    }
+
+    @Test
+    public void resultFollowsAllowListOrder() {
         // Supported order must not leak through; output is deterministic.
         String[] supported = {"TLSv1.3", "TLSv1.2", "TLSv1.1"};
-        assertTrue(Arrays.equals(
-                new String[]{"TLSv1.2", "TLSv1.3"},
-                HumlaSSLSocketFactory.filterTlsProtocols(supported)));
+        assertArrayEquals(new String[]{"TLSv1.2", "TLSv1.3"},
+                HumlaSSLSocketFactory.filterTlsProtocols(supported));
+    }
+
+    @Test
+    public void matchingIsCaseSensitive() {
+        assertEquals(0, HumlaSSLSocketFactory.filterTlsProtocols(new String[]{"tlsv1.2"}).length);
     }
 }

@@ -211,16 +211,27 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
     };
 
+    /**
+     * Stops the service for a start request that was ignored, unless a
+     * connection attempt or established connection is in progress.
+     */
+    private void stopSelfIfIdle(int startId) {
+        if (mConnectionState == ConnectionState.DISCONNECTED) {
+            stopSelf(startId);
+        }
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
             boolean isConnect = ACTION_CONNECT.equals(intent.getAction());
             Bundle extras = intent.getExtras();
             if (isConnect && (extras == null || !extras.containsKey(EXTRAS_SERVER))) {
-                // Malformed CONNECT: log and ignore. Never throw from exported
+                // Malformed CONNECT: log and ignore. Never throw from
                 // onStartCommand (crash primitive) and never proceed to
                 // configureExtras/connect() on the malformed intent.
                 Log.w(TAG, ACTION_CONNECT + " requires a server provided in extras; ignoring.");
+                stopSelfIfIdle(startId);
                 return START_NOT_STICKY;
             }
             if (isConnect && mConnectionState == ConnectionState.CONNECTING) {
@@ -235,7 +246,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 try {
                     configureExtras(extras);
                 } catch (AudioException e) {
-                    throw new RuntimeException("Attempted to initialize audio in onStartCommand erroneously.");
+                    Log.e(TAG, "Attempted to initialize audio in onStartCommand erroneously.", e);
+                    stopSelfIfIdle(startId);
+                    return START_NOT_STICKY;
+                } catch (IllegalArgumentException e) {
+                    Log.w(TAG, "Ignoring invalid service extras.", e);
+                    stopSelfIfIdle(startId);
+                    return START_NOT_STICKY;
                 }
             }
 
@@ -617,14 +634,18 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     /**
      * Validates a trust-store path for {@link #configureExtras}. The null
      * (system store) common case always passes. Non-null paths must
-     * canonical-resolve under the app files directory, must not contain
-     * '..', and must end in '.bks'.
+     * canonical-resolve under the app files directory and must end in
+     * '.bks'. Canonicalisation resolves any '..' segments, so a separate
+     * substring check is unnecessary.
+     *
+     * @param path Trust-store path, or null for the system store.
+     * @return true if the path may be applied.
      */
     private boolean isTrustStorePathAllowed(String path) {
         if (path == null) {
             return true;
         }
-        if (path.contains("..") || !path.endsWith(".bks")) {
+        if (!path.endsWith(".bks")) {
             return false;
         }
         try {
@@ -727,17 +748,27 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             if (isTrustStorePathAllowed(trustStore)) {
                 mTrustStore = trustStore;
                 reconnectNeeded = true;
+                // Password and format describe the store at this path, so
+                // they are only applied together with an accepted path.
+                if (extras.containsKey(EXTRAS_TRUST_STORE_PASSWORD)) {
+                    mTrustStorePassword = extras.getString(EXTRAS_TRUST_STORE_PASSWORD);
+                }
+                if (extras.containsKey(EXTRAS_TRUST_STORE_FORMAT)) {
+                    mTrustStoreFormat = extras.getString(EXTRAS_TRUST_STORE_FORMAT);
+                }
             } else {
-                Log.w(TAG, "Rejected trust store path outside app files directory; keeping previous value.");
+                Log.w(TAG, "Rejected trust store path (must be a .bks file under the app files directory); "
+                        + "keeping previous trust store settings.");
             }
-        }
-        if (extras.containsKey(EXTRAS_TRUST_STORE_PASSWORD)) {
-            mTrustStorePassword = extras.getString(EXTRAS_TRUST_STORE_PASSWORD);
-            reconnectNeeded = true;
-        }
-        if (extras.containsKey(EXTRAS_TRUST_STORE_FORMAT)) {
-            mTrustStoreFormat = extras.getString(EXTRAS_TRUST_STORE_FORMAT);
-            reconnectNeeded = true;
+        } else {
+            if (extras.containsKey(EXTRAS_TRUST_STORE_PASSWORD)) {
+                mTrustStorePassword = extras.getString(EXTRAS_TRUST_STORE_PASSWORD);
+                reconnectNeeded = true;
+            }
+            if (extras.containsKey(EXTRAS_TRUST_STORE_FORMAT)) {
+                mTrustStoreFormat = extras.getString(EXTRAS_TRUST_STORE_FORMAT);
+                reconnectNeeded = true;
+            }
         }
         if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {
             mHalfDuplex = extras.getBoolean(EXTRAS_HALF_DUPLEX);
