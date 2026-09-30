@@ -21,6 +21,8 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.EditText;
@@ -165,7 +167,26 @@ public class ServerEditFragment extends DialogFragment {
         // Warn (without blocking) when this dialog was opened from a deep link whose URL
         // embedded a password. Never shown for manually added/edited servers.
         TextView urlPasswordWarning = view.findViewById(R.id.server_edit_url_password_warning);
-        urlPasswordWarning.setVisibility(hasUrlPassword() ? View.VISIBLE : View.GONE);
+        if (hasUrlPassword() && oldServer != null) {
+            // The warning only applies while the field still holds the link's password.
+            final String urlPassword = oldServer.getPassword();
+            urlPasswordWarning.setVisibility(View.VISIBLE);
+            mPasswordEdit.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+                @Override
+                public void afterTextChanged(Editable s) {
+                    urlPasswordWarning.setVisibility(
+                            s.toString().equals(urlPassword) ? View.VISIBLE : View.GONE);
+                }
+            });
+        } else {
+            urlPasswordWarning.setVisibility(View.GONE);
+        }
 
         return new MaterialAlertDialogBuilder(requireActivity())
                 .setPositiveButton(actionName, null)
