@@ -210,7 +210,8 @@ version pin, no call-site migration in this phase.
   `allowTalkBroadcast` (`PREF_ALLOW_TALK_BROADCAST`, default `true`),
   accessor `isTalkBroadcastAllowed()`, strings
   `pref_talk_broadcast_title` / `pref_talk_broadcast_summary`
-  (English-only). Slice D warning string:
+  (English-only; landed in `preference.xml` rather than `strings.xml` —
+  same `@string` namespace, equivalent). Slice D warning string:
   `server_edit_url_password_warning`. No other slice adds user-visible
   strings.
 
