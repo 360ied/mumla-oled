@@ -353,7 +353,9 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
            mChannelOverlay.updatePosition();
        }
        if (mHotCorner != null && mHotCorner.isShown()) {
-           mHotCorner.refreshGestureExclusion();
+           // Deferred past the rotation relayout so getWidth/getHeight reflect
+           // the post-rotation size instead of silently no-opping (ODD-05).
+           mHotCorner.refreshGestureExclusionDeferred();
        }
    }
    ```

@@ -51,16 +51,16 @@ public class MumlaHotCorner implements View.OnTouchListener {
     private final WindowManager.LayoutParams mParams;
 
     public MumlaHotCorner(Context context, int gravity, MumlaHotCornerListener listener) {
-        if (listener == null) {
-            throw new IllegalArgumentException("A MumlaHotCornerListener must be assigned.");
-        }
         if (context == null) {
             throw new IllegalArgumentException("Context must not be null.");
         }
-        LayoutInflater inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+        if (listener == null) {
+            throw new IllegalArgumentException("A MumlaHotCornerListener must be assigned.");
+        }
+        LayoutInflater inflater = LayoutInflater.from(context);
         WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-        if (inflater == null || windowManager == null) {
-            throw new IllegalStateException("Required system services unavailable.");
+        if (windowManager == null) {
+            throw new IllegalStateException("WindowManager unavailable.");
         }
         mWindowManager = windowManager;
         mContext = context;
@@ -167,17 +167,22 @@ public class MumlaHotCorner implements View.OnTouchListener {
                     showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     try {
                         mContext.startActivity(showSetting);
+                        Toast.makeText(mContext, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
                     } catch (Exception e) {
-                        // OEM builds without the overlay-permission activity.
+                        // OEM builds without the overlay-permission activity: no
+                        // settings screen exists, so no grant toast either.
                         Log.e(TAG, "Failed to open overlay permission settings", e);
                     }
-                    Toast.makeText(mContext, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
                     return;
                 }
             }
             try {
                 mWindowManager.addView(mView, mParams);
                 mShown = true;
+                // A re-shown view lands on a fresh ViewRoot with empty exclusion
+                // rects while the size-gated listener still holds stale mLast
+                // dimensions and skips; reapply past the pending layout (D1).
+                refreshGestureExclusionDeferred();
             } catch (Exception e) {
                 Log.e(TAG, "exception adding hot corner view", e);
                 mShown = false;
@@ -185,7 +190,8 @@ public class MumlaHotCorner implements View.OnTouchListener {
         } else {
             try {
                 mWindowManager.removeView(mView);
-            } catch (IllegalArgumentException e) {
+            } catch (RuntimeException e) {
+                // removeView can throw past IAE when the host is dying.
                 Log.d(TAG, "exception removing hot corner view", e);
             }
             mShown = false;
@@ -197,12 +203,11 @@ public class MumlaHotCorner implements View.OnTouchListener {
      * dimension change. Android 10+ (Q+) invalidates exclusion rects on display
      * rotation, and because the hot corner view has a fixed size, the size-gated
      * layout listener alone would skip the reapplication after rotation (ODD-05).
-     * Does nothing on API < Q, when the hot corner is not shown, when the view
-     * is null (defense in depth: never null after construction), or when the
-     * view has no size yet.
+     * Does nothing on API < Q, when the hot corner is not shown, or when the
+     * view has no size yet. The view is never null after construction.
      */
     public void refreshGestureExclusion() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown || mView == null) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown) {
             return;
         }
         int width = mView.getWidth();
@@ -219,7 +224,15 @@ public class MumlaHotCorner implements View.OnTouchListener {
      * view has its post-rotation size (ODD-05).
      */
     public void refreshGestureExclusionDeferred() {
-        mView.post(this::refreshGestureExclusion);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown) {
+            return;
+        }
+        if (!mView.post(this::refreshGestureExclusion)) {
+            // View detached (rotation/disconnect race): the posted runnable will
+            // never run, so try immediately; a stale-size reapply still beats a
+            // silently cleared exclusion.
+            refreshGestureExclusion();
+        }
     }
 
     public boolean isShown() {
