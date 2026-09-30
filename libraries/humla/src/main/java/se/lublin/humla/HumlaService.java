@@ -37,6 +37,8 @@ import android.util.Log;
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties;
 import org.minidns.hla.ResolverApi;
 
+import java.io.File;
+import java.io.IOException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
@@ -215,8 +217,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             boolean isConnect = ACTION_CONNECT.equals(intent.getAction());
             Bundle extras = intent.getExtras();
             if (isConnect && (extras == null || !extras.containsKey(EXTRAS_SERVER))) {
-                // Ensure that we have been provided all required attributes.
-                throw new RuntimeException(ACTION_CONNECT + " requires a server provided in extras.");
+                // Malformed CONNECT: log and ignore. Never throw from exported
+                // onStartCommand (crash primitive) and never proceed to
+                // configureExtras/connect() on the malformed intent.
+                Log.w(TAG, ACTION_CONNECT + " requires a server provided in extras; ignoring.");
+                return START_NOT_STICKY;
             }
             if (isConnect && mConnectionState == ConnectionState.CONNECTING) {
                 // Ignore duplicate connect requests while a connection attempt is already
@@ -610,6 +615,32 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Validates a trust-store path for {@link #configureExtras}. The null
+     * (system store) common case always passes. Non-null paths must
+     * canonical-resolve under the app files directory, must not contain
+     * '..', and must end in '.bks'.
+     */
+    private boolean isTrustStorePathAllowed(String path) {
+        if (path == null) {
+            return true;
+        }
+        if (path.contains("..") || !path.endsWith(".bks")) {
+            return false;
+        }
+        try {
+            File filesDir = getFilesDir();
+            if (filesDir == null) {
+                return false;
+            }
+            String base = filesDir.getCanonicalFile().getPath();
+            String candidate = new File(path).getCanonicalFile().getPath();
+            return candidate.startsWith(base + File.separator);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
      * Loads all defined settings from the given bundle into the HumlaService.
      * Some settings may only take effect after a reconnect.
      * @param extras A bundle with settings.
@@ -692,8 +723,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
         }
         if (extras.containsKey(EXTRAS_TRUST_STORE)) {
-            mTrustStore = extras.getString(EXTRAS_TRUST_STORE);
-            reconnectNeeded = true;
+            String trustStore = extras.getString(EXTRAS_TRUST_STORE);
+            if (isTrustStorePathAllowed(trustStore)) {
+                mTrustStore = trustStore;
+                reconnectNeeded = true;
+            } else {
+                Log.w(TAG, "Rejected trust store path outside app files directory; keeping previous value.");
+            }
         }
         if (extras.containsKey(EXTRAS_TRUST_STORE_PASSWORD)) {
             mTrustStorePassword = extras.getString(EXTRAS_TRUST_STORE_PASSWORD);

@@ -84,6 +84,9 @@ public class Settings {
     public static final String PREF_CHAT_NOTIFY = "chatNotify";
     public static final Boolean DEFAULT_CHAT_NOTIFY = true;
 
+    public static final String PREF_ALLOW_TALK_BROADCAST = "allowTalkBroadcast";
+    public static final Boolean DEFAULT_ALLOW_TALK_BROADCAST = true;
+
     public static final String PREF_NOTIFICATION_STYLE = "notification_style";
     public static final String NOTIFICATION_STYLE_BIGTEXT = "bigtext";
     public static final String NOTIFICATION_STYLE_MEDIA = "media";
@@ -318,6 +321,10 @@ public class Settings {
 
     public boolean isChatNotifyEnabled() {
         return preferences.getBoolean(PREF_CHAT_NOTIFY, DEFAULT_CHAT_NOTIFY);
+    }
+
+    public boolean isTalkBroadcastAllowed() {
+        return preferences.getBoolean(PREF_ALLOW_TALK_BROADCAST, DEFAULT_ALLOW_TALK_BROADCAST);
     }
 
     public String getNotificationStyle() {

@@ -56,7 +56,7 @@
 
         <service
             android:name=".service.MumlaService"
-            android:exported="true"
+            android:exported="false"
             android:enabled="true"
             android:foregroundServiceType="microphone" />
 
