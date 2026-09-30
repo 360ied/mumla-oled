@@ -575,7 +575,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (mService != null && mSettings.getPushToTalkKey() > 0 && keyCode == mSettings.getPushToTalkKey()) {
+        int pttKey = mSettings.getPushToTalkKey();
+        if (mService != null && pttKey > 0 && keyCode == pttKey) {
             mService.onTalkKeyDown();
             return true;
         }
@@ -584,7 +585,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (mService != null && mSettings.getPushToTalkKey() > 0 && keyCode == mSettings.getPushToTalkKey()) {
+        int pttKey = mSettings.getPushToTalkKey();
+        if (mService != null && pttKey > 0 && keyCode == pttKey) {
             mService.onTalkKeyUp();
             return true;
         }
@@ -622,7 +624,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         protected void onPostExecute(DatabaseCertificate result) {
                             super.onPostExecute(result);
                             if (result != null) mSettings.setDefaultCertificateId(result.getId());
-                            new StartupAction().execute(MumlaActivity.this);
+                            // The news dialog shows from this activity's window token; skip
+                            // it if the activity died while generation was in flight.
+                            if (!isFinishing() && !isDestroyed()) {
+                                new StartupAction().execute(MumlaActivity.this);
+                            }
                         }
                     };
                     generateTask.execute();

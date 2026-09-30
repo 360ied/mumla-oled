@@ -192,7 +192,7 @@ public class SettingsPushKeyTest extends TestCase {
         assertEquals("Legacy stored 0 must read back as stored", 0, settings.getPushToTalkKey());
     }
 
-    public void testSetPushToTalkKeyPersists() {
+    public void testResetSentinelRoundTrip() {
         FakeSharedPreferences prefs = new FakeSharedPreferences();
         Settings settings = Settings.createForTesting(prefs);
         prefs.edit().putInt(Settings.PREF_PUSH_KEY, Settings.DEFAULT_PUSH_KEY).commit();
