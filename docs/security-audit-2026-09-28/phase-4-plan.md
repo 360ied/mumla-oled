@@ -1,9 +1,10 @@
-# Phase 4 implementation plan — local IPC + hygiene (H3–H5, H9, M1, M8, M9, M13, M14, M16, L2, L4, L6, I2)
+# Phase 4 implementation plan — local IPC + hygiene (H3–H5, H9, M1, M8, M9, M16, L2, L4, L6, I2)
 
 Companion to [remediation-plan.md](remediation-plan.md) Phase 4 and
-[findings.md](findings.md) (H3–H5, H9, M1, M8, M9, M13, M14, M16, L2,
-L4, L6, I2). M10 (lockscreen visibility) is decided won't-fix, see C6.
-Incorporates a pre-implementation review of the tree: ten
+[findings.md](findings.md) (H3–H5, H9, M1, M8, M9, M16, L2, L4, L6,
+I2). M10 (lockscreen visibility) is decided won't-fix, see C6; M13
+(jsoup) and M14 (MiniDNS) deferred to routine dep bumps, see C11.
+Incorporates a pre-implementation review of the tree: eleven
 corrections to the remediation plan as written, prerequisites to close
 before coding, then the work split (four parallel worktrees).
 Implementation itself MUST happen in dedicated worktrees
@@ -20,7 +21,7 @@ slice C). I1 needs no action (wire compat).
 
 ## 0. User-visible changes (UX contract — read first)
 
-No new dialogs except one export confirmation. Behavior changes:
+No new dialogs. Behavior changes:
 
 - Third-party apps can no longer start or drive `MumlaService` /
   `HumlaService` (mute/deafen/disconnect/connect). All internal
@@ -28,8 +29,8 @@ No new dialogs except one export confirmation. Behavior changes:
   Tasker/Automate `TALK` broadcasts keep working while a new settings
   toggle (default on) allows disabling them.
 - Cert export becomes SAF-only: the pre-R `/sdcard/Mumla` classic path
-  is deleted. A confirmation dialog with an explicit warning precedes
-  the picker, and the suggested filename is sanitized.
+  is deleted. No extra confirmation dialog — the export tap plus the
+  SAF picker is consent; the suggested filename is sanitized.
 - `mumble://` links keep the existing edit-before-connect dialog; URLs
   embedding a password gain an inline warning line (host stays
   visible/editable as today).
@@ -163,19 +164,26 @@ only when the parsed URL carried a password; do not block or strip
 - I2 (`FLAG_SECURE` nowhere): non-goal — screenshots are the device
   owner's own action; no credential-window flag in this phase.
 
+### C11 — M13/M14 deferred to routine dep bumps, not this security plan
+
+Neither has a demonstrated vuln: M13 is `parseBodyFragment`+`text()`
+only with no HTML sink at the call site
+(`MumlaService.java:386-388`, `NotificationSanitizer.java:68`); M14 is
+staleness only ("no vuln demonstrated"). The 0.3.4→1.x MiniDNS jump is
+the riskiest migration in Phase 4 (`ResolverApi`/`SrvResolverResult`/
+`SrvUtil` at `Server.java:226-242` and `HumlaTCP.java:114-124`,
+`AndroidUsingLinkProperties` at `HumlaService.java:248-258`) for zero
+demonstrated payoff. Defer both to routine dependency maintenance; no
+version pin, no call-site migration in this phase.
+
 ## 2. Prerequisites (close before coding, not during)
 
 - **P1 — no external service consumers (closed 2026-09-29).** Internal
   starters enumerated in C2 (grep over `app/` + `humla/`); TALK is the
   sole documented external surface (receiver code + findings H5). No
   Play/Tasker doc references a service start. `exported=false` is safe.
-- **P2 — dep targets + API compat (open, slice C).** Pin jsoup
-  (1.17+/1.18+, `parseBodyFragment`+`text()` stable at
-  `MumlaService.java:386-388` and `NotificationSanitizer.java:68`) and
-  MiniDNS 1.x; confirm `ResolverApi`/`SrvResolverResult`/`SrvUtil`
-  (`Server.java:226-242`, `HumlaTCP.java:114-124`) and
-  `AndroidUsingLinkProperties` (`HumlaService.java:248-258`) survive
-  the 0.3.4→1.x jump, migrating call sites if not.
+- **P2 — dropped (M13/M14 deferred, C11).** No version pins, no
+  call-site migration in this phase.
 - **P3 — release-signing expectations (open, slice C).** Read CI
   workflows + any release docs for who provides `signing.gradle`;
   craft the fail-closed error message (what file, what to do).
@@ -196,7 +204,7 @@ only when the parsed URL carried a password; do not block or strip
 |---|---|---|---|---|
 | A | `phase4-ipc-services` | H3,H4,H5,C4 | both manifests (service stanzas only), `MumlaService.java` `onStartCommand`+TALK registration, `HumlaService.java` entry guard+`configureExtras`, `TalkBroadcastReceiver.java`, Settings toggle + strings | adb denial tests (manual) |
 | B | `phase4-secrets-export` | H9,M8,M9(java),L6-filename | `CertificateExportActivity.java`, `CertificateImportActivity.java`, `Server.java` (parcel only), `ServerConnectTask.java`, app-manifest storage/legacy lines only, export filename sanitizer + test | sanitizer unit test, rotation manual |
-| C | `phase4-tls-deps-signing` | M1,M13,M14,M16,L6-crypt | `app/build.gradle`, `humla/build.gradle`, `HumlaSSLSocketFactory.java` + protocol-filter helper, `NativeCryptStateJni.cpp` one-liner, MiniDNS call-site hunks if P2 requires | filter unit test, build + interop |
+| C | `phase4-tls-signing` | M1,M16,L6-crypt | `app/build.gradle` (signing only), `HumlaSSLSocketFactory.java` + protocol-filter helper, `NativeCryptStateJni.cpp` one-liner | filter unit test, build |
 | D | `phase4-surface-hygiene` | L4,L2-remnant | `MumlaActivity.java` VIEW hunk, `ServerEditFragment.java` + warning strings, `MumbleURLParser.java` if needed, `MumlaTrustStore.java` | deep-link manual |
 
 Each worktree forks `master`; land order D, C, B, A (A last: IPC
@@ -225,13 +233,13 @@ surface; B before A per C7).
 
 - H9: delete `saveCertificateClassic` + permission flow
   (`CertificateExportActivity.java:127-177`); SAF-only via
-  `documentCreator`; pre-picker confirmation dialog with explicit
-  shared-storage/key-material warning; suggested name through a pure
+  `documentCreator` — the export tap plus the SAF picker is consent,
+  no extra confirmation dialog; suggested name through a pure
   `sanitizeExportFilename` (strip separators, reserved names, trim,
   cap length, `.p12` fallback, UUID on empty) covering L6-filename;
   manifest storage/legacy lines per C7. Defer re-encryption with a
-  user password (needs import-side flow; warning suffices for an
-  explicit-tap Low).
+  user password (needs import-side flow; explicit tap + SAF picker
+  suffice for an explicit-tap Low).
 - M8: `CertificateImportActivity` keeps `char[]` from field through
   `KeyStore.load`, zeroing immediately (`:304-312` already zeroes the
   dialog copy — extend to `storeKeystore` `:193-249`, replacing the
@@ -245,23 +253,18 @@ surface; B before A per C7).
   Bundle; traversal/reserved/empty cert names sanitize; export on a
   pre-R device uses SAF; `./scripts/check.sh` green.
 
-### Slice C — TLS floor + deps + signing + crypt one-liner (M1, M13, M14, M16, L6-crypt)
+### Slice C — TLS floor + signing + crypt one-liner (M1, M16, L6-crypt)
 
 - M1: `filterTlsProtocols` pure helper + apply post-creation in
   `createSocket` (C8; onion path needs no exemption — protocols are
   not identity).
-- M13/M14: bump jsoup + MiniDNS per P2; migrate call sites only if
-  the 1.x API moved (owns those hunks wherever they live); voice/SRV
-  interop + chat-render regression.
 - M16: execution-time fail-closed for release tasks without
   `signingConfigs.release` (C10 trap); debug/CI configuration
   unaffected; error message per P3.
 - L6-crypt: `INT_MAX - 4` guard before `NewByteArray`.
 - Accept: TLS≤1.1 handshake refused; release assemble without
   `signing.gradle` fails with the documented error while
-  `assembleFossDebug` still configures; no `javacpp`-style leftover
-  grep needed — `grep -rn minidns/jsoup` shows single versions;
-  `./scripts/check.sh` green.
+  `assembleFossDebug` still configures; `./scripts/check.sh` green.
 
 ### Slice D — deep link + trust-store streams (L4, L2)
 
@@ -278,10 +281,8 @@ surface; B before A per C7).
   `requestLegacyExternalStorage`, storage permissions only. Neither
   reformats the other's lines.
 - `HumlaService.java` is A's alone; `Server.java` parcel hunks are
-  B's, MiniDNS hunks (if P2 requires) are C's — B MUST NOT reformat
-  the SRV block, A MUST NOT touch `init()`.
-- Both `build.gradle`s are C's alone (jsoup + signing share
-  `app/build.gradle` — one owner, no conflict by construction).
+  B's (B MUST NOT reformat the SRV block, A MUST NOT touch `init()`).
+- `app/build.gradle` signing hunk is C's alone.
 - `strings.xml` additions only, disjoint names per slice; never edit
   another slice's strings.
 - Slice C MUST NOT change `createSocket` signatures — Phase 1 callers
@@ -318,9 +319,11 @@ surface; B before A per C7).
   `Server` parcel and DB Strings persist per the at-rest won't-fix
   boundary ([secrets-at-rest-plan.md](secrets-at-rest-plan.md)).
 - Export re-encryption deferred (slice B); generated certs have no
-  PBE password and the warning covers the explicit-tap Low.
-- TLS floor drops pre-1.2 servers (intended); dep rot re-accumulates
+  PBE password and the SAF picker is the consent for an explicit-tap
+  Low — no extra confirmation dialog.
+- M13/M14 deferred to routine dep bumps (C11); dep rot re-accumulates
   without automated bump tooling (audit gap 6 stays open).
+- TLS floor drops pre-1.2 servers (intended).
 - No `FLAG_SECURE` (I2 non-goal, C10); I1 no action.
 - No per-message remote-origin surfacing, no `customtabs`, no
   notification opt-out setting beyond the TALK toggle.
@@ -328,12 +331,12 @@ surface; B before A per C7).
 ## 7. Execution (worktree + commit + merge order)
 
 - Create: `./scripts/worktree.py add phase4-ipc-services`,
-  `phase4-secrets-export`, `phase4-tls-deps-signing`,
+  `phase4-secrets-export`, `phase4-tls-signing`,
   `phase4-surface-hygiene` (root stays on `master`; stagger
   `check.sh` runs — nix gradle is heavy in parallel).
 - Commits via `scripts/commit.py` with the three-section body; every
   code commit leaves `./scripts/check.sh` green inside its worktree.
 - No autonomous merging, pushing, or deletion (per `AGENTS.md`): leave
   branches and worktrees intact and unpushed, report for review.
-- Suggested review/merge order: surface-hygiene, tls-deps-signing,
+- Suggested review/merge order: surface-hygiene, tls-signing,
   secrets-export, ipc-services last (C7 + largest blast radius).
