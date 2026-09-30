@@ -28,8 +28,8 @@ No new dialogs. Behavior changes:
   starters are explicit same-app intents, so nothing internal breaks.
   Tasker/Automate `TALK` broadcasts keep working while a new settings
   toggle (default on) allows disabling them.
-- Cert export becomes SAF-only: the pre-R `/sdcard/Mumla` classic path
-  is deleted. No extra confirmation dialog — the export tap plus the
+- Cert export becomes SAF-only: the legacy `/sdcard/Mumla` classic path
+  (used on Android 10 and below, API ≤ 29) is deleted. No extra
   SAF picker is consent; the suggested filename is sanitized.
 - `mumble://` links keep the existing edit-before-connect dialog; URLs
   embedding a password gain an inline warning line (host stays
@@ -250,8 +250,8 @@ surface; B before A per C7).
 - M9 (bounded per C5): no `Parcelable`/extra shape changes; avoid new
   copies; document the residual.
 - Accept: rotation during password prompt loses no secret into the
-  Bundle; traversal/reserved/empty cert names sanitize; export on a
-  pre-R device uses SAF; `./scripts/check.sh` green.
+  Bundle; traversal/reserved/empty cert names sanitize; export on an
+  Android 10-or-older device uses SAF; `./scripts/check.sh` green.
 
 ### Slice C — TLS floor + signing + crypt one-liner (M1, M16, L6-crypt)
 
