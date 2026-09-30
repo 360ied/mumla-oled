@@ -13,6 +13,7 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.preference.PreferenceDialogFragmentCompat;
 
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 
 public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentCompat implements OnKeyListener {
     private TextView mValueView;
@@ -32,7 +33,7 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
 
         builder.setNeutralButton(R.string.reset_key, (dialog, which) -> {
             KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
-            mCurrentValue = 0;
+            mCurrentValue = Settings.DEFAULT_PUSH_KEY;
             // A NeutralButton causes onDialogClosed to be called with positiveResult==false,
             // so we persist manually here.
             if (preference.callChangeListener(mCurrentValue)) {
@@ -53,7 +54,7 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
         mValueView = view.findViewById(R.id.key_select_value_view);
         KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
         mCurrentValue = requireNonNull(preference.getSharedPreferences())
-                .getInt(preference.getKey(), 0);
+                .getInt(preference.getKey(), Settings.DEFAULT_PUSH_KEY);
         updateValueView();
     }
 
@@ -73,7 +74,7 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
     }
 
     private void updateValueView() {
-        if (mCurrentValue == 0) {
+        if (mCurrentValue <= 0) {
             mValueView.setText(R.string.no_ptt_key);
         } else {
             final String stripPrefix = "KEYCODE_";

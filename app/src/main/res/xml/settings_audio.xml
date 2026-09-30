@@ -65,6 +65,7 @@
             android:key="talkKey"
             android:summary="@string/pttKeySum"
             android:title="@string/pttKey"
+            android:defaultValue="-1"
             app:iconSpaceReserved="false"/>
 
         <ListPreference
