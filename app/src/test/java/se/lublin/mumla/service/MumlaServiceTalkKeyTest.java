@@ -17,151 +17,15 @@
 
 package se.lublin.mumla.service;
 
-import android.content.SharedPreferences;
-
 import junit.framework.TestCase;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
 
 import se.lublin.humla.Constants;
 import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.User;
+import se.lublin.mumla.FakeSharedPreferences;
 import se.lublin.mumla.Settings;
 
 public class MumlaServiceTalkKeyTest extends TestCase {
-
-    private static class FakeEditor implements SharedPreferences.Editor {
-        private final Map<String, Object> mValues;
-        private final Map<String, Object> mTemp = new HashMap<>();
-
-        FakeEditor(Map<String, Object> values) {
-            mValues = values;
-        }
-
-        @Override
-        public SharedPreferences.Editor putString(String key, String value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putStringSet(String key, Set<String> values) {
-            mTemp.put(key, values);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putInt(String key, int value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putLong(String key, long value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putFloat(String key, float value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor putBoolean(String key, boolean value) {
-            mTemp.put(key, value);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor remove(String key) {
-            mTemp.remove(key);
-            mValues.remove(key);
-            return this;
-        }
-
-        @Override
-        public SharedPreferences.Editor clear() {
-            mTemp.clear();
-            mValues.clear();
-            return this;
-        }
-
-        @Override
-        public boolean commit() {
-            apply();
-            return true;
-        }
-
-        @Override
-        public void apply() {
-            mValues.putAll(mTemp);
-            mTemp.clear();
-        }
-    }
-
-    private static class FakeSharedPreferences implements SharedPreferences {
-        private final Map<String, Object> mValues = new HashMap<>();
-
-        @Override
-        public Map<String, ?> getAll() {
-            return new HashMap<>(mValues);
-        }
-
-        @Override
-        public String getString(String key, String defValue) {
-            Object v = mValues.get(key);
-            return v instanceof String ? (String) v : defValue;
-        }
-
-        @Override
-        public Set<String> getStringSet(String key, Set<String> defValues) {
-            return defValues;
-        }
-
-        @Override
-        public int getInt(String key, int defValue) {
-            Object v = mValues.get(key);
-            return v instanceof Integer ? (Integer) v : defValue;
-        }
-
-        @Override
-        public long getLong(String key, long defValue) {
-            Object v = mValues.get(key);
-            return v instanceof Long ? (Long) v : defValue;
-        }
-
-        @Override
-        public float getFloat(String key, float defValue) {
-            Object v = mValues.get(key);
-            return v instanceof Float ? (Float) v : defValue;
-        }
-
-        @Override
-        public boolean getBoolean(String key, boolean defValue) {
-            Object v = mValues.get(key);
-            return v instanceof Boolean ? (Boolean) v : defValue;
-        }
-
-        @Override
-        public boolean contains(String key) {
-            return mValues.containsKey(key);
-        }
-
-        @Override
-        public Editor edit() {
-            return new FakeEditor(mValues);
-        }
-
-        @Override
-        public void registerOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {}
-
-        @Override
-        public void unregisterOnSharedPreferenceChangeListener(OnSharedPreferenceChangeListener listener) {}
-    }
 
     private static class TestTalkKeyService extends MumlaService {
         private boolean mConnected = true;

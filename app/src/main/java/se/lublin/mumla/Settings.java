@@ -276,10 +276,18 @@ public class Settings {
 
     /**
      * Returns whether or not the hot corner is enabled.
+     *
+     * <p>Strict allowlist: only the four known corner values count as enabled.
+     * Corrupted or unknown stored values resolve to disabled (consistent with
+     * {@link #getHotCornerGravity()}, which returns 0 for such values).
      * @return true if a hot corner should be shown.
      */
     public boolean isHotCornerEnabled() {
-        return !ARRAY_HOT_CORNER_NONE.equals(preferences.getString(PREF_HOT_CORNER_KEY, DEFAULT_HOT_CORNER));
+        String hc = preferences.getString(PREF_HOT_CORNER_KEY, DEFAULT_HOT_CORNER);
+        return ARRAY_HOT_CORNER_TOP_LEFT.equals(hc)
+                || ARRAY_HOT_CORNER_TOP_RIGHT.equals(hc)
+                || ARRAY_HOT_CORNER_BOTTOM_LEFT.equals(hc)
+                || ARRAY_HOT_CORNER_BOTTOM_RIGHT.equals(hc);
     }
 
     /**
