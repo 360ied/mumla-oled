@@ -289,13 +289,13 @@ public class Settings {
     public int getHotCornerGravity() {
         String hc = getHotCorner();
         if(ARRAY_HOT_CORNER_BOTTOM_LEFT.equals(hc)) {
-            return Gravity.LEFT | Gravity.BOTTOM;
+            return Gravity.START | Gravity.BOTTOM;
         } else if(ARRAY_HOT_CORNER_BOTTOM_RIGHT.equals(hc)) {
-            return Gravity.RIGHT | Gravity.BOTTOM;
+            return Gravity.END | Gravity.BOTTOM;
         } else if(ARRAY_HOT_CORNER_TOP_LEFT.equals(hc)) {
-            return Gravity.LEFT | Gravity.TOP;
+            return Gravity.START | Gravity.TOP;
         } else if(ARRAY_HOT_CORNER_TOP_RIGHT.equals(hc)) {
-            return Gravity.RIGHT | Gravity.TOP;
+            return Gravity.END | Gravity.TOP;
         }
         return 0;
     }
@@ -500,15 +500,15 @@ public class Settings {
     public int getOverlayGravity() {
         String placement = getOverlayPlacement();
         if (OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)) {
-            return Gravity.TOP | Gravity.LEFT;
+            return Gravity.TOP | Gravity.START;
         } else if (OVERLAY_PLACEMENT_TOP_RIGHT.equals(placement)) {
-            return Gravity.TOP | Gravity.RIGHT;
+            return Gravity.TOP | Gravity.END;
         } else if (OVERLAY_PLACEMENT_BOTTOM_LEFT.equals(placement)) {
-            return Gravity.BOTTOM | Gravity.LEFT;
+            return Gravity.BOTTOM | Gravity.START;
         } else if (OVERLAY_PLACEMENT_BOTTOM_RIGHT.equals(placement)) {
-            return Gravity.BOTTOM | Gravity.RIGHT;
+            return Gravity.BOTTOM | Gravity.END;
         }
-        return Gravity.TOP | Gravity.LEFT;
+        return Gravity.TOP | Gravity.START;
     }
 
     public int getOverlayPosX(int defaultX) {

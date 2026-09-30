@@ -26,7 +26,9 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.WindowMetrics;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -264,7 +266,20 @@ public class MumlaOverlay {
         }
     }
 
+    private android.graphics.Insets getSystemBarInsets() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
+            return metrics.getWindowInsets().getInsetsIgnoringVisibility(
+                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+        }
+        return null;
+    }
+
     private int getTopMargin(DisplayMetrics dm) {
+        android.graphics.Insets insets = getSystemBarInsets();
+        if (insets != null) {
+            return insets.top + (int) (8 * dm.density);
+        }
         int statusBarHeight = 0;
         int resourceId = mService.getResources().getIdentifier("status_bar_height", "dimen", "android");
         if (resourceId > 0) {
@@ -277,6 +292,10 @@ public class MumlaOverlay {
     }
 
     private int getBottomMargin(DisplayMetrics dm) {
+        android.graphics.Insets insets = getSystemBarInsets();
+        if (insets != null) {
+            return insets.bottom + (int) (8 * dm.density);
+        }
         int navBarHeight = 0;
         int resourceId = mService.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
         if (resourceId > 0) {

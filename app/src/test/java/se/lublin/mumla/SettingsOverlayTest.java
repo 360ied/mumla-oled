@@ -241,7 +241,7 @@ public class SettingsOverlayTest extends TestCase {
 
         assertEquals(Settings.OVERLAY_PLACEMENT_FLOATING, settings.getOverlayPlacement());
         assertFalse("Overlay should not be pinned by default", settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
     }
 
     public void testOverlayPlacementTopLeft() {
@@ -251,7 +251,7 @@ public class SettingsOverlayTest extends TestCase {
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_LEFT);
         assertEquals(Settings.OVERLAY_PLACEMENT_TOP_LEFT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
         assertEquals("topLeft", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
     }
 
@@ -262,7 +262,7 @@ public class SettingsOverlayTest extends TestCase {
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_RIGHT);
         assertEquals(Settings.OVERLAY_PLACEMENT_TOP_RIGHT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.RIGHT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.END, settings.getOverlayGravity());
         assertEquals("topRight", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
     }
 
@@ -273,7 +273,7 @@ public class SettingsOverlayTest extends TestCase {
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT);
         assertEquals(Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
-        assertEquals(Gravity.BOTTOM | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.BOTTOM | Gravity.START, settings.getOverlayGravity());
         assertEquals("bottomLeft", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
     }
 
@@ -284,7 +284,7 @@ public class SettingsOverlayTest extends TestCase {
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT);
         assertEquals(Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
-        assertEquals(Gravity.BOTTOM | Gravity.RIGHT, settings.getOverlayGravity());
+        assertEquals(Gravity.BOTTOM | Gravity.END, settings.getOverlayGravity());
         assertEquals("bottomRight", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
     }
 
@@ -298,7 +298,7 @@ public class SettingsOverlayTest extends TestCase {
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_FLOATING);
         assertEquals(Settings.OVERLAY_PLACEMENT_FLOATING, settings.getOverlayPlacement());
         assertFalse(settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
         assertEquals("floating", prefs.getString(Settings.PREF_OVERLAY_PLACEMENT, ""));
     }
 
@@ -309,11 +309,11 @@ public class SettingsOverlayTest extends TestCase {
         prefs.edit().putString(Settings.PREF_OVERLAY_PLACEMENT, "corruptedCorner").apply();
         assertEquals("corruptedCorner", settings.getOverlayPlacement());
         assertFalse("Unrecognized placement must not be treated as pinned", settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
 
         prefs.edit().putString(Settings.PREF_OVERLAY_PLACEMENT, "").apply();
         assertFalse("Empty placement must not be treated as pinned", settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
     }
 
     public void testOverlayPlacementNullSafety() {
@@ -323,7 +323,7 @@ public class SettingsOverlayTest extends TestCase {
         prefs.edit().putString(Settings.PREF_OVERLAY_PLACEMENT, null).apply();
         assertEquals(Settings.DEFAULT_OVERLAY_PLACEMENT, settings.getOverlayPlacement());
         assertFalse(settings.isOverlayPinned());
-        assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
+        assertEquals(Gravity.TOP | Gravity.START, settings.getOverlayGravity());
     }
 
     public void testOverlayPositionPersistence() {
