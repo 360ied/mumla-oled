@@ -1,8 +1,9 @@
-# Phase 4 implementation plan — local IPC + hygiene (H3–H5, H9, M1, M8–M10, M13, M14, M16, L2, L4, L6, I2)
+# Phase 4 implementation plan — local IPC + hygiene (H3–H5, H9, M1, M8, M9, M13, M14, M16, L2, L4, L6, I2)
 
 Companion to [remediation-plan.md](remediation-plan.md) Phase 4 and
-[findings.md](findings.md) (H3–H5, H9, M1, M8–M10, M13, M14, M16, L2,
-L4, L6, I2). Incorporates a pre-implementation review of the tree: ten
+[findings.md](findings.md) (H3–H5, H9, M1, M8, M9, M13, M14, M16, L2,
+L4, L6, I2). M10 (lockscreen visibility) is decided won't-fix, see C6.
+Incorporates a pre-implementation review of the tree: ten
 corrections to the remediation plan as written, prerequisites to close
 before coding, then the work split (four parallel worktrees).
 Implementation itself MUST happen in dedicated worktrees
@@ -32,9 +33,9 @@ No new dialogs except one export confirmation. Behavior changes:
 - `mumble://` links keep the existing edit-before-connect dialog; URLs
   embedding a password gain an inline warning line (host stays
   visible/editable as today).
-- Lockscreen notifications show redacted content on a secure
-  lockscreen (`PRIVATE`). One-time cost: channel IDs bump, so prior
-  user importance settings reset to default.
+- Lockscreen notification visibility unchanged (M10 won't-fix, C6):
+  voice comes out the speakers anyway, so anyone close enough to read
+  the lockscreen can already hear the conversation.
 - Release builds without `signing.gradle` now fail with an explicit
   error instead of silently shipping a debug-signed artifact.
 - TLS 1.0/1.1-only servers stop connecting (1.2+ floor).
@@ -104,17 +105,16 @@ handoffs (Server parcel, connect extras), which C2 contains.
 Document the `system_server` parcel residual; do not build a
 content-URI/KeyStore-alias passing scheme.
 
-### C6 — M10 requires channel ID bumps, not just flag flips
+### C6 — M10 won't-fix: lockscreen redaction is theater on a voice app
 
-`MumlaConnectionNotification.java:51-52` already versions channels
-(`connected_channel_v9`, deletes `connected_channel`). OS persists
-channel settings after creation, so flipping `327`/`373` to
-`PRIVATE` in place will not move existing installs — bump to a new
-ID and delete the old one, same pattern. Same for
-`MumlaMessageNotification.java:87-95` (`message_channel`, currently
-no visibility set): version it (`message_channel_v2`) or delete
-first, otherwise the flag is ignored on upgrade. No opt-out setting
-(declined — one more toggle for a lockscreen-proximity Low).
+Voice comes out the speakers, so anyone within lockscreen-reading
+distance can already hear the conversation. A `PRIVATE` flip buys
+nothing and costs a channel-ID bump (OS persists channel settings, so
+the flip needs a new ID plus old-ID deletion — same pattern as
+`connected_channel_v9` — resetting every user's importance settings
+for zero threat gain). Leave `MumlaConnectionNotification.java:327,373`
+and `message_channel` (`MumlaMessageNotification.java:87-95`) as-is.
+No opt-out setting either — nothing to opt out of.
 
 ### C7 — H9 manifest bits and activity rewrite split across two slices
 
@@ -184,13 +184,11 @@ only when the parsed URL carried a password; do not block or strip
   types. Pure and unit-testable: TLS protocol filter (C8),
   trust-store path validator (C4), export filename sanitizer,
   `ServerInfoResponse`-style guards need nothing new. Service
-  denial, TALK toggle, export, lockscreen, deep-link warning are
+  denial, TALK toggle, export, deep-link warning are
   manual (`adb` + device).
-- **P5 — settings + notification-channel wiring (open, slices A/D).**
-  Read the settings preference pattern for the TALK toggle
-  (default-on key, English-only strings) and confirm channel-bump
-  deletion order (create new → delete old, per existing
-  `LEGACY_CHANNEL_ID` pattern) so importance reset is one-time.
+- **P5 — settings wiring (open, slice A).** Read the settings
+  preference pattern for the TALK toggle (default-on key,
+  English-only strings).
 
 ## 3. Work split — four parallel worktrees
 
@@ -199,7 +197,7 @@ only when the parsed URL carried a password; do not block or strip
 | A | `phase4-ipc-services` | H3,H4,H5,C4 | both manifests (service stanzas only), `MumlaService.java` `onStartCommand`+TALK registration, `HumlaService.java` entry guard+`configureExtras`, `TalkBroadcastReceiver.java`, Settings toggle + strings | adb denial tests (manual) |
 | B | `phase4-secrets-export` | H9,M8,M9(java),L6-filename | `CertificateExportActivity.java`, `CertificateImportActivity.java`, `Server.java` (parcel only), `ServerConnectTask.java`, app-manifest storage/legacy lines only, export filename sanitizer + test | sanitizer unit test, rotation manual |
 | C | `phase4-tls-deps-signing` | M1,M13,M14,M16,L6-crypt | `app/build.gradle`, `humla/build.gradle`, `HumlaSSLSocketFactory.java` + protocol-filter helper, `NativeCryptStateJni.cpp` one-liner, MiniDNS call-site hunks if P2 requires | filter unit test, build + interop |
-| D | `phase4-surface-hygiene` | M10,L4,L2-remnant | `MumlaConnectionNotification.java`, `MumlaMessageNotification.java`, `MumlaActivity.java` VIEW hunk, `ServerEditFragment.java` + warning strings, `MumbleURLParser.java` if needed, `MumlaTrustStore.java` | lockscreen/deep-link manual |
+| D | `phase4-surface-hygiene` | L4,L2-remnant | `MumlaActivity.java` VIEW hunk, `ServerEditFragment.java` + warning strings, `MumbleURLParser.java` if needed, `MumlaTrustStore.java` | deep-link manual |
 
 Each worktree forks `master`; land order D, C, B, A (A last: IPC
 surface; B before A per C7).
@@ -265,19 +263,14 @@ surface; B before A per C7).
   grep needed — `grep -rn minidns/jsoup` shows single versions;
   `./scripts/check.sh` green.
 
-### Slice D — notifications + deep link + trust-store streams (M10, L4, L2)
+### Slice D — deep link + trust-store streams (L4, L2)
 
-- M10: `PRIVATE` on the connection channel + builder
-  (`MumlaConnectionNotification.java:327,373`) with a channel-ID bump
-  (old deleted, C6); same versioning treatment for `message_channel`
-  (`MumlaMessageNotification.java:87-95`).
 - L4: password-embedded deep links show the warning row in
   `ServerEditFragment` (C9); parser untouched unless the warning
   needs a carried flag.
 - L2: try-with-resources in `MumlaTrustStore.java:45-61`.
-- Accept: secure-lockscreen shows redacted notification; deep link
-  with `user:pass@host` warns, without stays as today;
-  `./scripts/check.sh` green.
+- Accept: deep link with `user:pass@host` warns, without stays as
+  today; `./scripts/check.sh` green.
 
 ## 4. Non-interaction contract (enforce before fan-out)
 
@@ -308,11 +301,14 @@ surface; B before A per C7).
 | TLS 1.0-only server (manual) | handshake refused |
 | Release assemble without `signing.gradle` | explicit failure; debug still configures |
 | `length > INT_MAX - 4` encrypt call | `nullptr`, no overflow |
-| Secure lockscreen, both notifications (manual) | redacted content; importance reset once |
 | `mumble://user:pass@host/` VIEW (manual) | warning row; no-password URL unchanged |
 | Existing suite | `./scripts/check.sh` green from each worktree |
 
 ## 6. Residuals and non-goals (explicit, not overlooked)
+
+- M10 won't-fix (C6): lockscreen visibility unchanged. Voice comes out
+  the speakers, so lockscreen proximity implies audio proximity — no
+  channel-ID bump, no importance reset.
 
 - TALK stays exported by design (C1): any installed app can drive
   mic state while connected when the toggle is on (default). Accepted
