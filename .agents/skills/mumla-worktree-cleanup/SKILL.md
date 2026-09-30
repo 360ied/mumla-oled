@@ -29,18 +29,19 @@ worktree (`master`) must **never** be removed.
 ```
 
 This inventories all secondary worktrees (typically `.worktrees/<branch-name>`)
-and classifies each as merged/unmerged × clean/dirty without deleting anything.
+and classifies each as merged/unmerged and clean/dirty without deleting anything.
 If no secondary worktrees exist it reports that only the root worktree exists.
+Include the preview output in your report to the user.
 
 ## 2. Remove (flag-driven, non-interactive)
 
 There is no interactive prompt. Destructive scope is controlled entirely by
-explicit flags:
+explicit flags (`-n` is short for `--dry-run`, `-f` for `--force`):
 
 ```bash
-./scripts/worktree.py cleanup                                  # clean & merged only (default, lossless)
+./scripts/worktree.py cleanup                                  # clean and merged only (default; safe w.r.t. tracked work)
 ./scripts/worktree.py cleanup --include-unmerged               # also remove clean worktrees with unmerged commits
-./scripts/worktree.py cleanup --force                          # also remove worktrees with uncommitted changes
+./scripts/worktree.py cleanup --force                          # also remove dirty-but-merged worktrees
 ./scripts/worktree.py cleanup --include-unmerged --force       # remove dirty AND unmerged (requires both flags)
 ./scripts/worktree.py cleanup --dry-run <branch-or-path>...    # preview specific worktrees
 ./scripts/worktree.py cleanup <branch-or-path>...              # target specific worktrees
@@ -48,14 +49,16 @@ explicit flags:
 
 Rules:
 
-- Default removes only **clean worktrees whose branch is fully merged** into local `master` (`git merge-base --is-ancestor <branch> master`).
-- An explicitly named worktree that is skipped under the given flags exits non-zero; bulk mode preserves skipped worktrees and exits zero.
+- Default removes only **clean worktrees whose branch is fully merged** into local `master` (`git merge-base --is-ancestor <branch> master`). Safe w.r.t. tracked commits and changes; ignored build artifacts inside the worktree directory are discarded with it.
+- Dirty means staged, unstaged, or untracked (`??`) changes; ignored files do not count.
+- Detached-HEAD worktrees have no branch to test, so they count as unmerged: clean detached needs `--include-unmerged`, dirty detached needs both flags.
 - A dirty AND unmerged worktree requires **both** `--include-unmerged` and `--force`.
+- An explicitly named worktree that is skipped under the given flags exits non-zero (except in `--dry-run`, which only previews and exits zero); bulk mode preserves skipped worktrees and exits zero unless a removal itself fails.
 - Locked worktrees are always preserved (unlock first). The worktree you are currently inside is never removed.
 - Local branches are always preserved; delete merged ones afterwards with `git branch -d <branch-name>`.
 - The command prunes worktree metadata and sweeps leftover empty directories under `.worktrees/` automatically.
 
-## 3. Verify & report
+## 3. Verify and report
 
 ```bash
 ./scripts/worktree.py list
