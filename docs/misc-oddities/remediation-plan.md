@@ -6,7 +6,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED](#phase-1-core-reliability--threading-architecture-p0--p1--completed)
 2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED](#phase-2-network-transport--real-time-buffer-parity-p1--p2--completed)
-3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2)
+3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--resolved-on-branch)
 4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
@@ -195,13 +195,18 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 
 ---
 
-## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)
+## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH
+
+> [!NOTE]
+> **Status: RESOLVED on branch `bugfix/oddities-phase3-remediation` (pending review/merge)**
+>
+> All Phase 3 items have been implemented and verified in the branch `bugfix/oddities-phase3-remediation` (commits `2e999f0c`, `cb11911d`, `bda21ffc`): ODD-06 by adding explicit Cancel/back-dismissal handling to the first-run certificate dialog so `first_run` is always cleared and the startup action always runs; ODD-07 by unifying the no-PTT-key sentinel on `Settings.DEFAULT_PUSH_KEY` (`-1`) with a `pttKey > 0` activation guard in `MumlaActivity` and coverage in `SettingsPushKeyTest`; ODD-05 by adding `MumlaHotCorner.refreshGestureExclusion()` and invoking it from `MumlaService.onConfigurationChanged()`.
 
 Phase 3 resolves UX annoyances, preference state divergence, and overlay rotation inconsistencies.
 
-### 3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06)
+### 3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06) — RESOLVED
 
-**Status**: Open
+**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `2e999f0c`.
 
 **Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503)
 
@@ -253,9 +258,9 @@ private void showFirstRunGuide() {
 
 ---
 
-### 3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07)
+### 3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07) — RESOLVED
 
-**Status**: Open
+**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `cb11911d`.
 
 **Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)
 
@@ -307,9 +312,9 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
 
 ---
 
-### 3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05)
+### 3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05) — RESOLVED
 
-**Status**: Open
+**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `bda21ffc`.
 
 **Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637), [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
 
