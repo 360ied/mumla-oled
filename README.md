@@ -137,7 +137,7 @@ Mumla OLED is built exclusively as a **100% FOSS** client without proprietary Go
 
 - **JDK**: Java 21 (OpenJDK recommended)
 - **Android SDK**: Compile SDK 36, Min SDK 21
-- **Android NDK**: Version `25.1.8937393`
+- **Android NDK**: Version `27.2.12479018`
 - **Supported ABIs**: `arm64-v8a`, `armeabi-v7a`, `x86_64` (obsolete 32-bit `x86` is no longer built or packaged)
 - **Submodules**: Git submodules must be checked out for native libraries (`opus`, `rnnoise`).
 
