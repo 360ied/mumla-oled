@@ -6,7 +6,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED](#phase-1-core-reliability--threading-architecture-p0--p1--completed)
 2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED](#phase-2-network-transport--real-time-buffer-parity-p1--p2--completed)
-3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2)
+3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--resolved-on-branch)
 4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
@@ -195,22 +195,34 @@ public void sendMessage(@NotNull final byte[] data, final int length) {
 
 ---
 
-## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2)
+## Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH
+
+> [!NOTE]
+> **Status: RESOLVED on branch `bugfix/oddities-phase3-remediation` (pending review/merge)**
+>
+> All Phase 3 items have been implemented and verified in the branch `bugfix/oddities-phase3-remediation` (commits `2e999f0c`, `cb11911d`, `bda21ffc`; review-hardening in `8d8dd97d`). ODD-06: explicit Cancel/back-dismissal handling on the first-run certificate dialog so `first_run` is always cleared and the startup action always runs. ODD-07: no-PTT-key sentinel unified on `Settings.DEFAULT_PUSH_KEY` (`-1`) with a `pttKey > 0` activation guard in `MumlaActivity`, covered by `SettingsPushKeyTest`. ODD-05: `MumlaHotCorner.refreshGestureExclusion()` invoked from `MumlaService.onConfigurationChanged()`.
+>
+> **Accepted trade-offs** (pedantic review of the branch):
+>
+> - **Backgrounded/trust-flow dismissal leaves `first_run` pending.** The first-run prompt is tracked in `mCertDialog`, so `onPause()` (backgrounding) and the trust/certificate-mismatch dialogs can dismiss it via `dismissCertDialog()` without firing the cancel listener. Neither `setFirstRun(false)` nor the startup action runs in that moment; because the prompt only shows on a fresh launch (`savedInstanceState == null`), it simply reappears on the next cold launch. Accepted as the more predictable outcome versus the previous behavior, where the prompt also skipped the startup action and re-showed indefinitely.
+> - **Dead defensive null check.** `MumlaHotCorner.refreshGestureExclusion()` includes an unreachable `mView == null` guard (`mView` is assigned in the constructor and never nulled); retained deliberately as defense-in-depth.
+> - **Guard test is a tripwire.** `SettingsPushKeyTest.testPttGuardSemantics_AgainstLegacyZeroAndUnknown` re-implements the `pttKey > 0 && keyCode == pttKey` expression rather than exercising `MumlaActivity` directly (the project's JVM-only test setup lacks Robolectric); a regression deleting the activity-side guard would still pass this test. A lint or Robolectric-based contract test remains a follow-up.
+> - **Plan snippets are a historical record.** The Solution snippets below reflect the proposals at planning time and drift slightly from the shipped implementation (e.g. the shipped `updateValueView` uses the equivalent `mCurrentValue <= 0` form; the shipped dialog is tracked in `mCertDialog`).
 
 Phase 3 resolves UX annoyances, preference state divergence, and overlay rotation inconsistencies.
 
-### 3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06)
+### 3.1 Fix First Run Certificate Dialog Outside Touch & Dismissal (ODD-06) — RESOLVED
 
-**Status**: Open
+**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `2e999f0c`.
 
-**Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503)
+**Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L610-L652)
 
 **Problem**:
-1. [`showFirstRunGuide()`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481) creates an `AlertDialog` with only a positive button (`R.string.generate`).
+1. [`showFirstRunGuide()`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L610) creates an `AlertDialog` with only a positive button (`R.string.generate`).
 2. The dialog is cancelable by default. If the user touches outside or presses Back:
    - The dialog dismisses silently.
    - `mSettings.setFirstRun(false)` is **never executed**.
-   - [`StartupAction`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L372) is skipped because it is located in the `else` branch of `if (mSettings.isFirstRun())`.
+   - The `else` branch running `StartupAction` (see [`MumlaActivity.java:462-470`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L462-L470), implemented in [`StartupAction.java`](../../app/src/foss/java/se/lublin/mumla/app/StartupAction.java)) is skipped because it is located in the `else` branch of `if (mSettings.isFirstRun())`.
    - On the next app launch, `isFirstRun()` remains `true`, re-spawning the dialog repeatedly.
 
 **Solution**:
@@ -253,11 +265,11 @@ private void showFirstRunGuide() {
 
 ---
 
-### 3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07)
+### 3.2 Harmonize PTT Keycode Reset Sentinel (-1 vs 0) (ODD-07) — RESOLVED
 
-**Status**: Open
+**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `cb11911d`.
 
-**Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)
+**Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L577-L593)
 
 **Problem**:
 1. [`Settings.java:59`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`.
@@ -296,7 +308,7 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
    }
    ```
 2. **`MumlaActivity.java`**:
-   Add a defensive guard ensuring unconfigured keycodes cannot match in both `onKeyDown()` ([`MumlaActivity.java:451`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)) and `onKeyUp()` ([`MumlaActivity.java:460`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L460)):
+   Add a defensive guard ensuring unconfigured keycodes cannot match in both `onKeyDown()` ([`MumlaActivity.java:577`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L577)) and `onKeyUp()` ([`MumlaActivity.java:587`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L587):
    ```java
    int pttKey = mSettings.getPushToTalkKey();
    if (mService != null && pttKey > 0 && keyCode == pttKey) {
@@ -307,14 +319,14 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
 
 ---
 
-### 3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05)
+### 3.3 Refresh Hot Corner Gesture Exclusion Rects on Configuration Change (ODD-05) — RESOLVED
 
-**Status**: Open
+**Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `bda21ffc`.
 
-**Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637), [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
+**Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652-L660), [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
 
 **Problem**:
-1. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632), `mChannelOverlay.updatePosition()` is invoked, but `mHotCorner` is completely ignored.
+1. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652), `mChannelOverlay.updatePosition()` is invoked, but `mHotCorner` is completely ignored.
 2. In [`MumlaHotCorner.addOnLayoutChangeListener()`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65), `setSystemGestureExclusionRects()` is conditioned on `(width != mLastWidth || height != mLastHeight)`.
 3. Because [`ptt_corner.xml`](../../app/src/main/res/layout/ptt_corner.xml) is fixed at 48dp × 48dp, rotating between portrait and landscape preserves width and height. The condition evaluates to `false`, skipping `setSystemGestureExclusionRects()`.
 4. On Android 10+ (Q+), system gesture exclusion rects are cleared or invalidated upon display rotation. As a result, the hot corner loses its exclusion zone after rotation and becomes intercepted by Android's system back-gesture.
@@ -332,7 +344,7 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
        }
    }
    ```
-2. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632), refresh both overlays:
+2. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652), refresh both overlays:
    ```java
    @Override
    public void onConfigurationChanged(Configuration newConfig) {
@@ -341,7 +353,9 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
            mChannelOverlay.updatePosition();
        }
        if (mHotCorner != null && mHotCorner.isShown()) {
-           mHotCorner.refreshGestureExclusion();
+           // Deferred past the rotation relayout so getWidth/getHeight reflect
+           // the post-rotation size instead of silently no-opping (ODD-05).
+           mHotCorner.refreshGestureExclusionDeferred();
        }
    }
    ```

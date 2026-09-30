@@ -13,8 +13,11 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.preference.PreferenceDialogFragmentCompat;
 
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 
 public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentCompat implements OnKeyListener {
+    private static final String KEYCODE_PREFIX = "KEYCODE_";
+
     private TextView mValueView;
     private int mCurrentValue;
 
@@ -32,7 +35,8 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
 
         builder.setNeutralButton(R.string.reset_key, (dialog, which) -> {
             KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
-            mCurrentValue = 0;
+            mCurrentValue = Settings.DEFAULT_PUSH_KEY;
+            updateValueView();
             // A NeutralButton causes onDialogClosed to be called with positiveResult==false,
             // so we persist manually here.
             if (preference.callChangeListener(mCurrentValue)) {
@@ -52,8 +56,11 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
 
         mValueView = view.findViewById(R.id.key_select_value_view);
         KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
-        mCurrentValue = requireNonNull(preference.getSharedPreferences())
-                .getInt(preference.getKey(), 0);
+        int stored = requireNonNull(preference.getSharedPreferences())
+                .getInt(preference.getKey(), Settings.DEFAULT_PUSH_KEY);
+        // Normalize the legacy pre-ODD-07 reset value (0) to the -1 sentinel on
+        // load, so pressing OK re-persists -1 and storage converges (round-2 D4).
+        mCurrentValue = stored <= KeyEvent.KEYCODE_UNKNOWN ? Settings.DEFAULT_PUSH_KEY : stored;
         updateValueView();
     }
 
@@ -63,23 +70,24 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
         if (event.getAction() != KeyEvent.ACTION_DOWN) {
             return false;
         }
-        if (keyCode != KeyEvent.KEYCODE_BACK) {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            dismiss();
+        } else if (keyCode > KeyEvent.KEYCODE_UNKNOWN) {
+            // Ignore KEYCODE_UNKNOWN (0): persisting it would recreate the legacy
+            // pre-ODD-07 sentinel that Settings.isPttKeyBound treats as unbound.
             mCurrentValue = keyCode;
             updateValueView();
-        } else {
-            dismiss();
         }
         return true;
     }
 
     private void updateValueView() {
-        if (mCurrentValue == 0) {
+        if (mCurrentValue <= KeyEvent.KEYCODE_UNKNOWN) {
             mValueView.setText(R.string.no_ptt_key);
         } else {
-            final String stripPrefix = "KEYCODE_";
             String keyName = KeyEvent.keyCodeToString(mCurrentValue);
-            if (keyName.startsWith(stripPrefix)) {
-                keyName = keyName.substring(stripPrefix.length());
+            if (keyName.startsWith(KEYCODE_PREFIX)) {
+                keyName = keyName.substring(KEYCODE_PREFIX.length());
             }
             mValueView.setText(keyName);
         }

@@ -654,6 +654,11 @@ public class MumlaService extends HumlaService implements
         if (mChannelOverlay != null && mChannelOverlay.isShown()) {
             mChannelOverlay.updatePosition();
         }
+        if (mHotCorner != null && mHotCorner.isShown()) {
+            // Post past the rotation relayout so getWidth/getHeight reflect
+            // the post-rotation size instead of silently no-opping (ODD-05).
+            mHotCorner.refreshGestureExclusionDeferred();
+        }
     }
 
     @Override
@@ -832,12 +837,33 @@ public class MumlaService extends HumlaService implements
 
     private void setProximitySensorOn(boolean on) {
         if(on) {
-            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-            mProximityLock = pm.newWakeLock(PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Mumla:Proximity");
-            mProximityLock.acquire();
-        } else {
-            if(mProximityLock != null) mProximityLock.release();
+            if (mProximityLock != null && mProximityLock.isHeld()) {
+                return;
+            }
             mProximityLock = null;
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null) {
+                Log.w(TAG, "proximity sensor unavailable: no PowerManager");
+                return;
+            }
+            try {
+                mProximityLock = pm.newWakeLock(PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Mumla:Proximity");
+                mProximityLock.acquire();
+            } catch (RuntimeException e) {
+                // Sensor-less devices and OEM restrictions can throw here;
+                // never let it escape into sync/pref/disconnect callers.
+                Log.w(TAG, "proximity lock acquire failed", e);
+                mProximityLock = null;
+            }
+        } else {
+            if (mProximityLock != null) {
+                try {
+                    if (mProximityLock.isHeld()) mProximityLock.release();
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "proximity lock release failed", e);
+                }
+                mProximityLock = null;
+            }
         }
     }
 
@@ -928,7 +954,7 @@ public class MumlaService extends HumlaService implements
                 startActivity(showSetting);
                 Toast.makeText(this, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
             } catch (Exception e) {
-                Log.e(TAG, "Failed to open overlay permission settings: " + e);
+                Log.e(TAG, "Failed to open overlay permission settings", e);
             }
             mSettings.setOverlayShown(false);
             updateConnectedNotification();

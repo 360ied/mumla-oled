@@ -20,6 +20,7 @@ package se.lublin.mumla;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.view.Gravity;
+import android.view.KeyEvent;
 
 import androidx.annotation.NonNull;
 import androidx.preference.PreferenceManager;
@@ -56,7 +57,7 @@ public class Settings {
     public static final int DEFAULT_THRESHOLD = 35;
 
     public static final String PREF_PUSH_KEY = "talkKey";
-    public static final Integer DEFAULT_PUSH_KEY = -1;
+    public static final int DEFAULT_PUSH_KEY = -1;
 
     public static final String PREF_HOT_CORNER_KEY = "hotCorner";
     public static final String ARRAY_HOT_CORNER_NONE = "none";
@@ -256,6 +257,17 @@ public class Settings {
 
     public int getPushToTalkKey() {
         return preferences.getInt(PREF_PUSH_KEY, DEFAULT_PUSH_KEY);
+    }
+
+    /**
+     * Returns whether the given key event matches the configured push-to-talk key.
+     *
+     * <p>An unconfigured key ({@link #DEFAULT_PUSH_KEY}, {@code -1}) and
+     * {@link KeyEvent#KEYCODE_UNKNOWN} ({@code 0}, also the legacy pre-ODD-07 reset value)
+     * never match, so unknown or unbound keys cannot trigger transmission (ODD-07).
+     */
+    public static boolean isPttKeyBound(int pttKey, int keyCode) {
+        return pttKey > KeyEvent.KEYCODE_UNKNOWN && keyCode == pttKey;
     }
 
     public String getHotCorner() {

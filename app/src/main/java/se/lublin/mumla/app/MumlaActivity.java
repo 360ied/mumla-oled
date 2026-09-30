@@ -132,6 +132,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
     private AlertDialog mCertDialog;
+    // Dedicated host for the first-run certificate guide. It carries an
+    // OnDismissListener with first-run side effects that must never fire for
+    // the TLS dialogs hosted by mCertDialog above (round-2 D2).
+    private AlertDialog mFirstRunDialog;
+    // True while the first-run certificate generation task owns StartupAction.
+    private boolean mFirstRunGenerateInFlight = false;
 
     /**
      * List of fragments to be notified about service state changes.
@@ -364,6 +370,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
     }
 
+    private void dismissFirstRunDialog() {
+        if (mFirstRunDialog != null) {
+            mFirstRunDialog.dismiss();
+            mFirstRunDialog = null;
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         mSettings = Settings.getInstance(this);
@@ -489,6 +502,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (mConnectingDialog != null)
             mConnectingDialog.dismiss();
         dismissCertDialog();
+        dismissFirstRunDialog();
 
         if (mService != null) {
             mService.onTalkKeyCancel();
@@ -575,7 +589,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (mService != null && keyCode == mSettings.getPushToTalkKey()) {
+        int pttKey = mSettings.getPushToTalkKey();
+        if (mService != null && Settings.isPttKeyBound(pttKey, keyCode)) {
             mService.onTalkKeyDown();
             return true;
         }
@@ -584,7 +599,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (mService != null && keyCode == mSettings.getPushToTalkKey()) {
+        int pttKey = mSettings.getPushToTalkKey();
+        if (mService != null && Settings.isPttKeyBound(pttKey, keyCode)) {
             mService.onTalkKeyUp();
             return true;
         }
@@ -609,24 +625,48 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         // Prompt the user to generate a certificate.
         if (mSettings.isUsingCertificate()) {
             mSettings.setFirstRun(false);
+            new StartupAction().execute(this);
             return;
         }
         String msg = getString(R.string.first_run_generate_certificate);
-        new MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.first_run_generate_certificate_title)
                 .setMessage(msg)
                 .setPositiveButton(R.string.generate, (DialogInterface dialog, int which) -> {
+                    mFirstRunGenerateInFlight = true;
                     MumlaCertificateGenerateTask generateTask = new MumlaCertificateGenerateTask(MumlaActivity.this) {
                         @Override
                         protected void onPostExecute(DatabaseCertificate result) {
                             super.onPostExecute(result);
+                            mFirstRunGenerateInFlight = false;
                             if (result != null) mSettings.setDefaultCertificateId(result.getId());
+                            // The news dialog shows from this activity's window token; skip
+                            // it if the activity died while generation was in flight.
+                            if (!isFinishing() && !isDestroyed()) {
+                                new StartupAction().execute(MumlaActivity.this);
+                            }
                         }
                     };
                     generateTask.execute();
                     mSettings.setFirstRun(false);
                 })
-                .show();
+                // The dismiss listener below owns the flag-clear/StartupAction path,
+                // so every dismissal (button, back-press, outside-tap, onPause)
+                // converges there instead of each path duplicating it (ODD-06).
+                // A null button listener keeps the default auto-dismiss behavior.
+                .setNegativeButton(android.R.string.cancel, null)
+                .setOnDismissListener(dialogInterface -> {
+                    // The generate path owns StartupAction via onPostExecute.
+                    if (mFirstRunGenerateInFlight) return;
+                    mSettings.setFirstRun(false);
+                    // Never run startup UI off a pausing/dying instance: onPause
+                    // dismisses this dialog on rotation, backgrounding, and finish
+                    // (round-2 D1). The flag is still cleared so no re-prompt loop.
+                    if (isFinishing() || isDestroyed() || isChangingConfigurations()) return;
+                    new StartupAction().execute(MumlaActivity.this);
+                });
+        mFirstRunDialog = builder.create();
+        mFirstRunDialog.show();
     }
 
     /**
