@@ -208,14 +208,14 @@ Phase 3 resolves UX annoyances, preference state divergence, and overlay rotatio
 
 **Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `2e999f0c`.
 
-**Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503)
+**Component**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L610-L652)
 
 **Problem**:
-1. [`showFirstRunGuide()`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481) creates an `AlertDialog` with only a positive button (`R.string.generate`).
+1. [`showFirstRunGuide()`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L610) creates an `AlertDialog` with only a positive button (`R.string.generate`).
 2. The dialog is cancelable by default. If the user touches outside or presses Back:
    - The dialog dismisses silently.
    - `mSettings.setFirstRun(false)` is **never executed**.
-   - [`StartupAction`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L372) is skipped because it is located in the `else` branch of `if (mSettings.isFirstRun())`.
+   - The `else` branch running `StartupAction` (see [`MumlaActivity.java:462-470`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L462-L470), implemented in [`StartupAction.java`](../../app/src/foss/java/se/lublin/mumla/app/StartupAction.java)) is skipped because it is located in the `else` branch of `if (mSettings.isFirstRun())`.
    - On the next app launch, `isFirstRun()` remains `true`, re-spawning the dialog repeatedly.
 
 **Solution**:
@@ -262,7 +262,7 @@ private void showFirstRunGuide() {
 
 **Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `cb11911d`.
 
-**Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)
+**Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59), [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L33-L58), [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L577-L593)
 
 **Problem**:
 1. [`Settings.java:59`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`.
@@ -301,7 +301,7 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
    }
    ```
 2. **`MumlaActivity.java`**:
-   Add a defensive guard ensuring unconfigured keycodes cannot match in both `onKeyDown()` ([`MumlaActivity.java:451`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L451)) and `onKeyUp()` ([`MumlaActivity.java:460`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L460)):
+   Add a defensive guard ensuring unconfigured keycodes cannot match in both `onKeyDown()` ([`MumlaActivity.java:577`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L577)) and `onKeyUp()` ([`MumlaActivity.java:587`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L587):
    ```java
    int pttKey = mSettings.getPushToTalkKey();
    if (mService != null && pttKey > 0 && keyCode == pttKey) {
@@ -316,10 +316,10 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
 
 **Status**: Resolved on branch `bugfix/oddities-phase3-remediation` in commit `bda21ffc`.
 
-**Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637), [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
+**Component**: [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652-L660), [`MumlaHotCorner.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65-L82)
 
 **Problem**:
-1. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632), `mChannelOverlay.updatePosition()` is invoked, but `mHotCorner` is completely ignored.
+1. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652), `mChannelOverlay.updatePosition()` is invoked, but `mHotCorner` is completely ignored.
 2. In [`MumlaHotCorner.addOnLayoutChangeListener()`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L65), `setSystemGestureExclusionRects()` is conditioned on `(width != mLastWidth || height != mLastHeight)`.
 3. Because [`ptt_corner.xml`](../../app/src/main/res/layout/ptt_corner.xml) is fixed at 48dp × 48dp, rotating between portrait and landscape preserves width and height. The condition evaluates to `false`, skipping `setSystemGestureExclusionRects()`.
 4. On Android 10+ (Q+), system gesture exclusion rects are cleared or invalidated upon display rotation. As a result, the hot corner loses its exclusion zone after rotation and becomes intercepted by Android's system back-gesture.
@@ -337,7 +337,7 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
        }
    }
    ```
-2. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632), refresh both overlays:
+2. In [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L652), refresh both overlays:
    ```java
    @Override
    public void onConfigurationChanged(Configuration newConfig) {
