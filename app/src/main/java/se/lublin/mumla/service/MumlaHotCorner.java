@@ -72,10 +72,12 @@ public class MumlaHotCorner implements View.OnTouchListener {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     int width = right - left;
                     int height = bottom - top;
-                    if (width > 0 && height > 0 && (width != mLastWidth || height != mLastHeight)) {
-                        mLastWidth = width;
-                        mLastHeight = height;
-                        mView.setSystemGestureExclusionRects(Collections.singletonList(new Rect(0, 0, width, height)));
+                    if (width > 0 && height > 0) {
+                        if (width != mLastWidth || height != mLastHeight) {
+                            mLastWidth = width;
+                            mLastHeight = height;
+                            refreshGestureExclusion();
+                        }
                     }
                 }
             }
@@ -173,6 +175,24 @@ public class MumlaHotCorner implements View.OnTouchListener {
                 Log.d(TAG, "exception removing hot corner view: " + e);
             }
             mShown = false;
+        }
+    }
+
+    /**
+     * Reapplies the system gesture exclusion rects without checking for a
+     * dimension change. Android 10+ (Q+) invalidates exclusion rects on display
+     * rotation, and because the hot corner view has a fixed size, the size-gated
+     * layout listener alone would skip the reapplication after rotation (ODD-05).
+     * Does nothing if the hot corner is not shown.
+     */
+    public void refreshGestureExclusion() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown || mView == null) {
+            return;
+        }
+        int width = mView.getWidth();
+        int height = mView.getHeight();
+        if (width > 0 && height > 0) {
+            mView.setSystemGestureExclusionRects(Collections.singletonList(new Rect(0, 0, width, height)));
         }
     }
 

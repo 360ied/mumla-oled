@@ -654,6 +654,9 @@ public class MumlaService extends HumlaService implements
         if (mChannelOverlay != null && mChannelOverlay.isShown()) {
             mChannelOverlay.updatePosition();
         }
+        if (mHotCorner != null && mHotCorner.isShown()) {
+            mHotCorner.refreshGestureExclusion();
+        }
     }
 
     @Override
