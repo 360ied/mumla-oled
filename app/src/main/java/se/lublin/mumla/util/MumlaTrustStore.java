@@ -30,6 +30,8 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
 
 /**
+ * Persists the user's pinned (trust-on-first-use) certificates in a private BKS store.
+ *
  * Created by andrew on 05/04/14.
  */
 public class MumlaTrustStore {
@@ -53,8 +55,20 @@ public class MumlaTrustStore {
     }
 
     public static void saveTrustStore(Context context, KeyStore store) throws IOException, CertificateException, NoSuchAlgorithmException, KeyStoreException {
-        try (FileOutputStream fos = context.openFileOutput(STORE_FILE, Context.MODE_PRIVATE)) {
-            store.store(fos, STORE_PASS.toCharArray());
+        // Write to a temporary file and rename over the store so a failure
+        // mid-write cannot leave the existing trust store truncated.
+        File tmp = new File(context.getFilesDir(), STORE_FILE + ".tmp");
+        try {
+            try (FileOutputStream fos = context.openFileOutput(tmp.getName(), Context.MODE_PRIVATE)) {
+                store.store(fos, STORE_PASS.toCharArray());
+            }
+            if (!tmp.renameTo(new File(context.getFilesDir(), STORE_FILE))) {
+                throw new IOException("Could not replace trust store");
+            }
+        } finally {
+            if (tmp.exists()) {
+                tmp.delete();
+            }
         }
     }
 

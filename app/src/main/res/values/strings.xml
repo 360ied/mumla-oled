@@ -92,7 +92,6 @@
     <string name="confirm_delete_server">Are you sure you want to delete this server?</string>
     <string name="no_ptt_key">No Key</string>
     <string name="reset_key">Reset Key</string>
-    <string name="externalStorageUnavailable">External storage unavailable, cannot load certificate</string>
     <string name="accessAdd">Add Access Token</string>
     <string name="messageReceived">New message</string>
     <string name="generateCertSuccess">Your certificate has been set and saved as %s</string>
@@ -175,7 +174,7 @@
     <string name="invalid_certificate">Invalid certificate could not be loaded.</string>
     <string name="certificate_load_failed">Could not store certificate.</string>
     <string name="certificate_import_success">Imported certificate %s.</string>
-    <string name="error_writing_to_storage">Could not write to external storage.</string>
+    <string name="error_writing_to_storage">Could not write the exported certificate.</string>
     <string name="export_success">Certificate exported to %s.</string>
     <string name="context_channel_link">Link</string>
     <string name="context_channel_unlink_all">Unlink All</string>
@@ -189,7 +188,6 @@
     <string name="shout_configure">Configure Voice Target</string>
     <string name="grant_perm_microphone">Please grant microphone permission.</string>
     <string name="grant_perm_notifications">Please grant permission to send notifications.</string>
-    <string name="grant_perm_storage">Please grant external storage permission.</string>
     <string name="grant_perm_draw_over_apps">Please grant permission to display over other apps.</string>
     <string name="default_">Default</string>
     <string name="image_confirm_send">Send this image?</string>

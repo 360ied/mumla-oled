@@ -70,4 +70,86 @@ public class CertificateExportTest extends TestCase {
     public void testNestedPathUsesBasename() {
         assertEquals("cert.p12", CertificateExportActivity.sanitizeExportFilename("a/b/cert"));
     }
+
+    private static final String UUID_P12 = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.p12";
+
+    public void testNullFallsBackToUuid() {
+        assertTrue(CertificateExportActivity.sanitizeExportFilename(null).matches(UUID_P12));
+    }
+
+    public void testUuidFallbackHasCanonicalLayout() {
+        assertTrue(CertificateExportActivity.sanitizeExportFilename("").matches(UUID_P12));
+    }
+
+    public void testBackslashPathUsesBasename() {
+        assertEquals("cert.p12", CertificateExportActivity.sanitizeExportFilename("..\\..\\cert"));
+    }
+
+    public void testDotDotAloneFallsBackToUuid() {
+        assertTrue(CertificateExportActivity.sanitizeExportFilename("..").matches(UUID_P12));
+    }
+
+    public void testLeadingDotsStripped() {
+        assertEquals("hidden.p12", CertificateExportActivity.sanitizeExportFilename("...hidden"));
+    }
+
+    public void testReservedCharactersReplaced() {
+        assertEquals("a_b_c_d_e_f_g_h.p12",
+                CertificateExportActivity.sanitizeExportFilename("a:b*c?d\"e<f>g|h"));
+    }
+
+    public void testControlCharactersReplaced() {
+        assertEquals("a_b.p12", CertificateExportActivity.sanitizeExportFilename("a\0b"));
+    }
+
+    public void testReservedNameWithExtensionPrefixed() {
+        assertEquals("_CON.p12", CertificateExportActivity.sanitizeExportFilename("CON.txt"));
+    }
+
+    public void testReservedNameWithMultipleDotsPrefixed() {
+        assertEquals("_CON.a.p12", CertificateExportActivity.sanitizeExportFilename("CON.a.b"));
+    }
+
+    public void testReservedNamePrefixWordNotPrefixed() {
+        assertEquals("CONSOLE.p12", CertificateExportActivity.sanitizeExportFilename("CONSOLE"));
+    }
+
+    public void testUpperCaseP12SuffixNotDuplicated() {
+        assertEquals("mycert.p12", CertificateExportActivity.sanitizeExportFilename("mycert.P12"));
+    }
+
+    public void testTrailingDotsAndSpacesStripped() {
+        assertEquals("foo.p12", CertificateExportActivity.sanitizeExportFilename("foo ."));
+        assertEquals("foo.p12", CertificateExportActivity.sanitizeExportFilename("foo..."));
+    }
+
+    public void testBaseOfExactly64CharsKept() {
+        StringBuilder name = new StringBuilder();
+        for (int i = 0; i < 64; i++) {
+            name.append('a');
+        }
+        assertEquals(name + ".p12", CertificateExportActivity.sanitizeExportFilename(name.toString()));
+    }
+
+    public void testTruncationDoesNotSplitSurrogatePair() {
+        StringBuilder name = new StringBuilder();
+        for (int i = 0; i < 63; i++) {
+            name.append('a');
+        }
+        name.append("\uD83D\uDE00"); // emoji straddling the 64-unit limit
+        String result = CertificateExportActivity.sanitizeExportFilename(name.toString());
+        String stem = result.substring(0, result.length() - 4);
+        assertEquals(63, stem.length());
+        assertFalse(Character.isHighSurrogate(stem.charAt(stem.length() - 1)));
+    }
+
+    public void testTruncationDoesNotLeaveTrailingDot() {
+        StringBuilder base = new StringBuilder();
+        for (int i = 0; i < 63; i++) {
+            base.append('a');
+        }
+        // Stem "aaa...a.bbb" (after dropping ".cert") is cut at 64 units, i.e. right after the dot.
+        assertEquals(base + ".p12",
+                CertificateExportActivity.sanitizeExportFilename(base + ".bbb.cert"));
+    }
 }

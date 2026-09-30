@@ -23,6 +23,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.text.Editable;
+import android.util.Log;
 import android.text.TextWatcher;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -34,6 +35,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
+import androidx.core.os.BundleCompat;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
@@ -70,6 +72,8 @@ import se.lublin.mumla.app.BaseActivity;
 public class CertificateImportActivity extends BaseActivity {
     public static final int REQUEST_FILE = 0;
 
+    private static final String TAG = CertificateImportActivity.class.getName();
+
     private static final String STATE_CERT_URI = "state_cert_uri";
     private static final String STATE_FILE_NAME = "state_file_name";
     private static final String STATE_IS_RETRY = "state_is_retry";
@@ -96,13 +100,15 @@ public class CertificateImportActivity extends BaseActivity {
             if (mWaitingForPassword) {
                 // Rotation residual: the Bundle holds only the source Uri (plus display
                 // metadata), never cert bytes or passwords. Re-read the file on restore.
-                mPendingCertUri = savedInstanceState.getParcelable(STATE_CERT_URI);
+                mPendingCertUri = BundleCompat.getParcelable(savedInstanceState, STATE_CERT_URI, Uri.class);
                 mPendingFileName = savedInstanceState.getString(STATE_FILE_NAME);
                 mPendingIsRetry = savedInstanceState.getBoolean(STATE_IS_RETRY);
                 if (mPendingCertUri != null && mPendingFileName != null) {
                     try {
                         mPendingCertBytes = readCertBytes(mPendingCertUri);
                     } catch (IOException e) {
+                        Log.w(TAG, "Could not re-read certificate after activity recreation", e);
+                        mWaitingForPassword = false;
                         Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
                         finish();
                         return;
@@ -110,7 +116,14 @@ public class CertificateImportActivity extends BaseActivity {
                     showPasswordDialog(mPendingCertUri, mPendingFileName, mPendingCertBytes, mPendingIsRetry);
                     return;
                 }
+                // Inconsistent saved state; nothing to restore.
+                mWaitingForPassword = false;
+                finish();
+                return;
             }
+            // Recreated while the file picker is open: its result is delivered to
+            // this instance, so do not launch a second picker.
+            return;
         }
 
         Intent fileIntent = new Intent(Intent.ACTION_GET_CONTENT);
@@ -162,29 +175,30 @@ public class CertificateImportActivity extends BaseActivity {
         try {
             certBytes = readCertBytes(uri);
         } catch (IOException e) {
-            e.printStackTrace();
+            Log.w(TAG, "Could not read picked certificate", e);
             Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
             finish();
             return;
         }
-        mPendingCertUri = uri;
 
-        String displayName;
-        Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
-        if (cursor != null && cursor.moveToFirst()) {
-            displayName = cursor.getString(0);
-        } else {
+        String displayName = null;
+        try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                displayName = cursor.getString(0);
+            }
+        } catch (SecurityException | IllegalArgumentException e) {
+            Log.w(TAG, "Could not query display name of picked certificate", e);
+        }
+        if (displayName == null || displayName.isEmpty()) {
             displayName = UUID.randomUUID().toString() + ".p12";
         }
-        if (cursor != null)
-            cursor.close();
 
         storeKeystore(new char[0], uri, displayName, certBytes, false);
     }
 
     /** Reads the picked certificate with the 5 MB cap; used for both first read and restore. */
     private byte[] readCertBytes(Uri uri) throws IOException {
-        try (InputStream is = getContentResolver().openInputStream(uri)) {
+        try (InputStream is = openCertificateStream(uri)) {
             if (is == null) {
                 throw new IOException("Could not open certificate");
             }
@@ -200,6 +214,15 @@ public class CertificateImportActivity extends BaseActivity {
                 baos.write(buffer, 0, read);
             }
             return baos.toByteArray();
+        }
+    }
+
+    /** Opens the Uri, reporting provider failures (lost grant, bad Uri) as {@link IOException}. */
+    private InputStream openCertificateStream(Uri uri) throws IOException {
+        try {
+            return getContentResolver().openInputStream(uri);
+        } catch (SecurityException | IllegalArgumentException | UnsupportedOperationException e) {
+            throw new IOException("Could not open certificate", e);
         }
     }
 
@@ -276,7 +299,9 @@ public class CertificateImportActivity extends BaseActivity {
 
         if (mPasswordDialog != null && mPasswordDialog.isShowing() && mPasswordLayout != null && mPasswordField != null) {
             if (isRetry) {
-                // Never refill a previous password: the user re-enters it.
+                // Never refill a previous password; clear the rejected one so the
+                // user re-enters it from scratch.
+                mPasswordField.setText("");
                 mPasswordLayout.setError(getString(R.string.invalid_password));
                 mPasswordField.requestFocus();
             }
@@ -316,10 +341,14 @@ public class CertificateImportActivity extends BaseActivity {
             if (mPasswordField == null) {
                 return;
             }
-            // char[] from the field through KeyStore.load; never retain the String copy.
+            // Copy chars straight from the field into a char[] (no intermediate
+            // String) for KeyStore.load.
             Editable text = mPasswordField.getText();
-            String entered = text != null ? text.toString() : "";
-            char[] passChars = entered.toCharArray();
+            int length = text != null ? text.length() : 0;
+            char[] passChars = new char[length];
+            if (length > 0) {
+                text.getChars(0, length, passChars, 0);
+            }
             try {
                 storeKeystore(passChars, sourceUri, fileName, certBytes, true);
             } finally {

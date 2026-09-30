@@ -17,21 +17,19 @@
 
 package se.lublin.mumla.preference;
 
+import android.content.DialogInterface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.widget.Toast;
 
-import android.content.DialogInterface;
-
+import androidx.annotation.NonNull;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument;
 import androidx.documentfile.provider.DocumentFile;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import java.io.BufferedOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
@@ -51,23 +49,41 @@ import se.lublin.mumla.app.BaseActivity;
 public class CertificateExportActivity extends BaseActivity implements DialogInterface.OnClickListener {
     private static final String TAG = CertificateExportActivity.class.getName();
 
+    private static final String STATE_PENDING_CERT_ID = "state_pending_cert_id";
+    private static final String P12_SUFFIX = ".p12";
+    /** Maximum UTF-16 units kept in the filename base (sans extension) for the SAF suggestion. */
+    private static final int MAX_EXPORT_BASENAME = 64;
+    /** Control characters plus the characters reserved by common filesystems. */
+    private static final Pattern INVALID_FILENAME_CHARS = Pattern.compile("[\\x00-\\x1f\\x7f:*?\"<>|]");
+    /** Windows device names, matched against the part of the name before the first dot. */
+    private static final Pattern WINDOWS_RESERVED_NAME =
+            Pattern.compile("^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", Pattern.CASE_INSENSITIVE);
+
     private MumlaDatabase mDatabase;
     private List<DatabaseCertificate> mCertificates;
+    private DatabaseCertificate mCertificatePending = null;
 
     private final ActivityResultLauncher<String> documentCreator =
             registerForActivityResult(new CreateDocument(), this::onDocumentCreated);
-
-    /** Maximum characters kept in the filename base (sans extension) for the SAF suggestion. */
-    private static final int MAX_EXPORT_BASENAME = 64;
-    private static final Pattern WINDOWS_RESERVED_NAME =
-            Pattern.compile("^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", Pattern.CASE_INSENSITIVE);
-    private DatabaseCertificate mCertificatePending = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mDatabase = new MumlaSQLiteDatabase(this);
         mCertificates = mDatabase.getCertificates();
+
+        if (savedInstanceState != null && savedInstanceState.containsKey(STATE_PENDING_CERT_ID)) {
+            // Recreated while the document picker was open: its result is delivered to
+            // the new instance, which must still know which certificate to write.
+            long pendingId = savedInstanceState.getLong(STATE_PENDING_CERT_ID);
+            for (DatabaseCertificate certificate : mCertificates) {
+                if (certificate.getId() == pendingId) {
+                    mCertificatePending = certificate;
+                    break;
+                }
+            }
+            return;
+        }
 
         CharSequence[] labels = new CharSequence[mCertificates.size()];
         for (int i = 0; i < labels.length; i++) {
@@ -82,6 +98,14 @@ public class CertificateExportActivity extends BaseActivity implements DialogInt
     }
 
     @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (mCertificatePending != null) {
+            outState.putLong(STATE_PENDING_CERT_ID, mCertificatePending.getId());
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         mDatabase.close();
@@ -89,27 +113,29 @@ public class CertificateExportActivity extends BaseActivity implements DialogInt
 
     @Override
     public void onClick(DialogInterface dialog, int which) {
-        DatabaseCertificate certificate = mCertificates.get(which);
-        // SAF-only export on all API levels: the tap plus the SAF picker is the consent.
-        mCertificatePending = certificate;
-        documentCreator.launch(sanitizeExportFilename(certificate.getName()));
+        // The tap plus the SAF picker is the consent.
+        mCertificatePending = mCertificates.get(which);
+        documentCreator.launch(sanitizeExportFilename(mCertificatePending.getName()));
+    }
+
+    private static String randomExportName() {
+        return UUID.randomUUID().toString() + P12_SUFFIX;
     }
 
     /**
      * Sanitizes a certificate name into a safe SAF suggestion with a {@code .p12} suffix.
      *
      * <p>Steps: trim; take the trailing path segment (splitting on slash/backslash) so
-     * traversal prefixes cannot survive; replace backslash/slash/colon/NUL with {@code '_'};
-     * strip leading dots (hidden-file/traversal remnants); prefix {@code '_'} when the base
-     * (sans extension) is a Windows reserved name; truncate the base to 64 chars; enforce a
-     * {@code .p12} suffix by appending or replacing any other extension. Blank input (or
-     * nothing left after sanitizing) falls back to {@code <random-uuid>.p12}.
+     * traversal prefixes cannot survive; replace control characters and
+     * {@code : * ? " < > |} with {@code '_'}; strip leading dots (hidden-file/traversal
+     * remnants); drop a trailing {@code .p12} or any other single extension; strip trailing
+     * dots and spaces; truncate the stem to 64 UTF-16 units without splitting a surrogate
+     * pair; prefix {@code '_'} when the part of the stem before its first dot is a Windows
+     * reserved device name; append {@code .p12}. Blank input (or nothing left after
+     * sanitizing) falls back to {@code <random-uuid>.p12}.
      */
     static String sanitizeExportFilename(String name) {
         String trimmed = name == null ? "" : name.trim();
-        if (trimmed.isEmpty()) {
-            return UUID.randomUUID().toString() + ".p12";
-        }
         // Take the trailing segment so "../../x" suggests "x", not a mangled prefix.
         String[] segments = trimmed.split("[\\\\/]+");
         String basename = "";
@@ -120,75 +146,87 @@ public class CertificateExportActivity extends BaseActivity implements DialogInt
                 break;
             }
         }
-        if (basename.isEmpty()) {
-            return UUID.randomUUID().toString() + ".p12";
+        basename = INVALID_FILENAME_CHARS.matcher(basename).replaceAll("_");
+        int start = 0;
+        while (start < basename.length() && basename.charAt(start) == '.') {
+            start++;
         }
-        basename = basename.replace('\\', '_').replace('/', '_')
-                .replace(':', '_').replace('\0', '_');
-        while (basename.startsWith(".")) {
-            basename = basename.substring(1);
-        }
-        if (basename.isEmpty()) {
-            return UUID.randomUUID().toString() + ".p12";
-        }
-        String baseSansExt = basename;
-        int dot = basename.lastIndexOf('.');
-        if (dot > 0) {
-            baseSansExt = basename.substring(0, dot);
-        }
-        if (WINDOWS_RESERVED_NAME.matcher(baseSansExt).matches()) {
-            basename = "_" + basename;
-        }
-        String lower = basename.toLowerCase(Locale.ROOT);
-        String basePart;
-        if (lower.endsWith(".p12")) {
-            basePart = basename.substring(0, basename.length() - 4);
+        String stem = basename.substring(start);
+
+        if (stem.toLowerCase(Locale.ROOT).endsWith(P12_SUFFIX)) {
+            stem = stem.substring(0, stem.length() - P12_SUFFIX.length());
         } else {
-            int extDot = basename.lastIndexOf('.');
-            basePart = extDot > 0 ? basename.substring(0, extDot) : basename;
+            int extDot = stem.lastIndexOf('.');
+            if (extDot > 0) {
+                stem = stem.substring(0, extDot);
+            }
         }
-        if (basePart.length() > MAX_EXPORT_BASENAME) {
-            basePart = basePart.substring(0, MAX_EXPORT_BASENAME);
+        stem = stripTrailingDotsAndSpaces(stem);
+        if (stem.length() > MAX_EXPORT_BASENAME) {
+            int cut = MAX_EXPORT_BASENAME;
+            if (Character.isHighSurrogate(stem.charAt(cut - 1))) {
+                cut--;
+            }
+            stem = stripTrailingDotsAndSpaces(stem.substring(0, cut));
         }
-        if (basePart.isEmpty()) {
-            return UUID.randomUUID().toString() + ".p12";
+        if (stem.isEmpty()) {
+            return randomExportName();
         }
-        return basePart + ".p12";
+
+        int firstDot = stem.indexOf('.');
+        String deviceName = stripTrailingDotsAndSpaces(firstDot < 0 ? stem : stem.substring(0, firstDot));
+        if (WINDOWS_RESERVED_NAME.matcher(deviceName).matches()) {
+            stem = "_" + stem;
+        }
+        return stem + P12_SUFFIX;
+    }
+
+    private static String stripTrailingDotsAndSpaces(String value) {
+        int end = value.length();
+        while (end > 0 && (value.charAt(end - 1) == '.' || value.charAt(end - 1) == ' ')) {
+            end--;
+        }
+        return value.substring(0, end);
     }
 
     private void onDocumentCreated(Uri uri) {
-        if (uri != null && mCertificatePending != null) {
-            try {
-                OutputStream os = getContentResolver().openOutputStream(uri);
-                DocumentFile df = DocumentFile.fromSingleUri(this, uri);
-                writeCertificate(os, mCertificatePending, df != null ? df.getName() : "<unknown>");
-            } catch (FileNotFoundException e) {
-                showErrorDialog(R.string.externalStorageUnavailable);
-                Log.w(TAG, "FileNotFound on output file picked by user?!");
-            }
+        if (uri == null) {
+            // User cancelled the picker.
         } else if (mCertificatePending == null) {
             Log.w(TAG, "No pending certificate after user picked output file");
+        } else {
+            DocumentFile df = DocumentFile.fromSingleUri(this, uri);
+            writeCertificate(uri, mCertificatePending, df != null ? df.getName() : "<unknown>");
         }
+        mCertificatePending = null;
         finish();
     }
 
-    private void writeCertificate(OutputStream fos, DatabaseCertificate cert, String path) {
+    private void writeCertificate(Uri uri, DatabaseCertificate cert, String displayName) {
         byte[] data = mDatabase.getCertificateData(cert.getId());
-        try {
-            BufferedOutputStream bos = new BufferedOutputStream(fos);
-            bos.write(data);
-            bos.close();
-            Toast.makeText(this, getString(R.string.export_success, path), Toast.LENGTH_LONG).show();
-        } catch (IOException e) {
-            e.printStackTrace();
-            showErrorDialog(R.string.error_writing_to_storage);
+        if (data == null) {
+            Log.w(TAG, "Certificate data missing for id " + cert.getId());
+            showError(R.string.error_writing_to_storage);
+            return;
         }
+        try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+            if (os == null) {
+                Log.w(TAG, "No output stream for document picked by user");
+                showError(R.string.error_writing_to_storage);
+                return;
+            }
+            os.write(data);
+            os.flush();
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to write exported certificate", e);
+            showError(R.string.error_writing_to_storage);
+            return;
+        }
+        Toast.makeText(this, getString(R.string.export_success, displayName), Toast.LENGTH_LONG).show();
     }
 
-    private void showErrorDialog(int resourceId) {
-        new MaterialAlertDialogBuilder(this)
-                .setMessage(resourceId)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+    /** Toast rather than a dialog: the activity finishes right after the export attempt. */
+    private void showError(int resourceId) {
+        Toast.makeText(this, resourceId, Toast.LENGTH_LONG).show();
     }
 }
