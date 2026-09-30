@@ -226,6 +226,8 @@ public class MumlaService extends HumlaService implements
     };
 
     private BroadcastReceiver mTalkReceiver;
+    /** Tracks TALK receiver registration so mid-connection toggles never double-register. */
+    private boolean mTalkReceiverRegistered;
 
     private void updateConnectedNotification() {
         Server server = getTargetServer();
@@ -613,6 +615,7 @@ public class MumlaService extends HumlaService implements
         } catch (IllegalArgumentException e) {
             e.printStackTrace();
         }
+        mTalkReceiverRegistered = false;
 
         unregisterObserver(mObserver);
         if(mTTS != null) {
@@ -664,9 +667,12 @@ public class MumlaService extends HumlaService implements
 
         updateOverlayVisibility();
 
-        ContextCompat.registerReceiver(this, mTalkReceiver,
-                new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
-                ContextCompat.RECEIVER_EXPORTED);
+        if (mSettings.isTalkBroadcastAllowed() && !mTalkReceiverRegistered) {
+            ContextCompat.registerReceiver(this, mTalkReceiver,
+                    new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
+                    ContextCompat.RECEIVER_EXPORTED);
+            mTalkReceiverRegistered = true;
+        }
 
         updateHotCornerVisibility();
         // Configure proximity sensor
@@ -686,6 +692,7 @@ public class MumlaService extends HumlaService implements
             unregisterReceiver(mTalkReceiver);
         } catch (IllegalArgumentException iae) {
         }
+        mTalkReceiverRegistered = false;
 
         // Remove overlay if present.
         if (mChannelOverlay != null) {
@@ -792,6 +799,22 @@ public class MumlaService extends HumlaService implements
             case Settings.PREF_FORCE_TCP:
                 // These are settings we flag as 'requiring reconnect'.
                 requiresReconnect = true;
+                break;
+            case Settings.PREF_ALLOW_TALK_BROADCAST:
+                if (mSettings.isTalkBroadcastAllowed()) {
+                    if (isConnectionEstablished() && !mTalkReceiverRegistered) {
+                        ContextCompat.registerReceiver(this, mTalkReceiver,
+                                new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
+                                ContextCompat.RECEIVER_EXPORTED);
+                        mTalkReceiverRegistered = true;
+                    }
+                } else if (mTalkReceiverRegistered) {
+                    try {
+                        unregisterReceiver(mTalkReceiver);
+                    } catch (IllegalArgumentException iae) {
+                    }
+                    mTalkReceiverRegistered = false;
+                }
                 break;
         }
         if (changedExtras.size() > 0) {
