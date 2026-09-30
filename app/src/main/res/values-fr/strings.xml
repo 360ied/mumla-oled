@@ -63,7 +63,6 @@
     <string name="connectionRefused">Connexion refusée</string>
     <string name="confirm_delete_server">Êtes-vous sûr(e) vouloir supprimer ce serveur \?</string>
     <string name="reset_key">Réinitialiser la touche</string>
-    <string name="externalStorageUnavailable">Stockage externe indisponible, impossible de charger le certificat</string>
     <string name="accessAdd">Ajouter un jeton d\'accès</string>
     <string name="messageReceived">Nouveau message</string>
     <string name="generateCertSuccess">Votre certificat a été définie et enregistré sous %s</string>
@@ -161,7 +160,6 @@
     <string name="shout_include_linked">Voix vers les salons liés</string>
     <string name="shout_include_subchannels">Voix vers les sous-salons</string>
     <string name="grant_perm_draw_over_apps">Veuillez autoriser l\'affichage sur d\'autres applications.</string>
-    <string name="grant_perm_storage">Veuillez accorder une autorisation de stockage externe.</string>
     <string name="grant_perm_microphone">Veuillez autoriser le microphone.</string>
     <string name="shout_configure">Configurer la cible vocale</string>
     <string name="shout_target">Destination vocale %s</string>
@@ -170,7 +168,7 @@
     <string name="context_channel_unlink_all">Tout délier</string>
     <string name="context_channel_link">Relier</string>
     <string name="export_success">Certificat exporté vers %s.</string>
-    <string name="error_writing_to_storage">Impossible d\'écrire sur un stockage externe.</string>
+    <string name="error_writing_to_storage">Impossible d\'écrire le certificat exporté.</string>
     <string name="certificate_import_success">Certificat importé %s.</string>
     <string name="certificate_load_failed">Impossible de stocker le certificat.</string>
     <string name="invalid_certificate">Un certificat invalide n\'a pas pu être chargé.</string>

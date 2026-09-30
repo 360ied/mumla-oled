@@ -31,9 +31,13 @@ import java.security.NoSuchProviderException;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
@@ -42,6 +46,13 @@ import javax.net.ssl.X509TrustManager;
 
 public class HumlaSSLSocketFactory {
     private static final String TAG = HumlaSSLSocketFactory.class.getName();
+
+    /**
+     * TLS versions this client negotiates (floor: TLS 1.2+). This is an
+     * allow-list, intersected with what the runtime supports so pre-29
+     * devices (no TLS 1.3) keep 1.2 instead of failing to connect.
+     */
+    private static final String[] TLS_PROTOCOLS_ALLOWED = {"TLSv1.2", "TLSv1.3"};
 
     private SSLContext mContext;
     private HumlaTrustManagerWrapper mTrustWrapper;
@@ -55,9 +66,10 @@ public class HumlaSSLSocketFactory {
         X509TrustManager pinnedTrustManager = null;
         KeyStore pinnedStore = null;
         if(trustStorePath != null) {
-            KeyStore trustStore = KeyStore.getInstance(trustStoreFormat);
+            KeyStore trustStore = KeyStore.getInstance(
+                    trustStoreFormat != null ? trustStoreFormat : KeyStore.getDefaultType());
             try (FileInputStream fis = new FileInputStream(trustStorePath)) {
-                trustStore.load(fis, trustStorePassword.toCharArray());
+                trustStore.load(fis, trustStorePassword != null ? trustStorePassword.toCharArray() : null);
             }
 
             TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
@@ -87,6 +99,30 @@ public class HumlaSSLSocketFactory {
         return createSocket(host, port, 0);
     }
 
+    /**
+     * Intersects {@link #TLS_PROTOCOLS_ALLOWED} with the runtime's
+     * supported protocols. Pure (no socket needed) so it is JVM-testable.
+     *
+     * @param supportedProtocols e.g. {@code SSLSocket.getSupportedProtocols()}
+     * @return the preferred protocols present in {@code supportedProtocols},
+     *         in preferred order; empty when none match or the input is null.
+     */
+    static String[] filterTlsProtocols(String[] supportedProtocols) {
+        if (supportedProtocols == null) {
+            return new String[0];
+        }
+        List<String> enabled = new ArrayList<>(TLS_PROTOCOLS_ALLOWED.length);
+        for (String preferred : TLS_PROTOCOLS_ALLOWED) {
+            for (String supported : supportedProtocols) {
+                if (preferred.equals(supported)) {
+                    enabled.add(preferred);
+                    break;
+                }
+            }
+        }
+        return enabled.toArray(new String[0]);
+    }
+
     public SSLSocket createSocket(String host, int port, int timeoutMs) throws IOException {
         // Always layer TLS over a connected plain socket so the hostname survives
         // for SNI and post-handshake verification on both paths. A direct
@@ -96,6 +132,16 @@ public class HumlaSSLSocketFactory {
             plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
             SSLSocket sslSocket =
                     (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+            // TLS 1.2+ floor. Protocols are not identity, so this
+            // applies to every host including .onion (only endpoint
+            // identification stays onion-exempt, below).
+            String[] tlsProtocols = filterTlsProtocols(sslSocket.getSupportedProtocols());
+            if (tlsProtocols.length == 0) {
+                // Fail closed: never fall back to the runtime's default
+                // protocol set, which may include TLS 1.0/1.1.
+                throw new SSLHandshakeException("No TLS 1.2+ protocol supported by this runtime");
+            }
+            sslSocket.setEnabledProtocols(tlsProtocols);
             // Defense-in-depth only: the authoritative check is the manual
             // TlsHostnameVerifier pass in HumlaTCP, which honors TOFU pins and
             // the .onion pin-or-nothing path. Endpoint identification must not
@@ -107,7 +153,7 @@ public class HumlaSSLSocketFactory {
                 sslSocket.setSSLParameters(params);
             }
             return sslSocket;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             try {
                 plainSocket.close();
             } catch (IOException ignored) {
@@ -145,7 +191,7 @@ public class HumlaSSLSocketFactory {
 
     /** Records the handshake failure reason (e.g. post-handshake hostname mismatch). */
     public void setLastHandshakeFailure(HandshakeFailure failure) {
-        mTrustWrapper.setLastHandshakeFailure(java.util.Objects.requireNonNull(failure));
+        mTrustWrapper.setLastHandshakeFailure(Objects.requireNonNull(failure));
     }
 
     /**

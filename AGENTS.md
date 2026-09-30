@@ -45,7 +45,7 @@
 ## Build & Deployment
 - **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor. Build with the Nix dev shell:
   - Debug APK: `nix develop --command ./gradlew assembleFossDebug`
-  - Release APK: `nix develop --command ./gradlew assembleFossRelease` (output: `app/build/outputs/apk/foss/release/mumla-foss-release.apk`)
+  - Release APK: `nix develop --command ./gradlew assembleFossRelease` (output: `app/build/outputs/apk/foss/release/mumla-foss-release.apk`; requires the local uncommitted `app/signing.gradle` defining `signingConfigs.release`, otherwise the build fails)
 - **ADB Launch**: Application ID is `se.lublin.mumla.oled15` (Java namespace is `se.lublin.mumla`). Launch with:
   ```bash
   adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity

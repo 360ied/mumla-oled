@@ -26,6 +26,13 @@
         android:title="@string/chatNotifications"
         app:iconSpaceReserved="false" />
 
+    <CheckBoxPreference
+        android:defaultValue="true"
+        android:key="allowTalkBroadcast"
+        android:summary="@string/pref_talk_broadcast_summary"
+        android:title="@string/pref_talk_broadcast_title"
+        app:iconSpaceReserved="false" />
+
     <ListPreference
         android:key="notification_style"
         android:defaultValue="bigtext"

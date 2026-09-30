@@ -100,4 +100,28 @@ public class URLParserTest extends TestCase {
         }
     }
 
+
+    public void testNullURLIsMalformed() {
+        try {
+            MumbleURLParser.parseURL(null);
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
+
+    public void testOverflowingPortIsMalformed() {
+        try {
+            MumbleURLParser.parseURL("mumble://server.com:99999999999/");
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
+
+    public void testOutOfRangePortIsMalformed() {
+        try {
+            MumbleURLParser.parseURL("mumble://server.com:65536/");
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
 }

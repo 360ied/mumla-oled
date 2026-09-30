@@ -448,21 +448,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             }
         }
 
-        // If we're given a Mumble URL to show, open up a server edit fragment.
-        if (getIntent() != null &&
-                Intent.ACTION_VIEW.equals(getIntent().getAction())) {
-            String url = getIntent().getDataString();
-            try {
-                Server server = MumbleURLParser.parseURL(url);
-
-                // Open a dialog prompting the user to connect to the Mumble server.
-                DialogFragment fragment = ServerEditFragment.createServerEditDialog(
-                        MumlaActivity.this, server, ServerEditFragment.Action.CONNECT_ACTION, true);
-                fragment.show(getSupportFragmentManager(), "url_edit");
-            } catch (MalformedURLException e) {
-                Toast.makeText(this, getString(R.string.mumble_url_parse_failed), Toast.LENGTH_LONG).show();
-                e.printStackTrace();
-            }
+        // If we're given a Mumble URL to show, open up a server edit fragment. Only on a
+        // fresh launch: after recreation the fragment manager restores the dialog itself.
+        if (savedInstanceState == null) {
+            handleViewIntent(getIntent());
         }
 
         setVolumeControlStream(mSettings.isHandsetMode() ?
@@ -510,6 +499,38 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService.setSuppressNotifications(false);
         }
         unbindService(mConnection);
+    }
+
+    /**
+     * If the intent is a Mumble URL view request, opens a server edit dialog prompting the
+     * user to connect.
+     */
+    private void handleViewIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return;
+        }
+        try {
+            Server server = MumbleURLParser.parseURL(intent.getDataString());
+
+            // Flag a password embedded in the link so the dialog can warn (not block).
+            String urlPassword = server.getPassword();
+            boolean hasUrlPassword = urlPassword != null && !urlPassword.isEmpty();
+            DialogFragment fragment = ServerEditFragment.createServerEditDialog(
+                    MumlaActivity.this, server, ServerEditFragment.Action.CONNECT_ACTION, true,
+                    hasUrlPassword);
+            fragment.show(getSupportFragmentManager(), "url_edit");
+        } catch (MalformedURLException e) {
+            Toast.makeText(this, getString(R.string.mumble_url_parse_failed), Toast.LENGTH_LONG).show();
+            Log.w(TAG, "Could not parse Mumble URL", e);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // singleTop: links opened while the activity is running arrive here.
+        setIntent(intent);
+        handleViewIntent(intent);
     }
 
     @Override

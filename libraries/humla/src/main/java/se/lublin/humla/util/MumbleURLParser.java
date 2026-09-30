@@ -40,13 +40,26 @@ public class MumbleURLParser {
      * @throws MalformedURLException if the URL cannot be parsed.
      */
     public static Server parseURL(String url) throws MalformedURLException {
+        if (url == null) {
+            throw new MalformedURLException("URL is null");
+        }
         Matcher matcher = URL_PATTERN.matcher(url);
         if(matcher.find()) {
             String username = matcher.group(2);
             String password = matcher.group(4);
             String host = matcher.group(5);
             String portString = matcher.group(7);
-            int port = portString == null ? Constants.DEFAULT_PORT : Integer.parseInt(portString);
+            int port = Constants.DEFAULT_PORT;
+            if (portString != null) {
+                try {
+                    port = Integer.parseInt(portString);
+                } catch (NumberFormatException e) {
+                    throw new MalformedURLException("Invalid port: " + portString);
+                }
+                if (port > 65535) {
+                    throw new MalformedURLException("Port out of range: " + portString);
+                }
+            }
             return new Server(-1, null, host, port, username, password);
         } else {
             throw new MalformedURLException();

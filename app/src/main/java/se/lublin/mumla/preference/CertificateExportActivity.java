@@ -17,35 +17,25 @@
 
 package se.lublin.mumla.preference;
 
-import static android.os.Build.VERSION.SDK_INT;
-
-import android.Manifest;
 import android.content.DialogInterface;
-import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.util.Log;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument;
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 import androidx.documentfile.provider.DocumentFile;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+import java.util.regex.Pattern;
 
 import se.lublin.mumla.R;
 import se.lublin.mumla.db.DatabaseCertificate;
@@ -59,24 +49,41 @@ import se.lublin.mumla.app.BaseActivity;
 public class CertificateExportActivity extends BaseActivity implements DialogInterface.OnClickListener {
     private static final String TAG = CertificateExportActivity.class.getName();
 
-    /**
-     * The name of the directory to export to on external storage.
-     */
-    private static final String EXTERNAL_STORAGE_DIR = "Mumla";
+    private static final String STATE_PENDING_CERT_ID = "state_pending_cert_id";
+    private static final String P12_SUFFIX = ".p12";
+    /** Maximum UTF-16 units kept in the filename base (sans extension) for the SAF suggestion. */
+    private static final int MAX_EXPORT_BASENAME = 64;
+    /** Control characters plus the characters reserved by common filesystems. */
+    private static final Pattern INVALID_FILENAME_CHARS = Pattern.compile("[\\x00-\\x1f\\x7f:*?\"<>|]");
+    /** Windows device names, matched against the part of the name before the first dot. */
+    private static final Pattern WINDOWS_RESERVED_NAME =
+            Pattern.compile("^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", Pattern.CASE_INSENSITIVE);
 
     private MumlaDatabase mDatabase;
     private List<DatabaseCertificate> mCertificates;
+    private DatabaseCertificate mCertificatePending = null;
 
     private final ActivityResultLauncher<String> documentCreator =
             registerForActivityResult(new CreateDocument(), this::onDocumentCreated);
-    private static final int PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE = 2;
-    private DatabaseCertificate mCertificatePending = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mDatabase = new MumlaSQLiteDatabase(this);
         mCertificates = mDatabase.getCertificates();
+
+        if (savedInstanceState != null && savedInstanceState.containsKey(STATE_PENDING_CERT_ID)) {
+            // Recreated while the document picker was open: its result is delivered to
+            // the new instance, which must still know which certificate to write.
+            long pendingId = savedInstanceState.getLong(STATE_PENDING_CERT_ID);
+            for (DatabaseCertificate certificate : mCertificates) {
+                if (certificate.getId() == pendingId) {
+                    mCertificatePending = certificate;
+                    break;
+                }
+            }
+            return;
+        }
 
         CharSequence[] labels = new CharSequence[mCertificates.size()];
         for (int i = 0; i < labels.length; i++) {
@@ -91,6 +98,14 @@ public class CertificateExportActivity extends BaseActivity implements DialogInt
     }
 
     @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (mCertificatePending != null) {
+            outState.putLong(STATE_PENDING_CERT_ID, mCertificatePending.getId());
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         mDatabase.close();
@@ -98,101 +113,120 @@ public class CertificateExportActivity extends BaseActivity implements DialogInt
 
     @Override
     public void onClick(DialogInterface dialog, int which) {
-        DatabaseCertificate certificate = mCertificates.get(which);
-        if (SDK_INT >= Build.VERSION_CODES.R) {
-            // TODO Should always use this method?
-            mCertificatePending = certificate;
-            documentCreator.launch(certificate.getName());
-        } else {
-            saveCertificateClassic(certificate);
+        // The tap plus the SAF picker is the consent.
+        mCertificatePending = mCertificates.get(which);
+        documentCreator.launch(sanitizeExportFilename(mCertificatePending.getName()));
+    }
+
+    private static String randomExportName() {
+        return UUID.randomUUID().toString() + P12_SUFFIX;
+    }
+
+    /**
+     * Sanitizes a certificate name into a safe SAF suggestion with a {@code .p12} suffix.
+     *
+     * <p>Steps: trim; take the trailing path segment (splitting on slash/backslash) so
+     * traversal prefixes cannot survive; replace control characters and
+     * {@code : * ? " < > |} with {@code '_'}; strip leading dots (hidden-file/traversal
+     * remnants); drop a trailing {@code .p12} or any other single extension; strip trailing
+     * dots and spaces; truncate the stem to 64 UTF-16 units without splitting a surrogate
+     * pair; prefix {@code '_'} when the part of the stem before its first dot is a Windows
+     * reserved device name; append {@code .p12}. Blank input (or nothing left after
+     * sanitizing) falls back to {@code <random-uuid>.p12}.
+     */
+    static String sanitizeExportFilename(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        // Take the trailing segment so "../../x" suggests "x", not a mangled prefix.
+        String[] segments = trimmed.split("[\\\\/]+");
+        String basename = "";
+        for (int i = segments.length - 1; i >= 0; i--) {
+            String seg = segments[i].trim();
+            if (!seg.isEmpty() && !seg.equals(".") && !seg.equals("..")) {
+                basename = seg;
+                break;
+            }
         }
+        basename = INVALID_FILENAME_CHARS.matcher(basename).replaceAll("_");
+        int start = 0;
+        while (start < basename.length() && basename.charAt(start) == '.') {
+            start++;
+        }
+        String stem = basename.substring(start);
+
+        if (stem.toLowerCase(Locale.ROOT).endsWith(P12_SUFFIX)) {
+            stem = stem.substring(0, stem.length() - P12_SUFFIX.length());
+        } else {
+            int extDot = stem.lastIndexOf('.');
+            if (extDot > 0) {
+                stem = stem.substring(0, extDot);
+            }
+        }
+        stem = stripTrailingDotsAndSpaces(stem);
+        if (stem.length() > MAX_EXPORT_BASENAME) {
+            int cut = MAX_EXPORT_BASENAME;
+            if (Character.isHighSurrogate(stem.charAt(cut - 1))) {
+                cut--;
+            }
+            stem = stripTrailingDotsAndSpaces(stem.substring(0, cut));
+        }
+        if (stem.isEmpty()) {
+            return randomExportName();
+        }
+
+        int firstDot = stem.indexOf('.');
+        String deviceName = stripTrailingDotsAndSpaces(firstDot < 0 ? stem : stem.substring(0, firstDot));
+        if (WINDOWS_RESERVED_NAME.matcher(deviceName).matches()) {
+            stem = "_" + stem;
+        }
+        return stem + P12_SUFFIX;
+    }
+
+    private static String stripTrailingDotsAndSpaces(String value) {
+        int end = value.length();
+        while (end > 0 && (value.charAt(end - 1) == '.' || value.charAt(end - 1) == ' ')) {
+            end--;
+        }
+        return value.substring(0, end);
     }
 
     private void onDocumentCreated(Uri uri) {
-        if (uri != null && mCertificatePending != null) {
-            try {
-                OutputStream os = getContentResolver().openOutputStream(uri);
-                DocumentFile df = DocumentFile.fromSingleUri(this, uri);
-                writeCertificate(os, mCertificatePending, df != null ? df.getName() : "<unknown>");
-            } catch (FileNotFoundException e) {
-                showErrorDialog(R.string.externalStorageUnavailable);
-                Log.w(TAG, "FileNotFound on output file picked by user?!");
-            }
+        if (uri == null) {
+            // User cancelled the picker.
         } else if (mCertificatePending == null) {
             Log.w(TAG, "No pending certificate after user picked output file");
+        } else {
+            DocumentFile df = DocumentFile.fromSingleUri(this, uri);
+            writeCertificate(uri, mCertificatePending, df != null ? df.getName() : "<unknown>");
         }
+        mCertificatePending = null;
         finish();
     }
 
-    private void saveCertificateClassic(DatabaseCertificate certificate) {
-        if (ContextCompat.checkSelfPermission(CertificateExportActivity.this,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(CertificateExportActivity.this,
-                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
-                    PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE);
-            mCertificatePending = certificate;
-            return;
-        }
-
-        if (!Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
-            showErrorDialog(R.string.externalStorageUnavailable);
-            return;
-        }
-        File storageDirectory = Environment.getExternalStorageDirectory();
-        File mumlaDirectory = new File(storageDirectory, EXTERNAL_STORAGE_DIR);
-        if (!mumlaDirectory.exists() && !mumlaDirectory.mkdir()) {
-            showErrorDialog(R.string.externalStorageUnavailable);
-            return;
-        }
-        File outputFile = new File(mumlaDirectory, certificate.getName());
-        FileOutputStream fos;
-        try {
-            fos = new FileOutputStream(outputFile);
-        } catch (FileNotFoundException e) {
-            showErrorDialog(R.string.externalStorageUnavailable);
-            return;
-        }
-        writeCertificate(fos, certificate, outputFile.getAbsolutePath());
-        finish();
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                if (mCertificatePending != null) {
-                    saveCertificateClassic(mCertificatePending);
-                } else {
-                    Log.w(TAG, "No pending certificate after permission was granted");
-                }
-            } else {
-                Toast.makeText(CertificateExportActivity.this, getString(R.string.grant_perm_storage),
-                        Toast.LENGTH_LONG).show();
-            }
-            mCertificatePending = null;
-        }
-    }
-
-    private void writeCertificate(OutputStream fos, DatabaseCertificate cert, String path) {
+    private void writeCertificate(Uri uri, DatabaseCertificate cert, String displayName) {
         byte[] data = mDatabase.getCertificateData(cert.getId());
-        try {
-            BufferedOutputStream bos = new BufferedOutputStream(fos);
-            bos.write(data);
-            bos.close();
-            Toast.makeText(this, getString(R.string.export_success, path), Toast.LENGTH_LONG).show();
-        } catch (IOException e) {
-            e.printStackTrace();
-            showErrorDialog(R.string.error_writing_to_storage);
+        if (data == null) {
+            Log.w(TAG, "Certificate data missing for id " + cert.getId());
+            showError(R.string.error_writing_to_storage);
+            return;
         }
+        try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+            if (os == null) {
+                Log.w(TAG, "No output stream for document picked by user");
+                showError(R.string.error_writing_to_storage);
+                return;
+            }
+            os.write(data);
+            os.flush();
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to write exported certificate", e);
+            showError(R.string.error_writing_to_storage);
+            return;
+        }
+        Toast.makeText(this, getString(R.string.export_success, displayName), Toast.LENGTH_LONG).show();
     }
 
-    private void showErrorDialog(int resourceId) {
-        new MaterialAlertDialogBuilder(this)
-                .setMessage(resourceId)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+    /** Toast rather than a dialog: the activity finishes right after the export attempt. */
+    private void showError(int resourceId) {
+        Toast.makeText(this, resourceId, Toast.LENGTH_LONG).show();
     }
 }

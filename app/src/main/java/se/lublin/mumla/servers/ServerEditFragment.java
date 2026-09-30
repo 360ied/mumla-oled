@@ -21,6 +21,8 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.EditText;
@@ -41,6 +43,7 @@ public class ServerEditFragment extends DialogFragment {
     private static final String ARGUMENT_SERVER = "server";
     private static final String ARGUMENT_ACTION = "action";
     private static final String ARGUMENT_IGNORE_TITLE = "ignore_title";
+    private static final String ARGUMENT_URL_PASSWORD = "url_password";
 
     private EditText mNameEdit;
     private EditText mHostEdit;
@@ -61,10 +64,29 @@ public class ServerEditFragment extends DialogFragment {
     public static DialogFragment createServerEditDialog(Context context, Server server,
                                                         Action action,
                                                         boolean ignoreTitle) {
+        return createServerEditDialog(context, server, action, ignoreTitle, false);
+    }
+
+    /**
+     * Creates a new {@link ServerEditFragment} dialog. Results will be delivered to the parent
+     * activity via {@link ServerEditListener}.
+     * @param server Optional, if set will populate the fragment with data from the server.
+     * @param action The action the fragment is performing (i.e. Add, Edit)
+     * @param ignoreTitle If true, don't show fields related to the server title (useful for quick
+     *                    connect dialogs)
+     * @param urlPassword If true, the server came from a deep link whose URL embedded a password;
+     *                    an inline warning row is shown (the dialog still only warns, it does not
+     *                    block or strip the password).
+     */
+    public static DialogFragment createServerEditDialog(Context context, Server server,
+                                                        Action action,
+                                                        boolean ignoreTitle,
+                                                        boolean urlPassword) {
         Bundle args = new Bundle();
         args.putParcelable(ARGUMENT_SERVER, server);
         args.putInt(ARGUMENT_ACTION, action.ordinal());
         args.putBoolean(ARGUMENT_IGNORE_TITLE, ignoreTitle);
+        args.putBoolean(ARGUMENT_URL_PASSWORD, urlPassword);
         return (DialogFragment) Fragment.instantiate(context, ServerEditFragment.class.getName(), args);
     }
 
@@ -142,6 +164,30 @@ public class ServerEditFragment extends DialogFragment {
             mNameEdit.setVisibility(View.GONE);
         }
 
+        // Warn (without blocking) when this dialog was opened from a deep link whose URL
+        // embedded a password. Never shown for manually added/edited servers.
+        TextView urlPasswordWarning = view.findViewById(R.id.server_edit_url_password_warning);
+        if (hasUrlPassword() && oldServer != null) {
+            // The warning only applies while the field still holds the link's password.
+            final String urlPassword = oldServer.getPassword();
+            urlPasswordWarning.setVisibility(View.VISIBLE);
+            mPasswordEdit.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+                @Override
+                public void afterTextChanged(Editable s) {
+                    urlPasswordWarning.setVisibility(
+                            s.toString().equals(urlPassword) ? View.VISIBLE : View.GONE);
+                }
+            });
+        } else {
+            urlPasswordWarning.setVisibility(View.GONE);
+        }
+
         return new MaterialAlertDialogBuilder(requireActivity())
                 .setPositiveButton(actionName, null)
                 .setNegativeButton(android.R.string.cancel, null)
@@ -214,6 +260,10 @@ public class ServerEditFragment extends DialogFragment {
 
     private boolean shouldIgnoreTitle() {
         return getArguments().getBoolean(ARGUMENT_IGNORE_TITLE);
+    }
+
+    private boolean hasUrlPassword() {
+        return getArguments().getBoolean(ARGUMENT_URL_PASSWORD, false);
     }
 
     public interface ServerEditListener {

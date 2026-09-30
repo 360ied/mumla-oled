@@ -27,12 +27,7 @@
 
     <application android:allowBackup="true">
         <service android:name=".HumlaService"
-                 android:exported="true">
-            <intent-filter>
-                <action android:name="se.lublin.humla.ACTION_CONNECT"/>
-                <action android:name="se.lublin.humla.ACTION_DISCONNECT"/>
-            </intent-filter>
-        </service>
+                 android:exported="false" />
     </application>
 
 </manifest>

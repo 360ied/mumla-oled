@@ -80,6 +80,8 @@ public class Server implements Parcelable {
         readFromParcel(in);
     }
 
+    // The server password is written to the parcel as a String. Parcel contents remain
+    // visible to system_server/root, so this is not a confidentiality boundary.
     @Override
     public void writeToParcel(Parcel parcel, int i) {
         parcel.writeLong(mId);

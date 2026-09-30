@@ -226,6 +226,8 @@ public class MumlaService extends HumlaService implements
     };
 
     private BroadcastReceiver mTalkReceiver;
+    /** Tracks TALK receiver registration so mid-connection toggles never double-register. */
+    private boolean mTalkReceiverRegistered;
 
     private void updateConnectedNotification() {
         Server server = getTargetServer();
@@ -608,11 +610,7 @@ public class MumlaService extends HumlaService implements
 
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.unregisterOnSharedPreferenceChangeListener(this);
-        try {
-            unregisterReceiver(mTalkReceiver);
-        } catch (IllegalArgumentException e) {
-            e.printStackTrace();
-        }
+        unregisterTalkReceiver();
 
         unregisterObserver(mObserver);
         if(mTTS != null) {
@@ -628,6 +626,26 @@ public class MumlaService extends HumlaService implements
         releaseSoundPool();
         mSelfTalking = false;
         super.onDestroy();
+    }
+
+    /** Registers the TALK broadcast receiver if not already registered. Main thread only. */
+    private void registerTalkReceiver() {
+        if (mTalkReceiverRegistered) {
+            return;
+        }
+        ContextCompat.registerReceiver(this, mTalkReceiver,
+                new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
+                ContextCompat.RECEIVER_EXPORTED);
+        mTalkReceiverRegistered = true;
+    }
+
+    /** Unregisters the TALK broadcast receiver if registered. Main thread only. */
+    private void unregisterTalkReceiver() {
+        if (!mTalkReceiverRegistered) {
+            return;
+        }
+        unregisterReceiver(mTalkReceiver);
+        mTalkReceiverRegistered = false;
     }
 
     @Override
@@ -664,9 +682,9 @@ public class MumlaService extends HumlaService implements
 
         updateOverlayVisibility();
 
-        ContextCompat.registerReceiver(this, mTalkReceiver,
-                new IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
-                ContextCompat.RECEIVER_EXPORTED);
+        if (mSettings.isTalkBroadcastAllowed()) {
+            registerTalkReceiver();
+        }
 
         updateHotCornerVisibility();
         // Configure proximity sensor
@@ -682,10 +700,7 @@ public class MumlaService extends HumlaService implements
     public void onConnectionDisconnected(HumlaException e) {
         super.onConnectionDisconnected(e);
         mSelfTalking = false;
-        try {
-            unregisterReceiver(mTalkReceiver);
-        } catch (IllegalArgumentException iae) {
-        }
+        unregisterTalkReceiver();
 
         // Remove overlay if present.
         if (mChannelOverlay != null) {
@@ -792,6 +807,13 @@ public class MumlaService extends HumlaService implements
             case Settings.PREF_FORCE_TCP:
                 // These are settings we flag as 'requiring reconnect'.
                 requiresReconnect = true;
+                break;
+            case Settings.PREF_ALLOW_TALK_BROADCAST:
+                if (!mSettings.isTalkBroadcastAllowed()) {
+                    unregisterTalkReceiver();
+                } else if (isConnectionEstablished()) {
+                    registerTalkReceiver();
+                }
                 break;
         }
         if (changedExtras.size() > 0) {

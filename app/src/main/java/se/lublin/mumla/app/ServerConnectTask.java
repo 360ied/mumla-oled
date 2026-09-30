@@ -62,6 +62,8 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
                 AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
 
         Intent connectIntent = new Intent(mContext, MumlaService.class);
+        // The server and certificate extras are a same-UID handoff to the app service;
+        // intent contents remain visible to system_server/root.
         connectIntent.putExtra(HumlaService.EXTRAS_SERVER, server);
         connectIntent.putExtra(HumlaService.EXTRAS_CLIENT_NAME, mContext.getString(R.string.app_name)+" "+ BuildConfig.VERSION_NAME);
         connectIntent.putExtra(HumlaService.EXTRAS_TRANSMIT_MODE, inputMethod);
