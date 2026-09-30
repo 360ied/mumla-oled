@@ -376,16 +376,23 @@ Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
 2. In [`Settings.java:477-489`](../../app/src/main/java/se/lublin/mumla/Settings.java#L477-L489), pinned overlay gravities return `Gravity.LEFT` / `Gravity.RIGHT` instead of `Gravity.START` / `Gravity.END`, preventing proper right-to-left (RTL) locale layout mirroring.
 
 **Solution**:
-1. For Android 11+ (API 30+), query `WindowMetrics` and `WindowInsets` for both top and bottom margins:
+1. For Android 11+ (API 30+), query `WindowMetrics` and `WindowInsets` through a shared helper; keep the legacy `getIdentifier()` fallback for API < 30 unchanged (including the `40dp`/`56dp` defaults):
    ```java
-   private int getTopMargin(DisplayMetrics dm) {
+   private android.graphics.Insets getSystemBarInsets() {
        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
            WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
-           android.graphics.Insets insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
-                   WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout());
+           return metrics.getWindowInsets().getInsetsIgnoringVisibility(
+                   WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+       }
+       return null;
+   }
+
+   private int getTopMargin(DisplayMetrics dm) {
+       android.graphics.Insets insets = getSystemBarInsets();
+       if (insets != null) {
            return insets.top + (int) (8 * dm.density);
        }
-       // Fallback for API < 30
+       // Fallback for API < 30 (unchanged)
        int statusBarHeight = 0;
        int resourceId = mService.getResources().getIdentifier("status_bar_height", "dimen", "android");
        if (resourceId > 0) {
@@ -395,13 +402,11 @@ Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
    }
 
    private int getBottomMargin(DisplayMetrics dm) {
-       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-           WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
-           android.graphics.Insets insets = metrics.getWindowInsets().getInsetsIgnoringVisibility(
-                   WindowInsets.Type.navigationBars());
+       android.graphics.Insets insets = getSystemBarInsets();
+       if (insets != null) {
            return insets.bottom + (int) (8 * dm.density);
        }
-       // Fallback for API < 30
+       // Fallback for API < 30 (unchanged)
        int navBarHeight = 0;
        int resourceId = mService.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
        if (resourceId > 0) {
@@ -410,7 +415,10 @@ Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
        return navBarHeight > 0 ? navBarHeight + (int) (8 * dm.density) : (int) (56 * dm.density);
    }
    ```
-2. Update [`Settings.getOverlayGravity()`](../../app/src/main/java/se/lublin/mumla/Settings.java#L477) to return `Gravity.START` and `Gravity.END`.
+   - Use `getInsetsIgnoringVisibility()` (not `getInsets()`) so the pinned HUD keeps its offset when bars are transiently hidden; the cutout inset still applies. Include `displayCutout()` on both top and bottom queries.
+   - Keep the `SDK_INT >= R` guard inline with the project's existing style; add the `WindowMetrics`/`WindowInsets` imports when implementing.
+   - **Service-context caveat (acceptance criterion):** `mWindowManager` comes from a `Service` context, so `getCurrentWindowMetrics().getWindowInsets()` may return empty or display-wide insets. Verify non-zero system-bar insets on an API 30+ device. If the service-context query proves unreliable, read insets from the attached overlay view instead (`mOverlayView.getRootWindowInsets()` / `OnApplyWindowInsetsListener` after `addView()`) and keep `WindowMetrics` only as a secondary source.
+2. Update [`Settings.getOverlayGravity()`](../../app/src/main/java/se/lublin/mumla/Settings.java#L477) to return `Gravity.START` / `Gravity.END` (top-left → `TOP | START`, top-right → `TOP | END`, and likewise for bottom). Explicitly out of scope: the floating (unpinned) path in [`MumlaOverlay.java:262`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L262) stays absolute (`TOP | LEFT`) because dragged `x`/`y` positions are stored and restored verbatim. Also decide on [`Settings.getHotCornerGravity()`](../../app/src/main/java/se/lublin/mumla/Settings.java#L289) in the same change — it has the identical `LEFT`/`RIGHT` defect; either migrate it to `START`/`END` or record why it is deferred. Acceptance includes an RTL-locale device check (e.g. Arabic/Hebrew, all four placements) confirming the pinned overlay mirrors without a double offset, since `WindowManager.LayoutParams` `x` semantics flip with layout direction.
 
 ---
 
@@ -563,7 +571,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 3** | **ODD-06** | Robolectric test in `MumlaActivityTest.java` simulating outside touch dismissal and verifying `isFirstRun() == false`. | Fresh install; tap outside first-run certificate dialog; force stop and relaunch to verify dialog does not reappear. |
 | **Phase 3** | **ODD-07** | Unit test in `SettingsTest.java` verifying `getPushToTalkKey()` returns `-1` before and after reset; verify `KEYCODE_UNKNOWN` (`0`) does not trigger PTT. | Open PTT key preference, click "Reset Key", verify "None" is displayed and key events with `keyCode=0` are ignored. |
 | **Phase 3** | **ODD-05** | Service unit test verifying `mHotCorner.refreshGestureExclusion()` is called in `onConfigurationChanged()`. | Enable hot corner on Android 10+ device; rotate screen; perform edge back gesture over hot corner to verify exclusion is active. |
-| **Phase 4** | **ODD-04** | Overlay insets unit test comparing modern `WindowMetrics` against legacy fallback. | Test overlay positioning on punch-hole and notch devices in portrait and landscape. |
+| **Phase 4** | **ODD-04** | Update `SettingsOverlayTest` gravity expectations to `START`/`END`; JVM-only setup cannot exercise `WindowManager`/`WindowMetrics` (no Robolectric). | Test overlay positioning on punch-hole and notch devices in portrait and landscape, plus an RTL-locale check of all four pinned placements; verify non-zero service-context insets on API 30+. |
 | **Phase 4** | **ODD-08** | Gradle build and resource compilation check (`assembleFossDebug`). | Verify settings appearance screen loads and renders without XML inflation warnings. |
 | **Phase 5** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
 | **Phase 6** | **ODD-13** | Unit test instantiating the comment fragment without arguments, verifying `IllegalStateException` instead of NPE. | Open user/channel comment dialogs; verify they render. |
