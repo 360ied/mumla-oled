@@ -36,6 +36,8 @@ public class SettingsPushKeyTest extends TestCase {
     private static class FakeEditor implements SharedPreferences.Editor {
         private final Map<String, Object> mValues;
         private final Map<String, Object> mTemp = new HashMap<>();
+        private final Set<String> mRemoved = new java.util.HashSet<>();
+        private boolean mCleared = false;
 
         FakeEditor(Map<String, Object> values) {
             mValues = values;
@@ -80,14 +82,14 @@ public class SettingsPushKeyTest extends TestCase {
         @Override
         public SharedPreferences.Editor remove(String key) {
             mTemp.remove(key);
-            mValues.remove(key);
+            mRemoved.add(key);
             return this;
         }
 
         @Override
         public SharedPreferences.Editor clear() {
             mTemp.clear();
-            mValues.clear();
+            mCleared = true;
             return this;
         }
 
@@ -99,6 +101,14 @@ public class SettingsPushKeyTest extends TestCase {
 
         @Override
         public void apply() {
+            if (mCleared) {
+                mValues.clear();
+                mCleared = false;
+            }
+            for (String key : mRemoved) {
+                mValues.remove(key);
+            }
+            mRemoved.clear();
             mValues.putAll(mTemp);
             mTemp.clear();
         }
@@ -167,7 +177,7 @@ public class SettingsPushKeyTest extends TestCase {
     }
 
     public void testDefaultPushKeySentinel() {
-        assertEquals("No-key sentinel must stay -1", -1, (int) Settings.DEFAULT_PUSH_KEY);
+        assertEquals("No-key sentinel must stay -1", -1, Settings.DEFAULT_PUSH_KEY);
     }
 
     public void testGetPushToTalkKey_Unconfigured() {
@@ -178,7 +188,7 @@ public class SettingsPushKeyTest extends TestCase {
     public void testGetPushToTalkKey_BoundKeyRoundTrip() {
         FakeSharedPreferences prefs = new FakeSharedPreferences();
         Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, 57 /* KEYCODE_VOLUME_UP-ish */).commit();
+        prefs.edit().putInt(Settings.PREF_PUSH_KEY, 57 /* arbitrary valid keycode */).commit();
         assertEquals(57, settings.getPushToTalkKey());
     }
 
@@ -197,25 +207,25 @@ public class SettingsPushKeyTest extends TestCase {
         Settings settings = Settings.createForTesting(prefs);
         prefs.edit().putInt(Settings.PREF_PUSH_KEY, Settings.DEFAULT_PUSH_KEY).commit();
         assertEquals("Reset path must persist the -1 sentinel",
-                Settings.DEFAULT_PUSH_KEY.intValue(), settings.getPushToTalkKey());
+                Settings.DEFAULT_PUSH_KEY, settings.getPushToTalkKey());
     }
 
-    /** Regression check for the ODD-07 activity guard semantics. */
+    /** Regression check for the ODD-07 activity guard semantics, via production code. */
     public void testPttGuardSemantics_AgainstLegacyZeroAndUnknown() {
         FakeSharedPreferences prefs = new FakeSharedPreferences();
         Settings settings = Settings.createForTesting(prefs);
 
-        // Simulate MumlaActivity's guard: pttKey > 0 && keyCode == pttKey.
         for (int keyCode : new int[] {0 /* KEYCODE_UNKNOWN */, Settings.DEFAULT_PUSH_KEY}) {
             prefs.edit().putInt(Settings.PREF_PUSH_KEY, keyCode).commit();
             int pttKey = settings.getPushToTalkKey();
             assertFalse("KEYCODE_UNKNOWN/sentinel must never match PTT",
-                    pttKey > 0 && keyCode == pttKey);
+                    Settings.isPttKeyBound(pttKey, keyCode));
         }
 
         // A real key must still match.
         prefs.edit().putInt(Settings.PREF_PUSH_KEY, 57).commit();
         int pttKey = settings.getPushToTalkKey();
-        assertTrue(57 == pttKey && pttKey > 0);
+        assertTrue(Settings.isPttKeyBound(pttKey, 57));
+        assertFalse(Settings.isPttKeyBound(pttKey, 58));
     }
 }

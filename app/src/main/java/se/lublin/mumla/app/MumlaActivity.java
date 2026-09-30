@@ -576,7 +576,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         int pttKey = mSettings.getPushToTalkKey();
-        if (mService != null && pttKey > 0 && keyCode == pttKey) {
+        if (mService != null && Settings.isPttKeyBound(pttKey, keyCode)) {
             mService.onTalkKeyDown();
             return true;
         }
@@ -586,7 +586,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         int pttKey = mSettings.getPushToTalkKey();
-        if (mService != null && pttKey > 0 && keyCode == pttKey) {
+        if (mService != null && Settings.isPttKeyBound(pttKey, keyCode)) {
             mService.onTalkKeyUp();
             return true;
         }
