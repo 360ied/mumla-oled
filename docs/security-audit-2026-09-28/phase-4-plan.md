@@ -27,7 +27,7 @@ No new dialogs. Behavior changes:
   `HumlaService` (mute/deafen/disconnect/connect). All internal
   starters are explicit same-app intents, so nothing internal breaks.
   Tasker/Automate `TALK` broadcasts keep working while a new settings
-  toggle (default on) allows disabling them.
+  toggle (key `allowTalkBroadcast`, default on, §2 P5) allows disabling them.
 - Cert export becomes SAF-only: the legacy `/sdcard/Mumla` classic path
   (used on Android 10 and below, API ≤ 29) is deleted. No extra
   SAF picker is consent; the suggested filename is sanitized.
@@ -42,11 +42,11 @@ No new dialogs. Behavior changes:
 - TLS 1.0/1.1-only servers stop connecting (1.2+ floor).
 - New strings ship English-only initially (no translations in this change).
 
-## 1. Corrections to remediation-plan.md (read first)
+## 1. Corrections to remediation-plan.md (read first — this file governs on conflict)
 
 ### C1 — H5 signature permission would kill the Tasker surface it claims to keep
 
-`TalkBroadcastReceiver.java:30-61` is a documented Tasker/Automate
+`TalkBroadcastReceiver.java:30-61` (`app/.../service/ipc/`) is a documented Tasker/Automate
 surface (`BROADCAST_TALK`, null-status defaults to toggle, no sender
 check). A `signature`-level permission cannot be held by Tasker
 (different signing key), so "signature permission + sender check"
@@ -86,8 +86,10 @@ cannot "return an error" to the sender either; the correct shape is
 Sole internal producer is `ServerConnectTask.java:77-79`
 (`MumlaTrustStore.getTrustStorePath`, filesDir or null). Under C2 no
 external app can inject `EXTRAS_TRUST_STORE` at all. Defense in depth
-only: `configureExtras` (`HumlaService.java:694-705`) rejects paths
-outside the app filesDir (reject `..`, require BKS), it does not need
+only: `configureExtras` (`HumlaService.java:694-705`) rejects non-null paths
+outside the app filesDir (canonical-resolve under `getFilesDir()`,
+reject `..`, require `.bks`; `null` — the system-store common case —
+always passes; reject means log-and-keep-previous, never crash), it does not need
 a wider redesign. Do NOT move trust-store loading out of extras —
 that drags app-layer `Context` knowledge into `HumlaService`.
 
@@ -149,7 +151,7 @@ only when the parsed URL carried a password; do not block or strip
 
 ### C10 — small-hunk placement (no slice of its own)
 
-- L2 remnant: `MumlaTrustStore.java:45-61` still hand-closes streams
+- L2 remnant: `MumlaTrustStore.java:45-61` (`app/.../util/`) still hand-closes streams
   (throw inside `load`/`store` skips `close`); try-with-resources.
   (`HumlaSSLSocketFactory` and `ServerInfoTask` streams were fixed in
   Phases 1–2.)
@@ -184,9 +186,15 @@ version pin, no call-site migration in this phase.
   Play/Tasker doc references a service start. `exported=false` is safe.
 - **P2 — dropped (M13/M14 deferred, C11).** No version pins, no
   call-site migration in this phase.
-- **P3 — release-signing expectations (open, slice C).** Read CI
-  workflows + any release docs for who provides `signing.gradle`;
-  craft the fail-closed error message (what file, what to do).
+- **P3 — release-signing expectations (closed 2026-09-30).** No CI
+  workflows exist at repo root and no release docs describe
+  `signing.gradle`: it is a local, uncommitted file applied at
+  `app/build.gradle:34-35` (`if (signingFile.exists()) apply from:`).
+  The release owner creates `app/signing.gradle` defining
+  `signingConfigs.release` out-of-band. Fail-closed message (slice C):
+  `Release build requires app/signing.gradle defining
+  signingConfigs.release (local file, intentionally uncommitted — see
+  findings M16). Debug builds are unaffected.`
 - **P4 — test seams.** `unitTests.returnDefaultValues = true`
   (`app/build.gradle:139`, `humla/build.gradle:84`) stubs platform
   types. Pure and unit-testable: TLS protocol filter (C8),
@@ -194,9 +202,17 @@ version pin, no call-site migration in this phase.
   `ServerInfoResponse`-style guards need nothing new. Service
   denial, TALK toggle, export, deep-link warning are
   manual (`adb` + device).
-- **P5 — settings wiring (open, slice A).** Read the settings
-  preference pattern for the TALK toggle (default-on key,
-  English-only strings).
+- **P5 — settings wiring (closed 2026-09-30).** Follow the existing
+  pattern: `Settings.java` `PREF_*` + `DEFAULT_*` constants with a
+  `preferences.getBoolean` accessor (cf. `PREF_CHAT_NOTIFY` /
+  `DEFAULT_CHAT_NOTIFY`, `isMuted()`), backed by a `CheckBoxPreference`
+  in `settings_general.xml` (cf. `chatNotify`). Allocated: key
+  `allowTalkBroadcast` (`PREF_ALLOW_TALK_BROADCAST`, default `true`),
+  accessor `isTalkBroadcastAllowed()`, strings
+  `pref_talk_broadcast_title` / `pref_talk_broadcast_summary`
+  (English-only). Slice D warning string:
+  `server_edit_url_password_warning`. No other slice adds user-visible
+  strings.
 
 ## 3. Work split — four parallel worktrees
 
@@ -222,25 +238,40 @@ surface; B before A per C7).
 - `configureExtras`: filesDir-scoped trust-store validation (C4).
 - `MumlaService.onStartCommand` control actions unchanged in logic
   (now unreachable externally); TALK registration in
-  `onConnectionSynchronized` (`:667-669`) gated on the new
-  default-on setting; disconnect path already tolerates
-  never-registered (`:685-688`).
-- Accept: external `am startservice` control/CONNECT attempts ignored
-  (logcat shows the warning, no crash, no state change); TALK works
-  with toggle on, inert with toggle off; `./scripts/check.sh` green.
+  `onConnectionSynchronized` (`:667-669`) gated on
+  `Settings.isTalkBroadcastAllowed()` (P5); toggles also apply live
+  mid-connection via the existing `OnSharedPreferenceChangeListener`
+  (`:711`) — register/unregister guarded against double-registration
+  (the unregister side already tolerates never-registered via
+  `try/catch`, `:685-688`; guard the register side with a boolean
+  field).
+- Accept: external `am startservice` control/CONNECT attempts are
+  denied by AMS (`SecurityException: not exported` to the caller — the
+  service never runs, so there is no service-side log; no crash, no
+  state change); an internal malformed CONNECT logs and returns
+  `START_NOT_STICKY`; TALK works with toggle on (including immediately
+  after toggling on mid-connection), inert with toggle off;
+  `./scripts/check.sh` green.
 
 ### Slice B — import/export secrets + parcel (H9, M8, M9, L6-filename)
 
 - H9: delete `saveCertificateClassic` + permission flow
-  (`CertificateExportActivity.java:127-177`); SAF-only via
+  (`app/.../preference/CertificateExportActivity.java:127-177`); SAF-only via
   `documentCreator` — the export tap plus the SAF picker is consent,
   no extra confirmation dialog; suggested name through a pure
-  `sanitizeExportFilename` (strip separators, reserved names, trim,
-  cap length, `.p12` fallback, UUID on empty) covering L6-filename;
+  `sanitizeExportFilename(String)` covering L6-filename. Algorithm:
+  trim; replace `[\\/:\0]` and path separators with `_`; strip
+  leading dots; if the base (sans extension) matches a Windows reserved
+  name (`CON PRN AUX NUL COM1-9 LPT1-9`, case-insensitive) prefix `_`;
+  truncate the base to 64 chars; ensure a `.p12` suffix (append if
+  missing, replacing any other extension); empty/blank input falls back
+  to `<random-uuid>.p12`. Vectors: `"../../x"` → `x.p12`; `"CON"` →
+  `_CON.p12`; `""` → UUID; 200-char name → 64-char base + `.p12`;
+  `foo.cert` → `foo.p12`;
   manifest storage/legacy lines per C7. Defer re-encryption with a
   user password (needs import-side flow; explicit tap + SAF picker
   suffice for an explicit-tap Low).
-- M8: `CertificateImportActivity` keeps `char[]` from field through
+- M8: `CertificateImportActivity` (`app/.../preference/`) keeps `char[]` from field through
   `KeyStore.load`, zeroing immediately (`:304-312` already zeroes the
   dialog copy — extend to `storeKeystore` `:193-249`, replacing the
   `new String(password)` at `:234` with conversion at the DB
@@ -255,9 +286,12 @@ surface; B before A per C7).
 
 ### Slice C — TLS floor + signing + crypt one-liner (M1, M16, L6-crypt)
 
-- M1: `filterTlsProtocols` pure helper + apply post-creation in
-  `createSocket` (C8; onion path needs no exemption — protocols are
-  not identity).
+- M1: `filterTlsProtocols` pure helper + apply in the 3-arg
+  `createSocket` (the single funnel — the 2-arg overload delegates to
+  it) via `setEnabledProtocols` post-creation (C8). Onion path confirmed
+  on the same factory (`HumlaTCP` uses the single `mSocketFactory` for
+  all hosts): no exemption — protocols are not identity; only
+  endpoint-identification is onion-exempt, and that stays as-is.
 - M16: execution-time fail-closed for release tasks without
   `signingConfigs.release` (C10 trap); debug/CI configuration
   unaffected; error message per P3.
@@ -269,9 +303,11 @@ surface; B before A per C7).
 ### Slice D — deep link + trust-store streams (L4, L2)
 
 - L4: password-embedded deep links show the warning row in
-  `ServerEditFragment` (C9); parser untouched unless the warning
-  needs a carried flag.
-- L2: try-with-resources in `MumlaTrustStore.java:45-61`.
+  `ServerEditFragment` (`app/.../servers/`, C9; string per P5) fed from
+  the `Server` built by `MumlaActivity` (`app/.../app/`); parser
+  (`libraries/.../humla/util/MumbleURLParser.java`) untouched unless
+  the warning needs a carried flag.
+- L2: try-with-resources in `MumlaTrustStore.java:45-61` (`app/.../util/`).
 - Accept: deep link with `user:pass@host` warns, without stays as
   today; `./scripts/check.sh` green.
 
@@ -292,7 +328,7 @@ surface; B before A per C7).
 
 | Case | Expects |
 |---|---|
-| External `am startservice` MUTE/DEAFEN/DISCONNECT (manual) | ignored, warning logged, call state unchanged |
+| External `am startservice` MUTE/DEAFEN/DISCONNECT (manual) | denied by AMS (`SecurityException: not exported`), call state unchanged |
 | External CONNECT without `EXTRAS_SERVER` (manual) | no crash, `START_NOT_STICKY` |
 | `EXTRAS_TRUST_STORE` outside filesDir | rejected in `configureExtras` |
 | TALK toggle off + broadcast (manual) | no mic state change; on = status honored |

@@ -72,6 +72,10 @@ references remain; `./scripts/check.sh`.
 
 ## Phase 4 — Local IPC + hygiene (H3–H5, M9, M16, Low bulk)
 
+> Superseded by [phase-4-plan.md](phase-4-plan.md), which governs on
+> conflict (notably H5/TALK stays exported by design, M10 won't-fix,
+> M13/M14 deferred, no export confirmation dialog).
+
 Installed-app-only paths and process hygiene. TALK stays exported
 (documented Tasker/Automate surface) — permission-guard, never
 `NOT_EXPORTED`.
