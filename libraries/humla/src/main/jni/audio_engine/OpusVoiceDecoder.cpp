@@ -56,9 +56,6 @@ OpusVoiceDecoder::OpusVoiceDecoder()
         m_decoder = nullptr;
         return;
     }
-    // Mono output: default decoder phase handling is fine. (The bundled
-    // opus predates OPUS_SET_PHASE_INVERSION_DISABLED; do not re-add
-    // without bumping the in-tree codec.)
 }
 
 OpusVoiceDecoder::~OpusVoiceDecoder() {

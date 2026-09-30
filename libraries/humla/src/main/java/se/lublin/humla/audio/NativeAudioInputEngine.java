@@ -38,7 +38,6 @@ public class NativeAudioInputEngine {
     public static final float DEFAULT_SQUELCH_MIN_DB = -65.0f; // Squelch noise floor in dBFS
 
     static {
-        System.loadLibrary("jniopus");
         System.loadLibrary("humlaaudio");
     }
 
@@ -111,7 +110,8 @@ public class NativeAudioInputEngine {
 
     public void processFrame(short[] pcm, int offset, int length) {
         long handle = mNativeHandle;
-        if (handle != 0 && pcm != null && length > 0) {
+        if (handle != 0 && pcm != null && offset >= 0 && length > 0
+                && offset <= pcm.length && length <= pcm.length - offset) {
             nativeProcessFrame(handle, pcm, offset, length);
         }
     }

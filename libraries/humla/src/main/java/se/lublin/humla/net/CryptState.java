@@ -39,11 +39,6 @@ public class CryptState {
     static {
         Throwable error = null;
         try {
-            try {
-                System.loadLibrary("jniopus");
-            } catch (Throwable ignored) {
-                // In host test environments, libhumlaaudio.so does not depend on libjniopus.
-            }
             System.loadLibrary("humlaaudio");
             if (!nativeIsSupported()) {
                 error = new UnsupportedOperationException("Native CryptState is not supported");

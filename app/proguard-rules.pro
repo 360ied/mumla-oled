@@ -15,18 +15,15 @@
 -keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
     public void onTalkStateChanged(int, int);
 }
--keep class se.lublin.humla.audio.javacpp.** { *; }
--keep class com.googlecode.javacpp.** { *; }
--dontwarn com.googlecode.javacpp.BuildMojo
--dontwarn org.apache.maven.plugin.**
 
 # Preserve Protobuf Lite generated message classes
 -keep class se.lublin.humla.protobuf.Mumble** { *; }
 -keep class com.google.protobuf.GeneratedMessageLite { *; }
 
-# MiniDNS & GuardianProject Netcipher
+# MiniDNS
 -keep class org.minidns.** { *; }
--dontwarn info.guardianproject.netcipher.**
+
+# jsoup (used by MumlaService, NotificationSanitizer)
 -dontwarn org.jsoup.**
 
 # Preserve Parcelable CREATOR fields
