@@ -18,6 +18,7 @@
 package se.lublin.mumla.service;
 
 import android.content.Context;
+import android.graphics.Insets;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.util.DisplayMetrics;
@@ -46,6 +47,9 @@ import se.lublin.mumla.channel.ChannelAdapter;
  */
 public class MumlaOverlay {
     private static final String TAG = MumlaOverlay.class.getName();
+
+    /** Extra padding between the pinned overlay and the system bars. */
+    private static final int EDGE_GUTTER_DP = 8;
 
     private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
@@ -266,7 +270,7 @@ public class MumlaOverlay {
         }
     }
 
-    private android.graphics.Insets getSystemBarInsets() {
+    private Insets getSystemBarInsets() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
             return metrics.getWindowInsets().getInsetsIgnoringVisibility(
@@ -276,9 +280,9 @@ public class MumlaOverlay {
     }
 
     private int getTopMargin(DisplayMetrics dm) {
-        android.graphics.Insets insets = getSystemBarInsets();
-        if (insets != null) {
-            return insets.top + (int) (8 * dm.density);
+        Insets insets = getSystemBarInsets();
+        if (insets != null && insets.top > 0) {
+            return insets.top + (int) (EDGE_GUTTER_DP * dm.density);
         }
         int statusBarHeight = 0;
         int resourceId = mService.getResources().getIdentifier("status_bar_height", "dimen", "android");
@@ -286,15 +290,15 @@ public class MumlaOverlay {
             statusBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
         }
         if (statusBarHeight > 0) {
-            return statusBarHeight + (int) (8 * dm.density);
+            return statusBarHeight + (int) (EDGE_GUTTER_DP * dm.density);
         }
         return (int) (40 * dm.density);
     }
 
     private int getBottomMargin(DisplayMetrics dm) {
-        android.graphics.Insets insets = getSystemBarInsets();
-        if (insets != null) {
-            return insets.bottom + (int) (8 * dm.density);
+        Insets insets = getSystemBarInsets();
+        if (insets != null && insets.bottom > 0) {
+            return insets.bottom + (int) (EDGE_GUTTER_DP * dm.density);
         }
         int navBarHeight = 0;
         int resourceId = mService.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
@@ -302,7 +306,7 @@ public class MumlaOverlay {
             navBarHeight = mService.getResources().getDimensionPixelSize(resourceId);
         }
         if (navBarHeight > 0) {
-            return navBarHeight + (int) (8 * dm.density);
+            return navBarHeight + (int) (EDGE_GUTTER_DP * dm.density);
         }
         return (int) (56 * dm.density);
     }
