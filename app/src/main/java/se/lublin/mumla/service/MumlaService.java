@@ -655,7 +655,9 @@ public class MumlaService extends HumlaService implements
             mChannelOverlay.updatePosition();
         }
         if (mHotCorner != null && mHotCorner.isShown()) {
-            mHotCorner.refreshGestureExclusion();
+            // Post past the rotation relayout so getWidth/getHeight reflect
+            // the post-rotation size instead of silently no-opping (ODD-05).
+            mHotCorner.refreshGestureExclusionDeferred();
         }
     }
 
@@ -835,12 +837,25 @@ public class MumlaService extends HumlaService implements
 
     private void setProximitySensorOn(boolean on) {
         if(on) {
+            if (mProximityLock != null && mProximityLock.isHeld()) {
+                return;
+            }
+            if (mProximityLock != null) {
+                // Stale unheld lock from an unbalanced acquire path; drop it.
+                mProximityLock = null;
+            }
             PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
             mProximityLock = pm.newWakeLock(PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Mumla:Proximity");
             mProximityLock.acquire();
         } else {
-            if(mProximityLock != null) mProximityLock.release();
-            mProximityLock = null;
+            if (mProximityLock != null) {
+                try {
+                    if (mProximityLock.isHeld()) mProximityLock.release();
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "proximity lock release failed", e);
+                }
+                mProximityLock = null;
+            }
         }
     }
 

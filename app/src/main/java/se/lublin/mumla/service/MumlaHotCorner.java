@@ -42,20 +42,27 @@ import se.lublin.mumla.R;
 public class MumlaHotCorner implements View.OnTouchListener {
     private static final String TAG = "MumlaHotCorner";
 
-    private WindowManager mWindowManager;
-    private Context mContext;
-    private View mView;
-    private ImageView mIconView;
+    private final WindowManager mWindowManager;
+    private final Context mContext;
+    private final View mView;
+    private final ImageView mIconView;
     private boolean mShown;
-    private MumlaHotCornerListener mListener;
-    private WindowManager.LayoutParams mParams;
+    private final MumlaHotCornerListener mListener;
+    private final WindowManager.LayoutParams mParams;
 
     public MumlaHotCorner(Context context, int gravity, MumlaHotCornerListener listener) {
         if (listener == null) {
-            throw new NullPointerException("A MumlaHotCornerListener must be assigned.");
+            throw new IllegalArgumentException("A MumlaHotCornerListener must be assigned.");
+        }
+        if (context == null) {
+            throw new IllegalArgumentException("Context must not be null.");
         }
         LayoutInflater inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-        mWindowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        if (inflater == null || windowManager == null) {
+            throw new IllegalStateException("Required system services unavailable.");
+        }
+        mWindowManager = windowManager;
         mContext = context;
         mView = inflater.inflate(R.layout.ptt_corner, null, false);
         mIconView = mView.findViewById(R.id.hot_corner_icon);
@@ -103,8 +110,10 @@ public class MumlaHotCorner implements View.OnTouchListener {
         if (!isShown()) return;
         try {
             mWindowManager.updateViewLayout(mView, mParams);
-        } catch (IllegalArgumentException e) {
-            Log.d(TAG, "exception updating hot corner layout: " + e);
+        } catch (RuntimeException e) {
+            // updateViewLayout can throw BadTokenException, SecurityException, or
+            // IllegalStateException after rotation or token loss, not just IAE.
+            Log.d(TAG, "exception updating hot corner layout", e);
         }
     }
 
@@ -156,7 +165,12 @@ public class MumlaHotCorner implements View.OnTouchListener {
                     Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                             Uri.parse("package:" + mContext.getPackageName()));
                     showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    mContext.startActivity(showSetting);
+                    try {
+                        mContext.startActivity(showSetting);
+                    } catch (Exception e) {
+                        // OEM builds without the overlay-permission activity.
+                        Log.e(TAG, "Failed to open overlay permission settings", e);
+                    }
                     Toast.makeText(mContext, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
                     return;
                 }
@@ -165,14 +179,14 @@ public class MumlaHotCorner implements View.OnTouchListener {
                 mWindowManager.addView(mView, mParams);
                 mShown = true;
             } catch (Exception e) {
-                Log.e(TAG, "exception adding hot corner view: " + e);
+                Log.e(TAG, "exception adding hot corner view", e);
                 mShown = false;
             }
         } else {
             try {
                 mWindowManager.removeView(mView);
             } catch (IllegalArgumentException e) {
-                Log.d(TAG, "exception removing hot corner view: " + e);
+                Log.d(TAG, "exception removing hot corner view", e);
             }
             mShown = false;
         }
@@ -183,7 +197,9 @@ public class MumlaHotCorner implements View.OnTouchListener {
      * dimension change. Android 10+ (Q+) invalidates exclusion rects on display
      * rotation, and because the hot corner view has a fixed size, the size-gated
      * layout listener alone would skip the reapplication after rotation (ODD-05).
-     * Does nothing if the hot corner is not shown.
+     * Does nothing on API < Q, when the hot corner is not shown, when the view
+     * is null (defense in depth: never null after construction), or when the
+     * view has no size yet.
      */
     public void refreshGestureExclusion() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown || mView == null) {
@@ -194,6 +210,16 @@ public class MumlaHotCorner implements View.OnTouchListener {
         if (width > 0 && height > 0) {
             mView.setSystemGestureExclusionRects(Collections.singletonList(new Rect(0, 0, width, height)));
         }
+    }
+
+    /**
+     * Defers {@link #refreshGestureExclusion()} past the in-flight layout pass.
+     * Call this from configuration-change paths where getWidth/getHeight may
+     * still hold pre-layout values; the posted runnable reapplies once the
+     * view has its post-rotation size (ODD-05).
+     */
+    public void refreshGestureExclusionDeferred() {
+        mView.post(this::refreshGestureExclusion);
     }
 
     public boolean isShown() {
