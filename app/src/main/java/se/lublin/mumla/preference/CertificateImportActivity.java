@@ -70,19 +70,18 @@ import se.lublin.mumla.app.BaseActivity;
 public class CertificateImportActivity extends BaseActivity {
     public static final int REQUEST_FILE = 0;
 
-    private static final String STATE_CERT_BYTES = "state_cert_bytes";
+    private static final String STATE_CERT_URI = "state_cert_uri";
     private static final String STATE_FILE_NAME = "state_file_name";
     private static final String STATE_IS_RETRY = "state_is_retry";
-    private static final String STATE_PREVIOUS_PASSWORD = "state_previous_password";
     private static final String STATE_WAITING_PASSWORD = "state_waiting_password";
     private static final int MAX_CERT_SIZE = 5 * 1024 * 1024; // 5 MB
 
     private static final Pattern MAC_PATTERN = Pattern.compile("\\bmac\\b", Pattern.CASE_INSENSITIVE);
 
     private byte[] mPendingCertBytes;
+    private Uri mPendingCertUri;
     private String mPendingFileName;
     private boolean mPendingIsRetry;
-    private String mPendingPreviousPassword;
     private boolean mWaitingForPassword;
     private AlertDialog mPasswordDialog;
     private TextInputLayout mPasswordLayout;
@@ -95,12 +94,20 @@ public class CertificateImportActivity extends BaseActivity {
         if (savedInstanceState != null) {
             mWaitingForPassword = savedInstanceState.getBoolean(STATE_WAITING_PASSWORD);
             if (mWaitingForPassword) {
-                mPendingCertBytes = savedInstanceState.getByteArray(STATE_CERT_BYTES);
+                // Rotation residual: the Bundle holds only the source Uri (plus display
+                // metadata), never cert bytes or passwords. Re-read the file on restore.
+                mPendingCertUri = savedInstanceState.getParcelable(STATE_CERT_URI);
                 mPendingFileName = savedInstanceState.getString(STATE_FILE_NAME);
                 mPendingIsRetry = savedInstanceState.getBoolean(STATE_IS_RETRY);
-                mPendingPreviousPassword = savedInstanceState.getString(STATE_PREVIOUS_PASSWORD);
-                if (mPendingCertBytes != null && mPendingFileName != null) {
-                    showPasswordDialog(mPendingFileName, mPendingCertBytes, mPendingIsRetry, mPendingPreviousPassword);
+                if (mPendingCertUri != null && mPendingFileName != null) {
+                    try {
+                        mPendingCertBytes = readCertBytes(mPendingCertUri);
+                    } catch (IOException e) {
+                        Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                        finish();
+                        return;
+                    }
+                    showPasswordDialog(mPendingCertUri, mPendingFileName, mPendingCertBytes, mPendingIsRetry);
                     return;
                 }
             }
@@ -117,14 +124,11 @@ public class CertificateImportActivity extends BaseActivity {
         super.onSaveInstanceState(outState);
         outState.putBoolean(STATE_WAITING_PASSWORD, mWaitingForPassword);
         if (mWaitingForPassword) {
-            outState.putByteArray(STATE_CERT_BYTES, mPendingCertBytes);
+            // Never persist cert bytes or passwords in the Bundle; the Uri is
+            // re-read (with the size cap) when the activity is recreated.
+            outState.putParcelable(STATE_CERT_URI, mPendingCertUri);
             outState.putString(STATE_FILE_NAME, mPendingFileName);
             outState.putBoolean(STATE_IS_RETRY, mPendingIsRetry);
-            if (mPasswordField != null && mPasswordField.getText() != null) {
-                outState.putString(STATE_PREVIOUS_PASSWORD, mPasswordField.getText().toString());
-            } else {
-                outState.putString(STATE_PREVIOUS_PASSWORD, mPendingPreviousPassword);
-            }
         }
     }
 
@@ -137,6 +141,8 @@ public class CertificateImportActivity extends BaseActivity {
         }
         mPasswordLayout = null;
         mPasswordField = null;
+        // Drop the in-memory file bytes; the Uri in saved state is the restore path.
+        mPendingCertBytes = null;
     }
 
     @Override
@@ -153,10 +159,34 @@ public class CertificateImportActivity extends BaseActivity {
 
         Uri uri = data.getData();
         byte[] certBytes;
+        try {
+            certBytes = readCertBytes(uri);
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+        mPendingCertUri = uri;
+
+        String displayName;
+        Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
+        if (cursor != null && cursor.moveToFirst()) {
+            displayName = cursor.getString(0);
+        } else {
+            displayName = UUID.randomUUID().toString() + ".p12";
+        }
+        if (cursor != null)
+            cursor.close();
+
+        storeKeystore(new char[0], uri, displayName, certBytes, false);
+    }
+
+    /** Reads the picked certificate with the 5 MB cap; used for both first read and restore. */
+    private byte[] readCertBytes(Uri uri) throws IOException {
         try (InputStream is = getContentResolver().openInputStream(uri)) {
             if (is == null) {
-                finish();
-                return;
+                throw new IOException("Could not open certificate");
             }
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
@@ -169,29 +199,12 @@ public class CertificateImportActivity extends BaseActivity {
                 }
                 baos.write(buffer, 0, read);
             }
-            certBytes = baos.toByteArray();
-        } catch (IOException e) {
-            e.printStackTrace();
-            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-            finish();
-            return;
+            return baos.toByteArray();
         }
-
-        String displayName;
-        Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null);
-        if (cursor != null && cursor.moveToFirst()) {
-            displayName = cursor.getString(0);
-        } else {
-            displayName = UUID.randomUUID().toString() + ".p12";
-        }
-        if (cursor != null)
-            cursor.close();
-
-        storeKeystore(new char[0], displayName, certBytes, false, null);
     }
 
-    private void storeKeystore(final char[] password, final String fileName, final byte[] certBytes,
-                               final boolean isRetry, final String previousPassword) {
+    private void storeKeystore(final char[] password, final Uri sourceUri, final String fileName,
+                               final byte[] certBytes, final boolean isRetry) {
         KeyStore keyStore;
         try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
             keyStore = KeyStore.getInstance("PKCS12");
@@ -208,7 +221,8 @@ public class CertificateImportActivity extends BaseActivity {
             }
         } catch (Exception e) {
             if (isPasswordFailure(e)) {
-                showPasswordDialog(fileName, certBytes, isRetry, previousPassword);
+                zeroPassword(password);
+                showPasswordDialog(sourceUri, fileName, certBytes, isRetry);
             } else {
                 e.printStackTrace();
                 if (mPasswordDialog != null) {
@@ -217,6 +231,7 @@ public class CertificateImportActivity extends BaseActivity {
                 }
                 mPasswordLayout = null;
                 mPasswordField = null;
+                zeroPassword(password);
                 Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
                 mWaitingForPassword = false;
                 finish();
@@ -231,7 +246,10 @@ public class CertificateImportActivity extends BaseActivity {
         }
         mPasswordLayout = null;
         mPasswordField = null;
+        // DB boundary only: the at-rest store keeps a String password by design
+        // (secrets-at-rest-plan), so convert here and zero the char[] immediately.
         String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
+        zeroPassword(password);
         MumlaDatabase database = new MumlaSQLiteDatabase(this);
         DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
         database.close();
@@ -248,20 +266,17 @@ public class CertificateImportActivity extends BaseActivity {
         finish();
     }
 
-    private void showPasswordDialog(final String fileName, final byte[] certBytes,
-                                    final boolean isRetry, final String previousPassword) {
+    private void showPasswordDialog(final Uri sourceUri, final String fileName,
+                                    final byte[] certBytes, final boolean isRetry) {
         mWaitingForPassword = true;
+        mPendingCertUri = sourceUri;
         mPendingFileName = fileName;
         mPendingCertBytes = certBytes;
         mPendingIsRetry = isRetry;
-        mPendingPreviousPassword = previousPassword;
 
         if (mPasswordDialog != null && mPasswordDialog.isShowing() && mPasswordLayout != null && mPasswordField != null) {
             if (isRetry) {
-                if (previousPassword != null) {
-                    mPasswordField.setText(previousPassword);
-                    mPasswordField.selectAll();
-                }
+                // Never refill a previous password: the user re-enters it.
                 mPasswordLayout.setError(getString(R.string.invalid_password));
                 mPasswordField.requestFocus();
             }
@@ -279,10 +294,6 @@ public class CertificateImportActivity extends BaseActivity {
         mPasswordField = dialogView.findViewById(R.id.certificate_password_field);
 
         if (isRetry) {
-            if (previousPassword != null) {
-                mPasswordField.setText(previousPassword);
-                mPasswordField.selectAll();
-            }
             mPasswordLayout.setError(getString(R.string.invalid_password));
         }
 
@@ -305,11 +316,15 @@ public class CertificateImportActivity extends BaseActivity {
             if (mPasswordField == null) {
                 return;
             }
+            // char[] from the field through KeyStore.load; never retain the String copy.
             Editable text = mPasswordField.getText();
             String entered = text != null ? text.toString() : "";
             char[] passChars = entered.toCharArray();
-            storeKeystore(passChars, fileName, certBytes, true, entered);
-            Arrays.fill(passChars, '\0');
+            try {
+                storeKeystore(passChars, sourceUri, fileName, certBytes, true);
+            } finally {
+                Arrays.fill(passChars, '\0');
+            }
         };
 
         mPasswordField.setOnEditorActionListener((v, actionId, event) -> {
@@ -348,6 +363,12 @@ public class CertificateImportActivity extends BaseActivity {
         }
         mPasswordDialog.show();
         mPasswordField.requestFocus();
+    }
+
+    private static void zeroPassword(char[] password) {
+        if (password != null) {
+            Arrays.fill(password, '\0');
+        }
     }
 
     static boolean isPasswordFailure(Throwable t) {
