@@ -65,8 +65,20 @@ There are two viable paths:
 ### Option A: Complete Removal (Recommended)
 Following Mumla's recent refactoring pattern (such as removing legacy Bluetooth SCO, Orbot, and Echo Cancellation):
 - Delete `ChannelSearchProvider.java`.
-- Remove `searchable.xml` and `search_suggest_authority` from `build.gradle`.
-- Remove the unused `android.intent.action.SEARCH` intent-filter and meta-data from `AndroidManifest.xml`.
+- Remove `searchable.xml` and `search_suggest_authority` (`app/build.gradle:124`) from `build.gradle`.
+- Remove the unused `android.intent.action.SEARCH` intent-filter and `android.app.searchable` meta-data from `AndroidManifest.xml`.
+
+---
+
+## 4. Re-verification (2026-10-01)
+
+Still fully valid; §1 above is accurate against the current tree:
+
+- No `<provider>` element in `AndroidManifest.xml` (grep confirms); the `SEARCH` intent-filter and `android.app.searchable` meta on `MumlaActivity` are still present but unresolvable.
+- `ChannelSearchProvider.java:95-112` still does `bindService()` + `mServiceLock.wait(5000)`; `onServiceConnected()` arrives on the main looper, so a main-thread `query()` deadlocks itself for the full 5 seconds and returns `null`. `query()` also concatenates `selectionArgs` without a null-check.
+- `MumlaActivity.onCreate`/`onNewIntent` only handle `mumble://` VIEW intents (`handleViewIntent`); there is no `ACTION_SEARCH` branch, no `SearchView`, and no menu entry anywhere.
+
+Reviving this means designing search UX from scratch plus rewriting the IPC (singleton service handle or async loader, `exported=false` provider). An in-app `SearchView` filtering the existing channel/user tree is strictly better than a `ContentProvider` if search is ever wanted.
 
 ### Option B: Fix and Integrate Search
 - Add `<provider android:name=".channel.ChannelSearchProvider" android:authorities="@string/search_suggest_authority" android:exported="false" />` to `AndroidManifest.xml`.

@@ -4,8 +4,9 @@
 **Severity:** low-medium (feature parity with upstream Mumble)  
 **Component:** `libraries/humla` Audio Engine / Mixer  
 **Files Affected:**
-- [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
-- [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java)
+- [`AudioOutputEngine.cpp`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp) (`renderMix`, ~line 467) / [`AudioOutputEngine.h`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.h) — native mixer, no priority term
+- [`User.java`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.java) (`isPrioritySpeaker`) / [`ModelHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java) (tracks `UserState.priority_speaker`) / [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) (`setPrioritySpeaker`) / [`UserMenu.java`](../../app/src/main/java/se/lublin/mumla/channel/UserMenu.java) (admin toggle)
+- Upstream reference: `../mumble/src/mumble/AudioOutput.cpp:477,486-501,665-669`
 
 ---
 
@@ -16,31 +17,24 @@ The Mumble protocol defines a **Priority Speaker** role (`Mumble.UserState.prior
 In Mumla:
 1. Priority speaker permissions and state are tracked on `User` objects.
 2. The user context menu allows admins to toggle priority speaker status.
-3. However, in `AudioOutput.java` (lines 164–170), the audio mixing implementation completely ignores priority speaker status:
-   ```java
-   /**
-    * Fetches audio data from registered audio output users and mixes them into the given buffer.
-    * TODO: add priority speaker support.
-    * @param buffer The buffer to mix output data into.
-    * @param bufferOffset The offset of the
-    * @param bufferSize The size of the buffer.
-    * @return true if the buffer contains audio data.
-    */
-   private boolean fetchAudio(short[] buffer, int bufferOffset, int bufferSize) {
-   ```
-
-All audio streams are passed to `mMixer.mix()` with equal gain. The priority speaker setting has no effect on audio output.
+3. However, the native mixer completely ignores priority speaker status: `AudioOutputEngine::renderMix()` sums per-voice scratch buffers with equal gain (`m_mix[i] += m_voiceScratch[i]`); grep for `priority/duck/attenuat` in `audio_engine/` finds nothing. (The `AudioOutput.fetchAudio()` / `AudioMixerShort` path cited in earlier revisions no longer exists — mixing moved to native.) The priority speaker setting therefore has no effect on audio output.
 
 ---
 
 ## 2. Technical Root Cause
 
-`AudioOutput.fetchAudio()` collects all active `AudioOutputSpeech.Result` sources and feeds them into `AudioMixerShort` without checking if any of the active sources belong to a user with `user.isPrioritySpeaker() == true`.
+`renderMix()` never consults `user.isPrioritySpeaker()`. The engine knows sessions and talk flags but has no priority-session set bridged over JNI, so it cannot distinguish priority voices at mix time. State plumbing around the engine is complete (`ModelHandler` tracks `priority_speaker`, `UserMenu` toggles it, `HumlaService.setPrioritySpeaker()` sends it); only the audio path is missing.
 
 ---
 
 ## 3. Remediation Plan
 
-1. In `AudioOutput.fetchAudio()`, inspect the active talking sources.
-2. Determine if any currently active speech source is marked as a priority speaker.
-3. If a priority speaker is active, apply a volume ducking multiplier (typically `0.25f` to `0.30f`, equivalent to -12 dB) to all non-priority audio streams before mixing.
+1. Bridge priority state into the engine (e.g. `setPrioritySpeaker(session, bool)` / priority-session set over JNI, updated on `UserState` changes) so `renderMix()` can identify priority voices.
+2. In `renderMix()`, follow upstream's two-pass mix (`AudioOutput.cpp:486-501,665-669`): first detect any active non-muted priority speaker, then multiply every non-priority, non-whisper voice by `adjustFactor = 10^(-18/20) ≈ 0.126` (-18 dB). Upstream exempts the whispering listener themselves (`tsState != Whispering`) and honors a `prioritySpeakerActiveOverride` — decide whether to mirror both.
+3. Keep the constant with upstream (-18 dB, not the -12 dB previously suggested here) unless a user-facing volume setting is added.
+
+---
+
+## 4. Re-verification (2026-10-01)
+
+Functionally still valid: `isPrioritySpeaker()` is set and toggleable but never read on any audio path. This report previously pointed at the deleted Java `fetchAudio()`; the target is now `AudioOutputEngine::renderMix()`. Talk-state/whisper work (whisper-target report) touches the same `renderMix`/flags path — implement together to avoid two native-interface revisions.
