@@ -31,9 +31,8 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.TabHost;
 
-import androidx.fragment.app.DialogFragment;
-
 import androidx.annotation.NonNull;
+import androidx.fragment.app.DialogFragment;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -104,7 +103,7 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         mTabHost.setOnTabChangedListener(new TabHost.OnTabChangeListener() {
             @Override
             public void onTabChanged(String tabId) {
-                // View hierarchy may be torn down (ODD-15); never touch nulled fields.
+                // View hierarchy may be torn down; never touch nulled fields.
                 if (mCommentView == null || mCommentEdit == null) return;
                 if ("View".equals(tabId)) {
                     // When switching back to view tab, update with user's HTML changes.

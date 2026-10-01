@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel.comment;
 
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 import android.os.Bundle;
@@ -95,6 +96,7 @@ public class CommentFragmentTeardownTest {
     public void tabCallbackAfterTeardownIsSafe() throws Exception {
         ShownDialog dialog = new ShownDialog();
         TabHost tabHost = (TabHost) viewField(dialog.fragment, "mTabHost");
+        assertNotNull(tabHost);
         dialog.dismiss();
         tabHost.setCurrentTab(1);
         tabHost.setCurrentTab(0);

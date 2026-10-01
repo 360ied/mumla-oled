@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel.comment;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import android.os.Bundle;
@@ -69,7 +70,10 @@ public class CommentFragmentArgumentsTest {
         return args;
     }
 
-    /** Attaches {@code fragment} to a stub host, driving {@code onCreate()} synchronously. */
+    /**
+     * Attaches {@code fragment} to a stub host, driving {@code onCreate()} synchronously.
+     * No host teardown needed: Robolectric discards the per-test sandbox automatically.
+     */
     private static CommentDialogStubHost attach(AbstractCommentFragment fragment) {
         CommentDialogStubHost host = Robolectric.buildActivity(CommentDialogStubHost.class)
                 .setup().get();
@@ -106,6 +110,7 @@ public class CommentFragmentArgumentsTest {
         ChannelDescriptionFragment fragment = new ChannelDescriptionFragment();
         fragment.setArguments(channelBundle());
         attach(fragment);
+        assertFalse(fragment.isEditing());
     }
 }
 
@@ -114,7 +119,9 @@ public class CommentFragmentArgumentsTest {
  * in {@code onAttach}. Shared with {@code CommentFragmentTeardownTest}.
  * Returning null from {@code getService()} is safe because every pinned
  * bundle carries a non-null {@code "comment"}, so the provider-dependent
- * {@code requestComment} path is never entered.
+ * {@code requestComment} path is never entered. Production callers can pass a
+ * null comment (entering {@code requestComment}); these tests intentionally
+ * pin non-null bundles to isolate the argument guards.
  */
 class CommentDialogStubHost extends FragmentActivity implements HumlaServiceProvider {
     @Override
