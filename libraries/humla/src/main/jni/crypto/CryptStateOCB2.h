@@ -33,6 +33,8 @@ namespace humla::crypto {
 
 constexpr int AES_BLOCK_SIZE = 16;
 constexpr int AES_KEY_SIZE_BYTES = 16;
+// OCB2 crypt header prepended to every encrypted datagram.
+constexpr int CRYPT_HEADER_BYTES = 4;
 
 class CryptStateOCB2 {
 public:

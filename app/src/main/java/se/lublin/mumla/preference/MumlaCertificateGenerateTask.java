@@ -19,6 +19,7 @@ package se.lublin.mumla.preference;
 
 import android.content.Context;
 import android.os.AsyncTask;
+import android.util.Log;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
@@ -37,6 +38,7 @@ import se.lublin.mumla.db.MumlaDatabase;
 import se.lublin.mumla.db.MumlaSQLiteDatabase;
 
 public class MumlaCertificateGenerateTask extends AsyncTask<Void, Void, DatabaseCertificate> {
+    private static final String TAG = MumlaCertificateGenerateTask.class.getSimpleName();
     private static final String DATE_FORMAT = "yyyy-MM-dd-HH-mm-ss";
 
     private Context context;
@@ -71,7 +73,7 @@ public class MumlaCertificateGenerateTask extends AsyncTask<Void, Void, Database
             database.close();
             return dc;
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.w(TAG, "Certificate generation failed", e);
             return null;
         }
     }

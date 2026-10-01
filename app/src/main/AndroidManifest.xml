@@ -26,6 +26,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" android:minSdkVersion="34" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Image picker only: needed on SDK 32 and below for ACTION_GET_CONTENT reads. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

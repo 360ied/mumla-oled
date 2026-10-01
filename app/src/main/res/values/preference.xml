@@ -33,10 +33,10 @@
 
     <!-- Hot corner -->
     <string name="hot_corner_none">Off</string>
-    <string name="hot_corner_top_left">↖ top left</string>
-    <string name="hot_corner_bottom_left">↙ bottom Left</string>
+    <string name="hot_corner_top_left">↖ Top left</string>
+    <string name="hot_corner_bottom_left">↙ Bottom left</string>
     <string name="hot_corner_top_right">Top right ↗</string>
-    <string name="hot_corner_bottom_right">bottom right ↘</string>
+    <string name="hot_corner_bottom_right">Bottom right ↘</string>
 
     <!-- About -->
     <string name="about">About</string>
@@ -130,5 +130,5 @@
     <string name="overlay_placement_bottom_left">↙ Bottom left (pinned, touch-through)</string>
     <string name="overlay_placement_bottom_right">Bottom right ↘ (pinned, touch-through)</string>
     <string name="pref_talk_broadcast_title">Allow Tasker \"TALK\" broadcasts</string>
-    <string name="pref_talk_broadcast_summary">Let automation apps drive push-to-talk via the TALK broadcast while connected.</string>
+    <string name="pref_talk_broadcast_summary">Let automation apps drive push-to-talk via the TALK broadcast while connected. Any installed app can send this broadcast.</string>
 </resources>

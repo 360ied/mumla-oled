@@ -34,6 +34,8 @@ import javax.crypto.ShortBufferException;
  */
 public class CryptState {
     public static final int AES_BLOCK_SIZE = 16;
+    /** OCB2 crypt header prepended to every encrypted datagram. */
+    static final int CRYPT_HEADER_BYTES = 4;
 
     private static final Throwable sLoadError;
     static {
@@ -202,7 +204,7 @@ public class CryptState {
      * @param length The length of the source array.
      */
     public byte[] decrypt(final byte[] source, final int length) throws BadPaddingException, IllegalBlockSizeException, ShortBufferException {
-        if (source == null || length < 4 || !mInit || length > source.length) return null;
+        if (source == null || length < CRYPT_HEADER_BYTES || !mInit || length > source.length) return null;
 
         final long nativeHandle = mNativeHandle;
         if (nativeHandle != 0) {
@@ -216,7 +218,7 @@ public class CryptState {
     }
 
     public int decryptInPlace(final byte[] data, final int offset, final int length) {
-        if (!mInit || data == null || length < 4 || offset < 0 || (long) offset + length > data.length) {
+        if (!mInit || data == null || length < CRYPT_HEADER_BYTES || offset < 0 || (long) offset + length > data.length) {
             return -1;
         }
         final long nativeHandle = mNativeHandle;

@@ -19,9 +19,9 @@
 
 #include <jni.h>
 #include <atomic>
-#include <climits>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -206,10 +206,12 @@ Java_se_lublin_humla_net_CryptState_nativeEncrypt(
         return nullptr;
     }
 
-    if (length > INT_MAX - 4) {
+    if (length > std::numeric_limits<jint>::max() - CRYPT_HEADER_BYTES) {
         return nullptr;
     }
-    jbyteArray dst = env->NewByteArray(length + 4);
+    // A nullptr return from this function frees the NewByteArray local reference
+    // on return to Java (the VM releases all local references on any return).
+    jbyteArray dst = env->NewByteArray(length + CRYPT_HEADER_BYTES);
     if (!dst) {
         return nullptr;
     }
@@ -249,7 +251,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         jbyteArray source,
         jint length) {
     auto cs = getCryptState(handle);
-    if (!cs || !source || length < 4) {
+    if (!cs || !source || length < CRYPT_HEADER_BYTES) {
         return nullptr;
     }
 
@@ -258,7 +260,8 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         return nullptr;
     }
 
-    jint plainLength = length - 4;
+    jint plainLength = length - CRYPT_HEADER_BYTES;
+    // As above, a nullptr return frees the NewByteArray local reference.
     jbyteArray dst = env->NewByteArray(plainLength);
     if (!dst) {
         return nullptr;
@@ -300,7 +303,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
         jint offset,
         jint cryptedLength) {
     auto cs = getCryptState(handle);
-    if (!cs || !buffer || cryptedLength < 4 || offset < 0) {
+    if (!cs || !buffer || cryptedLength < CRYPT_HEADER_BYTES || offset < 0) {
         return -1;
     }
 
@@ -325,7 +328,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
     if (!ok) {
         return -1;
     }
-    return cryptedLength - 4;
+    return cryptedLength - CRYPT_HEADER_BYTES;
 }
 
 JNIEXPORT void JNICALL

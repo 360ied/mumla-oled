@@ -90,6 +90,11 @@ public class MumlaTrustStore {
         return STORE_FORMAT;
     }
 
+    /**
+     * Gets the trust store password. The BKS store is an integrity container for
+     * public pinned certificates, not a secret: the empty password only guards
+     * against accidental corruption, so there is nothing here to protect.
+     */
     public static String getTrustStorePassword() {
         return STORE_PASS;
     }

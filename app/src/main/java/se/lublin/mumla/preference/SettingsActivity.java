@@ -1,6 +1,7 @@
 package se.lublin.mumla.preference;
 
 import android.os.Bundle;
+import android.util.Log;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.widget.Toolbar;
@@ -9,6 +10,7 @@ import se.lublin.mumla.R;
 import se.lublin.mumla.app.BaseActivity;
 
 public class SettingsActivity extends BaseActivity {
+    private static final String TAG = SettingsActivity.class.getSimpleName();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,7 +47,7 @@ public class SettingsActivity extends BaseActivity {
             if (fragmentClassName != null) {
                 try {
                     Class<?> fragmentClass = Class.forName(fragmentClassName);
-                    Fragment fragment = (Fragment) fragmentClass.newInstance();
+                    Fragment fragment = (Fragment) fragmentClass.getDeclaredConstructor().newInstance();
                     // Pass it on to the fragment so its onResume can set the title, see MumlaPreferenceFragment
                     fragment.setArguments(result);
                     getSupportFragmentManager()
@@ -54,7 +56,7 @@ public class SettingsActivity extends BaseActivity {
                             .addToBackStack(null)
                             .commit();
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    Log.w(TAG, "Could not instantiate settings fragment " + fragmentClassName, e);
                 }
             }
         });

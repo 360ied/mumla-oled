@@ -530,7 +530,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             String urlPassword = server.getPassword();
             boolean hasUrlPassword = urlPassword != null && !urlPassword.isEmpty();
             DialogFragment fragment = ServerEditFragment.createServerEditDialog(
-                    MumlaActivity.this, server, ServerEditFragment.Action.CONNECT_ACTION, true,
+                    server, ServerEditFragment.Action.CONNECT_ACTION, true,
                     hasUrlPassword);
             fragment.show(getSupportFragmentManager(), "url_edit");
         } catch (MalformedURLException e) {

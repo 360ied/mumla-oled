@@ -101,7 +101,7 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             applicationIdSuffix ".oled15"
             resValue "string", "app_name", "Mumla OLED"
-            if (android.hasProperty("signingConfigs") && signingConfigs.hasProperty("release")) {
+            if (signingConfigs.hasProperty("release")) {
                 signingConfig = signingConfigs.release
             } else {
                 signingConfig = signingConfigs.debug
@@ -148,7 +148,7 @@ android {
 // Debug builds never enter this branch and are unaffected.
 gradle.taskGraph.whenReady { graph ->
     def wantsReleaseAssemble = graph.allTasks.any { it.project == project && it.name ==~ /(assemble|bundle|package|install).*Release/ }
-    def hasReleaseSigning = android.hasProperty("signingConfigs") && android.signingConfigs.hasProperty("release")
+    def hasReleaseSigning = android.signingConfigs.hasProperty("release")
     if (wantsReleaseAssemble && !hasReleaseSigning) {
         throw new GradleException('Release build requires app/signing.gradle defining signingConfigs.release (local file, intentionally uncommitted). Debug builds are unaffected.')
     }

@@ -175,7 +175,7 @@ bool CryptStateOCB2::encryptUnlocked(const uint8_t *source, uint8_t *dst, uint32
     // Reject invalid overlapping buffers
     uintptr_t s = reinterpret_cast<uintptr_t>(source);
     uintptr_t d = reinterpret_cast<uintptr_t>(dst);
-    if (s < d + plain_length + 4 && d < s + plain_length) {
+    if (s < d + plain_length + CRYPT_HEADER_BYTES && d < s + plain_length) {
         return false;
     }
 
@@ -186,7 +186,7 @@ bool CryptStateOCB2::encryptUnlocked(const uint8_t *source, uint8_t *dst, uint32
             break;
     }
 
-    if (!ocb_encrypt(source, dst + 4, plain_length, encrypt_iv, tag)) {
+    if (!ocb_encrypt(source, dst + CRYPT_HEADER_BYTES, plain_length, encrypt_iv, tag)) {
         return false;
     }
 
@@ -203,8 +203,8 @@ bool CryptStateOCB2::decrypt(const uint8_t *source, uint8_t *dst, uint32_t crypt
 }
 
 bool CryptStateOCB2::decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32_t crypted_length) {
-    if (crypted_length < 4 || !bInit.load() || !source || !dst) return false;
-    uint32_t plain_length = crypted_length - 4;
+    if (crypted_length < CRYPT_HEADER_BYTES || !bInit.load() || !source || !dst) return false;
+    uint32_t plain_length = crypted_length - CRYPT_HEADER_BYTES;
 
     // Reject partially overlapping buffers (exact in-place source == dst is permitted)
     uintptr_t s = reinterpret_cast<uintptr_t>(source);
@@ -279,14 +279,14 @@ bool CryptStateOCB2::decryptUnlocked(const uint8_t *source, uint8_t *dst, uint32
 
     bool ocb_success;
     if (source == dst) {
-        ocb_success = ocb_decrypt(source + 4, dst + 4, plain_length, decrypt_iv, tag);
+        ocb_success = ocb_decrypt(source + CRYPT_HEADER_BYTES, dst + CRYPT_HEADER_BYTES, plain_length, decrypt_iv, tag);
         if (!ocb_success || memcmp(tag, source + 1, 3) != 0) {
             memcpy(decrypt_iv, saveiv, AES_BLOCK_SIZE);
             return false;
         }
-        memmove(dst, source + 4, plain_length);
+        memmove(dst, source + CRYPT_HEADER_BYTES, plain_length);
     } else {
-        ocb_success = ocb_decrypt(source + 4, dst, plain_length, decrypt_iv, tag);
+        ocb_success = ocb_decrypt(source + CRYPT_HEADER_BYTES, dst, plain_length, decrypt_iv, tag);
         if (!ocb_success || memcmp(tag, source + 1, 3) != 0) {
             memcpy(decrypt_iv, saveiv, AES_BLOCK_SIZE);
             return false;

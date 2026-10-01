@@ -20,21 +20,26 @@ package se.lublin.mumla.service.ipc;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
 
+import se.lublin.humla.Constants;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
+import se.lublin.humla.util.HumlaDisconnectedException;
 
 /**
  * Created by andrew on 08/08/14.
  */
 public class TalkBroadcastReceiver extends BroadcastReceiver {
+    private static final String TAG = TalkBroadcastReceiver.class.getSimpleName();
+
     public static final String BROADCAST_TALK = "se.lublin.mumla.action.TALK";
     public static final String EXTRA_TALK_STATUS = "status";
     public static final String TALK_STATUS_ON = "on";
     public static final String TALK_STATUS_OFF = "off";
     public static final String TALK_STATUS_TOGGLE = "toggle";
 
-    private IHumlaService mService;
+    private final IHumlaService mService;
 
     public TalkBroadcastReceiver(IHumlaService service) {
         mService = service;
@@ -42,21 +47,43 @@ public class TalkBroadcastReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (BROADCAST_TALK.equals(intent.getAction())) {
-            if (!mService.isConnected())
-                return;
-            IHumlaSession session = mService.HumlaSession();
-            String status = intent.getStringExtra(EXTRA_TALK_STATUS);
-            if (status == null) status = TALK_STATUS_TOGGLE;
-            if (TALK_STATUS_ON.equals(status)) {
-                session.setTalkingState(true);
-            } else if (TALK_STATUS_OFF.equals(status)) {
-                session.setTalkingState(false);
-            } else if (TALK_STATUS_TOGGLE.equals(status)) {
-                session.setTalkingState(!session.isTalking());
-            }
+        if (intent == null || !BROADCAST_TALK.equals(intent.getAction())) {
+            // Ignore rather than throw: a mis-wired filter must not crash the
+            // service, but it stays visible at warning level.
+            Log.w(TAG, "Ignoring unexpected broadcast: "
+                    + (intent == null ? "null intent" : intent.getAction()));
+            return;
+        }
+        if (!mService.isConnected())
+            return;
+        final IHumlaSession session;
+        try {
+            session = mService.HumlaSession();
+        } catch (HumlaDisconnectedException e) {
+            // Disconnected between the isConnected check above and this call.
+            Log.i(TAG, "Ignoring TALK broadcast while disconnected");
+            return;
+        }
+        if (session == null) {
+            Log.w(TAG, "Ignoring TALK broadcast with no session");
+            return;
+        }
+        if (session.getTransmitMode() != Constants.TRANSMIT_PUSH_TO_TALK) {
+            // Driving talk state is meaningless under voice activity or continuous
+            // transmission; only push-to-talk honors the broadcast.
+            Log.i(TAG, "Ignoring TALK broadcast outside push-to-talk transmit mode");
+            return;
+        }
+        String status = intent.getStringExtra(EXTRA_TALK_STATUS);
+        if (status == null) status = TALK_STATUS_TOGGLE;
+        if (TALK_STATUS_ON.equals(status)) {
+            session.setTalkingState(true);
+        } else if (TALK_STATUS_OFF.equals(status)) {
+            session.setTalkingState(false);
+        } else if (TALK_STATUS_TOGGLE.equals(status)) {
+            session.setTalkingState(!session.isTalking());
         } else {
-            throw new UnsupportedOperationException();
+            Log.w(TAG, "Ignoring unknown TALK status: " + status);
         }
     }
 }

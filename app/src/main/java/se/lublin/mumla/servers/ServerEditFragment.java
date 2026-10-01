@@ -30,7 +30,6 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.DialogFragment;
-import androidx.fragment.app.Fragment;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -60,10 +59,10 @@ public class ServerEditFragment extends DialogFragment {
      * @param ignoreTitle If true, don't show fields related to the server title (useful for quick
      *                    connect dialogs)
      */
-    public static DialogFragment createServerEditDialog(Context context, Server server,
+    public static DialogFragment createServerEditDialog(Server server,
                                                         Action action,
                                                         boolean ignoreTitle) {
-        return createServerEditDialog(context, server, action, ignoreTitle, false);
+        return createServerEditDialog(server, action, ignoreTitle, false);
     }
 
     /**
@@ -77,7 +76,7 @@ public class ServerEditFragment extends DialogFragment {
      *                    an inline warning row is shown (the dialog still only warns, it does not
      *                    block or strip the password).
      */
-    public static DialogFragment createServerEditDialog(Context context, Server server,
+    public static DialogFragment createServerEditDialog(Server server,
                                                         Action action,
                                                         boolean ignoreTitle,
                                                         boolean urlPassword) {
@@ -86,7 +85,9 @@ public class ServerEditFragment extends DialogFragment {
         args.putInt(ARGUMENT_ACTION, action.ordinal());
         args.putBoolean(ARGUMENT_IGNORE_TITLE, ignoreTitle);
         args.putBoolean(ARGUMENT_URL_PASSWORD, urlPassword);
-        return (DialogFragment) Fragment.instantiate(context, ServerEditFragment.class.getName(), args);
+        ServerEditFragment fragment = new ServerEditFragment();
+        fragment.setArguments(args);
+        return fragment;
     }
 
     @Override
