@@ -6,6 +6,19 @@ Scope: every surviving finding, phased by exploitability × blast radius.
 At-rest secrets (former C1, H6–H8, L1) are out of scope — see
 [secrets-at-rest-plan.md](secrets-at-rest-plan.md) ("do not fix").
 
+## Landing status — all phases complete on `master`
+
+- **Phase 1 (H1, H2, M2)** — ✅ Completed (`phase1-tls-framing` merged).
+- **Phase 2 (M3–M7, L3, L5)** — ✅ Completed (all four slices merged:
+  chat-links, comment-webview, image-pipeline, ping-tts).
+- **Phase 3 (M11, H12, H11, M12, H10, M15)** — ✅ Completed (rnnoise-digest,
+  opus-native, ndk-hardening merged, in that order).
+- **Phase 4 (H3–H5, H9, M1, M8, M9, M16, L2, L4, L6)** — ✅ Completed
+  (`phase4-integration` merged; M10 won't-fix, M13/M14 deferred, I2
+  non-goal per [phase-4-plan.md](phase-4-plan.md)).
+
+Per-finding table: [findings.md](findings.md#remediation-status-all-phases-landed-on-master).
+
 ## Phase 1 — Remote MITM + pre-auth DoS (H1, H2, M2)
 
 Highest value: any-CA-cert network attacker and malicious server.

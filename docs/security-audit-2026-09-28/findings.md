@@ -13,6 +13,48 @@ fix"). H3–H5 downgraded to Medium (installed-app-only), H12 to Medium (no
 demonstrated RCE); H9–H11 and M1/M8–M10/M12–M15 to Low (legacy, dead, local-only,
 or hygiene). Cert export (H9) was reported by multiple slices — deduplicated here.
 
+## Remediation status (all phases landed on `master`)
+
+Legend: ✅ Completed · ❌ Closed (won't-fix / no-action / do-not-fix) ·
+⏳ Deferred (open, tracked outside this audit). Branch names are the merged
+implementation branches (`git branch --merged master`).
+
+| Finding | Severity | Status | Landed as |
+|---|---|---|---|
+| H1 — missing TLS hostname verification | High | ✅ Completed | `phase1-tls-framing`: `TlsHostnameVerifier`, `HOSTNAME_MISMATCH` dialog, no pin bypass |
+| H2 — unbounded TCP frame allocation | High | ✅ Completed | `phase1-tls-framing`: `FrameValidator` cap, validate-before-alloc, abort on violation |
+| H3 — exported `MumlaService` control | Medium | ✅ Completed | `phase4-ipc-services`: `exported=false` |
+| H4 — exported `HumlaService` CONNECT | Medium | ✅ Completed | `phase4-ipc-services`: `exported=false`, log-and-ignore (no `throw`), filesDir trust-store validator |
+| H5 — exported TALK broadcast | Medium | ✅ Completed | `phase4-ipc-services`: stays exported by design (Tasker/Automate surface), gated on `allowTalkBroadcast` toggle (default on) |
+| H12 — vendored Opus 1.1-beta | Medium | ✅ Completed | `phase3-opus-native`: rebased to v1.6.1 (`22244de5`), exact-SHA pin kept |
+| M2 — global TOFU pins | Medium | ✅ Completed | `phase1-tls-framing`: per-host SPKI compare, `PIN_CHANGED` old-vs-new dialog |
+| M3 — chat link scheme allowlist | Medium | ✅ Completed | `phase2-chat-links`: `ChatLinkPolicy`, http/https-only, external chooser |
+| M4 — comment WebView hardening | Medium | ✅ Completed | `phase2-comment-webview`: JS/file/content off, image gating, `WebViewClient` interception |
+| M5 — remote `<img>` SSRF | Medium | ✅ Completed | `phase2-image-pipeline`: private-IP blocklist, manual redirects (cap 5) |
+| M6 — unbounded bitmap decode | Medium | ✅ Completed | `phase2-image-pipeline`: two-pass bounds + `inSampleSize` downsample |
+| M7 — avatar decode without caps | Medium | ✅ Completed | `phase2-image-pipeline`: downsample to icon size (~512) |
+| M11 — RNNoise weights without digest | Medium | ✅ Completed | `phase3-rnnoise-digest`: vendored `model_sha256`, verify-before-unpack, fail closed |
+| M16 — debug-signing fallback | Medium | ✅ Completed | `phase4-tls-signing`: execution-time fail-closed for release tasks |
+| H9 — cert export to shared storage | Low | ✅ Completed | `phase4-secrets-export`: SAF-only (classic path deleted), `sanitizeExportFilename` |
+| H10 — `nativeProcessFrame` overflow check | Low | ✅ Completed | `phase3-opus-native`: int64 `end` check + Java `offset >= 0` guard |
+| H11 — JavaCPP JNI shims | Low | ✅ Completed | `phase3-opus-native`: `jniopus.cpp` deleted (dead code) |
+| M1 — TLS version floor | Low | ✅ Completed | `phase4-tls-signing`: `filterTlsProtocols`, TLS 1.2+ floor |
+| M8 — import secrets in Bundle/Strings | Low | ✅ Completed | `phase4-secrets-export`: bounded scope per phase-4-plan C5 — `char[]` through `KeyStore.load`, Uri (not bytes) in saved state |
+| M9 — secrets in Intent extras/Strings | Low | ✅ Completed | Bounded scope per phase-4-plan C5 — contained by `exported=false`; `system_server` parcel residual documented |
+| M10 — lockscreen notification visibility | Low | ❌ Closed | Won't-fix per [phase-4-plan.md](phase-4-plan.md) C6 (voice audible anyway) |
+| M12 — JavaCPP 0.7 dep | Low | ✅ Completed | `phase3-opus-native`: dep + ProGuard keeps removed with H11 |
+| M13 — jsoup 1.13.1 | Low | ⏳ Deferred | Routine dep bumps per phase-4-plan C11 (no demonstrated vuln) |
+| M14 — MiniDNS 0.3.4 | Low | ⏳ Deferred | Routine dep bumps per phase-4-plan C11 (no demonstrated vuln) |
+| M15 — NDK 25, no hardening flags | Low | ✅ Completed | `phase3-ndk-hardening`: NDK r27c (`27.2.12479018`), `-fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wl,-z,RelRO,-z,Now` |
+| L2 — unclosed sockets/streams | Low | ✅ Completed | try-with-resources in `HumlaSSLSocketFactory`, `ServerInfoTask`, `MumlaTrustStore` |
+| L3 — ping reply length check | Low | ✅ Completed | `phase2-ping-tts`: `getLength() >= 24` guard + defensive parse check |
+| L4 — `mumble://` credential prefill | Low | ✅ Completed | `phase4-surface-hygiene`: inline password warning row, existing confirm dialog kept |
+| L5 — untrusted text in TTS/notifications | Low | ✅ Completed | `phase2-ping-tts`: `NotificationSanitizer` in TTS + notification title/text |
+| L6 — residual hardening gaps | Low | ✅ Completed | Crypt `INT_MAX - 4` guard, export filename sanitizer, legacy-storage flag + write perm removed |
+| I1 — OCB 24-bit tag | Info | ❌ Closed | No action (upstream wire compat) |
+| I2 — no `FLAG_SECURE` | Info | ❌ Closed | Non-goal (device owner's own action) |
+| C1, H6, H7, H8, L1 — secrets at rest | — | ❌ Closed | Do-not-fix per [secrets-at-rest-plan.md](secrets-at-rest-plan.md) |
+
 ---
 
 ## High

@@ -26,6 +26,24 @@ At-rest secrets (former C1, H6–H8, L1) withdrawn as noise — see
 No trust-all `X509TrustManager`, no cleartext fallback, no JS bridge, no `FileProvider`
 surface, no `taskAffinity` hijack found.
 
+## Remediation status
+
+All four remediation phases have landed on `master` (branches merged:
+`phase1-tls-framing`, `phase2-chat-links`, `phase2-comment-webview`,
+`phase2-image-pipeline`, `phase2-ping-tts`, `phase3-rnnoise-digest`,
+`phase3-opus-native`, `phase3-ndk-hardening`, and `phase4-integration`
+with its four slices). Per-finding status lives in the table in
+[findings.md](findings.md#remediation-status-all-phases-landed-on-master).
+
+Summary: every High and Medium finding is fixed except none open — H1, H2,
+H3–H5, H12, M2–M7, M11, M16 are all ✅ Completed. Of the Lows, all are
+✅ Completed except M10 (❌ won't-fix, voice audible anyway), M13/M14
+(⏳ deferred to routine dep bumps — no demonstrated vuln), and the
+withdrawn at-rest set (❌ do-not-fix per
+[secrets-at-rest-plan.md](secrets-at-rest-plan.md)). I1/I2 are ❌ closed
+(no-action / non-goal). Only remaining open items: M13 + M14 routine
+dependency refreshes.
+
 ## Fix first (exploitability × blast radius)
 
 1. **H1 + M2** — TLS has no hostname verification; TOFU pins are global. Any CA-valid
