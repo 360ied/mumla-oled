@@ -3,7 +3,7 @@
 This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED 0.21.23** ([`mumla-foss-release.apk`](../../app/build/outputs/apk/foss/release/mumla-foss-release.apk)). It is the successor to the [0.18.4 analysis](./README.md) and follows the same methodology so the two reports can be compared section by section.
 
 > [!NOTE]
-> **Version skew**: the analyzed APK was built from tag `0.21.23` (`versionCode 3070300`). `HEAD` sits two documentation-only commits ahead of the tag, so the binary is representative of the latest release version.
+> **Version skew**: the analyzed APK was built from tag `0.21.23` (`versionCode 3070300`). `HEAD` sits three documentation-only commits ahead of the tag (two prior plus this report), so the binary is representative of the latest release version.
 
 ---
 
@@ -25,7 +25,7 @@ flowchart TD
     DEX --> AX["AndroidX: 1,192 classes (49.2% of DEX)"]
     DEX --> ORG["Jsoup & MiniDNS: 390 classes (16.1% of DEX)"]
     DEX --> GG["Google (Material/Protobuf): 340 classes (14.0% of DEX)"]
-    DEX --> MUM["Mumla / Humla Core: 337 classes (13.9% of DEX)"]
+    DEX --> MUM["Mumla OLED / Humla Core: 337 classes (13.9% of DEX)"]
     LIB --> HUMLA["libhumlaaudio.so (x3 ABIs): 1.05 MB (Single-Library Layout)"]
 ```
 
@@ -56,9 +56,9 @@ flowchart TD
 | **`assets/`** | `2,781,718 B` | `2,782,035 B` | +317 B (flat) |
 | **`resources.arsc`** | `654,304 B` | `656,140 B` | +0.3% (flat) |
 | **`res/`** | `376,127 B` | `386,074 B` | +2.6% (PTT audio cues added) |
-| **Meta / signatures** | `131,513 B` | `97,423 B` | −25.9% (classpath leaks gone) |
+| **Meta / signatures** | `131,513 B` (incl. signing overhead) | `97,423 B` (+ `123,502 B` overhead split out in §2) | Scope change — genuine leak removal is ~32 KB (see §6) |
 
-Three changes explain effectively all of the ~1 MB reduction: the BouncyCastle-to-platform-crypto migration, the single-library native layout that absorbed `libjniopus.so`, and the disappearance of BouncyCastle/JavaCPP classpath baggage. Details follow in §§4–6.
+Three changes explain effectively all of the ~1 MB reduction: the BouncyCastle-to-platform-crypto migration, the single-library native layout that absorbed `libjniopus.so`, and the disappearance of BouncyCastle/JavaCPP classpath baggage. (The meta-row delta above is not like-for-like: the 0.18.4 bucket included signing-block overhead that §2 now splits into its own row.) Details follow in §§4–6.
 
 ---
 
@@ -76,6 +76,8 @@ The archive contents break down across seven functional categories (percentages 
 | **Signatures, Manifest & Meta** | `97,423 B` | **1.55%** | `228,329 B` | **2.35%** | 69 |
 | **Signing Block & ZIP Index Overhead** | `123,502 B` | **1.96%** | — | — | — |
 | **Total (on-disk APK)** | **`6,287,152 B`** | **100.00%** | **`9,700,152 B`** | **100.00%** | **985** |
+
+*Shares are rounded to two decimals; the uncompressed column totals 99.99% before rounding.*
 
 The headline structural shift since 0.18.4: assets grew from 38.0% to 44.3% of the APK **without growing in absolute terms** — the RNNoise model is unchanged in kind while DEX bytecode collapsed by nearly half, so the (incompressible, §3) model now dominates the package even more.
 
@@ -111,7 +113,7 @@ The single largest entry inside the entire APK remains [`assets/rnnoise_model.bi
 
 | Path | Compressed Size | Uncompressed Size | Compression % | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| `assets/rnnoise_model.bin` | `2,779,790 B` (2.65 MiB) | `3,544,320 B` (3.38 MiB) | 78.44% | Quantized neural network weights for RNNoise |
+| `assets/rnnoise_model.bin` | `2,779,790 B` (2.65 MiB) | `3,544,320 B` (3.38 MiB) | 78.43% | Quantized neural network weights for RNNoise |
 | `assets/dexopt/baseline.prof` | `1,985 B` (1.94 KiB) | `1,985 B` (1.94 KiB) | 100.00% | ART AOT baseline execution profile |
 | `assets/dexopt/baseline.profm` | `260 B` (0.25 KiB) | `260 B` (0.25 KiB) | 100.00% | ART baseline profile metadata |
 
@@ -140,7 +142,7 @@ pie title classes.dex Retained Class Census (2,423 Total Retained Classes)
     "AndroidX" : 1192
     "Utilities (Jsoup, MiniDNS)" : 390
     "Google (Material & Protobuf)" : 340
-    "Mumla / Humla Application" : 337
+    "Mumla OLED / Humla Application" : 337
     "Kotlin Stdlib" : 98
     "Legacy Support & kotlinx" : 66
 ```
@@ -162,21 +164,21 @@ Method-reference headroom grew from 47.3% to 67.3%. The application still comfor
 
 ### Class Retention Census by Dependency Package
 
-R8 minification and tree shaking (`minifyEnabled = true`) reduced the codebase to **2,423 mapped classes** (2,238 class definitions in the final DEX header) and **160,060 method mappings** — down from 5,303 classes and 245,428 methods:
+R8 minification and tree shaking (`minifyEnabled = true`) reduced the codebase to **2,423 mapped classes** (2,238 class definitions in the final DEX header) and **152,936 method mappings** — down from 5,303 classes and 245,428 methods. Method mappings are counted as indented `mapping.txt` entries carrying a `->` arrow, excluding 7,124 R8 `#` diagnostic comment lines; the 0.18.4 figure was counted with comment lines included, so the raw method-count drop slightly overstates the like-for-like reduction:
 
 | Package Prefix | Retained Classes | % of Retained Classes | Mapped Methods | % of Mapped Methods | Dominant Role / Purpose |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`androidx.*`** | **1,192** | **49.20%** | **89,877** | **56.15%** | AppCompat widgets, core shims, fragments, recycler, lifecycle |
-| `com.google.android.*` | 244 | 10.07% | 23,004 | 14.37% | Material design components, layout widgets |
-| **`se.lublin.humla.*`** | **199** | **8.21%** | **10,168** | **6.35%** | Core Mumble protocol engine, audio bridge, crypto |
-| `org.jsoup.*` | 187 | 7.72% | 10,268 | 6.41% | HTML sanitization and message rendering |
-| **`se.lublin.mumla.*`** | **138** | **5.70%** | **9,924** | **6.20%** | Android activities, fragments, overlay, preferences |
-| `org.minidns.*` | 203 | 8.38% | 3,385 | 2.11% | DNS SRV record lookup for Mumble server discovery |
-| `com.google.protobuf.*` | 96 | 3.96% | 9,094 | 5.68% | Mumble protocol protobuf runtime serialization |
-| `kotlin.*` | 98 | 4.04% | 1,065 | 0.67% | Kotlin standard library runtime helpers |
-| `android.support.v4.*` | 64 | 2.64% | 3,275 | 2.05% | Legacy support interfaces |
+| **`androidx.*`** | **1,192** | **49.20%** | **86,424** | **56.51%** | AppCompat widgets, core shims, fragments, recycler, lifecycle |
+| `com.google.android.*` | 244 | 10.07% | 22,104 | 14.45% | Material design components, layout widgets |
+| **`se.lublin.humla.*`** | **199** | **8.21%** | **9,236** | **6.04%** | Core Mumble protocol engine, audio bridge, crypto |
+| `org.jsoup.*` | 187 | 7.72% | 9,538 | 6.24% | HTML sanitization and message rendering |
+| **`se.lublin.mumla.*`** | **138** | **5.70%** | **9,425** | **6.16%** | Android activities, fragments, overlay, preferences |
+| `org.minidns.*` | 203 | 8.38% | 3,381 | 2.21% | DNS SRV record lookup for Mumble server discovery |
+| `com.google.protobuf.*` | 96 | 3.96% | 8,681 | 5.68% | Mumble protocol protobuf runtime serialization |
+| `kotlin.*` | 98 | 4.04% | 1,031 | 0.67% | Kotlin standard library runtime helpers |
+| `android.support.v4.*` | 64 | 2.64% | 3,116 | 2.04% | Legacy support interfaces |
 | `kotlinx.*` | 2 | 0.08% | 0 | 0.00% | Coroutine version markers |
-| **Total** | **2,423** | **100.00%** | **160,060** | **100.00%** | |
+| **Total** | **2,423** | **100.00%** | **152,936** | **100.00%** | |
 
 Sub-package detail (largest groups): `androidx.appcompat.widget` (153), `androidx.core.view` (125), `org.jsoup.parser` (115), `androidx.fragment.app` (75), `androidx.recyclerview.widget` (74), `androidx.appcompat.app` + `androidx.appcompat.view` (102 combined), `androidx.emoji2.text` (43).
 
@@ -258,11 +260,11 @@ flowchart LR
 
 | Resource Sub-Type | File Count | Compressed Size | Uncompressed Size | Characteristics |
 | :--- | :--- | :--- | :--- | :--- |
-| **Compiled XML (`.xml`)** | 636 | `~234 KB` | `~582 KB` | Binary XML layouts, vector drawables, state lists (+2 vs 0.18.4) |
+| **Compiled XML (`.xml`)** | 636 | `~227 KB` | `~558 KB` | Binary XML layouts, vector drawables, state lists, res-only (excl. manifest) (+2 vs 0.18.4) |
 | **Bitmaps (`.png`)** | 270 | `145,522 B` (142.1 KB) | `145,522 B` (142.1 KB) | Legacy notification icons, channel emblems (unchanged count) |
 | **Audio cues (`.ogg`)** | 2 | `8,588 B` (8.4 KB) | `8,588 B` (8.4 KB) | PTT on/off earcons, stored uncompressed (**new**) |
 
-The two new files are [`ptt_on.ogg` / `ptt_off.ogg`](../../../app/src/main/res/raw/) (~4.3 KB each), added with the push-to-talk audio feedback work — they play on speech onset/offset and cost a mere 8.6 KB thanks to already-compressed OGG streams being stored rather than re-deflated. The 270 legacy PNGs remain byte-identical in footprint and are still vector-drawable migration candidates (§7.4).
+The two new files are [`ptt_on.ogg`](../../app/src/main/res/raw/ptt_on.ogg) / [`ptt_off.ogg`](../../app/src/main/res/raw/ptt_off.ogg) (~4.3 KB each), added with the push-to-talk audio feedback work — they play on speech onset/offset and cost a mere 8.6 KB thanks to already-compressed OGG streams being stored rather than re-deflated. The 270 legacy PNGs are unchanged in count and identical in aggregate footprint (145,522 B) and are still vector-drawable migration candidates (row 5).
 
 ### Classpath Baggage & Cross-Platform Metadata Leaks (Mostly Resolved)
 
@@ -281,7 +283,7 @@ The 0.18.4 report flagged ~40 KB compressed (~235 KB uncompressed) of leaked dep
 
 ## 7. Actionable Size Optimization Matrix
 
-Updated from the 0.18.4 report: two recommendations are now **done**, one is partially done, and one new item (MiniDNS) replaces BouncyCastle as the DEX-side target.
+Updated from the 0.18.4 report: two recommendations are now **done**, a third is partially done (item 4's `jsoup/LICENSE` micro-exclusion remains open), and one new item (MiniDNS) replaces BouncyCastle as the DEX-side target.
 
 | Optimization Strategy | Target Component | Estimated Savings (Compressed) | Status since 0.18.4 | Complexity | Technical Risk & Trade-offs |
 | :--- | :--- | :--- | :--- | :--- | :--- |
