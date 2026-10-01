@@ -176,6 +176,9 @@ android {
     task ndkBuild(type: Exec) {
         dependsOn prepareRnnoiseModel
         inputs.dir file('src/main/jni')
+        // Track the NDK version so an NDK upgrade invalidates stale .so files
+        // instead of reporting UP-TO-DATE.
+        inputs.property("ndkVersion", android.ndkVersion)
         outputs.dir file('src/main/libs')
         def ndkExe = "$project.android.ndkDirectory/ndk-build"
         if (DefaultNativePlatform.getCurrentOperatingSystem().isWindows()) {
@@ -185,9 +188,9 @@ android {
         commandLine ndkExe, "-j${jobs}", '-C', file('src/main/jni/').absolutePath
     }
 
-    // NOTE: ndkBuild is wired to preBuild lazily in the taskGraph.whenReady
-    // block at the bottom of this file, only when the graph actually packages
-    // native libs. See below.
+    // NOTE: ndkBuild is wired to preBuild lazily in the startParameter gate
+    // at the bottom of this file, only when the requested tasks actually
+    // package native libs. See below.
     // Host JVM tests exercise Java code only (native coverage comes from the
     // host-built lib in build/test-native, see java.library.path below), so
     // forcing a 3-ABI NDK build on every `./gradlew test...` run only slowed
@@ -224,12 +227,37 @@ tasks.matching { it.name == "check" }.configureEach {
 if (gradle.startParameter.taskNames.any { it ==~ /.*(assemble|bundle|package|install|publish|build|connected).*/ }) {
     tasks.named("preBuild").configure { dependsOn tasks.named("ndkBuild") }
 }
+// Note: `build` intentionally matches broadly (e.g. `build`,
+// `assembleFossDebugUnitTest`); over-triggering only costs an NDK build,
+// never correctness — the fail-closed guard below covers the other direction.
+
+// Fail closed when a packaging subtask is invoked directly (e.g.
+// `:libraries:humla:mergeDebugJniLibs`), bypassing the startParameter gate
+// above, which only sees top-level CLI spellings. Without ndkBuild in the
+// graph, Gradle would package stale or missing .so files, so refuse instead.
+gradle.taskGraph.whenReady { graph ->
+    def consumesNativeLibs = graph.allTasks.any { t ->
+        t.project == project && (
+            (t.name.startsWith("merge") && (t.name.contains("JniLib") || t.name.contains("NativeLibs"))) ||
+            (t.name.startsWith("copy") && t.name.contains("JniLib")) ||
+            t.name.startsWith("strip") ||
+            (t.name.startsWith("package") && !t.name.contains("Resources")) ||
+            (t.name.startsWith("bundle") && t.name.endsWith("Aar")) ||
+            t.name.startsWith("assemble")
+        )
+    }
+    def hasNdkBuild = graph.allTasks.any { t -> t.project == project && t.name == "ndkBuild" }
+    if (consumesNativeLibs && !hasNdkBuild) {
+        throw new GradleException('Refusing to package native libs without ndkBuild in the task graph (direct packaging-subtask invocation is unsupported; run a top-level task such as :app:assembleFossDebug instead).')
+    }
+}
 
 // NOTE: Test tasks deliberately do NOT depend on testNativeAudioEngine.
-// That edge re-ran the full native rebuild (~50s, never up-to-date) on every
-// unit-test invocation, duplicating scripts/check.sh step 2b which already
-// runs the same suite explicitly. `./gradlew check` still covers native via
-// the check dependency above.
+// That edge re-ran the full native rebuild (~50s cold-cache, and never
+// up-to-date at the Gradle level since the Exec task declares no
+// inputs/outputs) on every unit-test invocation, duplicating scripts/check.sh
+// step 2b which already runs the same suite explicitly. `./gradlew check`
+// still covers native via the check dependency above.
 tasks.withType(Test).configureEach {
     systemProperty "java.library.path", "${project.rootDir}/build/test-native"
 }
