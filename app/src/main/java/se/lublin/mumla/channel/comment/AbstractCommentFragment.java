@@ -17,9 +17,9 @@
 
 package se.lublin.mumla.channel.comment;
 
-import android.app.Activity;
 import android.app.Dialog;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -32,6 +32,8 @@ import android.widget.EditText;
 import android.widget.TabHost;
 
 import androidx.fragment.app.DialogFragment;
+
+import androidx.annotation.NonNull;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -55,17 +57,17 @@ public abstract class AbstractCommentFragment extends DialogFragment {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mComment = getArguments().getString("comment");
+        mComment = requireArguments().getString("comment");
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
 
         try {
-            mProvider = (HumlaServiceProvider) activity;
+            mProvider = (HumlaServiceProvider) context;
         } catch (ClassCastException e) {
-            throw new RuntimeException(activity.getClass().getName() + " must implement HumlaServiceProvider!");
+            throw new RuntimeException(context.getClass().getName() + " must implement HumlaServiceProvider!", e);
         }
     }
 
@@ -202,7 +204,7 @@ public abstract class AbstractCommentFragment extends DialogFragment {
     }
 
     public boolean isEditing() {
-        return getArguments().getBoolean("editing");
+        return requireArguments().getBoolean("editing");
     }
 
     /**

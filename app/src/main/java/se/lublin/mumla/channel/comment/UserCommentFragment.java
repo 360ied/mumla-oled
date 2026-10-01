@@ -51,6 +51,6 @@ public class UserCommentFragment extends AbstractCommentFragment {
     }
 
     public int getSession() {
-        return getArguments().getInt("session");
+        return requireArguments().getInt("session");
     }
 }

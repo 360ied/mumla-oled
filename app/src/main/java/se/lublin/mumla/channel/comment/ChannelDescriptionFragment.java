@@ -49,6 +49,6 @@ public class ChannelDescriptionFragment extends AbstractCommentFragment {
     }
 
     private int getChannelId() {
-        return getArguments().getInt("channel");
+        return requireArguments().getInt("channel");
     }
 }
