@@ -7,7 +7,7 @@ Its distinctive feature versus earlier phases is a **one-time Robolectric pilot 
 changes that the repo's JVM-only setup cannot exercise, so this branch introduces the minimal test infrastructure to cover them —
 with an explicit revert rule if the pilot misbehaves.
 
-**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` (commits `cc393d98` through `2a88c4c7`); pending review and merge. A pedantic review of the branch expanded scope beyond the locked recipe to every adjacent incidental (see §2.5–§2.6 and §5 deltas).
+**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` (commits `cc393d98` through `772f725a`); pending review and merge. Two pedantic review rounds expanded scope beyond the locked recipe to every adjacent incidental (see §2.5–§2.6 and §5 deltas).
 **Scope:** Four items — ODD-13 through ODD-16 (all P3 / Low, latent or cosmetic; no live crash or leak) — plus shared `:app` Robolectric infrastructure. No behavior change except the guards described below.
 
 ---
@@ -61,7 +61,12 @@ scoped as narrowly as possible (see §2).
 5. **ODD-13 scope includes the two subclass sites, plus key validation.** `UserCommentFragment.getSession()` and
    `ChannelDescriptionFragment.getChannelId()` switch to a shared `requireIntArgument()` helper (missing key fails fast
    instead of silently yielding `0`), validated up front via a `validateArguments()` hook called from `onCreate()` so
-   partial bundles fail at creation. Bundle keys are shared `ARG_*` constants across fragments, both menu callers
+   partial bundles fail at creation. The base hook additionally requires `ARG_EDITING`; the channel override rejects
+   `editing=true` (channel editing is unsupported — previously a Save-time `UnsupportedOperationException`). Observer
+   tracking caches the registering service so `onDestroy` unregisters against it even after unbind, releasing any
+   replaced observer. Unbound save/fetch degrades to a logged no-op with the dialog left open. The five remaining
+   `onAttach(Activity)` subclasses across the module migrate in the same shape, and `ChannelMenu`/`ChannelListAdapter`
+   gain null-target/null-service guards.
    (which also drop deprecated `Fragment.instantiate`), and tests. Observer tracking (`trackCommentObserver`, released
    in `onDestroy`) closes the dismiss-before-reply leak; `getService()` is null-guarded at both use sites; `mProvider`
    is cleared in `onDetach`; the WebView is detached from its parent before `destroy()`.
@@ -197,7 +202,7 @@ verify the link exists and do not duplicate it. On merge, flip ODD-13 – ODD-16
 | Case | Expected handling |
 |---|---|
 | Bundle present but `"comment"` key missing | `requireArguments().getString()` returns null → existing `mComment == null` → `requestComment()` path. Unchanged. |
-| Bundle present but `"editing"` key missing | `getBoolean()` defaults to false → view tab, same as today. Unchanged. |
+| Bundle present but `"editing"` key missing | `validateArguments` throws `IllegalStateException` (fail-fast; both production callers always put it) |
 | No-args instantiation (future caller, restore edge, test) | `IllegalStateException` with a clear message instead of a bare NPE. Intended behavior change. |
 | Host activity not implementing `HumlaServiceProvider` | Same `RuntimeException` type/message as today, now with the `ClassCastException` cause chained for crash-report readability. |
 | Tab switch racing teardown | Early return; no NPE on either nulled field. Unobservable in practice (detached `TabHost` cannot fire), defense-in-depth only. |
@@ -243,26 +248,27 @@ New file `app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentArgum
 
 | Test | Procedure | Expectation |
 |---|---|---|
-| `onCreateWithoutArgumentsThrows` | `new UserCommentFragment()` with no arguments; attach via stub host | `IllegalStateException` (message-pinned), not `NullPointerException` |
-| `isEditingWithoutArgumentsThrows` | Same fragment; `fragment.isEditing()` directly (host-free) | `IllegalStateException` (message-pinned) |
-| `onCreateWithUserBundlePreservesEditing` | Pinned user bundle with `editing=true`; attach; `isEditing()` | No throw; returns true |
-| `onCreateWithUserViewBundleClearsEditing` | Pinned user bundle with `editing=false`; attach; `isEditing()` | No throw; returns false |
-| `onCreateWithUserBundleMissingSessionThrows` | User bundle without `"session"`; attach | `IllegalStateException` (message-pinned) |
-| `channelOnCreateWithBundleMissingChannelThrows` | Channel bundle without `"channel"`; attach | `IllegalStateException` (message-pinned) |
-| `attachToNonProviderHostThrows` | Pinned bundle on a plain `FragmentActivity`; attach | `RuntimeException` naming `HumlaServiceProvider` |
-| `channelOnCreateWithoutArgumentsThrows` | `new ChannelDescriptionFragment()` with no arguments; attach via stub host | `IllegalStateException` (message-pinned) |
+| `userOnCreateWithoutArgumentsThrows` | `new UserCommentFragment()` with no arguments; attach via themed stub host | `IllegalStateException` (message + key-pinned), not `NullPointerException` |
+| `userIsEditingWithoutArgumentsThrows` | Same fragment; `fragment.isEditing()` directly (host-free) | `IllegalStateException` (message-pinned) |
+| `userOnCreateWithBundlePreservesEditing` | Pinned user bundle with `editing=true`; attach; `isEditing()` | No throw; returns true |
+| `userOnCreateWithViewBundleClearsEditing` | Pinned user bundle with `editing=false`; attach; `isEditing()` | No throw; returns false |
+| `userOnCreateWithBundleMissingSessionThrows` | User bundle without `"session"`; attach | `IllegalStateException` (message + key-pinned) |
+| `userOnCreateWithBundleMissingEditingThrows` | User bundle without `"editing"`; attach | `IllegalStateException` (message + key-pinned) |
+| `channelOnCreateWithoutArgumentsThrows` | `new ChannelDescriptionFragment()` with no arguments; attach via themed stub host | `IllegalStateException` (message-pinned) |
 | `channelOnCreateWithBundleSucceeds` | Pinned channel bundle; attach; `isEditing()` | No throw; returns false |
+| `channelOnCreateWithBundleMissingChannelThrows` | Channel bundle without `"channel"`; attach | `IllegalStateException` (message + key-pinned) |
+| `channelOnCreateWithEditingRejects` | Channel bundle with `editing=true`; attach | `IllegalStateException` naming editing |
+| `userAttachToNonProviderHostThrows` | Pinned bundle on a plain `FragmentActivity`; attach | Exact-type `RuntimeException` naming `HumlaServiceProvider` with `ClassCastException` cause |
 
-The private `ChannelDescriptionFragment.getChannelId()` is accepted by identical-change review (private, unreachable without
-reflection, same single-identifier edit as the covered sites) — the two channel rows above pin its reachable behavior, so no
-reflection into the private getter is required.
+The private `ChannelDescriptionFragment.getChannelId()` (key-validated like its sibling, plus the editing rejection)
+is pinned by the channel rows above, so no reflection into the private getter is required.
 
 New file `app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java` (user fragment, pinned bundle
 with `editing=false`):
 
 | Test | Procedure | Expectation |
 |---|---|---|
-| `destroyViewNullsAllViewFields` | `show()` per the locked recipe; capture the `TabHost` via reflection before dismissal (`AbstractCommentFragment.class.getDeclaredField("mTabHost")` + `setAccessible(true)` — the declaring class, not the subclass); dismiss; read `mTabHost`/`mCommentView`/`mCommentEdit` the same way | All three null |
+| `destroyViewNullsAllViewFields` | `show()` per the locked recipe; assert all three view fields non-null via reflection before dismissal (`AbstractCommentFragment.class.getDeclaredField(...)` + `setAccessible(true)` — the declaring class, not the subclass); `dismiss()`; read the fields the same way | All three null |
 | `tabCallbackAfterTeardownIsSafe` | After teardown, drive the captured `TabHost` with `setCurrentTab(1)` then `setCurrentTab(0)` (fires the registered `OnTabChangeListener` for `"Edit"` and `"View"`) | Returns without throwing |
 
 Fallback rule (locked, from §2.3): if the teardown tests need theme/shadow scaffolding beyond `@Config` (e.g. a Material
