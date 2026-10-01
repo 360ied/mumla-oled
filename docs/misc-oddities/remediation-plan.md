@@ -450,7 +450,9 @@ Phase 5 addresses secondary transport feedback loops and real-time buffer adapta
 
 **Status**: Open
 
-**Component**: [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272), [`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java#L441), [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L685)
+**Component**: [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java), [`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) (`connect()`, `createAudioHandler()`, `configureExtras(EXTRAS_FRAMES_PER_PACKET)`)
+
+**Implementation plan**: [`phase5-odd09-plan.md`](phase5-odd09-plan.md)
 
 **Problem**:
 1. When server maximum bandwidth constraints trigger auto-degradation in `AudioHandler.setMaxBandwidth()`, `framesPerPacket` may be increased from 2 to 4 (or 1 to 2/4) to reduce packet header overhead.
