@@ -328,6 +328,8 @@ The pre-completion verification script ([`scripts/check.sh`](../../scripts/check
 1. `nix develop --command ./scripts/test_native_audio.sh` (compiles and executes native C++ tests on the Linux host with `g++`).
 2. `nix develop --command ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest` (executes Java unit tests inside the host JVM).
 
+The native suite runs exactly once per `check.sh` invocation (step 1 above): Gradle `Test` tasks deliberately do not re-trigger it (`./gradlew check` still covers it via an explicit dependency), and the 3-ABI NDK build is likewise reserved for packaging tasks (see `libraries/humla/build.gradle`). `scripts/test_native_audio.sh` builds incrementally — per-TU objects under `build/test-native/obj/` compiled in parallel and cached via `ccache` (shared across worktrees) — so repeat runs skip compilation and only re-execute the tests.
+
 Because the host JVM does not have Android's Bionic C runtime or Android NDK `.so` libraries in `java.library.path`, an unconditional `System.loadLibrary("humlaaudio")` inside [`CryptState.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.java) will throw `UnsatisfiedLinkError` during `./gradlew testDebugUnitTest`, failing:
 - [`CryptStateTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/CryptStateTest.java)
 - [`AdaptiveKeepaliveTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/AdaptiveKeepaliveTest.java)
