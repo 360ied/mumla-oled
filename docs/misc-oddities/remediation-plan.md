@@ -626,6 +626,8 @@ Add the two translations on the next strings pass.
 
 **Solution**: Explicit owner sign-off before any further polish: keep default-on, default-off, or permission-gate. Polish work below assumes the decision is recorded; do not ship receiver hardening as a substitute for the decision.
 
+> Decision (owner, 2026-10-01): keep default-on. The receiver hardening and the user-facing "any installed app can send this broadcast" disclosure ship under that decision.
+
 #### 7.3b Dialog, strings, and receiver polish
 
 **Problem**:

@@ -51,6 +51,7 @@
     <string name="server_port">Port</string>
     <string name="server_host">Adresse</string>
     <string name="server_label">Libellé</string>
+    <string name="server_edit_url_password_warning">Ce lien contenait un mot de passe. Ne vous connectez que si vous faites confiance à l\'expéditeur.</string>
     <string name="connecting_to_server">Connexion à %s…</string>
     <string name="ptt">Appuyer pour parler</string>
     <string name="mute">Muet</string>

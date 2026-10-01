@@ -37,6 +37,8 @@
     <string name="audio">Audio</string>
     <string name="chatNotifications">Notifications du chat</string>
     <string name="chatNotificationsSum">S\'affiche pour les nouveaux messages.</string>
+    <string name="pref_talk_broadcast_title">Autoriser les diffusions « TALK » de Tasker</string>
+    <string name="pref_talk_broadcast_summary">Permettez aux applications d\'automatisation de contrôler « appuyer pour parler » via la diffusion TALK pendant la connexion. Toute application installée peut envoyer cette diffusion.</string>
     <string name="pref_notification_style">Style de notification persistante</string>
     <string name="notification_style_bigtext">Style BigText (standard)</string>
     <string name="notification_style_media">Style multimédia (contrôles média)</string>

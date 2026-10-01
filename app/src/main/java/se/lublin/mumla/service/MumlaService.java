@@ -226,7 +226,8 @@ public class MumlaService extends HumlaService implements
     };
 
     private BroadcastReceiver mTalkReceiver;
-    /** Tracks TALK receiver registration so mid-connection toggles never double-register. */
+    /** Tracks TALK receiver registration: registered once connected with the broadcast
+     * allowed, unregistered on disconnect or opt-out, so toggles never double-register. */
     private boolean mTalkReceiverRegistered;
 
     private void updateConnectedNotification() {

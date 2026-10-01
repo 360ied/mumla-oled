@@ -52,6 +52,7 @@
     <string name="server_port">端口</string>
     <string name="server_host">地址</string>
     <string name="server_label">名称</string>
+    <string name="server_edit_url_password_warning">此链接包含密码。仅在信任发送者时连接。</string>
     <string name="connecting_to_server">正在连接至 %s…</string>
     <string name="ptt">按键发言</string>
     <string name="mute">开关麦克风</string>
