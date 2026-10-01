@@ -541,41 +541,141 @@ Add the two translations on the next strings pass.
 
 ## Phase 7: Phase-4 Integration Review Residuals (P3)
 
-Pedantic items left over from the `phase4-integration` review after all defects were fixed. None change behavior; details are in ODD-17 through ODD-20 in the [README](README.md).
+> [!NOTE]
+> **Status: OPEN**
+>
+> Pedantic items left over from the `phase4-integration` review after all defects were fixed. Details are in ODD-17 through ODD-20 in the [README](README.md).
+>
+> No standalone implementation plan (no `phase7-*.md`): style-only sub-items ship as drive-by nits with the next touch of each file. Three sub-items are decisions, not nits, and gate the rest: (a) the default-on exported TALK broadcast (ODD-19), (b) the main-thread certificate read (ODD-18), and (c) the `allowBackup` posture (ODD-20). They are tracked as explicit gates below, not as P3 polish.
+>
+> **Suggested order**: 7.3 decision (TALK default) → 7.2 main-thread I/O → 7.1 socket seam → style nits last.
 
 ### 7.1 Native and TLS Hygiene (ODD-17)
 
 **Status**: Open
 
+**Component**: [`NativeCryptStateJni.cpp`](../../libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp) (`nativeEncrypt`), [`HumlaSSLSocketFactory.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.java), [`HumlaSSLSocketFactoryTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/HumlaSSLSocketFactoryTest.java)
+
+**Problem**:
+1. The encrypt-side overflow guard uses the literal `4` (the crypt header size), repeated in several places in the file, and `INT_MAX` instead of the type-accurate limit.
+2. The `nullptr` returns after a successful `NewByteArray` leave the local reference to be freed on return to Java. Harmless, but undocumented.
+3. `filterTlsProtocols` sits between the two `createSocket` overloads, separating related methods.
+4. Only the pure filter is tested. Nothing tests that `createSocket` enforces the TLS 1.2+ floor (the fail-closed path) or closes the plain socket on failure.
+
 **Solution**:
-Name the crypt-header constant, move the overflow guard next to the other argument checks, relocate `filterTlsProtocols`, and add a `createSocket` test through an injectable socket factory.
+1. Introduce `constexpr jint kCryptHeaderBytes = 4` and compare against `std::numeric_limits<jint>::max()`. Keep the guard where it is (after `GetArrayLength`, whose result it depends on); the earlier "move it with the other argument checks" ask is withdrawn as cosmetic.
+2. Add a one-line comment on the post-`NewByteArray` `nullptr` returns noting the local reference is freed on return to Java.
+3. Relocate `filterTlsProtocols` below both `createSocket` overloads.
+4. Add an injectable socket seam (or factory) so a JVM test can assert the fail-closed path (no TLS 1.2+ match throws, plain socket closed). No dedicated native test for the length guard: `length <= srcLen` already bounds it to realistic sizes (only reachable near 2 GB arrays), so the constant plus comment is the fix.
+
+**Edge Cases & Impact**:
+- Pure renames/comments; no behavior change on reachable paths.
+- The seam must not alter the production socket path (SNI hostname layering, `.onion` endpoint-identification exemption, fail-closed throw stay intact).
+
+**Acceptance criteria**: constant used at every header-size site; `filterTlsProtocols` no longer splits the overloads; new JVM test pins fail-closed + plain-socket-close; existing TLS tests pass.
 
 ---
 
 ### 7.2 Certificate Import/Export Hygiene (ODD-18)
 
-**Status**: Open
+**Status**: Open (style nits) + one gated I/O fix (not P3, see 7.2a)
+
+**Component**: [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java), [`CertificateExportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java), [`MumlaTrustStore.java`](../../app/src/main/java/se/lublin/mumla/util/MumlaTrustStore.java), [`CertificateExportTest.java`](../../app/src/test/java/se/lublin/mumla/preference/CertificateExportTest.java)
+
+#### 7.2a Gated fix: certificate read blocks the main thread (not P3)
+
+**Problem**: `readCertBytes()` (5 MB cap) runs on the main thread in `onActivityResult` and again on rotation restore. ANR risk, not pedantry.
+
+**Solution**: Move the read to a background executor; the rotation path already restores from the `Uri` (never from persisted bytes), so re-read off-thread preserves behavior. Verify with a large-file import (no jank) plus rotate-mid-dialog.
+
+#### 7.2b Style nits (drive-by only)
+
+**Problem**:
+1. `mPendingCertBytes` is effectively write-only: its only consumption is the `showPasswordDialog` argument it was just assigned from (rotation re-reads from the `Uri`).
+2. The password `char[]` is zeroed twice: `storeKeystore` (callee) and the `submitAction` `finally` (caller) operate on the same array.
+3. One remaining `e.printStackTrace()` in the `storeKeystore` failure branch; `MAC_PATTERN` message-text heuristics are fuzzy.
+4. `MumlaTrustStore.getTrustStorePassword()` exposes the empty-string store password with no doc (the BKS store is an integrity container for public pinned certificates, not a secret).
+5. The sanitizer intentionally strips any single trailing extension (`Alice v1.2` becomes `Alice v1.p12`).
+6. `CertificateExportTest` extends JUnit 3 `TestCase` and tests only a static helper.
 
 **Solution**:
-Make `mPendingCertBytes` a local, give password zeroing a single owner, switch remaining `printStackTrace` calls to `Log`, document the trust-store password constant, move the certificate read off the main thread, and modernize the sanitizer test.
+1. Make the cert bytes a local passed through to the dialog callbacks; drop the field (keep the `Uri` + metadata restore path as-is).
+2. Single owner is the callee: `storeKeystore` zeroes on all paths; the caller drops its redundant `finally` fill.
+3. Switch `printStackTrace` to `Log.w(TAG, ...)`; keep `MAC_PATTERN` heuristics but note their fuzziness in a comment.
+4. Document the empty-string password on `getTrustStorePassword()` (integrity-only, public pins).
+5. Decision: keep the lossy single-extension strip (already documented in the `sanitizeExportFilename` Javadoc); change only if product decides dot-names matter. No code change by default.
+6. JUnit 3→4 migration is optional and opportunistic — only with the next functional touch of that file.
+
+**Edge Cases & Impact**:
+- Field-to-local refactor must preserve the rotation contract: `Bundle` holds only the `Uri` + metadata, never bytes or passwords.
+- Zeroing change is behavior-preserving (double-zero today); the risk is dropping the wrong fill, so keep the callee fill on every return path.
+
+**Acceptance criteria**: no `printStackTrace` remains (grep); password zeroed exactly once per path (code inspection); trust-store password documented; sanitizer pins unchanged; rotation restore still re-reads from `Uri`.
 
 ---
 
 ### 7.3 Server Edit Dialog, Strings and TALK Receiver Polish (ODD-19)
 
-**Status**: Open
+**Status**: Open (polish) + one gated policy decision (not P3, see 7.3a)
+
+**Component**: [`dialog_server_edit.xml`](../../app/src/main/res/layout/dialog_server_edit.xml), [`ServerEditFragment.java`](../../app/src/main/java/se/lublin/mumla/servers/ServerEditFragment.java), [`TalkBroadcastReceiver.java`](../../app/src/main/java/se/lublin/mumla/service/ipc/TalkBroadcastReceiver.java), [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java), `values/preference.xml`, `values/strings.xml`
+
+#### 7.3a Gated decision: default-on exported TALK broadcast (not P3)
+
+**Problem**: The TALK broadcast receiver is exported with no permission and enabled by default, so any installed app can key the microphone while connected. The setting only narrows exposure once the user opts out.
+
+**Solution**: Explicit owner sign-off before any further polish: keep default-on, default-off, or permission-gate. Polish work below assumes the decision is recorded; do not ship receiver hardening as a substitute for the decision.
+
+#### 7.3b Dialog, strings, and receiver polish
+
+**Problem**:
+1. The URL-password warning `TextView` has no `textAppearance`/color emphasis, no bottom margin before the title row, and no `accessibilityLiveRegion` (it can hide while the user edits). The dialog root is not scrollable (pre-existing), so the extra row makes landscape overflow more likely.
+2. `server_edit_url_password_warning` and the `pref_talk_broadcast_*` strings have no `values-fr`/`values-zh-rCN` translations (`MissingTranslation` lint is disabled, so nothing flags this).
+3. Neither `createServerEditDialog` overload documents `@param context`.
+4. `TalkBroadcastReceiver` throws `UnsupportedOperationException` for a non-TALK action instead of ignoring it, silently ignores unknown `status` values, and ignores the configured transmit mode.
+5. The `mTalkReceiverRegistered` field comment says "mid-connection toggles" but registration is gated on `isConnectionEstablished()` (which precedes server sync); harmless because the receiver re-checks `isConnected()`.
+6. `Fragment.instantiate` is deprecated (pre-existing, out of scope).
 
 **Solution**:
-Style and make the URL-password warning accessible, add fr/zh translations, document or remove the redundant overload parameter, harden `TalkBroadcastReceiver` (ignore unknown actions/status, honor transmit mode), and get an explicit decision on the default-on TALK broadcast.
+1. Style the warning row: body-small appearance with error coloring, 8 dp bottom margin, `accessibilityLiveRegion="polite"`. Keep the root non-scrollable (landscape overflow accepted as today) unless the decision in 7.3a reopens the dialog.
+2. Add the fr/zh translations via a manual locale pass (not lint — see Verification).
+3. Document `@param context` on both overloads. Keep the `urlPassword` flag: it carries provenance ("came from a deep link"), which cannot be derived from the password value without warning on manually typed passwords. The earlier "derive it" suggestion is withdrawn.
+4. Ignore (and log) unknown actions instead of throwing; log unknown `status` values instead of silently dropping them; gate `setTalkingState` on push-to-talk transmit mode, matching the service's PTT-sound gating.
+5. Correct the field comment to describe the actual gate (`isConnectionEstablished()` + preference toggle). Leave `Fragment.instantiate` alone.
+
+**Edge Cases & Impact**:
+- Unknown-action ignore must not mask registration bugs: log at warning level so a mis-wired filter is still visible.
+- Transmit-mode gating changes behavior only for voice-activity/continuous users receiving TALK broadcasts (previously honored, now ignored); call this out in release notes.
+
+**Acceptance criteria**: warning row styled with margin + live region (layout inspection, TalkBack pass); fr/zh strings present (manual locale check); both overloads document `@param context`; receiver unit test pins ignore-and-log + transmit-mode gate; `Fragment.instantiate` untouched.
 
 ---
 
 ### 7.4 Settings, Manifest and Build Script Hygiene (ODD-20)
 
-**Status**: Open
+**Status**: Open (drive-by nits) + one separately tracked posture item (not P3, see below)
+
+**Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java), [`app/build.gradle`](../../app/build.gradle), `values/preference.xml`, `values/strings.xml`, [`AndroidManifest.xml`](../../app/src/main/AndroidManifest.xml)
+
+**Problem**:
+1. `DEFAULT_ALLOW_TALK_BROADCAST` is a boxed `Boolean` (copying `DEFAULT_CHAT_NOTIFY`); the default is also duplicated as a literal in `settings_general.xml`. The accessor `isTalkBroadcastAllowed` does not mirror the constant name `PREF_ALLOW_TALK_BROADCAST`.
+2. `android.hasProperty("signingConfigs")` is always true for the Android extension, so the real check is only the second half; the "has release signing" condition is duplicated between the `release {}` block (configuration time) and the `taskGraph.whenReady` guard (execution time).
+3. New strings sit far from related groups; `pref_talk_broadcast_title`/`_summary` breaks the neighboring `chatNotifications` naming; the TALK title says "Tasker" while the summary says "automation apps" without stating any app can send the broadcast.
+4. `android:enabled="true"` is the default and redundant (pre-existing); `READ_EXTERNAL_STORAGE` lost its explanatory comment (only needed on SDK ≤ 32 for the image picker).
+5. Pre-existing, out of scope: `android:allowBackup="true"` with server passwords, client certificates, and the trust store under `filesDir`.
 
 **Solution**:
-Use primitive `boolean` defaults, align naming, factor the shared signing condition in `app/build.gradle`, tidy string placement/naming, restore the `READ_EXTERNAL_STORAGE` comment, and decide on `allowBackup` exclusions.
+1. Use primitive `boolean` for new defaults; leave existing boxed constants until the next functional touch (no standalone rename churn). Do not rename the accessor — the churn outweighs the benefit.
+2. Simplify to `signingConfigs.hasProperty("release")` (drop the vacuous `android.hasProperty` half). Do not "extract a shared `def`" across the two sites: one runs at configuration time, the other at execution time, so sharing needs an `ext` property or helper method, not a plain `def`. The configuration-cache note (`whenReady` dereferencing `android` at execution time) is speculative while only `org.gradle.caching` is on — record, do not act.
+3. String regrouping/renaming and the Tasker-vs-automation wording are opportunistic; the "any app can send this" disclosure belongs to the 7.3a decision, not to a rename.
+4. Restore the `READ_EXTERNAL_STORAGE` comment (`maxSdkVersion=32`, image picker only). Leave `android:enabled="true"` alone.
+5. `allowBackup` posture (exclusions vs `false`) is tracked separately as a security decision, not as Phase 7 polish. No change in this phase.
+
+**Edge Cases & Impact**:
+- Boxed-to-primitive changes are source-compatible for the `getBoolean(key, default)` call sites but touch every reader; batch with functional work to avoid churn.
+- Build-script edits risk breaking release signing; verify both with-signing and without-signing configurations (see Verification).
+
+**Acceptance criteria**: no new boxed defaults; manifest comment restored; release build with signing config succeeds and without it fails closed with the existing error; `allowBackup` decision recorded elsewhere.
 
 ---
 
@@ -598,7 +698,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 6** | **ODD-14** | Lint check (`Deprecated` warning) confirming no `onAttach(Activity)` override remains. | Open comment dialogs; verify provider binding works. |
 | **Phase 6** | **ODD-15** | [`CommentFragmentTeardownTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java) verifying all three view fields null after dismiss and post-teardown tab callbacks safe. | Open and dismiss comment dialogs repeatedly; inspect heap for retained view hierarchies. |
 | **Phase 6** | **ODD-16** | Lint `MissingTranslation` check on `comment_open_link`. | Switch to French/Chinese locales; open a comment link chooser and verify the title is translated. |
-| **Phase 7** | **ODD-17** | JVM test of `createSocket` fail-closed behavior via an injectable socket factory; native crypt test for the length guard. | None. |
-| **Phase 7** | **ODD-18** | Existing certificate import/export unit tests continue to pass. | Import a password-protected PKCS#12 with a wrong then right password; rotate mid-dialog; export and re-import. |
-| **Phase 7** | **ODD-19** | Lint `MissingTranslation` for the new strings; receiver unit test for unknown action/status. | Open a `mumble://` link with an embedded password in a right-to-left, large-font, landscape configuration. |
-| **Phase 7** | **ODD-20** | Gradle configuration check (`assembleFossDebug`) and lint. | None. |
+| **Phase 7** | **ODD-17** | JVM test of `createSocket` fail-closed behavior via an injectable socket seam (fail-closed throw + plain-socket close). No native test for the length guard (`length <= srcLen` already bounds it; constant + comment is the fix). | None. |
+| **Phase 7** | **ODD-18** | Existing import/export tests pass, plus: no `printStackTrace` remains (grep); sanitizer pins unchanged; rotation restore re-reads from `Uri` (no bytes/passwords in `Bundle`); background-executor read covered by manual large-file import below. | Import a password-protected PKCS#12 with a wrong then right password; rotate mid-dialog; export and re-import; import a large file and confirm no main-thread jank. |
+| **Phase 7** | **ODD-19** | Receiver unit test for unknown action/status (ignore-and-log, no throw) and transmit-mode gating. Translations verified by manual locale pass, not lint (`MissingTranslation` is disabled in `app/build.gradle`). | Open a `mumble://` link with an embedded password in a right-to-left, large-font, landscape configuration; switch to French/Chinese locales and verify the warning + TALK strings. |
+| **Phase 7** | **ODD-20** | Gradle configuration check (`assembleFossDebug`) and lint, verified both with and without the local signing config (without must fail closed with the existing error). `allowBackup` posture verified separately, not here. | None. |
