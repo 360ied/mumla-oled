@@ -271,5 +271,11 @@ public class SsrfHostPolicyTest extends TestCase {
                 SsrfHostPolicy.hostHeaderValue(new URL("https://example.com:8443/a")));
         assertEquals("example.com:8080",
                 SsrfHostPolicy.hostHeaderValue(new URL("http://example.com:8080/a")));
+        assertEquals("example.com",
+                SsrfHostPolicy.hostHeaderValue(new URL("http://EXAMPLE.COM./a")));
+        assertEquals("[::1]",
+                SsrfHostPolicy.hostHeaderValue(new URL("http://[::1]/")));
+        assertEquals("[::1]:8080",
+                SsrfHostPolicy.hostHeaderValue(new URL("http://[::1]:8080/x")));
     }
 }

@@ -45,12 +45,12 @@ public final class PinnedTlsSocketFactory extends SSLSocketFactory {
     private final String mSniHostname;
 
     public PinnedTlsSocketFactory(String sniHostname) {
-        mSniHostname = Objects.requireNonNull(sniHostname);
+        mSniHostname = Objects.requireNonNull(sniHostname, "sniHostname");
     }
 
     /** Verifier that checks the session against the original hostname, not the pinned IP. */
     public static HostnameVerifier verifierFor(final String originalHost) {
-        Objects.requireNonNull(originalHost);
+        Objects.requireNonNull(originalHost, "originalHost");
         final HostnameVerifier platform = HttpsURLConnection.getDefaultHostnameVerifier();
         return (hostname, session) -> platform.verify(originalHost, session);
     }
@@ -64,7 +64,7 @@ public final class PinnedTlsSocketFactory extends SSLSocketFactory {
                 SSLParameters params = socket.getSSLParameters();
                 params.setServerNames(Collections.singletonList(new SNIHostName(mSniHostname)));
                 socket.setSSLParameters(params);
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException ignored) {
                 // IP-literal or otherwise invalid SNI name: send no SNI. The handshake
                 // then succeeds only on a matching default cert or fails closed.
             }
@@ -76,7 +76,7 @@ public final class PinnedTlsSocketFactory extends SSLSocketFactory {
 
     // Non-layered overloads delegate without SNI: only the layered overload above
     // carries it. HttpsURLConnection always uses the layered path; any other use
-    // fails closed on name-routed vhosts.
+    // succeeds only on a matching default cert, else fails.
     @Override
     public String[] getDefaultCipherSuites() {
         return mDelegate.getDefaultCipherSuites();

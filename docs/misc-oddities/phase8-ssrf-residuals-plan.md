@@ -16,12 +16,12 @@ lands last, isolated in its own commits with device-side negative tests.
 
 Chat images in Mumla OLED come from server-supplied URLs, so a hostile server aims the phone's HTTP
 client at arbitrary hosts. The guard is [`SsrfHostPolicy`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java)
-(checked per hop by [`MumbleImageGetter.fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L551),
+(checked per hop by [`MumbleImageGetter.fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L543-L565),
 redirects followed manually with per-hop re-checks and a 5-hop cap). Three residuals remain:
 
 - **ODD-10:** `isHostBlocked()` resolves via `getAllByName`, then `url.openConnection()` resolves the
   hostname **again** — a DNS rebind between check and `connect()` (TOCTOU) defeats the policy at every hop.
-- **ODD-11:** `isBlockedIPv6()` ([`SsrfHostPolicy.java:278-331`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L278-L331))
+- **ODD-11:** `isBlockedIPv6()` ([`SsrfHostPolicy.java:281-337`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L281-L337))
   unwraps IPv4-mapped, IPv4-compatible, 6to4, and only the well-known NAT64 `64:ff9b::/96`. Teredo
   (`2001::/32`, XOR-obfuscated), ISATAP (`…:0:5efe:…`), and the local-use NAT64 `64:ff9b:1::/48`
   ([RFC 8215](https://www.rfc-editor.org/rfc/rfc8215)) are unhandled.
@@ -144,7 +144,7 @@ Notes:
 
 ### Step 2 — ODD-12: pin the shadowed branches directly
 
-1. Widen the two helpers (same file, `SsrfHostPolicy.java:227` and `:278`):
+1. Widen the two helpers (same file, [`SsrfHostPolicy.java:227`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L227) and [`SsrfHostPolicy.java:281`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L281)):
    ```java
    // Package-visible for testing: pins the explicit branches shadowed by the
    // generic InetAddress predicates in isBlockedAddress() (see ODD-12).
@@ -252,7 +252,7 @@ direction is fixed: newer devices get SNI, older devices fail closed, no device 
 #### 3c — Rewire `MumbleImageGetter.fetchOneUrl()` to fetch through the pin
 
 Replace the check-then-connect-by-hostname sequence
-([`MumbleImageGetter.java:541-551`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L551))
+([`MumbleImageGetter.java:543-565`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L543-L565))
 with resolve-once, try-each:
 
 ```java

@@ -184,9 +184,17 @@ public final class SsrfHostPolicy {
         return new URL(original.getProtocol() + "://" + authority + original.getFile());
     }
 
-    /** Value for the Host header, preserving virtual-host routing through the pinned connection. */
+    /**
+     * Value for the Host header, preserving virtual-host routing through the pinned
+     * connection. The host is normalized (lowercased, trailing dot stripped) with
+     * IPv6 literals re-bracketed, so header identity matches SNI and verification.
+     * Call only with URLs carrying a checked host (see resolveAndCheck).
+     */
     static String hostHeaderValue(URL original) {
-        String host = original.getHost();
+        String host = normalizeHost(original.getHost());
+        if (host != null && host.indexOf(':') >= 0) {
+            host = "[" + host + "]";
+        }
         int port = original.getPort();
         if (port == -1 || port == original.getDefaultPort()) {
             return host;

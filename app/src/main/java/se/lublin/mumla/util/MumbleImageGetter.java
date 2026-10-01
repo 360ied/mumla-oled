@@ -507,6 +507,11 @@ public class MumbleImageGetter implements Html.ImageGetter {
             }
         } catch (IOException e) {
             Log.w(TAG, "failed to load URL image: " + e.toString());
+        } catch (RuntimeException e) {
+            // Best-effort background fetch: an unexpected runtime failure skips the
+            // image instead of killing the executor worker (the null return still
+            // records the failure via mFailedDownloads in the caller).
+            Log.w(TAG, "failed to load URL image: " + e.toString());
         } catch (OutOfMemoryError e) {
             Log.w(TAG, "OOM decoding URL image: " + e.toString());
         }

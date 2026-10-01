@@ -22,7 +22,7 @@ probing, network mapping via timing, and similar).
 
 The `phase2-image-pipeline` work built the guard: before fetching any
 image,
-[`MumbleImageGetter.resolveAndCheck()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java)
+[`MumbleImageGetter.resolveAndCheck()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L573)
 checks the URL's host against
 [`SsrfHostPolicy`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java),
 which blocks loopback, private LAN ranges, link-local, multicast, CGNAT,
