@@ -44,9 +44,9 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-07** | **Preferences** | **Low** | **Resolved** | **PTT key sentinel unified**: the no-key sentinel is `Settings.DEFAULT_PUSH_KEY` (`-1`), enforced by [`Settings.isPttKeyBound()`](../../app/src/main/java/se/lublin/mumla/Settings.java#L262-L271) in the `MumlaActivity` key handlers and the key-select dialog, which normalizes the legacy `0` value on load. | [`Settings.java:60`](../../app/src/main/java/se/lublin/mumla/Settings.java#L60) |
 | **ODD-08** | **Code Hygiene** | **Low** | **Resolved** | **Dead commented-out preferences pruned**: the obsolete `channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers` block was removed from [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml). | [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml) |
 | **ODD-09** | **Network / Latency** | **Medium** | **Resolved** | **Degraded `framesPerPacket` rescales HumlaUDP send queue**: when server bandwidth limits trigger `AudioHandler` degradation (e.g. 2 to 4 frames), a service-mediated listener now rescales the `HumlaUDP` queue via `HumlaConnection.setTargetFramesPerPacket()`, so 40 ms audio buffers 5 packets within the ~200 ms latency ceiling. | [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) |
-| **ODD-10** | **Security / SSRF** | **Medium** | **Open** | **DNS Rebinding TOCTOU in Image SSRF Check**: [`MumbleImageGetter.isHostBlocked()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) resolves via `getAllByName` but `HttpURLConnection` reconnects by hostname, so a rebind between check and `connect()` defeats the policy. | [`MumbleImageGetter.java:598`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) |
-| **ODD-11** | **Security / SSRF** | **Low** | **Open** | **Incomplete IPv6 Transition-Mechanism Coverage**: [`SsrfHostPolicy.isBlockedIPv6()`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) unwraps only the well-known NAT64 `/96`; RFC 6052 variable-length and operator NAT64 prefixes plus Teredo/ISATAP are unhandled. | [`SsrfHostPolicy.java:239`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) |
-| **ODD-12** | **Testing** | **Low** | **Open** | **Thin SSRF Regression Test Layering**: `testSiteLocalBlocked` passes via either the `isSiteLocalAddress` gate or the explicit `fec0::/10` branch, and embedded `169.254`/`224` branches lack direct literal tests. | [`SsrfHostPolicyTest.java:113`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L124) |
+| **ODD-10** | **Security / SSRF** | **Medium** | **Resolved** | **Pinned fetching**: [`MumbleImageGetter.fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L543-L565) resolves once per hop and fetches through the checked IP (IP-literal URL with `Host` header; SNI plus platform hostname verification against the original host for `https` via [`PinnedTlsSocketFactory.java`](../../app/src/main/java/se/lublin/mumla/util/PinnedTlsSocketFactory.java)), closing the rebind window. | [`MumbleImageGetter.java:543`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L543-L551) |
+| **ODD-11** | **Security / SSRF** | **Low** | **Resolved** | **Transition gaps closed**: [`SsrfHostPolicy.isBlockedIPv6()`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L281-L337) now unwraps Teredo (server and client halves), ISATAP, and local-use NAT64 `64:ff9b:1::/48`, OR-combined across coincident embeddings; operator NAT64 and 6rd stay a documented residual. | [`SsrfHostPolicy.java:278`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L278-L331) |
+| **ODD-12** | **Testing** | **Low** | **Resolved** | **Layered pins**: `isBlockedIPv4`/`isBlockedIPv6` are package-visible-for-testing with direct per-branch tests plus NAT64/6to4 embedded vectors proving the unwrap path reaches the shadowed branches, covered by [`SsrfHostPolicyTest.java`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java). | [`SsrfHostPolicyTest.java`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java) |
 | **ODD-13** | **UI / Lifecycle** | **Low** | **Resolved** | **Guarded arguments**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java) now fails fast with `IllegalStateException` via `requireArguments()`, rejects partial bundles in `onCreate()` through shared `ARG_*` constants, covered by [`CommentFragmentArgumentsTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentArgumentsTest.java). | [`AbstractCommentFragment.java:58`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L58) |
 | **ODD-14** | **UI / Compatibility** | **Low** | **Resolved** | **Modernized attachment**: overrides `onAttach(Context)` with the `ClassCastException` cause chained; the same migration applied to `HumlaServiceFragment` and the five remaining subclasses. | [`AbstractCommentFragment.java:62`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68) |
 | **ODD-15** | **Memory / Lifecycle** | **Low** | **Resolved** | **Completed teardown**: `onDestroyView()` detaches and nulls all three view fields, the tab listener null-guards both dereferenced views, comment observers are released in `onDestroy`, covered by [`CommentFragmentTeardownTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java). | [`AbstractCommentFragment.java:132`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141) |
@@ -206,7 +206,7 @@ The dialog provides only a positive button. It lacks a negative button, cancel l
 If a user taps outside the dialog or presses Back:
 - The dialog dismisses.
 - `mSettings.setFirstRun(false)` is **not executed**.
-- The next time the user launches Mumla, the dialog prompts them again.
+- The next time the user launches Mumla OLED, the dialog prompts them again.
 
 ---
 
@@ -293,7 +293,9 @@ However, neither `HumlaConnection` nor `HumlaUDP` is notified of this adjusted p
 
 ### ODD-10: DNS Rebinding TOCTOU in Image SSRF Check
 
-In [`MumbleImageGetter.java:598-611`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611):
+> **Status: Resolved on branch `feature/oddities-phase8-ssrf`** (from `cff07a42`; merge pending — frozen range recorded at merge): `fetchOneUrl` resolves once per hop and fetches through the checked IP with SNI plus platform hostname verification. The description below is the pre-fix record.
+
+In [`MumbleImageGetter.java:598-611`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) (pre-fix lines):
 
 ```java
 try {
@@ -304,19 +306,23 @@ try {
 }
 ```
 
-The pre-connect DNS check in `isHostBlocked()` is best-effort: [`fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L549) validates the hostname, then `HttpURLConnection` reconnects by hostname in `getResponseCode()`, so a DNS rebind between the check and `connect()` (TOCTOU) defeats the policy. The manual redirect loop (no auto-follow, per-hop re-check, 5-hop cap) narrows but does not eliminate the window. Already disclosed as an accepted residual in [`SsrfHostPolicy.java:34-38`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L34-L38) (phase-2 plan C3). Closing it requires connecting to the checked IP directly (pinned socket or custom `SocketFactory`) with manual TLS hostname verification — a larger change than the policy itself.
+The pre-connect DNS check in `isHostBlocked()` was best-effort: [`fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L543-L565) validated the hostname, then `HttpURLConnection` reconnected by hostname in `getResponseCode()`, so a DNS rebind between the check and `connect()` (TOCTOU) defeated the policy. The manual redirect loop (no auto-follow, per-hop re-check, 5-hop cap) narrows but does not eliminate the window. Already disclosed as an accepted residual in [`SsrfHostPolicy.java:34-38`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L34-L38) (phase-2 plan C3). Closing it requires connecting to the checked IP directly (pinned socket or custom `SocketFactory`) with manual TLS hostname verification — a larger change than the policy itself.
 
 ---
 
 ### ODD-11: Incomplete IPv6 Transition-Mechanism Coverage in SSRF Policy
 
-In [`SsrfHostPolicy.java:239-266`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266), `isBlockedIPv6()` unwraps IPv4-mapped, IPv4-compatible, 6to4, and the well-known NAT64 `64:ff9b::/96` into `isBlockedIPv4()`, with explicit `fec0::/10`, `fc00::/7`, and `2001:db8::/32` branches. Unhandled: RFC 6052 variable-length NAT64 prefixes (`/32`–`/64`, where the IPv4 bits sit at non-`/96` offsets and need prefix-length-dependent extraction), operator-specific NAT64 prefixes, Teredo `2001::/32`, and ISATAP. Consistent with the existing rigor boundary, but an open bypass class on exotic networks. Recorded as accepted residual in the phase2-image-pipeline round-2 review.
+> **Status: Resolved on branch `feature/oddities-phase8-ssrf`** (from `cff07a42`; merge pending — frozen range recorded at merge): Teredo, ISATAP, and local-use NAT64 are unwrapped with OR-combined embeddings; only operator NAT64 and 6rd remain an accepted residual. The description below is the pre-fix record.
+
+In [`SsrfHostPolicy.java:239-266`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) (pre-fix lines), `isBlockedIPv6()` unwraps IPv4-mapped, IPv4-compatible, 6to4, and the well-known NAT64 `64:ff9b::/96` into `isBlockedIPv4()`, with explicit `fec0::/10`, `fc00::/7`, and `2001:db8::/32` branches. Unhandled: RFC 6052 variable-length NAT64 prefixes (`/32`–`/64`, where the IPv4 bits sit at non-`/96` offsets and need prefix-length-dependent extraction), operator-specific NAT64 prefixes, Teredo `2001::/32`, and ISATAP. Consistent with the existing rigor boundary, but an open bypass class on exotic networks. Recorded as accepted residual in the phase2-image-pipeline round-2 review.
 
 ---
 
 ### ODD-12: Thin SSRF Regression Test Layering
 
-In [`SsrfHostPolicyTest.java:113-124`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L124):
+> **Status: Resolved on branch `feature/oddities-phase8-ssrf`** (from `cff07a42`; merge pending — frozen range recorded at merge): every explicit branch is pinned by direct package-visible tests plus embedded unwrap-path vectors. The description below is the pre-fix record.
+
+In [`SsrfHostPolicyTest.java:113-117`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L117):
 
 - `testSiteLocalBlocked` passes via either the `isSiteLocalAddress()` gate in `isBlockedAddress()` or the explicit `fec0::/10` branch in `isBlockedIPv6()` on desktop JVMs, so it pins the blocking outcome but not the defense-in-depth layer.
 - Embedded `169.254`/`224` branches in `isBlockedIPv4()` are exercised only indirectly; `127` is covered via `64:ff9b::7f00:1`, but there are no direct `::ffff:169.254.x.x` / `::ffff:224.0.0.1` literal tests.
