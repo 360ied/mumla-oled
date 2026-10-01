@@ -11,7 +11,8 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED](#phase-5-dynamic-bandwidth--network-adaptation-p2--completed)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3) — COMPLETED](#phase-6-comment-dialog-hardening-follow-ups-p3--completed)
 7. [Phase 7: Phase-4 Integration Review Residuals (P3) — COMPLETED](#phase-7-phase-4-integration-review-residuals-p3--completed)
-8. [Verification & Test Strategy](#verification--test-strategy)
+8. [Phase 8: SSRF Residual Hardening (P1 / P2) — PLANNED](#phase-8-ssrf-residual-hardening-p1--p2--planned)
+9. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
 
@@ -677,6 +678,23 @@ Add the two translations on the next strings pass.
 
 ---
 
+## Phase 8: SSRF Residual Hardening (P1 / P2) — PLANNED
+
+> [!NOTE]
+> **Status: PLANNED**
+>
+> ODD-10 through ODD-12 remain open on `master`. The commit-ready design is locked in
+> [`phase8-ssrf-residuals-plan.md`](phase8-ssrf-residuals-plan.md): ODD-11 closes the exactly-matchable
+> transition gaps (Teredo, ISATAP, local-use NAT64 `64:ff9b:1::/48`; operator NAT64 and 6rd stay a documented
+> residual), ODD-12 pins the shadowed policy branches with direct package-visible tests, and ODD-10 closes
+> the DNS-rebinding TOCTOU with single-resolution pinned fetching (checked-IP connection with SNI and
+> platform hostname verification against the original host). Severity posture is unchanged: ODD-10 stays
+> Medium in the matrix with the low-practical-blast-radius note recorded in the plan. The implementing
+> branch flips this section to COMPLETED and `README.md` ODD-10 – ODD-12 to Resolved per the Phase 1–7
+> convention.
+
+---
+
 ## Verification & Test Strategy
 
 To ensure zero regressions across all phases, each change must be accompanied by targeted unit and integration tests:
@@ -700,3 +718,6 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 7** | **ODD-18** | Existing import/export tests pass, plus: no `printStackTrace` remains (grep); sanitizer pins unchanged; rotation restore re-reads from `Uri` (no bytes/passwords in `Bundle`); background-executor read covered by manual large-file import below. | Import a password-protected PKCS#12 with a wrong then right password; rotate mid-dialog; export and re-import; import a large file and confirm no main-thread jank. |
 | **Phase 7** | **ODD-19** | Receiver unit test for unknown action/status (ignore-and-log, no throw) and transmit-mode gating. Translations verified by manual locale pass, not lint (`MissingTranslation` is disabled in `app/build.gradle`). | Open a `mumble://` link with an embedded password in a right-to-left, large-font, landscape configuration; switch to French/Chinese locales and verify the warning + TALK strings. |
 | **Phase 7** | **ODD-20** | Gradle configuration check (`assembleFossDebug`) and lint, verified both with and without the local signing config (without must fail closed with the existing error). `allowBackup` posture verified separately, not here. | None. |
+| **Phase 8** | **ODD-10** | JVM tests for the pure pinning helpers (`buildPinnedUrl` / `hostHeaderValue` string and port vectors); no allow-all verifier (grep). TLS wiring covered by device checks. | Serve valid-HTTPS image (renders), wrong-host cert and self-signed cert (both refused), short-TTL rebind to private target (never connected), cross-host redirect chain (renders) plus redirect to private IP (refused); API 21–23 behavior recorded. |
+| **Phase 8** | **ODD-11** | [`SsrfHostPolicyTest.java`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java) vectors for Teredo (blocked client/server halves, allowed public), ISATAP (blocked, allowed, u/l-bit variant), and local-use NAT64 `/48` (blocked, allowed, nonzero-u-octet gate). | None (JVM suite covers it). |
+| **Phase 8** | **ODD-12** | Direct package-visible `isBlockedIPv4`/`isBlockedIPv6` tests pinning every explicit branch with boundary vectors, plus public-API NAT64/6to4 embedded `169.254`/`224`/`10` tests. | None (JVM suite covers it). |
