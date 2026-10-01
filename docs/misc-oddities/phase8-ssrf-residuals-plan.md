@@ -1,6 +1,6 @@
 # Phase 8 Implementation Plan: SSRF Residual Hardening (ODD-10 – ODD-12)
 
-Concrete, commit-ready plan for [Phase 8](remediation-plan.md#phase-8-ssrf-residual-hardening-p1--p2--planned) of the Miscellaneous Oddities remediation
+Concrete, commit-ready plan for [Phase 8](remediation-plan.md#phase-8-ssrf-residual-hardening-p2--p3--planned) of the Miscellaneous Oddities remediation
 ([detailed records](README.md#odd-10-dns-rebinding-toctou-in-image-ssrf-check), [plain-language explainer](ssrf-residuals-explainer.md)).
 This file locks the design decisions left open by the SSRF review so the implementing branch has no deliberation left to do.
 
@@ -16,7 +16,7 @@ lands last, isolated in its own commits with device-side negative tests.
 
 Chat images in Mumla OLED come from server-supplied URLs, so a hostile server aims the phone's HTTP
 client at arbitrary hosts. The guard is [`SsrfHostPolicy`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java)
-(checked per hop by [`MumbleImageGetter.fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L549),
+(checked per hop by [`MumbleImageGetter.fetchOneUrl()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L551),
 redirects followed manually with per-hop re-checks and a 5-hop cap). Three residuals remain:
 
 - **ODD-10:** `isHostBlocked()` resolves via `getAllByName`, then `url.openConnection()` resolves the
@@ -75,29 +75,40 @@ redirects followed manually with per-hop re-checks and a 5-hop cap). Three resid
 
 ### Step 1 — ODD-11: close the exactly-matchable transition gaps
 
-In `isBlockedIPv6()`, alongside the existing unwrap checks (disjoint prefixes, so order among unwraps is
-immaterial — put the three new checks directly after the `isNat64` check):
+In `isBlockedIPv6()`, alongside the existing unwrap checks (those constrain disjoint prefixes, so their
+early returns are order-independent — put the three new checks directly after the `isNat64` check).
+Unlike the existing unwraps, the three new predicates can coincide on an attacker-crafted literal:
+ISATAP constrains only the IID (bytes 8–11), so a Teredo or NAT64-local address can carry an
+ISATAP-coincident IID with a public suffix while embedding a private target elsewhere (e.g.
+`64:ff9b:1:a00:0:5efe:808:808` embeds `10.0.0.94` yet trails `8.8.8.8`). Early return on the first
+match would let the public embedding mask the private one, so the new checks OR-combine — the
+address is refused if *any* matched embedding is blocked:
 
 ```java
+// OR-combined: several transition embeddings can coincide in one crafted
+// literal, so every matched embedding is evaluated and any blocked one
+// refuses the address. Do not early-return between these three checks.
+boolean transitionBlocked = false;
 if (isTeredo(addr)) {
     // RFC 4380: 2001::/32. Bytes 4-7 are the server IPv4; the last 32 bits
     // are the client IPv4 XOR 0xFFFFFFFF. Either can carry the target.
-    if (isBlockedIPv4(new byte[]{addr[4], addr[5], addr[6], addr[7]})) {
-        return true;
-    }
-    return isBlockedIPv4(new byte[]{
+    transitionBlocked |= isBlockedIPv4(new byte[]{addr[4], addr[5], addr[6], addr[7]});
+    transitionBlocked |= isBlockedIPv4(new byte[]{
             (byte) (addr[12] ^ 0xFF), (byte) (addr[13] ^ 0xFF),
             (byte) (addr[14] ^ 0xFF), (byte) (addr[15] ^ 0xFF)});
 }
 if (isIsatap(addr)) {
     // RFC 5214: interface identifier 00-00-5E-FE (u/l bit masked) + IPv4.
-    return isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
+    transitionBlocked |= isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
 }
 if (isNat64LocalUse(addr)) {
     // RFC 8215 + RFC 6052 section-2.2 /48 row: prefix 0064:ff9b:0001,
     // u octet (byte 8) zero; v4 = bytes 6,7,9,10. Suffix ignored per
     // RFC 6052 section-2.3 (translators ignore nonzero suffix).
-    return isBlockedIPv4(new byte[]{addr[6], addr[7], addr[9], addr[10]});
+    transitionBlocked |= isBlockedIPv4(new byte[]{addr[6], addr[7], addr[9], addr[10]});
+}
+if (transitionBlocked) {
+    return true;
 }
 ```
 
@@ -211,7 +222,7 @@ public final class PinnedTlsSocketFactory extends SSLSocketFactory {
         HostnameVerifier platform = HttpsURLConnection.getDefaultHostnameVerifier();
         return (hostname, session) -> platform.verify(originalHost, session);
     }
-    // ... createSocket(Socket, host, port, autoClose) override below, plus six one-line delegates
+    // ... createSocket(Socket, host, port, autoClose) override below, plus five one-line delegates
 }
 ```
 
@@ -239,7 +250,7 @@ direction is fixed: newer devices get SNI, older devices fail closed, no device 
 #### 3c — Rewire `MumbleImageGetter.fetchOneUrl()` to fetch through the pin
 
 Replace the check-then-connect-by-hostname sequence
-([`MumbleImageGetter.java:541-549`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L549))
+([`MumbleImageGetter.java:541-551`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L541-L551))
 with resolve-once, try-each:
 
 ```java
@@ -270,7 +281,10 @@ return a single-element array; hostnames via `getAllByName` + `isAnyAddressBlock
 `fetchPinned` opens `SsrfHostPolicy.buildPinnedUrl(url, addr)`, sets the `Host` header from
 `hostHeaderValue(url)`, keeps `setInstanceFollowRedirects(false)` and the 15-second timeouts, and — for
 `https` — installs `new PinnedTlsSocketFactory(originalHost)` plus `PinnedTlsSocketFactory.verifierFor`
-before `connect()`. Redirect handling in `fetchURLImage` is untouched (each hop re-resolves and re-pins).
+before `connect()`. The §6.1 name-based-vhost positive test is the gate for the Step 3 commits: it
+proves the `Host` override reaches the wire on Android's `HttpURLConnection` stack — if the stack
+drops the override, pinned fetches land on the server's default vhost and Step 3 must not merge as-is.
+Redirect handling in `fetchURLImage` is untouched (each hop re-resolves and re-pins).
 
 Do not change: scheme/userinfo gating, per-hop re-check, 5-hop cap, 15 s timeouts, `disconnect()` in
 `finally`, the `mFailedDownloads`/`mPendingDownloads` bookkeeping.
@@ -303,6 +317,7 @@ Do not change: scheme/userinfo gating, per-hop re-check, 5-hop cap, 15 s timeout
 | Teredo server half public, client half private (or vice versa) | Blocked if *either* half is blocked — attacker controls the whole address, so both halves are untrusted. |
 | NAT64 local-use with nonzero suffix / nonzero u octet | Nonzero u octet → not a valid §2.2 address → no extraction (falls through to the outer-IPv6 verdict). Nonzero suffix → extraction still applied (§2.3: suffix doesn't move the target). Pinned by §5 vectors. |
 | ISATAP-looking IID on a mapped/compatible address | Impossible by construction (marker bytes are nonzero); checks are order-independent. |
+| Teredo or NAT64-local address with an ISATAP-coincident IID (crafted literal: public suffix, private embedding) | Blocked: the three Step 1 checks OR-combine, so any private embedding refuses the address. Pinned by the §5 overlap vectors. |
 | `fe00::…` (not unique-local, not link-local) | Direct `isBlockedIPv6` test pins `false` — guards the `fc00::/7` mask against over-widening. |
 
 ---
@@ -325,6 +340,8 @@ All in the existing JVM suites — no new infrastructure. `SsrfHostPolicyTest` k
 | `64:ff9b:1:a00:0:500:0:0` (§3 derivation: bytes 6,7 = `0A 00`, u = `00`, bytes 9,10 = `00 05` → 10.0.0.5) | blocked | /48 local-use extraction |
 | `64:ff9b:1:808:0:808:0:0` (→ 8.8.8.8) | allowed | no overblock on public /48 |
 | `64:ff9b:1:a00:100:500:0:0` (u octet `01` ≠ 0) | allowed | u-octet validity gate (outer is global, unlisted) |
+| `64:ff9b:1:a00:0:5efe:808:808` (NAT64-local → 10.0.0.94, ISATAP-coincident IID trailing 8.8.8.8) | blocked | OR-combination: private embedding not masked by public tail |
+| `2001:0:a00:1:0:5efe:808:808` (Teredo server 10.0.0.1, ISATAP-coincident IID trailing 8.8.8.8) | blocked | OR-combination across transition checks |
 
 Derivations shown above are normative — recompute, don't trust: client-half `XOR FFFFFFFF` both ways,
 `/48` bytes `[b6,b7,b9,b10]` per the RFC 6052 figure in §3.
@@ -334,7 +351,7 @@ Derivations shown above are normative — recompute, don't trust: client-half `X
 | Test | Pins |
 |---|---|
 | Direct `isBlockedIPv4(new byte[]{…})` for every explicit branch (`0/8`, `127/8`, `169.254/16`, `224/4`, `10/8`, `172.16/12`, `192.168/16`, `100.64/10`, `240/4`+broadcast, TEST-NET-1/2/3, `192.88.99/24`, `198.18/15`) with boundary pairs (e.g. `172.15.x`/`172.32.x` allowed; `100.63.x`/`100.128.x` allowed; `223.x`/`240.x` boundary; `198.17.x`/`198.20.x` allowed) | Each explicit layer, independent of JDK predicates |
-| Direct `isBlockedIPv6(rawOf("fec0::1"))` → blocked; `rawOf("fc00::1")`, `rawOf("fd00::1")` → blocked; `rawOf("fe00::1")` → allowed | `fec0::/10` + `fc00::/7` layers + mask boundary |
+| Direct `isBlockedIPv6(rawOf("fec0::1"))` → blocked; `rawOf("fc00::1")`, `rawOf("fd00::1")` → blocked; `rawOf("fe00::1")` → allowed | `fec0::/10` + `fc00::/7` layers + mask boundary (`rawOf` is a test-local helper over `InetAddress.getByName(...).getAddress()`) |
 | `isBlockedAddress(64:ff9b::a9fe:a14)` → blocked; `64:ff9b::e000:1` → blocked; `2002:a00:1::` → blocked | Unwrap path reaches the shadowed `169.254`/`224`/`10` branches via public API |
 
 **ODD-10 vectors** (pure helpers, JVM):
@@ -343,7 +360,7 @@ Derivations shown above are normative — recompute, don't trust: client-half `X
 |---|---|
 | `buildPinnedUrl("http://example.com/a/b?q=1", 93.184.216.34)` → exactly `http://93.184.216.34/a/b?q=1` | string form, path+query preserved |
 | Same with `https://example.com:8443/x` → `https://93.184.216.34:8443/x`; with default `:443` explicit in input → `Host` header without port | port handling both sides |
-| IPv6: `buildPinnedUrl("http://example.com/", ::1)` → exactly `http://[::1]/` (empty path degrades to `/`-less form — assert whatever `getFile()` yields, document it) | bracketed literal form |
+| IPv6: `buildPinnedUrl("http://example.com/", ::1)` → `"http://[" + addr.getHostAddress() + "]"` plus `getFile()` (empty path degrades to `/`-less form — assert whatever `getFile()` yields, document it; `getHostAddress()` returns the expanded `0:0:0:0:0:0:0:1` form, never `::1`) | bracketed literal form |
 | `hostHeaderValue`: default ports stripped (`example.com`, not `example.com:443`); non-default kept (`example.com:8443`) | virtual-host header correctness |
 
 No JVM test for the TLS factory or the fetch loop (needs Android + network) — covered by §6 device checks.

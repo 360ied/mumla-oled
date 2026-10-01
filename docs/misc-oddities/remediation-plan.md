@@ -11,7 +11,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED](#phase-5-dynamic-bandwidth--network-adaptation-p2--completed)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3) — COMPLETED](#phase-6-comment-dialog-hardening-follow-ups-p3--completed)
 7. [Phase 7: Phase-4 Integration Review Residuals (P3) — COMPLETED](#phase-7-phase-4-integration-review-residuals-p3--completed)
-8. [Phase 8: SSRF Residual Hardening (P1 / P2) — PLANNED](#phase-8-ssrf-residual-hardening-p1--p2--planned)
+8. [Phase 8: SSRF Residual Hardening (P2 / P3) — PLANNED](#phase-8-ssrf-residual-hardening-p2--p3--planned)
 9. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
@@ -678,7 +678,7 @@ Add the two translations on the next strings pass.
 
 ---
 
-## Phase 8: SSRF Residual Hardening (P1 / P2) — PLANNED
+## Phase 8: SSRF Residual Hardening (P2 / P3) — PLANNED
 
 > [!NOTE]
 > **Status: PLANNED**
