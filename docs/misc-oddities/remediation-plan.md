@@ -476,6 +476,8 @@ Wire a listener or feedback mechanism from `AudioHandler` to `HumlaConnection.se
 
 Residual low-severity items in `AbstractCommentFragment` surfaced by the phase2-comment-webview pedantic reviews. All latent or cosmetic; no live crash or leak.
 
+**Implementation plan:** [`phase6-comment-dialog-plan.md`](phase6-comment-dialog-plan.md)
+
 ### 6.1 Guard Comment Dialog Arguments (ODD-13)
 
 **Status**: Open
