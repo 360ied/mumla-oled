@@ -2,6 +2,13 @@
 
 > [!WARNING]
 > **Outdated Analysis**: This report reflects the binary footprint of **Mumla OLED 0.18.4** and is currently outdated. Package compositions, bytecode retention, native library sizes, and asset payloads may differ in subsequent releases.
+>
+> **Known inaccuracies** (body preserved as a snapshot; corrections noted here, not rewritten):
+> - Opus codec version (§5[^opus-version]): named as "1.5.2" — the actual submodule pin at `0.18.4` is upstream **v1.1**.
+> - Classpath-leak total (§6[^leak-total]): stated as "~40 KB compressed (~235 KB uncompressed)" — the itemized entries sum to ~33 KB / ~203 KB.
+
+[^opus-version]: Correction: the opus submodule pin at tag `0.18.4` is `65471dd5` ("Bump soname", Dec 2013), which `git describe --tags` resolves to exactly `v1.1` — not 1.5.2. See the [0.21.23 report](./README-0.21.23.md) for the corrected v1.1 → v1.6.1 history.
+[^leak-total]: Correction: the itemized entries (25,540 + 6,183 + 782 + 743 B compressed; 184,952 + 14,640 + 1,738 + 1,310 B uncompressed) sum to ~33 KB compressed (~203 KB uncompressed).
 
 This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED 0.18.4** ([`mumla-foss-release.apk`](../../app/build/outputs/apk/foss/release/mumla-foss-release.apk)).
 
@@ -238,11 +245,11 @@ flowchart LR
 
 | Architecture (ABI) | Library Name | Compressed Size | Uncompressed Size | Deflate Savings | Key Functionality |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`arm64-v8a`** | `libjniopus.so` | `296,497 B` (289.5 KB) | `566,224 B` (553.0 KB) | 47.6% | Upstream Opus 1.5.2 codec (ARM64 Neon asm) |
+| **`arm64-v8a`** | `libjniopus.so` | `296,497 B` (289.5 KB) | `566,224 B` (553.0 KB) | 47.6% | Upstream Opus 1.5.2 codec (ARM64 Neon asm)[^opus-version] |
 | | `libhumlaaudio.so` | `105,774 B` (103.3 KB) | `271,048 B` (264.7 KB) | 61.0% | AudioInputEngine, RNNoise C++ runtime, JitterBuffer |
-| **`armeabi-v7a`** | `libjniopus.so` | `246,092 B` (240.3 KB) | `383,828 B` (374.8 KB) | 35.9% | Upstream Opus 1.5.2 codec (ARMv7 Thumb2/Neon) |
+| **`armeabi-v7a`** | `libjniopus.so` | `246,092 B` (240.3 KB) | `383,828 B` (374.8 KB) | 35.9% | Upstream Opus 1.5.2 codec (ARMv7 Thumb2/Neon)[^opus-version] |
 | | `libhumlaaudio.so` | `77,680 B` (75.9 KB) | `148,648 B` (145.2 KB) | 47.7% | AudioInputEngine, RNNoise C++ runtime, JitterBuffer |
-| **`x86_64`** | `libjniopus.so` | `321,545 B` (314.0 KB) | `662,576 B` (647.0 KB) | 51.5% | Upstream Opus 1.5.2 codec (x86-64 AVX/SSE) |
+| **`x86_64`** | `libjniopus.so` | `321,545 B` (314.0 KB) | `662,576 B` (647.0 KB) | 51.5% | Upstream Opus 1.5.2 codec (x86-64 AVX/SSE)[^opus-version] |
 | | `libhumlaaudio.so` | `111,887 B` (109.3 KB) | `286,736 B` (280.0 KB) | 61.0% | AudioInputEngine, RNNoise C++ runtime, JitterBuffer |
 | **Subtotal (`libjniopus.so`)** | 3 ABIs | **`864,134 B` (843.9 KB)** | **`1,612,628 B` (1.54 MB)** | 46.4% | |
 | **Subtotal (`libhumlaaudio.so`)** | 3 ABIs | **`295,341 B` (288.4 KB)** | **`706,432 B` (689.9 KB)** | 58.2% | |
@@ -292,7 +299,7 @@ Notice that `.png` files have identical compressed and uncompressed sizes (`145,
 
 ### Classpath Baggage & Cross-Platform Metadata Leaks
 
-Several non-code resource files from upstream Java libraries leak into the root of the APK, totaling **~40 KB compressed** and **~235 KB uncompressed**:
+Several non-code resource files from upstream Java libraries leak into the root of the APK, totaling **~40 KB compressed** and **~235 KB uncompressed**[^leak-total]:
 
 1. **Bouncy Castle Localization Bundles**:
    - `org/bouncycastle/pkix/CertPathReviewerMessages.properties`: `6,038 B` comp (`42,868 B` uncomp)
