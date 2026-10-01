@@ -41,7 +41,9 @@ scoped as narrowly as possible (see §2).
    (required for resource-backed fragment inflation; keep the existing `returnDefaultValues = true` line untouched).
    All Robolectric tests carry `@Config(sdk = 34)`: running at API 34 avoids newest-shadow gaps around `compileSdk = 36`,
    keeps the one-time `android-all` download small, and is representative — none of the touched code paths are API-level-sensitive.
-   Do not add Robolectric to `:libraries:humla`; do not apply it to existing tests.
+   Do not add Robolectric to `:libraries:humla`; do not apply it to existing tests. Before writing tests, confirm `4.15.1`
+   resolves from Maven Central; if it has been removed or renamed, use the latest `4.x` and record the actual version
+   in the Step 0 commit message.
 2. **New Robolectric tests use JUnit 4 style, exempt from the module's `TestCase` convention.** Robolectric requires the
    `RobolectricTestRunner` (`@RunWith`), which is incompatible with `junit.framework.TestCase`. Existing tests stay as-is;
    the two new test classes use `@Test` + `@RunWith(RobolectricTestRunner.class)` + `@Config(sdk = 34)`. Record this exemption
@@ -49,25 +51,28 @@ scoped as narrowly as possible (see §2).
 3. **Pilot-then-decide with a locked revert rule.** The branch adds exactly two Robolectric tests (ODD-13 no-args, ODD-15 teardown;
    see §5). If either test requires production-code contortions (custom test themes, shadow configuration beyond `@Config`,
    real `WebView` emulation) or makes `./scripts/check.sh` materially slower/flakier, **drop that test and fall back to the
-   documented manual verification** — do not grow the infrastructure to save the test. One dropped test does not fail the branch;
+   documented manual verification** — do not grow the infrastructure to save the test (anything beyond the locked §5 recipe —
+   additional themes, shadow configuration beyond `@Config`, real `WebView` emulation, production-code changes — triggers
+   the drop, no exceptions). One dropped test does not fail the branch;
    dropping both means also reverting the `app/build.gradle` hunks so the branch is infrastructure-free.
-4. **No assertions on WebView rendering.** Robolectric's `ShadowWebView` does not emulate `loadData`, `WebSettings`, or
-   navigation callbacks. Tests may drive the fragment lifecycle and assert field state / exception type, but must not assert
+4. **No assertions on WebView rendering.** Treat Robolectric's `ShadowWebView` as unemulated for this branch — `loadData`,
+   `WebSettings`, and navigation callbacks are outside what the tests may rely on. Tests may drive the fragment lifecycle and assert field state / exception type, but must not assert
    anything about rendered comment content. (This is also why ODD-15's test asserts view-field nulling and listener safety,
    not preview behavior.)
 5. **ODD-13 scope includes the two subclass sites.** `UserCommentFragment.getSession()` and
-   `ChannelDescriptionFragment.getChannelId()` switch to `requireArguments()` in the same commit. Four one-word changes total,
+   `ChannelDescriptionFragment.getChannelId()` switch to `requireArguments()` in the same commit. Four single-identifier changes total,
    zero behavioral risk for the supplied-bundle path.
 6. **ODD-14 keeps the `RuntimeException` type, adds the cause.** `throw new RuntimeException(msg, e)` — minimal diff;
    switching to `IllegalStateException` would be more idiomatic but changes the observable exception type for no functional gain.
-   New signature: `onAttach(@NonNull Context context)` (import `android.content.Context`, drop the `android.app.Activity` import
-   if it becomes unused), cast `context`, `super.onAttach(context)`.
+   New signature: `onAttach(@NonNull Context context)` (add `import android.content.Context;` and
+   `import androidx.annotation.NonNull;`; drop the `android.app.Activity` import if it becomes unused), cast `context`,
+   `super.onAttach(context)`.
 7. **ODD-15 guards both fields, not just `mCommentView`.** The listener touches `mCommentEdit.getText()/setText(...)` as well as
    `mCommentView.loadData(...)`, so a `mCommentView`-only guard still NPEs on `mCommentEdit` once that field is nulled.
    Locked form: early return `if (mCommentView == null || mCommentEdit == null) return;` at the top of `onTabChanged`.
    (This mirrors the existing `loadComment()` null-guard precedent.)
-8. **ODD-16 adds only `comment_open_link` in this branch.** Values: fr `Ouvrir le lien` (infinitive, matching the neighboring
-   `Affichage` / `Éditer la source` / `Voir la source`), zh-rCN `打开链接` (matching `查看` / `编辑源代码` / `查看源代码`).
+8. **ODD-16 adds only `comment_open_link` in this branch.** Values: fr `Ouvrir le lien` (infinitive, like the neighboring
+   `Éditer la source` / `Voir la source`; consistent with the noun `Affichage`), zh-rCN `打开链接` (matching `查看` / `编辑源代码` / `查看源代码`).
    ODD-19's missing fr/zh strings (`server_edit_url_password_warning`, `pref_talk_broadcast_*`) stay Phase 7 scope — note the
    single-strings-pass opportunity in the commit message, but do not expand this diff.
 9. **First Robolectric run needs network.** The `android-all` runtime jar downloads from Maven Central on first execution
@@ -96,7 +101,9 @@ testImplementation 'org.robolectric:robolectric:4.15.1'
 
 No other build-file changes: no new source sets, no `testOptions.unitTests.all` JVM-arg tweaks, no manifest or resource changes for tests.
 Verify the hunk in isolation before writing production fixes: run one trivial Robolectric smoke test
-(e.g. assert `RuntimeEnvironment.getApplication() != null` at `sdk = 34`) and confirm it passes with network available.
+(e.g. assert `ApplicationProvider.getApplicationContext() != null` at `sdk = 34`) and confirm it passes with network available.
+(`ApplicationProvider` lives in `androidx.test:core`; if it is not transitively on the test classpath, fall back to the deprecated-but-present
+`RuntimeEnvironment.getApplication()` and record the choice in the Step 0 commit — no other substitution is permitted.)
 If the smoke test cannot pass cleanly, stop — revert this step and implement Phase 6 with manual verification only.
 
 ### Step 1 — ODD-13 + ODD-14: argument guards and attach modernization
@@ -123,7 +130,8 @@ public void onAttach(@NonNull Context context) {
 }
 ```
 
-(`@NonNull` is `androidx.annotation.NonNull`; adjust the `android.app.Activity` import accordingly.)
+(Add `import androidx.annotation.NonNull;` alongside `import android.content.Context;`; drop the `android.app.Activity` import
+if it becomes unused.)
 Same commit, `UserCommentFragment.java` / `ChannelDescriptionFragment.java`:
 
 ```java
@@ -172,10 +180,10 @@ Add to `app/src/main/res/values-zh-rCN/strings.xml`:
 <string name="comment_open_link">打开链接</string>
 ```
 
-### Step 4 — Link this plan from `remediation-plan.md`
+### Step 4 — Verify the `remediation-plan.md` link (already added)
 
-Add a single `**Implementation plan:** [`phase6-comment-dialog-plan.md`](phase6-comment-dialog-plan.md)` line to the Phase 6
-section intro (same convention as the Phase 5 link). On merge, flip ODD-13 – ODD-16 to Resolved with branch/commit recorded.
+The Phase 6 section intro already links this plan (added together with the plan itself, same convention as the Phase 5 link) —
+verify the link exists and do not duplicate it. On merge, flip ODD-13 – ODD-16 to Resolved with branch/commit recorded.
 
 ---
 
@@ -197,23 +205,54 @@ section intro (same convention as the Phase 5 link). On merge, flip ODD-13 – O
 
 Two new files, both JUnit 4 + Robolectric (`@RunWith(RobolectricTestRunner.class)`, `@Config(sdk = 34)`),
 GPL header copied from a recent file with `Copyright (C) 2026 Brian Zhu`.
-Neither test touches WebView rendering (per §2.4); both avoid `onCreateDialog()` dialog construction unless Step 0's
-smoke test plus a full-lifecycle trial proves the Material theme resolves under Robolectric without extra scaffolding.
+Neither test asserts WebView rendering (per §2.4).
+
+Shared harness (locked). Both test classes live in `app/src/test/java/se/lublin/mumla/channel/comment/` and share one
+test-local stub host: a `FragmentActivity` implementing `HumlaServiceProvider` (`getService()` returns null,
+`add/removeServiceFragment` are no-ops). The stub host is mandatory, not optional — `onAttach` casts the host to
+`HumlaServiceProvider` and rethrows `RuntimeException` on mismatch, so every lifecycle-driven test fails before reaching
+the code under test without it. Returning null from `getService()` is safe because every pinned bundle below carries a
+non-null `"comment"`, so `requestComment(mProvider.getService())` is never entered and the service is never dereferenced.
+Teardown tests additionally call `setTheme(R.style.Theme_Mumla)` on the host before `setup()` (`Theme.Mumla` extends
+`Theme.Material3.DayNight.NoActionBar`, satisfying `MaterialAlertDialogBuilder`); anything beyond this recipe triggers
+the §2.3 fallback, no exceptions.
+
+Driver APIs (locked, normative):
+
+- Arguments tests drive a bare instance directly — `new UserCommentFragment()` followed by `fragment.onCreate(null)` /
+  `fragment.isEditing()`. No host, no controller: `requireArguments()` throws before any host interaction, and
+  `Fragment.onCreate(null)` runs host-free. Do not use `FragmentScenario` here — its fixed internal host cannot satisfy
+  the provider cast, and the driver choice would change which `IllegalStateException` surfaces first.
+- Teardown tests drive full dialog creation via `Robolectric.buildActivity(StubHost.class)` + `setTheme` + `setup()`,
+  then `fragment.show(host.getSupportFragmentManager(), "tag")` + `executePendingTransactions()`. Teardown is driven by
+  `fragment.dismissAllowingStateLoss()` + `executePendingTransactions()` (which routes through `onDestroyView`); direct
+  `onDestroyView()` calls are not permitted (they bypass `DialogFragment` dismissal bookkeeping).
+
+Pinned bundles (locked): user-fragment bundles are `{session: 1, comment: "<p>x</p>", editing: <bool>}`; channel-fragment
+bundles are `{channel: 1, comment: "<p>x</p>", editing: false}`. A null or missing `"comment"` is never used in lifecycle
+tests — it would enter the provider-dependent `requestComment` path and conflate setup failure with the behavior under test.
 
 New file `app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentArgumentsTest.java`:
 
 | Test | Procedure | Expectation |
 |---|---|---|
-| `noArgsOnCreateThrowsIllegalState` | `new UserCommentFragment()` with no arguments; drive `onCreate(null)` via a Robolectric fragment controller | `IllegalStateException` (fail-fast), not `NullPointerException` |
-| `noArgsIsEditingThrowsIllegalState` | Same fragment; call `isEditing()` | `IllegalStateException` |
-| `suppliedBundlePreservesBehavior` | Arguments with `comment` + `editing=true`; drive `onCreate(null)`; call `isEditing()` | No throw; `isEditing()` returns true |
+| `noArgsOnCreateThrowsIllegalState` | `new UserCommentFragment()` with no arguments; `fragment.onCreate(null)` directly | `IllegalStateException` (fail-fast), not `NullPointerException` |
+| `noArgsIsEditingThrowsIllegalState` | Same fragment; `fragment.isEditing()` directly | `IllegalStateException` |
+| `suppliedBundlePreservesBehavior` | Pinned user bundle with `editing=true`; `fragment.onCreate(null)` directly; `fragment.isEditing()` | No throw; `isEditing()` returns true |
+| `channelFragmentNoArgsThrows` | `new ChannelDescriptionFragment()` with no arguments; `fragment.onCreate(null)` directly | `IllegalStateException` |
+| `channelFragmentSuppliedBundleNoThrow` | Pinned channel bundle; `fragment.onCreate(null)` directly | No throw |
 
-New file `app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java`:
+The private `ChannelDescriptionFragment.getChannelId()` is accepted by identical-change review (private, unreachable without
+reflection, same single-identifier edit as the covered sites) — the two channel rows above pin its reachable behavior, so no
+reflection into the private getter is required.
+
+New file `app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java` (user fragment, pinned bundle
+with `editing=false`):
 
 | Test | Procedure | Expectation |
 |---|---|---|
-| `destroyViewNullsAllViewFields` | Launch with a valid bundle through full creation, then destroy the view; read `mTabHost`/`mCommentView`/`mCommentEdit` via reflection | All three null |
-| `tabCallbackAfterTeardownIsSafe` | After teardown, invoke the `OnTabChangeListener` for `"View"` and `"Edit"` | Returns without throwing |
+| `destroyViewNullsAllViewFields` | `show()` per the locked recipe; capture the `TabHost` via reflection before dismissal (`AbstractCommentFragment.class.getDeclaredField("mTabHost")` + `setAccessible(true)` — the declaring class, not the subclass); dismiss; read `mTabHost`/`mCommentView`/`mCommentEdit` the same way | All three null |
+| `tabCallbackAfterTeardownIsSafe` | After teardown, drive the captured `TabHost` with `setCurrentTab(1)` then `setCurrentTab(0)` (fires the registered `OnTabChangeListener` for `"Edit"` and `"View"`) | Returns without throwing |
 
 Fallback rule (locked, from §2.3): if the teardown tests need theme/shadow scaffolding beyond `@Config` (e.g. a Material
 test theme to satisfy `MaterialAlertDialogBuilder`), drop `CommentFragmentTeardownTest.java`, verify ODD-15 manually per §6,
@@ -240,7 +279,8 @@ Run: `nix develop --command ./gradlew :app:testFossDebugUnitTest` during develop
 ## 7. Acceptance criteria
 
 - [ ] `requireArguments()` at all four sites (fragment `onCreate`/`isEditing` plus both subclass getters); no-args construction
-      fails fast with `IllegalStateException`.
+      fails fast with `IllegalStateException`. Channel private getter covered by identical-change review + channel rows in
+      `CommentFragmentArgumentsTest` (no reflection into the private getter).
 - [ ] `onAttach(Context)` override with chained cause; no `onAttach(Activity)` override remains (lint `Deprecated` clean).
 - [ ] `onDestroyView()` nulls all three view fields; tab listener null-guards both `mCommentView` and `mCommentEdit`.
 - [ ] `comment_open_link` translated in `values-fr` and `values-zh-rCN`, placed adjacent to the other `comment_*` strings.
@@ -248,8 +288,8 @@ Run: `nix develop --command ./gradlew :app:testFossDebugUnitTest` during develop
       manual coverage recorded. No WebView-rendering assertions anywhere.
 - [ ] `app/build.gradle` Robolectric hunks present if and only if at least one Robolectric test ships (no orphan infrastructure).
 - [ ] Manual checks in §6 performed on device; French/Chinese chooser titles visually confirmed.
-- [ ] `remediation-plan.md` Phase 6 links this plan; ODD-13 – ODD-16 flipped to Resolved with branch/commit recorded (same
-      convention as Phases 1–5) once merged.
+- [ ] `remediation-plan.md` Phase 6 link verified present (not duplicated); ODD-13 – ODD-16 flipped to Resolved with branch/commit
+      recorded (same convention as Phases 1–5) once merged.
 - [ ] `./scripts/check.sh` green in the worktree. No merge, push, or worktree deletion (per repo policy —
       leave the branch for review).
 
@@ -262,7 +302,7 @@ Run: `nix develop --command ./gradlew :app:testFossDebugUnitTest` during develop
 - Commits via `python3 scripts/commit.py -m "<scope>: <subject>"` with the three-section body
   (`Context & Motivation` / `Technical Approach` / `Edge Cases & Impact`); suggested split is
   (1) Step 0 infrastructure + smoke test, (2) ODD-13 + ODD-14 with arguments test, (3) ODD-15 with teardown test
-  (or manual-verification note if dropped), (4) ODD-16 strings + `remediation-plan.md` link.
+  (or manual-verification note if dropped), (4) ODD-16 strings + `remediation-plan.md` link verification.
 - New test files need the standard GPL-3.0-or-later header with `Copyright (C) 2026 Brian Zhu`.
 - This plan is the first Robolectric consumer in the repo: keep the pilot visible in commit messages so a later
   infrastructure review can find every Robolectric-dependent test from the branch history.
