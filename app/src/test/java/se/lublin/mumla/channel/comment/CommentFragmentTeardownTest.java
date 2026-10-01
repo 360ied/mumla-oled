@@ -23,6 +23,8 @@ import static org.junit.Assert.assertNull;
 import android.os.Bundle;
 import android.widget.TabHost;
 
+import java.lang.reflect.Field;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -47,16 +49,16 @@ public class CommentFragmentTeardownTest {
 
     private static Bundle pinnedBundle() {
         Bundle args = new Bundle();
-        args.putInt("session", 1);
-        args.putString("comment", "<p>x</p>");
-        args.putBoolean("editing", false);
+        args.putInt(UserCommentFragment.ARG_SESSION, 1);
+        args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
+        args.putBoolean(AbstractCommentFragment.ARG_EDITING, false);
         return args;
     }
 
     /** Shows the fragment as a dialog on a themed stub host. */
     private static final class ShownDialog {
-        final CommentDialogStubHost host;
-        final UserCommentFragment fragment;
+        private final CommentDialogStubHost host;
+        private final UserCommentFragment fragment;
 
         ShownDialog() {
             ActivityController<CommentDialogStubHost> controller =
@@ -70,32 +72,36 @@ public class CommentFragmentTeardownTest {
             host.getSupportFragmentManager().executePendingTransactions();
         }
 
+        UserCommentFragment fragment() {
+            return fragment;
+        }
+
         void dismiss() {
             fragment.dismissAllowingStateLoss();
             host.getSupportFragmentManager().executePendingTransactions();
         }
     }
 
-    private static Object viewField(Object target, String name) throws Exception {
-        java.lang.reflect.Field field =
+    private static Object viewField(Object target, String name) throws ReflectiveOperationException {
+        Field field =
                 AbstractCommentFragment.class.getDeclaredField(name);
         field.setAccessible(true);
         return field.get(target);
     }
 
     @Test
-    public void destroyViewNullsAllViewFields() throws Exception {
+    public void destroyViewNullsAllViewFields() throws ReflectiveOperationException {
         ShownDialog dialog = new ShownDialog();
         dialog.dismiss();
-        assertNull(viewField(dialog.fragment, "mTabHost"));
-        assertNull(viewField(dialog.fragment, "mCommentView"));
-        assertNull(viewField(dialog.fragment, "mCommentEdit"));
+        assertNull(viewField(dialog.fragment(), "mTabHost"));
+        assertNull(viewField(dialog.fragment(), "mCommentView"));
+        assertNull(viewField(dialog.fragment(), "mCommentEdit"));
     }
 
     @Test
-    public void tabCallbackAfterTeardownIsSafe() throws Exception {
+    public void tabCallbackAfterTeardownIsSafe() throws ReflectiveOperationException {
         ShownDialog dialog = new ShownDialog();
-        TabHost tabHost = (TabHost) viewField(dialog.fragment, "mTabHost");
+        TabHost tabHost = (TabHost) viewField(dialog.fragment(), "mTabHost");
         assertNotNull(tabHost);
         dialog.dismiss();
         tabHost.setCurrentTab(1);

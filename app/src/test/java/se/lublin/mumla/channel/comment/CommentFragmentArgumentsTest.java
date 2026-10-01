@@ -18,6 +18,7 @@
 package se.lublin.mumla.channel.comment;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import android.os.Bundle;
@@ -30,14 +31,10 @@ import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
-import se.lublin.mumla.service.IMumlaService;
-import se.lublin.mumla.util.HumlaServiceFragment;
-import se.lublin.mumla.util.HumlaServiceProvider;
-
 /**
- * Verifies the ODD-13 argument guards: a no-args instantiation fails fast
- * with {@link IllegalStateException} (via {@code requireArguments()})
- * instead of a bare {@link NullPointerException}, while the pinned
+ * Verifies the ODD-13 argument guards: a missing bundle or a missing key
+ * fails fast with {@link IllegalStateException} instead of a bare
+ * {@link NullPointerException} or a silent {@code 0}, while the pinned
  * production bundles behave exactly as before.
  *
  * <p>JUnit 4 style is mandatory here: {@link RobolectricTestRunner} is
@@ -56,17 +53,17 @@ public class CommentFragmentArgumentsTest {
 
     private static Bundle userBundle(boolean editing) {
         Bundle args = new Bundle();
-        args.putInt("session", 1);
-        args.putString("comment", "<p>x</p>");
-        args.putBoolean("editing", editing);
+        args.putInt(UserCommentFragment.ARG_SESSION, 1);
+        args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
+        args.putBoolean(AbstractCommentFragment.ARG_EDITING, editing);
         return args;
     }
 
     private static Bundle channelBundle() {
         Bundle args = new Bundle();
-        args.putInt("channel", 1);
-        args.putString("comment", "<p>x</p>");
-        args.putBoolean("editing", false);
+        args.putInt(ChannelDescriptionFragment.ARG_CHANNEL, 1);
+        args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
+        args.putBoolean(AbstractCommentFragment.ARG_EDITING, false);
         return args;
     }
 
@@ -74,66 +71,89 @@ public class CommentFragmentArgumentsTest {
      * Attaches {@code fragment} to a stub host, driving {@code onCreate()} synchronously.
      * No host teardown needed: Robolectric discards the per-test sandbox automatically.
      */
-    private static CommentDialogStubHost attach(AbstractCommentFragment fragment) {
+    private static void attach(AbstractCommentFragment fragment) {
         CommentDialogStubHost host = Robolectric.buildActivity(CommentDialogStubHost.class)
                 .setup().get();
         host.getSupportFragmentManager().beginTransaction()
                 .add(fragment, "comment").commitNow();
-        return host;
     }
 
-    @Test(expected = IllegalStateException.class)
-    public void noArgsOnCreateThrowsIllegalState() {
-        attach(new UserCommentFragment());
-    }
-
-    @Test(expected = IllegalStateException.class)
-    public void noArgsIsEditingThrowsIllegalState() {
-        new UserCommentFragment().isEditing();
+    /** Pins the oracle to the argument guard rather than to "some ISE". */
+    private static void assertArgumentError(IllegalStateException e) {
+        assertTrue(e.getMessage() != null && e.getMessage().contains("argument"));
     }
 
     @Test
-    public void suppliedBundlePreservesBehavior() {
+    public void onCreateWithoutArgumentsThrows() {
+        assertArgumentError(assertThrows(IllegalStateException.class,
+                () -> attach(new UserCommentFragment())));
+    }
+
+    @Test
+    public void isEditingWithoutArgumentsThrows() {
+        assertArgumentError(assertThrows(IllegalStateException.class,
+                () -> new UserCommentFragment().isEditing()));
+    }
+
+    @Test
+    public void onCreateWithUserBundlePreservesEditing() {
         UserCommentFragment fragment = new UserCommentFragment();
         fragment.setArguments(userBundle(true));
         attach(fragment);
         assertTrue(fragment.isEditing());
     }
 
-    @Test(expected = IllegalStateException.class)
-    public void channelFragmentNoArgsThrows() {
-        attach(new ChannelDescriptionFragment());
+    @Test
+    public void onCreateWithUserViewBundleClearsEditing() {
+        UserCommentFragment fragment = new UserCommentFragment();
+        fragment.setArguments(userBundle(false));
+        attach(fragment);
+        assertFalse(fragment.isEditing());
     }
 
     @Test
-    public void channelFragmentSuppliedBundleNoThrow() {
+    public void onCreateWithUserBundleMissingSessionThrows() {
+        Bundle args = userBundle(false);
+        args.remove(UserCommentFragment.ARG_SESSION);
+        UserCommentFragment fragment = new UserCommentFragment();
+        fragment.setArguments(args);
+        assertArgumentError(assertThrows(IllegalStateException.class,
+                () -> attach(fragment)));
+    }
+
+    @Test
+    public void channelOnCreateWithoutArgumentsThrows() {
+        assertArgumentError(assertThrows(IllegalStateException.class,
+                () -> attach(new ChannelDescriptionFragment())));
+    }
+
+    @Test
+    public void channelOnCreateWithBundleSucceeds() {
         ChannelDescriptionFragment fragment = new ChannelDescriptionFragment();
         fragment.setArguments(channelBundle());
         attach(fragment);
         assertFalse(fragment.isEditing());
     }
-}
 
-/**
- * Minimal test-local host satisfying the {@code HumlaServiceProvider} cast
- * in {@code onAttach}. Shared with {@code CommentFragmentTeardownTest}.
- * Returning null from {@code getService()} is safe because every pinned
- * bundle carries a non-null {@code "comment"}, so the provider-dependent
- * {@code requestComment} path is never entered. Production callers can pass a
- * null comment (entering {@code requestComment}); these tests intentionally
- * pin non-null bundles to isolate the argument guards.
- */
-class CommentDialogStubHost extends FragmentActivity implements HumlaServiceProvider {
-    @Override
-    public IMumlaService getService() {
-        return null;
+    @Test
+    public void channelOnCreateWithBundleMissingChannelThrows() {
+        Bundle args = channelBundle();
+        args.remove(ChannelDescriptionFragment.ARG_CHANNEL);
+        ChannelDescriptionFragment fragment = new ChannelDescriptionFragment();
+        fragment.setArguments(args);
+        assertArgumentError(assertThrows(IllegalStateException.class,
+                () -> attach(fragment)));
     }
 
-    @Override
-    public void addServiceFragment(HumlaServiceFragment fragment) {
-    }
-
-    @Override
-    public void removeServiceFragment(HumlaServiceFragment fragment) {
+    @Test
+    public void attachToNonProviderHostThrows() {
+        FragmentActivity host = Robolectric.buildActivity(FragmentActivity.class)
+                .setup().get();
+        UserCommentFragment fragment = new UserCommentFragment();
+        fragment.setArguments(userBundle(false));
+        RuntimeException e = assertThrows(RuntimeException.class, () ->
+                host.getSupportFragmentManager().beginTransaction()
+                        .add(fragment, "comment").commitNow());
+        assertTrue(e.getMessage() != null && e.getMessage().contains("HumlaServiceProvider"));
     }
 }

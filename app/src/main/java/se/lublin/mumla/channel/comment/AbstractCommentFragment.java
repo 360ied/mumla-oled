@@ -23,8 +23,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -37,6 +39,7 @@ import androidx.fragment.app.DialogFragment;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import se.lublin.humla.IHumlaService;
+import se.lublin.humla.util.HumlaObserver;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
 import se.lublin.mumla.util.HumlaServiceProvider;
@@ -47,16 +50,24 @@ import se.lublin.mumla.util.HumlaServiceProvider;
  */
 public abstract class AbstractCommentFragment extends DialogFragment {
 
+    private static final String TAG = "AbstractCommentFragment";
+
+    public static final String ARG_COMMENT = "comment";
+    public static final String ARG_EDITING = "editing";
+
     private TabHost mTabHost;
     private WebView mCommentView;
     private EditText mCommentEdit;
     private HumlaServiceProvider mProvider;
+    private HumlaObserver mPendingObserver;
     private String mComment;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mComment = requireArguments().getString("comment");
+        Bundle args = requireArguments();
+        mComment = args.getString(ARG_COMMENT);
+        validateArguments(args);
     }
 
     @Override
@@ -66,13 +77,24 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         try {
             mProvider = (HumlaServiceProvider) context;
         } catch (ClassCastException e) {
-            throw new RuntimeException(context.getClass().getName() + " must implement HumlaServiceProvider!", e);
+            // A wrapped context (theme wrapper, test harness) is not the host activity itself.
+            if (getActivity() instanceof HumlaServiceProvider) {
+                mProvider = (HumlaServiceProvider) getActivity();
+            } else {
+                throw new RuntimeException(context.getClass().getName() + " must implement HumlaServiceProvider!", e);
+            }
         }
     }
 
     @Override
+    public void onDetach() {
+        mProvider = null;
+        super.onDetach();
+    }
+
+    @Override
     public Dialog onCreateDialog(Bundle savedInstanceState) {
-        LayoutInflater inflater = LayoutInflater.from(getActivity());
+        LayoutInflater inflater = LayoutInflater.from(requireContext());
         View view = inflater.inflate(R.layout.dialog_comment, null, false);
 
         mCommentView = (WebView) view.findViewById(R.id.comment_view);
@@ -84,7 +106,10 @@ public abstract class AbstractCommentFragment extends DialogFragment {
 
         if (mComment == null) {
             mCommentView.loadData("Loading...", null, null);
-            requestComment(mProvider.getService());
+            IHumlaService service = mProvider != null ? mProvider.getService() : null;
+            if (service != null) {
+                requestComment(service);
+            }
         } else {
             loadComment(mComment);
         }
@@ -121,8 +146,12 @@ public abstract class AbstractCommentFragment extends DialogFragment {
             return new MaterialAlertDialogBuilder(requireActivity())
                     .setView(view)
                     .setNegativeButton(R.string.close, null)
-                    .setPositiveButton(R.string.save, (dialog, which) ->
-                            editComment(mProvider.getService(), mCommentEdit.getText().toString()))
+                    .setPositiveButton(R.string.save, (dialog, which) -> {
+                        IHumlaService service = mProvider != null ? mProvider.getService() : null;
+                        if (service != null) {
+                            editComment(service, mCommentEdit.getText().toString());
+                        }
+                    })
                     .create();
         } else {
             return new MaterialAlertDialogBuilder(requireActivity())
@@ -137,6 +166,10 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         // Release the WebView's native peer; otherwise the renderer and its
         // host Activity stay reachable via mCommentView after dismissal.
         if (mCommentView != null) {
+            ViewGroup parent = (ViewGroup) mCommentView.getParent();
+            if (parent != null) {
+                parent.removeView(mCommentView);
+            }
             mCommentView.destroy();
             mCommentView = null;
         }
@@ -174,7 +207,7 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         mCommentView.getSettings().setAllowContentAccess(false);
         mCommentView.getSettings().setAllowFileAccessFromFileURLs(false);
         mCommentView.getSettings().setAllowUniversalAccessFromFileURLs(false);
-        boolean loadExternalImages = Settings.getInstance(getActivity()).shouldLoadExternalImages();
+        boolean loadExternalImages = Settings.getInstance(requireContext()).shouldLoadExternalImages();
         mCommentView.getSettings().setBlockNetworkImage(!loadExternalImages);
         mCommentView.getSettings().setBlockNetworkLoads(!loadExternalImages);
     }
@@ -194,20 +227,62 @@ public abstract class AbstractCommentFragment extends DialogFragment {
             intent.addCategory(Intent.CATEGORY_BROWSABLE);
             try {
                 startActivity(Intent.createChooser(intent, getString(R.string.comment_open_link)));
-            } catch (ActivityNotFoundException ignored) {
+            } catch (ActivityNotFoundException e) {
+                Log.d(TAG, "No activity found to open comment link");
             }
         }
         return true;
     }
 
     protected void loadComment(String comment) {
-        if(mCommentView == null) return;
+        if (mCommentView == null) return;
         mCommentView.loadData(comment, "text/html", "UTF-8");
         mComment = comment;
     }
 
-    public boolean isEditing() {
-        return requireArguments().getBoolean("editing");
+    protected boolean isEditing() {
+        return requireArguments().getBoolean(ARG_EDITING);
+    }
+
+    /**
+     * Rejects bundles missing fragment-specific keys. The base implementation
+     * accepts anything; subclasses resolve their id getter so a partial bundle
+     * fails here instead of surfacing as a silent {@code 0} at first use.
+     */
+    protected void validateArguments(@NonNull Bundle args) {
+    }
+
+    /**
+     * Reads a required int argument, failing fast when the key is absent.
+     * {@code requireArguments()} alone only guards a missing bundle; a present
+     * bundle with a missing key would silently yield {@code 0}.
+     */
+    protected static int requireIntArgument(@NonNull Bundle args, String key) {
+        if (!args.containsKey(key)) {
+            throw new IllegalStateException("Missing required argument \"" + key + "\"");
+        }
+        return args.getInt(key);
+    }
+
+    /**
+     * Tracks an observer registered with the service so that dismissing the
+     * dialog before the async reply arrives does not leak it (or the fragment
+     * it captures). Unregistered in {@link #onDestroy}.
+     */
+    protected void trackCommentObserver(HumlaObserver observer) {
+        mPendingObserver = observer;
+    }
+
+    @Override
+    public void onDestroy() {
+        if (mPendingObserver != null) {
+            IHumlaService service = mProvider != null ? mProvider.getService() : null;
+            if (service != null) {
+                service.unregisterObserver(mPendingObserver);
+            }
+            mPendingObserver = null;
+        }
+        super.onDestroy();
     }
 
     /**

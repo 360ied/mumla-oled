@@ -26,7 +26,6 @@ import android.view.View;
 import android.widget.EditText;
 
 import androidx.appcompat.widget.PopupMenu;
-import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -37,6 +36,7 @@ import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.net.Permissions;
 import se.lublin.mumla.R;
+import se.lublin.mumla.channel.comment.AbstractCommentFragment;
 import se.lublin.mumla.channel.comment.UserCommentFragment;
 import se.lublin.mumla.service.MumlaService;
 import se.lublin.mumla.util.ModelUtils;
@@ -168,10 +168,11 @@ public class UserMenu implements PermissionsPopupMenu.IOnMenuPrepareListener, Po
 
     private void showUserComment(final boolean edit) {
         Bundle args = new Bundle();
-        args.putInt("session", mUser.getSession());
-        args.putString("comment", mUser.getComment());
-        args.putBoolean("editing", edit);
-        UserCommentFragment fragment = (UserCommentFragment) Fragment.instantiate(mContext, UserCommentFragment.class.getName(), args);
+        args.putInt(UserCommentFragment.ARG_SESSION, mUser.getSession());
+        args.putString(AbstractCommentFragment.ARG_COMMENT, mUser.getComment());
+        args.putBoolean(AbstractCommentFragment.ARG_EDITING, edit);
+        UserCommentFragment fragment = new UserCommentFragment();
+        fragment.setArguments(args);
         fragment.show(mFragmentManager, UserCommentFragment.class.getName());
     }
 

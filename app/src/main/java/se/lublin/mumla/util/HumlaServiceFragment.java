@@ -17,9 +17,10 @@
 
 package se.lublin.mumla.util;
 
-import android.app.Activity;
+import android.content.Context;
 import android.os.Bundle;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
@@ -39,13 +40,18 @@ public abstract class HumlaServiceFragment extends Fragment {
     private boolean mBound;
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
 
         try {
-            mServiceProvider = (HumlaServiceProvider) activity;
+            mServiceProvider = (HumlaServiceProvider) context;
         } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString() + " must implement HumlaServiceProvider");
+            // A wrapped context (theme wrapper, test harness) is not the host activity itself.
+            if (getActivity() instanceof HumlaServiceProvider) {
+                mServiceProvider = (HumlaServiceProvider) getActivity();
+            } else {
+                throw new ClassCastException(context.toString() + " must implement HumlaServiceProvider");
+            }
         }
     }
 

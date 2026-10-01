@@ -28,8 +28,6 @@ import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import androidx.appcompat.widget.PopupMenu;
-import androidx.fragment.app.DialogFragment;
-import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -41,6 +39,7 @@ import se.lublin.humla.model.Server;
 import se.lublin.humla.model.WhisperTargetChannel;
 import se.lublin.humla.util.VoiceTargetMode;
 import se.lublin.mumla.R;
+import se.lublin.mumla.channel.comment.AbstractCommentFragment;
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment;
 import se.lublin.mumla.db.MumlaDatabase;
 
@@ -104,11 +103,11 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             mService.HumlaSession().joinChannel(mChannel.getId());
         } else if (itemId == R.id.context_channel_view_description) {
             Bundle commentArgs = new Bundle();
-            commentArgs.putInt("channel", mChannel.getId());
-            commentArgs.putString("comment", mChannel.getDescription());
-            commentArgs.putBoolean("editing", false);
-            DialogFragment commentFragment = (DialogFragment) Fragment.instantiate(mContext,
-                    ChannelDescriptionFragment.class.getName(), commentArgs);
+            commentArgs.putInt(ChannelDescriptionFragment.ARG_CHANNEL, mChannel.getId());
+            commentArgs.putString(AbstractCommentFragment.ARG_COMMENT, mChannel.getDescription());
+            commentArgs.putBoolean(AbstractCommentFragment.ARG_EDITING, false);
+            ChannelDescriptionFragment commentFragment = new ChannelDescriptionFragment();
+            commentFragment.setArguments(commentArgs);
             commentFragment.show(mFragmentManager, ChannelDescriptionFragment.class.getName());
         } else if (itemId == R.id.context_channel_pin) {
             long serverId = mService.getTargetServer().getId();
