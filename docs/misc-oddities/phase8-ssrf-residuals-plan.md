@@ -21,7 +21,7 @@ redirects followed manually with per-hop re-checks and a 5-hop cap). Three resid
 
 - **ODD-10:** `isHostBlocked()` resolves via `getAllByName`, then `url.openConnection()` resolves the
   hostname **again** — a DNS rebind between check and `connect()` (TOCTOU) defeats the policy at every hop.
-- **ODD-11:** `isBlockedIPv6()` ([`SsrfHostPolicy.java:239-266`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266))
+- **ODD-11:** `isBlockedIPv6()` ([`SsrfHostPolicy.java:278-331`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L278-L331))
   unwraps IPv4-mapped, IPv4-compatible, 6to4, and only the well-known NAT64 `64:ff9b::/96`. Teredo
   (`2001::/32`, XOR-obfuscated), ISATAP (`…:0:5efe:…`), and the local-use NAT64 `64:ff9b:1::/48`
   ([RFC 8215](https://www.rfc-editor.org/rfc/rfc8215)) are unhandled.
@@ -144,7 +144,7 @@ Notes:
 
 ### Step 2 — ODD-12: pin the shadowed branches directly
 
-1. Widen the two helpers (same file, `SsrfHostPolicy.java:190` and `:239`):
+1. Widen the two helpers (same file, `SsrfHostPolicy.java:227` and `:278`):
    ```java
    // Package-visible for testing: pins the explicit branches shadowed by the
    // generic InetAddress predicates in isBlockedAddress() (see ODD-12).

@@ -558,7 +558,10 @@ public class MumbleImageGetter implements Html.ImageGetter {
                 lastFailure = e; // try the next checked address
             }
         }
-        throw lastFailure; // all checked addresses failed; loop treats as fetch failure
+        if (lastFailure != null) {
+            throw lastFailure; // all checked addresses failed; loop treats as fetch failure
+        }
+        return new FetchResult(null); // unreachable: resolveAndCheck never returns empty
     }
 
     /**
@@ -599,8 +602,10 @@ public class MumbleImageGetter implements Html.ImageGetter {
      * Fetches one hop through an already-checked address: the connection URL carries
      * the IP literal (no second DNS lookup) while the Host header — and, for https,
      * SNI plus the platform hostname verifier — keep presenting the original hostname.
+     * Raw host keeps IPv6-literal brackets for the header; the normalized form
+     * (no brackets, no trailing dot) goes to SNI and the hostname verifier.
      */
-    private FetchResult fetchPinned(URL url, InetAddress addr) throws IOException {
+    private static FetchResult fetchPinned(URL url, InetAddress addr) throws IOException {
         URLConnection conn = SsrfHostPolicy.buildPinnedUrl(url, addr).openConnection();
         if (!(conn instanceof HttpURLConnection)) {
             return new FetchResult(null);
@@ -612,10 +617,11 @@ public class MumbleImageGetter implements Html.ImageGetter {
             httpConn.setReadTimeout(NETWORK_TIMEOUT_MS);
             httpConn.setRequestProperty("Host", SsrfHostPolicy.hostHeaderValue(url));
             if (httpConn instanceof HttpsURLConnection) {
+                String sniHost = SsrfHostPolicy.normalizeHost(url.getHost());
                 HttpsURLConnection httpsConn = (HttpsURLConnection) httpConn;
-                httpsConn.setSSLSocketFactory(new PinnedTlsSocketFactory(url.getHost()));
+                httpsConn.setSSLSocketFactory(new PinnedTlsSocketFactory(sniHost));
                 httpsConn.setHostnameVerifier(
-                        PinnedTlsSocketFactory.verifierFor(url.getHost()));
+                        PinnedTlsSocketFactory.verifierFor(sniHost));
             }
             int status = httpConn.getResponseCode();
             if (SsrfHostPolicy.isRedirect(status)) {

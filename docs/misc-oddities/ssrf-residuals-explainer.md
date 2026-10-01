@@ -22,7 +22,7 @@ probing, network mapping via timing, and similar).
 
 The `phase2-image-pipeline` work built the guard: before fetching any
 image,
-[`MumbleImageGetter.isHostBlocked()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java)
+[`MumbleImageGetter.resolveAndCheck()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java)
 checks the URL's host against
 [`SsrfHostPolicy`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java),
 which blocks loopback, private LAN ranges, link-local, multicast, CGNAT,
@@ -35,13 +35,13 @@ and the policy layers are pinned by direct tests (ODD-12).
 
 ## ODD-10: the DNS rebinding hole (TOCTOU)
 
-The check and the fetch are two separate DNS lookups:
+Before Phase 8, the check and the fetch were two separate DNS lookups:
 
-1. `isHostBlocked("http://attacker.com/pic.png")` resolves `attacker.com`,
-   gets a public IP (allowed) — fetch approved.
-2. `url.openConnection()` resolves `attacker.com` **again** — this time the
-   attacker's DNS server answers `127.0.0.1` or `192.168.1.1`, and the HTTP
-   request goes to the internal target.
+1. `isHostBlocked("http://attacker.com/pic.png")` resolved `attacker.com`,
+   got a public IP (allowed) — fetch approved.
+2. `url.openConnection()` resolved `attacker.com` **again** — this time the
+   attacker's DNS server answered `127.0.0.1` or `192.168.1.1`, and the HTTP
+   request went to the internal target.
 
 That is the **TOCTOU** (time-of-check vs. time-of-use): the answer changes
 between the check and the use. Attackers do this with short-TTL DNS

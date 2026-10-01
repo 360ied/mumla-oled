@@ -242,8 +242,23 @@ public class SsrfHostPolicyTest extends TestCase {
     public void testBuildPinnedUrlBracketsIpv6() throws Exception {
         URL original = new URL("http://example.com/");
         InetAddress addr = InetAddress.getByName("::1");
-        // getHostAddress() returns the expanded form, never ::-compressed.
+        // Expected is built from getHostAddress() itself so the test does not
+        // depend on the JDK's IPv6 formatting (expanded vs ::-compressed).
         assertEquals("http://[" + addr.getHostAddress() + "]/",
+                SsrfHostPolicy.buildPinnedUrl(original, addr).toString());
+    }
+
+    public void testBuildPinnedUrlBareHost() throws Exception {
+        URL original = new URL("http://example.com");
+        InetAddress addr = InetAddress.getByName("93.184.216.34");
+        assertEquals("http://93.184.216.34",
+                SsrfHostPolicy.buildPinnedUrl(original, addr).toString());
+    }
+
+    public void testBuildPinnedUrlKeepsExplicitDefaultPort() throws Exception {
+        URL original = new URL("http://example.com:80/x");
+        InetAddress addr = InetAddress.getByName("93.184.216.34");
+        assertEquals("http://93.184.216.34:80/x",
                 SsrfHostPolicy.buildPinnedUrl(original, addr).toString());
     }
 

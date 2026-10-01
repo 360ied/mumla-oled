@@ -225,6 +225,9 @@ public final class SsrfHostPolicy {
     // Package-visible for testing: pins the explicit branches shadowed by the
     // generic InetAddress predicates in isBlockedAddress() (see ODD-12).
     static boolean isBlockedIPv4(byte[] addr) {
+        if (addr == null || addr.length != 4) {
+            return true;
+        }
         int b0 = addr[0] & 0xFF;
         int b1 = addr[1] & 0xFF;
         int b2 = addr[2] & 0xFF;
@@ -276,6 +279,9 @@ public final class SsrfHostPolicy {
     // Package-visible for testing: pins the explicit branches shadowed by the
     // generic InetAddress predicates in isBlockedAddress() (see ODD-12).
     static boolean isBlockedIPv6(byte[] addr) {
+        if (addr == null || addr.length != 16) {
+            return true;
+        }
         if (isIPv4Mapped(addr)) {
             return isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
         }
