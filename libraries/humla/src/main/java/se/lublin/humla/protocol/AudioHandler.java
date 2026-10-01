@@ -71,8 +71,9 @@ public class AudioHandler extends HumlaNetworkListener
 
     private final int mAudioStream;
     private final int mAudioSource;
-    private int mBitrate;
-    private int mFramesPerPacket;
+    private volatile int mBitrate;
+    private volatile int mFramesPerPacket;
+    private volatile FramesPerPacketListener mFramesPerPacketListener;
     private final IInputMode mInputMode;
     private final float mAmplitudeBoost;
 
@@ -257,42 +258,62 @@ public class AudioHandler extends HumlaNetworkListener
         return mBitrate;
     }
 
-    private void setMaxBandwidth(int maxBandwidth) {
+    /**
+     * Pure bandwidth-degradation decision: Android-API-free so JVM tests can cover it.
+     * Do not add logging, native calls, or context access here.
+     */
+    static EffectiveAudioConfig computeEffectiveConfig(int bitrate, int framesPerPacket, int maxBandwidth) {
         if (maxBandwidth == -1) {
+            return new EffectiveAudioConfig(bitrate, sanitizeFramesPerPacket(framesPerPacket));
+        }
+        int degradedBitrate = bitrate;
+        int degradedFpp = framesPerPacket;
+
+        if (HumlaConnection.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth) {
+            if (degradedFpp <= 4 && maxBandwidth <= 32000) {
+                degradedFpp = 4;
+            } else if (degradedFpp == 1 && maxBandwidth <= 64000) {
+                degradedFpp = 2;
+            } else if (degradedFpp == 2 && maxBandwidth <= 48000) {
+                degradedFpp = 4;
+            }
+            while (HumlaConnection.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth && degradedBitrate > 8000) {
+                degradedBitrate -= 1000;
+            }
+        }
+        degradedBitrate = Math.max(8000, degradedBitrate);
+        degradedFpp = sanitizeFramesPerPacket(degradedFpp);
+        return new EffectiveAudioConfig(degradedBitrate, degradedFpp);
+    }
+
+    private void setMaxBandwidth(int maxBandwidth) {
+        EffectiveAudioConfig config = computeEffectiveConfig(mBitrate, mFramesPerPacket, maxBandwidth);
+        if (config.bitrate == mBitrate && config.framesPerPacket == mFramesPerPacket) {
             return;
         }
-        int bitrate = mBitrate;
-        int framesPerPacket = mFramesPerPacket;
-
-        if (HumlaConnection.calculateAudioBandwidth(bitrate, framesPerPacket) > maxBandwidth) {
-            if (framesPerPacket <= 4 && maxBandwidth <= 32000) {
-                framesPerPacket = 4;
-            } else if (framesPerPacket == 1 && maxBandwidth <= 64000) {
-                framesPerPacket = 2;
-            } else if (framesPerPacket == 2 && maxBandwidth <= 48000) {
-                framesPerPacket = 4;
-            }
-            while (HumlaConnection.calculateAudioBandwidth(bitrate, framesPerPacket) > maxBandwidth && bitrate > 8000) {
-                bitrate -= 1000;
-            }
+        int oldFramesPerPacket = mFramesPerPacket;
+        mBitrate = config.bitrate;
+        mFramesPerPacket = config.framesPerPacket;
+        if (mNativeEngine != null) {
+            mNativeEngine.setBitrate(mBitrate);
+            mNativeEngine.setFramesPerPacket(mFramesPerPacket);
         }
-        bitrate = Math.max(8000, bitrate);
-        framesPerPacket = sanitizeFramesPerPacket(framesPerPacket);
-
-        if (bitrate != mBitrate || framesPerPacket != mFramesPerPacket) {
-            mBitrate = bitrate;
-            mFramesPerPacket = framesPerPacket;
-            if (mNativeEngine != null) {
-                mNativeEngine.setBitrate(mBitrate);
-                mNativeEngine.setFramesPerPacket(mFramesPerPacket);
+        mLogger.logInfo(mContext.getString(R.string.audio_max_bandwidth,
+                maxBandwidth / 1000, mBitrate / 1000, mFramesPerPacket * Constants.FRAME_DURATION_MS));
+        if (config.framesPerPacket != oldFramesPerPacket) {
+            FramesPerPacketListener listener = mFramesPerPacketListener; // volatile read
+            if (listener != null) {
+                listener.onEffectiveFramesPerPacketChanged(config.framesPerPacket);
             }
-            mLogger.logInfo(mContext.getString(R.string.audio_max_bandwidth,
-                    maxBandwidth / 1000, bitrate / 1000, framesPerPacket * Constants.FRAME_DURATION_MS));
         }
     }
 
     public int getFramesPerPacket() {
         return mFramesPerPacket;
+    }
+
+    public void setFramesPerPacketListener(FramesPerPacketListener listener) {
+        mFramesPerPacketListener = listener;
     }
 
     public float getAmplitudeBoost() {
@@ -518,6 +539,22 @@ public class AudioHandler extends HumlaNetworkListener
         return NativeAudioInputEngine.DEFAULT_SQUELCH_MIN_DB;
     }
 
+    /** Degraded effective audio config produced by bandwidth adaptation. Pure value type. */
+    public static final class EffectiveAudioConfig {
+        public final int bitrate;
+        public final int framesPerPacket;
+
+        public EffectiveAudioConfig(int bitrate, int framesPerPacket) {
+            this.bitrate = bitrate;
+            this.framesPerPacket = framesPerPacket;
+        }
+    }
+
+    /** Notified when bandwidth adaptation changes the effective frames-per-packet. */
+    public interface FramesPerPacketListener {
+        void onEffectiveFramesPerPacketChanged(int framesPerPacket);
+    }
+
     public interface AudioEncodeListener {
         void onAudioEncoded(byte[] data, int length);
         void onTalkingStateChanged(boolean talking);
@@ -540,6 +577,7 @@ public class AudioHandler extends HumlaNetworkListener
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;
         private AudioEncodeListener mEncodeListener;
+        private FramesPerPacketListener mFramesPerPacketListener;
         private AudioOutput.AudioOutputListener mTalkingListener;
 
         public Builder setContext(Context context) {
@@ -606,6 +644,11 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
+        public Builder setFramesPerPacketListener(FramesPerPacketListener listener) {
+            mFramesPerPacketListener = listener;
+            return this;
+        }
+
         public Builder setTalkingListener(AudioOutput.AudioOutputListener talkingListener) {
             mTalkingListener = talkingListener;
             return this;
@@ -623,6 +666,7 @@ public class AudioHandler extends HumlaNetworkListener
                     mAmplitudeBoost, mHalfDuplexEnabled,
                     mPreprocessorEnabled, mAdaptiveLevelerEnabled,
                     mEncodeListener, mTalkingListener);
+            handler.setFramesPerPacketListener(mFramesPerPacketListener);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
         }
