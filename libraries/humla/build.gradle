@@ -185,12 +185,13 @@ android {
         commandLine ndkExe, "-j${jobs}", '-C', file('src/main/jni/').absolutePath
     }
 
-    preBuild.dependsOn ndkBuild
-
-
-    tasks.withType(JavaCompile) {
-        compileTask -> compileTask.dependsOn ndkBuild
-    }
+    // NOTE: ndkBuild is wired to preBuild lazily in the taskGraph.whenReady
+    // block at the bottom of this file, only when the graph actually packages
+    // native libs. See below.
+    // Host JVM tests exercise Java code only (native coverage comes from the
+    // host-built lib in build/test-native, see java.library.path below), so
+    // forcing a 3-ABI NDK build on every `./gradlew test...` run only slowed
+    // the dev loop. Packaging tasks still get native libs via preBuild.
 
     lint {
         abortOnError = true
@@ -212,8 +213,24 @@ tasks.matching { it.name == "check" }.configureEach {
     dependsOn testNativeAudioEngine
 }
 
+// Only build native .so files when the requested tasks actually package them
+// (:app consumes this library's JNI libs at APK/AAR packaging time).
+// Unit-test-only runs such as `./gradlew testDebugUnitTest` or scripts/check.sh
+// step 3 must not pay for a 3-ABI ndk-build: host JVM tests exercise Java
+// only and load the host-built lib from build/test-native (see
+// java.library.path below). startParameter is used instead of
+// taskGraph.whenReady because dependency edges must exist before the
+// execution plan is calculated.
+if (gradle.startParameter.taskNames.any { it ==~ /.*(assemble|bundle|package|install|publish|build|connected).*/ }) {
+    tasks.named("preBuild").configure { dependsOn tasks.named("ndkBuild") }
+}
+
+// NOTE: Test tasks deliberately do NOT depend on testNativeAudioEngine.
+// That edge re-ran the full native rebuild (~50s, never up-to-date) on every
+// unit-test invocation, duplicating scripts/check.sh step 2b which already
+// runs the same suite explicitly. `./gradlew check` still covers native via
+// the check dependency above.
 tasks.withType(Test).configureEach {
-    dependsOn testNativeAudioEngine
     systemProperty "java.library.path", "${project.rootDir}/build/test-native"
 }
 
