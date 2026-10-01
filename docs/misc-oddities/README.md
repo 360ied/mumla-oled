@@ -39,9 +39,9 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-02** | **Threading / Perf** | **High** | **Resolved** | **UDP Voice Packets Processed on Main UI Thread**: In [`HumlaUDP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128), every incoming UDP datagram allocates a `Runnable` and posts to the main Looper. Protobuf parsing, byte copying, and JNI queueing run on the UI thread, causing UI jank and audio jitter during active chatter. | [`HumlaUDP.java:123`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L123-L128) |
 | **ODD-03** | **Network / Memory** | **Medium** | **Resolved** | **Unbounded Outgoing UDP Send Queue**: [`HumlaUDP.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) instantiates `mSendQueue` as an unbounded `LinkedBlockingQueue<DatagramPacket>`. Degraded or blocked cellular connections cause memory bloat and post-reconnect packet bursts. | [`HumlaUDP.java:74`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.java#L74) |
 | **ODD-04** | **UI / Compatibility** | **Medium** | **Resolved** | **Modernized inset query**: the pinned overlay now prefers live `WindowInsets` (system bars plus display cutout, ignoring visibility) via [`MumlaOverlay.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L266-L371), keeping the legacy `getIdentifier` lookup only as a fallback. Gravities intentionally stay physical `LEFT`/`RIGHT`. | [`MumlaOverlay.java:266`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L266-L371) |
-| **ODD-05** | **UI / Window** | **Low** | **Open** | **Hot Corner Disregards Orientation Change**: [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) updates overlay HUD coordinates on rotation, but neglects `MumlaHotCorner`, failing to refresh gesture exclusion rects or layout bounds. | [`MumlaService.java:632`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637) |
-| **ODD-06** | **UI / Lifecycle** | **Low** | **Open** | **First Run Certificate Dialog Re-spawns**: [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) displays a dialog without a negative button, cancel listener, or `setCancelable(false)`; tapping outside dismisses the dialog without setting `first_run = false`, causing it to reappear on every app launch. | [`MumlaActivity.java:481`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503) |
-| **ODD-07** | **Preferences** | **Low** | **Open** | **Inconsistent Reset Key Default Value**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59) defines `DEFAULT_PUSH_KEY = -1`, but [`KeySelectPreferenceDialogFragment.java`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) sets `mCurrentValue = 0` (`KEYCODE_UNKNOWN`), producing divergent preference states. | [`KeySelectPreferenceDialogFragment.java:35`](../../app/src/main/java/se/lublin/mumla/preference/KeySelectPreferenceDialogFragment.java#L35) |
+| **ODD-05** | **UI / Window** | **Low** | **Resolved** | **Hot corner exclusion refreshed on rotation**: [`MumlaService.onConfigurationChanged()`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L651-L662) now calls [`MumlaHotCorner.refreshGestureExclusionDeferred()`](../../app/src/main/java/se/lublin/mumla/service/MumlaHotCorner.java#L221-L234), reapplying gesture exclusion rects past the rotation relayout. | [`MumlaService.java:651`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L651-L662) |
+| **ODD-06** | **UI / Lifecycle** | **Low** | **Resolved** | **First-run dialog dismissal hardened**: all dismissal paths in [`MumlaActivity.showFirstRunGuide()`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L624-L671) converge on a lifecycle-guarded dismiss listener, so `first_run` is always cleared and the startup action runs on a live instance. | [`MumlaActivity.java:624`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L624-L671) |
+| **ODD-07** | **Preferences** | **Low** | **Resolved** | **PTT key sentinel unified**: the no-key sentinel is `Settings.DEFAULT_PUSH_KEY` (`-1`), enforced by [`Settings.isPttKeyBound()`](../../app/src/main/java/se/lublin/mumla/Settings.java#L262-L271) in the `MumlaActivity` key handlers and the key-select dialog, which normalizes the legacy `0` value on load. | [`Settings.java:60`](../../app/src/main/java/se/lublin/mumla/Settings.java#L60) |
 | **ODD-08** | **Code Hygiene** | **Low** | **Resolved** | **Dead commented-out preferences pruned**: the obsolete `channellistrowheight`, `colorizechannellist`, `colorthresholdnumusers` block was removed from [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml). | [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml) |
 | **ODD-09** | **Network / Latency** | **Medium** | **Open** | **Bandwidth-Degraded `framesPerPacket` Fails to Scale HumlaUDP Send Queue**: When low server bandwidth triggers `AudioHandler.setMaxBandwidth()` to increase `framesPerPacket` (e.g. from 2 to 4), `HumlaUDP` is not updated, keeping a 10-packet queue ($10 \times 40\text{ ms} = 400\text{ ms}$) and causing latency bloat. | [`AudioHandler.java:266`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java#L266-L272) |
 | **ODD-10** | **Security / SSRF** | **Medium** | **Open** | **DNS Rebinding TOCTOU in Image SSRF Check**: [`MumbleImageGetter.isHostBlocked()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) resolves via `getAllByName` but `HttpURLConnection` reconnects by hostname, so a rebind between check and `connect()` defeats the policy. | [`MumbleImageGetter.java:598`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) |
@@ -164,6 +164,8 @@ private int getTopMargin(DisplayMetrics dm) {
 
 ### ODD-05: Hot Corner Overlay Ignores Screen Rotation
 
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase3-remediation`, merge commit `dd6becad`, released in `0.21.19`): `onConfigurationChanged()` now refreshes the hot corner via `refreshGestureExclusionDeferred()`, posted past the rotation layout. The description below is the pre-fix record.
+
 In [`MumlaService.java:632-637`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java#L632-L637):
 
 ```java
@@ -184,6 +186,8 @@ When the device rotates (e.g., portrait to landscape while gaming):
 ---
 
 ### ODD-06: First Run Certificate Dialog Re-spawns on Outside Touch
+
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase3-remediation`, merge commit `dd6becad`, released in `0.21.19`): all dismissal paths converge on a lifecycle-guarded dismiss listener that always clears `first_run`. The description below is the pre-fix record.
 
 In [`MumlaActivity.java:481-503`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java#L481-L503):
 
@@ -207,6 +211,8 @@ If a user taps outside the dialog or presses Back:
 ---
 
 ### ODD-07: Keycode Reset Inconsistency (-1 vs 0)
+
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase3-remediation`, merge commit `dd6becad`, released in `0.21.19`): the sentinel is unified on `Settings.DEFAULT_PUSH_KEY` (`-1`) behind `Settings.isPttKeyBound`, with legacy-`0` normalization on dialog load. The description below is the pre-fix record.
 
 - In [`Settings.java:59`](../../app/src/main/java/se/lublin/mumla/Settings.java#L59):
   `public static final Integer DEFAULT_PUSH_KEY = -1;`
