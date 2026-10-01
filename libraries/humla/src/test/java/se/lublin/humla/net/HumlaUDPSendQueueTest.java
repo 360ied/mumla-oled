@@ -19,6 +19,7 @@ package se.lublin.humla.net;
 
 import android.os.Handler;
 import junit.framework.TestCase;
+import se.lublin.humla.util.HumlaException;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -102,6 +103,42 @@ public class HumlaUDPSendQueueTest extends TestCase {
         assertEquals(10, HumlaUDP.calculateQueueCapacity(-1));
         assertEquals(10, HumlaUDP.calculateQueueCapacity(3));
         assertEquals(10, HumlaUDP.calculateQueueCapacity(100));
+    }
+
+    /**
+     * Pins the ODD-09 degradation target end to end: bandwidth-degraded 40ms audio
+     * (framesPerPacket=4) yields a 5-packet queue, preserving the ~200ms ceiling.
+     */
+    public void testDegradedFortyMsPacketCapacity() {
+        HumlaUDP humlaUDP = new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, 4);
+        assertEquals(4, humlaUDP.getTargetFramesPerPacket());
+        assertEquals(5, humlaUDP.getSendQueueCapacity());
+    }
+
+    /**
+     * Verifies connection/UDP agreement (ODD-09 Step 4): HumlaConnection sanitizes
+     * frames-per-packet on set, so an invalid value (3) is stored as the default (2)
+     * instead of diverging from the UDP layer.
+     */
+    public void testConnectionSanitizesFramesPerPacket() {
+        HumlaConnection.HumlaConnectionListener listener = new HumlaConnection.HumlaConnectionListener() {
+            @Override
+            public void onConnectionEstablished() {}
+            @Override
+            public void onConnectionSynchronized() {}
+            @Override
+            public void onConnectionHandshakeFailed(java.security.cert.X509Certificate[] chain,
+                                                    HandshakeFailure failure, String verifiedHost) {}
+            @Override
+            public void onConnectionDisconnected(HumlaException e) {}
+            @Override
+            public void onConnectionWarning(String warning) {}
+        };
+        HumlaConnection connection = new HumlaConnection(listener);
+        connection.setTargetFramesPerPacket(3);
+        assertEquals("Invalid fpp must be sanitized to default", 2, connection.getTargetFramesPerPacket());
+        connection.setTargetFramesPerPacket(4);
+        assertEquals("Valid degraded fpp must pass through", 4, connection.getTargetFramesPerPacket());
     }
 
     /**

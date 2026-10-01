@@ -292,7 +292,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 .setContext(this)
                 .setLogger(this)
                 .setEncodeListener(mAudioInputListener)
-                .setTalkingListener(mAudioOutputListener);
+                .setTalkingListener(mAudioOutputListener)
+                .setFramesPerPacketListener(fpp -> {
+                    // Bandwidth-degraded effective packet size: rescale the UDP send queue
+                    // to preserve the ~200ms latency ceiling (ODD-09). The connection is
+                    // resolved at call time; it may be gone on a disconnect race.
+                    HumlaConnection connection = mConnection;
+                    if (connection != null) {
+                        connection.setTargetFramesPerPacket(fpp);
+                    }
+                });
         mConnectionState = ConnectionState.DISCONNECTED;
         mToggleInputMode = new ToggleInputMode();
         mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
