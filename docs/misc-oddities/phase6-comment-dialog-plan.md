@@ -7,7 +7,7 @@ Its distinctive feature versus earlier phases is a **one-time Robolectric pilot 
 changes that the repo's JVM-only setup cannot exercise, so this branch introduces the minimal test infrastructure to cover them —
 with an explicit revert rule if the pilot misbehaves.
 
-**Status:** Ready for implementation.
+**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` (commits `cc393d98` through `7e5c206c`); pending review and merge.
 **Scope:** Four items — ODD-13 through ODD-16 (all P3 / Low, latent or cosmetic; no live crash or leak) — plus shared `:app` Robolectric infrastructure. No behavior change except the guards described below.
 
 ---
@@ -41,9 +41,8 @@ scoped as narrowly as possible (see §2).
    (required for resource-backed fragment inflation; keep the existing `returnDefaultValues = true` line untouched).
    All Robolectric tests carry `@Config(sdk = 34)`: running at API 34 avoids newest-shadow gaps around `compileSdk = 36`,
    keeps the one-time `android-all` download small, and is representative — none of the touched code paths are API-level-sensitive.
-   Do not add Robolectric to `:libraries:humla`; do not apply it to existing tests. Before writing tests, confirm `4.15.1`
-   resolves from Maven Central; if it has been removed or renamed, use the latest `4.x` and record the actual version
-   in the Step 0 commit message.
+   Do not add Robolectric to `:libraries:humla`; do not apply it to existing tests. `4.15.1` was confirmed resolvable
+   from Maven Central during implementation, so no version substitution was needed.
 2. **New Robolectric tests use JUnit 4 style, exempt from the module's `TestCase` convention.** Robolectric requires the
    `RobolectricTestRunner` (`@RunWith`), which is incompatible with `junit.framework.TestCase`. Existing tests stay as-is;
    the two new test classes use `@Test` + `@RunWith(RobolectricTestRunner.class)` + `@Config(sdk = 34)`. Record this exemption
@@ -102,8 +101,9 @@ testImplementation 'org.robolectric:robolectric:4.15.1'
 No other build-file changes: no new source sets, no `testOptions.unitTests.all` JVM-arg tweaks, no manifest or resource changes for tests.
 Verify the hunk in isolation before writing production fixes: run one trivial Robolectric smoke test
 (e.g. assert `ApplicationProvider.getApplicationContext() != null` at `sdk = 34`) and confirm it passes with network available.
-(`ApplicationProvider` lives in `androidx.test:core`; if it is not transitively on the test classpath, fall back to the deprecated-but-present
-`RuntimeEnvironment.getApplication()` and record the choice in the Step 0 commit — no other substitution is permitted.)
+(`ApplicationProvider` lives in `androidx.test:core`, which implementation confirmed is **not** transitively on the test
+classpath — the smoke test failed to compile against it. Per this recipe the branch therefore uses the deprecated-but-present
+`RuntimeEnvironment.getApplication()`; no other substitution is permitted.)
 If the smoke test cannot pass cleanly, stop — revert this step and implement Phase 6 with manual verification only.
 
 ### Step 1 — ODD-13 + ODD-14: argument guards and attach modernization
@@ -219,10 +219,12 @@ the §2.3 fallback, no exceptions.
 
 Driver APIs (locked, normative):
 
-- Arguments tests drive a bare instance directly — `new UserCommentFragment()` followed by `fragment.onCreate(null)` /
-  `fragment.isEditing()`. No host, no controller: `requireArguments()` throws before any host interaction, and
-  `Fragment.onCreate(null)` runs host-free. Do not use `FragmentScenario` here — its fixed internal host cannot satisfy
-  the provider cast, and the driver choice would change which `IllegalStateException` surfaces first.
+- Arguments tests: `isEditing()` is driven host-free on a bare instance — `new UserCommentFragment()` followed by
+  `fragment.isEditing()`, where `requireArguments()` throws before any host interaction. `onCreate()`, however, cannot run
+  host-free: `super.onCreate()` walks the child `FragmentManager`, which needs an attached host under androidx.fragment 1.8.9
+  (a bare `fragment.onCreate(null)` NPEs inside the framework before reaching the guard). The `onCreate` rows therefore attach
+  via `commitNow()` to the shared stub host — no dialog is created, so no theme, service, or WebView is involved.
+  Do not use `FragmentScenario` here — its fixed internal host cannot satisfy the provider cast.
 - Teardown tests drive full dialog creation via `Robolectric.buildActivity(StubHost.class)` + `setTheme` + `setup()`,
   then `fragment.show(host.getSupportFragmentManager(), "tag")` + `executePendingTransactions()`. Teardown is driven by
   `fragment.dismissAllowingStateLoss()` + `executePendingTransactions()` (which routes through `onDestroyView`); direct
