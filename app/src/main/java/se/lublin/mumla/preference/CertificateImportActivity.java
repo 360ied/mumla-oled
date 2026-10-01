@@ -45,6 +45,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.KeyStore;
 import java.security.NoSuchAlgorithmException;
@@ -175,7 +176,12 @@ public class CertificateImportActivity extends BaseActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        mCertIoExecutor.shutdownNow();
+        for (Runnable dropped : mCertIoExecutor.shutdownNow()) {
+            // Dropped runnables never execute; zero here what the task would have zeroed.
+            if (dropped instanceof PasswordRunnable) {
+                ((PasswordRunnable) dropped).zeroHeldPassword();
+            }
+        }
         if (mPasswordDialog != null && mPasswordDialog.isShowing()) {
             mPasswordDialog.dismiss();
             mPasswordDialog = null;
@@ -271,8 +277,11 @@ public class CertificateImportActivity extends BaseActivity {
                                final byte[] certBytes, final boolean isRetry) {
         // KeyStore parsing (PBKDF/MAC over up-to-5 MB input) and the database insert
         // run off the main thread; only dialog, Toast, and finish run on the UI thread.
-        // storeKeystore remains the single password-zeroing owner on every path.
-        mCertIoExecutor.execute(() -> {
+        // storeKeystore remains the single password-zeroing owner on every executed path;
+        // a runnable discarded by shutdownNow is zeroed in onDestroy instead.
+        mCertIoExecutor.execute(new PasswordRunnable(password) {
+            @Override
+            public void run() {
             try {
                 openKeystore(certBytes, password);
             } catch (Exception e) {
@@ -338,11 +347,30 @@ public class CertificateImportActivity extends BaseActivity {
                 }
                 finish();
             });
-        });
+        }
+    });
     }
 
-    /** Parses and verifies the PKCS#12 keystore, throwing on any failure. Runs off-thread. */
-    private static void openKeystore(byte[] certBytes, char[] password) throws Exception {
+    /** Executor task holding a password char[]; zeroed if the executor discards it. */
+    private abstract static class PasswordRunnable implements Runnable {
+        private final char[] mPassword;
+
+        PasswordRunnable(char[] password) {
+            mPassword = password;
+        }
+
+        void zeroHeldPassword() {
+            CertificateImportActivity.zeroPassword(mPassword);
+        }
+    }
+
+    /**
+     * Parses and verifies the PKCS#12 keystore, throwing on any failure. Runs off-thread.
+     * Narrower than parse errors allow: keystore failures are security exceptions,
+     * transport failures are IO exceptions.
+     */
+    private static void openKeystore(byte[] certBytes, char[] password)
+            throws GeneralSecurityException, IOException {
         try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(input, password);
@@ -429,6 +457,8 @@ public class CertificateImportActivity extends BaseActivity {
             if (length > 0) {
                 text.getChars(0, length, passChars, 0);
             }
+            // Clear the field copy: the zeroed char[] below is the only retained form.
+            mPasswordField.setText("");
             // Single zeroing owner is the callee: storeKeystore zeroes the array on
             // every path, so no fill is needed here.
             storeKeystore(passChars, sourceUri, fileName, certBytes, true);
