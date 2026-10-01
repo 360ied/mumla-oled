@@ -6,7 +6,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 
 1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED](#phase-1-core-reliability--threading-architecture-p0--p1--completed)
 2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED](#phase-2-network-transport--real-time-buffer-parity-p1--p2--completed)
-3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--resolved-on-branch)
+3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — COMPLETED & RELEASED (0.21.19)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--completed--released-02119)
 4. [Phase 4: Modernization & Code Hygiene (P3) — COMPLETED](#phase-4-modernization--code-hygiene-p3--completed)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
