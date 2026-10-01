@@ -224,4 +224,37 @@ public class SsrfHostPolicyTest extends TestCase {
         // 6to4 unwrap reaches the shadowed 10/8 branch (10.0.1.0).
         assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("2002:a00:1::")));
     }
+
+    public void testBuildPinnedUrlPreservesPathAndQuery() throws Exception {
+        URL original = new URL("http://example.com/a/b?q=1");
+        InetAddress addr = InetAddress.getByName("93.184.216.34");
+        assertEquals("http://93.184.216.34/a/b?q=1",
+                SsrfHostPolicy.buildPinnedUrl(original, addr).toString());
+    }
+
+    public void testBuildPinnedUrlKeepsNonDefaultPort() throws Exception {
+        URL original = new URL("https://example.com:8443/x");
+        InetAddress addr = InetAddress.getByName("93.184.216.34");
+        assertEquals("https://93.184.216.34:8443/x",
+                SsrfHostPolicy.buildPinnedUrl(original, addr).toString());
+    }
+
+    public void testBuildPinnedUrlBracketsIpv6() throws Exception {
+        URL original = new URL("http://example.com/");
+        InetAddress addr = InetAddress.getByName("::1");
+        // getHostAddress() returns the expanded form, never ::-compressed.
+        assertEquals("http://[" + addr.getHostAddress() + "]/",
+                SsrfHostPolicy.buildPinnedUrl(original, addr).toString());
+    }
+
+    public void testHostHeaderValueStripsDefaultPorts() throws Exception {
+        assertEquals("example.com",
+                SsrfHostPolicy.hostHeaderValue(new URL("http://example.com/a")));
+        assertEquals("example.com",
+                SsrfHostPolicy.hostHeaderValue(new URL("https://example.com:443/a")));
+        assertEquals("example.com:8443",
+                SsrfHostPolicy.hostHeaderValue(new URL("https://example.com:8443/a")));
+        assertEquals("example.com:8080",
+                SsrfHostPolicy.hostHeaderValue(new URL("http://example.com:8080/a")));
+    }
 }

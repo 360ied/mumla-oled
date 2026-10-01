@@ -18,6 +18,7 @@
 package se.lublin.mumla.util;
 
 import java.net.InetAddress;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.Locale;
@@ -165,6 +166,32 @@ public final class SsrfHostPolicy {
             }
         }
         return false;
+    }
+
+    /**
+     * Builds the fetch URL for one already-checked address: same scheme, port,
+     * and path as the original, host replaced by the IP literal (bracketed for
+     * IPv6) so the connection performs no second DNS lookup. Call only with
+     * addresses that already passed {@link #isAnyAddressBlocked}.
+     */
+    static URL buildPinnedUrl(URL original, InetAddress address) throws MalformedURLException {
+        String literal = address.getHostAddress();
+        if (literal.indexOf(':') >= 0) {
+            literal = "[" + literal + "]";
+        }
+        int port = original.getPort();
+        String authority = (port == -1) ? literal : literal + ":" + port;
+        return new URL(original.getProtocol() + "://" + authority + original.getFile());
+    }
+
+    /** Value for the Host header, preserving virtual-host routing through the pinned connection. */
+    static String hostHeaderValue(URL original) {
+        String host = original.getHost();
+        int port = original.getPort();
+        if (port == -1 || port == original.getDefaultPort()) {
+            return host;
+        }
+        return host + ":" + port;
     }
 
     /**
