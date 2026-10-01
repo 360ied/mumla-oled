@@ -71,7 +71,7 @@ JAVA_INC=""
 if [[ -n "${JAVA_HOME:-}" && -d "$JAVA_HOME/include" ]]; then
     JAVA_INC="$JAVA_HOME/include"
 elif command -v javac >/dev/null 2>&1; then
-    DETECTED_JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which javac)")")")"
+    DETECTED_JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
     if [[ -d "$DETECTED_JAVA_HOME/include" ]]; then
         JAVA_INC="$DETECTED_JAVA_HOME/include"
     fi
@@ -153,16 +153,31 @@ else
     JOBS=$(( NPROC > 16 ? 16 : NPROC ))
 fi
 
+# Portable mtime probe: GNU stat uses -c, BSD (macOS) uses -f. Probed once;
+# helpers below take the portable path. (Inside `nix develop` GNU stat is
+# present on every platform, but standalone runs should not depend on it.)
+if stat -c '%Y' "$THIS_SCRIPT" >/dev/null 2>&1; then
+    STAT_MTIME_ARGS="-c %Y"
+else
+    STAT_MTIME_ARGS="-f %m"
+fi
+stat_mtime() {
+    # shellcheck disable=SC2086
+    # ($STAT_MTIME_ARGS word-splits into flag + format, by design)
+    stat $STAT_MTIME_ARGS "$1"
+}
+
 # Toolchain fingerprint: mtime tracking cannot see compiler upgrades, so a
 # compiler change wipes all objects — a stale .o from another toolchain must
-# never link into test binaries.
+# never link into test binaries. The full $CXX string is fingerprinted, not
+# just --version output, so wrapper/flag changes invalidate too.
 TOOLCHAIN_STAMP="$OBJ_DIR/.toolchain_fingerprint"
 # NOTE: the candidate fingerprint lives in $BUILD_DIR (not $OBJ_DIR), because
 # a toolchain change wipes $OBJ_DIR below, which would delete the candidate.
 TOOLCHAIN_CANDIDATE="$BUILD_DIR/.toolchain_fingerprint.new"
 # shellcheck disable=SC2086
 # ($CXX word-splits when wrapped with ccache, by design)
-$CXX --version > "$TOOLCHAIN_CANDIDATE" 2>/dev/null || echo "unknown-toolchain" > "$TOOLCHAIN_CANDIDATE"
+{ printf '%s\n' "$CXX"; $CXX --version; } > "$TOOLCHAIN_CANDIDATE" 2>/dev/null || echo "unknown-toolchain" > "$TOOLCHAIN_CANDIDATE"
 if ! cmp -s "$TOOLCHAIN_STAMP" "$TOOLCHAIN_CANDIDATE" 2>/dev/null; then
     echo "test_native_audio.sh: toolchain changed, rebuilding all native targets..." >&2
     rm -rf "${OBJ_DIR:?}"
@@ -185,7 +200,7 @@ tu_stale() {
     [[ -f "$obj" ]] || return 0
     [[ "$src" -nt "$obj" ]] && return 0
     local obj_ep ne
-    obj_ep=$(stat -c '%Y' "$obj")
+    obj_ep=$(stat_mtime "$obj")
     for ne in "$@"; do
         [[ -n "$ne" && "$ne" -gt "$obj_ep" ]] && return 0
     done
@@ -197,7 +212,9 @@ tu_stale() {
 newest_header_ep() {
     local d="$1"
     [[ -d "$d" ]] || return 0
-    find "$d" -name '*.h' -exec stat -c '%Y' {} + 2>/dev/null | sort -n | tail -n 1
+    # shellcheck disable=SC2086
+    # ($STAT_MTIME_ARGS word-splits into flag + format, by design)
+    find "$d" -name '*.h' -exec stat $STAT_MTIME_ARGS {} + 2>/dev/null | sort -n | tail -n 1
 }
 
 # Generic driver. Caller sets SRCS[@] (sources), CXXFLAGS[@] (compile flags)
@@ -216,8 +233,20 @@ compile_and_link() {
             break
         fi
     done
+    # Header-set tracking: deletions/renames never advance mtimes, so hash
+    # the sorted header list per profile and wipe on change (mtime-only
+    # tracking would otherwise link stale objects fail-open).
+    local header_cksum d
+    header_cksum="$(for d in "$@"; do [[ -d "$d" ]] && find "$d" -name '*.h' -print; done | LC_ALL=C sort | cksum)"
+    if [[ -f "$objdir/.header_set.cksum" ]]; then
+        if [[ "$(cat "$objdir/.header_set.cksum")" != "$header_cksum" ]]; then
+            echo "test_native_audio.sh: header set changed, rebuilding $(basename "$output")..." >&2
+            rm -rf "${objdir:?}"
+            mkdir -p "$objdir"
+        fi
+    fi
+    printf '%s' "$header_cksum" > "$objdir/.header_set.cksum"
     local -a dep_eps=()
-    local d
     for d in "$@"; do
         dep_eps+=("$(newest_header_ep "$d")")
     done
@@ -225,7 +254,8 @@ compile_and_link() {
     local src rel obj
     for src in "${SRCS[@]}"; do
         rel="${src#$ROOT_DIR/}"
-        obj="$objdir/${rel//\//_}.o"
+        obj="$objdir/$rel.o"
+        mkdir -p "${obj%/*}"
         all_objs+=("$obj")
         if tu_stale "$obj" "$src" "${dep_eps[@]}"; then
             todo_src+=("$src")
@@ -237,18 +267,31 @@ compile_and_link() {
     fi
     local i=0 n=${#todo_src[@]} fail=0
     while (( i < n )); do
-        local -a pids=()
-        local k
+        local -a pids=() btmp=() bobj=()
+        local k tmp_obj
         for (( k = 0; k < JOBS && i < n; k++, i++ )); do
+            # Compile to a temp file and rename on success: a killed compiler
+            # must never leave a fresh-dated partial .o that masks retry.
+            # (BASHPID expands in the parent, so names are unique per TU and
+            # per script invocation.)
+            tmp_obj="${todo_obj[$i]}.tmp.${BASHPID}"
             # shellcheck disable=SC2086
             # ($CXX word-splits when wrapped with ccache, by design)
-            $CXX "${CXXFLAGS[@]}" -c "${todo_src[$i]}" -o "${todo_obj[$i]}" &
-            pids+=($!)
+            $CXX "${CXXFLAGS[@]}" -c "${todo_src[$i]}" -o "$tmp_obj" &
+            pids+=($!); btmp+=("$tmp_obj"); bobj+=("${todo_obj[$i]}")
         done
         local pid
         for pid in "${pids[@]}"; do
             wait "$pid" || fail=1
         done
+        if (( fail )); then
+            rm -f "${btmp[@]}"
+        else
+            local m
+            for (( m = 0; m < ${#btmp[@]}; m++ )); do
+                mv "${btmp[$m]}" "${bobj[$m]}"
+            done
+        fi
     done
     if (( fail )); then
         echo "test_native_audio.sh: compilation failed." >&2
@@ -265,7 +308,7 @@ compile_and_link() {
         echo "test_native_audio.sh: linking $(basename "$output")..." >&2
         $CXX "${all_objs[@]}" "${LINKFLAGS[@]}" -o "$output" || return 1
     else
-        echo "test_native_audio.sh: $(basename "$output") up-to-date, skipping compilation." >&2
+        echo "test_native_audio.sh: $(basename "$output") up-to-date, skipping build." >&2
     fi
 }
 
@@ -319,7 +362,7 @@ CXXFLAGS=(-std=c++17 -O2 -fPIC -Wall -Wextra -Werror -UNDEBUG
     -I "$CRYPTO_DIR" -I "$JAVA_INC" -I "$JNI_MD_INC")
 LINKFLAGS=(-shared -lpthread)
 compile_and_link "$BUILD_DIR/libhumlaaudio.${SO_EXT}" "$OBJ_DIR/jni" \
-    "$CRYPTO_DIR" || exit 1
+    "$CRYPTO_DIR" "$JAVA_INC" "$JNI_MD_INC" || exit 1
 
 "$BUILD_DIR/test_audio_engine"
 
