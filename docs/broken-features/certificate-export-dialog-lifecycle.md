@@ -1,6 +1,6 @@
 # Bug: Certificate Export Error Dialog Dismissed Instantly by Premature Activity Finish
 
-**Status:** confirmed bug  
+**Status:** resolved  
 **Severity:** medium (swallows error messages and prevents user troubleshooting)  
 **Component:** `app` Preference / Certificate Management  
 **Files Affected:**
@@ -83,3 +83,9 @@ Because `finish()` is invoked immediately after `writeCertificate()`, Android de
    ```
 2. **Remove Unconditional `finish()` on Failure Paths:**
    Ensure that `finish()` is only called immediately when the export operation succeeds, or let dialog dismissal trigger completion.
+
+---
+
+## 4. Resolution
+
+Resolved in [`CertificateExportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java) by removing the `MaterialAlertDialogBuilder` error dialog entirely: `showError()` now posts a `Toast`, which survives `finish()` and is no longer torn down with the activity window. `writeCertificate()` additionally guards null certificate data and null output streams before writing, so all failure paths surface a visible message instead of a silently destroyed dialog.

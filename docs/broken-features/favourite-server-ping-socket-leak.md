@@ -1,6 +1,6 @@
 # Bug: DatagramSocket File Descriptor Leak During Server Pings
 
-**Status:** confirmed bug / resource leak  
+**Status:** resolved  
 **Severity:** high (causes eventual `EMFILE: Too many open files` network failure)  
 **Component:** `app` Networking / Favourite Server List  
 **Files Affected:**
@@ -67,3 +67,9 @@ try (DatagramSocket socket = new DatagramSocket()) {
 ```
 
 This ensures the UDP socket descriptor is unconditionally closed immediately after the ping response is received or upon a timeout/exception.
+
+---
+
+## 4. Resolution
+
+Resolved in [`ServerInfoTask.java`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.java) by wrapping the ping in `try (DatagramSocket socket = new DatagramSocket())`, so the descriptor is unconditionally closed on success, timeout, or exception. A short-reply guard (`responsePacket.getLength() < 24` returns a dummy response) was added alongside the fix to reject spoofed/truncated replies.
