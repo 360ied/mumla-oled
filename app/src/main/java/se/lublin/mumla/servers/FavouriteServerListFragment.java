@@ -102,7 +102,7 @@ public class FavouriteServerListFragment extends Fragment implements OnItemClick
             addServer();
             return true;
         } else if (itemId == R.id.menu_quick_connect) {
-            ServerEditFragment.createServerEditDialog(getActivity(), null, ServerEditFragment.Action.CONNECT_ACTION, true)
+            ServerEditFragment.createServerEditDialog(null, ServerEditFragment.Action.CONNECT_ACTION, true)
                     .show(getFragmentManager(), "serverInfo");
             return true;
         }
@@ -110,12 +110,12 @@ public class FavouriteServerListFragment extends Fragment implements OnItemClick
     }
 
     public void addServer() {
-        ServerEditFragment.createServerEditDialog(getActivity(), null, ServerEditFragment.Action.ADD_ACTION, false)
+        ServerEditFragment.createServerEditDialog(null, ServerEditFragment.Action.ADD_ACTION, false)
                 .show(getFragmentManager(), "serverInfo");
     }
 
     public void editServer(Server server) {
-        ServerEditFragment.createServerEditDialog(getActivity(), server, ServerEditFragment.Action.EDIT_ACTION, false)
+        ServerEditFragment.createServerEditDialog(server, ServerEditFragment.Action.EDIT_ACTION, false)
                 .show(getFragmentManager(), "serverInfo");
     }
 
