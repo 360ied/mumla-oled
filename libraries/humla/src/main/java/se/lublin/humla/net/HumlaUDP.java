@@ -296,6 +296,10 @@ public class HumlaUDP implements Runnable {
                 mSendQueue.poll();
             }
         }
+        // Volatile reads outside the lock: rare event (connect, settings change,
+        // bandwidth degradation), so debug logging here cannot spam logcat.
+        Log.d(TAG, "Rescaled send queue: " + (getTargetFramesPerPacket() * FRAME_DURATION_MS)
+                + "ms packets, capacity=" + getSendQueueCapacity());
     }
 
     public int getTargetFramesPerPacket() {
