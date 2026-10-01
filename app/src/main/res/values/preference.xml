@@ -33,10 +33,10 @@
 
     <!-- Hot corner -->
     <string name="hot_corner_none">Off</string>
-    <string name="hot_corner_top_left">↖ top left</string>
-    <string name="hot_corner_bottom_left">↙ bottom Left</string>
+    <string name="hot_corner_top_left">↖ Top left</string>
+    <string name="hot_corner_bottom_left">↙ Bottom left</string>
     <string name="hot_corner_top_right">Top right ↗</string>
-    <string name="hot_corner_bottom_right">bottom right ↘</string>
+    <string name="hot_corner_bottom_right">Bottom right ↘</string>
 
     <!-- About -->
     <string name="about">About</string>

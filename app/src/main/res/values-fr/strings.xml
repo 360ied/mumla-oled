@@ -57,13 +57,13 @@
     <string name="mute">Muet</string>
     <string name="deafen">Sourd</string>
     <string name="disconnect">Déconnecter</string>
-    <string name="disconnectSure">Êtes-vous sûr(e) de vouloir vous déconnecter de serveur %s \?</string>
+    <string name="disconnectSure">Êtes-vous sûr·e de vouloir vous déconnecter du serveur %s \?</string>
     <string name="save">Sauvegarder</string>
     <string name="add">Ajouter</string>
     <string name="chat">Discussion</string>
     <string name="perm_denied">Permission refusée.</string>
     <string name="connectionRefused">Connexion refusée</string>
-    <string name="confirm_delete_server">Êtes-vous sûr(e) vouloir supprimer ce serveur \?</string>
+    <string name="confirm_delete_server">Êtes-vous sûr·e de vouloir supprimer ce serveur \?</string>
     <string name="reset_key">Réinitialiser la touche</string>
     <string name="accessAdd">Ajouter un jeton d\'accès</string>
     <string name="messageReceived">Nouveau message</string>
