@@ -68,7 +68,6 @@ public class ServerEditFragment extends DialogFragment {
     /**
      * Creates a new {@link ServerEditFragment} dialog. Results will be delivered to the parent
      * activity via {@link ServerEditListener}.
-     * @param context Host activity context, used only to instantiate the fragment.
      * @param server Optional, if set will populate the fragment with data from the server.
      * @param action The action the fragment is performing (i.e. Add, Edit)
      * @param ignoreTitle If true, don't show fields related to the server title (useful for quick
