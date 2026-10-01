@@ -208,6 +208,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             cvh.mMoreButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    if (mService == null) {
+                        return;
+                    }
                     ChannelMenu menu = new ChannelMenu(mContext, channel, mService, mDatabase, mFragmentManager);
                     menu.showPopup(v);
                 }
@@ -265,6 +268,9 @@ public class ChannelListAdapter extends RecyclerView.Adapter<RecyclerView.ViewHo
             uvh.mMoreButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
+                    if (mService == null) {
+                        return;
+                    }
                     UserMenu menu = new UserMenu(mContext, user, (MumlaService) mService,
                             mFragmentManager, ChannelListAdapter.this);
                     menu.showPopup(v);

@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel.comment;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -29,7 +30,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
+import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
+
+import se.lublin.mumla.R;
 
 /**
  * Verifies the ODD-13 argument guards: a missing bundle or a missing key
@@ -44,8 +48,9 @@ import org.robolectric.annotation.Config;
  * cannot be driven on a bare instance — {@code super.onCreate()} walks the
  * child {@code FragmentManager}, which needs an attached host under
  * androidx.fragment 1.8.9. The {@code onCreate} rows therefore attach the
- * fragment to {@link CommentDialogStubHost} via a synchronous transaction
- * (no dialog is created, so no theme, service, or WebView is involved).
+ * fragment to {@link CommentDialogStubHost} via a synchronous transaction.
+ * Attaching a {@code DialogFragment} drives dialog creation, so the host is
+ * themed exactly like the teardown test for parity.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -59,44 +64,50 @@ public class CommentFragmentArgumentsTest {
         return args;
     }
 
-    private static Bundle channelBundle() {
+    private static Bundle channelBundle(boolean editing) {
         Bundle args = new Bundle();
         args.putInt(ChannelDescriptionFragment.ARG_CHANNEL, 1);
         args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
-        args.putBoolean(AbstractCommentFragment.ARG_EDITING, false);
+        args.putBoolean(AbstractCommentFragment.ARG_EDITING, editing);
         return args;
     }
 
     /**
-     * Attaches {@code fragment} to a stub host, driving {@code onCreate()} synchronously.
+     * Attaches {@code fragment} to a themed stub host, driving {@code onCreate()}
+     * (and dialog creation) synchronously.
      * No host teardown needed: Robolectric discards the per-test sandbox automatically.
      */
     private static void attach(AbstractCommentFragment fragment) {
-        CommentDialogStubHost host = Robolectric.buildActivity(CommentDialogStubHost.class)
-                .setup().get();
+        ActivityController<CommentDialogStubHost> controller =
+                Robolectric.buildActivity(CommentDialogStubHost.class);
+        CommentDialogStubHost host = controller.get();
+        host.setTheme(R.style.Theme_Mumla);
+        controller.setup();
         host.getSupportFragmentManager().beginTransaction()
                 .add(fragment, "comment").commitNow();
     }
 
     /** Pins the oracle to the argument guard rather than to "some ISE". */
-    private static void assertArgumentError(IllegalStateException e) {
-        assertTrue(e.getMessage() != null && e.getMessage().contains("argument"));
+    private static void assertArgumentError(IllegalStateException e, String key) {
+        assertTrue(e.getMessage() != null
+                && e.getMessage().contains("argument")
+                && e.getMessage().contains(key));
     }
 
     @Test
-    public void onCreateWithoutArgumentsThrows() {
+    public void userOnCreateWithoutArgumentsThrows() {
         assertArgumentError(assertThrows(IllegalStateException.class,
-                () -> attach(new UserCommentFragment())));
+                () -> attach(new UserCommentFragment())), "argument");
     }
 
     @Test
-    public void isEditingWithoutArgumentsThrows() {
+    public void userIsEditingWithoutArgumentsThrows() {
         assertArgumentError(assertThrows(IllegalStateException.class,
-                () -> new UserCommentFragment().isEditing()));
+                () -> new UserCommentFragment().isEditing()), "argument");
     }
 
     @Test
-    public void onCreateWithUserBundlePreservesEditing() {
+    public void userOnCreateWithBundlePreservesEditing() {
         UserCommentFragment fragment = new UserCommentFragment();
         fragment.setArguments(userBundle(true));
         attach(fragment);
@@ -104,7 +115,7 @@ public class CommentFragmentArgumentsTest {
     }
 
     @Test
-    public void onCreateWithUserViewBundleClearsEditing() {
+    public void userOnCreateWithViewBundleClearsEditing() {
         UserCommentFragment fragment = new UserCommentFragment();
         fragment.setArguments(userBundle(false));
         attach(fragment);
@@ -112,41 +123,60 @@ public class CommentFragmentArgumentsTest {
     }
 
     @Test
-    public void onCreateWithUserBundleMissingSessionThrows() {
+    public void userOnCreateWithBundleMissingSessionThrows() {
         Bundle args = userBundle(false);
         args.remove(UserCommentFragment.ARG_SESSION);
         UserCommentFragment fragment = new UserCommentFragment();
         fragment.setArguments(args);
         assertArgumentError(assertThrows(IllegalStateException.class,
-                () -> attach(fragment)));
+                () -> attach(fragment)), UserCommentFragment.ARG_SESSION);
+    }
+
+    @Test
+    public void userOnCreateWithBundleMissingEditingThrows() {
+        Bundle args = userBundle(false);
+        args.remove(AbstractCommentFragment.ARG_EDITING);
+        UserCommentFragment fragment = new UserCommentFragment();
+        fragment.setArguments(args);
+        assertArgumentError(assertThrows(IllegalStateException.class,
+                () -> attach(fragment)), AbstractCommentFragment.ARG_EDITING);
     }
 
     @Test
     public void channelOnCreateWithoutArgumentsThrows() {
         assertArgumentError(assertThrows(IllegalStateException.class,
-                () -> attach(new ChannelDescriptionFragment())));
+                () -> attach(new ChannelDescriptionFragment())), "argument");
     }
 
     @Test
     public void channelOnCreateWithBundleSucceeds() {
         ChannelDescriptionFragment fragment = new ChannelDescriptionFragment();
-        fragment.setArguments(channelBundle());
+        fragment.setArguments(channelBundle(false));
         attach(fragment);
         assertFalse(fragment.isEditing());
     }
 
     @Test
     public void channelOnCreateWithBundleMissingChannelThrows() {
-        Bundle args = channelBundle();
+        Bundle args = channelBundle(false);
         args.remove(ChannelDescriptionFragment.ARG_CHANNEL);
         ChannelDescriptionFragment fragment = new ChannelDescriptionFragment();
         fragment.setArguments(args);
         assertArgumentError(assertThrows(IllegalStateException.class,
-                () -> attach(fragment)));
+                () -> attach(fragment)), ChannelDescriptionFragment.ARG_CHANNEL);
     }
 
     @Test
-    public void attachToNonProviderHostThrows() {
+    public void channelOnCreateWithEditingRejects() {
+        ChannelDescriptionFragment fragment = new ChannelDescriptionFragment();
+        fragment.setArguments(channelBundle(true));
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> attach(fragment));
+        assertTrue(e.getMessage() != null && e.getMessage().contains("editing"));
+    }
+
+    @Test
+    public void userAttachToNonProviderHostThrows() {
         FragmentActivity host = Robolectric.buildActivity(FragmentActivity.class)
                 .setup().get();
         UserCommentFragment fragment = new UserCommentFragment();
@@ -154,6 +184,8 @@ public class CommentFragmentArgumentsTest {
         RuntimeException e = assertThrows(RuntimeException.class, () ->
                 host.getSupportFragmentManager().beginTransaction()
                         .add(fragment, "comment").commitNow());
+        assertEquals(RuntimeException.class, e.getClass());
         assertTrue(e.getMessage() != null && e.getMessage().contains("HumlaServiceProvider"));
+        assertTrue(e.getCause() instanceof ClassCastException);
     }
 }

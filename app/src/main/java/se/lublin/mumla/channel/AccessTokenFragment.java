@@ -17,7 +17,6 @@
 
 package se.lublin.mumla.channel;
 
-import android.app.Activity;
 import android.content.Context;
 import android.os.Bundle;
 import android.util.Log;
@@ -33,6 +32,8 @@ import android.widget.ImageButton;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.TextView.OnEditorActionListener;
+
+import androidx.annotation.NonNull;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,16 +60,16 @@ public class AccessTokenFragment extends HumlaServiceFragment {
     private DatabaseProvider mProvider;
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
 
         mTokens = new ArrayList<String>(getAccessTokens());
-        mTokenAdapter = new TokenAdapter(activity, mTokens);
+        mTokenAdapter = new TokenAdapter(context, mTokens);
 
         try {
-            mProvider = (DatabaseProvider) activity;
+            mProvider = (DatabaseProvider) context;
         } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString() + " must implement DatabaseProvider");
+            throw new ClassCastException(context.toString() + " must implement DatabaseProvider");
         }
     }
 

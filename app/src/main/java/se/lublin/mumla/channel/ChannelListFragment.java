@@ -17,7 +17,6 @@
 
 package se.lublin.mumla.channel;
 
-import android.app.Activity;
 import android.app.SearchManager;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -156,8 +155,8 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
         try {
             mTargetProvider = (ChatTargetProvider) getParentFragment();
         } catch (ClassCastException e) {
@@ -168,8 +167,8 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
         } catch (ClassCastException e) {
             throw new ClassCastException(getActivity().toString()+" must implement DatabaseProvider");
         }
-        mSettings = Settings.getInstance(activity);
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(activity);
+        mSettings = Settings.getInstance(context);
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
         preferences.registerOnSharedPreferenceChangeListener(this);
     }
 

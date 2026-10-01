@@ -17,7 +17,7 @@
 
 package se.lublin.mumla.servers;
 
-import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -30,6 +30,7 @@ import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.GridView;
 
+import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -59,14 +60,14 @@ public class FavouriteServerListFragment extends Fragment implements OnItemClick
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
 
         try {
-            mConnectHandler = (ServerConnectHandler)activity;
-            mDatabaseProvider = (DatabaseProvider) activity;
+            mConnectHandler = (ServerConnectHandler)context;
+            mDatabaseProvider = (DatabaseProvider) context;
         } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString()+" must implement ServerConnectHandler!");
+            throw new ClassCastException(context.toString()+" must implement ServerConnectHandler!");
         }
     }
 

@@ -46,7 +46,7 @@ public class ChannelDescriptionFragment extends AbstractCommentFragment {
                 }
             }
         };
-        trackCommentObserver(observer);
+        trackCommentObserver(service, observer);
         service.registerObserver(observer);
         service.HumlaSession().requestChannelDescription(getChannelId());
     }
@@ -62,6 +62,10 @@ public class ChannelDescriptionFragment extends AbstractCommentFragment {
 
     @Override
     protected void validateArguments(@NonNull Bundle args) {
-        getChannelId();
+        super.validateArguments(args);
+        requireIntArgument(args, ARG_CHANNEL);
+        if (args.getBoolean(AbstractCommentFragment.ARG_EDITING, false)) {
+            throw new IllegalStateException("ChannelDescriptionFragment does not support editing");
+        }
     }
 }

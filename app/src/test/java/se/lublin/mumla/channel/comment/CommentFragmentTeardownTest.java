@@ -77,7 +77,7 @@ public class CommentFragmentTeardownTest {
         }
 
         void dismiss() {
-            fragment.dismissAllowingStateLoss();
+            fragment.dismiss();
             host.getSupportFragmentManager().executePendingTransactions();
         }
     }
@@ -92,6 +92,9 @@ public class CommentFragmentTeardownTest {
     @Test
     public void destroyViewNullsAllViewFields() throws ReflectiveOperationException {
         ShownDialog dialog = new ShownDialog();
+        assertNotNull(viewField(dialog.fragment(), "mTabHost"));
+        assertNotNull(viewField(dialog.fragment(), "mCommentView"));
+        assertNotNull(viewField(dialog.fragment(), "mCommentEdit"));
         dialog.dismiss();
         assertNull(viewField(dialog.fragment(), "mTabHost"));
         assertNull(viewField(dialog.fragment(), "mCommentView"));

@@ -50,9 +50,18 @@ public abstract class HumlaServiceFragment extends Fragment {
             if (getActivity() instanceof HumlaServiceProvider) {
                 mServiceProvider = (HumlaServiceProvider) getActivity();
             } else {
-                throw new ClassCastException(context.toString() + " must implement HumlaServiceProvider");
+                ClassCastException failure = new ClassCastException(
+                        context.getClass().getName() + " must implement HumlaServiceProvider");
+                failure.initCause(e);
+                throw failure;
             }
         }
+    }
+
+    @Override
+    public void onDetach() {
+        mServiceProvider = null;
+        super.onDetach();
     }
 
     @Override
@@ -65,9 +74,11 @@ public abstract class HumlaServiceFragment extends Fragment {
 
     @Override
     public void onDestroy() {
-        mServiceProvider.removeServiceFragment(this);
-        if(mServiceProvider.getService() != null && mBound)
-            onServiceDetached(mServiceProvider.getService());
+        if (mServiceProvider != null) {
+            mServiceProvider.removeServiceFragment(this);
+            if (mServiceProvider.getService() != null && mBound)
+                onServiceDetached(mServiceProvider.getService());
+        }
         super.onDestroy();
     }
 
@@ -105,6 +116,6 @@ public abstract class HumlaServiceFragment extends Fragment {
     }
 
     public IMumlaService getService() {
-        return mServiceProvider.getService();
+        return mServiceProvider != null ? mServiceProvider.getService() : null;
     }
 }

@@ -46,7 +46,7 @@ public class UserCommentFragment extends AbstractCommentFragment {
                 }
             }
         };
-        trackCommentObserver(observer);
+        trackCommentObserver(service, observer);
         service.registerObserver(observer);
         service.HumlaSession().requestComment(getSession());
     }
@@ -64,6 +64,7 @@ public class UserCommentFragment extends AbstractCommentFragment {
 
     @Override
     protected void validateArguments(@NonNull Bundle args) {
-        getSession();
+        super.validateArguments(args);
+        requireIntArgument(args, ARG_SESSION);
     }
 }

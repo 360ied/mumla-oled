@@ -25,7 +25,6 @@ import static android.view.inputmethod.EditorInfo.IME_NULL;
 
 import static androidx.core.content.ContextCompat.checkSelfPermission;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
@@ -64,6 +63,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.annotation.NonNull;
 import androidx.activity.result.contract.ActivityResultContracts.GetContent;
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission;
 import androidx.core.text.HtmlCompat;
@@ -160,8 +160,8 @@ public class ChannelChatFragment extends HumlaServiceFragment implements ChatTar
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
         try {
             mTargetProvider = (ChatTargetProvider) getParentFragment();
         } catch (ClassCastException e) {

@@ -110,7 +110,11 @@ public class ChannelMenu implements PermissionsPopupMenu.IOnMenuPrepareListener,
             commentFragment.setArguments(commentArgs);
             commentFragment.show(mFragmentManager, ChannelDescriptionFragment.class.getName());
         } else if (itemId == R.id.context_channel_pin) {
-            long serverId = mService.getTargetServer().getId();
+            Server targetServer = mService.getTargetServer();
+            if (targetServer == null) {
+                return false;
+            }
+            long serverId = targetServer.getId();
             boolean pinned = mDatabase.isChannelPinned(serverId, mChannel.getId());
             if (!pinned) mDatabase.addPinnedChannel(serverId, mChannel.getId());
             else mDatabase.removePinnedChannel(serverId, mChannel.getId());
