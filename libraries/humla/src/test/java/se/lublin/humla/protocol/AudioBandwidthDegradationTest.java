@@ -77,7 +77,7 @@ public class AudioBandwidthDegradationTest extends TestCase {
 
     /**
      * Bitrate never drops below the 8000 bps floor, even when the cap cannot
-     * be met (19200 > 8000 at the floor).
+     * be met (18200 > 8000 at the floor).
      */
     public void testBitrateFloorHolds() {
         assertConfig(8000, 4, 9000, 2, 8000);

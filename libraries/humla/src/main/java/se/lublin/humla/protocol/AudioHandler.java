@@ -19,7 +19,6 @@
 package se.lublin.humla.protocol;
 
 import android.content.Context;
-import android.util.Log;
 
 import com.google.protobuf.ByteString;
 
@@ -52,8 +51,6 @@ import se.lublin.humla.util.HumlaNetworkListener;
  */
 public class AudioHandler extends HumlaNetworkListener
         implements AudioInput.AudioInputListener, NativeAudioInputEngine.AudioInputEngineListener {
-
-    private static final String TAG = "AudioHandler";
 
     public static final int SAMPLE_RATE = 48000;
     public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
@@ -259,7 +256,7 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     /**
-     * Pure bandwidth-degradation decision: Android-API-free so JVM tests can cover it.
+     * Pure bandwidth-degradation decision: does not call Android APIs, so JVM tests can cover it.
      * Do not add logging, native calls, or context access here.
      */
     static EffectiveAudioConfig computeEffectiveConfig(int bitrate, int framesPerPacket, int maxBandwidth) {
@@ -551,6 +548,7 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     /** Notified when bandwidth adaptation changes the effective frames-per-packet. */
+    @FunctionalInterface
     public interface FramesPerPacketListener {
         void onEffectiveFramesPerPacketChanged(int framesPerPacket);
     }

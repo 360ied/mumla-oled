@@ -106,8 +106,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
     }
 
     /**
-     * Pins the ODD-09 degradation target end to end: bandwidth-degraded 40ms audio
-     * (framesPerPacket=4) yields a 5-packet queue, preserving the ~200ms ceiling.
+     * Pins the ODD-09 degradation-target capacity (fpp=4 → 5), preserving the ~200ms ceiling.
      */
     public void testDegradedFortyMsPacketCapacity() {
         HumlaUDP humlaUDP = new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, 4);

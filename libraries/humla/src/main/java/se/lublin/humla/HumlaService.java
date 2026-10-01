@@ -410,7 +410,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void onConnectionSynchronized() {
-        // early disconned?
+        // early disconnected?
         if (!mConnection.isConnected()) {
             return;
         }
@@ -821,7 +821,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Returnes the current {@link AudioHandler}. An AudioHandler is instantiated upon connection
+     * Return the current {@link AudioHandler}. An AudioHandler is instantiated upon connection
      * to a server, and destroyed upon disconnection.
      * @return the active AudioHandler, or null if there is no active connection.
      */
