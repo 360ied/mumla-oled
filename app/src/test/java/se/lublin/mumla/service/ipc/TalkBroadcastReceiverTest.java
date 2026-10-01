@@ -34,6 +34,7 @@ import java.lang.reflect.Proxy;
 import se.lublin.humla.Constants;
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.IHumlaSession;
+import se.lublin.humla.util.HumlaDisconnectedException;
 
 /**
  * Verifies the ODD-19 receiver hardening: unknown actions are ignored (never
@@ -45,6 +46,8 @@ import se.lublin.humla.IHumlaSession;
 public class TalkBroadcastReceiverTest {
 
     private boolean mConnected = true;
+    private boolean mThrowOnSession;
+    private boolean mNullSession;
     private int mTransmitMode = Constants.TRANSMIT_PUSH_TO_TALK;
     private boolean mTalking;
     private int mSetTalkingStateCalls;
@@ -59,6 +62,9 @@ public class TalkBroadcastReceiverTest {
         }
         if (type == boolean.class) {
             return false;
+        }
+        if (type == int.class) {
+            return 0;
         }
         if (type == long.class) {
             return 0L;
@@ -108,7 +114,10 @@ public class TalkBroadcastReceiverTest {
                         case "isConnected":
                             return mConnected;
                         case "HumlaSession":
-                            return mSession;
+                            if (mThrowOnSession) {
+                                throw new HumlaDisconnectedException("gone");
+                            }
+                            return mNullSession ? null : mSession;
                         default:
                             return defaultValue(method.getReturnType());
                     }
@@ -187,6 +196,36 @@ public class TalkBroadcastReceiverTest {
     @Test
     public void disconnectedServiceIgnored() {
         mConnected = false;
+        receive(talkIntent(TalkBroadcastReceiver.TALK_STATUS_ON));
+        assertFalse(mTalking);
+        assertEquals(0, mSetTalkingStateCalls);
+    }
+
+    @Test
+    public void nullIntentIgnored() {
+        receive(null);
+        assertFalse(mTalking);
+        assertEquals(0, mSetTalkingStateCalls);
+    }
+
+    @Test
+    public void nullActionIgnored() {
+        receive(new Intent());
+        assertFalse(mTalking);
+        assertEquals(0, mSetTalkingStateCalls);
+    }
+
+    @Test
+    public void nullSessionIgnored() {
+        mNullSession = true;
+        receive(talkIntent(TalkBroadcastReceiver.TALK_STATUS_ON));
+        assertFalse(mTalking);
+        assertEquals(0, mSetTalkingStateCalls);
+    }
+
+    @Test
+    public void disconnectRaceIgnored() {
+        mThrowOnSession = true;
         receive(talkIntent(TalkBroadcastReceiver.TALK_STATUS_ON));
         assertFalse(mTalking);
         assertEquals(0, mSetTalkingStateCalls);
