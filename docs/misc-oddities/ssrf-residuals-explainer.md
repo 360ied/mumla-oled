@@ -99,12 +99,11 @@ you think you have is actually there. The same applies to the
 `169.254.x.x` and `224.0.0.1` branches in the IPv4 checker, which are
 covered only indirectly via generic link-local/multicast predicates.
 
-The wrinkle: those JDK predicates are byte-based, so no test written
-through the public `isBlockedAddress` API can ever reach the explicit
-branches — the generic check always wins the race, on JVM and Android
-alike. Pinning them requires widening `isBlockedIPv4`/`isBlockedIPv6` to
-package-visible-for-testing (or reflection), to pin branches that are
-unreachable-in-practice defense-in-depth. Coverage gap, not a code bug —
+The wrinkle, stated precisely: through the public `isBlockedAddress` API with plain IPv4 or IPv6
+literals, the generic JDK predicates always win the race, so the explicit branches *look* unreachable —
+but they are *shadowed*, not dead. The IPv6-unwrap path reaches them (the `64:ff9b::7f00:1` test proves
+it: the `127/8` branch fires via NAT64 unwrapping), and the Phase 8 pins added direct package-visible
+tests plus embedded `169.254`/`224`/`10` vectors to prove it. Coverage gap, not a code bug —
 and the fix is process judgment, not engineering.
 
 ## The one-paragraph version

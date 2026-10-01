@@ -165,4 +165,63 @@ public class SsrfHostPolicyTest extends TestCase {
         assertTrue(SsrfHostPolicy.isBlockedAddress(
                 InetAddress.getByName("2001:0:a00:1:0:5efe:808:808")));
     }
+
+    private static byte[] v4(int b0, int b1, int b2, int b3) {
+        return new byte[]{(byte) b0, (byte) b1, (byte) b2, (byte) b3};
+    }
+
+    private static byte[] rawOf(String literal) throws Exception {
+        return InetAddress.getByName(literal).getAddress();
+    }
+
+    public void testBlockedIPv4BranchesDirectly() {
+        // Every explicit isBlockedIPv4 branch, bypassing the generic JDK gate.
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(0, 0, 0, 0)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(0, 255, 255, 255)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(127, 0, 0, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(169, 254, 10, 20)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(224, 0, 0, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(239, 255, 255, 255)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(10, 0, 0, 5)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(172, 16, 0, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(172, 31, 255, 255)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(192, 168, 1, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(100, 64, 0, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(100, 127, 255, 255)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(240, 0, 0, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(255, 255, 255, 255)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(192, 0, 2, 33)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(198, 51, 100, 7)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(203, 0, 113, 9)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(192, 88, 99, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(198, 18, 0, 1)));
+        assertTrue(SsrfHostPolicy.isBlockedIPv4(v4(198, 19, 255, 255)));
+        // Boundaries just outside the blocked ranges stay allowed.
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(1, 0, 0, 1)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(172, 15, 255, 255)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(172, 32, 0, 1)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(100, 63, 255, 255)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(100, 128, 0, 1)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(223, 255, 255, 255)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(198, 17, 255, 255)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(198, 20, 0, 1)));
+        assertFalse(SsrfHostPolicy.isBlockedIPv4(v4(8, 8, 8, 8)));
+    }
+
+    public void testBlockedIPv6BranchesDirectly() throws Exception {
+        assertTrue(SsrfHostPolicy.isBlockedIPv6(rawOf("fec0::1")));
+        assertTrue(SsrfHostPolicy.isBlockedIPv6(rawOf("fc00::1")));
+        assertTrue(SsrfHostPolicy.isBlockedIPv6(rawOf("fd00::1")));
+        assertFalse(SsrfHostPolicy.isBlockedIPv6(rawOf("fe00::1")));
+        assertTrue(SsrfHostPolicy.isBlockedIPv6(rawOf("2001:db8::1")));
+        assertFalse(SsrfHostPolicy.isBlockedIPv6(rawOf("2001:4860:4860::8888")));
+    }
+
+    public void testUnwrapPathReachesShadowedBranches() throws Exception {
+        // NAT64 unwrap reaches the shadowed 169.254/16 and 224/4 branches.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("64:ff9b::a9fe:a14")));
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("64:ff9b::e000:1")));
+        // 6to4 unwrap reaches the shadowed 10/8 branch (10.0.1.0).
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("2002:a00:1::")));
+    }
 }
