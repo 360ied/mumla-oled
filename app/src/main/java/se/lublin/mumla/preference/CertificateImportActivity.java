@@ -54,6 +54,8 @@ import java.util.Arrays;
 import java.util.Enumeration;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
 
 import javax.crypto.AEADBadTagException;
@@ -80,9 +82,12 @@ public class CertificateImportActivity extends BaseActivity {
     private static final String STATE_WAITING_PASSWORD = "state_waiting_password";
     private static final int MAX_CERT_SIZE = 5 * 1024 * 1024; // 5 MB
 
+    // Heuristic only: PKCS#12 implementations report wrong-password failures with
+    // varied messages ("mac", "password", "padding", ...). The typed exceptions
+    // in isPasswordFailure take precedence; this pattern is a last-resort
+    // fallback, not a precise classifier.
     private static final Pattern MAC_PATTERN = Pattern.compile("\\bmac\\b", Pattern.CASE_INSENSITIVE);
 
-    private byte[] mPendingCertBytes;
     private Uri mPendingCertUri;
     private String mPendingFileName;
     private boolean mPendingIsRetry;
@@ -90,6 +95,8 @@ public class CertificateImportActivity extends BaseActivity {
     private AlertDialog mPasswordDialog;
     private TextInputLayout mPasswordLayout;
     private TextInputEditText mPasswordField;
+    /** Off-main-thread reader for picked certificate files (5 MB cap); shut down in onDestroy. */
+    private final ExecutorService mCertIoExecutor = Executors.newSingleThreadExecutor();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,16 +111,31 @@ public class CertificateImportActivity extends BaseActivity {
                 mPendingFileName = savedInstanceState.getString(STATE_FILE_NAME);
                 mPendingIsRetry = savedInstanceState.getBoolean(STATE_IS_RETRY);
                 if (mPendingCertUri != null && mPendingFileName != null) {
-                    try {
-                        mPendingCertBytes = readCertBytes(mPendingCertUri);
-                    } catch (IOException e) {
-                        Log.w(TAG, "Could not re-read certificate after activity recreation", e);
-                        mWaitingForPassword = false;
-                        Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-                        finish();
-                        return;
-                    }
-                    showPasswordDialog(mPendingCertUri, mPendingFileName, mPendingCertBytes, mPendingIsRetry);
+                    // Re-read off the main thread; the Bundle holds only the source Uri
+                    // (plus display metadata), never cert bytes or passwords.
+                    final Uri uri = mPendingCertUri;
+                    final String fileName = mPendingFileName;
+                    final boolean isRetry = mPendingIsRetry;
+                    mCertIoExecutor.execute(() -> {
+                        final byte[] certBytes;
+                        try {
+                            certBytes = readCertBytes(uri);
+                        } catch (IOException e) {
+                            Log.w(TAG, "Could not re-read certificate after activity recreation", e);
+                            runOnUiThread(() -> {
+                                mWaitingForPassword = false;
+                                Toast.makeText(CertificateImportActivity.this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                                finish();
+                            });
+                            return;
+                        }
+                        runOnUiThread(() -> {
+                            if (isFinishing() || isDestroyed()) {
+                                return;
+                            }
+                            showPasswordDialog(uri, fileName, certBytes, isRetry);
+                        });
+                    });
                     return;
                 }
                 // Inconsistent saved state; nothing to restore.
@@ -148,14 +170,15 @@ public class CertificateImportActivity extends BaseActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        mCertIoExecutor.shutdownNow();
         if (mPasswordDialog != null && mPasswordDialog.isShowing()) {
             mPasswordDialog.dismiss();
             mPasswordDialog = null;
         }
         mPasswordLayout = null;
         mPasswordField = null;
-        // Drop the in-memory file bytes; the Uri in saved state is the restore path.
-        mPendingCertBytes = null;
+        // The in-memory file bytes are dialog-scoped locals; the Uri in saved
+        // state is the restore path, so there is nothing to retain here.
     }
 
     @Override
@@ -170,30 +193,40 @@ public class CertificateImportActivity extends BaseActivity {
             return;
         }
 
-        Uri uri = data.getData();
-        byte[] certBytes;
-        try {
-            certBytes = readCertBytes(uri);
-        } catch (IOException e) {
-            Log.w(TAG, "Could not read picked certificate", e);
-            Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
-
-        String displayName = null;
-        try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst()) {
-                displayName = cursor.getString(0);
+        final Uri uri = data.getData();
+        // Read and probe off the main thread; only Toast/finish run on the UI thread.
+        mCertIoExecutor.execute(() -> {
+            final byte[] certBytes;
+            try {
+                certBytes = readCertBytes(uri);
+            } catch (IOException e) {
+                Log.w(TAG, "Could not read picked certificate", e);
+                runOnUiThread(() -> {
+                    Toast.makeText(CertificateImportActivity.this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                    finish();
+                });
+                return;
             }
-        } catch (SecurityException | IllegalArgumentException e) {
-            Log.w(TAG, "Could not query display name of picked certificate", e);
-        }
-        if (displayName == null || displayName.isEmpty()) {
-            displayName = UUID.randomUUID().toString() + ".p12";
-        }
 
-        storeKeystore(new char[0], uri, displayName, certBytes, false);
+            String displayName = null;
+            try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    displayName = cursor.getString(0);
+                }
+            } catch (SecurityException | IllegalArgumentException e) {
+                Log.w(TAG, "Could not query display name of picked certificate", e);
+            }
+            if (displayName == null || displayName.isEmpty()) {
+                displayName = UUID.randomUUID().toString() + ".p12";
+            }
+            final String fileName = displayName;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                storeKeystore(new char[0], uri, fileName, certBytes, false);
+            });
+        });
     }
 
     /** Reads the picked certificate with the 5 MB cap; used for both first read and restore. */
@@ -247,7 +280,7 @@ public class CertificateImportActivity extends BaseActivity {
                 zeroPassword(password);
                 showPasswordDialog(sourceUri, fileName, certBytes, isRetry);
             } else {
-                e.printStackTrace();
+                Log.w(TAG, "Certificate keystore could not be opened", e);
                 if (mPasswordDialog != null) {
                     mPasswordDialog.dismiss();
                     mPasswordDialog = null;
@@ -294,7 +327,6 @@ public class CertificateImportActivity extends BaseActivity {
         mWaitingForPassword = true;
         mPendingCertUri = sourceUri;
         mPendingFileName = fileName;
-        mPendingCertBytes = certBytes;
         mPendingIsRetry = isRetry;
 
         if (mPasswordDialog != null && mPasswordDialog.isShowing() && mPasswordLayout != null && mPasswordField != null) {
@@ -349,11 +381,9 @@ public class CertificateImportActivity extends BaseActivity {
             if (length > 0) {
                 text.getChars(0, length, passChars, 0);
             }
-            try {
-                storeKeystore(passChars, sourceUri, fileName, certBytes, true);
-            } finally {
-                Arrays.fill(passChars, '\0');
-            }
+            // Single zeroing owner is the callee: storeKeystore zeroes the array on
+            // every path, so no fill is needed here.
+            storeKeystore(passChars, sourceUri, fileName, certBytes, true);
         };
 
         mPasswordField.setOnEditorActionListener((v, actionId, event) -> {
