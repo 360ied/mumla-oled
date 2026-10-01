@@ -9,7 +9,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — COMPLETED & RELEASED (0.21.19)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--completed--released-02119)
 4. [Phase 4: Modernization & Code Hygiene (P3) — COMPLETED](#phase-4-modernization--code-hygiene-p3--completed)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED](#phase-5-dynamic-bandwidth--network-adaptation-p2--completed)
-6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
+6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3) — COMPLETED](#phase-6-comment-dialog-hardening-follow-ups-p3--completed)
 7. [Phase 7: Phase-4 Integration Review Residuals (P3)](#phase-7-phase-4-integration-review-residuals-p3)
 8. [Verification & Test Strategy](#verification--test-strategy)
 
@@ -472,7 +472,12 @@ Wire a listener or feedback mechanism from `AudioHandler` to `HumlaConnection.se
 
 ---
 
-## Phase 6: Comment Dialog Hardening Follow-Ups (P3)
+## Phase 6: Comment Dialog Hardening Follow-Ups (P3) — COMPLETED
+
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 6 remediation items (ODD-13 through ODD-16) have been implemented and merged into `master` (branch `feature/oddities-phase6-comment-dialog`, commits `cc393d98` through `772f725a`, merge commit `308a133d`): ODD-13 resolved by failing fast with `requireArguments()`, key validation via a `validateArguments` hook, and shared `ARG_*` constants across fragments, menus, and tests, covered by [`CommentFragmentArgumentsTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentArgumentsTest.java); ODD-14 resolved by migrating to `onAttach(Context)` with chained cause across the module; ODD-15 resolved by completing the teardown (detach-before-destroy, listener guard, observer release), covered by [`CommentFragmentTeardownTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java); ODD-16 resolved by translating `comment_open_link` in `values-fr` and `values-zh-rCN`. Two pedantic review rounds expanded the branch to adjacent incidentals (service/host lifecycle guards, call-site modernization, menu null guards) with no behavior change on reachable paths.
 
 Residual low-severity items in `AbstractCommentFragment` surfaced by the phase2-comment-webview pedantic reviews. All latent or cosmetic; no live crash or leak.
 
@@ -480,7 +485,7 @@ Residual low-severity items in `AbstractCommentFragment` surfaced by the phase2-
 
 ### 6.1 Guard Comment Dialog Arguments (ODD-13)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `feature/oddities-phase6-comment-dialog`, commits `8cfe2bca` through `772f725a`; merge commit `308a133d`).
 
 **Component**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L56-L58)
 
@@ -494,7 +499,7 @@ Switch both sites to `requireArguments()`.
 
 ### 6.2 Modernize Comment Dialog Attachment (ODD-14)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `feature/oddities-phase6-comment-dialog`, commits `8cfe2bca` through `772f725a`; merge commit `308a133d`).
 
 **Component**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68)
 
@@ -508,7 +513,7 @@ Override `onAttach(Context)` and chain the cause in the rethrow.
 
 ### 6.3 Complete Comment Dialog View Teardown (ODD-15)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `feature/oddities-phase6-comment-dialog`, commits `da86e5c9` through `772f725a`; merge commit `308a133d`).
 
 **Component**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141)
 
@@ -522,7 +527,7 @@ Null all three view fields in `onDestroyView()` and null-guard the listener's `m
 
 ### 6.4 Translate Comment Chooser Title (ODD-16)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `feature/oddities-phase6-comment-dialog`, commit `7e5c206c`; merge commit `308a133d`).
 
 **Component**: [`strings.xml`](../../app/src/main/res/values/strings.xml#L56)
 
@@ -591,7 +596,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 5** | **ODD-09** | [`AudioBandwidthDegradationTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/protocol/AudioBandwidthDegradationTest.java) covering the pure `computeEffectiveConfig` degradation vectors; `HumlaUDPSendQueueTest.java` pins the degraded `fpp=4` capacity (5 packets) and the `setTargetFramesPerPacket` sanitize agreement. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5 (rescales now log at debug). |
 | **Phase 6** | **ODD-13** | Unit test instantiating the comment fragment without arguments, verifying `IllegalStateException` instead of NPE. | Open user/channel comment dialogs; verify they render. |
 | **Phase 6** | **ODD-14** | Lint check (`Deprecated` warning) confirming no `onAttach(Activity)` override remains. | Open comment dialogs; verify provider binding works. |
-| **Phase 6** | **ODD-15** | Gradle build and resource compilation check (`assembleFossDebug`). | Open and dismiss comment dialogs repeatedly; inspect heap for retained view hierarchies. |
+| **Phase 6** | **ODD-15** | [`CommentFragmentTeardownTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java) verifying all three view fields null after dismiss and post-teardown tab callbacks safe. | Open and dismiss comment dialogs repeatedly; inspect heap for retained view hierarchies. |
 | **Phase 6** | **ODD-16** | Lint `MissingTranslation` check on `comment_open_link`. | Switch to French/Chinese locales; open a comment link chooser and verify the title is translated. |
 | **Phase 7** | **ODD-17** | JVM test of `createSocket` fail-closed behavior via an injectable socket factory; native crypt test for the length guard. | None. |
 | **Phase 7** | **ODD-18** | Existing certificate import/export unit tests continue to pass. | Import a password-protected PKCS#12 with a wrong then right password; rotate mid-dialog; export and re-import. |

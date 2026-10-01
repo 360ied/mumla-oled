@@ -7,7 +7,7 @@ Its distinctive feature versus earlier phases is a **one-time Robolectric pilot 
 changes that the repo's JVM-only setup cannot exercise, so this branch introduces the minimal test infrastructure to cover them —
 with an explicit revert rule if the pilot misbehaves.
 
-**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` (commits `cc393d98` through `772f725a`); pending review and merge. Two pedantic review rounds expanded scope beyond the locked recipe to every adjacent incidental (see §2.5–§2.6 and §5 deltas).
+**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` and merged into `master` (merge commit `308a133d`).
 **Scope:** Four items — ODD-13 through ODD-16 (all P3 / Low, latent or cosmetic; no live crash or leak) — plus shared `:app` Robolectric infrastructure. No behavior change except the guards described below.
 
 ---

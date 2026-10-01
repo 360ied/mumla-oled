@@ -47,10 +47,10 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-10** | **Security / SSRF** | **Medium** | **Open** | **DNS Rebinding TOCTOU in Image SSRF Check**: [`MumbleImageGetter.isHostBlocked()`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) resolves via `getAllByName` but `HttpURLConnection` reconnects by hostname, so a rebind between check and `connect()` defeats the policy. | [`MumbleImageGetter.java:598`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) |
 | **ODD-11** | **Security / SSRF** | **Low** | **Open** | **Incomplete IPv6 Transition-Mechanism Coverage**: [`SsrfHostPolicy.isBlockedIPv6()`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) unwraps only the well-known NAT64 `/96`; RFC 6052 variable-length and operator NAT64 prefixes plus Teredo/ISATAP are unhandled. | [`SsrfHostPolicy.java:239`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) |
 | **ODD-12** | **Testing** | **Low** | **Open** | **Thin SSRF Regression Test Layering**: `testSiteLocalBlocked` passes via either the `isSiteLocalAddress` gate or the explicit `fec0::/10` branch, and embedded `169.254`/`224` branches lack direct literal tests. | [`SsrfHostPolicyTest.java:113`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L124) |
-| **ODD-13** | **UI / Lifecycle** | **Low** | **Open** | **Unguarded `getArguments()` in Comment Dialog**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L58) dereferences `getArguments()` without a null check in `onCreate()` and `isEditing()`; a no-args instantiation crashes with NPE. | [`AbstractCommentFragment.java:58`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L58) |
-| **ODD-14** | **UI / Compatibility** | **Low** | **Open** | **Deprecated `onAttach(Activity)` and Dropped Cause**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68) overrides the deprecated `onAttach(Activity)` overload and rethrows `ClassCastException` as `RuntimeException` without chaining the cause. | [`AbstractCommentFragment.java:62`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68) |
-| **ODD-15** | **Memory / Lifecycle** | **Low** | **Open** | **Partial View Teardown in Comment Dialog**: `onDestroyView()` nulls `mCommentView` but leaves `mTabHost`/`mCommentEdit` reachable, and the tab listener dereferences `mCommentView` unguarded. | [`AbstractCommentFragment.java:132`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141) |
-| **ODD-16** | **UI / i18n** | **Low** | **Open** | **Untranslated Comment Chooser Title**: `comment_open_link` exists only in `values/strings.xml`; `values-fr` and `values-zh-rCN` fall back to English. | [`strings.xml:56`](../../app/src/main/res/values/strings.xml#L56) |
+| **ODD-13** | **UI / Lifecycle** | **Low** | **Resolved** | **Guarded arguments**: [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java) now fails fast with `IllegalStateException` via `requireArguments()`, rejects partial bundles in `onCreate()` through shared `ARG_*` constants, covered by [`CommentFragmentArgumentsTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentArgumentsTest.java). | [`AbstractCommentFragment.java:58`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L58) |
+| **ODD-14** | **UI / Compatibility** | **Low** | **Resolved** | **Modernized attachment**: overrides `onAttach(Context)` with the `ClassCastException` cause chained; the same migration applied to `HumlaServiceFragment` and the five remaining subclasses. | [`AbstractCommentFragment.java:62`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68) |
+| **ODD-15** | **Memory / Lifecycle** | **Low** | **Resolved** | **Completed teardown**: `onDestroyView()` detaches and nulls all three view fields, the tab listener null-guards both dereferenced views, comment observers are released in `onDestroy`, covered by [`CommentFragmentTeardownTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java). | [`AbstractCommentFragment.java:132`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141) |
+| **ODD-16** | **UI / i18n** | **Low** | **Resolved** | **Translated chooser title**: `comment_open_link` is now translated in `values-fr` (`Ouvrir le lien`) and `values-zh-rCN` (`打开链接`). | [`strings.xml:56`](../../app/src/main/res/values/strings.xml#L56) |
 | **ODD-17** | **Code Hygiene** | **Low** | **Open** | **Phase-4 Native and TLS Code Hygiene**: unnamed crypt-header constant and misplaced overflow guard in the JNI encrypt path, `filterTlsProtocols` split from its neighbours, and no test of the `createSocket` protocol-floor wiring. | [`NativeCryptStateJni.cpp`](../../libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp) |
 | **ODD-18** | **Code Hygiene** | **Low** | **Open** | **Phase-4 Certificate Import/Export Hygiene**: write-only `mPendingCertBytes`, split password-zeroing ownership, `printStackTrace` instead of `Log`, fuzzy `MAC_PATTERN`, empty-string trust-store password constant, and JUnit 3 test style. | [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java) |
 | **ODD-19** | **UI / i18n** | **Low** | **Open** | **Phase-4 Server Edit Dialog, Strings and TALK Receiver Polish**: unstyled non-scrolling URL-password warning row, missing fr/zh translations, undocumented overload parameters, and `TalkBroadcastReceiver` edge cases. | [`dialog_server_edit.xml`](../../app/src/main/res/layout/dialog_server_edit.xml) |
@@ -327,6 +327,8 @@ Coverage gap, not a code bug. Recorded in the phase2-image-pipeline round-2 revi
 
 ### ODD-13: Unguarded getArguments() in Comment Dialog
 
+> **Status: Resolved on `master`** (branch `feature/oddities-phase6-comment-dialog`, merge commit `308a133d`): argument sites fail fast with `IllegalStateException`, partial bundles are rejected in `onCreate()`, and keys are shared `ARG_*` constants. The description below is the pre-fix record.
+
 In [`AbstractCommentFragment.java:56-58`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L56-L58) and [`AbstractCommentFragment.java:204-205`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L204-L205):
 
 ```java
@@ -342,6 +344,8 @@ Both production callers ([`UserMenu.java:169-175`](../../app/src/main/java/se/lu
 ---
 
 ### ODD-14: Deprecated onAttach Overload and Dropped Cause in Comment Dialog
+
+> **Status: Resolved on `master`** (branch `feature/oddities-phase6-comment-dialog`, merge commit `308a133d`): `onAttach(Context)` with chained cause, migrated across the module. The description below is the pre-fix record.
 
 In [`AbstractCommentFragment.java:61-70`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L61-L70):
 
@@ -363,11 +367,15 @@ Two hygiene issues, both non-behavioral today: `onAttach(Activity)` is deprecate
 
 ### ODD-15: Partial View Teardown in Comment Dialog
 
+> **Status: Resolved on `master`** (branch `feature/oddities-phase6-comment-dialog`, merge commit `308a133d`): full teardown with detach-before-destroy, guarded listener, and observer release. The description below is the pre-fix record.
+
 In [`AbstractCommentFragment.java:132-141`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141), `onDestroyView()` (added by the phase2-comment-webview branch) destroys and nulls `mCommentView` but leaves `mTabHost` and `mCommentEdit` reachable, retaining a partial view-hierarchy reference after dismissal. Additionally, the tab listener in [`AbstractCommentFragment.java:102-113`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L102-L113) dereferences `mCommentView` unguarded (`mCommentView.loadData(...)` at line 107), so a tab switch racing teardown after `onDestroyView` would NPE. Listener callbacks cannot fire after view destruction in practice (the `TabHost` is detached with the hierarchy), so both are residual hardening, not live bugs. Fix: null `mTabHost`/`mCommentEdit` alongside `mCommentView`, and null-guard the listener's `mCommentView` deref.
 
 ---
 
 ### ODD-16: Untranslated Comment Chooser Title
+
+> **Status: Resolved on `master`** (branch `feature/oddities-phase6-comment-dialog`, merge commit `308a133d`): `comment_open_link` translated in `values-fr` and `values-zh-rCN`. The description below is the pre-fix record.
 
 `comment_open_link` ("Open link", added by the phase2-comment-webview branch for the external-browser chooser title in [`AbstractCommentFragment.java`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java)) exists only in [`values/strings.xml`](../../app/src/main/res/values/strings.xml). `values-fr` and `values-zh-rCN` (which both translate the neighboring `comment_*` strings) fall back to English at runtime. Cosmetic; no crash. Fix: add `comment_open_link` translations on the next strings pass.
 
