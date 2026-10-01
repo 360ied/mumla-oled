@@ -141,8 +141,36 @@ OPUS_INC="-I $OPUS_DIR/include -I $OPUS_DIR/celt -I $OPUS_DIR/silk -I $OPUS_DIR/
 # to the real compiler). Flags are identical to the previous single-command
 # builds, only split into per-TU compile plus a final link.
 OBJ_DIR="$BUILD_DIR/obj"
-JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
-[[ "$JOBS" =~ ^[0-9]+$ ]] && (( JOBS >= 1 )) || JOBS=4
+mkdir -p "$OBJ_DIR"
+# Parallelism: default to core count, capped so huge-core machines do not
+# exhaust RAM with concurrent -O2 compiles. An explicit JOBS= is honored
+# as-is (assumed deliberate).
+NPROC="$(nproc 2>/dev/null || echo 4)"
+[[ "$NPROC" =~ ^[0-9]+$ ]] && (( NPROC >= 1 )) || NPROC=4
+if [[ -n "${JOBS:-}" ]]; then
+    [[ "$JOBS" =~ ^[0-9]+$ ]] && (( JOBS >= 1 )) || JOBS=4
+else
+    JOBS=$(( NPROC > 16 ? 16 : NPROC ))
+fi
+
+# Toolchain fingerprint: mtime tracking cannot see compiler upgrades, so a
+# compiler change wipes all objects — a stale .o from another toolchain must
+# never link into test binaries.
+TOOLCHAIN_STAMP="$OBJ_DIR/.toolchain_fingerprint"
+# NOTE: the candidate fingerprint lives in $BUILD_DIR (not $OBJ_DIR), because
+# a toolchain change wipes $OBJ_DIR below, which would delete the candidate.
+TOOLCHAIN_CANDIDATE="$BUILD_DIR/.toolchain_fingerprint.new"
+# shellcheck disable=SC2086
+# ($CXX word-splits when wrapped with ccache, by design)
+$CXX --version > "$TOOLCHAIN_CANDIDATE" 2>/dev/null || echo "unknown-toolchain" > "$TOOLCHAIN_CANDIDATE"
+if ! cmp -s "$TOOLCHAIN_STAMP" "$TOOLCHAIN_CANDIDATE" 2>/dev/null; then
+    echo "test_native_audio.sh: toolchain changed, rebuilding all native targets..." >&2
+    rm -rf "${OBJ_DIR:?}"
+    mkdir -p "$OBJ_DIR"
+    mv "$TOOLCHAIN_CANDIDATE" "$TOOLCHAIN_STAMP"
+else
+    rm -f "$TOOLCHAIN_CANDIDATE"
+fi
 
 read -ra OPUS_FLAGS_ARR <<< "$OPUS_FLAGS"
 read -ra OPUS_INC_ARR <<< "$OPUS_INC"
