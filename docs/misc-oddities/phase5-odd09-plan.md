@@ -34,14 +34,16 @@ notification edge is missing.
    create a dependency cycle and conflate the *user-configured* target (`HumlaConnection.mTargetFramesPerPacket`,
    owned by `HumlaService`) with the *bandwidth-degraded effective* value (owned by `AudioHandler`).
    Instead, `AudioHandler` exposes a single-method listener that `HumlaService` wires to the live
-   connection. This also keeps `AudioHandler` unit-testable in shape (plain interface, no connection import).
+   connection. This also keeps `AudioHandler` unit-testable in shape (plain interface, no new instance
+   back-reference; static `HumlaConnection` use remains).
 2. **Listener is installed before `initialize()` runs.** Degradation is computed inside `initialize()`
-   (via the `maxBandwidth` constructor path), so wiring it after construction-but-before-init is
+   (via the `initialize(maxBandwidth)` path), so wiring it after construction-but-before-init is
    order-sensitive. The `Builder` carries the listener and sets it between `new AudioHandler(...)` and
    `handler.initialize(...)`.
 3. **Notify only on `framesPerPacket` change.** Bitrate-only degradation (the `while (bitrate...)` loop)
-   needs no queue update; a needless rescale would flush fresh packets. The log line still fires on
-   either change, as today.
+   needs no queue update; a needless rescale is a wasted cross-thread call and lock acquisition
+   (a same-capacity rescale is a no-op — eviction only runs while `size > capacity`). The log line
+   still fires on either change, as today.
 4. **UDP-Ping `MaxBandwidthPerUser` path is an accepted residual, not in scope.**
    `HumlaConnection.mUDPPingListener.messageProtobufPing()` updates `mMaxBandwidth` on the UDP thread
    and bypasses `AudioHandler` entirely — today neither the encoder nor the queue adapts to it, and this
@@ -142,7 +144,9 @@ private void setMaxBandwidth(int maxBandwidth) {
 Notes:
 
 - The branch table, bitrate loop, 8000 floor, `-1` early-out, and log-on-either-change semantics are
-  byte-for-byte preserves of the current behavior — this step is a pure refactor plus the guarded notify.
+  behavior-preserving for all reachable inputs — this step is a pure refactor plus the guarded notify.
+  (Strictly, the sketch also sanitizes on the `-1` path where the current code early-returns; this is
+  unobservable because the constructor already sanitizes, so all reachable inputs are sanitized.)
 - Invoking the listener while holding the `AudioHandler` monitor (the `initialize()` path is
   `synchronized`) is safe and intentional: the downstream chain
   (`HumlaConnection.setTargetFramesPerPacket` → `HumlaUDP.setTargetFramesPerPacket`) takes only the
@@ -154,7 +158,11 @@ Notes:
 ### Step 2 — `AudioHandler.Builder`: carry the listener
 
 Add a `FramesPerPacketListener` field plus setter to the `Builder` (mirroring `setEncodeListener`), and
-install it in `Builder.initialize()` strictly between construction and `handler.initialize(...)`:
+with the corresponding Builder field:
+```java
+private AudioHandler.FramesPerPacketListener mFramesPerPacketListener;
+```
+Install it in `Builder.initialize()` strictly between construction and `handler.initialize(...)`:
 
 ```java
 public Builder setFramesPerPacketListener(AudioHandler.FramesPerPacketListener listener) {
@@ -189,9 +197,31 @@ already push to both builder and connection) and do **not** write the degraded v
 `mAudioBuilder` — reconnects must start from the user setting, which `connect()` already applies via
 `mConnection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())`.
 
-`HumlaConnection.java` and `HumlaUDP.java` need **no production-code changes**.
+### Step 4 — Adjacent hardening on the touched path (no side-backlog)
 
-### Step 4 — Refresh stale line references in `remediation-plan.md`
+Two pre-existing hazards sit directly on the code this branch touches; fix them here rather than
+filing follow-ups:
+
+1. **Sanitize in `HumlaConnection.setTargetFramesPerPacket()`.** The setter stores the raw value while
+   `HumlaUDP` sanitizes, so an invalid `fpp` (e.g. `3` via `configureExtras`) leaves the connection
+   reporting `3` while UDP uses `2`. One-line fix (`Constants` is already imported):
+   ```java
+   public void setTargetFramesPerPacket(int targetFramesPerPacket) {
+       mTargetFramesPerPacket = Constants.sanitizeFramesPerPacket(targetFramesPerPacket);
+       final HumlaUDP udp = mUDP;
+       if (udp != null) {
+           udp.setTargetFramesPerPacket(mTargetFramesPerPacket);
+       }
+   }
+   ```
+   Note the delegation must forward the sanitized field, not the raw parameter, so both layers agree.
+   `HumlaUDP.java` itself needs no production-code changes.
+2. **`volatile` on `AudioHandler.mBitrate` / `AudioHandler.mFramesPerPacket`.** Both are written from
+   the main thread (`initialize()`) and the TCP thread (`messageServerSync()`) and read via getters
+   from other threads; the new `volatile` listener does not harden them. One word each, zero
+   behavioral risk.
+
+### Step 5 — Refresh stale line references in `remediation-plan.md`
 
 Phase 5 cites `HumlaConnection.java#L441` (now ~L484) and `HumlaService.java#L685` (now `connect()` ~L340,
 `createAudioHandler()` ~L610–628, `configureExtras(EXTRAS_FRAMES_PER_PACKET)` ~L739–744). Update the
@@ -208,6 +238,7 @@ an otherwise code branch is acceptable here since it documents the same item).
 | Bitrate-only degradation, `fpp` unchanged | Fields/native/log update as today; listener NOT fired; queue untouched. |
 | User `fpp=6` (60 ms) under constraint | Branch table leaves `fpp=6` (only bitrate loop applies); capacity stays `ceil(200/60)=4`. Correct per formula. |
 | Invalid `fpp` input | `sanitizeFramesPerPacket` fallback preserved inside the helper (same as today). |
+| Invalid `fpp` via `setTargetFramesPerPacket` (e.g. `3`) | Sanitized once in `HumlaConnection` (Step 4); connection and UDP agree on `2`, capacity 10. |
 | `ForceTCP` mode | Rescale is harmless — queued-but-unsent packets simply never accumulate via UDP. No special-casing. |
 | Disconnect race on late `messageServerSync` | Service lambda null-guards `mConnection`. `HumlaUDP.setTargetFramesPerPacket` on a disconnected instance only adjusts numbers under lock. |
 | `Builder` without listener (other/future callers) | Null listener is legal; degradation still applies to the encoder, queue just isn't rescaled. Same as today's behavior. |
@@ -220,7 +251,8 @@ New file `libraries/humla/src/test/java/se/lublin/humla/protocol/AudioBandwidthD
 (JUnit-3 `extends TestCase` style, matching the module's existing tests; GPL header copied from a recent
 file, `Copyright (C) 2026 Brian Zhu`). It exercises **only** the pure `computeEffectiveConfig` — no Android
 APIs involved. Vectors (all hand-verified against `calculateAudioBandwidth`: overhead
-$(20+8+4+1+2+12+\mathrm{fpp}) \times (800/\mathrm{fpp}) + \mathrm{bitrate}$):
+$(20+8+4+1+2+12+\mathrm{fpp}) \times (800/\mathrm{fpp}) + \mathrm{bitrate}$, integer division —
+`800/6 = 133`):
 
 | Input (bitrate, fpp, maxBW) | Expected | Rationale |
 |---|---|---|
@@ -232,10 +264,12 @@ $(20+8+4+1+2+12+\mathrm{fpp}) \times (800/\mathrm{fpp}) + \mathrm{bitrate}$):
 | `(9000, 2, 8000)` | `(8000, 4)` | Bitrate floor holds at 8000. |
 | `(40000, 3, -1)` | `(40000, 2)` | Invalid `fpp` sanitized to default. |
 
-Queue-level coverage: extend `HumlaUDPSendQueueTest.java` with one method asserting the exact degraded
-configuration end to end — `new HumlaUDP(..., 4).getSendQueueCapacity() == 5` (the 40 ms row of the
-existing capacity table, now pinned as the degradation target). No new eviction test is needed; the
-shrink/flush path is already covered by `testSendQueueDynamicResizeFlushesExcessPackets`.
+Queue-level coverage: extend `HumlaUDPSendQueueTest.java` with methods asserting the exact degraded
+configuration end to end — `new HumlaUDP(mClientCrypt, mDummyListener, mDummyHandler, 4)` yields
+capacity `5` (the 40 ms row of the existing capacity table, now pinned as the degradation target),
+and `setTargetFramesPerPacket(3)` leaves `getTargetFramesPerPacket() == 2` with capacity 10 (the Step 4
+agreement pin). No new eviction test is needed; the shrink/flush path is already covered by
+`testSendQueueDynamicResizeFlushesExcessPackets`.
 
 Run: `nix develop --command ./gradlew testFossDebugUnitTest` during development; full `./scripts/check.sh`
 in the worktree before completion.
@@ -260,8 +294,11 @@ in the worktree before completion.
 - [ ] Degraded `fpp` from both `initialize()` and late `messageServerSync()` reaches a live `HumlaUDP`
       via the service listener; capacity for 40 ms audio becomes 5 with excess stale packets flushed.
 - [ ] Listener fires only on `fpp` change; bitrate-only adaptation leaves the queue alone.
+- [ ] `HumlaConnection` sanitizes `fpp` on set (connection/UDP agreement pinned); `AudioHandler`
+      `mBitrate`/`mFramesPerPacket` are `volatile`.
 - [ ] `AudioBandwidthDegradationTest` passes with the vector table in §5; new-file GPL header present.
-- [ ] Queue-capacity pin (`fpp=4 → 5`) added to `HumlaUDPSendQueueTest`; full JVM suite green.
+- [ ] Queue-capacity pin (`fpp=4 → 5`) plus sanitize-agreement pin (`3 → 2`) added to
+      `HumlaUDPSendQueueTest`; full JVM suite green.
 - [ ] Manual check in §6 performed against a bandwidth-limited server.
 - [ ] `remediation-plan.md` §5.1 line references refreshed; ODD-09 status flipped to Resolved with the
       branch/commit recorded (same convention as Phases 1–4) once merged.
@@ -275,5 +312,6 @@ in the worktree before completion.
 - Worktree/branch: `./scripts/worktree.py add feature/oddities-phase5-odd09` (root stays on `master`).
 - Commits via `python3 scripts/commit.py -m "<scope>: <subject>"` with the three-section body
   (`Context & Motivation` / `Technical Approach` / `Edge Cases & Impact`); suggested split is
-  (1) pure-helper refactor + unit test, (2) listener + service wiring (+ docs touch-up).
+  (1) pure-helper refactor + unit test, (2) listener + service wiring + adjacent hardening,
+  (3) docs touch-up (`remediation-plan.md` pins, ODD-09 status on merge).
 - New test file needs the standard GPL-3.0-or-later header with `Copyright (C) 2026 Brian Zhu`.
