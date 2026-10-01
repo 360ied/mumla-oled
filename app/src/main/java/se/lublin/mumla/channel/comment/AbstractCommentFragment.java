@@ -104,6 +104,8 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         mTabHost.setOnTabChangedListener(new TabHost.OnTabChangeListener() {
             @Override
             public void onTabChanged(String tabId) {
+                // View hierarchy may be torn down (ODD-15); never touch nulled fields.
+                if (mCommentView == null || mCommentEdit == null) return;
                 if ("View".equals(tabId)) {
                     // When switching back to view tab, update with user's HTML changes.
                     mCommentView.loadData(mCommentEdit.getText().toString(), "text/html", "UTF-8");
@@ -139,6 +141,8 @@ public abstract class AbstractCommentFragment extends DialogFragment {
             mCommentView.destroy();
             mCommentView = null;
         }
+        mTabHost = null;
+        mCommentEdit = null;
         super.onDestroyView();
     }
 
