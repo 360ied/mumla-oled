@@ -293,7 +293,7 @@ However, neither `HumlaConnection` nor `HumlaUDP` is notified of this adjusted p
 
 ### ODD-10: DNS Rebinding TOCTOU in Image SSRF Check
 
-> **Status: Resolved on branch `feature/oddities-phase8-ssrf`** (from `cff07a42`; merge pending — frozen range recorded at merge): `fetchOneUrl` resolves once per hop and fetches through the checked IP with SNI plus platform hostname verification. The description below is the pre-fix record.
+> **Status: Resolved on `master`** (branch `feature/oddities-phase8-ssrf`, merge commit `4bc0fd86`): `fetchOneUrl` resolves once per hop and fetches through the checked IP with SNI plus platform hostname verification. The description below is the pre-fix record.
 
 In [`MumbleImageGetter.java:598-611`](../../app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.java#L598-L611) (pre-fix lines):
 
@@ -312,7 +312,7 @@ The pre-connect DNS check in `isHostBlocked()` was best-effort: [`fetchOneUrl()`
 
 ### ODD-11: Incomplete IPv6 Transition-Mechanism Coverage in SSRF Policy
 
-> **Status: Resolved on branch `feature/oddities-phase8-ssrf`** (from `cff07a42`; merge pending — frozen range recorded at merge): Teredo, ISATAP, and local-use NAT64 are unwrapped with OR-combined embeddings; only operator NAT64 and 6rd remain an accepted residual. The description below is the pre-fix record.
+> **Status: Resolved on `master`** (branch `feature/oddities-phase8-ssrf`, merge commit `4bc0fd86`): Teredo, ISATAP, and local-use NAT64 are unwrapped with OR-combined embeddings; only operator NAT64 and 6rd remain an accepted residual. The description below is the pre-fix record.
 
 In [`SsrfHostPolicy.java:239-266`](../../app/src/main/java/se/lublin/mumla/util/SsrfHostPolicy.java#L239-L266) (pre-fix lines), `isBlockedIPv6()` unwraps IPv4-mapped, IPv4-compatible, 6to4, and the well-known NAT64 `64:ff9b::/96` into `isBlockedIPv4()`, with explicit `fec0::/10`, `fc00::/7`, and `2001:db8::/32` branches. Unhandled: RFC 6052 variable-length NAT64 prefixes (`/32`–`/64`, where the IPv4 bits sit at non-`/96` offsets and need prefix-length-dependent extraction), operator-specific NAT64 prefixes, Teredo `2001::/32`, and ISATAP. Consistent with the existing rigor boundary, but an open bypass class on exotic networks. Recorded as accepted residual in the phase2-image-pipeline round-2 review.
 
@@ -320,7 +320,7 @@ In [`SsrfHostPolicy.java:239-266`](../../app/src/main/java/se/lublin/mumla/util/
 
 ### ODD-12: Thin SSRF Regression Test Layering
 
-> **Status: Resolved on branch `feature/oddities-phase8-ssrf`** (from `cff07a42`; merge pending — frozen range recorded at merge): every explicit branch is pinned by direct package-visible tests plus embedded unwrap-path vectors. The description below is the pre-fix record.
+> **Status: Resolved on `master`** (branch `feature/oddities-phase8-ssrf`, merge commit `4bc0fd86`): every explicit branch is pinned by direct package-visible tests plus embedded unwrap-path vectors. The description below is the pre-fix record.
 
 In [`SsrfHostPolicyTest.java:113-117`](../../app/src/test/java/se/lublin/mumla/util/SsrfHostPolicyTest.java#L113-L117):
 

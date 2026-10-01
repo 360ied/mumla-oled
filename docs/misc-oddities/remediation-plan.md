@@ -684,7 +684,7 @@ Add the two translations on the next strings pass.
 > **Status: COMPLETED**
 >
 > ODD-10 through ODD-12 implemented on branch `feature/oddities-phase8-ssrf`
-> (from `cff07a42`; merge pending — frozen range recorded at merge): ODD-11 closes the exactly-matchable
+> (commits `cff07a42` through `61ad4ec3`, merge commit `4bc0fd86`): ODD-11 closes the exactly-matchable
 > transition gaps (Teredo, ISATAP, local-use NAT64 `64:ff9b:1::/48` with OR-combined embeddings;
 > operator NAT64 and 6rd stay a documented residual), ODD-12 pins the shadowed policy branches
 > with direct package-visible tests, and ODD-10 closes the DNS-rebinding TOCTOU with
