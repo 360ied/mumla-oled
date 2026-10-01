@@ -95,6 +95,8 @@ public class CertificateImportActivity extends BaseActivity {
     private AlertDialog mPasswordDialog;
     private TextInputLayout mPasswordLayout;
     private TextInputEditText mPasswordField;
+    /** Guards the dialog submit against double-taps while a parse is in flight. */
+    private boolean mStoring;
     /** Off-main-thread reader for picked certificate files (5 MB cap); shut down in onDestroy. */
     private final ExecutorService mCertIoExecutor = Executors.newSingleThreadExecutor();
 
@@ -123,6 +125,9 @@ public class CertificateImportActivity extends BaseActivity {
                         } catch (IOException e) {
                             Log.w(TAG, "Could not re-read certificate after activity recreation", e);
                             runOnUiThread(() -> {
+                                if (isFinishing() || isDestroyed()) {
+                                    return;
+                                }
                                 mWaitingForPassword = false;
                                 Toast.makeText(CertificateImportActivity.this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
                                 finish();
@@ -202,6 +207,9 @@ public class CertificateImportActivity extends BaseActivity {
             } catch (IOException e) {
                 Log.w(TAG, "Could not read picked certificate", e);
                 runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) {
+                        return;
+                    }
                     Toast.makeText(CertificateImportActivity.this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
                     finish();
                 });
@@ -261,9 +269,82 @@ public class CertificateImportActivity extends BaseActivity {
 
     private void storeKeystore(final char[] password, final Uri sourceUri, final String fileName,
                                final byte[] certBytes, final boolean isRetry) {
-        KeyStore keyStore;
+        // KeyStore parsing (PBKDF/MAC over up-to-5 MB input) and the database insert
+        // run off the main thread; only dialog, Toast, and finish run on the UI thread.
+        // storeKeystore remains the single password-zeroing owner on every path.
+        mCertIoExecutor.execute(() -> {
+            try {
+                openKeystore(certBytes, password);
+            } catch (Exception e) {
+                if (isPasswordFailure(e)) {
+                    zeroPassword(password);
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) {
+                            return;
+                        }
+                        // Release the in-flight submit so the reshown dialog accepts a retry.
+                        mStoring = false;
+                        showPasswordDialog(sourceUri, fileName, certBytes, isRetry);
+                    });
+                } else {
+                    Log.w(TAG, "Certificate keystore could not be opened", e);
+                    zeroPassword(password);
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) {
+                            return;
+                        }
+                        dismissPasswordDialog();
+                        mWaitingForPassword = false;
+                        Toast.makeText(CertificateImportActivity.this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
+                        finish();
+                    });
+                }
+                return;
+            }
+
+            // Destroyed while parsing (e.g. rotation): the restore path re-reads from
+            // the Uri, so bail before inserting to avoid a duplicate certificate row.
+            // shutdownNow interrupts the worker, which sets this flag on the runner.
+            if (Thread.currentThread().isInterrupted()) {
+                zeroPassword(password);
+                return;
+            }
+
+            // DB boundary only: the at-rest store keeps a String password by design
+            // (secrets-at-rest-plan), so convert here and zero the char[] immediately.
+            String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
+            zeroPassword(password);
+            MumlaDatabase database = new MumlaSQLiteDatabase(CertificateImportActivity.this);
+            DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
+            database.close();
+
+            final boolean imported = certificate != null && certificate.getId() >= 0;
+            if (imported) {
+                Settings settings = Settings.getInstance(CertificateImportActivity.this);
+                settings.setDefaultCertificateId(certificate.getId());
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                mWaitingForPassword = false;
+                dismissPasswordDialog();
+                if (imported) {
+                    Toast.makeText(CertificateImportActivity.this,
+                            getString(R.string.certificate_import_success, fileName),
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(CertificateImportActivity.this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
+                }
+                finish();
+            });
+        });
+    }
+
+    /** Parses and verifies the PKCS#12 keystore, throwing on any failure. Runs off-thread. */
+    private static void openKeystore(byte[] certBytes, char[] password) throws Exception {
         try (ByteArrayInputStream input = new ByteArrayInputStream(certBytes)) {
-            keyStore = KeyStore.getInstance("PKCS12");
+            KeyStore keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(input, password);
             Enumeration<String> aliases = keyStore.aliases();
             while (aliases.hasMoreElements()) {
@@ -275,51 +356,17 @@ public class CertificateImportActivity extends BaseActivity {
                     }
                 }
             }
-        } catch (Exception e) {
-            if (isPasswordFailure(e)) {
-                zeroPassword(password);
-                showPasswordDialog(sourceUri, fileName, certBytes, isRetry);
-            } else {
-                Log.w(TAG, "Certificate keystore could not be opened", e);
-                if (mPasswordDialog != null) {
-                    mPasswordDialog.dismiss();
-                    mPasswordDialog = null;
-                }
-                mPasswordLayout = null;
-                mPasswordField = null;
-                zeroPassword(password);
-                Toast.makeText(this, R.string.invalid_certificate, Toast.LENGTH_LONG).show();
-                mWaitingForPassword = false;
-                finish();
-            }
-            return;
         }
+    }
 
-        mWaitingForPassword = false;
+    /** Dismisses the password dialog and releases its view references. Runs on the UI thread. */
+    private void dismissPasswordDialog() {
         if (mPasswordDialog != null) {
             mPasswordDialog.dismiss();
             mPasswordDialog = null;
         }
         mPasswordLayout = null;
         mPasswordField = null;
-        // DB boundary only: the at-rest store keeps a String password by design
-        // (secrets-at-rest-plan), so convert here and zero the char[] immediately.
-        String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
-        zeroPassword(password);
-        MumlaDatabase database = new MumlaSQLiteDatabase(this);
-        DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
-        database.close();
-
-        if (certificate != null && certificate.getId() >= 0) {
-            Settings settings = Settings.getInstance(this);
-            settings.setDefaultCertificateId(certificate.getId());
-            Toast.makeText(this, getString(R.string.certificate_import_success, fileName),
-                    Toast.LENGTH_LONG).show();
-        } else {
-            Toast.makeText(this, R.string.certificate_load_failed, Toast.LENGTH_LONG).show();
-        }
-
-        finish();
     }
 
     private void showPasswordDialog(final Uri sourceUri, final String fileName,
@@ -370,9 +417,10 @@ public class CertificateImportActivity extends BaseActivity {
         });
 
         Runnable submitAction = () -> {
-            if (mPasswordField == null) {
+            if (mPasswordField == null || mStoring) {
                 return;
             }
+            mStoring = true;
             // Copy chars straight from the field into a char[] (no intermediate
             // String) for KeyStore.load.
             Editable text = mPasswordField.getText();
