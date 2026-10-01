@@ -7,7 +7,7 @@ Its distinctive feature versus earlier phases is a **one-time Robolectric pilot 
 changes that the repo's JVM-only setup cannot exercise, so this branch introduces the minimal test infrastructure to cover them —
 with an explicit revert rule if the pilot misbehaves.
 
-**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` (commits `cc393d98` through `7e5c206c`); pending review and merge.
+**Status:** Implemented on branch `feature/oddities-phase6-comment-dialog` (commits `cc393d98` through `2a88c4c7`); pending review and merge. A pedantic review of the branch expanded scope beyond the locked recipe to every adjacent incidental (see §2.5–§2.6 and §5 deltas).
 **Scope:** Four items — ODD-13 through ODD-16 (all P3 / Low, latent or cosmetic; no live crash or leak) — plus shared `:app` Robolectric infrastructure. No behavior change except the guards described below.
 
 ---
@@ -58,14 +58,19 @@ scoped as narrowly as possible (see §2).
    `WebSettings`, and navigation callbacks are outside what the tests may rely on. Tests may drive the fragment lifecycle and assert field state / exception type, but must not assert
    anything about rendered comment content. (This is also why ODD-15's test asserts view-field nulling and listener safety,
    not preview behavior.)
-5. **ODD-13 scope includes the two subclass sites.** `UserCommentFragment.getSession()` and
-   `ChannelDescriptionFragment.getChannelId()` switch to `requireArguments()` in the same commit. Four single-identifier changes total,
-   zero behavioral risk for the supplied-bundle path.
+5. **ODD-13 scope includes the two subclass sites, plus key validation.** `UserCommentFragment.getSession()` and
+   `ChannelDescriptionFragment.getChannelId()` switch to a shared `requireIntArgument()` helper (missing key fails fast
+   instead of silently yielding `0`), validated up front via a `validateArguments()` hook called from `onCreate()` so
+   partial bundles fail at creation. Bundle keys are shared `ARG_*` constants across fragments, both menu callers
+   (which also drop deprecated `Fragment.instantiate`), and tests. Observer tracking (`trackCommentObserver`, released
+   in `onDestroy`) closes the dismiss-before-reply leak; `getService()` is null-guarded at both use sites; `mProvider`
+   is cleared in `onDetach`; the WebView is detached from its parent before `destroy()`.
 6. **ODD-14 keeps the `RuntimeException` type, adds the cause.** `throw new RuntimeException(msg, e)` — minimal diff;
    switching to `IllegalStateException` would be more idiomatic but changes the observable exception type for no functional gain.
    New signature: `onAttach(@NonNull Context context)` (add `import android.content.Context;` and
    `import androidx.annotation.NonNull;`; drop the `android.app.Activity` import if it becomes unused), cast `context`,
-   `super.onAttach(context)`.
+   `super.onAttach(context)`. A `ContextWrapper` fallback re-resolves via `getActivity()` before throwing, preserving
+   the exact type/message/cause contract.
 7. **ODD-15 guards both fields, not just `mCommentView`.** The listener touches `mCommentEdit.getText()/setText(...)` as well as
    `mCommentView.loadData(...)`, so a `mCommentView`-only guard still NPEs on `mCommentEdit` once that field is nulled.
    Locked form: early return `if (mCommentView == null || mCommentEdit == null) return;` at the top of `onTabChanged`.
@@ -207,8 +212,8 @@ Two new files, both JUnit 4 + Robolectric (`@RunWith(RobolectricTestRunner.class
 GPL header copied from a recent file with `Copyright (C) 2026 Brian Zhu`.
 Neither test asserts WebView rendering (per §2.4).
 
-Shared harness (locked). Both test classes live in `app/src/test/java/se/lublin/mumla/channel/comment/` and share one
-test-local stub host: a `FragmentActivity` implementing `HumlaServiceProvider` (`getService()` returns null,
+Shared harness (locked). Both test classes live in `app/src/test/java/se/lublin/mumla/channel/comment/` and share
+`CommentDialogStubHost` (own file in the same package): a `FragmentActivity` implementing `HumlaServiceProvider` (`getService()` returns null,
 `add/removeServiceFragment` are no-ops). The stub host is mandatory, not optional — `onAttach` casts the host to
 `HumlaServiceProvider` and rethrows `RuntimeException` on mismatch, so every lifecycle-driven test fails before reaching
 the code under test without it. Returning null from `getService()` is safe because every pinned bundle below carries a
@@ -238,11 +243,15 @@ New file `app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentArgum
 
 | Test | Procedure | Expectation |
 |---|---|---|
-| `noArgsOnCreateThrowsIllegalState` | `new UserCommentFragment()` with no arguments; `fragment.onCreate(null)` directly | `IllegalStateException` (fail-fast), not `NullPointerException` |
-| `noArgsIsEditingThrowsIllegalState` | Same fragment; `fragment.isEditing()` directly | `IllegalStateException` |
-| `suppliedBundlePreservesBehavior` | Pinned user bundle with `editing=true`; `fragment.onCreate(null)` directly; `fragment.isEditing()` | No throw; `isEditing()` returns true |
-| `channelFragmentNoArgsThrows` | `new ChannelDescriptionFragment()` with no arguments; `fragment.onCreate(null)` directly | `IllegalStateException` |
-| `channelFragmentSuppliedBundleNoThrow` | Pinned channel bundle; `fragment.onCreate(null)` directly | No throw |
+| `onCreateWithoutArgumentsThrows` | `new UserCommentFragment()` with no arguments; attach via stub host | `IllegalStateException` (message-pinned), not `NullPointerException` |
+| `isEditingWithoutArgumentsThrows` | Same fragment; `fragment.isEditing()` directly (host-free) | `IllegalStateException` (message-pinned) |
+| `onCreateWithUserBundlePreservesEditing` | Pinned user bundle with `editing=true`; attach; `isEditing()` | No throw; returns true |
+| `onCreateWithUserViewBundleClearsEditing` | Pinned user bundle with `editing=false`; attach; `isEditing()` | No throw; returns false |
+| `onCreateWithUserBundleMissingSessionThrows` | User bundle without `"session"`; attach | `IllegalStateException` (message-pinned) |
+| `channelOnCreateWithBundleMissingChannelThrows` | Channel bundle without `"channel"`; attach | `IllegalStateException` (message-pinned) |
+| `attachToNonProviderHostThrows` | Pinned bundle on a plain `FragmentActivity`; attach | `RuntimeException` naming `HumlaServiceProvider` |
+| `channelOnCreateWithoutArgumentsThrows` | `new ChannelDescriptionFragment()` with no arguments; attach via stub host | `IllegalStateException` (message-pinned) |
+| `channelOnCreateWithBundleSucceeds` | Pinned channel bundle; attach; `isEditing()` | No throw; returns false |
 
 The private `ChannelDescriptionFragment.getChannelId()` is accepted by identical-change review (private, unreachable without
 reflection, same single-identifier edit as the covered sites) — the two channel rows above pin its reachable behavior, so no
