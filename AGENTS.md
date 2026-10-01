@@ -39,8 +39,9 @@
 
 ## Verification
 - **Pre-Completion Check**: Run `./scripts/check.sh` inside the dedicated worktree before completing any code task. Passing verification signifies that the branch is ready for user review—it does NOT trigger or authorize merging into `master`. Standalone documentation-only changes (committed on `master`) are exempt from `./scripts/check.sh`.
-- **Fast Unit Tests**: FOSS debug unit tests via `nix develop --command ./gradlew testFossDebugUnitTest`.
-- **Full Test Suite** (when required): `nix develop --command ./gradlew test`.
+- **Fast Unit Tests** (JVM only): FOSS debug unit tests via `nix develop --command ./gradlew testFossDebugUnitTest`. This does NOT run the native C++ audio/crypto suite — use `./scripts/check.sh` (step 2b) or root `./gradlew check` for native coverage.
+- **Full Test Suite** (when required): `nix develop --command ./gradlew test` (JVM unit tests across all modules) plus `./scripts/test_native_audio.sh` for the native suite — or simply `./scripts/check.sh`, which runs both.
+- **Native Build Wiring**: `libraries/humla/build.gradle` reserves the 3-ABI `ndkBuild` for packaging task names and runs the host native suite only via `check`/explicit script invocation, so unit-test tasks stay fast. After an AGP upgrade, re-validate with `--dry-run` that unit-test tasks exclude `ndkBuild`/`testNativeAudioEngine` while `assembleFossDebug` includes `ndkBuild`.
 
 ## Build & Deployment
 - **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor. Build with the Nix dev shell:
