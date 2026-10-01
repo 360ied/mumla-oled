@@ -36,6 +36,14 @@ import java.util.Locale;
  * (TOCTOU) can defeat it because {@code HttpURLConnection} cannot pin
  * the checked IP. The redirect cap and per-hop checks below narrow but
  * do not eliminate that window.
+ *
+ * Transition-mechanism coverage: IPv4-mapped, IPv4-compatible, 6to4,
+ * Teredo, ISATAP, the well-known NAT64 {@code 64:ff9b::/96}, and the
+ * local-use NAT64 {@code 64:ff9b:1::/48} are unwrapped and classified by
+ * their embedded IPv4. Operator-specific NAT64 prefixes and 6rd stay an
+ * accepted residual: per RFC 6052 section-2.2 the embedded-IPv4 offsets
+ * depend on a prefix length the app cannot know statically, and
+ * heuristic extraction would overblock genuine public IPv6 addresses.
  */
 public final class SsrfHostPolicy {
 
@@ -247,6 +255,32 @@ public final class SsrfHostPolicy {
             // NAT64 64:ff9b::/96 embeds the IPv4 target in the last 32 bits.
             return isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
         }
+        // OR-combined: several transition embeddings can coincide in one crafted
+        // literal (ISATAP constrains only the IID), so every matched embedding is
+        // evaluated and any blocked one refuses the address. Do not early-return
+        // between these three checks (see phase-8 plan, ODD-11).
+        boolean transitionBlocked = false;
+        if (isTeredo(addr)) {
+            // RFC 4380: 2001::/32. Bytes 4-7 are the server IPv4; the last 32 bits
+            // are the client IPv4 XOR 0xFFFFFFFF. Either can carry the target.
+            transitionBlocked |= isBlockedIPv4(new byte[]{addr[4], addr[5], addr[6], addr[7]});
+            transitionBlocked |= isBlockedIPv4(new byte[]{
+                    (byte) (addr[12] ^ 0xFF), (byte) (addr[13] ^ 0xFF),
+                    (byte) (addr[14] ^ 0xFF), (byte) (addr[15] ^ 0xFF)});
+        }
+        if (isIsatap(addr)) {
+            // RFC 5214: interface identifier 00-00-5E-FE (u/l bit masked) + IPv4.
+            transitionBlocked |= isBlockedIPv4(new byte[]{addr[12], addr[13], addr[14], addr[15]});
+        }
+        if (isNat64LocalUse(addr)) {
+            // RFC 8215 + RFC 6052 section-2.2 /48 row: prefix 0064:ff9b:0001,
+            // u octet (byte 8) zero; v4 = bytes 6,7,9,10. Suffix ignored per
+            // RFC 6052 section-2.3 (translators ignore nonzero suffix).
+            transitionBlocked |= isBlockedIPv4(new byte[]{addr[6], addr[7], addr[9], addr[10]});
+        }
+        if (transitionBlocked) {
+            return true;
+        }
         int b0 = addr[0] & 0xFF;
         int b1 = addr[1] & 0xFF;
         if (b0 == 0xFE && (b1 & 0xC0) == 0xC0) {
@@ -287,6 +321,22 @@ public final class SsrfHostPolicy {
                 && addr[9] == 0x00
                 && addr[10] == 0x00
                 && addr[11] == 0x00;
+    }
+
+    private static boolean isTeredo(byte[] addr) {
+        return addr[0] == 0x20 && addr[1] == 0x01 && addr[2] == 0x00 && addr[3] == 0x00;
+    }
+
+    private static boolean isIsatap(byte[] addr) {
+        return (addr[8] & 0xFD) == 0x00 && addr[9] == 0x00
+                && addr[10] == 0x5E && addr[11] == (byte) 0xFE;
+    }
+
+    private static boolean isNat64LocalUse(byte[] addr) {
+        return addr[0] == 0x00 && addr[1] == 0x64
+                && addr[2] == (byte) 0xFF && addr[3] == (byte) 0x9B
+                && addr[4] == 0x00 && addr[5] == 0x01
+                && addr[8] == 0x00; // u octet must be zero; suffix bytes 11-15 ignored
     }
 
     private static boolean isIPv4Compatible(byte[] addr) {

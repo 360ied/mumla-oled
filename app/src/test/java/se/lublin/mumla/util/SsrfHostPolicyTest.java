@@ -122,4 +122,47 @@ public class SsrfHostPolicyTest extends TestCase {
         assertTrue(SsrfHostPolicy.isLiteralBlocked("[64:ff9b::a00:1]"));
         assertFalse(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("64:ff9b::808:808")));
     }
+
+    public void testTeredoEmbeddedPrivateBlocked() throws Exception {
+        // Server 8.8.8.8, client F5FFFFFA ^ FFFFFFFF = 0A000005 = 10.0.0.5.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("2001:0:808:808:8000:fb2d:f5ff:fffa")));
+        // Server 10.0.0.1, client 10.0.0.5: the server half is checked too.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("2001:0:a00:1:8000:fb2d:f5ff:fffa")));
+        // Client F7F7F7F7 ^ FFFFFFFF = 08080808 = 8.8.8.8: no overblock.
+        assertFalse(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("2001:0:808:808:8000:fb2d:f7f7:f7f7")));
+        assertTrue(SsrfHostPolicy.isLiteralBlocked("[2001:0:808:808:8000:fb2d:f5ff:fffa]"));
+    }
+
+    public void testIsatapEmbeddedPrivateBlocked() throws Exception {
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("::0:5efe:a00:5")));
+        // u/l bit set variant must match the IID mask, not an exact IID.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("::200:5efe:a00:5")));
+        assertFalse(SsrfHostPolicy.isBlockedAddress(InetAddress.getByName("::0:5efe:808:808")));
+        assertTrue(SsrfHostPolicy.isLiteralBlocked("[::0:5efe:a00:5]"));
+    }
+
+    public void testNat64LocalUseEmbeddedPrivateBlocked() throws Exception {
+        // RFC 6052 /48 row: v4 = bytes 6,7,9,10 -> 0A 00 00 05 = 10.0.0.5.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("64:ff9b:1:a00:0:500:0:0")));
+        assertFalse(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("64:ff9b:1:808:0:808:0:0")));
+        // Nonzero u octet is not a valid section-2.2 address: no extraction.
+        assertFalse(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("64:ff9b:1:a00:100:500:0:0")));
+        assertTrue(SsrfHostPolicy.isLiteralBlocked("[64:ff9b:1:a00:0:500:0:0]"));
+    }
+
+    public void testCoincidentTransitionEmbeddingsOrCombined() throws Exception {
+        // NAT64-local embedding 10.0.0.94 with an ISATAP-coincident IID
+        // trailing 8.8.8.8: the private embedding must win.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("64:ff9b:1:a00:0:5efe:808:808")));
+        // Teredo server 10.0.0.1 with an ISATAP-coincident IID trailing 8.8.8.8.
+        assertTrue(SsrfHostPolicy.isBlockedAddress(
+                InetAddress.getByName("2001:0:a00:1:0:5efe:808:808")));
+    }
 }
