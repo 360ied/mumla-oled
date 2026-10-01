@@ -1,6 +1,6 @@
 # SSRF Residuals Explainer (ODD-10 – ODD-12)
 
-Plain-language companion to the three open SSRF items in the [misc-oddities
+Plain-language companion to the three SSRF items in the [misc-oddities
 catalog](README.md). Status and remediation tracking live in the
 [remediation plan](remediation-plan.md); this file explains what the items
 mean and why they were left open.
@@ -29,7 +29,9 @@ which blocks loopback, private LAN ranges, link-local, multicast, CGNAT,
 reserved ranges, and their IPv6 equivalents — resolving hostnames via DNS
 and checking **every** returned address (fail-closed: DNS failure means
 blocked). Redirects are followed manually, re-checked per hop, and capped
-at 5. The three items below poke holes in that machinery.
+at 5. Phase 8 closed the three items below: fetches now resolve once per hop and
+connect to the checked address (ODD-10), the transition gaps are unwrapped (ODD-11),
+and the policy layers are pinned by direct tests (ODD-12).
 
 ## ODD-10: the DNS rebinding hole (TOCTOU)
 
@@ -47,20 +49,24 @@ records that flip between a public IP and the internal target. The 5-hop
 redirect cap and per-hop re-checking shrink the window but cannot close
 it — every hop has the same check-then-fetch gap.
 
-The real fix is to resolve once, connect to *that specific IP*, and still
-validate the TLS certificate against the hostname (a custom socket factory
-with manual hostname verification). That is delicate, security-critical
-code: a bug in hand-rolled TLS verification would be worse than the hole
-it fixes. Hence "accepted residual."
+The fix (shipped in Phase 8) resolves once per hop and connects to *that specific IP*:
+`fetchOneUrl` checks the resolved addresses, then fetches through an IP-literal URL — no
+second DNS lookup — while the `Host` header and, for HTTPS, SNI plus the platform hostname
+verifier keep presenting the original hostname. Crucially, no certificate logic was
+reimplemented: verification is always the platform default verifier, only the *name* it
+checks is overridden, so there is no hand-rolled TLS verification to get wrong. Several
+all-allowed addresses are tried in order; a mixed public-plus-private answer still refuses
+the whole host.
 
-Honest severity: low in practice. The attacker gets one blind request
-from the phone to an internal address, and only learns whether the
-response happened to decode as an image. No data comes back to them.
+Blast-radius note (not a downgrade — the matrix keeps ODD-10 at Medium): even unpatched,
+the attacker got one blind request from the phone to an internal address, and only learned
+whether the response happened to decode as an image. No data came back to them.
 
 ## ODD-11: the IPv6 disguises the policy doesn't see through
 
 An IPv4 address like `10.0.0.5` can wear several different IPv6 costumes,
-and the policy only recognizes some of them. IPv6 has a family of
+and the policy now sees through every exactly-matchable one — only provider-chosen
+prefixes stay uncovered. IPv6 has a family of
 **transition mechanisms** — ways to carry an IPv4 address inside a 128-bit
 IPv6 address, relics of the long IPv4-to-IPv6 migration:
 
@@ -69,19 +75,19 @@ IPv6 address, relics of the long IPv4-to-IPv6 migration:
 | IPv4-mapped (`::ffff:10.0.0.5`) | last 32 bits | Yes — unwrapped and blocked |
 | 6to4 (`2002:0a00:0005::`) | bytes 2–5 | Yes — unwrapped and blocked |
 | Well-known NAT64 (`64:ff9b::10.0.0.5`) | last 32 bits | Yes — unwrapped and blocked |
-| Teredo (`2001::…`) | last 32 bits, XOR-obfuscated | **No — missed** |
-| ISATAP (`…::0:5efe:10.0.0.5`) | last 32 bits | **No — missed** |
-| Operator / RFC 6052 NAT64 (custom prefix) | IPv4 bits at varying offsets | **No — missed** |
+| Teredo (`2001::…`) | last 32 bits, XOR-obfuscated | Yes — unwrapped, blocked if server *or* client half embeds private |
+| ISATAP (`…::0:5efe:10.0.0.5`) | last 32 bits | Yes — unwrapped (u/l-bit mask) |
+| Local-use NAT64 (`64:ff9b:1::/48`) | bytes 6,7,9,10 per RFC 6052 §2.2 | Yes — unwrapped, u-octet gated |
+| Operator / RFC 6052 NAT64 (custom prefix) | IPv4 bits at varying offsets | **No — accepted residual (prefix unknowable statically)** |
+| 6rd (provider prefix + IPv4 suffix) | IPv4 bits after a provider prefix | **No — accepted residual (prefix unknowable statically)** |
 
 Attacker DNS returns, say, a Teredo address embedding `127.0.0.1`; the
 policy inspects the IPv6 wrapper, sees nothing on its blocklists, and
 waves it through.
 
-Why it is still Low: each bypass needs the victim's network to actually
-*route* that transition mechanism toward the target. Teredo needs relays
-in the path; ISATAP needs a router on the LAN; exotic NAT64 prefixes only
-exist on networks running them. On a typical phone (carrier NAT or home
-Wi-Fi), these packets go nowhere — a real bypass class with almost no
+Why the remainder is still Low: the surviving bypass class needs the victim's network to
+actually run operator NAT64 or 6rd toward the target. On a typical phone (carrier NAT or
+home Wi-Fi), those translations don't exist — a real bypass class with almost no
 road to drive on.
 
 ## ODD-12: tests that pass for the wrong reason
@@ -109,10 +115,10 @@ and the fix is process judgment, not engineering.
 ## The one-paragraph version
 
 The image pipeline lets hostile servers aim the phone's HTTP client at
-arbitrary URLs; the SSRF policy is the fence. **ODD-10** is a gate that
-can be sprinted through between check and fetch (but the prize for doing
-so is meager). **ODD-11** is three unguarded disguises for smuggling
-private IPv4 addresses past the fence (that only work on networks exotic
-enough to honor them). **ODD-12** is the observation that two of the
-fence's rails have never actually been load-tested, because another rail
-always takes the weight first.
+arbitrary URLs; the SSRF policy is the fence. **ODD-10** was a gate that
+could be sprinted through between check and fetch (now resolve-once pinned; the meager
+prize is recorded as a blast-radius note). **ODD-11** was three unguarded disguises for
+smuggling private IPv4 addresses past the fence (now unwrapped; only provider-chosen
+prefixes remain an accepted residual). **ODD-12** was the observation that two of the
+fence's rails had never actually been load-tested, because another rail
+always took the weight first (now pinned directly).

@@ -11,7 +11,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED](#phase-5-dynamic-bandwidth--network-adaptation-p2--completed)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3) — COMPLETED](#phase-6-comment-dialog-hardening-follow-ups-p3--completed)
 7. [Phase 7: Phase-4 Integration Review Residuals (P3) — COMPLETED](#phase-7-phase-4-integration-review-residuals-p3--completed)
-8. [Phase 8: SSRF Residual Hardening (P2 / P3) — PLANNED](#phase-8-ssrf-residual-hardening-p2--p3--planned)
+8. [Phase 8: SSRF Residual Hardening (P2 / P3) — COMPLETED](#phase-8-ssrf-residual-hardening-p2--p3--completed)
 9. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
@@ -678,20 +678,21 @@ Add the two translations on the next strings pass.
 
 ---
 
-## Phase 8: SSRF Residual Hardening (P2 / P3) — PLANNED
+## Phase 8: SSRF Residual Hardening (P2 / P3) — COMPLETED
 
 > [!NOTE]
-> **Status: PLANNED**
+> **Status: COMPLETED**
 >
-> ODD-10 through ODD-12 remain open on `master`. The commit-ready design is locked in
-> [`phase8-ssrf-residuals-plan.md`](phase8-ssrf-residuals-plan.md): ODD-11 closes the exactly-matchable
-> transition gaps (Teredo, ISATAP, local-use NAT64 `64:ff9b:1::/48`; operator NAT64 and 6rd stay a documented
-> residual), ODD-12 pins the shadowed policy branches with direct package-visible tests, and ODD-10 closes
-> the DNS-rebinding TOCTOU with single-resolution pinned fetching (checked-IP connection with SNI and
-> platform hostname verification against the original host). Severity posture is unchanged: ODD-10 stays
-> Medium in the matrix with the low-practical-blast-radius note recorded in the plan. The implementing
-> branch flips this section to COMPLETED and `README.md` ODD-10 – ODD-12 to Resolved per the Phase 1–7
-> convention.
+> ODD-10 through ODD-12 implemented on branch `feature/oddities-phase8-ssrf`
+> (commits `cff07a42` through `60f4f397`, merge pending): ODD-11 closes the exactly-matchable
+> transition gaps (Teredo, ISATAP, local-use NAT64 `64:ff9b:1::/48` with OR-combined embeddings;
+> operator NAT64 and 6rd stay a documented residual), ODD-12 pins the shadowed policy branches
+> with direct package-visible tests, and ODD-10 closes the DNS-rebinding TOCTOU with
+> single-resolution pinned fetching (checked-IP connection with SNI and platform hostname
+> verification against the original host). Severity posture is unchanged: ODD-10 stays
+> Medium in the matrix with the low-practical-blast-radius note recorded in the plan. The
+> implementation follows [`phase8-ssrf-residuals-plan.md`](phase8-ssrf-residuals-plan.md); the
+> TLS device checks in its section 6 are recorded for hardware verification.
 
 ---
 

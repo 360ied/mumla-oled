@@ -1,6 +1,6 @@
 # Phase 8 Implementation Plan: SSRF Residual Hardening (ODD-10 – ODD-12)
 
-Concrete, commit-ready plan for [Phase 8](remediation-plan.md#phase-8-ssrf-residual-hardening-p2--p3--planned) of the Miscellaneous Oddities remediation
+Concrete, commit-ready plan for [Phase 8](remediation-plan.md#phase-8-ssrf-residual-hardening-p2--p3--completed) of the Miscellaneous Oddities remediation
 ([detailed records](README.md#odd-10-dns-rebinding-toctou-in-image-ssrf-check), [plain-language explainer](ssrf-residuals-explainer.md)).
 This file locks the design decisions left open by the SSRF review so the implementing branch has no deliberation left to do.
 
