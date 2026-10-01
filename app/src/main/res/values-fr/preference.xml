@@ -46,7 +46,7 @@
     <string name="defaultUsernameSum">Nom prérempli utilisé lors de l\'ajout d\'un serveur ou de la connexion à un serveur public.</string>
     <string name="defaultUsernameDefault">Utilisateur_Mumla</string>
     <string name="certificateGenerate">Générer un certificat</string>
-    <string name="certificateGenerateSum">Générer un nouveau certificat Mumla auto-signé. Recommendé pour les débutants.</string>
+    <string name="certificateGenerateSum">Générer un nouveau certificat Mumla auto-signé. Recommandé pour les débutants.</string>
     <string name="pttSettings">Paramètres de « appuyer pour parler »</string>
     <string name="voiceActivitySettings">Paramètres d\'activité vocale</string>
     <string name="hidePtt">Masquer le bouton « Appuyer pour parler »</string>
@@ -70,7 +70,7 @@
     <string name="handsetModeSum">Utilise le haut-parleur frontal et le capteur de proximité pour simuler un appel.</string>
     <string name="pttSound">Son « Appuyer pour parler »</string>
     <string name="pttSoundSum">Joue un effet sonore lorsque vous appuyez sur le bouton « Appuyer pour parler ».</string>
-    <string name="audio_per_packet"> Trames audio par paquet</string>
+    <string name="audio_per_packet">Trames audio par paquet</string>
     <string name="audio_per_packet_sum">Durée de la trame audio par paquet.</string>
     <string name="stay_awake">Rester activé</string>
     <string name="stay_awake_sum">Maintient l\'écran allumé lorsque Mumla est ouvert.</string>
