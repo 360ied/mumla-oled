@@ -57,8 +57,7 @@ public class HumlaSSLSocketFactory {
     private SSLContext mContext;
     private HumlaTrustManagerWrapper mTrustWrapper;
 
-    public HumlaSSLSocketFactory(KeyStore keystore, String keystorePassword, String trustStorePath, String trustStorePassword, String trustStoreFormat) throws NoSuchAlgorithmException, KeyManagementException, KeyStoreException, UnrecoverableKeyException, NoSuchProviderException, IOException, CertificateException {
-        mContext = SSLContext.getInstance("TLS");
+    public HumlaSSLSocketFactory(KeyStore keystore, String keystorePassword, String trustStorePath, String trustStorePassword, String trustStoreFormat) throws NoSuchAlgorithmException, KeyManagementException, KeyStoreException, UnrecoverableKeyException, NoSuchProviderException, IOException, CertificateException {        mContext = SSLContext.getInstance("TLS");
 
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("X509");
         kmf.init(keystore, keystorePassword != null ? keystorePassword.toCharArray() : new char[0]);
@@ -86,6 +85,17 @@ public class HumlaSSLSocketFactory {
     }
 
     /**
+     * Test-only seam: wraps a prebuilt context, skipping keystore and trust-store
+     * init (Android runtimes provide KeyManagerFactory algorithms the JVM test
+     * runtime lacks). {@code createSocket} touches only {@code mContext} through
+     * the {@link #layerTlsSocket} seam, which tests override; every other method
+     * requires the public constructor. Never used in production.
+     */
+    HumlaSSLSocketFactory(SSLContext context) {
+        mContext = context;
+    }
+
+    /**
      * Sets the hostname the next handshake is expected to identify. The factory
      * is created per {@link HumlaConnection#connect} call, so callers set this
      * once from {@link HumlaTCP} before {@code startHandshake()}.
@@ -99,39 +109,13 @@ public class HumlaSSLSocketFactory {
         return createSocket(host, port, 0);
     }
 
-    /**
-     * Intersects {@link #TLS_PROTOCOLS_ALLOWED} with the runtime's
-     * supported protocols. Pure (no socket needed) so it is JVM-testable.
-     *
-     * @param supportedProtocols e.g. {@code SSLSocket.getSupportedProtocols()}
-     * @return the preferred protocols present in {@code supportedProtocols},
-     *         in preferred order; empty when none match or the input is null.
-     */
-    static String[] filterTlsProtocols(String[] supportedProtocols) {
-        if (supportedProtocols == null) {
-            return new String[0];
-        }
-        List<String> enabled = new ArrayList<>(TLS_PROTOCOLS_ALLOWED.length);
-        for (String preferred : TLS_PROTOCOLS_ALLOWED) {
-            for (String supported : supportedProtocols) {
-                if (preferred.equals(supported)) {
-                    enabled.add(preferred);
-                    break;
-                }
-            }
-        }
-        return enabled.toArray(new String[0]);
-    }
-
     public SSLSocket createSocket(String host, int port, int timeoutMs) throws IOException {
         // Always layer TLS over a connected plain socket so the hostname survives
         // for SNI and post-handshake verification on both paths. A direct
         // createSocket(InetAddress, port) would verify against the IP literal.
-        Socket plainSocket = new Socket();
+        Socket plainSocket = createPlainSocket(host, port, timeoutMs);
         try {
-            plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
-            SSLSocket sslSocket =
-                    (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+            SSLSocket sslSocket = layerTlsSocket(plainSocket, host, port);
             // TLS 1.2+ floor. Protocols are not identity, so this
             // applies to every host including .onion (only endpoint
             // identification stays onion-exempt, below).
@@ -160,6 +144,48 @@ public class HumlaSSLSocketFactory {
             }
             throw e;
         }
+    }
+
+    /**
+     * Creates and connects the plain socket underneath TLS. Separate seam so JVM
+     * tests can exercise the fail-closed protocol floor without network I/O.
+     */
+    Socket createPlainSocket(String host, int port, int timeoutMs) throws IOException {
+        Socket plainSocket = new Socket();
+        plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
+        return plainSocket;
+    }
+
+    /**
+     * Layers TLS over a connected plain socket. Separate seam so JVM tests can
+     * supply a canned {@link SSLSocket}.
+     */
+    SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
+        return (SSLSocket) mContext.getSocketFactory().createSocket(plainSocket, host, port, true);
+    }
+
+    /**
+     * Intersects {@link #TLS_PROTOCOLS_ALLOWED} with the runtime's
+     * supported protocols. Pure (no socket needed) so it is JVM-testable.
+     *
+     * @param supportedProtocols e.g. {@code SSLSocket.getSupportedProtocols()}
+     * @return the preferred protocols present in {@code supportedProtocols},
+     *         in preferred order; empty when none match or the input is null.
+     */
+    static String[] filterTlsProtocols(String[] supportedProtocols) {
+        if (supportedProtocols == null) {
+            return new String[0];
+        }
+        List<String> enabled = new ArrayList<>(TLS_PROTOCOLS_ALLOWED.length);
+        for (String preferred : TLS_PROTOCOLS_ALLOWED) {
+            for (String supported : supportedProtocols) {
+                if (preferred.equals(supported)) {
+                    enabled.add(preferred);
+                    break;
+                }
+            }
+        }
+        return enabled.toArray(new String[0]);
     }
 
     /**
