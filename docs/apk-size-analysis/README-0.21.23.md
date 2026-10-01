@@ -233,9 +233,9 @@ flowchart LR
 
 ### Component Analysis
 
-1. **Opus 1.6.1, statically linked** (was: Opus 1.5.2 in a separate `libjniopus.so` via JavaCPP):
+1. **Opus 1.6.1, statically linked** (was: Opus v1.1, Dec 2013, in a separate `libjniopus.so` via JavaCPP):
    - Sources come from the pinned upstream submodule ([`libraries/humla/src/main/jni/opus`](../../libraries/humla/src/main/jni/opus)) via `celt_sources.mk` / `silk_sources.mk` / `opus_sources.mk`, compiled with `-DVAR_ARRAYS -DFIXED_POINT -DHAVE_LRINTF=1 -O3` (deep PLC/DRED `lpcnet_sources.mk` intentionally excluded as it conflicts with fixed-point).
-   - Per-ABI totals are ~62 KB *smaller* than the old two-library sum despite the major-version codec bump — whole-archive linking with `--gc-sections` / `--exclude-libs=ALL` plus the removal of the JavaCPP JNI shim more than paid for the newer codec.
+   - Per-ABI totals are ~62 KB *smaller* than the old two-library sum despite jumping twelve years of upstream codec development (v1.1 → v1.6.1) — whole-archive linking with `--gc-sections` / `--exclude-libs=ALL` plus the removal of the JavaCPP JNI shim more than paid for the newer codec.
 2. **`libhumlaaudio.so` contents**:
    - Opus codec (static `humlaopus`), RNNoise runtime (static `humlarnnoise`, weights externalized per §3), the C++ audio pipeline (`AudioInputEngine`, `OpusVoiceEncoder`, `RnnoiseProcessor`, `PreSpeechRingBuffer`, `HysteresisVad`, `SoftLimiter`, `AdaptiveLeveler`), the Speex-derived adaptive jitter buffer, the native output mix engine, and native OCB2 crypto (`crypto/`, hardened in the `feature/native-ocb2-crypto` branch).
    - Built with `-ffunction-sections -fdata-sections -fvisibility=hidden -fstack-protector-strong -D_FORTIFY_SOURCE=2`, 16 KiB page alignment (`-Wl,-z,max-page-size=16384`), and safe auto-vectorization; x86_64 remains the largest ABI (+3% over arm64) as in 0.18.4.
@@ -298,7 +298,7 @@ Updated from the 0.18.4 report: two recommendations are now **done**, a third is
 
 ## 8. Summary Conclusion
 
-The Mumla OLED 0.21.23 release package at **6.0 MB** is a full megabyte leaner than 0.18.4 (7.1 MB) — a 14.0% on-disk and 23.8% installed-footprint reduction achieved while *upgrading* the Opus codec (1.5.2 → 1.6.1), adding native OCB2 crypto and a native output engine, and shipping new PTT audio cues. The binary footprint is still dominated by the same two specialized components, with bytecode no longer dominated by a single crypto provider:
+The Mumla OLED 0.21.23 release package at **6.0 MB** is a full megabyte leaner than 0.18.4 (7.1 MB) — a 14.0% on-disk and 23.8% installed-footprint reduction achieved while *upgrading* the Opus codec (v1.1 → v1.6.1), adding native OCB2 crypto and a native output engine, and shipping new PTT audio cues. The binary footprint is still dominated by the same two specialized components, with bytecode no longer dominated by a single crypto provider:
 
 ```math
 \text{Dominant Payloads} = \underbrace{44.3\%}_{\text{RNNoise Weights}} + \underbrace{18.2\%}_{\text{Dalvik Bytecode}} + \underbrace{17.5\%}_{\text{Native (3 ABIs)}} = 80.0\% \text{ of Total APK}
