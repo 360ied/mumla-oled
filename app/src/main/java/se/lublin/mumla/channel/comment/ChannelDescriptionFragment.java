@@ -17,6 +17,10 @@
 
 package se.lublin.mumla.channel.comment;
 
+import android.os.Bundle;
+
+import androidx.annotation.NonNull;
+
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.util.HumlaObserver;
@@ -26,20 +30,24 @@ import se.lublin.humla.util.HumlaObserver;
  */
 public class ChannelDescriptionFragment extends AbstractCommentFragment {
 
+    public static final String ARG_CHANNEL = "channel";
+
     @Override
     public void requestComment(final IHumlaService service) {
         if (!service.isConnected())
             return;
-        service.registerObserver(new HumlaObserver() {
+        HumlaObserver observer = new HumlaObserver() {
             @Override
             public void onChannelStateUpdated(IChannel channel) {
-                if(channel.getId() == getChannelId() &&
+                if (channel.getId() == getChannelId() &&
                         channel.getDescription() != null) {
                     loadComment(channel.getDescription());
                     service.unregisterObserver(this);
                 }
             }
-        });
+        };
+        trackCommentObserver(service, observer);
+        service.registerObserver(observer);
         service.HumlaSession().requestChannelDescription(getChannelId());
     }
 
@@ -49,6 +57,15 @@ public class ChannelDescriptionFragment extends AbstractCommentFragment {
     }
 
     private int getChannelId() {
-        return getArguments().getInt("channel");
+        return requireIntArgument(requireArguments(), ARG_CHANNEL);
+    }
+
+    @Override
+    protected void validateArguments(@NonNull Bundle args) {
+        super.validateArguments(args);
+        requireIntArgument(args, ARG_CHANNEL);
+        if (args.getBoolean(AbstractCommentFragment.ARG_EDITING, false)) {
+            throw new IllegalStateException("ChannelDescriptionFragment does not support editing");
+        }
     }
 }

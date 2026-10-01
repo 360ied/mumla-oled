@@ -17,6 +17,10 @@
 
 package se.lublin.mumla.channel.comment;
 
+import android.os.Bundle;
+
+import androidx.annotation.NonNull;
+
 import se.lublin.humla.IHumlaService;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.util.HumlaObserver;
@@ -26,20 +30,24 @@ import se.lublin.humla.util.HumlaObserver;
  */
 public class UserCommentFragment extends AbstractCommentFragment {
 
+    public static final String ARG_SESSION = "session";
+
     @Override
     public void requestComment(final IHumlaService service) {
         if (!service.isConnected())
             return;
-        service.registerObserver(new HumlaObserver() {
+        HumlaObserver observer = new HumlaObserver() {
             @Override
             public void onUserStateUpdated(IUser user) {
-                if(user.getSession() == getSession() &&
+                if (user.getSession() == getSession() &&
                         user.getComment() != null) {
                     loadComment(user.getComment());
                     service.unregisterObserver(this);
                 }
             }
-        });
+        };
+        trackCommentObserver(service, observer);
+        service.registerObserver(observer);
         service.HumlaSession().requestComment(getSession());
     }
 
@@ -50,7 +58,13 @@ public class UserCommentFragment extends AbstractCommentFragment {
         service.HumlaSession().setUserComment(getSession(), comment);
     }
 
-    public int getSession() {
-        return getArguments().getInt("session");
+    private int getSession() {
+        return requireIntArgument(requireArguments(), ARG_SESSION);
+    }
+
+    @Override
+    protected void validateArguments(@NonNull Bundle args) {
+        super.validateArguments(args);
+        requireIntArgument(args, ARG_SESSION);
     }
 }

@@ -137,6 +137,7 @@ android {
 
     testOptions {
         unitTests.returnDefaultValues = true
+        unitTests.includeAndroidResources = true
     }
 }
 
@@ -167,4 +168,6 @@ dependencies {
     implementation 'org.jsoup:jsoup:1.23.2'
 
     testImplementation 'junit:junit:4.13.2'
+    // Robolectric pilot for the comment-dialog fragment tests; pinned: verify @Config(sdk) support before bumping.
+    testImplementation 'org.robolectric:robolectric:4.15.1'
 }

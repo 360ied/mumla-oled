@@ -17,7 +17,6 @@
 
 package se.lublin.mumla.servers;
 
-import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
 import android.os.Bundle;
@@ -91,12 +90,12 @@ public class ServerEditFragment extends DialogFragment {
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
         try {
-            mListener = (ServerEditListener) activity;
+            mListener = (ServerEditListener) context;
         } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString() + " must implement ServerEditListener!");
+            throw new ClassCastException(context.toString() + " must implement ServerEditListener!");
         }
     }
 

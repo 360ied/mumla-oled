@@ -17,9 +17,10 @@
 
 package se.lublin.mumla.util;
 
-import android.app.Activity;
+import android.content.Context;
 import android.os.Bundle;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
@@ -39,14 +40,28 @@ public abstract class HumlaServiceFragment extends Fragment {
     private boolean mBound;
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
 
         try {
-            mServiceProvider = (HumlaServiceProvider) activity;
+            mServiceProvider = (HumlaServiceProvider) context;
         } catch (ClassCastException e) {
-            throw new ClassCastException(activity.toString() + " must implement HumlaServiceProvider");
+            // A wrapped context (theme wrapper, test harness) is not the host activity itself.
+            if (getActivity() instanceof HumlaServiceProvider) {
+                mServiceProvider = (HumlaServiceProvider) getActivity();
+            } else {
+                ClassCastException failure = new ClassCastException(
+                        context.getClass().getName() + " must implement HumlaServiceProvider");
+                failure.initCause(e);
+                throw failure;
+            }
         }
+    }
+
+    @Override
+    public void onDetach() {
+        mServiceProvider = null;
+        super.onDetach();
     }
 
     @Override
@@ -59,9 +74,11 @@ public abstract class HumlaServiceFragment extends Fragment {
 
     @Override
     public void onDestroy() {
-        mServiceProvider.removeServiceFragment(this);
-        if(mServiceProvider.getService() != null && mBound)
-            onServiceDetached(mServiceProvider.getService());
+        if (mServiceProvider != null) {
+            mServiceProvider.removeServiceFragment(this);
+            if (mServiceProvider.getService() != null && mBound)
+                onServiceDetached(mServiceProvider.getService());
+        }
         super.onDestroy();
     }
 
@@ -99,6 +116,6 @@ public abstract class HumlaServiceFragment extends Fragment {
     }
 
     public IMumlaService getService() {
-        return mServiceProvider.getService();
+        return mServiceProvider != null ? mServiceProvider.getService() : null;
     }
 }

@@ -31,6 +31,7 @@
     <string name="comment_view">查看</string>
     <string name="comment_edit_source">编辑源代码</string>
     <string name="comment_view_source">查看源代码</string>
+    <string name="comment_open_link">打开链接</string>
     <!-- Server Info Fragment -->
     <string name="control_channel">控制信道</string>
     <string name="tcp_encryption_mode">使用 256 位 AES-256-SHA 算法加密</string>

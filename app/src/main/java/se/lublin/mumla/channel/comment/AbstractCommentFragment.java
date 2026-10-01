@@ -17,25 +17,30 @@
 
 package se.lublin.mumla.channel.comment;
 
-import android.app.Activity;
 import android.app.Dialog;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.TabHost;
 
+import androidx.annotation.NonNull;
 import androidx.fragment.app.DialogFragment;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import se.lublin.humla.IHumlaService;
+import se.lublin.humla.util.HumlaObserver;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
 import se.lublin.mumla.util.HumlaServiceProvider;
@@ -46,80 +51,114 @@ import se.lublin.mumla.util.HumlaServiceProvider;
  */
 public abstract class AbstractCommentFragment extends DialogFragment {
 
+    private static final String TAG = "AbstractCommentFragment";
+
+    private static final String TAB_VIEW = "View";
+    private static final String TAB_EDIT = "Edit";
+
+    public static final String ARG_COMMENT = "comment";
+    public static final String ARG_EDITING = "editing";
+
     private TabHost mTabHost;
     private WebView mCommentView;
     private EditText mCommentEdit;
     private HumlaServiceProvider mProvider;
+    private HumlaObserver mPendingObserver;
+    private IHumlaService mPendingService;
     private String mComment;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mComment = getArguments().getString("comment");
+        Bundle args = requireArguments();
+        mComment = args.getString(ARG_COMMENT);
+        validateArguments(args);
     }
 
     @Override
-    public void onAttach(Activity activity) {
-        super.onAttach(activity);
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
 
         try {
-            mProvider = (HumlaServiceProvider) activity;
+            mProvider = (HumlaServiceProvider) context;
         } catch (ClassCastException e) {
-            throw new RuntimeException(activity.getClass().getName() + " must implement HumlaServiceProvider!");
+            // A wrapped context (theme wrapper, test harness) is not the host activity itself.
+            if (getActivity() instanceof HumlaServiceProvider) {
+                mProvider = (HumlaServiceProvider) getActivity();
+            } else {
+                throw new RuntimeException(context.getClass().getName() + " must implement HumlaServiceProvider!", e);
+            }
         }
+    }
+
+    @Override
+    public void onDetach() {
+        mProvider = null;
+        super.onDetach();
     }
 
     @Override
     public Dialog onCreateDialog(Bundle savedInstanceState) {
-        LayoutInflater inflater = LayoutInflater.from(getActivity());
+        final boolean editing = isEditing();
+        LayoutInflater inflater = LayoutInflater.from(requireContext());
         View view = inflater.inflate(R.layout.dialog_comment, null, false);
 
-        mCommentView = (WebView) view.findViewById(R.id.comment_view);
+        mCommentView = view.findViewById(R.id.comment_view);
         hardenCommentWebView();
-        mCommentEdit = (EditText) view.findViewById(R.id.comment_edit);
+        mCommentEdit = view.findViewById(R.id.comment_edit);
 
-        mTabHost = (TabHost) view.findViewById(R.id.comment_tabhost);
+        mTabHost = view.findViewById(R.id.comment_tabhost);
         mTabHost.setup();
 
         if (mComment == null) {
             mCommentView.loadData("Loading...", null, null);
-            requestComment(mProvider.getService());
+            IHumlaService service = boundService();
+            if (service != null) {
+                requestComment(service);
+            } else {
+                Log.w(TAG, "No bound service; cannot fetch comment");
+            }
         } else {
             loadComment(mComment);
         }
 
-        TabHost.TabSpec viewTab = mTabHost.newTabSpec("View");
+        TabHost.TabSpec viewTab = mTabHost.newTabSpec(TAB_VIEW);
         viewTab.setIndicator(getString(R.string.comment_view));
         viewTab.setContent(R.id.comment_tab_view);
 
-        TabHost.TabSpec editTab = mTabHost.newTabSpec("Edit");
-        editTab.setIndicator(getString(isEditing() ? R.string.comment_edit_source : R.string.comment_view_source));
+        TabHost.TabSpec editTab = mTabHost.newTabSpec(TAB_EDIT);
+        editTab.setIndicator(getString(editing ? R.string.comment_edit_source : R.string.comment_view_source));
         editTab.setContent(R.id.comment_tab_edit);
 
         mTabHost.addTab(viewTab);
         mTabHost.addTab(editTab);
 
-        mTabHost.setOnTabChangedListener(new TabHost.OnTabChangeListener() {
-            @Override
-            public void onTabChanged(String tabId) {
-                if ("View".equals(tabId)) {
-                    // When switching back to view tab, update with user's HTML changes.
-                    mCommentView.loadData(mCommentEdit.getText().toString(), "text/html", "UTF-8");
-                } else if ("Edit".equals(tabId) && "".equals(mCommentEdit.getText().toString())) {
-                    // Load edittext content for the first time when the tab is selected, to improve performance with long messages.
-                    mCommentEdit.setText(mComment);
-                }
+        mTabHost.setOnTabChangedListener(tabId -> {
+            // View hierarchy may be torn down; never touch nulled fields.
+            if (mCommentView == null || mCommentEdit == null) return;
+            if (TAB_VIEW.equals(tabId)) {
+                // When switching back to view tab, update with user's HTML changes.
+                mCommentView.loadData(mCommentEdit.getText().toString(), "text/html", "UTF-8");
+            } else if (TAB_EDIT.equals(tabId) && "".equals(mCommentEdit.getText().toString())) {
+                // Load edittext content for the first time when the tab is selected, to improve performance with long messages.
+                mCommentEdit.setText(mComment);
             }
         });
 
-        mTabHost.setCurrentTab(isEditing() ? 1 : 0);
+        mTabHost.setCurrentTab(editing ? 1 : 0);
 
-        if (isEditing()) {
+        if (editing) {
             return new MaterialAlertDialogBuilder(requireActivity())
                     .setView(view)
                     .setNegativeButton(R.string.close, null)
-                    .setPositiveButton(R.string.save, (dialog, which) ->
-                            editComment(mProvider.getService(), mCommentEdit.getText().toString()))
+                    .setPositiveButton(R.string.save, (dialog, which) -> {
+                        IHumlaService service = boundService();
+                        if (service != null) {
+                            editComment(service, mCommentEdit.getText().toString());
+                        } else {
+                            Log.w(TAG, "No bound service; save discarded");
+                        }
+                    })
                     .create();
         } else {
             return new MaterialAlertDialogBuilder(requireActivity())
@@ -134,9 +173,15 @@ public abstract class AbstractCommentFragment extends DialogFragment {
         // Release the WebView's native peer; otherwise the renderer and its
         // host Activity stay reachable via mCommentView after dismissal.
         if (mCommentView != null) {
+            ViewGroup parent = (ViewGroup) mCommentView.getParent();
+            if (parent != null) {
+                parent.removeView(mCommentView);
+            }
             mCommentView.destroy();
             mCommentView = null;
         }
+        mTabHost = null;
+        mCommentEdit = null;
         super.onDestroyView();
     }
 
@@ -164,14 +209,15 @@ public abstract class AbstractCommentFragment extends DialogFragment {
                 return handleCommentUrl(request.getUrl() == null ? null : request.getUrl().toString());
             }
         });
-        mCommentView.getSettings().setJavaScriptEnabled(false);
-        mCommentView.getSettings().setAllowFileAccess(false);
-        mCommentView.getSettings().setAllowContentAccess(false);
-        mCommentView.getSettings().setAllowFileAccessFromFileURLs(false);
-        mCommentView.getSettings().setAllowUniversalAccessFromFileURLs(false);
-        boolean loadExternalImages = Settings.getInstance(getActivity()).shouldLoadExternalImages();
-        mCommentView.getSettings().setBlockNetworkImage(!loadExternalImages);
-        mCommentView.getSettings().setBlockNetworkLoads(!loadExternalImages);
+        WebSettings commentSettings = mCommentView.getSettings();
+        commentSettings.setJavaScriptEnabled(false);
+        commentSettings.setAllowFileAccess(false);
+        commentSettings.setAllowContentAccess(false);
+        commentSettings.setAllowFileAccessFromFileURLs(false);
+        commentSettings.setAllowUniversalAccessFromFileURLs(false);
+        boolean loadExternalImages = Settings.getInstance(requireContext()).shouldLoadExternalImages();
+        commentSettings.setBlockNetworkImage(!loadExternalImages);
+        commentSettings.setBlockNetworkLoads(!loadExternalImages);
     }
 
     /**
@@ -189,20 +235,83 @@ public abstract class AbstractCommentFragment extends DialogFragment {
             intent.addCategory(Intent.CATEGORY_BROWSABLE);
             try {
                 startActivity(Intent.createChooser(intent, getString(R.string.comment_open_link)));
-            } catch (ActivityNotFoundException ignored) {
+            } catch (ActivityNotFoundException e) {
+                Log.d(TAG, "No activity found to open comment link", e);
             }
         }
         return true;
     }
 
     protected void loadComment(String comment) {
-        if(mCommentView == null) return;
-        mCommentView.loadData(comment, "text/html", "UTF-8");
         mComment = comment;
+        if (mCommentView == null) return;
+        mCommentView.loadData(comment, "text/html", "UTF-8");
     }
 
-    public boolean isEditing() {
-        return getArguments().getBoolean("editing");
+    protected boolean isEditing() {
+        return requireArguments().getBoolean(ARG_EDITING);
+    }
+
+    /**
+     * Rejects bundles missing fragment-specific keys. The base implementation
+     * requires the editing flag; subclasses additionally resolve their id
+     * getter so a partial bundle fails here instead of surfacing as a silent
+     * {@code 0} at first use.
+     */
+    protected void validateArguments(@NonNull Bundle args) {
+        if (!args.containsKey(ARG_EDITING)) {
+            throw new IllegalStateException("Missing required argument \"" + ARG_EDITING + "\"");
+        }
+    }
+
+    /**
+     * Reads a required int argument, failing fast when the key is absent.
+     * {@code requireArguments()} alone only guards a missing bundle; a present
+     * bundle with a missing key would silently yield {@code 0}. A present key
+     * holding a non-int value still yields the platform default; callers
+     * always write these keys with the matching putter, so that path is
+     * unreachable outside deliberately crafted bundles.
+     */
+    protected static int requireIntArgument(@NonNull Bundle args, @NonNull String key) {
+        if (!args.containsKey(key)) {
+            throw new IllegalStateException("Missing required argument \"" + key + "\"");
+        }
+        return args.getInt(key);
+    }
+
+    /**
+     * Tracks an observer registered with the service so that dismissing the
+     * dialog before the async reply arrives does not leak it (or the fragment
+     * it captures). A previous pending observer is released first, so repeat
+     * registrations cannot orphan one. Unregistered in {@link #onDestroy}
+     * against the cached service, which stays valid for unregistration even
+     * if the provider has since unbound.
+     */
+    protected void trackCommentObserver(@NonNull IHumlaService service, @NonNull HumlaObserver observer) {
+        releasePendingObserver();
+        mPendingService = service;
+        mPendingObserver = observer;
+    }
+
+    private void releasePendingObserver() {
+        if (mPendingObserver != null) {
+            if (mPendingService != null) {
+                mPendingService.unregisterObserver(mPendingObserver);
+            }
+            mPendingObserver = null;
+            mPendingService = null;
+        }
+    }
+
+    /** Returns the bound service, or null when the provider is gone or unbound. */
+    private IHumlaService boundService() {
+        return mProvider != null ? mProvider.getService() : null;
+    }
+
+    @Override
+    public void onDestroy() {
+        releasePendingObserver();
+        super.onDestroy();
     }
 
     /**
