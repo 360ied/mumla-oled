@@ -222,7 +222,9 @@ public final class PinnedTlsSocketFactory extends SSLSocketFactory {
         HostnameVerifier platform = HttpsURLConnection.getDefaultHostnameVerifier();
         return (hostname, session) -> platform.verify(originalHost, session);
     }
-    // ... createSocket(Socket, host, port, autoClose) override below, plus five one-line delegates
+    // ... createSocket(Socket, host, port, autoClose) override below, plus seven one-line delegates
+    // (five SocketFactory overloads and two cipher-suite getters). The override count was
+    // verified against the compiler: an early draft with five delegates failed to build.
 }
 ```
 

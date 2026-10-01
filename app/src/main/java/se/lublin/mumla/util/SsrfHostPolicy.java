@@ -32,11 +32,11 @@ import java.util.Locale;
  * {@link #isAnyAddressBlocked(InetAddress[])}; literal IP hosts are
  * classified without DNS via {@link #isLiteralBlocked(String)}.
  *
- * Residual (accepted, see phase-2 plan C3): the pre-connect DNS check is
- * best-effort. DNS rebind between the check and {@code connect()}
- * (TOCTOU) can defeat it because {@code HttpURLConnection} cannot pin
- * the checked IP. The redirect cap and per-hop checks below narrow but
- * do not eliminate that window.
+ * DNS-rebinding TOCTOU: the pre-connect DNS check alone is best-effort — a rebind
+ * between the check and {@code connect()} would defeat it. Image fetches therefore
+ * resolve once per hop and connect to the checked address: {@code MumbleImageGetter}
+ * opens an IP-literal URL (no second DNS lookup) while presenting the original
+ * hostname via the Host header, SNI, and the platform hostname verifier.
  *
  * Transition-mechanism coverage: IPv4-mapped, IPv4-compatible, 6to4,
  * Teredo, ISATAP, the well-known NAT64 {@code 64:ff9b::/96}, and the

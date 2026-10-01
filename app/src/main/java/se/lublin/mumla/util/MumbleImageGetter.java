@@ -48,6 +48,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 
+import javax.net.ssl.HttpsURLConnection;
+
 import se.lublin.mumla.Settings;
 
 /**
@@ -543,12 +545,63 @@ public class MumbleImageGetter implements Html.ImageGetter {
             Log.w(TAG, "Refusing to load image with disallowed URL");
             return new FetchResult(null);
         }
-        if (isHostBlocked(url)) {
+        InetAddress[] checked = resolveAndCheck(url); // null = blocked (fail closed), per-hop
+        if (checked == null) {
             Log.w(TAG, "Refusing to load image from blocked host");
             return new FetchResult(null);
         }
+        IOException lastFailure = null;
+        for (InetAddress addr : checked) {
+            try {
+                return fetchPinned(url, addr);
+            } catch (IOException e) {
+                lastFailure = e; // try the next checked address
+            }
+        }
+        throw lastFailure; // all checked addresses failed; loop treats as fetch failure
+    }
 
-        URLConnection conn = url.openConnection();
+    /**
+     * Resolve-once SSRF check: literals are classified without DNS, hostnames are
+     * resolved and refused when any address is blocked. Returns the checked
+     * addresses, or null when the host is refused (fail closed). Every redirect
+     * hop re-resolves and re-pins through fetchOneUrl.
+     */
+    private static InetAddress[] resolveAndCheck(URL url) {
+        String host = url.getHost();
+        if (host == null || host.isEmpty()) {
+            return null;
+        }
+        if (SsrfHostPolicy.looksLikeIpLiteral(host)) {
+            if (SsrfHostPolicy.isLiteralBlocked(host)) {
+                return null;
+            }
+            try {
+                return new InetAddress[]{
+                        InetAddress.getByName(SsrfHostPolicy.normalizeHost(host))};
+            } catch (UnknownHostException e) {
+                return null;
+            }
+        }
+        try {
+            InetAddress[] addresses =
+                    InetAddress.getAllByName(SsrfHostPolicy.normalizeHost(host));
+            if (SsrfHostPolicy.isAnyAddressBlocked(addresses)) {
+                return null;
+            }
+            return addresses;
+        } catch (UnknownHostException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Fetches one hop through an already-checked address: the connection URL carries
+     * the IP literal (no second DNS lookup) while the Host header — and, for https,
+     * SNI plus the platform hostname verifier — keep presenting the original hostname.
+     */
+    private FetchResult fetchPinned(URL url, InetAddress addr) throws IOException {
+        URLConnection conn = SsrfHostPolicy.buildPinnedUrl(url, addr).openConnection();
         if (!(conn instanceof HttpURLConnection)) {
             return new FetchResult(null);
         }
@@ -557,6 +610,13 @@ public class MumbleImageGetter implements Html.ImageGetter {
             httpConn.setInstanceFollowRedirects(false);
             httpConn.setConnectTimeout(NETWORK_TIMEOUT_MS);
             httpConn.setReadTimeout(NETWORK_TIMEOUT_MS);
+            httpConn.setRequestProperty("Host", SsrfHostPolicy.hostHeaderValue(url));
+            if (httpConn instanceof HttpsURLConnection) {
+                HttpsURLConnection httpsConn = (HttpsURLConnection) httpConn;
+                httpsConn.setSSLSocketFactory(new PinnedTlsSocketFactory(url.getHost()));
+                httpsConn.setHostnameVerifier(
+                        PinnedTlsSocketFactory.verifierFor(url.getHost()));
+            }
             int status = httpConn.getResponseCode();
             if (SsrfHostPolicy.isRedirect(status)) {
                 return new FetchResult(status, httpConn.getHeaderField("Location"));
@@ -587,28 +647,6 @@ public class MumbleImageGetter implements Html.ImageGetter {
         String protocol = url.getProtocol();
         return protocol != null
                 && (protocol.equalsIgnoreCase("http") || protocol.equalsIgnoreCase("https"));
-    }
-
-    /**
-     * Best-effort pre-connect SSRF check: literals that look like IPs are
-     * classified without DNS; everything else (hostnames plus exotic
-     * numeric forms) is resolved and rejected when any address is
-     * blocked. DNS failures and empty hosts fail closed.
-     */
-    private static boolean isHostBlocked(URL url) {
-        String host = url.getHost();
-        if (host == null || host.isEmpty()) {
-            return true;
-        }
-        if (SsrfHostPolicy.looksLikeIpLiteral(host)) {
-            return SsrfHostPolicy.isLiteralBlocked(host);
-        }
-        try {
-            return SsrfHostPolicy.isAnyAddressBlocked(
-                    InetAddress.getAllByName(SsrfHostPolicy.normalizeHost(host)));
-        } catch (UnknownHostException e) {
-            return true;
-        }
     }
 
     private static byte[] readStreamWithLimit(InputStream is, int maxBytes) throws IOException {
