@@ -7,7 +7,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED](#phase-1-core-reliability--threading-architecture-p0--p1--completed)
 2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED](#phase-2-network-transport--real-time-buffer-parity-p1--p2--completed)
 3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — RESOLVED ON BRANCH](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--resolved-on-branch)
-4. [Phase 4: Modernization & Code Hygiene (P3)](#phase-4-modernization--code-hygiene-p3)
+4. [Phase 4: Modernization & Code Hygiene (P3) — COMPLETED](#phase-4-modernization--code-hygiene-p3--completed)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
 7. [Phase 7: Phase-4 Integration Review Residuals (P3)](#phase-7-phase-4-integration-review-residuals-p3)
@@ -361,13 +361,18 @@ Unify the "no key" sentinel value to `Settings.DEFAULT_PUSH_KEY` (`-1`):
 
 ---
 
-## Phase 4: Modernization & Code Hygiene (P3)
+## Phase 4: Modernization & Code Hygiene (P3) — COMPLETED
+
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 4 remediation items (ODD-04 and ODD-08) have been implemented and merged into `master` (branch `bugfix/oddities-phase4-remediation`, commits `1b08c2c6` through `23b892f0`, merge commit `f4fa74d0`): ODD-04 resolved by preferring live `WindowInsets` (`getInsetsIgnoringVisibility(systemBars | displayCutout)`) via a single per-layout `WindowMetrics` query shared by pure, unit-tested margin resolvers, with the legacy resource and hardcoded fallbacks preserved; ODD-08 resolved by pruning the dead commented-out preferences from `settings_appearance.xml`. Overlay gravities intentionally stay on physical `LEFT`/`RIGHT` (stored values and labels are explicitly physical, e.g. `topLeft` / `↖ Top left`), verified by [`MumlaOverlayMarginsTest.java`](../../app/src/test/java/se/lublin/mumla/service/MumlaOverlayMarginsTest.java).
 
 Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
 
 ### 4.1 Modernize Status & Navigation Bar Insets in Overlay HUD (ODD-04)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase4-remediation`, commits `1b08c2c6` through `23b892f0`; merge commit `f4fa74d0`).
 
 **Component**: [`MumlaOverlay.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaOverlay.java#L263-L285), [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java#L477-L489)
 
@@ -425,7 +430,7 @@ Phase 4 updates legacy Android platform APIs and prunes dead code baggage.
 
 ### 4.2 Remove Dead Commented-Out XML Preferences (ODD-08)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase4-remediation`, commit `1b08c2c6`; merge commit `f4fa74d0`).
 
 **Component**: [`settings_appearance.xml`](../../app/src/main/res/xml/settings_appearance.xml#L74-L94)
 
@@ -572,7 +577,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 3** | **ODD-06** | Robolectric test in `MumlaActivityTest.java` simulating outside touch dismissal and verifying `isFirstRun() == false`. | Fresh install; tap outside first-run certificate dialog; force stop and relaunch to verify dialog does not reappear. |
 | **Phase 3** | **ODD-07** | Unit test in `SettingsTest.java` verifying `getPushToTalkKey()` returns `-1` before and after reset; verify `KEYCODE_UNKNOWN` (`0`) does not trigger PTT. | Open PTT key preference, click "Reset Key", verify "None" is displayed and key events with `keyCode=0` are ignored. |
 | **Phase 3** | **ODD-05** | Service unit test verifying `mHotCorner.refreshGestureExclusion()` is called in `onConfigurationChanged()`. | Enable hot corner on Android 10+ device; rotate screen; perform edge back gesture over hot corner to verify exclusion is active. |
-| **Phase 4** | **ODD-04** | `SettingsOverlayTest` keeps `LEFT`/`RIGHT` overlay expectations and adds hot-corner gravity cases (four corners, default, corrupted, null); JVM-only setup cannot exercise `WindowManager`/`WindowMetrics` (no Robolectric). | Test overlay positioning on punch-hole and notch devices in portrait and landscape; verify non-zero service-context insets on API 30+. |
+| **Phase 4** | **ODD-04** | [`MumlaOverlayMarginsTest.java`](../../app/src/test/java/se/lublin/mumla/service/MumlaOverlayMarginsTest.java) verifying the pure margin resolvers (live insets win, legacy resource fallback, hardcoded defaults; edge gutter always added); `SettingsOverlayTest` keeps `LEFT`/`RIGHT` overlay expectations. JVM-only setup cannot exercise `WindowManager`/`WindowMetrics` (no Robolectric). | Test overlay positioning on punch-hole and notch devices in portrait and landscape; verify non-zero service-context insets on API 30+. |
 | **Phase 4** | **ODD-08** | Gradle build and resource compilation check (`assembleFossDebug`). | Verify settings appearance screen loads and renders without XML inflation warnings. |
 | **Phase 5** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
 | **Phase 6** | **ODD-13** | Unit test instantiating the comment fragment without arguments, verifying `IllegalStateException` instead of NPE. | Open user/channel comment dialogs; verify they render. |
