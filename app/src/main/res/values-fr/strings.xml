@@ -30,6 +30,7 @@
     <string name="comment_view">Affichage</string>
     <string name="comment_edit_source">Éditer la source</string>
     <string name="comment_view_source">Voir la source</string>
+    <string name="comment_open_link">Ouvrir le lien</string>
     <!--Server Info Fragment-->
     <string name="control_channel">Canal de contrôle</string>
     <string name="tcp_encryption_mode">Chiffré en AES256-SHA 256 bit</string>
