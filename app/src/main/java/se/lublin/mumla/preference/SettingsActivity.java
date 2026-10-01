@@ -47,7 +47,7 @@ public class SettingsActivity extends BaseActivity {
             if (fragmentClassName != null) {
                 try {
                     Class<?> fragmentClass = Class.forName(fragmentClassName);
-                    Fragment fragment = (Fragment) fragmentClass.newInstance();
+                    Fragment fragment = (Fragment) fragmentClass.getDeclaredConstructor().newInstance();
                     // Pass it on to the fragment so its onResume can set the title, see MumlaPreferenceFragment
                     fragment.setArguments(result);
                     getSupportFragmentManager()
