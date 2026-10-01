@@ -8,7 +8,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 2. [Phase 2: Network Transport & Real-Time Buffer Parity (P1 / P2) — COMPLETED](#phase-2-network-transport--real-time-buffer-parity-p1--p2--completed)
 3. [Phase 3: UI Lifecycle, Input State & Dialog Correctness (P2) — COMPLETED & RELEASED (0.21.19)](#phase-3-ui-lifecycle-input-state--dialog-correctness-p2--completed--released-02119)
 4. [Phase 4: Modernization & Code Hygiene (P3) — COMPLETED](#phase-4-modernization--code-hygiene-p3--completed)
-5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2)](#phase-5-dynamic-bandwidth--network-adaptation-p2)
+5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED](#phase-5-dynamic-bandwidth--network-adaptation-p2--completed)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3)](#phase-6-comment-dialog-hardening-follow-ups-p3)
 7. [Phase 7: Phase-4 Integration Review Residuals (P3)](#phase-7-phase-4-integration-review-residuals-p3)
 8. [Verification & Test Strategy](#verification--test-strategy)
@@ -442,13 +442,18 @@ Prune lines 74–94 from [`settings_appearance.xml`](../../app/src/main/res/xml/
 
 ---
 
-## Phase 5: Dynamic Bandwidth & Network Adaptation (P2)
+## Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED
+
+> [!NOTE]
+> **Status: COMPLETED**
+>
+> All Phase 5 remediation items (ODD-09) have been implemented and merged into `master` (branch `feature/oddities-phase5-odd09`, commits `e5ef91c4` through `f8403a61`, merge commit `cc1efe0c`; follow-up `1504dc4a` logs queue rescales at debug): ODD-09 resolved by extracting the pure `AudioHandler.computeEffectiveConfig` degradation decision (covered by [`AudioBandwidthDegradationTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/protocol/AudioBandwidthDegradationTest.java)) with a service-mediated `FramesPerPacketListener` that rescales the `HumlaUDP` send queue via `HumlaConnection.setTargetFramesPerPacket()` (40 ms audio now buffers 5 packets, preserving the ~200 ms latency ceiling), plus `fpp` sanitizing in the connection setter and `volatile` on the cross-thread audio fields. Queue-capacity and sanitize-agreement pins live in [`HumlaUDPSendQueueTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/HumlaUDPSendQueueTest.java).
 
 Phase 5 addresses secondary transport feedback loops and real-time buffer adaptation under server-enforced bandwidth constraints.
 
 ### 5.1 Scale HumlaUDP Send Queue on Bandwidth Throttling (ODD-09)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `feature/oddities-phase5-odd09`, commits `e5ef91c4` through `f8403a61`; merge commit `cc1efe0c`).
 
 **Component**: [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java), [`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java), [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java) (`connect()`, `createAudioHandler()`, `configureExtras(EXTRAS_FRAMES_PER_PACKET)`)
 
@@ -581,7 +586,7 @@ To ensure zero regressions across all phases, each change must be accompanied by
 | **Phase 3** | **ODD-05** | Service unit test verifying `mHotCorner.refreshGestureExclusion()` is called in `onConfigurationChanged()`. | Enable hot corner on Android 10+ device; rotate screen; perform edge back gesture over hot corner to verify exclusion is active. |
 | **Phase 4** | **ODD-04** | [`MumlaOverlayMarginsTest.java`](../../app/src/test/java/se/lublin/mumla/service/MumlaOverlayMarginsTest.java) verifying the pure margin resolvers (live insets win, legacy resource fallback, hardcoded defaults; edge gutter always added); `SettingsOverlayTest` keeps `LEFT`/`RIGHT` overlay expectations. JVM-only setup cannot exercise `WindowManager`/`WindowMetrics` (no Robolectric). | Test overlay positioning on punch-hole and notch devices in portrait and landscape; verify non-zero service-context insets on API 30+. |
 | **Phase 4** | **ODD-08** | Gradle build and resource compilation check (`assembleFossDebug`). | Verify settings appearance screen loads and renders without XML inflation warnings. |
-| **Phase 5** | **ODD-09** | Unit test verifying `setMaxBandwidth` invokes `setTargetFramesPerPacket` and shrinks `HumlaUDP` queue to 5 packets. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5. |
+| **Phase 5** | **ODD-09** | [`AudioBandwidthDegradationTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/protocol/AudioBandwidthDegradationTest.java) covering the pure `computeEffectiveConfig` degradation vectors; `HumlaUDPSendQueueTest.java` pins the degraded `fpp=4` capacity (5 packets) and the `setTargetFramesPerPacket` sanitize agreement. | Connect to bandwidth-limited server (32 kbps); verify send queue capacity shrinks dynamically from 10 to 5 (rescales now log at debug). |
 | **Phase 6** | **ODD-13** | Unit test instantiating the comment fragment without arguments, verifying `IllegalStateException` instead of NPE. | Open user/channel comment dialogs; verify they render. |
 | **Phase 6** | **ODD-14** | Lint check (`Deprecated` warning) confirming no `onAttach(Activity)` override remains. | Open comment dialogs; verify provider binding works. |
 | **Phase 6** | **ODD-15** | Gradle build and resource compilation check (`assembleFossDebug`). | Open and dismiss comment dialogs repeatedly; inspect heap for retained view hierarchies. |
