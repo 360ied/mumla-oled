@@ -29,8 +29,6 @@
 using namespace humla::crypto;
 
 namespace {
-// OCB2 crypt header prepended to every encrypted datagram.
-constexpr jint kCryptHeaderBytes = 4;
 std::mutex g_registryMutex;
 std::unordered_map<jlong, std::shared_ptr<CryptStateOCB2>> g_registry;
 std::atomic<jlong> g_nextHandle{1};
@@ -208,11 +206,12 @@ Java_se_lublin_humla_net_CryptState_nativeEncrypt(
         return nullptr;
     }
 
-    if (length > std::numeric_limits<jint>::max() - kCryptHeaderBytes) {
+    if (length > std::numeric_limits<jint>::max() - CRYPT_HEADER_BYTES) {
         return nullptr;
     }
-    // A nullptr return below frees the NewByteArray local reference on return to Java.
-    jbyteArray dst = env->NewByteArray(length + kCryptHeaderBytes);
+    // A nullptr return from this function frees the NewByteArray local reference
+    // on return to Java (the VM releases all local references on any return).
+    jbyteArray dst = env->NewByteArray(length + CRYPT_HEADER_BYTES);
     if (!dst) {
         return nullptr;
     }
@@ -252,7 +251,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         jbyteArray source,
         jint length) {
     auto cs = getCryptState(handle);
-    if (!cs || !source || length < kCryptHeaderBytes) {
+    if (!cs || !source || length < CRYPT_HEADER_BYTES) {
         return nullptr;
     }
 
@@ -261,8 +260,8 @@ Java_se_lublin_humla_net_CryptState_nativeDecrypt(
         return nullptr;
     }
 
-    jint plainLength = length - kCryptHeaderBytes;
-    // A nullptr return below frees the NewByteArray local reference on return to Java.
+    jint plainLength = length - CRYPT_HEADER_BYTES;
+    // As above, a nullptr return frees the NewByteArray local reference.
     jbyteArray dst = env->NewByteArray(plainLength);
     if (!dst) {
         return nullptr;
@@ -304,7 +303,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
         jint offset,
         jint cryptedLength) {
     auto cs = getCryptState(handle);
-    if (!cs || !buffer || cryptedLength < kCryptHeaderBytes || offset < 0) {
+    if (!cs || !buffer || cryptedLength < CRYPT_HEADER_BYTES || offset < 0) {
         return -1;
     }
 
@@ -329,7 +328,7 @@ Java_se_lublin_humla_net_CryptState_nativeDecryptInPlace(
     if (!ok) {
         return -1;
     }
-    return cryptedLength - kCryptHeaderBytes;
+    return cryptedLength - CRYPT_HEADER_BYTES;
 }
 
 JNIEXPORT void JNICALL

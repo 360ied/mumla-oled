@@ -19,6 +19,7 @@ package se.lublin.humla.net;
 
 import org.junit.Test;
 
+import java.io.IOException;
 import java.net.Socket;
 import java.net.SocketAddress;
 
@@ -119,6 +120,8 @@ public class HumlaSSLSocketFactoryTest {
         private final String[] mSupported;
         private String[] mEnabled = new String[0];
         private SSLParameters mParameters = new SSLParameters();
+        private RecordingSocket mBacking;
+        boolean closed;
 
         CannedSslSocket(String[] supported) {
             mSupported = supported.clone();
@@ -215,6 +218,19 @@ public class HumlaSSLSocketFactoryTest {
         public void setSSLParameters(SSLParameters params) {
             mParameters = params;
         }
+
+        /** Models autoClose ownership: closing the layered socket closes the plain one. */
+        void attach(RecordingSocket backing) {
+            mBacking = backing;
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            if (mBacking != null) {
+                mBacking.close();
+            }
+        }
     }
 
     /** Exercises the real createSocket orchestration with canned sockets. */
@@ -233,7 +249,8 @@ public class HumlaSSLSocketFactoryTest {
         }
 
         @Override
-        SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) {
+        SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
+            sslSocket.attach((RecordingSocket) plainSocket);
             return sslSocket;
         }
     }
@@ -246,7 +263,9 @@ public class HumlaSSLSocketFactoryTest {
             fail("Expected SSLHandshakeException when no TLS 1.2+ protocol is available");
         } catch (SSLHandshakeException expected) {
         }
-        assertTrue("Plain socket must be closed on the fail-closed path",
+        assertTrue("Layered socket must be closed on the fail-closed path",
+                factory.sslSocket.closed);
+        assertTrue("Plain socket must be closed via the layered socket",
                 factory.plainSocket.closed);
     }
 
@@ -269,6 +288,43 @@ public class HumlaSSLSocketFactoryTest {
         factory.createSocket("example1234567890.onion", 64738, 0);
         assertArrayEquals(new String[]{"TLSv1.2", "TLSv1.3"},
                 factory.sslSocket.getEnabledProtocols());
+        assertNull(factory.sslSocket.getSSLParameters().getEndpointIdentificationAlgorithm());
+    }
+
+    @Test
+    public void createSocketClosesPlainSocketWhenLayeringThrows() throws Exception {
+        TestableFactory factory = new TestableFactory(new String[]{"TLSv1.2"}) {
+            @Override
+            SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
+                throw new IOException("layer boom");
+            }
+        };
+        try {
+            factory.createSocket("example.com", 64738, 0);
+            fail("Expected IOException from the TLS layer");
+        } catch (IOException expected) {
+        }
+        assertTrue(factory.plainSocket.closed);
+        assertFalse(factory.sslSocket.closed);
+    }
+
+    @Test
+    public void onionHostStillFailsClosedWithoutModernTls() throws Exception {
+        TestableFactory factory = new TestableFactory(new String[]{"TLSv1"});
+        try {
+            factory.createSocket("example1234567890.onion", 64738, 0);
+            fail("Expected SSLHandshakeException even for onion hosts");
+        } catch (SSLHandshakeException expected) {
+        }
+        assertTrue(factory.sslSocket.closed);
+        assertTrue(factory.plainSocket.closed);
+    }
+
+    @Test
+    public void uppercaseTrailingDotOnionSkipsEndpointIdentification() throws Exception {
+        TestableFactory factory = new TestableFactory(new String[]{"TLSv1.2"});
+        factory.createSocket("EXAMPLE1234567890.ONION.", 64738, 0);
+        assertArrayEquals(new String[]{"TLSv1.2"}, factory.sslSocket.getEnabledProtocols());
         assertNull(factory.sslSocket.getSSLParameters().getEndpointIdentificationAlgorithm());
     }
 }

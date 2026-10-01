@@ -114,8 +114,9 @@ public class HumlaSSLSocketFactory {
         // for SNI and post-handshake verification on both paths. A direct
         // createSocket(InetAddress, port) would verify against the IP literal.
         Socket plainSocket = createPlainSocket(host, port, timeoutMs);
+        SSLSocket sslSocket = null;
         try {
-            SSLSocket sslSocket = layerTlsSocket(plainSocket, host, port);
+            sslSocket = layerTlsSocket(plainSocket, host, port);
             // TLS 1.2+ floor. Protocols are not identity, so this
             // applies to every host including .onion (only endpoint
             // identification stays onion-exempt, below).
@@ -138,8 +139,15 @@ public class HumlaSSLSocketFactory {
             }
             return sslSocket;
         } catch (IOException | RuntimeException e) {
+            // Close the layered socket when layering succeeded: with autoClose it
+            // owns the transport and cascading covers the plain socket. Close the
+            // plain socket only when layering never produced one.
             try {
-                plainSocket.close();
+                if (sslSocket != null) {
+                    sslSocket.close();
+                } else {
+                    plainSocket.close();
+                }
             } catch (IOException ignored) {
             }
             throw e;
@@ -152,7 +160,16 @@ public class HumlaSSLSocketFactory {
      */
     Socket createPlainSocket(String host, int port, int timeoutMs) throws IOException {
         Socket plainSocket = new Socket();
-        plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
+        try {
+            plainSocket.connect(new InetSocketAddress(host, port), Math.max(timeoutMs, 0));
+        } catch (IOException | RuntimeException e) {
+            // connect() owns nothing on failure: release the FD acquired above.
+            try {
+                plainSocket.close();
+            } catch (IOException ignored) {
+            }
+            throw e;
+        }
         return plainSocket;
     }
 
