@@ -482,10 +482,10 @@ public class HumlaConnection implements HumlaTCP.TCPConnectionListener, HumlaUDP
     }
 
     public void setTargetFramesPerPacket(int targetFramesPerPacket) {
-        mTargetFramesPerPacket = targetFramesPerPacket;
+        mTargetFramesPerPacket = Constants.sanitizeFramesPerPacket(targetFramesPerPacket);
         final HumlaUDP udp = mUDP;
         if (udp != null) {
-            udp.setTargetFramesPerPacket(targetFramesPerPacket);
+            udp.setTargetFramesPerPacket(mTargetFramesPerPacket);
         }
     }
 
