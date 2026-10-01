@@ -10,7 +10,7 @@ This document outlines a prioritized, phased engineering roadmap for resolving a
 4. [Phase 4: Modernization & Code Hygiene (P3) — COMPLETED](#phase-4-modernization--code-hygiene-p3--completed)
 5. [Phase 5: Dynamic Bandwidth & Network Adaptation (P2) — COMPLETED](#phase-5-dynamic-bandwidth--network-adaptation-p2--completed)
 6. [Phase 6: Comment Dialog Hardening Follow-Ups (P3) — COMPLETED](#phase-6-comment-dialog-hardening-follow-ups-p3--completed)
-7. [Phase 7: Phase-4 Integration Review Residuals (P3)](#phase-7-phase-4-integration-review-residuals-p3)
+7. [Phase 7: Phase-4 Integration Review Residuals (P3) — COMPLETED](#phase-7-phase-4-integration-review-residuals-p3--completed)
 8. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
@@ -539,20 +539,16 @@ Add the two translations on the next strings pass.
 
 ---
 
-## Phase 7: Phase-4 Integration Review Residuals (P3)
+## Phase 7: Phase-4 Integration Review Residuals (P3) — COMPLETED
 
 > [!NOTE]
-> **Status: OPEN**
+> **Status: COMPLETED**
 >
-> Pedantic items left over from the `phase4-integration` review after all defects were fixed. Details are in ODD-17 through ODD-20 in the [README](README.md).
->
-> No standalone implementation plan (no `phase7-*.md`): style-only sub-items ship as drive-by nits with the next touch of each file. Three sub-items are decisions, not nits, and gate the rest: (a) the default-on exported TALK broadcast (ODD-19), (b) the main-thread certificate read (ODD-18), and (c) the `allowBackup` posture (ODD-20). They are tracked as explicit gates below, not as P3 polish.
->
-> **Suggested order**: 7.3 decision (TALK default) → 7.2 main-thread I/O → 7.1 socket seam → style nits last.
+> All Phase 7 remediation items (ODD-17 through ODD-20) have been implemented and merged into `master` (branch `bugfix/oddities-phase7-remediation`, commits `eda3a519` through `ecbc7591`, merge commit `ca6094fe`): ODD-17 resolved by naming the crypt-header constant and adding the injectable TLS socket seam with fail-closed tests; ODD-18 resolved by moving the certificate import read off the main thread with single-owner password zeroing and `Log` hygiene; ODD-19 resolved by hardening the TALK receiver (ignore-and-log unknown actions, transmit-mode gating) with fr/zh translations under the recorded keep-default-on decision; ODD-20 resolved by trimming the signing checks and restoring the manifest note, with the `allowBackup` posture tracked separately.
 
 ### 7.1 Native and TLS Hygiene (ODD-17)
 
-**Status**: Open
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase7-remediation`, commits `eda3a519` through `ecbc7591`; merge commit `ca6094fe`).
 
 **Component**: [`NativeCryptStateJni.cpp`](../../libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp) (`nativeEncrypt`), [`HumlaSSLSocketFactory.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.java), [`HumlaSSLSocketFactoryTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/net/HumlaSSLSocketFactoryTest.java)
 
@@ -578,7 +574,7 @@ Add the two translations on the next strings pass.
 
 ### 7.2 Certificate Import/Export Hygiene (ODD-18)
 
-**Status**: Open (style nits) + one gated I/O fix (not P3, see 7.2a)
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase7-remediation`, commits `660176cb` through `8786a024`; merge commit `ca6094fe`).
 
 **Component**: [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java), [`CertificateExportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java), [`MumlaTrustStore.java`](../../app/src/main/java/se/lublin/mumla/util/MumlaTrustStore.java), [`CertificateExportTest.java`](../../app/src/test/java/se/lublin/mumla/preference/CertificateExportTest.java)
 
@@ -616,7 +612,7 @@ Add the two translations on the next strings pass.
 
 ### 7.3 Server Edit Dialog, Strings and TALK Receiver Polish (ODD-19)
 
-**Status**: Open (polish) + one gated policy decision (not P3, see 7.3a)
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase7-remediation`, commits `b5c9a6ea` through `ecbc7591`; merge commit `ca6094fe`).
 
 **Component**: [`dialog_server_edit.xml`](../../app/src/main/res/layout/dialog_server_edit.xml), [`ServerEditFragment.java`](../../app/src/main/java/se/lublin/mumla/servers/ServerEditFragment.java), [`TalkBroadcastReceiver.java`](../../app/src/main/java/se/lublin/mumla/service/ipc/TalkBroadcastReceiver.java), [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java), `values/preference.xml`, `values/strings.xml`
 
@@ -655,7 +651,7 @@ Add the two translations on the next strings pass.
 
 ### 7.4 Settings, Manifest and Build Script Hygiene (ODD-20)
 
-**Status**: Open (drive-by nits) + one separately tracked posture item (not P3, see below)
+**Status**: Resolved on `master` (branch `bugfix/oddities-phase7-remediation`, commit `d0002a0e`; merge commit `ca6094fe`).
 
 **Component**: [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java), [`app/build.gradle`](../../app/build.gradle), `values/preference.xml`, `values/strings.xml`, [`AndroidManifest.xml`](../../app/src/main/AndroidManifest.xml)
 

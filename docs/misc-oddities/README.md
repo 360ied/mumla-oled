@@ -51,10 +51,10 @@ This directory catalogs defects, architectural inconsistencies, performance bott
 | **ODD-14** | **UI / Compatibility** | **Low** | **Resolved** | **Modernized attachment**: overrides `onAttach(Context)` with the `ClassCastException` cause chained; the same migration applied to `HumlaServiceFragment` and the five remaining subclasses. | [`AbstractCommentFragment.java:62`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L62-L68) |
 | **ODD-15** | **Memory / Lifecycle** | **Low** | **Resolved** | **Completed teardown**: `onDestroyView()` detaches and nulls all three view fields, the tab listener null-guards both dereferenced views, comment observers are released in `onDestroy`, covered by [`CommentFragmentTeardownTest.java`](../../app/src/test/java/se/lublin/mumla/channel/comment/CommentFragmentTeardownTest.java). | [`AbstractCommentFragment.java:132`](../../app/src/main/java/se/lublin/mumla/channel/comment/AbstractCommentFragment.java#L132-L141) |
 | **ODD-16** | **UI / i18n** | **Low** | **Resolved** | **Translated chooser title**: `comment_open_link` is now translated in `values-fr` (`Ouvrir le lien`) and `values-zh-rCN` (`打开链接`). | [`strings.xml:56`](../../app/src/main/res/values/strings.xml#L56) |
-| **ODD-17** | **Code Hygiene** | **Low** | **Open** | **Phase-4 Native and TLS Code Hygiene**: unnamed crypt-header constant and misplaced overflow guard in the JNI encrypt path, `filterTlsProtocols` split from its neighbours, and no test of the `createSocket` protocol-floor wiring. | [`NativeCryptStateJni.cpp`](../../libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp) |
-| **ODD-18** | **Code Hygiene** | **Low** | **Open** | **Phase-4 Certificate Import/Export Hygiene**: write-only `mPendingCertBytes`, split password-zeroing ownership, `printStackTrace` instead of `Log`, fuzzy `MAC_PATTERN`, empty-string trust-store password constant, and JUnit 3 test style. | [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java) |
-| **ODD-19** | **UI / i18n** | **Low** | **Open** | **Phase-4 Server Edit Dialog, Strings and TALK Receiver Polish**: unstyled non-scrolling URL-password warning row, missing fr/zh translations, undocumented overload parameters, and `TalkBroadcastReceiver` edge cases. | [`dialog_server_edit.xml`](../../app/src/main/res/layout/dialog_server_edit.xml) |
-| **ODD-20** | **Code Hygiene** | **Low** | **Open** | **Phase-4 Settings, Manifest and Build Script Hygiene**: boxed `Boolean` default, accessor naming, redundant `hasProperty`/`enabled` checks, duplicated signing condition, and string/preference naming inconsistencies. | [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java) |
+| **ODD-17** | **Code Hygiene** | **Low** | **Resolved** | **Phase-4 Native and TLS Code Hygiene**: unnamed crypt-header constant and misplaced overflow guard in the JNI encrypt path, `filterTlsProtocols` split from its neighbours, and no test of the `createSocket` protocol-floor wiring. | [`NativeCryptStateJni.cpp`](../../libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp) |
+| **ODD-18** | **Code Hygiene** | **Low** | **Resolved** | **Phase-4 Certificate Import/Export Hygiene**: write-only `mPendingCertBytes`, split password-zeroing ownership, `printStackTrace` instead of `Log`, fuzzy `MAC_PATTERN`, empty-string trust-store password constant, and JUnit 3 test style. | [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java) |
+| **ODD-19** | **UI / i18n** | **Low** | **Resolved** | **Phase-4 Server Edit Dialog, Strings and TALK Receiver Polish**: unstyled non-scrolling URL-password warning row, missing fr/zh translations, undocumented overload parameters, and `TalkBroadcastReceiver` edge cases. | [`dialog_server_edit.xml`](../../app/src/main/res/layout/dialog_server_edit.xml) |
+| **ODD-20** | **Code Hygiene** | **Low** | **Resolved** | **Phase-4 Settings, Manifest and Build Script Hygiene**: boxed `Boolean` default, accessor naming, redundant `hasProperty`/`enabled` checks, duplicated signing condition, and string/preference naming inconsistencies. | [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java) |
 
 ---
 
@@ -383,6 +383,8 @@ In [`AbstractCommentFragment.java:132-141`](../../app/src/main/java/se/lublin/mu
 
 ### ODD-17: Phase-4 Native and TLS Code Hygiene
 
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase7-remediation`, merge commit `ca6094fe`): the crypt-header size is a named constant and `createSocket` enforces the TLS 1.2+ floor through an injectable socket seam pinned by fail-closed tests. The description below is the pre-fix record.
+
 Residual pedantic items from the `phase4-integration` review, all non-behavioral:
 
 - In [`NativeCryptStateJni.cpp`](../../libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp), the encrypt-side overflow guard `length > INT_MAX - 4` is correct but uses the literal `4` (the crypt header size), which is repeated in several other places in the file. A named `constexpr jint kCryptHeaderBytes = 4` would document it, and `std::numeric_limits<jint>::max()` is more type-accurate than `INT_MAX`. The guard also sits after `GetArrayLength` instead of with the other argument checks, and is effectively unreachable because `length <= srcLen` already bounds it (no test exercises it).
@@ -393,6 +395,8 @@ Residual pedantic items from the `phase4-integration` review, all non-behavioral
 ---
 
 ### ODD-18: Phase-4 Certificate Import/Export Hygiene
+
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase7-remediation`, merge commit `ca6094fe`): the certificate read moved off the main thread, password zeroing has a single owner, and `printStackTrace` is replaced with `Log`. The description below is the pre-fix record.
 
 Residual pedantic items in [`CertificateImportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java), [`CertificateExportActivity.java`](../../app/src/main/java/se/lublin/mumla/preference/CertificateExportActivity.java), [`MumlaTrustStore.java`](../../app/src/main/java/se/lublin/mumla/util/MumlaTrustStore.java) and their tests:
 
@@ -408,6 +412,8 @@ Residual pedantic items in [`CertificateImportActivity.java`](../../app/src/main
 
 ### ODD-19: Phase-4 Server Edit Dialog, Strings and TALK Receiver Polish
 
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase7-remediation`, merge commit `ca6094fe`): the TALK receiver ignores-and-logs unknown actions with transmit-mode gating, the warning row is styled, and fr/zh translations ship under the recorded keep-default-on decision. The description below is the pre-fix record.
+
 - [`dialog_server_edit.xml`](../../app/src/main/res/layout/dialog_server_edit.xml): the URL-password warning `TextView` has no `textAppearance`/color emphasis, no bottom margin before the title row, and no `accessibilityLiveRegion` (it can now hide while the user edits). The dialog root is not scrollable (pre-existing), so the extra row makes landscape overflow more likely.
 - `server_edit_url_password_warning` in `strings.xml` and the `pref_talk_broadcast_*` strings have no `values-fr`/`values-zh-rCN` translations (`MissingTranslation` lint is disabled, so nothing flags this).
 - [`ServerEditFragment.java`](../../app/src/main/java/se/lublin/mumla/servers/ServerEditFragment.java): the four-argument `createServerEditDialog` overload forwards to the five-argument one, and neither Javadoc documents `@param context`. The `urlPassword` flag could be derived from `getServer().getPassword()` for `CONNECT_ACTION` + `ignoreTitle`, removing the extra parameter. `Fragment.instantiate` is deprecated (pre-existing).
@@ -418,6 +424,8 @@ Residual pedantic items in [`CertificateImportActivity.java`](../../app/src/main
 ---
 
 ### ODD-20: Phase-4 Settings, Manifest and Build Script Hygiene
+
+> **Status: Resolved on `master`** (branch `bugfix/oddities-phase7-remediation`, merge commit `ca6094fe`): the signing checks are trimmed and the manifest note restored, with the `allowBackup` posture tracked separately. The description below is the pre-fix record.
 
 - [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java): `DEFAULT_ALLOW_TALK_BROADCAST` is a boxed `Boolean` (copying `DEFAULT_CHAT_NOTIFY`); plain `boolean` avoids unboxing. The default is duplicated as a literal in `settings_general.xml`. The accessor `isTalkBroadcastAllowed` does not mirror the constant name `PREF_ALLOW_TALK_BROADCAST`.
 - [`app/build.gradle`](../../app/build.gradle): `android.hasProperty("signingConfigs")` is always true for the Android extension, and the "has release signing" condition is duplicated between the `release {}` build type and the `taskGraph.whenReady` guard (extract a shared `def`). `whenReady` dereferences the `android` extension at execution time, which would not be configuration-cache compatible if the cache is ever enabled (only `org.gradle.caching` is on today).
