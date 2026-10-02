@@ -793,6 +793,9 @@ public class MumlaService extends HumlaService implements
             case Settings.PREF_HALF_DUPLEX:
                 changedExtras.putBoolean(EXTRAS_HALF_DUPLEX, mSettings.isHalfDuplex());
                 break;
+            case Settings.PREF_BLUETOOTH_HEADSET:
+                changedExtras.putBoolean(EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
+                break;
             case Settings.PREF_ADAPTIVE_LEVELER_ENABLED:
                 changedExtras.putBoolean(EXTRAS_ADAPTIVE_LEVELER,
                         mSettings.isAdaptiveLevelerEnabled());
