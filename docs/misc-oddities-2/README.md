@@ -15,6 +15,7 @@ numbering from [misc-oddities](../misc-oddities/README.md) (ODD-01–ODD-20).
    - [ODD-24: Sticky `mForceTcp` Never Clears](#odd-24-sticky-mforcetcp-never-clears)
    - [ODD-25: `setVoiceTargetId` NPE While Disconnected](#odd-25-setvoicetargetid-npe-while-disconnected)
    - [ODD-26: Channel Fragment Listener Unregistered Late](#odd-26-channel-fragment-listener-unregistered-late)
+   - [ODD-27: Unguarded Input-Rate Parse Crashes Connect](#odd-27-unguarded-input-rate-parse-crashes-connect)
 
 ---
 
@@ -28,6 +29,7 @@ numbering from [misc-oddities](../misc-oddities/README.md) (ODD-01–ODD-20).
 | **ODD-24** | **Service Logic** | **Low** | **Open** | **Sticky `mForceTcp`**: `configureExtras` accumulates with `\|=`, so once forced, TCP stays forced for the service lifetime even if the setting is later disabled. | [`HumlaService.java:788`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L788) |
 | **ODD-25** | **Service Logic** | **Low** | **Open** | **`setVoiceTargetId` NPE**: dereferences `mAudioHandler` without a null check; callable while disconnected. | [`HumlaService.java:1320`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1320-L1327) |
 | **ODD-26** | **UI / Lifecycle** | **Low** | **Open** | **Late listener unregister**: the preference listener is registered in `onActivityCreated` but unregistered in `onDestroy` rather than `onDestroyView`, surviving view recreations. | [`ChannelFragment.java:205`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L205) vs [`ChannelFragment.java:270`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L270) |
+| **ODD-27** | **Preferences** | **Low** | **Open** | **Unguarded input-rate parse**: `getInputSampleRate()` calls `Integer.parseInt` without the `try/catch` fallback its `getFramesPerPacket()` neighbor has; a corrupted pref string crashes connect. | [`Settings.java:242`](../../app/src/main/java/se/lublin/mumla/Settings.java#L242-L244) |
 
 ---
 
@@ -115,3 +117,20 @@ unregisters in `onDestroy` rather than `onDestroyView`, so the retained
 listener survives view recreations. Fix: move the unregister to
 `onDestroyView` to mirror the view lifecycle. Latent: the callback only
 touches view state through null-guarded paths today.
+
+### ODD-27: Unguarded Input-Rate Parse Crashes Connect
+
+> Origin: pedantic review of the `bt-sco-manual` worktree (incidental, pre-existing).
+
+In [`Settings.java:242-244`](../../app/src/main/java/se/lublin/mumla/Settings.java#L242-L244):
+
+```java
+public int getInputSampleRate() {
+    return Integer.parseInt(preferences.getString(Settings.PREF_INPUT_RATE, DEFAULT_RATE));
+}
+```
+
+The adjacent [`getFramesPerPacket()`](../../app/src/main/java/se/lublin/mumla/Settings.java#L428-L434)
+catches `NumberFormatException` and falls back to `Constants.DEFAULT_FRAMES_PER_PACKET`.
+A hand-edited or backup-restored `PREF_INPUT_RATE` string kills the connect path and every
+`PREF_INPUT_RATE` change. Fix: mirror the `try/catch` fallback.
