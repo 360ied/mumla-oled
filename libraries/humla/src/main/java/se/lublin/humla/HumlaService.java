@@ -147,6 +147,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
     private volatile boolean mScoRequested;
     private BluetoothScoManager mScoManager;
+    private boolean mScoRouteActive;
 
     private byte mVoiceTargetId;
     private WhisperTargetList mWhisperTargetList;
@@ -407,8 +408,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
-        // stopScoWithNotify null-guards the manager itself.
-        stopScoWithNotify();
+        // Bare teardown, no notify: observers detach in onDestroy and posted
+        // UI work (SoundPool recreate, proximity lock) would revive audio on
+        // a dead service.
+        if (mScoManager != null) {
+            mScoManager.stop();
+        }
+        mAudioBuilder.setScoEnabled(false);
+        mScoRouteActive = false;
         releaseWifiLock();
     }
 
@@ -740,6 +747,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         boolean wasActive = mScoManager.isActive();
         mScoManager.stop();
         mAudioBuilder.setScoEnabled(false);
+        mScoRouteActive = false;
         if (wasActive) {
             // Posted: teardown callers (disconnect, destroy, mid-call disable)
             // may run off the main thread, but hook and observers are
@@ -772,9 +780,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     /**
      * Applies a confirmed route to the pipeline, cue hook, and observers in
-     * that order. All three route callbacks converge here.
+     * that order. All three route callbacks converge here. Skips reload and
+     * notify when the applied route is unchanged (e.g. a failure that never
+     * went active); the failure toast is the caller's job, not this method's.
      */
     private void applyScoRoute(boolean active, String reason) {
+        if (active == mScoRouteActive) {
+            Log.i(TAG, "SCO route unchanged, skipping reload (" + reason + ").");
+            return;
+        }
+        mScoRouteActive = active;
         mAudioBuilder.setScoEnabled(active);
         reloadAudioForRoute(reason);
         onScoRouteChanged();

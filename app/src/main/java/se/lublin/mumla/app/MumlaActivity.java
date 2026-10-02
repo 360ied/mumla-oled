@@ -159,6 +159,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService.registerObserver(mObserver);
             mService.clearChatNotifications(); // Clear chat notifications on resume.
             mDrawerAdapter.notifyDataSetChanged();
+            // Re-sync volume routing: onCreate ran pre-bind (MUSIC), and a
+            // rebound already-active SCO link emits no transition event.
+            setVolumeControlStream(useVoiceCallVolume() ?
+                    AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
 
             for (HumlaServiceFragment fragment : mServiceFragments)
                 fragment.setServiceBound(true);
@@ -627,9 +631,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     /**
      * Asserts Bluetooth headset state. Absolute, not a toggle; enabling
      * without the grant defers past the permission result. Explicit retries
-     * go through retryBluetoothSco, not same-value preference writes.
+     * go through retryBluetoothSco. No-op writes return early and never
+     * dispatch preference listeners.
      */
     public void setBluetoothHeadset(boolean enabled) {
+        if (mSettings.isBluetoothHeadset() == enabled) {
+            return;
+        }
         if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 && ContextCompat.checkSelfPermission(MumlaActivity.this,
                         Manifest.permission.BLUETOOTH_CONNECT)
@@ -897,12 +905,24 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
         if (grantResults.length == 0) {
+            // Dismissed (not denied) system dialog: resume or explain instead
+            // of stranding the pending action.
             if (requestCode == PERMISSIONS_REQUEST_BLUETOOTH_CONNECT) {
+                boolean menuPending = mBluetoothMenuPendingPerm;
                 mBluetoothMenuPendingPerm = false;
+                if (!menuPending && mServerPendingPerm != null) {
+                    mSettings.setBluetoothHeadset(false);
+                    Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
+                            Toast.LENGTH_LONG).show();
+                    connectToServerWithPerm();
+                }
             } else if (requestCode == PERMISSIONS_REQUEST_POST_NOTIFICATIONS) {
                 // Cancelled dialog: proceed without notifications instead of
                 // stranding the pending connect.
                 connectToServerWithPerm();
+            } else if (requestCode == PERMISSIONS_REQUEST_RECORD_AUDIO) {
+                Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_microphone),
+                        Toast.LENGTH_LONG).show();
             }
             return;
         }

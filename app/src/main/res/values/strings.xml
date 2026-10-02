@@ -188,7 +188,7 @@
     <string name="shout_configure">Configure Voice Target</string>
     <string name="grant_perm_microphone">Please grant microphone permission.</string>
     <string name="grant_perm_bluetooth">Please grant Bluetooth permission to use a headset.</string>
-    <string name="bluetooth_sco_connecting">Bluetooth headset connecting\u2026</string>
+    <string name="bluetooth_sco_connecting">Bluetooth headset connecting…</string>
     <string name="grant_perm_notifications">Please grant permission to send notifications.</string>
     <string name="grant_perm_draw_over_apps">Please grant permission to display over other apps.</string>
     <string name="default_">Default</string>
