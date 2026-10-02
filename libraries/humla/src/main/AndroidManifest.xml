@@ -24,8 +24,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Needed for ConnectivityManager, at least -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Doze-shield experiment: HumlaService holds a WIFI_MODE_FULL_HIGH_PERF
-         WifiLock while connected so the radio never power-saves on battery. -->
+    <!-- Doze shield: HumlaService holds a WIFI_MODE_FULL_HIGH_PERF WifiLock
+         while connected so the radio never power-saves on battery. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 

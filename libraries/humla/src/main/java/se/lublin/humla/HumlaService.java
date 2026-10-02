@@ -318,19 +318,22 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService");
         mWakeLock.setReferenceCounted(false);
 
-        // Doze-shield experiment (bugfix/doze-shield-ab): keep the WiFi radio out of
-        // firmware power-save for the lifetime of the connection. No WifiLock was
-        // ever held (dumpsys wifi: zero locks acquired), so on battery + screen-off
-        // the radio slept between Doze maintenance windows, stalling keepalives past
-        // Murmur's 30 s timeout. Created here, acquired in connect(), released on
-        // final teardown. Uses the application context so the lock outlives config
+        // Doze shield: keep the WiFi radio out of firmware power-save for the
+        // lifetime of the connection. Without a WifiLock (dumpsys wifi showed
+        // zero locks acquired), on battery + screen-off the radio slept between
+        // Doze maintenance windows, stalling keepalives past Murmur's 30 s
+        // timeout. Created here, acquired in connect(), released on final
+        // teardown. Uses the application context so the lock outlives config
         // changes; reference-counted false to mirror mWakeLock semantics.
+        // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): LOW_LATENCY needs
+        // API 30+ while this library targets API 21+, and HIGH_PERF is the
+        // documented VoIP-compatible mode available on all supported devices.
         try {
             WifiManager wifiManager = (WifiManager) getApplicationContext()
                     .getSystemService(WIFI_SERVICE);
             if (wifiManager != null) {
                 mWifiLock = wifiManager.createWifiLock(
-                        WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Humla:HumlaService");
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Humla:HumlaServiceWifi");
                 mWifiLock.setReferenceCounted(false);
             }
         } catch (Exception e) {
@@ -931,6 +934,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
+        releaseWifiLock();
     }
 
     @Override
