@@ -60,6 +60,13 @@ public interface IHumlaObserver {
 
     void onVoiceTargetChanged(VoiceTargetMode mode);
 
+    /**
+     * Called on the main thread when the Bluetooth SCO link transitions.
+     * @param active true if SCO is up and carrying call audio, false on
+     *               teardown or failed bring-up (phone-audio fallback).
+     */
+    void onBluetoothScoChanged(boolean active);
+
     void onLogInfo(String message);
 
     void onLogWarning(String message);

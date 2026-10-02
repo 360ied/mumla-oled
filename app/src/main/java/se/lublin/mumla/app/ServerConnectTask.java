@@ -58,6 +58,9 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
 
         int audioSource = mSettings.isHandsetMode() ?
                 MediaRecorder.AudioSource.DEFAULT : MediaRecorder.AudioSource.MIC;
+        // Voice-call stream only pre-confirm when handset mode is on: the
+        // service selects it on confirmed SCO, so starting there early would
+        // misroute the failure fallback. See EXTRAS_BLUETOOTH_SCO.
         int audioStream = mSettings.isHandsetMode() ?
                 AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
 
@@ -80,6 +83,7 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         connectIntent.putExtra(HumlaService.EXTRAS_TRUST_STORE_PASSWORD, MumlaTrustStore.getTrustStorePassword());
         connectIntent.putExtra(HumlaService.EXTRAS_TRUST_STORE_FORMAT, MumlaTrustStore.getTrustStoreFormat());
         connectIntent.putExtra(HumlaService.EXTRAS_HALF_DUPLEX, mSettings.isHalfDuplex());
+        connectIntent.putExtra(HumlaService.EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
         connectIntent.putExtra(HumlaService.EXTRAS_ENABLE_PREPROCESSOR, mSettings.isPreprocessorEnabled());
         connectIntent.putExtra(HumlaService.EXTRAS_ADAPTIVE_LEVELER, mSettings.isAdaptiveLevelerEnabled());
         if (server.isSaved()) {

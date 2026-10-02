@@ -145,6 +145,9 @@ public class Settings {
     public static final String PREF_HANDSET_MODE = "handset_mode";
     public static final boolean DEFAULT_HANDSET_MODE = false;
 
+    public static final String PREF_BLUETOOTH_HEADSET = "bluetooth_headset";
+    public static final boolean DEFAULT_BLUETOOTH_HEADSET = false;
+
     public static final String PREF_PTT_SOUND = "ptt_sound";
     public static final boolean DEFAULT_PTT_SOUND = false;
 
@@ -439,6 +442,14 @@ public class Settings {
 
     public boolean isHandsetMode() {
         return preferences.getBoolean(PREF_HANDSET_MODE, DEFAULT_HANDSET_MODE);
+    }
+
+    public boolean isBluetoothHeadset() {
+        return preferences.getBoolean(PREF_BLUETOOTH_HEADSET, DEFAULT_BLUETOOTH_HEADSET);
+    }
+
+    public void setBluetoothHeadset(boolean enabled) {
+        preferences.edit().putBoolean(PREF_BLUETOOTH_HEADSET, enabled).apply();
     }
 
     public boolean isPttSoundEnabled() {

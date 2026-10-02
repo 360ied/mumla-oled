@@ -32,6 +32,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
@@ -55,6 +56,7 @@ import se.lublin.humla.util.IHumlaObserver;
 import se.lublin.humla.util.VoiceTargetMode;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
+import se.lublin.mumla.app.MumlaActivity;
 import se.lublin.mumla.util.HumlaServiceFragment;
 
 /**
@@ -228,9 +230,46 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     @Override
+    public void onPrepareOptionsMenu(Menu menu) {
+        super.onPrepareOptionsMenu(menu);
+        MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth_headset);
+        if (bluetoothItem != null && getActivity() != null) {
+            // Checked reflects the confirmed link, not the raw toggle: a
+            // failed or in-flight bring-up reads unchecked until SCO is up.
+            boolean scoUp = getService() != null && getService().isBluetoothScoActive();
+            bluetoothItem.setVisible(getService() != null && getService().isConnected());
+            bluetoothItem.setChecked(scoUp);
+        }
+    }
+
+    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        Settings settings = Settings.getInstance(getActivity());
         int itemId = item.getItemId();
+        if (itemId == R.id.menu_bluetooth_headset) {
+            if (getActivity() instanceof MumlaActivity) {
+                // Assert the displayed state, never blind-toggle: an unchecked
+                // row with no request enables; with a request in flight or
+                // failed it explicitly retries; a checked row disables.
+                MumlaActivity activity = (MumlaActivity) getActivity();
+                boolean scoUp = getService() != null && getService().isBluetoothScoActive();
+                if (scoUp) {
+                    activity.setBluetoothHeadset(false);
+                } else if (getService() != null
+                        && Settings.getInstance(activity).isBluetoothHeadset()) {
+                    // Already requested but not up: explicit retry. A false
+                    // return means bring-up is already running, so say so
+                    // instead of tapping silently dead.
+                    if (!getService().retryBluetoothSco()) {
+                        Toast.makeText(activity, R.string.bluetooth_sco_connecting,
+                                Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    activity.setBluetoothHeadset(true);
+                }
+            }
+            return true;
+        }
+        Settings settings = Settings.getInstance(getActivity());
         if (itemId == R.id.menu_input_voice) {
             settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_VOICE);
             return true;
