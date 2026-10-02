@@ -142,7 +142,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
     private boolean mHalfDuplex;
-    private boolean mBluetoothScoRequested;
+    private boolean mScoRequested;
     private BluetoothScoManager mScoManager;
 
     private byte mVoiceTargetId;
@@ -367,27 +367,26 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mScoManager = new BluetoothScoManager(this, new BluetoothScoManager.Listener() {
             @Override
             public void onScoConnected() {
-                mAudioBuilder.setBluetoothEnabled(true);
+                mAudioBuilder.setScoEnabled(true);
                 reloadAudioForRoute("Bluetooth SCO connected");
             }
 
             @Override
             public void onScoDisconnected() {
-                mAudioBuilder.setBluetoothEnabled(false);
+                mAudioBuilder.setScoEnabled(false);
                 reloadAudioForRoute("Bluetooth SCO disconnected, falling back to phone audio");
             }
 
             @Override
-            public void onScoFailed() {
-                mAudioBuilder.setBluetoothEnabled(false);
+            public void onScoFailed(String reason) {
+                mAudioBuilder.setScoEnabled(false);
                 reloadAudioForRoute("Bluetooth SCO unavailable, falling back to phone audio");
-                mHandler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        Toast.makeText(HumlaService.this,
-                                R.string.bluetooth_sco_failed, Toast.LENGTH_LONG).show();
-                    }
-                });
+                // Manager guarantees main-thread delivery, so toast directly.
+                Toast.makeText(HumlaService.this,
+                        BluetoothScoManager.REASON_PERMISSION.equals(reason)
+                                ? R.string.bluetooth_sco_permission
+                                : R.string.bluetooth_sco_failed,
+                        Toast.LENGTH_LONG).show();
             }
         });
         mToggleInputMode = new ToggleInputMode();
@@ -465,9 +464,20 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mWakeLock.release();
         }
         releaseWifiLock();
+        // Tear down SCO synchronously: the async disconnect callback may lag,
+        // and a quick reconnect must not reuse a stale link or route flag.
+        if (mScoManager != null) {
+            mScoManager.stop();
+        }
+        mAudioBuilder.setScoEnabled(false);
         if (mConnection != null) {
             mConnection.disconnect();
         }
+    }
+
+    @Override
+    public boolean isBluetoothScoActive() {
+        return mScoManager != null && mScoManager.isActive();
     }
 
     public boolean isConnectionEstablished() {
@@ -576,7 +586,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mScoManager != null) {
             mScoManager.stop();
         }
-        mAudioBuilder.setBluetoothEnabled(false);
+        mAudioBuilder.setScoEnabled(false);
 
         mCallbacks.onDisconnected(e);
     }
@@ -722,7 +732,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mScoManager == null) {
             return;
         }
-        if (mBluetoothScoRequested && mConnectionState == ConnectionState.CONNECTED) {
+        if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
             mScoManager.start();
         } else {
             mScoManager.stop();
@@ -742,6 +752,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 Log.i(TAG, reason + "; audio pipeline recreated.");
             } catch (AudioException e) {
                 Log.e(TAG, "Route-change audio reload failed", e);
+                onConnectionWarning(e.getMessage());
             }
         }
     }
@@ -814,6 +825,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      */
     public boolean configureExtras(Bundle extras) throws AudioException {
         boolean reconnectNeeded = false;
+        boolean suppressReload = false;
         if (extras.containsKey(EXTRAS_SERVER)) {
             mServer = extras.getParcelable(EXTRAS_SERVER);
             reconnectNeeded = true;
@@ -922,12 +934,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex);
         }
         if (extras.containsKey(EXTRAS_BLUETOOTH_SCO)) {
-            mBluetoothScoRequested = extras.getBoolean(EXTRAS_BLUETOOTH_SCO);
-            if (!mBluetoothScoRequested) {
-                // Synchronous teardown first, so the end-of-method reload
-                // recreates the pipeline on the fallback route.
-                mScoManager.stop();
-                mAudioBuilder.setBluetoothEnabled(false);
+            boolean requested = extras.getBoolean(EXTRAS_BLUETOOTH_SCO);
+            // A fresh enable skips the end-of-method reload: the confirmed
+            // callback performs the single pipeline recreate on the SCO
+            // route instead of paying for two (one now, one on connect).
+            suppressReload = requested && !mScoRequested;
+            mScoRequested = requested;
+            if (!requested) {
+                mAudioBuilder.setScoEnabled(false);
             }
             updateBluetoothScoRoute();
         }
@@ -946,8 +960,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioBuilder.setAdaptiveLevelerEnabled(extras.getBoolean(EXTRAS_ADAPTIVE_LEVELER));
         }
 
-        // Reload audio subsystem if initialized
-        if (mAudioHandler != null && mAudioHandler.isInitialized()) {
+        // Reload audio subsystem if initialized. Guarded on CONNECTED as well
+        // as initialization: a disconnect racing a settings change must not
+        // resurrect the pipeline (or trip the DEBUG assertion inside).
+        if (!suppressReload && mAudioHandler != null && mAudioHandler.isInitialized()
+                && mConnectionState == ConnectionState.CONNECTED) {
             createAudioHandler();
             Log.i(TAG, "Audio subsystem reloaded after settings change.");
         }

@@ -45,6 +45,12 @@ public interface IHumlaService {
     boolean isConnected();
 
     /**
+     * @return true if a Bluetooth SCO headset link is currently up and carrying
+     *         call audio. This is confirmed link state, not the user preference.
+     */
+    boolean isBluetoothScoActive();
+
+    /**
      * Disconnects from the active connection, or does nothing if no connection is active.
      */
     void disconnect();

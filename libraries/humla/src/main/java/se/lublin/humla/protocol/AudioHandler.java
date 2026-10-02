@@ -80,7 +80,7 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mServerMuted;
     private volatile boolean mSuppressed;
     private boolean mHalfDuplex;
-    private boolean mBluetoothSco;
+    private volatile boolean mScoActive;
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
     private volatile boolean mTalking;
@@ -176,7 +176,7 @@ public class AudioHandler extends HumlaNetworkListener
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mSuppressed;
 
-        mOutput.startPlaying(mBluetoothSco ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
+        mOutput.startPlaying(mScoActive ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
         mInitialized = true;
         updateMuteState(isMuted);
     }
@@ -322,12 +322,8 @@ public class AudioHandler extends HumlaNetworkListener
      * never on the raw user toggle: starting playback on the voice-call stream
      * without a live SCO link would misroute audio.
      */
-    public void setBluetoothEnabled(boolean bluetoothEnabled) {
-        mBluetoothSco = bluetoothEnabled;
-    }
-
-    public boolean isBluetoothEnabled() {
-        return mBluetoothSco;
+    public void setScoEnabled(boolean scoEnabled) {
+        mScoActive = scoEnabled;
     }
 
     public void setAdaptiveLevelerEnabled(boolean enabled) {
@@ -580,7 +576,7 @@ public class AudioHandler extends HumlaNetworkListener
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
-        private boolean mBluetoothEnabled;
+        private boolean mScoEnabled;
         private boolean mPreprocessorEnabled;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;
@@ -637,8 +633,12 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
-        public Builder setBluetoothEnabled(boolean bluetoothEnabled) {
-            mBluetoothEnabled = bluetoothEnabled;
+        /**
+         * Selects the voice-call route. Pass confirmed SCO link state only
+         * (see {@link AudioHandler#setScoEnabled}), never the raw toggle.
+         */
+        public Builder setScoEnabled(boolean scoEnabled) {
+            mScoEnabled = scoEnabled;
             return this;
         }
 
@@ -680,7 +680,7 @@ public class AudioHandler extends HumlaNetworkListener
                     mPreprocessorEnabled, mAdaptiveLevelerEnabled,
                     mEncodeListener, mTalkingListener);
             handler.setFramesPerPacketListener(mFramesPerPacketListener);
-            handler.setBluetoothEnabled(mBluetoothEnabled);
+            handler.setScoEnabled(mScoEnabled);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
         }
