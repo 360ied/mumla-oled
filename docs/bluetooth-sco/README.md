@@ -8,8 +8,8 @@ prior art existed in the Jumble/Plumble ancestors, and which design to implement
 
 SCO support is **worth building**, as a manual opt-in toggle first. The 48 kHz
 pipeline needs no resampling changes (the platform resamples the 8/16 kHz SCO
-link), and the output `Pacer` + native jitter buffer already tolerate SCO-grade
-latency. The real work is all lifecycle: permissions, `AudioManager` mode
+link), and the output `Pacer` + native jitter buffer are expected to accommodate
+SCO-grade latency — pending on-device validation (see [Android platform requirements](android-platform.md)). The real work is all lifecycle: permissions, `AudioManager` mode
 management, async link setup/teardown, and route-failure fallback. None of that
 machinery exists in the tree today.
 
@@ -29,17 +29,17 @@ machinery exists in the tree today.
 
 | Fact | Implication |
 |---|---|
-| No `AudioManager` routing exists anywhere in the tree | Greenfield lifecycle owner needed (proposed: `HumlaService`) |
+| No `AudioManager` route-control exists anywhere in the tree | Greenfield lifecycle owner needed (proposed: `HumlaService`) |
 | Capture and playback are fixed 48 kHz mono | No DSP changes required; platform resamples SCO |
 | `targetSdk 36`, `minSdk 21` | `BLUETOOTH_CONNECT` runtime permission (API 31+) plus legacy flags; API-dependent routing code paths |
 | Ancestor `BluetoothScoReceiver` + `setBluetoothEnabled` existed | Proven shape to reintroduce, but its teardown and error handling need hardening |
-| `startBluetoothSco` is deprecated from API 33 | New code should branch: `setCommunicationDevice` on API 31+, legacy SCO below |
+| `startBluetoothSco` is deprecated from API 33 | New code should branch: `setCommunicationDevice` on API 31+, legacy SCO path below 31 (usable through 32) |
 
 ## Component touch list (anticipated)
 
 | Layer | File | Change |
 |---|---|---|
-| Manifest | `app/src/main/AndroidManifest.xml` | `BLUETOOTH_CONNECT`, legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` |
+| Manifest | `app/src/main/AndroidManifest.xml` | `BLUETOOTH_CONNECT`, legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` (with `maxSdkVersion="30"`) |
 | Settings | `app/src/main/res/xml/settings_audio.xml`, `Settings.java` | Bluetooth toggle preference |
 | Connect path | `app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java` | Pass Bluetooth preference into service extras |
 | Service | `libraries/humla/src/main/java/se/lublin/humla/HumlaService.java` | SCO lifecycle owner, receiver registration |

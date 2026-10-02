@@ -45,7 +45,9 @@ Findings:
   maps `STREAM_VOICE_CALL` → `USAGE_VOICE_COMMUNICATION`, everything else →
   `USAGE_MEDIA`, on API 23+. The `Pacer` bounds render lead to ~40 ms and
   already names A2DP-scale buffers (4800–11532 frames) as a design input, so
-  SCO's latency profile fits inside existing margins — no DSP change expected.
+  SCO's latency profile is expected to fit inside existing margins — to be
+  validated on-device (see [Android platform requirements](android-platform.md));
+  no DSP change is anticipated.
 - Reference: [audio output pipeline](../audio-output/README.md).
 
 ## Service and routing ownership
@@ -53,10 +55,12 @@ Findings:
 - [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
   builds the `AudioHandler` from intent extras (`configureExtras`) and recreates
   it on settings change (`createAudioHandler`). It holds a `WifiLock` and
-  partial `WakeLock` for radio/CPU retention but **never touches `AudioManager`**:
+  partial `WakeLock` for radio/CPU retention but **performs no `AudioManager`
+  route-control**:
   no `setMode`, no `setSpeakerphoneOn`, no `startBluetoothSco`, no audio-focus
   request, no `AudioDeviceCallback`. Grep for `Bluetooth`/`Sco` across
-  `libraries/humla` and `app` returns zero functional hits.
+  `libraries/humla` and `app` returns zero route-control hits (only A2DP
+  buffer-size comments in `AudioOutput` remain).
 - [`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java)
   only calls `setVolumeControlStream` based on `handset_mode`. No route UI exists.
 - [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java)
@@ -65,9 +69,10 @@ Findings:
 
 ## Preferences
 
-- [`settings_audio.xml`](../../app/src/main/res/xml/settings_audio.xml) exposes
+- [`settings_audio.xml`](../../app/src/main/res/xml/settings_audio.xml) exposes,
+  among others,
   `handset_mode`, `half_duplex`, input method, VAD threshold, bitrate,
-  frames-per-packet, and leveler toggles. There is **no Bluetooth preference**,
+  frames-per-packet, and the adaptive-leveler toggle. There is **no Bluetooth preference**,
   and `Settings.java` has no Bluetooth accessor.
 - Natural home for the toggle: `settings_audio.xml` next to `handset_mode`,
   since SCO (like handset mode) implies the `VOICE_CALL` stream family.

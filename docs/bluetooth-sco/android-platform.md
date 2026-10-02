@@ -1,16 +1,20 @@
 # Android Platform Requirements for SCO
 
 What the OS demands of any app routing VoIP audio over a Bluetooth HFP link.
-Sources are the Android developer guides (AudioManager self-managed call guide,
-BLE Audio overview), AOSP SCO documentation, and AOSP Bluetooth internals.
+Sources: the [AudioManager self-managed call guide](https://developer.android.com/develop/connectivity/bluetooth/ble-audio/audio-manager),
+the [BLE Audio overview](https://developer.android.com/develop/connectivity/bluetooth/ble-audio/overview),
+[AOSP SCO audio management](https://source.android.com/docs/core/audio/sco-audio-mgmt),
+and the [AudioManager API 34 diff](https://developer.android.com/sdk/api_diff/34/changes/android.media.AudioManager)
+(deprecation evidence).
 
 ## What SCO is
 
 - **HFP SCO link**: a synchronous, circuit-like channel between phone and
   headset carrying mic uplink + earpiece downlink. Classic (narrowband) mode
   uses CVSD at **8 kHz**; wideband speech (WBS, mSBC codec) runs at **16 kHz**
-  only if *both* ends negotiate it (`bt_wbs` / `g_sco_samplerate` in the BT
-  stack; codec selection in `bta_ag_sco`).
+  only if *both* ends negotiate wideband (mSBC codec selection in the Bluetooth
+  stack; stack-internal parameter names such as `bt_wbs` / `g_sco_samplerate`
+  vary by vendor).
 - The app keeps capturing/rendering at 48 kHz; the platform resamples across
   the link. Expect telephone-grade input with no energy above 4 kHz (NB) or
   8 kHz (WB). Opus fullband encoding of that signal is fine — no encoder
@@ -28,7 +32,10 @@ BLE Audio overview), AOSP SCO documentation, and AOSP Bluetooth internals.
 3. Register for `AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED` and wait for
    `SCO_AUDIO_STATE_CONNECTED` before treating the route as live. The older
    `ACTION_SCO_AUDIO_STATE_CHANGED` is deprecated; the `_UPDATED` intent fixed
-   missing failure delivery.
+   missing failure delivery. `_UPDATED` dates to API 14, so it covers the full
+   `minSdk 21` range with no intent fallback needed. (Note: current API-37
+   diffs mark the SCO broadcast intents deprecated in turn — further reason
+   the `OnCommunicationDeviceChangedListener` path is the forward direction.)
 4. On failure (`SCO_AUDIO_STATE_ERROR`) or timeout: retry with backoff, then
    fall back to the previous route. Never leave the user on a dead route.
 5. `stopBluetoothSco()` + restore `setMode(MODE_NORMAL)` on call end /
@@ -51,23 +58,25 @@ Known flakiness to design around:
 - From API 33, `startBluetoothSco()` / `stopBluetoothSco()` /
   `setSpeakerphoneOn()` are **deprecated** in favor of
   `setCommunicationDevice()` + `clearCommunicationDevice()` plus
-  `OnCommunicationDeviceChangedListener`. Google's stated reason is BLE Audio
-  (LE Audio / LC3 at 32 kHz) headset support, which the legacy SCO APIs cannot
+  `OnCommunicationDeviceChangedListener`. The migration is driven in part by
+  BLE Audio (LE Audio) headset support, which the legacy SCO APIs cannot
   address.
-- AOSP 17+ moves further to Audio-Managed SCO (AMSCO): the audio framework
-  itself owns SCO bring-up as a consequence of streaming activity, and the BT
-  stack no longer drives connection state. Behavior of the legacy APIs on
-  future releases should be treated as compatibility shims.
+- AOSP moves further to Audio-Managed SCO (AMSCO): per the [AOSP SCO audio
+  management notes](https://source.android.com/docs/core/audio/sco-audio-mgmt),
+  on recent releases the audio framework itself owns SCO bring-up as a
+  consequence of streaming activity, and the BT stack no longer drives
+  connection state. Treat the legacy APIs as compatibility shims there.
 
 Implementation consequence: new code needs **two routing backends** behind one
 interface — `setCommunicationDevice` on API 31+, legacy `startBluetoothSco`
-below — with `minSdk 21` preserved.
+below 31 (the legacy calls keep working through 32; deprecated at 33) — with
+`minSdk 21` preserved.
 
 ## Permissions and manifest
 
 | API level | Requirement |
 |---|---|
-| ≤ 30 | `BLUETOOTH` + `BLUETOOTH_ADMIN` (install-time) |
+| ≤ 30 | `BLUETOOTH` + `BLUETOOTH_ADMIN` (install-time; declare with `android:maxSdkVersion="30"` when `BLUETOOTH_CONNECT` is also declared) |
 | ≥ 31 | `BLUETOOTH_CONNECT` (**runtime** permission; user-grant flow needed) |
 | All | `MODIFY_AUDIO_SETTINGS` (already declared) |
 

@@ -3,8 +3,12 @@
 The ancestor codebase (Jumble, by Andrew Comminos — also the upstream of this
 repository's `humla` library) shipped Bluetooth SCO support that was later
 dropped in the forks. Its shape is the best available template for
-reintroduction. References below are to the Jumble master branch on GitHub
-(`com.morlunk.jumble`), not to local paths.
+reintroduction. References below are to Jumble at pinned commit `34c374a`
+on GitHub (not to local paths):
+
+- [`BluetoothScoReceiver.java`](https://github.com/acomminos/Jumble/blob/34c374af8823c790676508310f6f8c783c7c97a1/src/main/java/com/morlunk/jumble/audio/BluetoothScoReceiver.java)
+- [`JumbleService.java`](https://github.com/acomminos/Jumble/blob/34c374af8823c790676508310f6f8c783c7c97a1/src/main/java/com/morlunk/jumble/JumbleService.java)
+- [`AudioHandler.java`](https://github.com/acomminos/Jumble/blob/34c374af8823c790676508310f6f8c783c7c97a1/src/main/java/com/morlunk/jumble/protocol/AudioHandler.java)
 
 ## What existed
 
@@ -50,7 +54,8 @@ Neither the current `HumlaService` nor the app layer retains any of the above:
 no receiver, no builder flag, no session API, no manifest Bluetooth
 permissions. The `handset_mode` → `STREAM_VOICE_CALL` mapping in
 `ServerConnectTask` is the only surviving voice-call-route logic, and it is
-static per connection rather than route-reactive.
+static per settings state rather than route-reactive (handset-mode changes do
+recreate the handler mid-connection, but nothing reacts to route state).
 
 ## Reuse plan
 

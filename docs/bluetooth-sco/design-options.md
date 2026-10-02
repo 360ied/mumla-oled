@@ -1,8 +1,19 @@
 # Design Options and Recommendation
 
 Three scoped options, ordered by increasing complexity. All assume the
-two-backend routing interface (legacy SCO ≤ 30, `setCommunicationDevice`
-≥ 31) and the `BLUETOOTH_CONNECT` runtime permission flow.
+two-backend routing interface (legacy SCO below 31 — usable through 32,
+deprecated at 33 — and `setCommunicationDevice` ≥ 31) and the
+`BLUETOOTH_CONNECT` runtime permission flow.
+
+## Gap traceability
+
+| Gap | Closed by |
+|---|---|
+| G-1 (route-control), G-2 (permissions), G-3 (state receiver) | Option A |
+| G-6 (route UI) | Option A (minimal indicator); extended by B |
+| G-4 (stream/source selection) | Option A (voice-call stream flag); source choice via OQ-2 measurement |
+| G-5 (AEC), G-7 (VAD tuning) | Measurement follow-ups after A (OQ-3, OQ-4); not option-gated |
+| Auto-routing beyond the manual toggle | Option B |
 
 ## Option A — Manual toggle (recommended first)
 
