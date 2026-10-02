@@ -1,0 +1,117 @@
+# Miscellaneous Oddities, Round 2
+
+Residual findings from the Bluetooth SCO investigation and its pedantic
+code reviews that are **not SCO behavior**: pre-existing defects, stale
+documentation, and test debt worth tickets of their own. Continues the
+numbering from [misc-oddities](../misc-oddities/README.md) (ODD-01–ODD-20).
+
+## Table of Contents
+
+1. [Summary Matrix](#summary-matrix)
+2. [Detailed Topics](#detailed-topics)
+   - [ODD-21: Dead Preprocessor Preference](#odd-21-dead-preprocessor-preference)
+   - [ODD-22: Stale Render-Lead Bound in Audio Output Docs](#odd-22-stale-render-lead-bound-in-audio-output-docs)
+   - [ODD-23: No JVM Coverage for the SCO State Machine](#odd-23-no-jvm-coverage-for-the-sco-state-machine)
+   - [ODD-24: Sticky `mForceTcp` Never Clears](#odd-24-sticky-mforcetcp-never-clears)
+   - [ODD-25: `setVoiceTargetId` NPE While Disconnected](#odd-25-setvoicetargetid-npe-while-disconnected)
+   - [ODD-26: Channel Fragment Listener Unregistered Late](#odd-26-channel-fragment-listener-unregistered-late)
+
+---
+
+## Summary Matrix
+
+| ID | Category | Severity | Status | Summary | Location |
+|---|---|---|---|---|---|
+| **ODD-21** | **Preferences** | **Low** | **Open** | **Dead preprocessor toggle**: `isPreprocessorEnabled()` returns `true` unconditionally, so `EXTRAS_ENABLE_PREPROCESSOR` can never be `false` despite the pref key and default existing. | [`Settings.java:448`](../../app/src/main/java/se/lublin/mumla/Settings.java#L448-L450) |
+| **ODD-22** | **Documentation** | **Low** | **Open** | **Stale render-lead docs**: the audio output reference says the bound is "1 quantum", but the code allows up to 2 quanta (~40 ms). | [`README.md:37`](../audio-output/README.md#L37) vs [`AudioOutput.java:574`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L574-L575) |
+| **ODD-23** | **Testing** | **Low** | **Open** | **SCO state machine untestable on JVM**: timeout, retry budget, and `Handler` are hard-wired in `BluetoothScoManager`, so the bring-up matrix has no unit coverage. | [`BluetoothScoManager.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java) (on `bt-sco-manual`; unmerged) |
+| **ODD-24** | **Service Logic** | **Low** | **Open** | **Sticky `mForceTcp`**: `configureExtras` accumulates with `\|=`, so once forced, TCP stays forced for the service lifetime even if the setting is later disabled. | [`HumlaService.java:788`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L788) |
+| **ODD-25** | **Service Logic** | **Low** | **Open** | **`setVoiceTargetId` NPE**: dereferences `mAudioHandler` without a null check; callable while disconnected. | [`HumlaService.java:1320`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1320-L1327) |
+| **ODD-26** | **UI / Lifecycle** | **Low** | **Open** | **Late listener unregister**: the preference listener is registered in `onActivityCreated` but unregistered in `onDestroy` rather than `onDestroyView`, surviving view recreations. | [`ChannelFragment.java:205`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L205) vs [`ChannelFragment.java:270`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L270) |
+
+---
+
+### ODD-21: Dead Preprocessor Preference
+
+> Origin: pedantic review of the SCO dossier (incidental finding), verified on `master`.
+
+In [`Settings.java:448-450`](../../app/src/main/java/se/lublin/mumla/Settings.java#L448-L450):
+
+```java
+public boolean isPreprocessorEnabled() {
+    return true;
+}
+```
+
+`PREF_PREPROCESSOR_ENABLED` and `DEFAULT_PREPROCESSOR_ENABLED` both exist, but
+the accessor ignores them, so `EXTRAS_ENABLE_PREPROCESSOR` is always `true` and
+the RNNoise preprocessor can never be disabled at runtime. Either wire the
+accessor to the preference or remove the dead key and default. Low severity:
+the preprocessor-on path is the tested, desirable default.
+
+### ODD-22: Stale Render-Lead Bound in Audio Output Docs
+
+> Origin: pedantic review of the SCO dossier (incidental finding), verified on `master`.
+
+[`audio-output/README.md:37`](../audio-output/README.md#L37) says the render-lead
+bound is "1 quantum, or the track minimum", but
+[`AudioOutput.java:574-575`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java#L574-L575)
+computes `max(renderSamples, min(renderSamples * 2, trackFrames))` — up to 2
+quanta (~40 ms). One-line doc fix; the code is correct.
+
+### ODD-23: No JVM Coverage for the SCO State Machine
+
+> Origin: pedantic review of the `bt-sco-manual` worktree (unmerged at time of writing).
+
+`CONNECT_TIMEOUT_MS`, `MAX_ATTEMPTS`, and the main-thread `Handler` are
+hard-wired in `BluetoothScoManager`, so the timeout/retry/observer matrix
+(bring-up success, timeout, retry, refusal, no-device, drop-after-connect)
+cannot be exercised by JVM tests. Inject the timeout budget and handler (or
+extract a pure transition function) when the branch lands, and cover the
+matrix in the existing JUnit style.
+
+### ODD-24: Sticky `mForceTcp` Never Clears
+
+> Origin: pedantic review of the `bt-sco-manual` worktree (incidental, pre-existing).
+
+In [`HumlaService.java:788`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L788):
+
+```java
+mForceTcp |= extras.getBoolean(EXTRAS_FORCE_TCP);
+```
+
+Once forced TCP is ever `true`, it stays `true` for the service lifetime even
+if the setting is later disabled. Fix: plain assignment. Latent: the setting is
+flagged as requiring reconnect, so the sticky value rarely surprises anyone —
+but a mid-connection settings push hits exactly this line.
+
+### ODD-25: `setVoiceTargetId` NPE While Disconnected
+
+> Origin: pedantic review of the `bt-sco-manual` worktree (incidental, pre-existing).
+
+In [`HumlaService.java:1320-1327`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1320-L1327):
+
+```java
+public void setVoiceTargetId(byte targetId) {
+    ...
+    mVoiceTargetId = targetId;
+    mAudioHandler.setVoiceTargetId(targetId);
+    ...
+}
+```
+
+`mAudioHandler` is dereferenced without a null check and is null while
+disconnected. Fix: null-guard (defer or drop the call when no handler exists).
+Latent: current callers only invoke it while connected.
+
+### ODD-26: Channel Fragment Listener Unregistered Late
+
+> Origin: pedantic review of the `bt-sco-manual` worktree (incidental, pre-existing).
+
+[`ChannelFragment.java:205`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L205)
+registers the shared-preference listener in `onActivityCreated`, but
+[`ChannelFragment.java:270`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L270)
+unregisters in `onDestroy` rather than `onDestroyView`, so the retained
+listener survives view recreations. Fix: move the unregister to
+`onDestroyView` to mirror the view lifecycle. Latent: the callback only
+touches view state through null-guarded paths today.
