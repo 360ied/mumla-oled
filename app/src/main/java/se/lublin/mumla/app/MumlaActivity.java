@@ -130,6 +130,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private Server mServerPendingPerm = null;
     private boolean mPermPostNotificationsAsked = false;
     private boolean mBluetoothMenuPendingPerm = false;
+    private static final String STATE_SERVER_PENDING = "server_pending";
+    private static final String STATE_BT_MENU_PENDING = "bt_menu_pending";
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
@@ -384,6 +386,16 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         mSettings = Settings.getInstance(this);
 
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            mBluetoothMenuPendingPerm =
+                    savedInstanceState.getBoolean(STATE_BT_MENU_PENDING, false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                mServerPendingPerm =
+                        savedInstanceState.getParcelable(STATE_SERVER_PENDING, Server.class);
+            } else {
+                mServerPendingPerm = savedInstanceState.getParcelable(STATE_SERVER_PENDING);
+            }
+        }
         setContentView(R.layout.activity_main);
 
         Toolbar toolbar = findViewById(R.id.toolbar);
@@ -469,7 +481,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             handleViewIntent(getIntent());
         }
 
-        setVolumeControlStream(mSettings.isHandsetMode() || mSettings.isBluetoothHeadset() ?
+        setVolumeControlStream(useVoiceCallVolume() ?
                 AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
 
         if (savedInstanceState == null) {
@@ -581,6 +593,19 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return true;
         }
         return false;
+    }
+
+    /**
+     * Volume keys follow the voice-call stream when the handset path is in
+     * use or a SCO link is confirmed up. Confirmed state (not the raw
+     * toggle) keeps keys coherent with the actual route, including after a
+     * failed bring-up that falls back to phone audio.
+     */
+    private boolean useVoiceCallVolume() {
+        if (mSettings.isHandsetMode()) {
+            return true;
+        }
+        return mService != null && mService.isBluetoothScoActive();
     }
 
     /**
@@ -732,6 +757,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         requireNonNull(getSupportActionBar()).setTitle(mDrawerAdapter.getItemWithId(fragmentId).title);
     }
 
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean(STATE_BT_MENU_PENDING, mBluetoothMenuPendingPerm);
+        outState.putParcelable(STATE_SERVER_PENDING, mServerPendingPerm);
+    }
+
     public void connectToServer(final Server server) {
         mServerPendingPerm = server;
         connectToServerWithPerm();
@@ -835,6 +867,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
         if (grantResults.length == 0) {
+            mBluetoothMenuPendingPerm = false;
             return;
         }
 
@@ -1032,10 +1065,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 setStayAwake(mSettings.shouldStayAwake());
                 break;
             case Settings.PREF_HANDSET_MODE:
-                setVolumeControlStream(mSettings.isHandsetMode() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+                setVolumeControlStream(useVoiceCallVolume() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                 break;
             case Settings.PREF_BLUETOOTH_HEADSET:
-                setVolumeControlStream(mSettings.isHandsetMode() || mSettings.isBluetoothHeadset() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+                setVolumeControlStream(useVoiceCallVolume() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                 break;
         }
     }

@@ -17,10 +17,12 @@
 
 package se.lublin.mumla.service;
 
+import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
@@ -486,9 +488,9 @@ public class MumlaService extends HumlaService implements
     void initSoundPool() {
         releaseSoundPool();
         try {
-            int streamType = (mSettings != null && mSettings.isHandsetMode())
+            int streamType = (mSettings != null && (mSettings.isHandsetMode() || isBluetoothScoActive()))
                     ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
-            int usage = (mSettings != null && mSettings.isHandsetMode())
+            int usage = (mSettings != null && (mSettings.isHandsetMode() || isBluetoothScoActive()))
                     ? AudioAttributes.USAGE_VOICE_COMMUNICATION : AudioAttributes.USAGE_MEDIA;
             AudioAttributes attributes = new AudioAttributes.Builder()
                     .setLegacyStreamType(streamType)
@@ -794,7 +796,16 @@ public class MumlaService extends HumlaService implements
                 changedExtras.putBoolean(EXTRAS_HALF_DUPLEX, mSettings.isHalfDuplex());
                 break;
             case Settings.PREF_BLUETOOTH_HEADSET:
+                if (mSettings.isBluetoothHeadset() && !hasBluetoothConnectGrant()) {
+                    // Settings-screen flip without the runtime grant: revert
+                    // with a hint instead of pushing a doomed extra. The
+                    // overflow toggle and connect flow request the grant first.
+                    mSettings.setBluetoothHeadset(false);
+                    Toast.makeText(this, R.string.grant_perm_bluetooth, Toast.LENGTH_LONG).show();
+                    break;
+                }
                 changedExtras.putBoolean(EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
+                initSoundPool();
                 break;
             case Settings.PREF_ADAPTIVE_LEVELER_ENABLED:
                 changedExtras.putBoolean(EXTRAS_ADAPTIVE_LEVELER,
@@ -837,6 +848,18 @@ public class MumlaService extends HumlaService implements
         if (requiresReconnect && isConnectionEstablished()) {
             Toast.makeText(this, R.string.change_requires_reconnect, Toast.LENGTH_LONG).show();
         }
+    }
+
+    /**
+     * Whether the BLUETOOTH_CONNECT runtime grant (API 31+) is in place.
+     * Below 31 the manifest flags are install-time, so always true.
+     */
+    private boolean hasBluetoothConnectGrant() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true;
+        }
+        return checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private void setProximitySensorOn(boolean on) {

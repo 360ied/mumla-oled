@@ -232,9 +232,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     public void onPrepareOptionsMenu(Menu menu) {
         super.onPrepareOptionsMenu(menu);
         MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth_headset);
-        if (bluetoothItem != null) {
+        if (bluetoothItem != null && getActivity() != null) {
+            // Checked reflects the confirmed link, not the raw toggle: a
+            // failed or in-flight bring-up reads unchecked until SCO is up.
+            boolean scoUp = getService() != null && getService().isBluetoothScoActive();
             bluetoothItem.setVisible(getService() != null && getService().isConnected());
-            bluetoothItem.setChecked(Settings.getInstance(getActivity()).isBluetoothHeadset());
+            bluetoothItem.setChecked(scoUp);
         }
     }
 
