@@ -147,9 +147,9 @@ that keeps the radio in high-power tails anyway.
 ## 7. Remediation options
 
 1. **Acquire a `WIFI_MODE_FULL_HIGH_PERF` `WifiLock` for the connection
-   lifetime** (acquire in `onConnectionSynchronized()`, release in
-   `onConnectionDisconnected()`/`disconnect()`), plus `ACCESS_WIFI_STATE` /
-   `CHANGE_WIFI_STATE` manifest permissions. Standard VoIP practice; directly
+   lifetime** (landed — see experiment verdict below; acquired in `connect()`,
+   held across reconnect gaps, released on final teardown), plus
+   `ACCESS_WIFI_STATE` / `CHANGE_WIFI_STATE` manifest permissions. Standard VoIP practice; directly
    addresses the radio-sleep half of the stall. Small incremental drain while
    connected; large saving versus reconnect storms.
 2. **Do not shorten the ping interval.** The threads are suspended, not slow;
@@ -205,6 +205,20 @@ Disambiguation needs A/B testing: (a) hold the mic open while connected,
 combination restores 0.21.7 stability. Battery exemptions are already
 granted (deviceidle whitelist + `RUN_IN_BACKGROUND: allow`) and proved
 insufficient against Vivo force-suspend.
+
+### Experiment verdict (2026-10-02)
+
+The A/B branch `bugfix/doze-shield-ab` tested (a) + (c) together and
+restored stability: the open mic proved the load-bearing shield (the
+recording-active signal defeats Vivo force-suspend where the held partial
+wake lock alone does not), with the `WifiLock` covering the radio-sleep
+half of the stall. Both shields landed on `master` (connection-scoped
+`WIFI_MODE_FULL_HIGH_PERF` `WifiLock` in `HumlaService`, mic held open
+while muted with native-engine `setMuted` gating so no voice is encoded or
+transmitted). Accepted costs: the system mic indicator stays visible while
+connected plus ~15–25 mA capture drain — cheaper than the 5-minute
+TLS-handshake + sync storm cycle. Render-tick restoration (b) was not
+needed and stays out.
 
 ## Appendix: reproduction commands
 
