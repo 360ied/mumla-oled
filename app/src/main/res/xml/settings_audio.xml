@@ -35,6 +35,13 @@
         android:defaultValue="false"
         app:iconSpaceReserved="false"/>
 
+    <CheckBoxPreference
+        android:key="bluetooth_headset"
+        android:title="@string/bluetoothHeadset"
+        android:summary="@string/bluetoothHeadsetSum"
+        android:defaultValue="false"
+        app:iconSpaceReserved="false"/>
+
     <se.lublin.mumla.preference.SeekBarDialogPreference
         android:title="@string/audioInputVolume"
         android:summary="@string/audioInputVolumeSum"

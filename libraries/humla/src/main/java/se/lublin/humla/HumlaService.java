@@ -34,6 +34,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.util.Log;
+import android.widget.Toast;
 
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties;
 import org.minidns.hla.ResolverApi;
@@ -45,6 +46,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import se.lublin.humla.audio.AudioOutput;
+import se.lublin.humla.audio.BluetoothScoManager;
 import se.lublin.humla.audio.inputmode.ActivityInputMode;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
 import se.lublin.humla.audio.inputmode.IInputMode;
@@ -122,6 +124,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_LOCAL_IGNORE_HISTORY = "local_ignore_history";
     public static final String EXTRAS_ENABLE_PREPROCESSOR = "enable_preprocessor";
     public static final String EXTRAS_ADAPTIVE_LEVELER = "adaptive_leveler";
+    /** Request Bluetooth SCO headset routing for this connection. */
+    public static final String EXTRAS_BLUETOOTH_SCO = "bluetooth_sco";
 
     // Service settings
     private Server mServer;
@@ -138,6 +142,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
     private boolean mHalfDuplex;
+    private boolean mBluetoothScoRequested;
+    private BluetoothScoManager mScoManager;
 
     private byte mVoiceTargetId;
     private WhisperTargetList mWhisperTargetList;
@@ -358,6 +364,32 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     }
                 });
         mConnectionState = ConnectionState.DISCONNECTED;
+        mScoManager = new BluetoothScoManager(this, new BluetoothScoManager.Listener() {
+            @Override
+            public void onScoConnected() {
+                mAudioBuilder.setBluetoothEnabled(true);
+                reloadAudioForRoute("Bluetooth SCO connected");
+            }
+
+            @Override
+            public void onScoDisconnected() {
+                mAudioBuilder.setBluetoothEnabled(false);
+                reloadAudioForRoute("Bluetooth SCO disconnected, falling back to phone audio");
+            }
+
+            @Override
+            public void onScoFailed() {
+                mAudioBuilder.setBluetoothEnabled(false);
+                reloadAudioForRoute("Bluetooth SCO unavailable, falling back to phone audio");
+                mHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(HumlaService.this,
+                                R.string.bluetooth_sco_failed, Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
         mToggleInputMode = new ToggleInputMode();
         mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
         mContinuousInputMode = new ContinuousInputMode();
@@ -374,6 +406,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         setReconnecting(false);
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
+        }
+        if (mScoManager != null) {
+            mScoManager.stop();
         }
         releaseWifiLock();
     }
@@ -497,6 +532,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             e.printStackTrace();
             onConnectionWarning(e.getMessage());
         }
+        updateBluetoothScoRoute();
 
         mCallbacks.onConnected();
     }
@@ -534,6 +570,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mAudioHandler = null;
         mVoiceTargetId = 0;
         mWhisperTargetList.clear();
+
+        // Never leak the SCO link across disconnects: the next sync re-arms
+        // it via updateBluetoothScoRoute when still requested.
+        if (mScoManager != null) {
+            mScoManager.stop();
+        }
+        mAudioBuilder.setBluetoothEnabled(false);
 
         mCallbacks.onDisconnected(e);
     }
@@ -668,6 +711,39 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
         };
         mHandler.postDelayed(mReconnectRunnable, delay);
+    }
+
+    /**
+     * Starts or stops SCO bring-up to match the requested toggle and the
+     * connection state. Safe to call redundantly: the manager ignores
+     * start requests while starting or active, and stop is idempotent.
+     */
+    private void updateBluetoothScoRoute() {
+        if (mScoManager == null) {
+            return;
+        }
+        if (mBluetoothScoRequested && mConnectionState == ConnectionState.CONNECTED) {
+            mScoManager.start();
+        } else {
+            mScoManager.stop();
+        }
+    }
+
+    /**
+     * Recreates the audio pipeline so a route change takes effect on both
+     * capture and playback. Route callbacks (already on the main thread)
+     * converge here; no-ops unless the pipeline is live.
+     */
+    private void reloadAudioForRoute(String reason) {
+        if (mAudioHandler != null && mAudioHandler.isInitialized()
+                && mConnectionState == ConnectionState.CONNECTED) {
+            try {
+                createAudioHandler();
+                Log.i(TAG, reason + "; audio pipeline recreated.");
+            } catch (AudioException e) {
+                Log.e(TAG, "Route-change audio reload failed", e);
+            }
+        }
     }
 
     /**
@@ -844,6 +920,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (extras.containsKey(EXTRAS_HALF_DUPLEX) || extras.containsKey(EXTRAS_TRANSMIT_MODE)) {
             mAudioBuilder.setHalfDuplexEnabled(
                     mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex);
+        }
+        if (extras.containsKey(EXTRAS_BLUETOOTH_SCO)) {
+            mBluetoothScoRequested = extras.getBoolean(EXTRAS_BLUETOOTH_SCO);
+            if (!mBluetoothScoRequested) {
+                // Synchronous teardown first, so the end-of-method reload
+                // recreates the pipeline on the fallback route.
+                mScoManager.stop();
+                mAudioBuilder.setBluetoothEnabled(false);
+            }
+            updateBluetoothScoRoute();
         }
         if (extras.containsKey(EXTRAS_LOCAL_MUTE_HISTORY)) {
             mLocalMuteHistory = extras.getIntegerArrayList(EXTRAS_LOCAL_MUTE_HISTORY);

@@ -80,6 +80,7 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         connectIntent.putExtra(HumlaService.EXTRAS_TRUST_STORE_PASSWORD, MumlaTrustStore.getTrustStorePassword());
         connectIntent.putExtra(HumlaService.EXTRAS_TRUST_STORE_FORMAT, MumlaTrustStore.getTrustStoreFormat());
         connectIntent.putExtra(HumlaService.EXTRAS_HALF_DUPLEX, mSettings.isHalfDuplex());
+        connectIntent.putExtra(HumlaService.EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
         connectIntent.putExtra(HumlaService.EXTRAS_ENABLE_PREPROCESSOR, mSettings.isPreprocessorEnabled());
         connectIntent.putExtra(HumlaService.EXTRAS_ADAPTIVE_LEVELER, mSettings.isAdaptiveLevelerEnabled());
         if (server.isSaved()) {

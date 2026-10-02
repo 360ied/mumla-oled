@@ -103,6 +103,8 @@
     <string name="halfDuplexSum">Mutes other playback during push-to-talk to avoid audio loops/feedback.</string>
     <string name="handsetMode">Handset</string>
     <string name="handsetModeSum">Uses the front speaker and proximity sensor to simulate a traditional phone call.</string>
+    <string name="bluetoothHeadset">Bluetooth headset</string>
+    <string name="bluetoothHeadsetSum">Routes call audio over a Bluetooth headset (HFP). Requires Bluetooth permission on Android 12+.</string>
     <string name="pttSound">Push-to-talk sound</string>
     <string name="pttSoundSum">Play sound effect when pressing the push-to-talk button.</string>
     <string name="adaptive_leveler">Automatic Voice Leveling</string>

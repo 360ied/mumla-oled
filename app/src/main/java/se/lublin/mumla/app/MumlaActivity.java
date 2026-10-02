@@ -126,6 +126,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     private static final int PERMISSIONS_REQUEST_RECORD_AUDIO = 1;
     private static final int PERMISSIONS_REQUEST_POST_NOTIFICATIONS = 2;
+    private static final int PERMISSIONS_REQUEST_BLUETOOTH_CONNECT = 3;
     private Server mServerPendingPerm = null;
     private boolean mPermPostNotificationsAsked = false;
 
@@ -467,7 +468,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             handleViewIntent(getIntent());
         }
 
-        setVolumeControlStream(mSettings.isHandsetMode() ?
+        setVolumeControlStream(mSettings.isHandsetMode() || mSettings.isBluetoothHeadset() ?
                 AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
 
         if (savedInstanceState == null) {
@@ -725,6 +726,17 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return;
         }
 
+        if (mSettings.isBluetoothHeadset()
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && ContextCompat.checkSelfPermission(MumlaActivity.this,
+                        Manifest.permission.BLUETOOTH_CONNECT)
+                        != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(MumlaActivity.this,
+                    new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                    PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
+            return;
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !mPermPostNotificationsAsked) {
             if (ContextCompat.checkSelfPermission(MumlaActivity.this,
                     Manifest.permission.POST_NOTIFICATIONS)
@@ -811,6 +823,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     connectToServerWithPerm();
                 } else {
                     Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_microphone),
+                            Toast.LENGTH_LONG).show();
+                }
+                break;
+            case PERMISSIONS_REQUEST_BLUETOOTH_CONNECT:
+                if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    connectToServerWithPerm();
+                } else {
+                    Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                             Toast.LENGTH_LONG).show();
                 }
                 break;
@@ -986,6 +1006,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 break;
             case Settings.PREF_HANDSET_MODE:
                 setVolumeControlStream(mSettings.isHandsetMode() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+                break;
+            case Settings.PREF_BLUETOOTH_HEADSET:
+                setVolumeControlStream(mSettings.isHandsetMode() || mSettings.isBluetoothHeadset() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                 break;
         }
     }

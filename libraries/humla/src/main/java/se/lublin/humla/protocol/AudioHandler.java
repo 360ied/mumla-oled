@@ -19,6 +19,7 @@
 package se.lublin.humla.protocol;
 
 import android.content.Context;
+import android.media.AudioManager;
 
 import com.google.protobuf.ByteString;
 
@@ -79,6 +80,7 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mServerMuted;
     private volatile boolean mSuppressed;
     private boolean mHalfDuplex;
+    private boolean mBluetoothSco;
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
     private volatile boolean mTalking;
@@ -174,7 +176,7 @@ public class AudioHandler extends HumlaNetworkListener
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mSuppressed;
 
-        mOutput.startPlaying(mAudioStream);
+        mOutput.startPlaying(mBluetoothSco ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
         mInitialized = true;
         updateMuteState(isMuted);
     }
@@ -312,6 +314,20 @@ public class AudioHandler extends HumlaNetworkListener
 
     public boolean isHalfDuplex() {
         return mHalfDuplex;
+    }
+
+    /**
+     * Selects the voice-call route for confirmed Bluetooth SCO, mirroring
+     * handset mode. Set only on confirmed link state (see BluetoothScoManager),
+     * never on the raw user toggle: starting playback on the voice-call stream
+     * without a live SCO link would misroute audio.
+     */
+    public void setBluetoothEnabled(boolean bluetoothEnabled) {
+        mBluetoothSco = bluetoothEnabled;
+    }
+
+    public boolean isBluetoothEnabled() {
+        return mBluetoothSco;
     }
 
     public void setAdaptiveLevelerEnabled(boolean enabled) {
@@ -564,6 +580,7 @@ public class AudioHandler extends HumlaNetworkListener
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
+        private boolean mBluetoothEnabled;
         private boolean mPreprocessorEnabled;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;
@@ -620,6 +637,11 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
+        public Builder setBluetoothEnabled(boolean bluetoothEnabled) {
+            mBluetoothEnabled = bluetoothEnabled;
+            return this;
+        }
+
         public Builder setPreprocessorEnabled(boolean preprocessorEnabled) {
             mPreprocessorEnabled = preprocessorEnabled;
             return this;
@@ -658,6 +680,7 @@ public class AudioHandler extends HumlaNetworkListener
                     mPreprocessorEnabled, mAdaptiveLevelerEnabled,
                     mEncodeListener, mTalkingListener);
             handler.setFramesPerPacketListener(mFramesPerPacketListener);
+            handler.setBluetoothEnabled(mBluetoothEnabled);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
         }
