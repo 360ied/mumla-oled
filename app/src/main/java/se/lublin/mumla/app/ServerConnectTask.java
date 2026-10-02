@@ -58,6 +58,9 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
 
         int audioSource = mSettings.isHandsetMode() ?
                 MediaRecorder.AudioSource.DEFAULT : MediaRecorder.AudioSource.MIC;
+        // Voice-call stream only pre-confirm when handset mode is on: the
+        // service selects it on confirmed SCO, so starting there early would
+        // misroute the failure fallback. See EXTRAS_BLUETOOTH_SCO.
         int audioStream = mSettings.isHandsetMode() ?
                 AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
 

@@ -51,14 +51,23 @@ import java.util.Objects;
  *       (available since API 14, so no intent fallback is needed).</li>
  * </ul>
  *
- * <p>Locking: {@code mState}, {@code mAttempts}, and {@code mSavedMode} are guarded
- * by the manager monitor. Private bring-up/teardown helpers require the monitor
- * unless noted. AudioManager IPC and all listener callbacks run outside the
- * monitor: callbacks originate on the main thread (broadcast receiver, device
- * listener, and timeout all run there) except {@code onScoFailed}, which is
- * always posted to the main handler because bring-up failures can surface on
- * the {@code start()} caller's thread. Callbacks may race a concurrent
- * {@code stop()}; owners must treat them as hints and re-check pipeline state.
+ * <p>Locking: {@code mState}, {@code mAttempts}, {@code mSavedMode},
+ * {@code mModeOwned}, {@code mGeneration}, {@code mLegacyReceiver}, and
+ * {@code mDeviceListener} are guarded by the manager monitor. The bring-up
+ * sequence ({@code attemptBringUp} and below) deliberately holds the monitor
+ * across its fast, fire-and-forget AudioManager IPC so a concurrent
+ * {@code stop()} cannot interleave a route request between selection and
+ * observer registration; none of those calls block waiting on another thread,
+ * so the only cost is brief contention. Unregistering observers also runs
+ * under the monitor on purpose: the calls are idempotent and quick, and
+ * splitting snapshot from unregister would open double-registration races.
+ * All listener callbacks run outside the monitor. {@code onScoConnected} and
+ * {@code onScoDisconnected} originate on main-thread platform callbacks;
+ * {@code onScoFailed} is always posted to the main handler because bring-up
+ * failures can surface on the {@code start()} caller's thread. Callbacks may
+ * race a concurrent {@code stop()}: posted failures carry the session
+ * generation and are dropped when stale, so owners must still treat delivery
+ * as a hint and re-check pipeline state.
  */
 public class BluetoothScoManager {
     private static final String TAG = "BluetoothScoManager";
@@ -72,11 +81,15 @@ public class BluetoothScoManager {
     private static final int STATE_STARTING = 1;
     private static final int STATE_ACTIVE = 2;
 
-    /** Failure reasons delivered to {@link Listener#onScoFailed}. */
+    /** The grant is missing or was revoked mid-bring-up; surface a permission hint. */
     public static final String REASON_PERMISSION = "permission";
+    /** No SCO communication device is available (none paired/connected). */
     public static final String REASON_NO_DEVICE = "no-device";
+    /** The platform refused the device selection. */
     public static final String REASON_REFUSED = "refused";
+    /** The link did not report connected within the attempt budget. */
     public static final String REASON_TIMEOUT = "timeout";
+    /** Any other platform failure. */
     public static final String REASON_ERROR = "error";
 
     public interface Listener {
@@ -86,8 +99,7 @@ public class BluetoothScoManager {
         void onScoDisconnected();
         /**
          * The link never came up.
-         * @param reason one of {@code REASON_*};
-         *               {@code REASON_PERMISSION} means the grant is missing.
+         * @param reason one of {@code REASON_*}.
          */
         void onScoFailed(String reason);
     }
@@ -100,6 +112,8 @@ public class BluetoothScoManager {
     private int mState = STATE_IDLE;
     private int mAttempts;
     private int mSavedMode = AudioManager.MODE_NORMAL;
+    private boolean mModeOwned;
+    private int mGeneration;
 
     private BroadcastReceiver mLegacyReceiver;
     private AudioManager.OnCommunicationDeviceChangedListener mDeviceListener;
@@ -116,28 +130,48 @@ public class BluetoothScoManager {
         Objects.requireNonNull(listener, "listener");
         mContext = context.getApplicationContext();
         mListener = listener;
-        mAudioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        AudioManager audioManager =
+                (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        Objects.requireNonNull(audioManager, "AudioManager");
+        mAudioManager = audioManager;
     }
 
     /**
-     * Begins SCO bring-up. No-op while starting or active. A posted
-     * {@link Listener#onScoFailed} (never {@code onScoDisconnected}) reports
-     * every failure, including pre-flight checks, so callers must not assume
-     * the link is up when this returns.
+     * Begins SCO bring-up. No-op while starting or active. Every failure —
+     * including pre-flight checks — reports through a posted
+     * {@link Listener#onScoFailed} (never {@code onScoDisconnected}), so
+     * callers must not assume the link is up when this returns.
      */
-    public synchronized void start() {
-        if (mState != STATE_IDLE) {
-            return;
+    public void start() {
+        synchronized (this) {
+            if (mState != STATE_IDLE) {
+                return;
+            }
+            // Flip first: pre-flight failures below report through fail(), which
+            // only notifies when leaving a non-IDLE state. Bump the generation
+            // so callbacks posted by earlier sessions are dropped on delivery.
+            mState = STATE_STARTING;
+            mAttempts = 0;
+            ++mGeneration;
         }
-        // Flip first: pre-flight failures below report through fail(), which
-        // only notifies when leaving a non-IDLE state.
-        mState = STATE_STARTING;
-        mAttempts = 0;
         if (!hasConnectPermission()) {
             fail(REASON_PERMISSION);
             return;
         }
-        mSavedMode = mAudioManager.getMode();
+        final int currentMode;
+        try {
+            currentMode = mAudioManager.getMode();
+        } catch (Exception e) {
+            Log.w(TAG, "getMode threw", e);
+            fail(REASON_ERROR);
+            return;
+        }
+        synchronized (this) {
+            if (mState != STATE_STARTING) {
+                return; // stopped concurrently; nothing was changed yet.
+            }
+            mSavedMode = currentMode;
+        }
         try {
             mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
         } catch (Exception e) {
@@ -145,24 +179,46 @@ public class BluetoothScoManager {
             fail(REASON_ERROR);
             return;
         }
-        attemptBringUp();
+        synchronized (this) {
+            if (mState != STATE_STARTING) {
+                // Stopped while setMode was in flight: undo the mode change,
+                // which stop() could not know about.
+                try {
+                    if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+                        mAudioManager.setMode(currentMode);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "setMode undo threw", e);
+                }
+                return;
+            }
+            mModeOwned = true;
+            attemptBringUp();
+        }
     }
 
     /**
      * Tears down the link and restores the previous audio mode. Idempotent and
      * safe to call when idle; a failed bring-up may still hold a requested
-     * route, so release is unconditional. Never fires listener callbacks.
+     * route, so release is unconditional. Never fires listener callbacks:
+     * the generation bump drops any already-posted failure on delivery.
      */
     public void stop() {
+        mHandler.removeCallbacks(mTimeoutRunnable);
+        teardownObservers();
         final int savedMode;
+        final boolean owned;
         synchronized (this) {
-            mHandler.removeCallbacks(mTimeoutRunnable);
-            teardownObservers();
             mState = STATE_IDLE;
             savedMode = mSavedMode;
+            owned = mModeOwned;
+            mModeOwned = false;
+            ++mGeneration;
         }
         releaseRoute();
-        restoreMode(savedMode);
+        if (owned) {
+            restoreMode(savedMode);
+        }
     }
 
     /** True only once the link has reported connected and not since dropped. */
@@ -170,7 +226,8 @@ public class BluetoothScoManager {
         return mState == STATE_ACTIVE;
     }
 
-    // Call with monitor held.
+    // Call with monitor held. Holds the monitor across fast AudioManager IPC
+    // by design (see class locking note).
     private void attemptBringUp() {
         mAttempts++;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -182,13 +239,30 @@ public class BluetoothScoManager {
 
     // Call with monitor held.
     private void bringUpModern() {
-        AudioDeviceInfo sco = findScoDevice();
+        final AudioDeviceInfo sco;
+        try {
+            sco = findScoDevice();
+        } catch (SecurityException e) {
+            Log.w(TAG, "getAvailableCommunicationDevices denied", e);
+            fail(REASON_PERMISSION);
+            return;
+        } catch (Exception e) {
+            Log.w(TAG, "getAvailableCommunicationDevices threw", e);
+            fail(REASON_ERROR);
+            return;
+        }
         if (sco == null) {
             fail(REASON_NO_DEVICE);
             return;
         }
-        if (!registerDeviceListener()) {
-            fail(REASON_ERROR);
+        try {
+            if (!registerDeviceListener()) {
+                fail(REASON_ERROR);
+                return;
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "Device listener denied", e);
+            fail(REASON_PERMISSION);
             return;
         }
         boolean accepted;
@@ -212,8 +286,14 @@ public class BluetoothScoManager {
 
     // Call with monitor held.
     private void bringUpLegacy() {
-        if (!registerLegacyReceiver()) {
-            fail(REASON_ERROR);
+        try {
+            if (!registerLegacyReceiver()) {
+                fail(REASON_ERROR);
+                return;
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "Legacy SCO receiver denied", e);
+            fail(REASON_PERMISSION);
             return;
         }
         try {
@@ -231,16 +311,7 @@ public class BluetoothScoManager {
     }
 
     private AudioDeviceInfo findScoDevice() {
-        List<AudioDeviceInfo> devices;
-        try {
-            devices = mAudioManager.getAvailableCommunicationDevices();
-        } catch (SecurityException e) {
-            Log.w(TAG, "getAvailableCommunicationDevices denied", e);
-            return null;
-        } catch (Exception e) {
-            Log.w(TAG, "getAvailableCommunicationDevices threw", e);
-            return null;
-        }
+        List<AudioDeviceInfo> devices = mAudioManager.getAvailableCommunicationDevices();
         if (devices == null) {
             return null;
         }
@@ -308,7 +379,6 @@ public class BluetoothScoManager {
         }
         Log.i(TAG, "SCO bring-up attempt timed out, retrying");
         // Clear observers and any half-requested route before re-attempting.
-        // Outside the monitor: unregister/release are Binder IPC.
         teardownObservers();
         releaseRoute();
         synchronized (this) {
@@ -335,6 +405,7 @@ public class BluetoothScoManager {
 
     private void dropActiveLink() {
         final int savedMode;
+        final boolean owned;
         synchronized (this) {
             if (mState != STATE_ACTIVE) {
                 return;
@@ -343,9 +414,13 @@ public class BluetoothScoManager {
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
             savedMode = mSavedMode;
+            owned = mModeOwned;
+            mModeOwned = false;
         }
         releaseRoute();
-        restoreMode(savedMode);
+        if (owned) {
+            restoreMode(savedMode);
+        }
         Log.i(TAG, "Bluetooth SCO disconnected");
         // Main-thread origin; see setActive.
         mListener.onScoDisconnected();
@@ -353,6 +428,8 @@ public class BluetoothScoManager {
 
     private void fail(String reason) {
         final int savedMode;
+        final boolean owned;
+        final int generation;
         synchronized (this) {
             if (mState == STATE_IDLE) {
                 return;
@@ -361,16 +438,30 @@ public class BluetoothScoManager {
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
             savedMode = mSavedMode;
+            owned = mModeOwned;
+            mModeOwned = false;
+            generation = mGeneration;
         }
         releaseRoute();
-        restoreMode(savedMode);
+        if (owned) {
+            restoreMode(savedMode);
+        }
         Log.w(TAG, "Bluetooth SCO failed: " + reason);
-        // Always posted: pre-flight and re-entrant failures can surface on
-        // the start() caller's thread, and callbacks must stay main-thread.
+        // Always posted: failures can surface on the start() caller's thread.
+        // The generation check drops delivery when stop() or a newer start()
+        // has since moved on, honoring stop()'s never-callbacks contract.
         mHandler.post(new Runnable() {
             @Override
             public void run() {
-                mListener.onScoFailed(reason);
+                final boolean current;
+                synchronized (BluetoothScoManager.this) {
+                    current = generation == mGeneration;
+                }
+                if (current) {
+                    mListener.onScoFailed(reason);
+                } else {
+                    Log.i(TAG, "Dropping stale SCO failure callback: " + reason);
+                }
             }
         });
     }
@@ -417,9 +508,6 @@ public class BluetoothScoManager {
     // case bring-up must fail fast: without an observer nothing can ever
     // report the link connected.
     private boolean registerDeviceListener() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return false;
-        }
         if (mDeviceListener != null) {
             return true;
         }
@@ -427,6 +515,10 @@ public class BluetoothScoManager {
         try {
             mAudioManager.addOnCommunicationDeviceChangedListener(
                     mContext.getMainExecutor(), mDeviceListener);
+        } catch (SecurityException e) {
+            Log.w(TAG, "addOnCommunicationDeviceChangedListener denied", e);
+            mDeviceListener = null;
+            throw e;
         } catch (Exception e) {
             Log.w(TAG, "addOnCommunicationDeviceChangedListener threw", e);
             mDeviceListener = null;
@@ -460,6 +552,10 @@ public class BluetoothScoManager {
             } else {
                 mContext.registerReceiver(mLegacyReceiver, filter);
             }
+        } catch (SecurityException e) {
+            Log.w(TAG, "Legacy SCO receiver denied", e);
+            mLegacyReceiver = null;
+            throw e;
         } catch (Exception e) {
             Log.w(TAG, "Legacy SCO receiver registration threw", e);
             mLegacyReceiver = null;
@@ -468,7 +564,7 @@ public class BluetoothScoManager {
         return true;
     }
 
-    private void teardownObservers() {
+    private synchronized void teardownObservers() {
         if (mLegacyReceiver != null) {
             try {
                 mContext.unregisterReceiver(mLegacyReceiver);
@@ -480,7 +576,8 @@ public class BluetoothScoManager {
         if (mDeviceListener != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
                 mAudioManager.removeOnCommunicationDeviceChangedListener(mDeviceListener);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                Log.w(TAG, "Device listener removal threw", e);
             }
             mDeviceListener = null;
         }

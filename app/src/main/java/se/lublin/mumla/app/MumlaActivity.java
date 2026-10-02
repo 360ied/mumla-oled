@@ -217,6 +217,15 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
 
         @Override
+        public void onBluetoothScoChanged(boolean active) {
+            // Link transitions refresh what the preference snapshot cannot:
+            // volume keys and the overflow checkmark follow the live route.
+            setVolumeControlStream(useVoiceCallVolume() ?
+                    AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+            supportInvalidateOptionsMenu();
+        }
+
+        @Override
         public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
             if (chain == null || chain.length == 0 || chain[0] == null) {
                 return;
@@ -610,8 +619,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     /**
      * Flips the Bluetooth headset toggle. Enabling without the runtime grant
-     * defers the flip until the permission result arrives; the service picks
-     * up the preference change (and the volume stream follows) either way.
+     * defers the flip until the permission result arrives. The service picks
+     * up the preference change, and link transitions refresh volume and menu
+     * state through the SCO observer event.
      */
     public void toggleBluetoothHeadset() {
         boolean enabling = !mSettings.isBluetoothHeadset();
@@ -890,6 +900,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     }
                 } else {
                     mBluetoothMenuPendingPerm = false;
+                    // Denial reverts the toggle everywhere: without the grant
+                    // the route can never come up, and keeping it on would nag
+                    // on every connect (the system short-circuits re-prompts).
+                    mSettings.setBluetoothHeadset(false);
                     Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                             Toast.LENGTH_LONG).show();
                 }
@@ -1065,8 +1079,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 setStayAwake(mSettings.shouldStayAwake());
                 break;
             case Settings.PREF_HANDSET_MODE:
-                setVolumeControlStream(useVoiceCallVolume() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
-                break;
             case Settings.PREF_BLUETOOTH_HEADSET:
                 setVolumeControlStream(useVoiceCallVolume() ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                 break;

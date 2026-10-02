@@ -159,6 +159,13 @@ public class HumlaCallbacks implements IHumlaObserver {
     }
 
     @Override
+    public void onBluetoothScoChanged(boolean active) {
+        for (IHumlaObserver observer : mCallbacks) {
+            observer.onBluetoothScoChanged(active);
+        }
+    }
+
+    @Override
     public void onLogInfo(String message) {
         for (IHumlaObserver observer : mCallbacks) {
             observer.onLogInfo(message);

@@ -576,7 +576,7 @@ public class AudioHandler extends HumlaNetworkListener
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
-        private boolean mScoEnabled;
+        private volatile boolean mScoEnabled;
         private boolean mPreprocessorEnabled;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;

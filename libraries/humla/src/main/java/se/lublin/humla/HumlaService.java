@@ -142,7 +142,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
     private boolean mHalfDuplex;
-    private boolean mScoRequested;
+    private volatile boolean mScoRequested;
     private BluetoothScoManager mScoManager;
 
     private byte mVoiceTargetId;
@@ -369,19 +369,26 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             public void onScoConnected() {
                 mAudioBuilder.setScoEnabled(true);
                 reloadAudioForRoute("Bluetooth SCO connected");
+                onScoRouteChanged();
+                mCallbacks.onBluetoothScoChanged(true);
             }
 
             @Override
             public void onScoDisconnected() {
                 mAudioBuilder.setScoEnabled(false);
                 reloadAudioForRoute("Bluetooth SCO disconnected, falling back to phone audio");
+                onScoRouteChanged();
+                mCallbacks.onBluetoothScoChanged(false);
             }
 
             @Override
             public void onScoFailed(String reason) {
                 mAudioBuilder.setScoEnabled(false);
                 reloadAudioForRoute("Bluetooth SCO unavailable, falling back to phone audio");
-                // Manager guarantees main-thread delivery, so toast directly.
+                onScoRouteChanged();
+                mCallbacks.onBluetoothScoChanged(false);
+                // onScoFailed is posted to the main thread; connected and
+                // disconnected arrive on main-thread platform callbacks.
                 Toast.makeText(HumlaService.this,
                         BluetoothScoManager.REASON_PERMISSION.equals(reason)
                                 ? R.string.bluetooth_sco_permission
@@ -724,6 +731,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Invoked on the main thread after every confirmed SCO route change,
+     * after the pipeline reload. Subclasses override to refresh
+     * route-dependent audio that the pipeline does not own (e.g. cue streams).
+     */
+    protected void onScoRouteChanged() {
+    }
+
+    /**
      * Starts or stops SCO bring-up to match the requested toggle and the
      * connection state. Safe to call redundantly: the manager ignores
      * start requests while starting or active, and stop is idempotent.
@@ -755,6 +770,24 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 onConnectionWarning(e.getMessage());
             }
         }
+    }
+
+    /**
+     * Whether a settings bundle carries audio-affecting keys beyond the
+     * Bluetooth toggle, which alone never justifies a pipeline reload.
+     */
+    private static boolean bundleHasOtherAudioKeys(Bundle extras) {
+        return extras.containsKey(EXTRAS_DETECTION_THRESHOLD)
+                || extras.containsKey(EXTRAS_AMPLITUDE_BOOST)
+                || extras.containsKey(EXTRAS_TRANSMIT_MODE)
+                || extras.containsKey(EXTRAS_INPUT_RATE)
+                || extras.containsKey(EXTRAS_INPUT_QUALITY)
+                || extras.containsKey(EXTRAS_AUDIO_SOURCE)
+                || extras.containsKey(EXTRAS_AUDIO_STREAM)
+                || extras.containsKey(EXTRAS_FRAMES_PER_PACKET)
+                || extras.containsKey(EXTRAS_HALF_DUPLEX)
+                || extras.containsKey(EXTRAS_ENABLE_PREPROCESSOR)
+                || extras.containsKey(EXTRAS_ADAPTIVE_LEVELER);
     }
 
     /**
@@ -935,10 +968,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (extras.containsKey(EXTRAS_BLUETOOTH_SCO)) {
             boolean requested = extras.getBoolean(EXTRAS_BLUETOOTH_SCO);
-            // A fresh enable skips the end-of-method reload: the confirmed
-            // callback performs the single pipeline recreate on the SCO
-            // route instead of paying for two (one now, one on connect).
-            suppressReload = requested && !mScoRequested;
+            // A fresh enable skips the end-of-method reload only when the
+            // bundle holds nothing else audio-affecting: the confirmed
+            // callback then performs the single pipeline recreate on the
+            // SCO route. Bundled audio changes reload immediately (and the
+            // callback reloads once more on confirm); the connect-time
+            // bundle never reloads here since no handler exists yet.
+            suppressReload = requested && !mScoRequested && !bundleHasOtherAudioKeys(extras);
             mScoRequested = requested;
             if (!requested) {
                 mAudioBuilder.setScoEnabled(false);

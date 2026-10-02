@@ -110,6 +110,11 @@ public class HumlaObserver implements IHumlaObserver {
     }
 
     @Override
+    public void onBluetoothScoChanged(boolean active) {
+
+    }
+
+    @Override
     public void onLogInfo(String message) {
 
     }

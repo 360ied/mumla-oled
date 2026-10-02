@@ -485,6 +485,15 @@ public class MumlaService extends HumlaService implements
         }
     }
 
+    /**
+     * Refreshes route-dependent cue audio after a confirmed SCO change.
+     * The pipeline owns voice routing; this owns the PTT SoundPool.
+     */
+    @Override
+    protected void onScoRouteChanged() {
+        initSoundPool();
+    }
+
     void initSoundPool() {
         releaseSoundPool();
         try {
