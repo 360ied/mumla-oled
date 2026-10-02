@@ -143,7 +143,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private int mTransmitMode;
     private boolean mHalfDuplex;
     // Volatile: written in configureExtras, read across service threads in
-    // updateBluetoothScoRoute and the route callbacks.
+    // updateBluetoothScoRoute, retryBluetoothSco, and the route callbacks.
+    // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
     private volatile boolean mScoRequested;
     private BluetoothScoManager mScoManager;
 
@@ -406,9 +407,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
-        if (mScoManager != null) {
-            stopScoWithNotify();
-        }
+        // stopScoWithNotify null-guards the manager itself.
+        stopScoWithNotify();
         releaseWifiLock();
     }
 
@@ -478,11 +478,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
-    public void retryBluetoothSco() {
+    public boolean retryBluetoothSco() {
         if (mScoRequested && mConnectionState == ConnectionState.CONNECTED
                 && mScoManager != null && mScoManager.isIdle()) {
             mScoManager.start();
+            return true;
         }
+        return false;
     }
 
     public boolean isConnectionEstablished() {
@@ -746,6 +748,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (mScoManager != null && mScoManager.isActive()) {
+                        // Re-connected since teardown queued: fresh callbacks
+                        // own the UI; a stale false must not overwrite them.
+                        return;
+                    }
                     onScoRouteChanged();
                     mCallbacks.onBluetoothScoChanged(false);
                 }

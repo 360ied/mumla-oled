@@ -717,10 +717,9 @@ public class MumlaService extends HumlaService implements
         }
 
         updateHotCornerVisibility();
-        // Configure proximity sensor
-        if (mSettings.isHandsetMode()) {
-            setProximitySensorOn(true);
-        }
+        // Configure proximity sensor: SCO wins over handset mode (see
+        // shouldUseProximitySensor) so a headset never blanks the screen.
+        setProximitySensorOn(shouldUseProximitySensor());
 
         updateConnectedNotification();
         mSelfTalking = false;

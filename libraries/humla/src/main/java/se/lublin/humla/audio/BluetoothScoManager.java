@@ -149,8 +149,10 @@ public class BluetoothScoManager {
             // Flip first: pre-flight failures below report through fail(), which
             // only notifies when leaving a non-IDLE state. Bump the generation
             // so callbacks posted by earlier sessions are dropped on delivery.
+            // A new session never inherits a stale route hold.
             mState = STATE_STARTING;
             mAttempts = 0;
+            mRouteHeld = false;
             ++mGeneration;
         }
         if (!hasConnectPermission()) {
@@ -178,20 +180,24 @@ public class BluetoothScoManager {
             fail(REASON_ERROR);
             return;
         }
+        final boolean stopped;
         synchronized (this) {
-            if (mState != STATE_STARTING) {
-                // Stopped while setMode was in flight: undo the mode change,
-                // which stop() could not know about.
-                try {
-                    if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
-                        mAudioManager.setMode(currentMode);
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "setMode undo threw", e);
-                }
-                return;
+            stopped = mState != STATE_STARTING;
+            if (!stopped) {
+                mModeOwned = true;
             }
-            mModeOwned = true;
+        }
+        if (stopped) {
+            // Stopped while setMode was in flight: undo the mode change,
+            // which stop() could not know about. Outside the monitor: IPC.
+            try {
+                if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+                    mAudioManager.setMode(currentMode);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "setMode undo threw", e);
+            }
+            return;
         }
         // Outside the monitor: bring-up IPC must never pin the lock that
         // main-thread callbacks and stop() need.
@@ -201,7 +207,7 @@ public class BluetoothScoManager {
     /**
      * Tears down the link and restores the previous audio mode. Idempotent and
      * safe to call when idle; a failed bring-up may still hold a requested
-     * route, so release is unconditional. Never fires listener callbacks:
+     * route, so release is guarded by the hold flag. Never fires listener callbacks:
      * the generation bump drops any already-posted failure on delivery.
      */
     public void stop() {
@@ -221,7 +227,9 @@ public class BluetoothScoManager {
             mModeOwned = false;
             ++mGeneration;
         }
-        releaseRoute();
+        // Guarded release: a stale hold must never clear another app's
+        // routing selection.
+        releaseRouteIfHeld();
         if (owned) {
             restoreMode(savedMode);
         }
@@ -315,6 +323,20 @@ public class BluetoothScoManager {
             releaseRouteIfHeld();
             return null;
         }
+        if (isScoActiveNow()) {
+            // Already on SCO (preselected route or idempotent re-request):
+            // complete now instead of burning the timeout waiting for a
+            // change event that will never come. The timeout stays armed as
+            // fallback; setActive (or stop) removes it.
+            armTimeout();
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    setActive();
+                }
+            });
+            return null;
+        }
         armTimeout();
         return null;
     }
@@ -353,8 +375,41 @@ public class BluetoothScoManager {
             releaseRouteIfHeld();
             return null;
         }
+        if (isScoActiveNow()) {
+            // See modern fast-path above.
+            armTimeout();
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    setActive();
+                }
+            });
+            return null;
+        }
         armTimeout();
         return null;
+    }
+
+    // Whether SCO audio is currently routed, independent of the state
+    // machine. Fail-closed false: doubt falls through to event-driven setup.
+    private boolean isScoActiveNow() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioDeviceInfo current = mAudioManager.getCommunicationDevice();
+                return current != null
+                        && current.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
+            } else {
+                return isBluetoothScoOnLegacy();
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // Legacy path runs below API 31 only, where this query is not deprecated.
+    @SuppressWarnings("deprecation")
+    private boolean isBluetoothScoOnLegacy() {
+        return mAudioManager.isBluetoothScoOn();
     }
 
     // Fail-open HFP presence check: any doubt preserves the timeout fallback.
@@ -404,8 +459,10 @@ public class BluetoothScoManager {
 
     private void onLegacyStateChanged(int audioState) {
         final int state;
+        final int attempts;
         synchronized (this) {
             state = mState;
+            attempts = mAttempts;
         }
         if (audioState == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
             if (state == STATE_STARTING) {
@@ -422,11 +479,7 @@ public class BluetoothScoManager {
             // broadcasts are benign link chatter and must not burn the retry
             // budget (the modern path ignores mid-bring-up moves likewise).
             if (audioState == AudioManager.SCO_AUDIO_STATE_ERROR) {
-                final boolean exhausted;
-                synchronized (BluetoothScoManager.this) {
-                    exhausted = mAttempts >= MAX_ATTEMPTS;
-                }
-                if (exhausted) {
+                if (attempts >= MAX_ATTEMPTS) {
                     fail(REASON_ERROR);
                     return;
                 }
@@ -460,8 +513,9 @@ public class BluetoothScoManager {
             if (mState != STATE_STARTING) {
                 return;
             }
-            attemptBringUp();
         }
+        // Outside the monitor: bring-up IPC must never pin the lock.
+        attemptBringUp();
     }
 
     private void setActive() {

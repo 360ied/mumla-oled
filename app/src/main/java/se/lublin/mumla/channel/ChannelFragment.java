@@ -32,6 +32,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
@@ -255,7 +256,13 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                     activity.setBluetoothHeadset(false);
                 } else if (getService() != null
                         && Settings.getInstance(activity).isBluetoothHeadset()) {
-                    getService().retryBluetoothSco();
+                    // Already requested but not up: explicit retry. A false
+                    // return means bring-up is already running, so say so
+                    // instead of tapping silently dead.
+                    if (!getService().retryBluetoothSco()) {
+                        Toast.makeText(activity, R.string.bluetooth_sco_connecting,
+                                Toast.LENGTH_SHORT).show();
+                    }
                 } else {
                     activity.setBluetoothHeadset(true);
                 }

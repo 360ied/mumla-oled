@@ -129,10 +129,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private static final int PERMISSIONS_REQUEST_BLUETOOTH_CONNECT = 3;
     private Server mServerPendingPerm = null;
     private boolean mPermPostNotificationsAsked = false;
+    private boolean mPermBluetoothAsked = false;
     private boolean mBluetoothMenuPendingPerm = false;
     private static final String STATE_SERVER_PENDING = "server_pending";
     private static final String STATE_BT_MENU_PENDING = "bt_menu_pending";
     private static final String STATE_POST_NOTIF_ASKED = "post_notif_asked";
+    private static final String STATE_BT_ASKED = "bt_asked";
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
@@ -399,6 +401,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (savedInstanceState != null) {
             mBluetoothMenuPendingPerm =
                     savedInstanceState.getBoolean(STATE_BT_MENU_PENDING, false);
+            mPermBluetoothAsked =
+                    savedInstanceState.getBoolean(STATE_BT_ASKED, false);
             mPermPostNotificationsAsked =
                     savedInstanceState.getBoolean(STATE_POST_NOTIF_ASKED, false);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -772,6 +776,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     protected void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putBoolean(STATE_BT_MENU_PENDING, mBluetoothMenuPendingPerm);
+        outState.putBoolean(STATE_BT_ASKED, mPermBluetoothAsked);
         outState.putBoolean(STATE_POST_NOTIF_ASKED, mPermPostNotificationsAsked);
         outState.putParcelable(STATE_SERVER_PENDING, mServerPendingPerm);
     }
@@ -796,21 +801,26 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 && ContextCompat.checkSelfPermission(MumlaActivity.this,
                         Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
-            if (ActivityCompat.shouldShowRequestPermissionRationale(MumlaActivity.this,
-                    Manifest.permission.BLUETOOTH_CONNECT)) {
+            if (!mPermBluetoothAsked) {
+                // First use: ask. shouldShowRequestPermissionRationale is
+                // false both before the first ask and after permanent denial,
+                // so the asked-flag (not rationale) tells them apart.
+                mPermBluetoothAsked = true;
                 ActivityCompat.requestPermissions(MumlaActivity.this,
                         new String[]{Manifest.permission.BLUETOOTH_CONNECT},
                         PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
                 return;
             }
-            // Permanently denied: revert with an explanation and continue on
-            // phone audio instead of dead-ending every connect at the gate.
+            // Asked before and still denied: revert with an explanation and
+            // continue on phone audio instead of dead-ending every connect.
             mSettings.setBluetoothHeadset(false);
             Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                     Toast.LENGTH_LONG).show();
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !mPermPostNotificationsAsked) {
+            // Mark asked before requesting: a cancelled dialog must not loop.
+            mPermPostNotificationsAsked = true;
             if (ContextCompat.checkSelfPermission(MumlaActivity.this,
                     Manifest.permission.POST_NOTIFICATIONS)
                     != PackageManager.PERMISSION_GRANTED) {
@@ -889,6 +899,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (grantResults.length == 0) {
             if (requestCode == PERMISSIONS_REQUEST_BLUETOOTH_CONNECT) {
                 mBluetoothMenuPendingPerm = false;
+            } else if (requestCode == PERMISSIONS_REQUEST_POST_NOTIFICATIONS) {
+                // Cancelled dialog: proceed without notifications instead of
+                // stranding the pending connect.
+                connectToServerWithPerm();
             }
             return;
         }
@@ -920,14 +934,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                             Toast.LENGTH_LONG).show();
                 } else {
-                    // Connect-flow denial keeps the stored toggle; re-prompt
-                    // only while the system still shows rationale, so a
-                    // permanent denial does not nag on every connect.
-                    if (ActivityCompat.shouldShowRequestPermissionRationale(MumlaActivity.this,
-                            Manifest.permission.BLUETOOTH_CONNECT)) {
-                        Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
-                                Toast.LENGTH_LONG).show();
-                    }
+                    // Denied after asking: revert so future connects proceed,
+                    // then resume this connect on phone audio.
+                    mSettings.setBluetoothHeadset(false);
+                    Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
+                            Toast.LENGTH_LONG).show();
+                    connectToServerWithPerm();
                 }
                 break;
             case PERMISSIONS_REQUEST_POST_NOTIFICATIONS:
