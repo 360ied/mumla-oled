@@ -164,6 +164,48 @@ that keeps the radio in high-power tails anyway.
    drain; this incident is evidence for why naive wake-lock removal without
    that track would convert these 5-minute flaps into permanent silence.
 
+## 8. Regression from 0.21.7: two lost keep-alive shields
+
+0.21.7 was flawless on this device; the current tree flaps every ~5 minutes
+despite containing the full 0.21.11 restoration (monolithic `PARTIAL_WAKE_LOCK`
+in [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java),
+`ScheduledExecutorService` keepalives in
+[`HumlaConnection.java`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.java),
+`PLAYSTATE_PLAYING` output). Prior art for this exact `EOFException`
+signature is
+[zero-audio-standby-regression-investigation](zero-audio-standby-regression-investigation.md)
+(0.21.10: wakelock released in standby → same Murmur reap). The mechanism
+today differs — the wakelock is never released (zero `-wake_lock` batterystats
+transitions) yet the kernel suspends anyway — and two 0.21.7-era shields that
+kept the process visibly active are gone:
+
+1. **Continuous microphone capture.** Before commit `1a971285` (`audio: gate
+   mic on mute`, first shipped in 0.21.10), the mic ran 24/7 even while
+   muted. Today `AudioRecord` opens for ~200 ms per (re)connect then closes
+   (logcat `start(7xx)` → `stop(7xx)`; `dumpsys` audio `rec start` →
+   `rec stop` ~200 ms apart at every reconnect). Recording-active is the
+   strongest anti-suspend signal Android/Vivo honor; it is now absent
+   99.99% of the connected time.
+2. **Render-thread activity.** 0.21.7's idle branch used a timed
+   `mInactiveLock.wait(20)` (50 Hz paced spin); the current loop in
+   [`AudioOutput.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java)
+   waits indefinitely with zero registered voices, parking the process fully
+   quiescent — at which point Vivo force-suspends beneath the held wake lock.
+
+The output silence shield is alive but unfed: `dumpsys audio` shows Mumla's
+track (`state:started`, 48 kHz mono) yet batterystats records no `+audio`
+for the app uid all day — the OS does not count a starved track as active
+playback. (The ~5 s `+audio` blips at each reconnect are Google TTS, uid
+10361, announcing "Disconnected" — confirming the flaps are user-visible.)
+
+Caveat: 0.21.9 (open mic + held wakelock + paused track) still drew OEM
+`SIGKILL`, so an open mic alone is a candidate shield, not a proven one.
+Disambiguation needs A/B testing: (a) hold the mic open while connected,
+(b) restore paced render ticks, (c) add a `WifiLock` — and observe which
+combination restores 0.21.7 stability. Battery exemptions are already
+granted (deviceidle whitelist + `RUN_IN_BACKGROUND: allow`) and proved
+insufficient against Vivo force-suspend.
+
 ## Appendix: reproduction commands
 
 ```bash
