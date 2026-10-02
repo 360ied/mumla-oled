@@ -132,6 +132,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private boolean mBluetoothMenuPendingPerm = false;
     private static final String STATE_SERVER_PENDING = "server_pending";
     private static final String STATE_BT_MENU_PENDING = "bt_menu_pending";
+    private static final String STATE_POST_NOTIF_ASKED = "post_notif_asked";
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
@@ -398,6 +399,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (savedInstanceState != null) {
             mBluetoothMenuPendingPerm =
                     savedInstanceState.getBoolean(STATE_BT_MENU_PENDING, false);
+            mPermPostNotificationsAsked =
+                    savedInstanceState.getBoolean(STATE_POST_NOTIF_ASKED, false);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 mServerPendingPerm =
                         savedInstanceState.getParcelable(STATE_SERVER_PENDING, Server.class);
@@ -618,14 +621,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     /**
-     * Flips the Bluetooth headset toggle. Enabling without the runtime grant
-     * defers the flip until the permission result arrives. The service picks
-     * up the preference change, and link transitions refresh volume and menu
-     * state through the SCO observer event.
+     * Asserts Bluetooth headset state. Absolute, not a toggle: tapping an
+     * unchecked-but-requested row re-asserts enable (retrying a failed
+     * bring-up through the preference re-fire) instead of flipping it off.
+     * Same-value writes intentionally re-fire listeners for that retry.
      */
-    public void toggleBluetoothHeadset() {
-        boolean enabling = !mSettings.isBluetoothHeadset();
-        if (enabling && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    public void setBluetoothHeadset(boolean enabled) {
+        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 && ContextCompat.checkSelfPermission(MumlaActivity.this,
                         Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -635,7 +637,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
             return;
         }
-        mSettings.setBluetoothHeadset(enabling);
+        mSettings.setBluetoothHeadset(enabled);
     }
 
     @Override
@@ -771,6 +773,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     protected void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putBoolean(STATE_BT_MENU_PENDING, mBluetoothMenuPendingPerm);
+        outState.putBoolean(STATE_POST_NOTIF_ASKED, mPermPostNotificationsAsked);
         outState.putParcelable(STATE_SERVER_PENDING, mServerPendingPerm);
     }
 
@@ -877,7 +880,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
         if (grantResults.length == 0) {
-            mBluetoothMenuPendingPerm = false;
+            if (requestCode == PERMISSIONS_REQUEST_BLUETOOTH_CONNECT) {
+                mBluetoothMenuPendingPerm = false;
+            }
             return;
         }
 
@@ -894,18 +899,25 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     if (mBluetoothMenuPendingPerm) {
                         mBluetoothMenuPendingPerm = false;
-                        mSettings.setBluetoothHeadset(true);
+                        setBluetoothHeadset(true);
                     } else {
                         connectToServerWithPerm();
                     }
-                } else {
+                } else if (mBluetoothMenuPendingPerm) {
+                    // Menu-flow denial reverts (nothing was persisted there).
                     mBluetoothMenuPendingPerm = false;
-                    // Denial reverts the toggle everywhere: without the grant
-                    // the route can never come up, and keeping it on would nag
-                    // on every connect (the system short-circuits re-prompts).
-                    mSettings.setBluetoothHeadset(false);
+                    setBluetoothHeadset(false);
                     Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                             Toast.LENGTH_LONG).show();
+                } else {
+                    // Connect-flow denial keeps the stored toggle; re-prompt
+                    // only while the system still shows rationale, so a
+                    // permanent denial does not nag on every connect.
+                    if (ActivityCompat.shouldShowRequestPermissionRationale(MumlaActivity.this,
+                            Manifest.permission.BLUETOOTH_CONNECT)) {
+                        Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
+                                Toast.LENGTH_LONG).show();
+                    }
                 }
                 break;
             case PERMISSIONS_REQUEST_POST_NOTIFICATIONS:

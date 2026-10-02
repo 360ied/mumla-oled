@@ -18,6 +18,7 @@
 
 <resources>
     <string name="audio_max_bandwidth">Maximum server network bandwidth is only %1$d kbit/s. Adjusting audio quality to %2$d kbit/s (%3$d ms).</string>
+    <!-- Shown when SCO bring-up fails for any non-permission reason. -->
     <string name="bluetooth_sco_failed">Bluetooth headset unavailable, using phone audio.</string>
     <!-- Shown when SCO bring-up fails for lack of the Bluetooth grant. -->
     <string name="bluetooth_sco_permission">Bluetooth permission required for headset audio.</string>

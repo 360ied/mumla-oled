@@ -204,11 +204,16 @@ public class BluetoothScoManager {
      * the generation bump drops any already-posted failure on delivery.
      */
     public void stop() {
-        mHandler.removeCallbacks(mTimeoutRunnable);
-        teardownObservers();
         final int savedMode;
         final boolean owned;
         synchronized (this) {
+            // One atomic unit with the flip: callback removal, observer
+            // teardown, and the generation bump cannot interleave with a
+            // concurrent bring-up's register/arm, matching fail() and
+            // dropActiveLink(). Unregister calls are idempotent and fast;
+            // route release and mode restore stay outside the monitor.
+            mHandler.removeCallbacks(mTimeoutRunnable);
+            teardownObservers();
             mState = STATE_IDLE;
             savedMode = mSavedMode;
             owned = mModeOwned;
@@ -356,8 +361,18 @@ public class BluetoothScoManager {
             return;
         }
         if (state == STATE_STARTING) {
-            // Bring-up attempt failed inside the stack; retry or give up on
-            // the timeout path's terms by re-arming immediately.
+            // An explicit stack error with no attempts left fails fast as an
+            // error instead of relabeling as a timeout after the fact.
+            final boolean exhausted;
+            synchronized (BluetoothScoManager.this) {
+                exhausted = mAttempts >= MAX_ATTEMPTS;
+            }
+            if (exhausted) {
+                fail(REASON_ERROR);
+                return;
+            }
+            // Otherwise retry or give up on the timeout path's terms by
+            // re-arming immediately.
             mHandler.removeCallbacks(mTimeoutRunnable);
             mHandler.post(mTimeoutRunnable);
         } else if (state == STATE_ACTIVE) {

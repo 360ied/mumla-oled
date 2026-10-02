@@ -576,7 +576,9 @@ public class AudioHandler extends HumlaNetworkListener
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
-        private volatile boolean mScoEnabled;
+        // Plain like neighbors: the builder is configured single-threaded on
+        // the service main thread; only the built handler's mScoActive is volatile.
+        private boolean mScoEnabled;
         private boolean mPreprocessorEnabled;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;

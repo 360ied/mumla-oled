@@ -142,6 +142,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
     private boolean mHalfDuplex;
+    // Volatile: written on main-thread route callbacks, read on binder and
+    // service threads in updateBluetoothScoRoute/configureExtras.
     private volatile boolean mScoRequested;
     private BluetoothScoManager mScoManager;
 
@@ -414,7 +416,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mWakeLock.release();
         }
         if (mScoManager != null) {
-            mScoManager.stop();
+            stopScoWithNotify();
         }
         releaseWifiLock();
     }
@@ -473,10 +475,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         releaseWifiLock();
         // Tear down SCO synchronously: the async disconnect callback may lag,
         // and a quick reconnect must not reuse a stale link or route flag.
-        if (mScoManager != null) {
-            mScoManager.stop();
-        }
-        mAudioBuilder.setScoEnabled(false);
+        stopScoWithNotify();
         if (mConnection != null) {
             mConnection.disconnect();
         }
@@ -590,10 +589,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateBluetoothScoRoute when still requested.
-        if (mScoManager != null) {
-            mScoManager.stop();
-        }
-        mAudioBuilder.setScoEnabled(false);
+        stopScoWithNotify();
 
         mCallbacks.onDisconnected(e);
     }
@@ -731,9 +727,30 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Stops SCO and clears the confirmed-route flag, emitting route-change
+     * notifications when a live link was up. stop() itself never callbacks,
+     * so synchronous teardowns must notify explicitly or volume, cues, and
+     * menu state strand on the voice route.
+     */
+    private void stopScoWithNotify() {
+        if (mScoManager == null) {
+            return;
+        }
+        boolean wasActive = mScoManager.isActive();
+        mScoManager.stop();
+        mAudioBuilder.setScoEnabled(false);
+        if (wasActive) {
+            onScoRouteChanged();
+            mCallbacks.onBluetoothScoChanged(false);
+        }
+    }
+
+    /**
      * Invoked on the main thread after every confirmed SCO route change,
      * after the pipeline reload. Subclasses override to refresh
      * route-dependent audio that the pipeline does not own (e.g. cue streams).
+     * Overrides must be idempotent and non-blocking, and must not call back
+     * into configureExtras; this also runs when no pipeline exists.
      */
     protected void onScoRouteChanged() {
     }
@@ -974,10 +991,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             // SCO route. Bundled audio changes reload immediately (and the
             // callback reloads once more on confirm); the connect-time
             // bundle never reloads here since no handler exists yet.
-            suppressReload = requested && !mScoRequested && !bundleHasOtherAudioKeys(extras);
+            suppressReload = !bundleHasOtherAudioKeys(extras)
+                    && (requested || requested == mScoRequested);
             mScoRequested = requested;
             if (!requested) {
-                mAudioBuilder.setScoEnabled(false);
+                // Synchronous teardown with notifications: stop() itself never
+                // callbacks, and the generic reload below only refreshes the
+                // pipeline, not observers or cue audio.
+                stopScoWithNotify();
             }
             updateBluetoothScoRoute();
         }

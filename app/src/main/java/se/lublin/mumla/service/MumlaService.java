@@ -492,14 +492,27 @@ public class MumlaService extends HumlaService implements
     @Override
     protected void onScoRouteChanged() {
         initSoundPool();
+        setProximitySensorOn(shouldUseProximitySensor());
+    }
+
+    /**
+     * The proximity sensor blanks the screen for ear-held handset use only.
+     * A live SCO link wins over handset mode: blanking the screen for a
+     * headset with no ear proximity would be unexpected.
+     */
+    private boolean shouldUseProximitySensor() {
+        return isConnectionEstablished() && mSettings.isHandsetMode()
+                && !isBluetoothScoActive();
     }
 
     void initSoundPool() {
         releaseSoundPool();
         try {
-            int streamType = (mSettings != null && (mSettings.isHandsetMode() || isBluetoothScoActive()))
+            boolean voiceRoute = mSettings != null
+                    && (mSettings.isHandsetMode() || isBluetoothScoActive());
+            int streamType = voiceRoute
                     ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
-            int usage = (mSettings != null && (mSettings.isHandsetMode() || isBluetoothScoActive()))
+            int usage = voiceRoute
                     ? AudioAttributes.USAGE_VOICE_COMMUNICATION : AudioAttributes.USAGE_MEDIA;
             AudioAttributes attributes = new AudioAttributes.Builder()
                     .setLegacyStreamType(streamType)
@@ -752,7 +765,7 @@ public class MumlaService extends HumlaService implements
                 updateHotCornerVisibility();
                 break;
             case Settings.PREF_HANDSET_MODE:
-                setProximitySensorOn(isConnectionEstablished() && mSettings.isHandsetMode());
+                setProximitySensorOn(shouldUseProximitySensor());
                 changedExtras.putInt(HumlaService.EXTRAS_AUDIO_STREAM, mSettings.isHandsetMode() ?
                                      AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                 initSoundPool();
@@ -814,6 +827,7 @@ public class MumlaService extends HumlaService implements
                     break;
                 }
                 changedExtras.putBoolean(EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
+                setProximitySensorOn(shouldUseProximitySensor());
                 initSoundPool();
                 break;
             case Settings.PREF_ADAPTIVE_LEVELER_ENABLED:
@@ -867,7 +881,7 @@ public class MumlaService extends HumlaService implements
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return true;
         }
-        return checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                 == PackageManager.PERMISSION_GRANTED;
     }
 
