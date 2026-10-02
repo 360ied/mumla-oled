@@ -561,9 +561,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     public boolean onPrepareOptionsMenu(Menu menu) {
         MenuItem disconnectButton = menu.findItem(R.id.action_disconnect);
         disconnectButton.setVisible(mService != null && mService.isConnected());
-        MenuItem bluetoothButton = menu.findItem(R.id.action_bluetooth_headset);
-        bluetoothButton.setVisible(mService != null && mService.isConnected());
-        bluetoothButton.setChecked(mSettings.isBluetoothHeadset());
 
         return super.onPrepareOptionsMenu(menu);
     }
@@ -583,10 +580,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             getService().disconnect();
             return true;
         }
-        if (item.getItemId() == R.id.action_bluetooth_headset) {
-            toggleBluetoothHeadset();
-            return true;
-        }
         return false;
     }
 
@@ -595,7 +588,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
      * defers the flip until the permission result arrives; the service picks
      * up the preference change (and the volume stream follows) either way.
      */
-    private void toggleBluetoothHeadset() {
+    public void toggleBluetoothHeadset() {
         boolean enabling = !mSettings.isBluetoothHeadset();
         if (enabling && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 && ContextCompat.checkSelfPermission(MumlaActivity.this,

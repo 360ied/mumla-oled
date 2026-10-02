@@ -55,6 +55,7 @@ import se.lublin.humla.util.IHumlaObserver;
 import se.lublin.humla.util.VoiceTargetMode;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
+import se.lublin.mumla.app.MumlaActivity;
 import se.lublin.mumla.util.HumlaServiceFragment;
 
 /**
@@ -228,9 +229,25 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     @Override
+    public void onPrepareOptionsMenu(Menu menu) {
+        super.onPrepareOptionsMenu(menu);
+        MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth_headset);
+        if (bluetoothItem != null) {
+            bluetoothItem.setVisible(getService() != null && getService().isConnected());
+            bluetoothItem.setChecked(Settings.getInstance(getActivity()).isBluetoothHeadset());
+        }
+    }
+
+    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         Settings settings = Settings.getInstance(getActivity());
         int itemId = item.getItemId();
+        if (itemId == R.id.menu_bluetooth_headset) {
+            if (getActivity() instanceof MumlaActivity) {
+                ((MumlaActivity) getActivity()).toggleBluetoothHeadset();
+            }
+            return true;
+        }
         if (itemId == R.id.menu_input_voice) {
             settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_VOICE);
             return true;

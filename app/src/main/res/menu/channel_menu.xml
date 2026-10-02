@@ -25,4 +25,7 @@
             <item android:id="@+id/menu_input_continuous" android:title="@string/inputMethodContinuous"/>
         </menu>
     </item>
+    <item android:id="@+id/menu_bluetooth_headset"
+        android:title="@string/bluetoothHeadset"
+        android:checkable="true"/>
 </menu>
