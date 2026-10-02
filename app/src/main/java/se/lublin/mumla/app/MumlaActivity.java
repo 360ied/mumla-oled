@@ -621,10 +621,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     /**
-     * Asserts Bluetooth headset state. Absolute, not a toggle: tapping an
-     * unchecked-but-requested row re-asserts enable (retrying a failed
-     * bring-up through the preference re-fire) instead of flipping it off.
-     * Same-value writes intentionally re-fire listeners for that retry.
+     * Asserts Bluetooth headset state. Absolute, not a toggle; enabling
+     * without the grant defers past the permission result. Explicit retries
+     * go through retryBluetoothSco, not same-value preference writes.
      */
     public void setBluetoothHeadset(boolean enabled) {
         if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -797,10 +796,18 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 && ContextCompat.checkSelfPermission(MumlaActivity.this,
                         Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(MumlaActivity.this,
-                    new String[]{Manifest.permission.BLUETOOTH_CONNECT},
-                    PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
-            return;
+            if (ActivityCompat.shouldShowRequestPermissionRationale(MumlaActivity.this,
+                    Manifest.permission.BLUETOOTH_CONNECT)) {
+                ActivityCompat.requestPermissions(MumlaActivity.this,
+                        new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                        PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
+                return;
+            }
+            // Permanently denied: revert with an explanation and continue on
+            // phone audio instead of dead-ending every connect at the gate.
+            mSettings.setBluetoothHeadset(false);
+            Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
+                    Toast.LENGTH_LONG).show();
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !mPermPostNotificationsAsked) {
@@ -904,9 +911,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         connectToServerWithPerm();
                     }
                 } else if (mBluetoothMenuPendingPerm) {
-                    // Menu-flow denial reverts (nothing was persisted there).
+                    // Menu-flow denial reverts (nothing was persisted there);
+                    // skip the write when already off to avoid a no-op storm.
                     mBluetoothMenuPendingPerm = false;
-                    setBluetoothHeadset(false);
+                    if (mSettings.isBluetoothHeadset()) {
+                        setBluetoothHeadset(false);
+                    }
                     Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                             Toast.LENGTH_LONG).show();
                 } else {

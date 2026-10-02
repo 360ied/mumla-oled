@@ -18,7 +18,7 @@
   -->
 
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/menu_input_method" android:title="@string/audioInputMethod">
+    <item android:title="@string/audioInputMethod">
         <menu>
             <item android:id="@+id/menu_input_voice" android:title="@string/inputMethodVoice"/>
             <item android:id="@+id/menu_input_ptt" android:title="@string/inputMethodPtt"/>

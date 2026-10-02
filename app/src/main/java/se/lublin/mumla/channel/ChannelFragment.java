@@ -246,10 +246,19 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
         int itemId = item.getItemId();
         if (itemId == R.id.menu_bluetooth_headset) {
             if (getActivity() instanceof MumlaActivity) {
-                // Assert the displayed state: an unchecked row enables (or
-                // re-asserts a failed bring-up); a checked row disables.
-                boolean enable = getService() == null || !getService().isBluetoothScoActive();
-                ((MumlaActivity) getActivity()).setBluetoothHeadset(enable);
+                // Assert the displayed state, never blind-toggle: an unchecked
+                // row with no request enables; with a request in flight or
+                // failed it explicitly retries; a checked row disables.
+                MumlaActivity activity = (MumlaActivity) getActivity();
+                boolean scoUp = getService() != null && getService().isBluetoothScoActive();
+                if (scoUp) {
+                    activity.setBluetoothHeadset(false);
+                } else if (getService() != null
+                        && Settings.getInstance(activity).isBluetoothHeadset()) {
+                    getService().retryBluetoothSco();
+                } else {
+                    activity.setBluetoothHeadset(true);
+                }
             }
             return true;
         }

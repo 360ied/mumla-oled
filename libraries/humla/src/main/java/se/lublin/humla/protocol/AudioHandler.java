@@ -320,7 +320,8 @@ public class AudioHandler extends HumlaNetworkListener
      * Selects the voice-call route for confirmed Bluetooth SCO, mirroring
      * handset mode. Set only on confirmed link state (see BluetoothScoManager),
      * never on the raw user toggle: starting playback on the voice-call stream
-     * without a live SCO link would misroute audio.
+     * without a live SCO link would misroute audio. Takes effect on the next
+     * pipeline creation; live pipelines must be recreated to apply it.
      */
     public void setScoEnabled(boolean scoEnabled) {
         mScoActive = scoEnabled;

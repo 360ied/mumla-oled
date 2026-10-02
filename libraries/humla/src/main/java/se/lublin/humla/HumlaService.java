@@ -142,8 +142,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
     private boolean mHalfDuplex;
-    // Volatile: written on main-thread route callbacks, read on binder and
-    // service threads in updateBluetoothScoRoute/configureExtras.
+    // Volatile: written in configureExtras, read across service threads in
+    // updateBluetoothScoRoute and the route callbacks.
     private volatile boolean mScoRequested;
     private BluetoothScoManager mScoManager;
 
@@ -156,7 +156,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private HumlaCallbacks mCallbacks;
 
     private HumlaConnection mConnection;
-    private ConnectionState mConnectionState;
+    private volatile ConnectionState mConnectionState;
     private ModelHandler mModelHandler;
     private AudioHandler mAudioHandler;
 
@@ -369,26 +369,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mScoManager = new BluetoothScoManager(this, new BluetoothScoManager.Listener() {
             @Override
             public void onScoConnected() {
-                mAudioBuilder.setScoEnabled(true);
-                reloadAudioForRoute("Bluetooth SCO connected");
-                onScoRouteChanged();
-                mCallbacks.onBluetoothScoChanged(true);
+                applyScoRoute(true, "Bluetooth SCO connected");
             }
 
             @Override
             public void onScoDisconnected() {
-                mAudioBuilder.setScoEnabled(false);
-                reloadAudioForRoute("Bluetooth SCO disconnected, falling back to phone audio");
-                onScoRouteChanged();
-                mCallbacks.onBluetoothScoChanged(false);
+                applyScoRoute(false, "Bluetooth SCO disconnected, falling back to phone audio");
             }
 
             @Override
             public void onScoFailed(String reason) {
-                mAudioBuilder.setScoEnabled(false);
-                reloadAudioForRoute("Bluetooth SCO unavailable, falling back to phone audio");
-                onScoRouteChanged();
-                mCallbacks.onBluetoothScoChanged(false);
+                applyScoRoute(false, "Bluetooth SCO unavailable, falling back to phone audio");
                 // onScoFailed is posted to the main thread; connected and
                 // disconnected arrive on main-thread platform callbacks.
                 Toast.makeText(HumlaService.this,
@@ -484,6 +475,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public boolean isBluetoothScoActive() {
         return mScoManager != null && mScoManager.isActive();
+    }
+
+    @Override
+    public void retryBluetoothSco() {
+        if (mScoRequested && mConnectionState == ConnectionState.CONNECTED
+                && mScoManager != null && mScoManager.isIdle()) {
+            mScoManager.start();
+        }
     }
 
     public boolean isConnectionEstablished() {
@@ -740,8 +739,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mScoManager.stop();
         mAudioBuilder.setScoEnabled(false);
         if (wasActive) {
-            onScoRouteChanged();
-            mCallbacks.onBluetoothScoChanged(false);
+            // Posted: teardown callers (disconnect, destroy, mid-call disable)
+            // may run off the main thread, but hook and observers are
+            // main-thread confined. Posting also orders the event after the
+            // synchronous disable-path pipeline reload.
+            mHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    onScoRouteChanged();
+                    mCallbacks.onBluetoothScoChanged(false);
+                }
+            });
         }
     }
 
@@ -756,6 +764,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Applies a confirmed route to the pipeline, cue hook, and observers in
+     * that order. All three route callbacks converge here.
+     */
+    private void applyScoRoute(boolean active, String reason) {
+        mAudioBuilder.setScoEnabled(active);
+        reloadAudioForRoute(reason);
+        onScoRouteChanged();
+        mCallbacks.onBluetoothScoChanged(active);
+    }
+
+    /**
      * Starts or stops SCO bring-up to match the requested toggle and the
      * connection state. Safe to call redundantly: the manager ignores
      * start requests while starting or active, and stop is idempotent.
@@ -766,7 +785,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
             mScoManager.start();
-        } else {
+        } else if (!mScoManager.isIdle()) {
+            // Skip the platform round-trip when already idle; stop() is safe
+            // but needlessly releases and bumps the callback generation.
             mScoManager.stop();
         }
     }
@@ -792,10 +813,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     /**
      * Whether a settings bundle carries audio-affecting keys beyond the
      * Bluetooth toggle, which alone never justifies a pipeline reload.
+     * Detection threshold is excluded: it applies live via setVadThresholds.
      */
     private static boolean bundleHasOtherAudioKeys(Bundle extras) {
-        return extras.containsKey(EXTRAS_DETECTION_THRESHOLD)
-                || extras.containsKey(EXTRAS_AMPLITUDE_BOOST)
+        return extras.containsKey(EXTRAS_AMPLITUDE_BOOST)
                 || extras.containsKey(EXTRAS_TRANSMIT_MODE)
                 || extras.containsKey(EXTRAS_INPUT_RATE)
                 || extras.containsKey(EXTRAS_INPUT_QUALITY)
@@ -923,7 +944,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioBuilder.setTargetBitrate(extras.getInt(EXTRAS_INPUT_QUALITY));
         }
         if (extras.containsKey(EXTRAS_FORCE_TCP)) {
-            mForceTcp |= extras.getBoolean(EXTRAS_FORCE_TCP);
+            mForceTcp = extras.getBoolean(EXTRAS_FORCE_TCP);
             reconnectNeeded = true;
         }
         if (extras.containsKey(EXTRAS_CLIENT_NAME)) {
@@ -992,7 +1013,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             // callback reloads once more on confirm); the connect-time
             // bundle never reloads here since no handler exists yet.
             suppressReload = !bundleHasOtherAudioKeys(extras)
-                    && (requested || requested == mScoRequested);
+                    && (requested || !mScoRequested);
             mScoRequested = requested;
             if (!requested) {
                 // Synchronous teardown with notifications: stop() itself never

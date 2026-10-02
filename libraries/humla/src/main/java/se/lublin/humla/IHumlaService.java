@@ -51,6 +51,13 @@ public interface IHumlaService {
     boolean isBluetoothScoActive();
 
     /**
+     * Re-asserts SCO bring-up when requested but idle, e.g. after a failed
+     * attempt the user explicitly retries. No-op unless a link was requested,
+     * the service is connected, and no link is up or starting.
+     */
+    void retryBluetoothSco();
+
+    /**
      * Disconnects from the active connection, or does nothing if no connection is active.
      */
     void disconnect();
