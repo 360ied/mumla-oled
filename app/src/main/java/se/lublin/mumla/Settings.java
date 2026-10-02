@@ -448,6 +448,10 @@ public class Settings {
         return preferences.getBoolean(PREF_BLUETOOTH_HEADSET, DEFAULT_BLUETOOTH_HEADSET);
     }
 
+    public void setBluetoothHeadset(boolean enabled) {
+        preferences.edit().putBoolean(PREF_BLUETOOTH_HEADSET, enabled).apply();
+    }
+
     public boolean isPttSoundEnabled() {
         return preferences.getBoolean(PREF_PTT_SOUND, DEFAULT_PTT_SOUND);
     }

@@ -129,6 +129,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private static final int PERMISSIONS_REQUEST_BLUETOOTH_CONNECT = 3;
     private Server mServerPendingPerm = null;
     private boolean mPermPostNotificationsAsked = false;
+    private boolean mBluetoothMenuPendingPerm = false;
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
@@ -560,6 +561,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     public boolean onPrepareOptionsMenu(Menu menu) {
         MenuItem disconnectButton = menu.findItem(R.id.action_disconnect);
         disconnectButton.setVisible(mService != null && mService.isConnected());
+        MenuItem bluetoothButton = menu.findItem(R.id.action_bluetooth_headset);
+        bluetoothButton.setVisible(mService != null && mService.isConnected());
+        bluetoothButton.setChecked(mSettings.isBluetoothHeadset());
 
         return super.onPrepareOptionsMenu(menu);
     }
@@ -579,7 +583,31 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             getService().disconnect();
             return true;
         }
+        if (item.getItemId() == R.id.action_bluetooth_headset) {
+            toggleBluetoothHeadset();
+            return true;
+        }
         return false;
+    }
+
+    /**
+     * Flips the Bluetooth headset toggle. Enabling without the runtime grant
+     * defers the flip until the permission result arrives; the service picks
+     * up the preference change (and the volume stream follows) either way.
+     */
+    private void toggleBluetoothHeadset() {
+        boolean enabling = !mSettings.isBluetoothHeadset();
+        if (enabling && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && ContextCompat.checkSelfPermission(MumlaActivity.this,
+                        Manifest.permission.BLUETOOTH_CONNECT)
+                        != PackageManager.PERMISSION_GRANTED) {
+            mBluetoothMenuPendingPerm = true;
+            ActivityCompat.requestPermissions(MumlaActivity.this,
+                    new String[]{Manifest.permission.BLUETOOTH_CONNECT},
+                    PERMISSIONS_REQUEST_BLUETOOTH_CONNECT);
+            return;
+        }
+        mSettings.setBluetoothHeadset(enabling);
     }
 
     @Override
@@ -828,8 +856,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 break;
             case PERMISSIONS_REQUEST_BLUETOOTH_CONNECT:
                 if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    connectToServerWithPerm();
+                    if (mBluetoothMenuPendingPerm) {
+                        mBluetoothMenuPendingPerm = false;
+                        mSettings.setBluetoothHeadset(true);
+                    } else {
+                        connectToServerWithPerm();
+                    }
                 } else {
+                    mBluetoothMenuPendingPerm = false;
                     Toast.makeText(MumlaActivity.this, getString(R.string.grant_perm_bluetooth),
                             Toast.LENGTH_LONG).show();
                 }

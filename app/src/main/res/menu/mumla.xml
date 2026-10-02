@@ -17,6 +17,11 @@
 
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
       xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/action_bluetooth_headset"
+        android:title="@string/bluetoothHeadset"
+        android:checkable="true"
+        android:orderInCategory="50"
+        app:showAsAction="never"/>
     <item android:id="@+id/action_disconnect"
         android:title="@string/disconnect"
         android:orderInCategory="99"
