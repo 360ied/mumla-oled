@@ -187,29 +187,22 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
-    private void stopRecording() {
-        synchronized (mInput) {
-            if (mInput.isRecording()) {
-                mInput.stopRecording();
-            }
-        }
-    }
-
     private synchronized void updateMuteState(boolean muted) {
-        if (muted) {
-            if (mInput != null) {
-                stopRecording();
-            }
-            if (mNativeEngine != null) {
-                mNativeEngine.setMuted(true);
-            }
-        } else {
-            if (mNativeEngine != null) {
-                mNativeEngine.setMuted(false);
-            }
-            if (mInput != null && mInitialized) {
-                startRecording();
-            }
+        // Doze shield: the microphone stays open for the whole connection, even
+        // while muted. Recording-active is the strongest signal Android/Vivo
+        // honor against force-suspend on battery + screen-off; closing the mic
+        // (commit 1a971285) removed the 0.21.7-era shield and preceded the
+        // 5-minute Murmur-timeout flaps, and the A/B experiment validated the
+        // open mic as the load-bearing shield. Muted frames are dropped in the
+        // native engine via setMuted(true), so no new voice frames are encoded
+        // or transmitted (a single terminator may still be emitted on the mute
+        // transition if mid-utterance) — at the cost of the system mic
+        // indicator and ~15-25 mA capture drain.
+        if (mNativeEngine != null) {
+            mNativeEngine.setMuted(muted);
+        }
+        if (mInput != null && mInitialized) {
+            startRecording();
         }
     }
 

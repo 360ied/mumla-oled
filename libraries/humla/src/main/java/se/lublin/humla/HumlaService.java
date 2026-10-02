@@ -26,6 +26,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.NetworkRequest;
+import android.net.wifi.WifiManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -142,6 +143,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private WhisperTargetList mWhisperTargetList;
 
     private PowerManager.WakeLock mWakeLock;
+    private WifiManager.WifiLock mWifiLock;
     private Handler mHandler;
     private HumlaCallbacks mCallbacks;
 
@@ -221,6 +223,36 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
     }
 
+    /**
+     * Acquires the high-performance WiFi lock, keeping the radio out of power-save
+     * while the connection (including auto-reconnect gaps) is alive. No-op when the
+     * lock could not be created. Mirrors the mWakeLock lifecycle.
+     */
+    private void acquireWifiLock() {
+        try {
+            if (mWifiLock != null && !mWifiLock.isHeld()) {
+                mWifiLock.acquire();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not acquire WifiLock.", e);
+        }
+    }
+
+    /**
+     * Releases the WiFi lock on final teardown so the radio may sleep again.
+     * Never called across auto-reconnect retries: the radio must stay up while
+     * redialing or the handshake itself stalls past the server timeout.
+     */
+    private void releaseWifiLock() {
+        try {
+            if (mWifiLock != null && mWifiLock.isHeld()) {
+                mWifiLock.release();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not release WifiLock.", e);
+        }
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
@@ -286,6 +318,29 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mWakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService");
         mWakeLock.setReferenceCounted(false);
 
+        // Doze shield: keep the WiFi radio out of firmware power-save for the
+        // lifetime of the connection. Without a WifiLock (dumpsys wifi showed
+        // zero locks acquired), on battery + screen-off the radio slept between
+        // Doze maintenance windows, stalling keepalives past Murmur's 30 s
+        // timeout. Created here, acquired in connect(), released on final
+        // teardown. Uses the application context so the lock outlives config
+        // changes; reference-counted false to mirror mWakeLock semantics.
+        // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): LOW_LATENCY needs
+        // API 30+ while this library targets API 21+, and HIGH_PERF is the
+        // documented VoIP-compatible mode available on all supported devices.
+        try {
+            WifiManager wifiManager = (WifiManager) getApplicationContext()
+                    .getSystemService(WIFI_SERVICE);
+            if (wifiManager != null) {
+                mWifiLock = wifiManager.createWifiLock(
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Humla:HumlaServiceWifi");
+                mWifiLock.setReferenceCounted(false);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not create WifiLock; radio may sleep on battery.", e);
+            mWifiLock = null;
+        }
+
         mHandler = new Handler(getMainLooper());
         mCallbacks = new HumlaCallbacks();
         mAudioBuilder = new AudioHandler.Builder()
@@ -320,6 +375,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
+        releaseWifiLock();
     }
 
     public IBinder onBind(Intent intent) {
@@ -344,6 +400,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 }
                 mWakeLock.acquire(15000);
             }
+            acquireWifiLock();
 
             mConnection = new HumlaConnection(this);
             mConnection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket());
@@ -372,6 +429,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
+        releaseWifiLock();
         if (mConnection != null) {
             mConnection.disconnect();
         }
@@ -465,6 +523,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             if (mWakeLock != null && mWakeLock.isHeld()) {
                 mWakeLock.release();
             }
+            releaseWifiLock();
         }
 
         if (mAudioHandler != null) {
@@ -875,6 +934,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mWakeLock != null && mWakeLock.isHeld()) {
             mWakeLock.release();
         }
+        releaseWifiLock();
     }
 
     @Override
