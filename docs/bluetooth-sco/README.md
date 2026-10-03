@@ -30,6 +30,9 @@ owned by `HumlaService`.
    codebase descended from, what it did, and why it was dropped.
 4. [Design options and recommendation](design-options.md) — the three scoped
    options considered, the phased plan adopted, and the as-built deltas.
+5. [Toggle unification plan](toggle-unification-plan.md) — proposal to unify
+   the Settings checkbox and the channel-overflow item into a single
+   requested-state toggle with Settings semantics.
 
 ## Key facts (starting position, pre-0.22.0)
 
