@@ -51,8 +51,10 @@ public boolean isPreprocessorEnabled() {
 
 `PREF_PREPROCESSOR_ENABLED` and `DEFAULT_PREPROCESSOR_ENABLED` both exist, but
 the accessor ignores them, so `EXTRAS_ENABLE_PREPROCESSOR` is always `true` and
-the RNNoise preprocessor can never be disabled at runtime. Either wire the
-accessor to the preference or remove the dead key and default. Low severity:
+the RNNoise preprocessor can never be disabled at runtime. Decision (owner):
+remove the dead key, default, and extra plumbing — making the preprocessor
+truly toggleable (settings UI, reconnect semantics, a supported off-config)
+is a deep architectural lift, and always-on is the tested default. Low severity:
 the preprocessor-on path is the tested, desirable default.
 
 ### ODD-22: Stale Render-Lead Bound in Audio Output Docs

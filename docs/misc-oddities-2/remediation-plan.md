@@ -1,6 +1,6 @@
 # Miscellaneous Oddities Round-2 Remediation Plan
 
-Prioritized engineering plan for the residual findings cataloged in ([`README.md`](README.md)) (ODD-21–ODD-27) for Mumla OLED. All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness.
+Prioritized engineering plan for the residual findings cataloged in ([`README.md`](README.md)) (ODD-21–ODD-27) for Mumla OLED. All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness. Owner decisions are recorded inline (ODD-21 removal, single-branch scheduling); implement in one `bugfix/oddities-round2-remediation` branch covering Phases 1–3.
 
 ## Table of Contents
 
@@ -67,11 +67,13 @@ Dead state and a stale bound description. No behavior change in either fix.
 
 **Problem**: `isPreprocessorEnabled()` returns `true` unconditionally while `PREF_PREPROCESSOR_ENABLED` and `DEFAULT_PREPROCESSOR_ENABLED` exist but are never read, so `EXTRAS_ENABLE_PREPROCESSOR` can never be `false` and the RNNoise preprocessor cannot be disabled at runtime. The key has no settings-screen entry (no XML references it) and no other readers, so both directions are safe.
 
-**Solution** (owner picks one; recommended first):
-1. **Wire it (recommended)**: return `preferences.getBoolean(PREF_PREPROCESSOR_ENABLED, DEFAULT_PREPROCESSOR_ENABLED)` and add a settings-screen toggle, so the dead key becomes a real user control.
-2. **Remove it**: delete the key, default, and the `EXTRAS_ENABLE_PREPROCESSOR` plumbing if the preprocessor-on default is a deliberate product decision.
+**Solution** (decision, owner): **remove**. Making the preprocessor truly toggleable — settings-screen UI, reconnect-vs-live semantics (`EXTRAS_ENABLE_PREPROCESSOR` participates in `bundleHasOtherAudioKeys`), and a supported/tested preprocessor-off audio configuration — is a deep architectural lift, and always-on is the tested default. Delete:
+1. `PREF_PREPROCESSOR_ENABLED` / `DEFAULT_PREPROCESSOR_ENABLED` and `isPreprocessorEnabled()` in [`Settings.java`](../../app/src/main/java/se/lublin/mumla/Settings.java).
+2. `EXTRAS_ENABLE_PREPROCESSOR`, its `bundleHasOtherAudioKeys` entry, and its `configureExtras` block in [`HumlaService.java`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java).
+3. The `putExtra` in [`ServerConnectTask.java:87`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java#L87).
+4. `Builder.setPreprocessorEnabled` and its field in [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) — hardcode `true` at the builder→handler handoff, since the extra is unconditionally `true` today and the default must not silently flip to off. The now-constant internal flag is left for a future cleanup.
 
-**Acceptance criteria**: no dead key remains — either the accessor reads the preference behind a visible toggle, or the key/default/extra are gone (grep).
+**Acceptance criteria**: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain (grep); `assembleFossDebug` passes; connect succeeds with preprocessing audibly active.
 
 ### 2.2 Fix the render-lead bound doc (ODD-22)
 
@@ -105,7 +107,7 @@ A fragment lifecycle mirror fix and the only test-debt item in the batch.
 
 **Problem**: Timeout budget, retry budget, and the `Handler` are hard-wired, so the bring-up matrix (success, timeout, retry, refusal, no-device, drop-after-connect) cannot be exercised by JVM tests.
 
-**Solution**: Inject the timeout/retry budget and the handler (constructor or setter seam), or extract a pure transition function the manager drives; then cover the matrix in the existing JUnit style. Keep the production defaults (`8000 ms`, `2` attempts, main-looper handler) unchanged.
+**Solution**: constructor injection of the timeout budget, retry budget, and handler, with the production defaults (`8000 ms`, `2` attempts, main-looper handler) passed at the `HumlaService` call site — minimal seam, no manager API redesign, behavior byte-identical. Then cover the matrix in the existing JUnit style.
 
 **Acceptance criteria**: JVM tests pin at least timeout, retry-exhaustion, and refusal transitions without Robolectric; production defaults byte-identical.
 
@@ -125,7 +127,7 @@ Each fix ships with a targeted regression pin; all items are JVM-testable except
 |---|---|---|---|
 | **Phase 1** | **ODD-25** | Unit test calling `setVoiceTargetId` with a null `mAudioHandler`; existing voice-target tests pass. | None (latent path). |
 | **Phase 1** | **ODD-27** | JVM test: valid rate string passes through, garbage string falls back to the default rate. | Corrupt `PREF_INPUT_RATE` via backup restore; connect succeeds. |
-| **Phase 2** | **ODD-21** | Grep: no unread `PREF_PREPROCESSOR_ENABLED` remains (wired behind a toggle, or key/default/extra removed). | Toggle the preprocessor off (if wired); verify audio path still connects. |
+| **Phase 2** | **ODD-21** | Grep: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain; `assembleFossDebug` passes. | Connect and verify preprocessing audibly active (behavior unchanged, always on). |
 | **Phase 2** | **ODD-22** | Doc/code consistency inspection (no test). | None. |
 | **Phase 3** | **ODD-26** | Lifecycle symmetry inspection; Robolectric rotation test if harnessed. | Rotate with the channel view open; confirm no stale callbacks. |
 | **Phase 3** | **ODD-23** | JUnit coverage of the timeout / retry-exhaustion / refusal transitions via the injected seam. | None (JVM suite covers it). |
