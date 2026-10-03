@@ -79,7 +79,7 @@ Dead state and a stale bound description. No behavior change in either fix.
 3. The `putExtra` in [`ServerConnectTask.java:87`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java#L87).
 4. `Builder.setPreprocessorEnabled` and its field in [`AudioHandler.java`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java) — hardcode `true` at the builder→handler handoff, since the extra is unconditionally `true` today and the default must not silently flip to off. The now-constant internal flag is left for a future cleanup.
 
-**Acceptance criteria**: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain (grep); `assembleFossDebug` passes; connect succeeds with preprocessing audibly active.
+**Acceptance criteria**: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain in `app/src` or `libraries/humla/src` (the docs intentionally record the removed names); `assembleFossDebug` passes; connect succeeds with preprocessing audibly active.
 
 ### 2.2 Fix the render-lead bound doc (ODD-22)
 
@@ -133,7 +133,7 @@ Each fix ships with a targeted regression pin; all items are JVM-testable except
 |---|---|---|---|
 | **Phase 1** | **ODD-25** | Unit test calling `setVoiceTargetId` with a null `mAudioHandler`; existing voice-target tests pass. | None (latent path). |
 | **Phase 1** | **ODD-27** | JVM test: valid rate string passes through, garbage string falls back to the default rate. | Corrupt `PREF_INPUT_RATE` via backup restore; connect succeeds. |
-| **Phase 2** | **ODD-21** | Grep: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain; `assembleFossDebug` passes. | Connect and verify preprocessing audibly active (behavior unchanged, always on). |
+| **Phase 2** | **ODD-21** | Grep: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain in `app/src` or `libraries/humla/src`; `assembleFossDebug` passes. | Connect and verify preprocessing audibly active (behavior unchanged, always on). |
 | **Phase 2** | **ODD-22** | Doc/code consistency inspection (no test). | None. |
 | **Phase 3** | **ODD-26** | Lifecycle symmetry inspection; Robolectric rotation test if harnessed. | Rotate with the channel view open; confirm no stale callbacks. |
 | **Phase 3** | **ODD-23** | [`BluetoothScoRetryPolicyTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/audio/BluetoothScoRetryPolicyTest.java) truth-tabling the shared retry predicate (fresh/first-timeout retry, exhaustion, single/zero budgets); refusal and no-device are unconditional fail paths. | None (JVM suite covers it). |

@@ -15,7 +15,7 @@ A miss arriving with debt outstanding settles the old slot via concealment
 first (its frame is beyond LBRR range) and starts a fresh debt, so burst
 loss chains correctly instead of playing the wrong frame's audio in a stale
 slot. Our encoder always sends LBRR (`OPUS_SET_INBAND_FEC(1)`), so
-Mumla-to-Mumla streams recover single losses near-perfectly.
+Mumla OLED-to-Mumla OLED streams recover single losses near-perfectly.
 
 ## 2. Clicks at loss boundaries — IMPLEMENTED
 
@@ -74,7 +74,7 @@ concealment artifacts it prevents:
 | Startup gate (upstream parity) | none: buffered packets played immediately, the loop free-ran into concealment on burst start | holds until margin+1 frames queued, force-start at `GATE_TIMEOUT_FRAMES` = 20 frames (200 ms) |
 | Render quantum / idle wait (batching) | 60 ms | 20 ms |
 | Track buffer floor | ~120 ms | ~40 ms plus the hardware minimum |
-| Render lead | unbounded (loop sprinted into track slack) | up to 2 quanta (~40 ms) past the playback head (or the track minimum if larger) |
+| Render lead | unbounded (loop sprinted into track slack) | past the playback head, capped: `max(1 quantum, min(2 quanta, trackFrames))` |
 
 Remaining risk: the leaner margin trades robustness for latency on jittery
 links. Per-voice queue-to-playout delay is now logged on device

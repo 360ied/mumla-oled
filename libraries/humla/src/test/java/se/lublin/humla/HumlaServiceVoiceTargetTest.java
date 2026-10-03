@@ -69,8 +69,9 @@ public class HumlaServiceVoiceTargetTest extends TestCase {
         assertEquals((byte) 31, service.getVoiceTargetId());
     }
 
-    public void testNegativeTargetIdRejectedBeforeStateChange() throws Exception {        // Sign-extended bytes must not slip past the 5-bit check and poison
-        // the stored target before fromId() throws (pedantic review).
+    // Sign-extended bytes must not slip past the 5-bit check and poison
+    // the stored target before fromId() throws (pedantic review).
+    public void testNegativeTargetIdRejectedBeforeStateChange() throws Exception {
         HumlaService service = newDisconnectedService();
         try {
             service.setVoiceTargetId((byte) -1);

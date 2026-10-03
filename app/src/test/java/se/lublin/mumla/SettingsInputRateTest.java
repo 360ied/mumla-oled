@@ -67,6 +67,7 @@ public class SettingsInputRateTest extends TestCase {
     }
 
     public void testWhitespacePaddedRateStringFallsBack() {
+        // parseInt does not trim: padded input falls back rather than passing.
         FakeSharedPreferences prefs = new FakeSharedPreferences();
         Settings settings = Settings.createForTesting(prefs);
         prefs.edit().putString(Settings.PREF_INPUT_RATE, " 48000 ").commit();

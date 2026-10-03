@@ -339,8 +339,11 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
 
         IHumlaSession session = getService().HumlaSession();
         VoiceTargetMode mode = session.getVoiceTargetMode();
-        if (mode == VoiceTargetMode.WHISPER) {
-            WhisperTarget target = session.getWhisperTarget();
+        // Null when WHISPER points at an unregistered id: hide rather than
+        // dereference (pedantic review).
+        WhisperTarget target =
+                mode == VoiceTargetMode.WHISPER ? session.getWhisperTarget() : null;
+        if (target != null) {
             mTargetPanel.setVisibility(View.VISIBLE);
             mTargetPanelText.setText(getString(R.string.shout_target, target.getName()));
         } else {
@@ -434,6 +437,9 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     private void setTalkButtonHidden(final boolean hidden) {
+        if (mTalkView == null) {
+            return;
+        }
         mTalkView.setVisibility(hidden ? View.GONE : View.VISIBLE);
         if (hidden && mTalkButton != null) {
             mTalkButton.setActivated(false);

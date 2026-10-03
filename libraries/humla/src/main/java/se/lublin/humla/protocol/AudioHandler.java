@@ -81,6 +81,8 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mSuppressed;
     private boolean mHalfDuplex;
     private volatile boolean mScoActive;
+    // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
+    // hardcodes preprocessor-on and no production path can reach off.
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
     private volatile boolean mTalking;
