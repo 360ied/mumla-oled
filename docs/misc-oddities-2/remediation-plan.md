@@ -2,17 +2,20 @@
 
 Prioritized engineering plan for the residual findings cataloged in [`README.md`](README.md) (ODD-21–ODD-27) for Mumla OLED. All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness. Owner decisions are recorded inline (ODD-21 removal, single-branch scheduling); implement in one `bugfix/oddities-round2-remediation` branch covering Phases 1–3.
 
+> [!NOTE]
+> **Status: COMPLETED** — all three phases implemented on branch `bugfix/oddities-round2-remediation` (six commits: the remediation batch plus four pedantic-review follow-ups, each review round returning OK with notes) and merged via `d7dbd548`. Per-item records live in [`README.md`](README.md); the solutions below are the as-built record.
+
 ## Table of Contents
 
-1. [Phase 1: Crash-Path Hardening (ODD-25, ODD-27)](#phase-1-crash-path-hardening-odd-25-odd-27)
-2. [Phase 2: Preference & Doc Hygiene (ODD-21, ODD-22)](#phase-2-preference--doc-hygiene-odd-21-odd-22)
-3. [Phase 3: Lifecycle & Testability (ODD-26, ODD-23)](#phase-3-lifecycle--testability-odd-26-odd-23)
+1. [Phase 1: Crash-Path Hardening (ODD-25, ODD-27) — COMPLETED](#phase-1-crash-path-hardening-odd-25-odd-27)
+2. [Phase 2: Preference & Doc Hygiene (ODD-21, ODD-22) — COMPLETED](#phase-2-preference--doc-hygiene-odd-21-odd-22)
+3. [Phase 3: Lifecycle & Testability (ODD-26, ODD-23) — COMPLETED](#phase-3-lifecycle--testability-odd-26-odd-23)
 4. [Resolved: Sticky `mForceTcp` (ODD-24)](#resolved-sticky-mforcetcp-odd-24)
 5. [Verification & Test Strategy](#verification--test-strategy)
 
 ---
 
-## Phase 1: Crash-Path Hardening (ODD-25, ODD-27)
+## Phase 1: Crash-Path Hardening (ODD-25, ODD-27) — COMPLETED
 
 Both items are unguarded dereferences/parses on paths reachable with corrupted state or off-nominal call timing. One-line fixes each; do them together.
 
@@ -63,7 +66,7 @@ inspection-verified.
 
 ---
 
-## Phase 2: Preference & Doc Hygiene (ODD-21, ODD-22)
+## Phase 2: Preference & Doc Hygiene (ODD-21, ODD-22) — COMPLETED
 
 Dead state and a stale bound description. No behavior change in either fix.
 
@@ -93,7 +96,7 @@ Dead state and a stale bound description. No behavior change in either fix.
 
 ---
 
-## Phase 3: Lifecycle & Testability (ODD-26, ODD-23)
+## Phase 3: Lifecycle & Testability (ODD-26, ODD-23) — COMPLETED
 
 A fragment lifecycle mirror fix and the only test-debt item in the batch.
 
