@@ -32,7 +32,6 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
@@ -236,11 +235,14 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
         super.onPrepareOptionsMenu(menu);
         MenuItem bluetoothItem = menu.findItem(R.id.menu_bluetooth_headset);
         if (bluetoothItem != null && getActivity() != null) {
-            // Checked reflects the confirmed link, not the raw toggle: a
-            // failed or in-flight bring-up reads unchecked until SCO is up.
-            boolean scoUp = getService() != null && getService().isBluetoothScoActive();
+            // Checked reflects the requested toggle, mirroring Settings >
+            // Audio: a failed or in-flight bring-up still reads checked
+            // until the user flips it off. Link state is signaled by
+            // toasts, never by this checkmark.
+            boolean requested =
+                    Settings.getInstance(getActivity()).isBluetoothHeadset();
             bluetoothItem.setVisible(getService() != null && getService().isConnected());
-            bluetoothItem.setChecked(scoUp);
+            bluetoothItem.setChecked(requested);
         }
     }
 
@@ -249,25 +251,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
         int itemId = item.getItemId();
         if (itemId == R.id.menu_bluetooth_headset) {
             if (getActivity() instanceof MumlaActivity) {
-                // Assert the displayed state, never blind-toggle: an unchecked
-                // row with no request enables; with a request in flight or
-                // failed it explicitly retries; a checked row disables.
+                // Thin alias of the Settings > Audio checkbox: flip the
+                // requested state. No explicit retry; a failed link
+                // retries by flipping off and on again.
                 MumlaActivity activity = (MumlaActivity) getActivity();
-                boolean scoUp = getService() != null && getService().isBluetoothScoActive();
-                if (scoUp) {
-                    activity.setBluetoothHeadset(false);
-                } else if (getService() != null
-                        && Settings.getInstance(activity).isBluetoothHeadset()) {
-                    // Already requested but not up: explicit retry. A false
-                    // return means bring-up is already running, so say so
-                    // instead of tapping silently dead.
-                    if (!getService().retryBluetoothSco()) {
-                        Toast.makeText(activity, R.string.bluetooth_sco_connecting,
-                                Toast.LENGTH_SHORT).show();
-                    }
-                } else {
-                    activity.setBluetoothHeadset(true);
-                }
+                activity.setBluetoothHeadset(
+                        !Settings.getInstance(activity).isBluetoothHeadset());
             }
             return true;
         }
@@ -460,6 +449,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             || Settings.PREF_PUSH_BUTTON_HIDE_KEY.equals(key)
             || Settings.PREF_PTT_BUTTON_HEIGHT.equals(key))
             configureInput();
+        if (Settings.PREF_BLUETOOTH_HEADSET.equals(key) && isAdded()
+                && getActivity() instanceof MumlaActivity) {
+            // Requested-state alias: a Settings flip must refresh the
+            // overflow checkmark without waiting for an SCO callback.
+            ((MumlaActivity) getActivity()).supportInvalidateOptionsMenu();
+        }
     }
 
     @Override
