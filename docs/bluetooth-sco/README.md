@@ -1,8 +1,8 @@
 # Bluetooth SCO Investigation
 
-Deep investigation into adding Bluetooth SCO (HFP) headset support to Mumla OLED:
-where the audio pipeline stands today, what the Android platform requires, what
-prior art existed in the Jumble/Plumble ancestors, and which design to implement.
+Investigation record for Bluetooth SCO (HFP) headset support in Mumla OLED:
+the pre-0.22.0 audio pipeline, what the Android platform requires, what
+prior art existed in the Jumble/Plumble ancestors, and which design shipped.
 
 > **Status (0.22.0)**: Option A (manual toggle) is implemented and released.
 > This dossier now records the as-built design; OQ-1 is answered, OQ-2–OQ-4
@@ -10,48 +10,47 @@ prior art existed in the Jumble/Plumble ancestors, and which design to implement
 
 ## Verdict
 
-SCO support was **worth building**, as a manual opt-in toggle first — shipped
-in 0.22.0 as "Two-way Bluetooth". The 48 kHz
+SCO support was **worth building** as a manual opt-in toggle first — shipped
+in 0.22.0 as "Two-way Bluetooth". The investigation found the 48 kHz
 pipeline needs no resampling changes (the platform resamples the 8/16 kHz SCO
 link), and the output `Pacer` + native jitter buffer are expected to accommodate
-SCO-grade latency — pending on-device validation (see [Android platform requirements](android-platform.md)). The real work is all lifecycle: permissions, `AudioManager` mode
+SCO-grade latency — still pending on-device validation (see [Android platform requirements](android-platform.md)). The bulk of the work was lifecycle, not DSP: permissions, `AudioManager` mode
 management, async link setup/teardown, and route-failure fallback. None of that
-machinery exists in the tree today.
+machinery existed in the tree before; it now lives in `BluetoothScoManager`,
+owned by `HumlaService`.
 
 ## Contents
 
-1. [Current pipeline and gaps](current-pipeline.md) — how audio routing works
-   today, and the exact integration points SCO needs.
+1. [Current pipeline and gaps](current-pipeline.md) — pre-0.22.0 audio routing,
+   the integration points SCO needed, and each gap's resolution status.
 2. [Android platform requirements](android-platform.md) — HFP/WBS audio reality,
    permissions, lifecycle APIs, and the `startBluetoothSco` →
    `setCommunicationDevice` migration.
 3. [Prior art: Jumble/Plumble](prior-art.md) — the SCO implementation this
    codebase descended from, what it did, and why it was dropped.
-4. [Design options and recommendation](design-options.md) — three scoped
-   options, the recommended phased plan, risks, and test matrix.
+4. [Design options and recommendation](design-options.md) — the three scoped
+   options considered, the phased plan adopted, and the as-built deltas.
 
-## Key facts
+## Key facts (starting position, pre-0.22.0)
 
-| Fact | Implication |
+| Fact | What happened |
 |---|---|
-| No `AudioManager` route-control exists anywhere in the tree | Greenfield lifecycle owner needed (proposed: `HumlaService`) |
+| No `AudioManager` route-control existed anywhere in the tree | Now owned by `HumlaService` via the new `BluetoothScoManager` |
 | Capture and playback are fixed 48 kHz mono | No DSP changes required; platform resamples SCO |
 | `targetSdk 36`, `minSdk 21` | `BLUETOOTH_CONNECT` runtime permission (API 31+) plus legacy flags; API-dependent routing code paths |
-| Ancestor `BluetoothScoReceiver` + `setBluetoothEnabled` existed | Proven shape to reintroduce, but its teardown and error handling need hardening |
-| `startBluetoothSco` is deprecated from API 33 | New code should branch: `setCommunicationDevice` on API 31+, legacy SCO path below 31 (usable through 32) |
+| Ancestor `BluetoothScoReceiver` + `setBluetoothEnabled` existed | Reintroduced in hardened form (timeouts, reason-coded failures, owned mode restore) |
+| `startBluetoothSco` is deprecated from API 33 | Branched as proposed: `setCommunicationDevice` on API 31+, legacy SCO path below 31 |
 
-## Component touch list (anticipated)
-
-As built in 0.22.0 (see [design options](design-options.md) for the as-built summary):
+## Component touch list (as built in 0.22.0)
 
 | Layer | File | Change |
 |---|---|---|
 | Manifest | `app/src/main/AndroidManifest.xml` | `BLUETOOTH_CONNECT`, legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` (with `maxSdkVersion="30"`) |
 | Settings | `app/src/main/res/xml/settings_audio.xml`, `Settings.java` | Bluetooth toggle preference |
 | Connect path | `app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java` | Pass Bluetooth preference into service extras |
-| Service | `libraries/humla/src/main/java/se/lublin/humla/HumlaService.java` | SCO lifecycle owner, receiver registration |
-| Audio | `libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java` | Route-aware stream/source selection, recreate on route change |
-| UI | `MumlaActivity.java`, service notification | Route indicator, manual toggle entry point |
+| Service | `libraries/humla/src/main/java/se/lublin/humla/HumlaService.java` | SCO lifecycle owner; drives `BluetoothScoManager`, recreates pipeline on confirmed route change |
+| Audio | `libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java` | Voice-call stream on confirmed SCO only; capture source unchanged (OQ-2 open) |
+| UI | `MumlaActivity.java`, `ChannelFragment.java` | Checkable channel-overflow item with confirmed-state checkmark; failure/fallback toasts; volume, cues, and proximity follow confirmed state |
 
 ## Open questions for implementation
 
