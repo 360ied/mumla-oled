@@ -84,10 +84,11 @@ android {
         }
     }
 
-    // Note: no unitTests.includeAndroidResources here. That flag wires
-    // resource-packaging tasks into unit-test execution, which trips this
-    // file's fail-closed native-packaging guard below; the Robolectric
-    // audio-route tests below touch no resources and run without it.
+    // Note: no unitTests.includeAndroidResources here. That flag pulls the
+    // unit-test resource-packaging task (packageDebugUnitTestForUnitTest,
+    // matched by the package* arm of the fail-closed native-packaging
+    // guard below) into unit-test execution; the Robolectric audio-route
+    // tests in src/test touch no resources and run without it.
     testOptions {
         unitTests.returnDefaultValues = true
     }

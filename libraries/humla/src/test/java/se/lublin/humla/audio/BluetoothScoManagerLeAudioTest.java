@@ -88,6 +88,9 @@ public class BluetoothScoManagerLeAudioTest {
         }
     }
 
+    // Type-only endpoints: production reads getType() and nothing else, so
+    // address/product fields stay unset by design. Revisit if the manager
+    // ever keys off more than the type.
     private static AudioDeviceInfo device(int type) {
         return AudioDeviceInfoBuilder.newBuilder().setType(type).build();
     }
@@ -101,8 +104,9 @@ public class BluetoothScoManagerLeAudioTest {
                 Context.AUDIO_SERVICE);
         mShadowAudioManager = Shadows.shadowOf(mAudioManager);
         mListener = new RecordingListener();
-        // Single attempt and a short budget: failures must surface without
-        // waiting out production timeouts.
+        // Single attempt and a short budget. The exercised failures below
+        // are synchronous (no-device and refusal fail before any timeout is
+        // armed); the budget only bounds wall-clock worst cases.
         mManager = new BluetoothScoManager(mApplication, mListener, 1000, 1);
     }
 
@@ -111,7 +115,12 @@ public class BluetoothScoManagerLeAudioTest {
         if (mManager != null) {
             mManager.stop();
         }
-        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        // Explicitly release test-set shadow state rather than relying on
+        // sandbox reset alone, so no test depends on execution order.
+        mShadowAudioManager.lockCommunicationDevice(false);
+        mShadowAudioManager.setAvailableCommunicationDevices(
+                Collections.<AudioDeviceInfo>emptyList());
+        idleMain();
     }
 
     private void idleMain() {
@@ -131,6 +140,17 @@ public class BluetoothScoManagerLeAudioTest {
         mShadowAudioManager.callOnCommunicationDeviceChangedListeners(ble);
         idleMain();
         assertEquals("BLE confirmation must report connected", 1, mListener.connected);
+
+        // Re-firing the same endpoint must be a no-op: a stale SCO-only
+        // listener would read BLE as a route loss and drop the live link.
+        // This is the regression net for widening selection and listener
+        // atomically.
+        mShadowAudioManager.callOnCommunicationDeviceChangedListeners(ble);
+        idleMain();
+        assertEquals("Re-confirmed BLE route must stay connected",
+                1, mListener.connected);
+        assertEquals("Re-confirmed BLE route must not drop",
+                0, mListener.disconnected);
     }
 
     @Test
@@ -143,6 +163,15 @@ public class BluetoothScoManagerLeAudioTest {
         mManager.start();
         assertSame("Dual-mode list must resolve to the BLE endpoint",
                 ble, mAudioManager.getCommunicationDevice());
+
+        mShadowAudioManager.callOnCommunicationDeviceChangedListeners(ble);
+        idleMain();
+        assertEquals("Dual-mode BLE confirmation must report connected",
+                1, mListener.connected);
+        mShadowAudioManager.callOnCommunicationDeviceChangedListeners(ble);
+        idleMain();
+        assertEquals("Re-fired dual-mode route must not drop",
+                0, mListener.disconnected);
     }
 
     @Test
@@ -169,7 +198,8 @@ public class BluetoothScoManagerLeAudioTest {
         mManager.start();
         mShadowAudioManager.callOnCommunicationDeviceChangedListeners(ble);
         idleMain();
-        assertEquals(1, mListener.connected);
+        assertEquals("Precondition: BLE link must be up before route loss",
+                1, mListener.connected);
 
         // The OS moved the route elsewhere (e.g. speaker): the live link
         // must drop rather than linger on a dead selection.
@@ -188,6 +218,8 @@ public class BluetoothScoManagerLeAudioTest {
         idleMain();
         assertEquals("Empty device list must fail as no-device",
                 BluetoothScoManager.REASON_NO_DEVICE, mListener.lastFailure);
+        assertEquals("Failed bring-up must not connect", 0, mListener.connected);
+        assertEquals("Failed bring-up must not drop", 0, mListener.disconnected);
         assertNull("Failed bring-up must hold no route",
                 mAudioManager.getCommunicationDevice());
     }
@@ -203,5 +235,25 @@ public class BluetoothScoManagerLeAudioTest {
         idleMain();
         assertEquals("Platform refusal must fail as refused",
                 BluetoothScoManager.REASON_REFUSED, mListener.lastFailure);
+        assertEquals("Refused bring-up must not connect", 0, mListener.connected);
+        assertEquals("Refused bring-up must not drop", 0, mListener.disconnected);
+    }
+
+    @Test
+    public void testDualModeRefusalFailsFastWithoutScoCascade() {
+        AudioDeviceInfo sco = device(AudioDeviceInfo.TYPE_BLUETOOTH_SCO);
+        AudioDeviceInfo ble = device(AudioDeviceInfo.TYPE_BLE_HEADSET);
+        mShadowAudioManager.setAvailableCommunicationDevices(Arrays.asList(sco, ble));
+        mShadowAudioManager.lockCommunicationDevice(true);
+
+        mManager.start();
+        idleMain();
+        // Fail-fast is intentional (see findScoDevice): recovery is the
+        // phone-audio fallback plus user retry, never a silent cascade to
+        // the less-preferred transport.
+        assertEquals("Preferred-endpoint refusal must fail the session",
+                BluetoothScoManager.REASON_REFUSED, mListener.lastFailure);
+        assertEquals("Failed session must not connect", 0, mListener.connected);
+        assertEquals("Failed session must not drop", 0, mListener.disconnected);
     }
 }

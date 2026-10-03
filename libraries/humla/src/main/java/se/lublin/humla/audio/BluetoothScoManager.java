@@ -37,7 +37,10 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Owns the Bluetooth SCO (HFP) audio route for a voice session.
+ * Owns the Bluetooth voice route for a voice session: classic SCO (HFP) on
+ * every API level, LE Audio headsets on API 33+. "Sco" survives in member
+ * and method names as the generic voice route; only the
+ * {@link #isVoiceRouteDevice} predicate knows the transports.
  *
  * <p>SCO link bring-up is asynchronous and unreliable: {@code startBluetoothSco()}
  * returns before the link exists, establishment takes seconds, and failure is
@@ -46,8 +49,9 @@ import java.util.Objects;
  *
  * <p>Two platform backends sit behind one interface, selected by API level:
  * <ul>
- *   <li>API 31+: {@code setCommunicationDevice()} with a {@code TYPE_BLUETOOTH_SCO}
- *       device from {@code getAvailableCommunicationDevices()}, observed via
+ *   <li>API 31+: {@code setCommunicationDevice()} with a voice-route
+ *       ({@code TYPE_BLUETOOTH_SCO} or {@code TYPE_BLE_HEADSET}) device from
+ *       {@code getAvailableCommunicationDevices()}, observed via
  *       {@code OnCommunicationDeviceChangedListener}.</li>
  *   <li>Below 31: legacy {@code startBluetoothSco()} / {@code stopBluetoothSco()},
  *       observed via the {@code ACTION_SCO_AUDIO_STATE_UPDATED} broadcast
@@ -490,6 +494,9 @@ public class BluetoothScoManager {
             if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
                 // Dual-mode headsets expose both transports; keep scanning
                 // for the preferred LE endpoint and fall back to SCO.
+                // The fallback covers absence only: a preferred-endpoint
+                // failure fails the session rather than cascading, with
+                // phone-audio fallback plus user retry as the recovery.
                 if (scoFallback == null) {
                     scoFallback = device;
                 }
@@ -501,20 +508,21 @@ public class BluetoothScoManager {
     }
 
     private void onModernDeviceChanged(AudioDeviceInfo device) {
-        final boolean voiceRouteNow;
+        final boolean voiceRouteNow =
+                device != null && isVoiceRouteDevice(device.getType());
         final int state;
         synchronized (this) {
             state = mState;
-            voiceRouteNow = device != null && isVoiceRouteDevice(device.getType());
         }
         if (state == STATE_STARTING && voiceRouteNow) {
             setActive();
         } else if (state == STATE_ACTIVE && !voiceRouteNow) {
             dropActiveLink();
         }
-        // A system move to a non-SCO device mid-bring-up is left to burn the
-        // attempt timeout: selections flap transiently during routing, and
-        // failing fast here would turn every blip into a fallback.
+        // A system move to a non-voice-route device mid-bring-up is left to
+        // burn the attempt timeout: selections flap transiently during
+        // routing, and failing fast here would turn every blip into a
+        // fallback.
     }
 
     private void onLegacyStateChanged(int audioState) {

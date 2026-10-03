@@ -36,9 +36,8 @@ import org.robolectric.annotation.Config;
  * <p>JUnit 4 style is mandatory here: {@link RobolectricTestRunner} drives
  * per-sandbox API levels via {@link Config}, which is incompatible with the
  * module's {@code TestCase} convention. The predicate reads
- * {@code Build.VERSION.SDK_INT}, so the version gate is pinned by running
- * the same assertions under two sandboxes rather than by branching test
- * helpers.
+ * {@code Build.VERSION.SDK_INT}, so the version gate is pinned by a
+ * dedicated SDK-30 sandbox method rather than by branching test helpers.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)

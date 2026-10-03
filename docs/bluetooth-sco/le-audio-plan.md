@@ -115,9 +115,8 @@ not opportunistic scope.
 - New truth-table test beside
   [`BluetoothScoRetryPolicyTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/audio/BluetoothScoRetryPolicyTest.java):
   SCO accepted, BLE headset accepted on 33+ guard semantics, A2DP /
-  speaker / broadcast / hearing-aid / unknown rejected, BLE-before-SCO
-  ordering for dual-mode lists. The predicate is pure Java and needs no
-  Android runtime.
+  speaker / broadcast / hearing-aid / unknown rejected. The predicate is
+  pure Java and needs no Android runtime.
 - Add Robolectric to `:libraries:humla`, mirroring the `:app` pilot
   (`testImplementation 'org.robolectric:robolectric:4.15.1'`,
   `@Config(sdk = 34)` convention, JUnit 4 style for runner-based tests —
@@ -127,10 +126,11 @@ not opportunistic scope.
   resources): cover device selection
   (`findScoDevice` BLE-first ordering against the communication-device
   list) and listener transitions (`onModernDeviceChanged` confirm vs.
-  drop) under shadows. Confirm the exact shadow surface at
-  implementation; if the communication-device shadows prove insufficient,
-  the predicate test plus the manual matrix below are the fallback — do
-  not gold-plate untestable seams. The first Robolectric run downloads
+  drop) under shadows. The communication-device shadow surface
+  (`setAvailableCommunicationDevices`, `setCommunicationDevice` plus
+  `lockCommunicationDevice` for refusal, and
+  `callOnCommunicationDeviceChangedListeners`) proved sufficient for all
+  of the above. The first Robolectric run downloads
   the `android-all` runtime (network needed once); record the SDK pin
   next to the dependency as `:app` does.
 - Must keep passing untouched: `BluetoothScoRetryPolicyTest`,
