@@ -17,6 +17,15 @@ deprecated at 33 — and `setCommunicationDevice` ≥ 31) and the
 
 ## Option A — Manual toggle (recommended first)
 
+> **Shipped in 0.22.0** as "Two-way Bluetooth" (`bluetooth_headset`).
+> As-built deltas vs this sketch: the SCO lifecycle lives in a dedicated
+> `BluetoothScoManager` (epoch-guarded bring-up, reason-coded failures, owned
+> mode restore) rather than inline service code; the voice-call stream is
+> selected only on *confirmed* link state, never the raw toggle; volume keys,
+> PTT cues, proximity, and the overflow checkmark all follow confirmed state
+> via a new `onBluetoothScoChanged` observer event; the toggle additionally
+> lives as a checkable channel-overflow item with a deferred-grant flow.
+
 - New `bluetooth_headset` checkbox in `settings_audio.xml` beside
   `handset_mode`; plumbed through `Settings` → `ServerConnectTask` extras →
   `HumlaService`.

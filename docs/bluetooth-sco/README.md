@@ -4,9 +4,14 @@ Deep investigation into adding Bluetooth SCO (HFP) headset support to Mumla OLED
 where the audio pipeline stands today, what the Android platform requires, what
 prior art existed in the Jumble/Plumble ancestors, and which design to implement.
 
+> **Status (0.22.0)**: Option A (manual toggle) is implemented and released.
+> This dossier now records the as-built design; OQ-1 is answered, OQ-2–OQ-4
+> remain open measurement questions, and Options B/C are future work.
+
 ## Verdict
 
-SCO support is **worth building**, as a manual opt-in toggle first. The 48 kHz
+SCO support was **worth building**, as a manual opt-in toggle first — shipped
+in 0.22.0 as "Two-way Bluetooth". The 48 kHz
 pipeline needs no resampling changes (the platform resamples the 8/16 kHz SCO
 link), and the output `Pacer` + native jitter buffer are expected to accommodate
 SCO-grade latency — pending on-device validation (see [Android platform requirements](android-platform.md)). The real work is all lifecycle: permissions, `AudioManager` mode
@@ -37,6 +42,8 @@ machinery exists in the tree today.
 
 ## Component touch list (anticipated)
 
+As built in 0.22.0 (see [design options](design-options.md) for the as-built summary):
+
 | Layer | File | Change |
 |---|---|---|
 | Manifest | `app/src/main/AndroidManifest.xml` | `BLUETOOTH_CONNECT`, legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` (with `maxSdkVersion="30"`) |
@@ -49,7 +56,8 @@ machinery exists in the tree today.
 ## Open questions for implementation
 
 - **OQ-1**: Manual toggle only, or auto-start SCO when an HFP device connects
-  mid-call? (Recommendation: manual first; see [design options](design-options.md).)
+  mid-call? **Answered: manual toggle shipped** (Settings checkbox plus channel
+overflow item); auto-routing deferred to Option B.
 - **OQ-2**: Should SCO force `VOICE_COMMUNICATION` capture source, or keep the
   existing `MIC`/`DEFAULT` selection? Needs on-device measurement.
 - **OQ-3**: Is `AcousticEchoCanceler` needed for the headset speaker→mic path?

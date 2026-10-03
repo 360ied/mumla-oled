@@ -77,14 +77,14 @@ Findings:
 - Natural home for the toggle: `settings_audio.xml` next to `handset_mode`,
   since SCO (like handset mode) implies the `VOICE_CALL` stream family.
 
-## Gap summary
+## Gap summary (status as of 0.22.0)
 
-| # | Gap | Severity |
-|---|---|---|
-| G-1 | No `AudioManager` mode/routing management anywhere | Blocking |
-| G-2 | No Bluetooth permissions in `app/src/main/AndroidManifest.xml` | Blocking |
-| G-3 | No SCO state receiver (`ACTION_SCO_AUDIO_STATE_UPDATED`, `AudioDeviceCallback`, or comm-device listener) | Blocking |
-| G-4 | Capture source never `VOICE_COMMUNICATION`; no route-change recreate | Needed for quality |
-| G-5 | No `AcousticEchoCanceler` on the capture session | Quality risk, measure first (OQ-3) |
-| G-6 | No route indicator or toggle UI | UX, needed for manual phase |
-| G-7 | VAD/squelch thresholds tuned for phone mics, unvalidated on SCO mics | Tuning risk (OQ-4) |
+| # | Gap | Severity | Status |
+|---|---|---|---|
+| G-1 | No `AudioManager` mode/routing management anywhere | Blocking | **Closed**: `BluetoothScoManager` owned by `HumlaService` |
+| G-2 | No Bluetooth permissions in `app/src/main/AndroidManifest.xml` | Blocking | **Closed**: `BLUETOOTH_CONNECT` + legacy flags with `maxSdkVersion="30"` |
+| G-3 | No SCO state receiver (`ACTION_SCO_AUDIO_STATE_UPDATED`, `AudioDeviceCallback`, or comm-device listener) | Blocking | **Closed**: both backends with timeout, retry, and fallback |
+| G-4 | Capture source never `VOICE_COMMUNICATION`; no route-change recreate | Needed for quality | **Partial**: voice-call stream on confirmed SCO with pipeline recreate; source unchanged (OQ-2 open) |
+| G-5 | No `AcousticEchoCanceler` on the capture session | Quality risk, measure first (OQ-3) | **Open** |
+| G-6 | No route indicator or toggle UI | UX, needed for manual phase | **Closed**: Settings checkbox + checkable channel-overflow item with confirmed-state checkmark |
+| G-7 | VAD/squelch thresholds tuned for phone mics, unvalidated on SCO mics | Tuning risk (OQ-4) | **Open** |

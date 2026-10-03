@@ -61,6 +61,8 @@ recreate the handler mid-connection, but nothing reacts to route state).
 
 Keep the three-part shape (receiver → service lifecycle → builder flag), but:
 
+(Implemented as planned in 0.22.0, hardened per the notes below.)
+
 1. Put the timeout/retry/fallback state machine in the service, not the receiver.
 2. Gate stream selection on *confirmed* SCO state, and recreate capture +
    playback together so source and stream stay consistent.
