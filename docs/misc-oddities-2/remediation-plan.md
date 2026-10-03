@@ -37,7 +37,7 @@ Dropping (rather than deferring) the live call matches current per-connection se
 
 ### 1.2 Guard the input-rate parse (ODD-27)
 
-**Component**: [`Settings.java:245-247`](../../app/src/main/java/se/lublin/mumla/Settings.java#L245-L247)
+**Component**: [`Settings.java:242-247`](../../app/src/main/java/se/lublin/mumla/Settings.java#L242-L247)
 
 **Problem**: `getInputSampleRate()` calls `Integer.parseInt` on a raw preference string with no fallback, while the adjacent `getFramesPerPacket()` catches `NumberFormatException`. A hand-edited or backup-restored `PREF_INPUT_RATE` value crashes the connect path on any read of the corrupted value.
 
@@ -63,7 +63,7 @@ Dead state and a stale bound description. No behavior change in either fix.
 
 ### 2.1 Resolve the dead preprocessor toggle (ODD-21)
 
-**Component**: [`Settings.java:459-461`](../../app/src/main/java/se/lublin/mumla/Settings.java#L459-L461), [`ServerConnectTask.java:87`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.java#L87)
+**Component** (removed by this change; pre-fix locations): `Settings.PREF_PREPROCESSOR_ENABLED` / `isPreprocessorEnabled()` (was `Settings.java:459-461`), `HumlaService.EXTRAS_ENABLE_PREPROCESSOR` and its `configureExtras` block, `AudioHandler.Builder.setPreprocessorEnabled`, and the `ServerConnectTask` put (was line 87).
 
 **Problem**: `isPreprocessorEnabled()` returns `true` unconditionally while `PREF_PREPROCESSOR_ENABLED` and `DEFAULT_PREPROCESSOR_ENABLED` exist but are never read, so `EXTRAS_ENABLE_PREPROCESSOR` can never be `false` and the RNNoise preprocessor cannot be disabled at runtime. The key has no settings-screen entry (no XML references it) and no other readers, so both directions are safe.
 
@@ -93,7 +93,7 @@ A fragment lifecycle mirror fix and the only test-debt item in the batch.
 
 ### 3.1 Move the listener unregister to `onDestroyView` (ODD-26)
 
-**Component**: [`ChannelFragment.java:207`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L207), [`ChannelFragment.java:307-310`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L307-L310)
+**Component**: [`ChannelFragment.java:207`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L207) (register), [`ChannelFragment.java:304-305`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L304-L305) (unregister in `onDestroyView`)
 
 **Problem**: The shared-preference listener is registered in `onActivityCreated` but unregistered in `onDestroy` rather than `onDestroyView`, so the retained listener survives view recreations. Latent today (callbacks only touch null-guarded view state), but the asymmetry leaks the fragment as a listener across every rotation.
 

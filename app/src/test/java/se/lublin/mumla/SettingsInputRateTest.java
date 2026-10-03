@@ -22,9 +22,9 @@ import junit.framework.TestCase;
 /**
  * Verifies the input-sample-rate parse contract (ODD-27):
  * {@link Settings#getInputSampleRate()} must mirror the
- * {@link Settings#getFramesPerPacket()} fallback and never throw on a
- * corrupted {@code PREF_INPUT_RATE} string, since the connect path reads it
- * on every connect.
+ * {@link Settings#getFramesPerPacket()} fallback and never throw
+ * {@link NumberFormatException} on a corrupted {@code PREF_INPUT_RATE}
+ * string, since the connect path reads it on every connect.
  */
 public class SettingsInputRateTest extends TestCase {
 

@@ -57,4 +57,25 @@ public class HumlaServiceVoiceTargetTest extends TestCase {
         } catch (IllegalArgumentException expected) {
         }
     }
+
+    public void testBoundaryTargetIdsAccepted() throws Exception {
+        HumlaService service = newDisconnectedService();
+        service.setVoiceTargetId((byte) 0);
+        assertEquals((byte) 0, service.getVoiceTargetId());
+        service.setVoiceTargetId((byte) 31);
+        assertEquals((byte) 31, service.getVoiceTargetId());
+    }
+
+    public void testNegativeTargetIdRejectedBeforeStateChange() throws Exception {
+        // Sign-extended bytes must not slip past the 5-bit check and poison
+        // the stored target before fromId() throws (pedantic review).
+        HumlaService service = newDisconnectedService();
+        try {
+            service.setVoiceTargetId((byte) -1);
+            fail("Negative target IDs must be rejected");
+        } catch (IllegalArgumentException expected) {
+        }
+        assertEquals("Rejected set must leave the previous target intact",
+                (byte) 0, service.getVoiceTargetId());
+    }
 }

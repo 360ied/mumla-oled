@@ -54,7 +54,7 @@ public class BluetoothScoRetryPolicyTest extends TestCase {
     }
 
     public void testSingleAttemptBudget() {
-        assertTrue("Budget of one retries the first attempt",
+        assertTrue("No attempts run yet must retry even with a budget of one",
                 BluetoothScoManager.shouldRetryBringUp(0, 1));
         assertFalse("Budget of one fails once it has run",
                 BluetoothScoManager.shouldRetryBringUp(1, 1));

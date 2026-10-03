@@ -133,6 +133,8 @@ public class BluetoothScoManager {
      * (ODD-23): another bring-up attempt remains while fewer than
      * {@code maxAttempts} attempts have run. Refusal and no-device fail
      * unconditionally in their callers — no budget branch exists to drift.
+     * Package-visible for the JVM truth-table test; not part of the
+     * production API.
      */
     static boolean shouldRetryBringUp(int attempts, int maxAttempts) {
         return attempts < maxAttempts;

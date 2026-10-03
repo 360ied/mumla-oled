@@ -306,11 +306,6 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     @Override
-    public void onDestroy() {
-        super.onDestroy();
-    }
-
-    @Override
     public IHumlaObserver getServiceObserver() {
         return mObserver;
     }
