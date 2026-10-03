@@ -1,6 +1,6 @@
 # Miscellaneous Oddities Round-2 Remediation Plan
 
-Prioritized engineering plan for the residual findings cataloged in ([`README.md`](README.md)) (ODD-21–ODD-27). All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness.
+Prioritized engineering plan for the residual findings cataloged in ([`README.md`](README.md)) (ODD-21–ODD-27) for Mumla OLED. All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ if (mAudioHandler != null) {
 }
 ```
 
-Dropping (rather than deferring) is safe: the stored `mVoiceTargetId` is re-applied to the fresh pipeline at init ([`HumlaService.java:873`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L873)), so no target update is lost across a disconnect/reconnect.
+Dropping (rather than deferring) the live call matches current per-connection semantics: the stored `mVoiceTargetId` is re-applied to the fresh pipeline at init ([`HumlaService.java:870-873`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L870-L873)), so a mid-connection set survives pipeline rebuilds — but `connect()` ([`:435`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L435)) and disconnect ([`:595`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L595)) reset the target to `0`, so a pre-connect set is intentionally not preserved.
 
 **Acceptance criteria**: `setVoiceTargetId` callable with `mAudioHandler == null` (unit test with a null handler seam or a disconnected service harness); existing voice-target tests pass.
 
@@ -101,7 +101,7 @@ A fragment lifecycle mirror fix and the only test-debt item in the batch.
 
 ### 3.2 Make the SCO state machine JVM-testable (ODD-23)
 
-**Component**: [`BluetoothScoManager.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java) (`CONNECT_TIMEOUT_MS` at `:74`, `MAX_ATTEMPTS` at `:76`, main-thread `Handler` at `:108`)
+**Component**: [`BluetoothScoManager.java`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java) (`CONNECT_TIMEOUT_MS` at [`BluetoothScoManager.java:74`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L74), `MAX_ATTEMPTS` at [`BluetoothScoManager.java:76`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L76), main-thread `Handler` at [`BluetoothScoManager.java:108`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L108))
 
 **Problem**: Timeout budget, retry budget, and the `Handler` are hard-wired, so the bring-up matrix (success, timeout, retry, refusal, no-device, drop-after-connect) cannot be exercised by JVM tests.
 

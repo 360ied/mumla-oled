@@ -35,6 +35,8 @@ numbering from [misc-oddities](../misc-oddities/README.md) (ODD-01–ODD-20).
 
 ---
 
+## Detailed Topics
+
 ### ODD-21: Dead Preprocessor Preference
 
 > Origin: pedantic review of the SCO dossier (incidental finding), verified on `master`.
@@ -67,7 +69,7 @@ quanta (~40 ms). One-line doc fix; the code is correct.
 
 > Origin: pedantic review of the `bt-sco-manual` worktree (merged to `master` via `b3bfdc00` after this entry was written).
 
-`CONNECT_TIMEOUT_MS` ([`:74`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L74)), `MAX_ATTEMPTS` ([`:76`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L76)), and the main-thread `Handler` ([`:108`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L108)) are
+`CONNECT_TIMEOUT_MS` ([`BluetoothScoManager.java:74`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L74)), `MAX_ATTEMPTS` ([`BluetoothScoManager.java:76`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L76)), and the main-thread `Handler` ([`BluetoothScoManager.java:108`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.java#L108)) are
 hard-wired in `BluetoothScoManager`, so the timeout/retry/observer matrix
 (bring-up success, timeout, retry, refusal, no-device, drop-after-connect)
 cannot be exercised by JVM tests. Inject the timeout budget and handler (or
@@ -117,7 +119,7 @@ Latent: current callers only invoke it while connected.
 
 [`ChannelFragment.java:207`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L207)
 registers the shared-preference listener in `onActivityCreated`, but
-[`ChannelFragment.java:307`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L307-L310)
+[`ChannelFragment.java:307-310`](../../app/src/main/java/se/lublin/mumla/channel/ChannelFragment.java#L307-L310)
 unregisters in `onDestroy` rather than `onDestroyView`, so the retained
 listener survives view recreations. Fix: move the unregister to
 `onDestroyView` to mirror the view lifecycle. Latent: the callback only
