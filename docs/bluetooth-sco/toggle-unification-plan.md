@@ -147,8 +147,7 @@ After (both toggles):
 - Unit coverage pins the shared `Settings` accessor both toggles use
   (`SettingsBluetoothHeadsetTest`: key, default-off, requested-state
   round-trip). Overflow checked-state wiring itself (`ChannelFragment`)
-  has no unit test by design — this repo's fragment tests cover pure
-  helpers only, with no Robolectric harness — so the
+  has no unit test — so the
   requested-vs-confirmed decoupling ("checked equals
   `Settings.isBluetoothHeadset()` regardless of `isBluetoothScoActive()`")
   is verified by the manual matrix below, not by automation. Existing

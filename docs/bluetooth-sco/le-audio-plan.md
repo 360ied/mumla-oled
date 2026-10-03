@@ -108,8 +108,9 @@ not opportunistic scope.
   [`BluetoothScoRetryPolicyTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/audio/BluetoothScoRetryPolicyTest.java):
   SCO accepted, BLE headset accepted on 33+ guard semantics, A2DP /
   speaker / broadcast / hearing-aid / unknown rejected, BLE-before-SCO
-  ordering for dual-mode lists. This repo has no Robolectric harness by
-  design, so `AudioManager`-touching paths stay on the manual matrix below.
+  ordering for dual-mode lists. The predicate is pure Java and needs no
+  Android runtime; `AudioManager`-touching paths stay on the manual matrix
+  below.
 - Must keep passing untouched: `BluetoothScoRetryPolicyTest`,
   `SettingsBluetoothHeadsetTest`.
 
