@@ -1,6 +1,6 @@
 # Miscellaneous Oddities Round-2 Remediation Plan
 
-Prioritized engineering plan for the residual findings cataloged in ([`README.md`](README.md)) (ODD-21–ODD-27) for Mumla OLED. All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness. Owner decisions are recorded inline (ODD-21 removal, single-branch scheduling); implement in one `bugfix/oddities-round2-remediation` branch covering Phases 1–3.
+Prioritized engineering plan for the residual findings cataloged in [`README.md`](README.md) (ODD-21–ODD-27) for Mumla OLED. All seven items are **Low** severity — latent defects, stale docs, and test debt — so the plan is ordered by blast radius (crash paths first, testability last) rather than by severity. ODD-24 is already resolved on `master` and recorded here for completeness. Owner decisions are recorded inline (ODD-21 removal, single-branch scheduling); implement in one `bugfix/oddities-round2-remediation` branch covering Phases 1–3.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ Both items are unguarded dereferences/parses on paths reachable with corrupted s
 
 ### 1.1 Null-guard `setVoiceTargetId` (ODD-25)
 
-**Component**: [`HumlaService.java:1523-1530`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1523-L1530)
+**Component**: [`HumlaService.java:1518-1527`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L1518-L1527)
 
 **Problem**: `mAudioHandler.setVoiceTargetId(targetId)` dereferences `mAudioHandler` without a null check. The handler is null while disconnected, so any future disconnected caller gets an NPE. Neighboring `setTalkingState` already null-guards the same field.
 

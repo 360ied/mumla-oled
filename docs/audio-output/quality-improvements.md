@@ -74,7 +74,7 @@ concealment artifacts it prevents:
 | Startup gate (upstream parity) | none: buffered packets played immediately, the loop free-ran into concealment on burst start | holds until margin+1 frames queued, force-start at `GATE_TIMEOUT_FRAMES` = 20 frames (200 ms) |
 | Render quantum / idle wait (batching) | 60 ms | 20 ms |
 | Track buffer floor | ~120 ms | ~40 ms plus the hardware minimum |
-| Render lead | unbounded (loop sprinted into track slack) | 1 quantum past the playback head (or the track minimum if larger) |
+| Render lead | unbounded (loop sprinted into track slack) | up to 2 quanta (~40 ms) past the playback head (or the track minimum if larger) |
 
 Remaining risk: the leaner margin trades robustness for latency on jittery
 links. Per-voice queue-to-playout delay is now logged on device

@@ -57,4 +57,20 @@ public class SettingsInputRateTest extends TestCase {
         assertEquals("Empty rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
+
+    public void testOverflowingRateStringFallsBack() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        prefs.edit().putString(Settings.PREF_INPUT_RATE, "9999999999").commit();
+        assertEquals("Out-of-int-range rate must fall back, not throw", 48000,
+                settings.getInputSampleRate());
+    }
+
+    public void testWhitespacePaddedRateStringFallsBack() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        Settings settings = Settings.createForTesting(prefs);
+        prefs.edit().putString(Settings.PREF_INPUT_RATE, " 48000 ").commit();
+        assertEquals("Padded rate string must fall back, not throw", 48000,
+                settings.getInputSampleRate());
+    }
 }

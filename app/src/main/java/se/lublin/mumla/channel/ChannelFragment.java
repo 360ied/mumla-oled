@@ -303,6 +303,15 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
         }
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
         preferences.unregisterOnSharedPreferenceChangeListener(this);
+        // Release the detached hierarchy: the service observer outlives the
+        // view (until onDestroy), and its callbacks null-guard these fields.
+        mViewPager = null;
+        mTabStrip = null;
+        mTalkButton = null;
+        mTalkView = null;
+        mTargetPanel = null;
+        mTargetPanelCancel = null;
+        mTargetPanelText = null;
     }
 
     @Override

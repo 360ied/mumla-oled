@@ -20,8 +20,11 @@ package se.lublin.humla;
 import junit.framework.TestCase;
 
 import java.lang.reflect.Field;
+import java.util.concurrent.atomic.AtomicReference;
 
 import se.lublin.humla.util.HumlaCallbacks;
+import se.lublin.humla.util.HumlaObserver;
+import se.lublin.humla.util.VoiceTargetMode;
 
 /**
  * Verifies the {@link HumlaService#setVoiceTargetId} null-guard (ODD-25):
@@ -66,8 +69,7 @@ public class HumlaServiceVoiceTargetTest extends TestCase {
         assertEquals((byte) 31, service.getVoiceTargetId());
     }
 
-    public void testNegativeTargetIdRejectedBeforeStateChange() throws Exception {
-        // Sign-extended bytes must not slip past the 5-bit check and poison
+    public void testNegativeTargetIdRejectedBeforeStateChange() throws Exception {        // Sign-extended bytes must not slip past the 5-bit check and poison
         // the stored target before fromId() throws (pedantic review).
         HumlaService service = newDisconnectedService();
         try {
@@ -77,5 +79,23 @@ public class HumlaServiceVoiceTargetTest extends TestCase {
         }
         assertEquals("Rejected set must leave the previous target intact",
                 (byte) 0, service.getVoiceTargetId());
+    }
+
+    public void testAcceptedSetNotifiesObserver() throws Exception {
+        HumlaService service = newDisconnectedService();
+        final AtomicReference<VoiceTargetMode> notified = new AtomicReference<>();
+        Field callbacks = HumlaService.class.getDeclaredField("mCallbacks");
+        callbacks.setAccessible(true);
+        HumlaCallbacks router = new HumlaCallbacks();
+        router.registerObserver(new HumlaObserver() {
+            @Override
+            public void onVoiceTargetChanged(VoiceTargetMode mode) {
+                notified.set(mode);
+            }
+        });
+        callbacks.set(service, router);
+        service.setVoiceTargetId((byte) 1);
+        assertEquals("Accepted set must notify with the mapped mode",
+                VoiceTargetMode.WHISPER, notified.get());
     }
 }

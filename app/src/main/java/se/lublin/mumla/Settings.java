@@ -241,8 +241,8 @@ public class Settings {
 
     public int getInputSampleRate() {
         try {
-            return Integer.parseInt(preferences.getString(Settings.PREF_INPUT_RATE, DEFAULT_RATE));
-        } catch (NumberFormatException e) {
+            return Integer.parseInt(preferences.getString(PREF_INPUT_RATE, DEFAULT_RATE));
+        } catch (NumberFormatException | ClassCastException e) {
             return Integer.parseInt(DEFAULT_RATE);
         }
     }
@@ -432,7 +432,7 @@ public class Settings {
     public int getFramesPerPacket() {
         try {
             return Integer.parseInt(preferences.getString(PREF_FRAMES_PER_PACKET, DEFAULT_FRAMES_PER_PACKET));
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException | ClassCastException e) {
             return Constants.DEFAULT_FRAMES_PER_PACKET;
         }
     }
