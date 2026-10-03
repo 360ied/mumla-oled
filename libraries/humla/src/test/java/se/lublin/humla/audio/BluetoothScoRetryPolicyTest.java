@@ -27,10 +27,10 @@ import junit.framework.TestCase;
  * the bring-up fails. Refusal and no-device fail unconditionally in their
  * callers, so no budget branch exists to pin for those reasons.
  *
- * <p>The full manager cannot be constructed on the JVM (it needs a platform
- * {@code Context} and main-looper {@code Handler}; this module is JUnit-only
- * with no Robolectric), so this truth table is the JVM-testable seam for the
- * bring-up matrix.
+ * <p>The full manager needs a platform {@code Context} and main-looper
+ * {@code Handler}, so manager-level coverage lives under Robolectric in
+ * {@code BluetoothScoManagerLeAudioTest}; this truth table is the
+ * JVM-testable seam for the bring-up matrix.
  */
 public class BluetoothScoRetryPolicyTest extends TestCase {
 

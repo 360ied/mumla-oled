@@ -120,8 +120,11 @@ not opportunistic scope.
   Android runtime.
 - Add Robolectric to `:libraries:humla`, mirroring the `:app` pilot
   (`testImplementation 'org.robolectric:robolectric:4.15.1'`,
-  `unitTests.includeAndroidResources`, `@Config(sdk = 34)` convention,
-  JUnit 4 style for runner-based tests): cover device selection
+  `@Config(sdk = 34)` convention, JUnit 4 style for runner-based tests —
+  but deliberately *without* `unitTests.includeAndroidResources`, which
+  wires resource-packaging tasks into unit-test execution and trips the
+  module's fail-closed native-packaging guard; the route tests touch no
+  resources): cover device selection
   (`findScoDevice` BLE-first ordering against the communication-device
   list) and listener transitions (`onModernDeviceChanged` confirm vs.
   drop) under shadows. Confirm the exact shadow surface at

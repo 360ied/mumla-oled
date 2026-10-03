@@ -40,6 +40,10 @@ dependencies {
     implementation 'org.minidns:minidns-hla:1.0.5'
     implementation 'org.minidns:minidns-android21:1.0.5'
     testImplementation 'junit:junit:4.13.2'
+    // Robolectric for audio-route manager tests (BluetoothScoManager needs a
+    // platform Context + AudioManager); pinned like :app — verify @Config(sdk)
+    // support before bumping.
+    testImplementation 'org.robolectric:robolectric:4.15.1'
 }
 
 allprojects {
@@ -80,6 +84,10 @@ android {
         }
     }
 
+    // Note: no unitTests.includeAndroidResources here. That flag wires
+    // resource-packaging tasks into unit-test execution, which trips this
+    // file's fail-closed native-packaging guard below; the Robolectric
+    // audio-route tests below touch no resources and run without it.
     testOptions {
         unitTests.returnDefaultValues = true
     }

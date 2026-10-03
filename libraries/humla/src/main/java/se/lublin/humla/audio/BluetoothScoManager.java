@@ -140,6 +140,30 @@ public class BluetoothScoManager {
         return attempts < maxAttempts;
     }
 
+    /**
+     * Whether an {@code AudioDeviceInfo} type can carry this manager's
+     * bidirectional voice route: classic SCO on every API level, LE Audio
+     * headsets on API 33+ (LE_AUDIO profile). Output-only and broadcast
+     * endpoints ({@code TYPE_BLUETOOTH_A2DP}, {@code TYPE_BLE_SPEAKER},
+     * {@code TYPE_BLE_BROADCAST}) and hearing aids are never voice routes.
+     * Pure over the device type plus the runtime API level, so
+     * Robolectric {@code @Config(sdk)} tests pin the version gate;
+     * package-visible for those tests, not part of the production API.
+     */
+    static boolean isVoiceRouteDevice(int type) {
+        if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+            return true;
+        }
+        // TYPE_BLE_HEADSET exists from API 33. The constant is inlined at
+        // compile time so the reference is safe on older runtimes; the
+        // explicit SDK_INT gate states the platform requirement in the
+        // form lint's version check recognizes.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return false;
+        }
+        return type == AudioDeviceInfo.TYPE_BLE_HEADSET;
+    }
+
     public BluetoothScoManager(Context context, Listener listener) {
         this(context, listener, CONNECT_TIMEOUT_MS, MAX_ATTEMPTS);
     }
@@ -419,8 +443,7 @@ public class BluetoothScoManager {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 AudioDeviceInfo current = mAudioManager.getCommunicationDevice();
-                return current != null
-                        && current.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
+                return current != null && isVoiceRouteDevice(current.getType());
             } else {
                 return isBluetoothScoOnLegacy();
             }
@@ -436,6 +459,10 @@ public class BluetoothScoManager {
     }
 
     // Fail-open HFP presence check: any doubt preserves the timeout fallback.
+    // LE Audio needs no equivalent here: this legacy backend runs below API 31
+    // while LE endpoints require API 33+, so the check could never meet one.
+    // The modern backend needs no presence check at all — an empty
+    // communication-device list already fails as REASON_NO_DEVICE.
     private boolean isHeadsetConnected() {
         try {
             BluetoothManager manager =
@@ -455,24 +482,34 @@ public class BluetoothScoManager {
         if (devices == null) {
             return null;
         }
+        AudioDeviceInfo scoFallback = null;
         for (AudioDeviceInfo device : devices) {
-            if (device != null && device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                return device;
+            if (device == null || !isVoiceRouteDevice(device.getType())) {
+                continue;
             }
+            if (device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                // Dual-mode headsets expose both transports; keep scanning
+                // for the preferred LE endpoint and fall back to SCO.
+                if (scoFallback == null) {
+                    scoFallback = device;
+                }
+                continue;
+            }
+            return device;
         }
-        return null;
+        return scoFallback;
     }
 
     private void onModernDeviceChanged(AudioDeviceInfo device) {
-        final boolean scoNow;
+        final boolean voiceRouteNow;
         final int state;
         synchronized (this) {
             state = mState;
-            scoNow = device != null && device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
+            voiceRouteNow = device != null && isVoiceRouteDevice(device.getType());
         }
-        if (state == STATE_STARTING && scoNow) {
+        if (state == STATE_STARTING && voiceRouteNow) {
             setActive();
-        } else if (state == STATE_ACTIVE && !scoNow) {
+        } else if (state == STATE_ACTIVE && !voiceRouteNow) {
             dropActiveLink();
         }
         // A system move to a non-SCO device mid-bring-up is left to burn the
