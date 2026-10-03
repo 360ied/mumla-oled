@@ -108,10 +108,12 @@ Explicit non-goals: no auto-routing on HFP connect (Option B in
   unaffected. Optionally mark the UI-facing retry as retained-for-tests if a
   lint pass flags it as newly unused.
 
-### 5. Strings, menus, preferences — no change
+### 5. Strings, menus, preferences — near-zero change
 
-- No string, menu XML, or `settings_audio.xml` edits. Both toggles keep the
-  existing "Two-way Bluetooth" title and the Settings summary.
+- No menu XML or `settings_audio.xml` edits. Both toggles keep the
+  existing "Two-way Bluetooth" title and the Settings summary. The
+  now-unused `bluetooth_sco_connecting` string was deleted from
+  `strings.xml` as follow-up cleanup after the retry-toast removal.
 
 ## Permission flow before/after (API 31+)
 

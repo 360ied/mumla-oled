@@ -20,12 +20,12 @@ package se.lublin.mumla;
 import junit.framework.TestCase;
 
 /**
- * Pins the Bluetooth toggle unification invariant: the Settings &gt; Audio
- * checkbox and the channel-overflow item are both thin aliases of one
- * requested-state preference ({@link Settings#PREF_BLUETOOTH_HEADSET}).
- * Neither reads confirmed SCO link state; the overflow flip is a plain
- * {@code setBluetoothHeadset(!isBluetoothHeadset())} through this accessor
- * pair, so the round-trip below is the contract both toggles share.
+ * Pins the shared {@link Settings} accessor contract behind the unified
+ * Bluetooth toggle: the Settings &gt; Audio checkbox and the
+ * channel-overflow item both read and write this requested-state
+ * preference ({@link Settings#PREF_BLUETOOTH_HEADSET}), never confirmed
+ * SCO link state. The overflow checked-state wiring itself lives in
+ * ChannelFragment and is not covered here.
  */
 public class SettingsBluetoothHeadsetTest extends TestCase {
 

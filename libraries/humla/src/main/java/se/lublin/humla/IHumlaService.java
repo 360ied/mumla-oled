@@ -52,7 +52,8 @@ public interface IHumlaService {
 
     /**
      * Re-asserts SCO bring-up when requested but idle, e.g. after a failed
-     * attempt the user explicitly retries.
+     * attempt. No UI caller remains (both toggles share the requested-state
+     * preference and retry by flipping off and on); retained for internal use.
      * @return true if bring-up was (re)started, false if there was nothing
      *         to do (link up, starting, unrequested, or disconnected).
      */
