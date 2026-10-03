@@ -108,10 +108,12 @@ Explicit non-goals: no auto-routing on HFP connect (Option B in
   unaffected. Optionally mark the UI-facing retry as retained-for-tests if a
   lint pass flags it as newly unused.
 
-### 5. Strings, menus, preferences — no change
+### 5. Strings, menus, preferences — near-zero change
 
-- No string, menu XML, or `settings_audio.xml` edits. Both toggles keep the
-  existing "Two-way Bluetooth" title and the Settings summary.
+- No menu XML or `settings_audio.xml` edits. Both toggles keep the
+  existing "Two-way Bluetooth" title and the Settings summary. The
+  now-unused `bluetooth_sco_connecting` string was deleted from
+  `strings.xml` as follow-up cleanup after the retry-toast removal.
 
 ## Permission flow before/after (API 31+)
 
@@ -142,9 +144,14 @@ After (both toggles):
 
 ## Test plan
 
-- Update/extend unit coverage for the new invariant: overflow checked-state
-  equals `Settings.isBluetoothHeadset()` regardless of `isBluetoothScoActive()`
-  (requested vs confirmed decoupling). Existing
+- Unit coverage pins the shared `Settings` accessor both toggles use
+  (`SettingsBluetoothHeadsetTest`: key, default-off, requested-state
+  round-trip). Overflow checked-state wiring itself (`ChannelFragment`)
+  has no unit test by design — this repo's fragment tests cover pure
+  helpers only, with no Robolectric harness — so the
+  requested-vs-confirmed decoupling ("checked equals
+  `Settings.isBluetoothHeadset()` regardless of `isBluetoothScoActive()`")
+  is verified by the manual matrix below, not by automation. Existing
   `BluetoothScoRetryPolicyTest` (automatic-retry budget) must keep passing
   untouched.
 - Manual matrix on a WBS-capable and a narrowband-only headset: flip each
@@ -172,7 +179,10 @@ After (both toggles):
 ## Rollout
 
 1. Implement in a dedicated worktree (`./scripts/worktree.py add <branch>`)
-   touching `ChannelFragment.java` and `MumlaActivity.java` only (plus
-   tests); no service, pipeline, string, or manifest changes expected.
+   touching `ChannelFragment.java` and `MumlaActivity.java` (plus
+   tests); comment-only touch-ups in `MumlaService.java` /
+   `IHumlaService.java` and deletion of the now-unused
+   `bluetooth_sco_connecting` string are expected. No pipeline or manifest
+   changes expected.
 2. Verify with `./scripts/check.sh` in the worktree and the manual matrix above.
 3. Leave merge, push, and cleanup to the user on review.

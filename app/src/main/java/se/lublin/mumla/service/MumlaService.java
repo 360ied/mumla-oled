@@ -818,9 +818,9 @@ public class MumlaService extends HumlaService implements
                 break;
             case Settings.PREF_BLUETOOTH_HEADSET:
                 if (mSettings.isBluetoothHeadset() && !hasBluetoothConnectGrant()) {
-                    // Settings-screen flip without the runtime grant: revert
-                    // with a hint instead of pushing a doomed extra. The
-                    // overflow toggle and connect flow request the grant first.
+                    // Either toggle flips without the runtime grant: revert
+                    // with a hint instead of pushing a doomed extra. Only
+                    // the connect flow requests the grant first.
                     mSettings.setBluetoothHeadset(false);
                     Toast.makeText(this, R.string.grant_perm_bluetooth, Toast.LENGTH_LONG).show();
                     break;
