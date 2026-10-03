@@ -329,6 +329,10 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     private void configureTargetPanel() {
+        if (!isAdded() || getActivity() == null
+                || mTargetPanel == null || mTargetPanelText == null) {
+            return;
+        }
         if (getService() == null || !getService().isConnected()) {
             return;
         }

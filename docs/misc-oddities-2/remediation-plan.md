@@ -47,11 +47,17 @@ Dropping (rather than deferring) the live call matches current per-connection se
 public int getInputSampleRate() {
     try {
         return Integer.parseInt(preferences.getString(Settings.PREF_INPUT_RATE, DEFAULT_RATE));
-    } catch (NumberFormatException e) {
+    } catch (NumberFormatException | ClassCastException e) {
         return Integer.parseInt(DEFAULT_RATE);
     }
 }
 ```
+
+The same widening applies to the neighboring `getFramesPerPacket()`, which
+shared the narrow catch. A wrong-typed stored value cannot be pinned through
+`FakeSharedPreferences` (it returns the default on type mismatch instead of
+throwing like the framework), so the `ClassCastException` arm is
+inspection-verified.
 
 **Acceptance criteria**: JVM test pins valid-string passthrough and garbage-string fallback; connect path no longer throws on corrupted prefs.
 
@@ -97,7 +103,7 @@ A fragment lifecycle mirror fix and the only test-debt item in the batch.
 
 **Problem**: The shared-preference listener is registered in `onActivityCreated` but unregistered in `onDestroy` rather than `onDestroyView`, so the retained listener survives view recreations. Latent today (callbacks only touch null-guarded view state), but the asymmetry leaks the fragment as a listener across every rotation.
 
-**Solution**: Move the `unregisterOnSharedPreferenceChangeListener` call to `onDestroyView`, mirroring the view lifecycle. Safe: the fragment is still attached to its activity in `onDestroyView`, so `getActivity()` remains valid there.
+**Solution**: Move the `unregisterOnSharedPreferenceChangeListener` call to `onDestroyView`, mirroring the view lifecycle. Safe: the fragment is still attached to its activity in `onDestroyView`, so `getActivity()` remains valid there. Null all seven view fields alongside (per the ODD-15 precedent) and guard `configureTargetPanel()` with the same `!isAdded()` / null checks as `configureInput()`, since the service observer outlives the view until `onDestroy` and `onVoiceTargetChanged` would otherwise touch the nulled panel.
 
 **Acceptance criteria**: register/unregister live in symmetric lifecycle callbacks (inspection); rotate-with-view-recreation leaves no stale listener (manual or Robolectric check if harnessed).
 

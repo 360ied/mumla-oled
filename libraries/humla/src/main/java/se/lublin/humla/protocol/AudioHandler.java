@@ -674,7 +674,7 @@ public class AudioHandler extends HumlaNetworkListener
             AudioHandler handler = new AudioHandler(mContext, mLogger, mAudioStream, mAudioSource,
                     mInputSampleRate, mTargetBitrate, mTargetFramesPerPacket, mInputMode, targetId,
                     mAmplitudeBoost, mHalfDuplexEnabled,
-                    true, mAdaptiveLevelerEnabled,
+                    /* preprocessorEnabled */ true, mAdaptiveLevelerEnabled,
                     mEncodeListener, mTalkingListener);
             handler.setFramesPerPacketListener(mFramesPerPacketListener);
             handler.setScoEnabled(mScoEnabled);

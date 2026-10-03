@@ -1516,8 +1516,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setVoiceTargetId(byte targetId) {
-        if (Byte.toUnsignedInt(targetId) > 0x1F) {
-            throw new IllegalArgumentException("Target ID must be at most 5 bits.");
+        // Mask, not Byte.toUnsignedInt: the latter needs API 26 and this
+        // module is minSdk 21 without core-library desugaring.
+        if ((targetId & 0xFF) > 0x1F) {
+            throw new IllegalArgumentException(
+                    "Target ID must be at most 5 bits: " + (targetId & 0xFF));
         }
         mVoiceTargetId = targetId;
         if (mAudioHandler != null) {
