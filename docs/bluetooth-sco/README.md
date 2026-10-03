@@ -33,6 +33,9 @@ owned by `HumlaService`.
 5. [Toggle unification plan](toggle-unification-plan.md) — proposal to unify
    the Settings checkbox and the channel-overflow item into a single
    requested-state toggle with Settings semantics.
+6. [LE Audio implementation plan](le-audio-plan.md) — proposal to recognize
+   `TYPE_BLE_HEADSET` endpoints in the voice-route manager so the same
+   toggle drives LE Audio as well as classic SCO.
 
 ## Key facts (starting position, pre-0.22.0)
 
