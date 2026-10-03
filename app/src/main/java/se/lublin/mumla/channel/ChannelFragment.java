@@ -79,9 +79,6 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     /** Chat target listeners, notified when the chat target is changed. */
     private List<OnChatTargetSelectedListener> mChatTargetListeners = new ArrayList<OnChatTargetSelectedListener>();
 
-    /** True iff the talk button has been hidden (e.g. when muted) */
-    private boolean mTalkButtonHidden;
-
     private HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onUserTalkStateUpdated(IUser user) {
@@ -110,7 +107,7 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             int selfSession;
             try {
                 selfSession = getService().HumlaSession().getSessionId();
-            } catch (IllegalStateException e) {
+            } catch (HumlaDisconnectedException|IllegalStateException e) {
                 Log.d(TAG, "exception in onUserStateUpdated: " + e);
                 return;
             }
@@ -186,7 +183,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                 if (getService() == null || !getService().isConnected())
                     return;
 
-                IHumlaSession session = getService().HumlaSession();
+                final IHumlaSession session;
+                try {
+                    session = getService().HumlaSession();
+                } catch (HumlaDisconnectedException|IllegalStateException e) {
+                    return;
+                }
                 if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
                     byte target = session.getVoiceTargetId();
                     session.setVoiceTargetId((byte) 0);
@@ -301,13 +303,17 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             mTalkButton.setActivated(false);
             mTalkButton.setPressed(false);
         }
-    }
-
-    @Override
-    public void onDestroy() {
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
         preferences.unregisterOnSharedPreferenceChangeListener(this);
-        super.onDestroy();
+        // Release the detached hierarchy: the service observer outlives the
+        // view (until onDestroy), and its callbacks null-guard these fields.
+        mViewPager = null;
+        mTabStrip = null;
+        mTalkButton = null;
+        mTalkView = null;
+        mTargetPanel = null;
+        mTargetPanelCancel = null;
+        mTargetPanelText = null;
     }
 
     @Override
@@ -325,14 +331,26 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     private void configureTargetPanel() {
+        if (!isAdded() || getActivity() == null
+                || mTargetPanel == null || mTargetPanelText == null) {
+            return;
+        }
         if (getService() == null || !getService().isConnected()) {
             return;
         }
 
-        IHumlaSession session = getService().HumlaSession();
+        final IHumlaSession session;
+        try {
+            session = getService().HumlaSession();
+        } catch (HumlaDisconnectedException|IllegalStateException e) {
+            return;
+        }
         VoiceTargetMode mode = session.getVoiceTargetMode();
-        if (mode == VoiceTargetMode.WHISPER) {
-            WhisperTarget target = session.getWhisperTarget();
+        // Null when WHISPER points at an unregistered id: hide rather than
+        // dereference (pedantic review).
+        WhisperTarget target =
+                mode == VoiceTargetMode.WHISPER ? session.getWhisperTarget() : null;
+        if (target != null) {
             mTargetPanel.setVisibility(View.VISIBLE);
             mTargetPanelText.setText(getString(R.string.shout_target, target.getName()));
         } else {
@@ -426,12 +444,14 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     private void setTalkButtonHidden(final boolean hidden) {
+        if (mTalkView == null) {
+            return;
+        }
         mTalkView.setVisibility(hidden ? View.GONE : View.VISIBLE);
         if (hidden && mTalkButton != null) {
             mTalkButton.setActivated(false);
             mTalkButton.setPressed(false);
         }
-        mTalkButtonHidden = hidden;
     }
 
     @Override

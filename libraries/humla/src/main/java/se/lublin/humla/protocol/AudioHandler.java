@@ -81,6 +81,8 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mSuppressed;
     private boolean mHalfDuplex;
     private volatile boolean mScoActive;
+    // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
+    // hardcodes preprocessor-on and no production path can reach off.
     private boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
     private volatile boolean mTalking;
@@ -580,7 +582,6 @@ public class AudioHandler extends HumlaNetworkListener
         // Plain like neighbors: the builder is configured single-threaded on
         // the service main thread; only the built handler's mScoActive is volatile.
         private boolean mScoEnabled;
-        private boolean mPreprocessorEnabled;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;
         private AudioEncodeListener mEncodeListener;
@@ -645,11 +646,6 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
-        public Builder setPreprocessorEnabled(boolean preprocessorEnabled) {
-            mPreprocessorEnabled = preprocessorEnabled;
-            return this;
-        }
-
         public Builder setAdaptiveLevelerEnabled(boolean adaptiveLevelerEnabled) {
             mAdaptiveLevelerEnabled = adaptiveLevelerEnabled;
             return this;
@@ -680,7 +676,7 @@ public class AudioHandler extends HumlaNetworkListener
             AudioHandler handler = new AudioHandler(mContext, mLogger, mAudioStream, mAudioSource,
                     mInputSampleRate, mTargetBitrate, mTargetFramesPerPacket, mInputMode, targetId,
                     mAmplitudeBoost, mHalfDuplexEnabled,
-                    mPreprocessorEnabled, mAdaptiveLevelerEnabled,
+                    /* preprocessorEnabled */ true, mAdaptiveLevelerEnabled,
                     mEncodeListener, mTalkingListener);
             handler.setFramesPerPacketListener(mFramesPerPacketListener);
             handler.setScoEnabled(mScoEnabled);

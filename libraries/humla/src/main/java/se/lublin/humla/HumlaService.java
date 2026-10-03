@@ -122,7 +122,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_LOCAL_MUTE_HISTORY = "local_mute_history";
     /** A list of users that should be local ignored upon connection. */
     public static final String EXTRAS_LOCAL_IGNORE_HISTORY = "local_ignore_history";
-    public static final String EXTRAS_ENABLE_PREPROCESSOR = "enable_preprocessor";
     public static final String EXTRAS_ADAPTIVE_LEVELER = "adaptive_leveler";
     /** Request Bluetooth SCO headset routing for this connection. */
     public static final String EXTRAS_BLUETOOTH_SCO = "bluetooth_sco";
@@ -846,7 +845,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 || extras.containsKey(EXTRAS_AUDIO_STREAM)
                 || extras.containsKey(EXTRAS_FRAMES_PER_PACKET)
                 || extras.containsKey(EXTRAS_HALF_DUPLEX)
-                || extras.containsKey(EXTRAS_ENABLE_PREPROCESSOR)
                 || extras.containsKey(EXTRAS_ADAPTIVE_LEVELER);
     }
 
@@ -1052,9 +1050,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (extras.containsKey(EXTRAS_LOCAL_IGNORE_HISTORY)) {
             mLocalIgnoreHistory = extras.getIntegerArrayList(EXTRAS_LOCAL_IGNORE_HISTORY);
             reconnectNeeded = true;
-        }
-        if (extras.containsKey(EXTRAS_ENABLE_PREPROCESSOR)) {
-            mAudioBuilder.setPreprocessorEnabled(extras.getBoolean(EXTRAS_ENABLE_PREPROCESSOR));
         }
         if (extras.containsKey(EXTRAS_ADAPTIVE_LEVELER)) {
             mAudioBuilder.setAdaptiveLevelerEnabled(extras.getBoolean(EXTRAS_ADAPTIVE_LEVELER));
@@ -1521,11 +1516,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setVoiceTargetId(byte targetId) {
-        if ((targetId & ~0x1F) > 0) {
-            throw new IllegalArgumentException("Target ID must be at most 5 bits.");
+        // Mask, not Byte.toUnsignedInt: the latter needs API 26 and this
+        // module is minSdk 21 without core-library desugaring.
+        if ((targetId & 0xFF) > 0x1F) {
+            throw new IllegalArgumentException(
+                    "Target ID must be at most 5 bits: " + (targetId & 0xFF));
         }
         mVoiceTargetId = targetId;
-        mAudioHandler.setVoiceTargetId(targetId);
+        if (mAudioHandler != null) {
+            mAudioHandler.setVoiceTargetId(targetId);
+        }
         mCallbacks.onVoiceTargetChanged(VoiceTargetMode.fromId(targetId));
     }
 
