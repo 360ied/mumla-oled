@@ -301,12 +301,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             mTalkButton.setActivated(false);
             mTalkButton.setPressed(false);
         }
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
+        preferences.unregisterOnSharedPreferenceChangeListener(this);
     }
 
     @Override
     public void onDestroy() {
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
-        preferences.unregisterOnSharedPreferenceChangeListener(this);
         super.onDestroy();
     }
 

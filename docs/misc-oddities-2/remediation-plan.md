@@ -107,7 +107,7 @@ A fragment lifecycle mirror fix and the only test-debt item in the batch.
 
 **Problem**: Timeout budget, retry budget, and the `Handler` are hard-wired, so the bring-up matrix (success, timeout, retry, refusal, no-device, drop-after-connect) cannot be exercised by JVM tests.
 
-**Solution**: constructor injection of the timeout budget, retry budget, and handler, with the production defaults (`8000 ms`, `2` attempts, main-looper handler) passed at the `HumlaService` call site — minimal seam, no manager API redesign, behavior byte-identical. Then cover the matrix in the existing JUnit style.
+**Solution**: constructor injection of the timeout and retry budgets via a package-visible overload, with the production defaults (`8000 ms`, `2` attempts) passed at the existing `HumlaService` call site — no manager API redesign, behavior byte-identical. The `Handler` stays hard-wired: `android.os.Handler` cannot be constructed on the JVM and this module is JUnit-only (no Robolectric/Mockito), so an injected handler would gain no test. The bring-up matrix is instead pinned through the extracted pure predicate `shouldRetryBringUp(attempts, maxAttempts)`, shared by the timeout and stack-error paths; refusal and no-device fail unconditionally in their callers.
 
 **Acceptance criteria**: JVM tests pin at least timeout, retry-exhaustion, and refusal transitions without Robolectric; production defaults byte-identical.
 
@@ -130,4 +130,4 @@ Each fix ships with a targeted regression pin; all items are JVM-testable except
 | **Phase 2** | **ODD-21** | Grep: no `PREPROCESSOR_ENABLED` / `ENABLE_PREPROCESSOR` references remain; `assembleFossDebug` passes. | Connect and verify preprocessing audibly active (behavior unchanged, always on). |
 | **Phase 2** | **ODD-22** | Doc/code consistency inspection (no test). | None. |
 | **Phase 3** | **ODD-26** | Lifecycle symmetry inspection; Robolectric rotation test if harnessed. | Rotate with the channel view open; confirm no stale callbacks. |
-| **Phase 3** | **ODD-23** | JUnit coverage of the timeout / retry-exhaustion / refusal transitions via the injected seam. | None (JVM suite covers it). |
+| **Phase 3** | **ODD-23** | [`BluetoothScoRetryPolicyTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/audio/BluetoothScoRetryPolicyTest.java) truth-tabling the shared retry predicate (fresh/first-timeout retry, exhaustion, single/zero budgets); refusal and no-device are unconditional fail paths. | None (JVM suite covers it). |

@@ -151,9 +151,6 @@ public class Settings {
     public static final String PREF_PTT_SOUND = "ptt_sound";
     public static final boolean DEFAULT_PTT_SOUND = false;
 
-    public static final String PREF_PREPROCESSOR_ENABLED = "preprocessor_enabled";
-    public static final boolean DEFAULT_PREPROCESSOR_ENABLED = true;
-
     public static final String PREF_ADAPTIVE_LEVELER_ENABLED = "adaptive_leveler";
     public static final boolean DEFAULT_ADAPTIVE_LEVELER_ENABLED = true;
 
@@ -243,7 +240,11 @@ public class Settings {
     }
 
     public int getInputSampleRate() {
-        return Integer.parseInt(preferences.getString(Settings.PREF_INPUT_RATE, DEFAULT_RATE));
+        try {
+            return Integer.parseInt(preferences.getString(Settings.PREF_INPUT_RATE, DEFAULT_RATE));
+        } catch (NumberFormatException e) {
+            return Integer.parseInt(DEFAULT_RATE);
+        }
     }
 
     public int getInputQuality() {
@@ -454,10 +455,6 @@ public class Settings {
 
     public boolean isPttSoundEnabled() {
         return preferences.getBoolean(PREF_PTT_SOUND, DEFAULT_PTT_SOUND);
-    }
-
-    public boolean isPreprocessorEnabled() {
-        return true;
     }
 
     public boolean isAdaptiveLevelerEnabled() {

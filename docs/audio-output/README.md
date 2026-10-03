@@ -34,7 +34,7 @@ UDP datagram / protobuf Audio
 | Track buffer | `max(minBytes, 2 quanta)` | Floor of ~40 ms plus the hardware minimum |
 | `m_jitterMarginFrames` | 4 frames | 40 ms jitter margin floor; also sizes the startup gate (a fresh voice plays once margin+1 frames of audio are queued); Speex adapts upward on bad links |
 | `GATE_TIMEOUT_FRAMES` | 20 frames | Startup gate force-start (200 ms): a fresh voice holds silent (zero PCM) until the gate fills, so the render loop never outruns the packet arrival clock; a lone blip force-starts instead of wedging |
-| Render lead bound | 1 quantum, or the track minimum | The render loop queues at most this far ahead of the playback head, mirroring a pull-model device clock |
+| Render lead bound | up to 2 quanta (~40 ms), or the track minimum | The render loop queues at most this far ahead of the playback head, mirroring a pull-model device clock |
 | `DEAD_MISS_FRAMES` | 10 frames | Voice expiry after 100 ms of consecutive misses |
 | `MAX_VOICES` | 32 | Evicts highest session id on join flood |
 | `MAX_DECODE_SAMPLES` | 5760 samples | Caps 120 ms Opus bundles |

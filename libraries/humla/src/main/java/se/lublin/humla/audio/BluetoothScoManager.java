@@ -106,6 +106,10 @@ public class BluetoothScoManager {
     private final AudioManager mAudioManager;
     private final Listener mListener;
     private final Handler mHandler = new Handler(Looper.getMainLooper());
+    // Injected budgets (ODD-23): production uses the static defaults above;
+    // a future device harness can narrow the timeout without touching the machine.
+    private final long mConnectTimeoutMs;
+    private final int mMaxAttempts;
 
     private int mState = STATE_IDLE;
     private int mAttempts;
@@ -124,11 +128,28 @@ public class BluetoothScoManager {
         }
     };
 
+    /**
+     * Pure retry-budget decision shared by the timeout and stack-error paths
+     * (ODD-23): another bring-up attempt remains while fewer than
+     * {@code maxAttempts} attempts have run. Refusal and no-device fail
+     * unconditionally in their callers — no budget branch exists to drift.
+     */
+    static boolean shouldRetryBringUp(int attempts, int maxAttempts) {
+        return attempts < maxAttempts;
+    }
+
     public BluetoothScoManager(Context context, Listener listener) {
+        this(context, listener, CONNECT_TIMEOUT_MS, MAX_ATTEMPTS);
+    }
+
+    BluetoothScoManager(Context context, Listener listener,
+                        long connectTimeoutMs, int maxAttempts) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(listener, "listener");
         mContext = context.getApplicationContext();
         mListener = listener;
+        mConnectTimeoutMs = connectTimeoutMs;
+        mMaxAttempts = maxAttempts;
         AudioManager audioManager =
                 (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
         Objects.requireNonNull(audioManager, "AudioManager");
@@ -479,7 +500,7 @@ public class BluetoothScoManager {
             // broadcasts are benign link chatter and must not burn the retry
             // budget (the modern path ignores mid-bring-up moves likewise).
             if (audioState == AudioManager.SCO_AUDIO_STATE_ERROR) {
-                if (attempts >= MAX_ATTEMPTS) {
+                if (!shouldRetryBringUp(attempts, mMaxAttempts)) {
                     fail(REASON_ERROR);
                     return;
                 }
@@ -499,7 +520,7 @@ public class BluetoothScoManager {
             if (mState != STATE_STARTING) {
                 return;
             }
-            retry = mAttempts < MAX_ATTEMPTS;
+            retry = shouldRetryBringUp(mAttempts, mMaxAttempts);
         }
         if (!retry) {
             fail(REASON_TIMEOUT);
@@ -641,7 +662,7 @@ public class BluetoothScoManager {
 
     private void armTimeout() {
         mHandler.removeCallbacks(mTimeoutRunnable);
-        mHandler.postDelayed(mTimeoutRunnable, CONNECT_TIMEOUT_MS);
+        mHandler.postDelayed(mTimeoutRunnable, mConnectTimeoutMs);
     }
 
     private boolean hasConnectPermission() {
