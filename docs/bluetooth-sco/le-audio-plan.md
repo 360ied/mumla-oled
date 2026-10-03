@@ -13,8 +13,8 @@ this dossier's [README](README.md). LE Audio is a separate transport —
 bidirectional LC3 instead of 8/16 kHz CVSD/mSBC — exposed by Android as a
 separate profile with separate device types. The current manager filters for
 `TYPE_BLUETOOTH_SCO` only, so an LE headset is invisible to it: `findScoDevice`
-returns null (`REASON_NO_DEVICE`) and the user stays on phone mic/speaker or
-output-only A2DP. For earbud users this is the worst-sounding configuration
+returns null (mapped to `REASON_NO_DEVICE` by its caller) and the user stays
+on phone mic/speaker or output-only `TYPE_BLUETOOTH_A2DP`. For earbud users this is the worst-sounding configuration
 the app can produce, which makes LE recognition a quality fix rather than a
 novel feature. This plan is the follow-up the [toggle unification
 plan](toggle-unification-plan.md) explicitly defers ("no LE Audio work").
@@ -43,20 +43,26 @@ is the LE half.
   `setCommunicationDevice()`, await confirmation via
   `getCommunicationDevice()` / `OnCommunicationDeviceChangedListener` with a
   timeout, `clearCommunicationDevice()` at session end.
-- Android 14 enables LEA by default on Pixel/AOSP and deprecates
-  `isBluetoothScoOn()` / `start-stopBluetoothSco()` in favor of the
-  communication-device APIs — confirming the modern path is the foundation.
+- Android 14 enables LEA by default on Pixel/AOSP. The legacy
+  `isBluetoothScoOn()` / `start-stopBluetoothSco()` calls are deprecated
+  from API 33 (reiterated in the Android 14 migration guide) in favor of
+  the communication-device APIs — confirming the modern path is the
+  foundation.
 - The legacy `startBluetoothSco()` backend (runs below API 31) can **never**
   serve BLE, and BLE-capable devices require API 33+, so the legacy path is
   provably untouched by this work.
 - No manifest or permission changes: `BLUETOOTH_CONNECT` is already declared
   without `maxSdkVersion`, and it is the only runtime grant the BLE path
-  needs. The existing `MumlaActivity` / `MumlaService` grant flow covers it.
+  needs. The existing grant flow ([`MumlaActivity.java`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.java)
+plus the revert-with-toast gate in [`MumlaService.java`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.java))
+covers it.
 - Compile-time safety: `compileSdk = 36` provides the constants, and
   `static final int` constants are inlined by javac, so referencing
   `TYPE_BLE_HEADSET` cannot throw `NoSuchFieldError` on old devices. New
   *calls* (`getProfileConnectionState(LE_AUDIO)`) still get `SDK_INT >=
-  Build.VERSION_CODES.TIRAMISU` guards for lint and clarity.
+  Build.VERSION_CODES.TIRAMISU` guards for lint and clarity. (The LE Audio
+profile call named above is illustrative of the guard convention, not a
+call this plan introduces — see row 4.)
 
 ## Gap analysis
 
@@ -69,7 +75,7 @@ All recognition logic lives in one file (paths relative to the repo root):
 | 1 | `findScoDevice()` | Accepts only `TYPE_BLUETOOTH_SCO` | Also accept `TYPE_BLE_HEADSET` on API 33+; **prefer BLE over SCO** when a dual-mode headset exposes both |
 | 2 | `isScoActiveNow()` | Checks only `TYPE_BLUETOOTH_SCO` | Same widening, or the already-routed fast path misfires on BLE |
 | 3 | `onModernDeviceChanged()` | `scoNow` is SCO-only | Widen atomically with (1): otherwise selecting a BLE headset fires `dropActiveLink()` on the callback that should confirm the connection |
-| 4 | `isHeadsetConnected()` | Checks only the `HEADSET` profile | **No change.** Legacy-path pre-flight, unreachable on API 33+; add a comment saying why so nobody "fixes" it later |
+| 4 | `isHeadsetConnected()` | Checks only the `HEADSET` profile | **No functional change — comment-only diff.** Legacy-path pre-flight, unreachable on API 33+; add a comment saying why so nobody "fixes" it later |
 
 Rows 1–3 must land in a single commit: any subset that widens selection
 without widening the listener (or vice versa) introduces a connect-then-drop
@@ -91,7 +97,9 @@ not opportunistic scope.
   and (guarded) `TYPE_BLE_HEADSET`. Pure like `shouldRetryBringUp`, so the
   existing JVM truth-table test style applies.
 - `findScoDevice()`: iterate the communication-device list collecting both
-  accepted types, return BLE first. Single-device fast path unchanged.
+  accepted types, return BLE first. Single-device fast-path structure
+  unchanged (its behavior still widens: a lone BLE endpoint now completes
+  early).
 - `isScoActiveNow()` and `onModernDeviceChanged()`: replace the inline
   `type == TYPE_BLUETOOTH_SCO` comparisons with the predicate.
 - `isHeadsetConnected()`: comment-only touch recording that LE Audio needs
@@ -102,15 +110,26 @@ not opportunistic scope.
   rest are service/UI API surface. The SCO-named manager owning an LE route
   is accepted naming debt, recorded here; a rename is a separate follow-up.
 
-### 2. Tests — JVM predicate coverage, no harness changes
+### 2. Tests — JVM predicate plus new humla Robolectric infra
 
 - New truth-table test beside
   [`BluetoothScoRetryPolicyTest.java`](../../libraries/humla/src/test/java/se/lublin/humla/audio/BluetoothScoRetryPolicyTest.java):
   SCO accepted, BLE headset accepted on 33+ guard semantics, A2DP /
   speaker / broadcast / hearing-aid / unknown rejected, BLE-before-SCO
   ordering for dual-mode lists. The predicate is pure Java and needs no
-  Android runtime; `AudioManager`-touching paths stay on the manual matrix
-  below.
+  Android runtime.
+- Add Robolectric to `:libraries:humla`, mirroring the `:app` pilot
+  (`testImplementation 'org.robolectric:robolectric:4.15.1'`,
+  `unitTests.includeAndroidResources`, `@Config(sdk = 34)` convention,
+  JUnit 4 style for runner-based tests): cover device selection
+  (`findScoDevice` BLE-first ordering against the communication-device
+  list) and listener transitions (`onModernDeviceChanged` confirm vs.
+  drop) under shadows. Confirm the exact shadow surface at
+  implementation; if the communication-device shadows prove insufficient,
+  the predicate test plus the manual matrix below are the fallback — do
+  not gold-plate untestable seams. The first Robolectric run downloads
+  the `android-all` runtime (network needed once); record the SDK pin
+  next to the dependency as `:app` does.
 - Must keep passing untouched: `BluetoothScoRetryPolicyTest`,
   `SettingsBluetoothHeadsetTest`.
 
@@ -152,7 +171,7 @@ not opportunistic scope.
 | Dual-mode headset exposes SCO + BLE | Prefer BLE (LC3 bidirectional is the quality win); SCO remains the fallback entry |
 | LE headset connected, toggle off | No route change; manual-toggle semantics preserved |
 | OS moves the route mid-call (e.g. user picks speaker in system UI) | Widened `onModernDeviceChanged` drops a genuinely lost route, ignores transient flaps — same policy as SCO today |
-| Pre-33 device | Byte-identical behavior; new branches are version-guarded |
+| Pre-33 device | Behaviorally identical; new branches are version-guarded |
 | No BLE device present | `REASON_NO_DEVICE`, same fallback toast as SCO |
 | `BLUETOOTH_CONNECT` revoked mid-bring-up | `REASON_PERMISSION` path unchanged |
 | Hearing-aid-only or Auracast-only environment | Not selected; behavior identical to today (phone routes) |
@@ -160,8 +179,8 @@ not opportunistic scope.
 
 ## Test plan
 
-- Unit: predicate truth table and BLE-first ordering (new test, §2); full
-  `./scripts/check.sh` gate in the worktree.
+- Unit: predicate truth table plus Robolectric selection/listener tests
+  (new tests, §2); full `./scripts/check.sh` gate in the worktree.
 - Manual matrix (requires an Android 13+ phone **and** an LE Audio headset —
   neither emulators nor CI cover this):
   1. Toggle on mid-call: `adb shell dumpsys audio` shows the
@@ -173,7 +192,7 @@ not opportunistic scope.
   4. Deny `BLUETOOTH_CONNECT`: existing revert-plus-toast path from either
      toggle.
   5. Dual-mode headset: dumpsys confirms the BLE endpoint won over SCO.
-  6. Repeat (1) on OS 33 vs 34+ and note the version (hearing-aid
+  6. Repeat (1) on API 33 vs 34+ and note the version (hearing-aid
      visibility and LEA default-on changed at 14).
 - Useful commands: `adb shell dumpsys audio | grep -i -A2 communication`,
   `adb shell dumpsys bluetooth_manager | grep -i -A5 le_audio`,
@@ -197,7 +216,8 @@ not opportunistic scope.
 ## Rollout
 
 1. Implement in a dedicated worktree (`./scripts/worktree.py add
-   <branch>`) touching `BluetoothScoManager.java` plus the new JVM test;
+   <branch>`) touching `BluetoothScoManager.java`, the new JVM test, the
+   Robolectric infra hunk, and the Robolectric selection/listener tests;
    comment-only where noted. No manifest, UI, pipeline, or permission-flow
    changes expected.
 2. Verify with `./scripts/check.sh` in the worktree plus the manual matrix

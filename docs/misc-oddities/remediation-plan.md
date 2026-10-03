@@ -2,6 +2,12 @@
 
 This document outlines a prioritized, phased engineering roadmap for resolving all identified miscellaneous codebase defects, threading bottlenecks, memory leaks, lifecycle issues, and code hygiene gaps in Mumla OLED ([`README.md`](../../docs/misc-oddities/README.md)).
 
+> **Note (2026-10-03):** statements below describing a JVM-only test setup
+> without Robolectric predate the `:app` Robolectric 4.15.1 pilot (see the
+> [Phase 6 plan](phase6-comment-dialog-plan.md)); `:libraries:humla`
+> remains plain JUnit. Original text is preserved as the investigation
+> record.
+
 ## Table of Contents
 
 1. [Phase 1: Core Reliability & Threading Architecture (P0 / P1) — COMPLETED](#phase-1-core-reliability--threading-architecture-p0--p1--completed)

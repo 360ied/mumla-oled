@@ -5,6 +5,12 @@ Prioritized engineering plan for the residual findings cataloged in [`README.md`
 > [!NOTE]
 > **Status: COMPLETED** — all three phases implemented on branch `bugfix/oddities-round2-remediation` (six commits: the remediation batch plus four pedantic-review follow-ups, each review round returning OK with notes) and merged via `d7dbd548`. Per-item records live in [`README.md`](README.md); the solutions below are the as-built record.
 
+> **Note (2026-10-03):** statements below describing a JVM-only test setup
+> without Robolectric predate the `:app` Robolectric 4.15.1 pilot (see the
+> [Phase 6 plan](../misc-oddities/phase6-comment-dialog-plan.md));
+> `:libraries:humla` remains plain JUnit. Original text is preserved as the
+> investigation record.
+
 ## Table of Contents
 
 1. [Phase 1: Crash-Path Hardening (ODD-25, ODD-27) — COMPLETED](#phase-1-crash-path-hardening-odd-25-odd-27)
