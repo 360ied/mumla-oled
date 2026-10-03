@@ -79,9 +79,6 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     /** Chat target listeners, notified when the chat target is changed. */
     private List<OnChatTargetSelectedListener> mChatTargetListeners = new ArrayList<OnChatTargetSelectedListener>();
 
-    /** True iff the talk button has been hidden (e.g. when muted) */
-    private boolean mTalkButtonHidden;
-
     private HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onUserTalkStateUpdated(IUser user) {
@@ -110,7 +107,7 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             int selfSession;
             try {
                 selfSession = getService().HumlaSession().getSessionId();
-            } catch (IllegalStateException e) {
+            } catch (HumlaDisconnectedException|IllegalStateException e) {
                 Log.d(TAG, "exception in onUserStateUpdated: " + e);
                 return;
             }
@@ -186,7 +183,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
                 if (getService() == null || !getService().isConnected())
                     return;
 
-                IHumlaSession session = getService().HumlaSession();
+                final IHumlaSession session;
+                try {
+                    session = getService().HumlaSession();
+                } catch (HumlaDisconnectedException|IllegalStateException e) {
+                    return;
+                }
                 if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
                     byte target = session.getVoiceTargetId();
                     session.setVoiceTargetId((byte) 0);
@@ -337,7 +339,12 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             return;
         }
 
-        IHumlaSession session = getService().HumlaSession();
+        final IHumlaSession session;
+        try {
+            session = getService().HumlaSession();
+        } catch (HumlaDisconnectedException|IllegalStateException e) {
+            return;
+        }
         VoiceTargetMode mode = session.getVoiceTargetMode();
         // Null when WHISPER points at an unregistered id: hide rather than
         // dereference (pedantic review).
@@ -445,7 +452,6 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             mTalkButton.setActivated(false);
             mTalkButton.setPressed(false);
         }
-        mTalkButtonHidden = hidden;
     }
 
     @Override
