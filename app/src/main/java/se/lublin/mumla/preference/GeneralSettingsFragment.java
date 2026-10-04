@@ -1,6 +1,10 @@
 package se.lublin.mumla.preference;
 
 import static java.util.Objects.requireNonNull;
+import static se.lublin.mumla.Settings.NOTIFICATION_STYLE_MEDIA;
+import static se.lublin.mumla.Settings.PREF_MEDIA_KEY_MUTE;
+import static se.lublin.mumla.Settings.PREF_MEDIA_KEY_MUTE_TTS;
+import static se.lublin.mumla.Settings.PREF_NOTIFICATION_STYLE;
 import static se.lublin.mumla.Settings.PREF_TTS_ENGINE;
 import static se.lublin.mumla.Settings.TTS_ENGINE_SYSTEM_DEFAULT;
 
@@ -13,6 +17,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 
+import androidx.preference.CheckBoxPreference;
 import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 
@@ -29,7 +34,46 @@ public class GeneralSettingsFragment extends MumlaPreferenceFragment {
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_general, rootKey);
 
+        setupMediaKeyMuteDependency();
         setupTtsEnginePreference();
+    }
+
+    /**
+     * Grays out the pause-key mute toggle unless the media notification
+     * style is active: without a media session there are no transport keys
+     * to bind, so showing it enabled would promise a dead option. The
+     * announce toggle additionally follows the parent mute toggle.
+     */
+    private void setupMediaKeyMuteDependency() {
+        ListPreference stylePreference =
+                getPreferenceScreen().findPreference(PREF_NOTIFICATION_STYLE);
+        CheckBoxPreference mediaKeyMutePreference =
+                getPreferenceScreen().findPreference(PREF_MEDIA_KEY_MUTE);
+        CheckBoxPreference mediaKeyMuteTtsPreference =
+                getPreferenceScreen().findPreference(PREF_MEDIA_KEY_MUTE_TTS);
+        requireNonNull(stylePreference, PREF_NOTIFICATION_STYLE);
+        requireNonNull(mediaKeyMutePreference, PREF_MEDIA_KEY_MUTE);
+        requireNonNull(mediaKeyMuteTtsPreference, PREF_MEDIA_KEY_MUTE_TTS);
+
+        syncMediaKeyMuteEnabledStates(mediaKeyMutePreference, mediaKeyMuteTtsPreference,
+                stylePreference.getValue());
+        stylePreference.setOnPreferenceChangeListener((preference, newValue) -> {
+            syncMediaKeyMuteEnabledStates(mediaKeyMutePreference, mediaKeyMuteTtsPreference, newValue);
+            return true;
+        });
+        mediaKeyMutePreference.setOnPreferenceChangeListener((preference, newValue) -> {
+            mediaKeyMuteTtsPreference.setEnabled(
+                    NOTIFICATION_STYLE_MEDIA.equals(stylePreference.getValue())
+                            && Boolean.TRUE.equals(newValue));
+            return true;
+        });
+    }
+
+    private static void syncMediaKeyMuteEnabledStates(CheckBoxPreference mediaKeyMutePreference,
+            CheckBoxPreference mediaKeyMuteTtsPreference, Object styleValue) {
+        boolean mediaStyle = NOTIFICATION_STYLE_MEDIA.equals(styleValue);
+        mediaKeyMutePreference.setEnabled(mediaStyle);
+        mediaKeyMuteTtsPreference.setEnabled(mediaStyle && mediaKeyMutePreference.isChecked());
     }
 
     /** A single installed TTS engine with a non-null display label. */

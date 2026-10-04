@@ -43,6 +43,20 @@
         app:iconSpaceReserved="false" />
 
     <CheckBoxPreference
+        android:key="mediaKeyMute"
+        android:defaultValue="true"
+        android:title="@string/pref_media_key_mute"
+        android:summary="@string/pref_media_key_mute_sum"
+        app:iconSpaceReserved="false" />
+
+    <CheckBoxPreference
+        android:key="mediaKeyMuteTts"
+        android:defaultValue="true"
+        android:title="@string/pref_media_key_mute_tts"
+        android:summary="@string/pref_media_key_mute_tts_sum"
+        app:iconSpaceReserved="false" />
+
+    <CheckBoxPreference
         android:key="stay_awake"
         android:defaultValue="true"
         android:title="@string/stay_awake"

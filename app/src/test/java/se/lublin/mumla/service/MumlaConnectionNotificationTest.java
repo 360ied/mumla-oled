@@ -19,6 +19,8 @@ package se.lublin.mumla.service;
 
 import junit.framework.TestCase;
 
+import android.view.KeyEvent;
+
 import se.lublin.mumla.FakeSharedPreferences;
 import se.lublin.mumla.R;
 
@@ -105,6 +107,41 @@ public class MumlaConnectionNotificationTest extends TestCase {
         assertEquals("Lobby", MumlaConnectionNotification.formatChannelName("Lobby", "Channel"));
         assertEquals("Channel", MumlaConnectionNotification.formatChannelName("", "Channel"));
         assertEquals("Channel", MumlaConnectionNotification.formatChannelName(null, "Channel"));
+    }
+
+    public void testMuteToggleKeyCodes() {
+        assertTrue("Play/pause must toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
+        assertTrue("Pause must toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_MEDIA_PAUSE));
+        assertTrue("Play must toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_MEDIA_PLAY));
+        assertTrue("Headset hook must toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_HEADSETHOOK));
+
+        assertFalse("Stop must not toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_MEDIA_STOP));
+        assertFalse("Next must not toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_MEDIA_NEXT));
+        assertFalse("Volume keys must not toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_VOLUME_UP));
+        assertFalse("Unknown key must not toggle mute",
+                MumlaConnectionNotification.isMuteToggleKeyCode(KeyEvent.KEYCODE_UNKNOWN));
+    }
+
+    public void testPttClaimedMediaKey() {
+        assertTrue("Pause bound as PTT must be PTT-claimed",
+                MumlaConnectionNotification.isPttClaimedMediaKey(
+                        KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_PAUSE));
+        assertFalse("Pause must not be PTT-claimed when PTT is unbound",
+                MumlaConnectionNotification.isPttClaimedMediaKey(
+                        KeyEvent.KEYCODE_MEDIA_PAUSE, se.lublin.mumla.Settings.DEFAULT_PUSH_KEY));
+        assertFalse("Pause must not be PTT-claimed when PTT is another key",
+                MumlaConnectionNotification.isPttClaimedMediaKey(
+                        KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_VOLUME_UP));
+        assertFalse("Non-toggle keys are never PTT-claimed media keys",
+                MumlaConnectionNotification.isPttClaimedMediaKey(
+                        KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_UP));
     }
 
     public void testNotificationInstanceHooks() {
