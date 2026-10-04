@@ -918,12 +918,32 @@ public class MumlaService extends HumlaService implements
 
     @Override
     public void onMuteToggled() {
-        IUser user = getSessionUser();
-        if (isConnectionEstablished() && user != null) {
-            boolean muted = !user.isSelfMuted();
-            boolean deafened = user.isSelfDeafened() && muted;
-            setSelfMuteDeafState(muted, deafened);
+        toggleSelfMute();
+    }
+
+    /**
+     * Applies a self-mute toggle, collapsing deafen into mute.
+     *
+     * @return the applied muted target, or null when disconnected,
+     * unsynchronized, or userless, so toggle entry points stay no-ops
+     * instead of throwing on a teardown race.
+     */
+    private Boolean toggleSelfMute() {
+        if (!isConnectionEstablished()) {
+            return null;
         }
+        final IUser user;
+        try {
+            user = getSessionUser();
+        } catch (IllegalStateException e) {
+            return null;
+        }
+        if (user == null) {
+            return null;
+        }
+        boolean muted = !user.isSelfMuted();
+        setSelfMuteDeafState(muted, user.isSelfDeafened() && muted);
+        return muted;
     }
 
     /**
@@ -934,21 +954,24 @@ public class MumlaService extends HumlaService implements
      */
     @Override
     public void onMediaKeyMuteToggled() {
-        IUser user = getSessionUser();
-        if (isConnectionEstablished() && user != null) {
-            boolean muted = !user.isSelfMuted();
-            boolean deafened = user.isSelfDeafened() && muted;
-            setSelfMuteDeafState(muted, deafened);
-            if (mSettings.isMediaKeyMuteTtsEnabled()) {
-                speakTts(getString(muted ? R.string.tts_muted : R.string.tts_unmuted));
-            }
+        Boolean muted = toggleSelfMute();
+        if (muted != null && mSettings.isMediaKeyMuteTtsEnabled()) {
+            speakTts(getString(muted ? R.string.tts_muted : R.string.tts_unmuted));
         }
     }
 
     @Override
     public void onDeafenToggled() {
-        IUser user = getSessionUser();
-        if (isConnectionEstablished() && user != null) {
+        if (!isConnectionEstablished()) {
+            return;
+        }
+        final IUser user;
+        try {
+            user = getSessionUser();
+        } catch (IllegalStateException e) {
+            return;
+        }
+        if (user != null) {
             setSelfMuteDeafState(!user.isSelfDeafened(), !user.isSelfDeafened());
         }
     }

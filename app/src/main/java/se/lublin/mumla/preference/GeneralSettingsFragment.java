@@ -49,16 +49,16 @@ public class GeneralSettingsFragment extends MumlaPreferenceFragment {
                 getPreferenceScreen().findPreference(PREF_NOTIFICATION_STYLE);
         CheckBoxPreference mediaKeyMutePreference =
                 getPreferenceScreen().findPreference(PREF_MEDIA_KEY_MUTE);
-        Preference mediaKeyMuteTtsPreference =
+        CheckBoxPreference mediaKeyMuteTtsPreference =
                 getPreferenceScreen().findPreference(PREF_MEDIA_KEY_MUTE_TTS);
-        requireNonNull(stylePreference);
-        requireNonNull(mediaKeyMutePreference);
-        requireNonNull(mediaKeyMuteTtsPreference);
+        requireNonNull(stylePreference, PREF_NOTIFICATION_STYLE);
+        requireNonNull(mediaKeyMutePreference, PREF_MEDIA_KEY_MUTE);
+        requireNonNull(mediaKeyMuteTtsPreference, PREF_MEDIA_KEY_MUTE_TTS);
 
-        syncMediaKeyMuteEnabledStates(stylePreference, mediaKeyMutePreference, mediaKeyMuteTtsPreference);
+        syncMediaKeyMuteEnabledStates(mediaKeyMutePreference, mediaKeyMuteTtsPreference,
+                stylePreference.getValue());
         stylePreference.setOnPreferenceChangeListener((preference, newValue) -> {
-            syncMediaKeyMuteEnabledStates(stylePreference, mediaKeyMutePreference,
-                    mediaKeyMuteTtsPreference, newValue);
+            syncMediaKeyMuteEnabledStates(mediaKeyMutePreference, mediaKeyMuteTtsPreference, newValue);
             return true;
         });
         mediaKeyMutePreference.setOnPreferenceChangeListener((preference, newValue) -> {
@@ -69,15 +69,8 @@ public class GeneralSettingsFragment extends MumlaPreferenceFragment {
         });
     }
 
-    private static void syncMediaKeyMuteEnabledStates(ListPreference stylePreference,
-            CheckBoxPreference mediaKeyMutePreference, Preference mediaKeyMuteTtsPreference) {
-        syncMediaKeyMuteEnabledStates(stylePreference, mediaKeyMutePreference,
-                mediaKeyMuteTtsPreference, stylePreference.getValue());
-    }
-
-    private static void syncMediaKeyMuteEnabledStates(ListPreference stylePreference,
-            CheckBoxPreference mediaKeyMutePreference, Preference mediaKeyMuteTtsPreference,
-            Object styleValue) {
+    private static void syncMediaKeyMuteEnabledStates(CheckBoxPreference mediaKeyMutePreference,
+            CheckBoxPreference mediaKeyMuteTtsPreference, Object styleValue) {
         boolean mediaStyle = NOTIFICATION_STYLE_MEDIA.equals(styleValue);
         mediaKeyMutePreference.setEnabled(mediaStyle);
         mediaKeyMuteTtsPreference.setEnabled(mediaStyle && mediaKeyMutePreference.isChecked());

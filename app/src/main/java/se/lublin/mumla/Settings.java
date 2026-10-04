@@ -94,10 +94,10 @@ public class Settings {
     public static final String DEFAULT_NOTIFICATION_STYLE = NOTIFICATION_STYLE_BIGTEXT;
 
     public static final String PREF_MEDIA_KEY_MUTE = "mediaKeyMute";
-    public static final Boolean DEFAULT_MEDIA_KEY_MUTE = true;
+    public static final boolean DEFAULT_MEDIA_KEY_MUTE = true;
 
     public static final String PREF_MEDIA_KEY_MUTE_TTS = "mediaKeyMuteTts";
-    public static final Boolean DEFAULT_MEDIA_KEY_MUTE_TTS = true;
+    public static final boolean DEFAULT_MEDIA_KEY_MUTE_TTS = true;
 
     public static final String PREF_USE_TTS = "useTts";
     public static final Boolean DEFAULT_USE_TTS = true;

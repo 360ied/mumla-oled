@@ -21,6 +21,7 @@ import static android.app.PendingIntent.FLAG_CANCEL_CURRENT;
 import static android.app.PendingIntent.FLAG_IMMUTABLE;
 import static android.app.PendingIntent.FLAG_UPDATE_CURRENT;
 import static android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+import static java.util.Objects.requireNonNull;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -442,8 +443,8 @@ public class MumlaConnectionNotification {
         private final Settings mSettings;
 
         MediaSessionCallback(OnActionListener listener, Settings settings) {
-            mListener = listener;
-            mSettings = settings;
+            mListener = requireNonNull(listener);
+            mSettings = requireNonNull(settings);
         }
 
         @Override
@@ -481,10 +482,10 @@ public class MumlaConnectionNotification {
             if (!mSettings.isMediaKeyMuteEnabled()) {
                 return false;
             }
-            // Hardware keys arrive here; returning true consumes
-            // them so the default dispatch below never double-toggles
-            // via onPlay()/onPause(). Software transport controls
-            // call onPlay()/onPause() directly instead.
+            // Hardware keys arrive here and are handled without delegating
+            // to super (which would re-enter onPlay()/onPause()); returning
+            // true then consumes them. Software transport controls call
+            // onPlay()/onPause() directly instead.
             KeyEvent event = mediaButtonEvent != null ? IntentCompat.getParcelableExtra(
                     mediaButtonEvent, Intent.EXTRA_KEY_EVENT, KeyEvent.class) : null;
             if (event == null || !isMuteToggleKeyCode(event.getKeyCode())) {

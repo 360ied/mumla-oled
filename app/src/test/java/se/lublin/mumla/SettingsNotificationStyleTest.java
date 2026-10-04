@@ -44,6 +44,18 @@ public class SettingsNotificationStyleTest extends TestCase {
                 mSettings.isMediaKeyMuteTtsEnabled());
     }
 
+    public void testMediaKeyMuteExplicitOffHonored() {
+        mPrefsMap.put(Settings.PREF_MEDIA_KEY_MUTE, false);
+        assertFalse("Stored false must disable the media-key mute toggle",
+                mSettings.isMediaKeyMuteEnabled());
+    }
+
+    public void testMediaKeyMuteTtsExplicitOffHonored() {
+        mPrefsMap.put(Settings.PREF_MEDIA_KEY_MUTE_TTS, false);
+        assertFalse("Stored false must disable the media-key mute announcement",
+                mSettings.isMediaKeyMuteTtsEnabled());
+    }
+
     public void testDefaultNotificationStyleIsBigText() {
         assertEquals("Default notification style must be 'bigtext'",
                 Settings.NOTIFICATION_STYLE_BIGTEXT,
