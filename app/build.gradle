@@ -59,10 +59,13 @@ android {
         buildConfig = true
     }
 
-    def gitDescribe = providers.exec {
+    def gitDescribeRaw = providers.exec {
         // Need --always because there are no tags in gitlab ci (right?)
-        commandLine "git", "describe", "--tags", "--match", "[0-9]*.[0-9]*.[0-9]*", "--always"
+        // New tags are v-prefixed (e.g. v0.24.0); also match legacy bare tags.
+        commandLine "git", "describe", "--tags", "--match", "v[0-9]*.[0-9]*.[0-9]*", "--match", "[0-9]*.[0-9]*.[0-9]*", "--always"
     }.standardOutput.asText.get().trim()
+    // Strip the leading 'v' so versionName/VERSIONTAG stay bare semver.
+    def gitDescribe = gitDescribeRaw.replaceFirst(/^v(?=\d)/, "")
 
     defaultConfig {
         minSdkVersion 21

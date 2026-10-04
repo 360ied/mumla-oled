@@ -62,8 +62,8 @@
 - Reference upstream C++ code and protocol schemas in `../mumble` (sibling of the repository root — from inside a worktree, bare `../mumble` resolves elsewhere; e.g., `../mumble/src/Mumble.proto`, `../mumble/src/MumbleUDP.proto`, connection/audio logic) to ensure exact behavioral and protocol parity.
 
 ## Versioning
-- **Semantic Versioning**: Uses `0.X.X`. `versionName` is resolved dynamically via `git describe --tags --match "[0-9]*.[0-9]*.[0-9]*" --always`.
-- **Release Tagging**: Tag releases using annotated Git tags: `git tag -a <version> -m "Release <version>"`.
+- **Semantic Versioning**: Uses `v0.X.X` (leading `v`, e.g. `v0.24.0`). `versionName` is resolved dynamically via `git describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --always` with the leading `v` stripped, so `versionName`/`VERSIONTAG` stay bare semver (`0.X.X`). The build also matches legacy bare tags from before the `v` convention.
+- **Release Tagging**: Tag releases using annotated Git tags, `<version>` includes the leading `v`: `git tag -a <version> -m "Release <version>"` (e.g. `git tag -a v0.24.0 -m "Release v0.24.0"`).
 
 ## Documentation & Markdown Standards
 - **Application Naming Convention**: The name of the application is ALWAYS "Mumla OLED", never "Mumla" in isolation. It is a hard fork of Mumla which has yet to be comprehensively rebranded.

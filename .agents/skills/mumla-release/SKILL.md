@@ -15,7 +15,7 @@ already merged.
 
 ## 1. Determine the version
 
-- Latest tag: `git tag -l | sort -V | tail -1`. Versions are `0.X.X` semver.
+- Latest tag: `git tag -l | sort -V | tail -1`. Versions are `v0.X.X` semver with a leading `v` (e.g. `v0.24.0`). `<version>` below always means the full v-prefixed tag.
 - Scope of changes: `git log <last-tag>..master --oneline`.
 - **Bump type (major/minor/patch) must be explicitly stated by the user.**
   Never infer it from the commit log. If the user did not specify one, ask
@@ -94,7 +94,7 @@ gitignored).
 ### Release Notes Structure
 
 - **Title**: passed via `gh release create --title "Mumla OLED <version>"`
-  (matches existing release list; do NOT use bare version). Do NOT include an
+  (e.g. `Mumla OLED v0.24.0`; the title carries the `v` like the tag). Do NOT include an
   `# Mumla OLED <version>` H1 heading in the notes file — GitHub renders
   `--title` above the body, so an H1 duplicates it. The notes file MUST start
   at `## Highlights`.
