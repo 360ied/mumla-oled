@@ -93,6 +93,9 @@ public class Settings {
     public static final String NOTIFICATION_STYLE_MEDIA = "media";
     public static final String DEFAULT_NOTIFICATION_STYLE = NOTIFICATION_STYLE_BIGTEXT;
 
+    public static final String PREF_MEDIA_KEY_MUTE = "mediaKeyMute";
+    public static final Boolean DEFAULT_MEDIA_KEY_MUTE = true;
+
     public static final String PREF_USE_TTS = "useTts";
     public static final Boolean DEFAULT_USE_TTS = true;
 
@@ -361,6 +364,10 @@ public class Settings {
 
     public boolean isNotificationStyleBigText() {
         return NOTIFICATION_STYLE_BIGTEXT.equals(getNotificationStyle());
+    }
+
+    public boolean isMediaKeyMuteEnabled() {
+        return preferences.getBoolean(PREF_MEDIA_KEY_MUTE, DEFAULT_MEDIA_KEY_MUTE);
     }
 
     public void setNotificationStyle(String style) {

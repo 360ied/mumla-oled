@@ -461,16 +461,26 @@ public class MumlaConnectionNotification {
 
         @Override
         public void onPlay() {
-            mListener.onMuteToggled();
+            if (mSettings.isMediaKeyMuteEnabled()) {
+                mListener.onMuteToggled();
+            }
         }
 
         @Override
         public void onPause() {
-            mListener.onMuteToggled();
+            if (mSettings.isMediaKeyMuteEnabled()) {
+                mListener.onMuteToggled();
+            }
         }
 
         @Override
         public boolean onMediaButtonEvent(Intent mediaButtonEvent) {
+            // Opt-in toggle living right below the notification-style
+            // preference: off means fully inert, falling through to the
+            // default (no-op) dispatch.
+            if (!mSettings.isMediaKeyMuteEnabled()) {
+                return false;
+            }
             // Hardware keys arrive here; returning true consumes
             // them so the default dispatch below never double-toggles
             // via onPlay()/onPause(). Software transport controls

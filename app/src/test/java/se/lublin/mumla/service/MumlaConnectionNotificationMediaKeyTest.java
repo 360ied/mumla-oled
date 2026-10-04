@@ -60,6 +60,12 @@ public class MumlaConnectionNotificationMediaKeyTest {
         return Settings.createForTesting(prefs);
     }
 
+    private static Settings disabledMediaKeySettings() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        prefs.edit().putBoolean(Settings.PREF_MEDIA_KEY_MUTE, false).commit();
+        return Settings.createForTesting(prefs);
+    }
+
     private static Intent mediaButtonIntent(int action, int keyCode, int repeatCount) {
         KeyEvent event = new KeyEvent(0, 0, action, keyCode, repeatCount);
         Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
@@ -172,5 +178,25 @@ public class MumlaConnectionNotificationMediaKeyTest {
     public void customMuteActionStillDelegates() {
         mCallback.onCustomAction(MumlaService.ACTION_MUTE, null);
         assertEquals(1, mMuteToggles);
+    }
+
+    @Test
+    public void disabledTransportControlsDoNothing() {
+        MumlaConnectionNotification.MediaSessionCallback disabledCallback =
+                new MumlaConnectionNotification.MediaSessionCallback(
+                        mListener, disabledMediaKeySettings());
+        disabledCallback.onPlay();
+        disabledCallback.onPause();
+        assertEquals(0, mMuteToggles);
+    }
+
+    @Test
+    public void disabledMediaKeyFallsThrough() {
+        MumlaConnectionNotification.MediaSessionCallback disabledCallback =
+                new MumlaConnectionNotification.MediaSessionCallback(
+                        mListener, disabledMediaKeySettings());
+        assertFalse(disabledCallback.onMediaButtonEvent(
+                mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
+        assertEquals(0, mMuteToggles);
     }
 }

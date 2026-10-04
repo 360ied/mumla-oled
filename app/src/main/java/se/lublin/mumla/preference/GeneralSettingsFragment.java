@@ -1,6 +1,9 @@
 package se.lublin.mumla.preference;
 
 import static java.util.Objects.requireNonNull;
+import static se.lublin.mumla.Settings.NOTIFICATION_STYLE_MEDIA;
+import static se.lublin.mumla.Settings.PREF_MEDIA_KEY_MUTE;
+import static se.lublin.mumla.Settings.PREF_NOTIFICATION_STYLE;
 import static se.lublin.mumla.Settings.PREF_TTS_ENGINE;
 import static se.lublin.mumla.Settings.TTS_ENGINE_SYSTEM_DEFAULT;
 
@@ -29,7 +32,28 @@ public class GeneralSettingsFragment extends MumlaPreferenceFragment {
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_general, rootKey);
 
+        setupMediaKeyMuteDependency();
         setupTtsEnginePreference();
+    }
+
+    /**
+     * Grays out the pause-key mute toggle unless the media notification
+     * style is active: without a media session there are no transport keys
+     * to bind, so showing it enabled would promise a dead option.
+     */
+    private void setupMediaKeyMuteDependency() {
+        ListPreference stylePreference =
+                getPreferenceScreen().findPreference(PREF_NOTIFICATION_STYLE);
+        Preference mediaKeyMutePreference =
+                getPreferenceScreen().findPreference(PREF_MEDIA_KEY_MUTE);
+        requireNonNull(stylePreference);
+        requireNonNull(mediaKeyMutePreference);
+
+        mediaKeyMutePreference.setEnabled(NOTIFICATION_STYLE_MEDIA.equals(stylePreference.getValue()));
+        stylePreference.setOnPreferenceChangeListener((preference, newValue) -> {
+            mediaKeyMutePreference.setEnabled(NOTIFICATION_STYLE_MEDIA.equals(newValue));
+            return true;
+        });
     }
 
     /** A single installed TTS engine with a non-null display label. */
