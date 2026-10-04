@@ -131,11 +131,12 @@ not opportunistic scope.
   `setAvailableCommunicationDevices`, refusal driven through platform
   `setCommunicationDevice` via shadow `lockCommunicationDevice`, and
   `callOnCommunicationDeviceChangedListeners`) proved sufficient for all
-  of the above. The first Robolectric run downloads
+  of the above (spike-verified; the branch's tests are the standing proof).
+  The first Robolectric run downloads
   the `android-all` runtime (network needed once); record the SDK pin
   next to the dependency as `:app` does.
 - Must keep passing (`BluetoothScoRetryPolicyTest` carries a javadoc-only
-  touch in this branch): `BluetoothScoRetryPolicyTest`,
+  touch in this branch): `BluetoothScoRetryPolicyTest`, and in `:app`,
   `SettingsBluetoothHeadsetTest`.
 
 ### 3. Docs — this plan plus index entry

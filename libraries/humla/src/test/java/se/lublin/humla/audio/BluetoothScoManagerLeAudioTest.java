@@ -45,8 +45,10 @@ import org.robolectric.shadows.ShadowAudioManager;
 /**
  * Drives {@link BluetoothScoManager} through its modern
  * ({@code setCommunicationDevice}) backend under Robolectric: BLE endpoint
- * selection and preference, confirmed-connect and drop transitions, and
- * the no-device and refusal failure paths.
+ * selection and preference, end-state connect plus drop transitions, and
+ * the no-device and refusal failure paths. Connect asserts pin the live
+ * end-state, not the listener branch in isolation (see below); listener
+ * widening is pinned by the re-fire no-drop halves.
  *
  * <p>JUnit 4 style is mandatory here: {@link RobolectricTestRunner} is
  * incompatible with the module's {@code TestCase} convention (see the
@@ -93,9 +95,6 @@ public class BluetoothScoManagerLeAudioTest {
     // Type-only endpoints: production reads getType() and nothing else, so
     // address/product fields stay unset by design. Revisit if the manager
     // ever keys off more than the type.
-    // Type-only endpoints: production reads getType() and nothing else, so
-    // address/product fields stay unset by design. Revisit if the manager
-    // ever keys off more than the type.
     private static AudioDeviceInfo device(int type) {
         return AudioDeviceInfoBuilder.newBuilder().setType(type).build();
     }
@@ -120,8 +119,10 @@ public class BluetoothScoManagerLeAudioTest {
         if (mManager != null) {
             mManager.stop();
         }
-        // Explicitly release test-set shadow state rather than relying on
-        // sandbox reset alone, so no test depends on execution order.
+        // Explicitly release the test-set shadow audio states (refusal lock
+        // and device list) rather than relying on sandbox reset alone, so
+        // no test depends on execution order. The permission grant is left
+        // to sandbox reset: it has no revoke affordance.
         // JUnit still runs @After after an early setUp failure, hence the
         // guard: without it a failed setUp would mask itself with an NPE.
         if (mShadowAudioManager == null) {
@@ -185,6 +186,7 @@ public class BluetoothScoManagerLeAudioTest {
                 1, mListener.connected);
         assertEquals("Re-fired dual-mode route must not drop",
                 0, mListener.disconnected);
+        assertEquals("Re-fired dual-mode route must never fail", 0, mListener.failed);
     }
 
     @Test
@@ -201,6 +203,12 @@ public class BluetoothScoManagerLeAudioTest {
         idleMain();
         assertEquals("SCO confirmation must still report connected",
                 1, mListener.connected);
+        mShadowAudioManager.callOnCommunicationDeviceChangedListeners(sco);
+        idleMain();
+        assertEquals("Re-fired SCO route must stay connected",
+                1, mListener.connected);
+        assertEquals("Re-fired SCO route must not drop",
+                0, mListener.disconnected);
     }
 
     @Test
@@ -221,6 +229,7 @@ public class BluetoothScoManagerLeAudioTest {
         idleMain();
         assertEquals("Route loss must report disconnected", 1, mListener.disconnected);
         assertEquals("Dropped link must keep its single connect", 1, mListener.connected);
+        assertEquals("Dropped link must not fail", 0, mListener.failed);
         assertNull("Dropped link must release the route",
                 mAudioManager.getCommunicationDevice());
     }
@@ -279,5 +288,7 @@ public class BluetoothScoManagerLeAudioTest {
         assertEquals("Failed session must fail exactly once", 1, mListener.failed);
         assertEquals("Failed session must not connect", 0, mListener.connected);
         assertEquals("Failed session must not drop", 0, mListener.disconnected);
+        assertNull("Failed session must hold no route",
+                mAudioManager.getCommunicationDevice());
     }
 }

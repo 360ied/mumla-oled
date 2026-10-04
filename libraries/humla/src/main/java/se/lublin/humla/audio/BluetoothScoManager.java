@@ -74,7 +74,9 @@ import java.util.Objects;
  * callbacks run outside the monitor: {@code onScoConnected} and
  * {@code onScoDisconnected} originate on main-thread platform callbacks;
  * {@code onScoFailed} is always posted to the main handler and dropped when
- * its session generation is stale, so {@code stop()} truly never callbacks.
+ * its session generation is stale, so {@code stop()} itself never invokes
+ * a failure callback. Connect and disconnect delivery carry no such guard
+ * (see residual above): one phantom remains possible in the stated window.
  */
 public class BluetoothScoManager {
     private static final String TAG = "BluetoothScoManager";
@@ -158,6 +160,8 @@ public class BluetoothScoManager {
      * Pure over the device type plus the runtime API level, so
      * Robolectric {@code @Config(sdk)} tests pin the version gate;
      * package-visible for those tests, not part of the production API.
+     * Callers are modern-path-only (API 31+), so the API 23 class
+     * reference in the first branch needs no gate of its own.
      */
     static boolean isVoiceRouteDevice(int type) {
         if (type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
@@ -729,6 +733,12 @@ public class BluetoothScoManager {
     // Returns false when registration threw, in which case bring-up must fail
     // fast: without an observer nothing can ever report the link connected.
     private synchronized boolean registerDeviceListener() {
+        // The executor and listener APIs below need API 28 and 31.
+        // Callers reach here only on the API 31+ backend; the local gate
+        // keeps that contract explicit and lint-robust.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return false;
+        }
         if (mDeviceListener != null) {
             return true;
         }
