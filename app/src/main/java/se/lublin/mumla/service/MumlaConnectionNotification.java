@@ -33,8 +33,10 @@ import android.os.Build;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
+import android.view.KeyEvent;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.IntentCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
 
 import se.lublin.mumla.R;
@@ -122,6 +124,30 @@ public class MumlaConnectionNotification {
         return overlayShown ? R.drawable.ic_action_overlay_on : R.drawable.ic_action_overlay_off;
     }
 
+    /**
+     * Media keycodes that toggle self-mute while the media notification style
+     * is active. Covers the dedicated pause/play keys, the combined
+     * play/pause key, and the single-button headset hook most Bluetooth
+     * headsets send. Deliberately excludes transport keys with unrelated
+     * semantics (e.g. stop, next/previous).
+     */
+    public static boolean isMuteToggleKeyCode(int keyCode) {
+        return keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE
+                || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY
+                || keyCode == KeyEvent.KEYCODE_HEADSETHOOK;
+    }
+
+    /**
+     * Whether the given media key is claimed by the configured push-to-talk
+     * key. A PTT binding wins over mute-toggle: the activity owns the key
+     * for transmission, so the media session must consume it silently
+     * instead of toggling mute.
+     */
+    public static boolean isPttClaimedMediaKey(int keyCode, int pttKey) {
+        return isMuteToggleKeyCode(keyCode) && Settings.isPttKeyBound(pttKey, keyCode);
+    }
+
     public static String cleanStatusText(String statusText) {
         if (statusText != null && (statusText.endsWith(".") || statusText.endsWith("。"))) {
             return statusText.substring(0, statusText.length() - 1);
@@ -199,6 +225,8 @@ public class MumlaConnectionNotification {
         } else {
             if (mMediaSession == null) {
                 mMediaSession = new MediaSessionCompat(mService, "MumlaMediaSession");
+                mMediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS
+                        | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
                 mMediaSession.setCallback(new MediaSessionCompat.Callback() {
                     @Override
                     public void onCustomAction(String action, android.os.Bundle extras) {
@@ -211,6 +239,36 @@ public class MumlaConnectionNotification {
                         } else if (MumlaService.ACTION_TOGGLE_OVERLAY.equals(action)) {
                             mListener.onOverlayToggled();
                         }
+                    }
+
+                    @Override
+                    public void onPlay() {
+                        mListener.onMuteToggled();
+                    }
+
+                    @Override
+                    public void onPause() {
+                        mListener.onMuteToggled();
+                    }
+
+                    @Override
+                    public boolean onMediaButtonEvent(Intent mediaButtonEvent) {
+                        // Hardware keys arrive here; returning true consumes
+                        // them so the default dispatch below never double-toggles
+                        // via onPlay()/onPause(). Software transport controls
+                        // call onPlay()/onPause() directly instead.
+                        KeyEvent event = mediaButtonEvent != null ? IntentCompat.getParcelableExtra(
+                                mediaButtonEvent, Intent.EXTRA_KEY_EVENT, KeyEvent.class) : null;
+                        if (event == null || !isMuteToggleKeyCode(event.getKeyCode())) {
+                            return false;
+                        }
+                        if (isPttClaimedMediaKey(event.getKeyCode(), mSettings.getPushToTalkKey())) {
+                            return true;
+                        }
+                        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                            mListener.onMuteToggled();
+                        }
+                        return true;
                     }
                 });
             }
@@ -243,6 +301,9 @@ public class MumlaConnectionNotification {
                     .build();
 
             PlaybackStateCompat state = new PlaybackStateCompat.Builder()
+                    .setActions(PlaybackStateCompat.ACTION_PLAY
+                            | PlaybackStateCompat.ACTION_PAUSE
+                            | PlaybackStateCompat.ACTION_PLAY_PAUSE)
                     .addCustomAction(muteCustomAction)
                     .addCustomAction(deafenCustomAction)
                     .addCustomAction(overlayCustomAction)
