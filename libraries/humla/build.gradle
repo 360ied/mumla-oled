@@ -34,9 +34,9 @@ repositories {
 }
 
 dependencies {
-    api 'com.google.protobuf:protobuf-javalite:4.35.1'
+    api 'com.google.protobuf:protobuf-javalite:4.36.2'
 
-    implementation 'org.jetbrains:annotations:18.0.0'
+    implementation 'org.jetbrains:annotations:26.1.0'
     implementation 'org.minidns:minidns-hla:1.0.5'
     implementation 'org.minidns:minidns-android21:1.0.5'
     testImplementation 'junit:junit:4.13.2'
