@@ -35,9 +35,10 @@ import se.lublin.mumla.Settings;
 
 /**
  * Drives {@link MumlaConnectionNotification.MediaSessionCallback} directly:
- * transport controls and hardware media keys must toggle self-mute, key-up
- * and auto-repeat must be consumed without toggling, a PTT-bound key must be
- * consumed silently, and unrelated keys must fall through to default dispatch.
+ * transport controls and hardware media keys must route to the announcing
+ * media-key toggle (not the silent toggle), key-up and auto-repeat must be
+ * consumed without toggling, a PTT-bound key must be consumed silently, and
+ * unrelated keys must fall through to default dispatch.
  *
  * <p>JUnit 4 style is mandatory here: {@link RobolectricTestRunner} is
  * incompatible with the module's {@code TestCase} convention.
@@ -47,6 +48,7 @@ import se.lublin.mumla.Settings;
 public class MumlaConnectionNotificationMediaKeyTest {
 
     private int mMuteToggles;
+    private int mMediaKeyToggles;
     private MumlaConnectionNotification.OnActionListener mListener;
     private MumlaConnectionNotification.MediaSessionCallback mCallback;
 
@@ -76,10 +78,16 @@ public class MumlaConnectionNotificationMediaKeyTest {
     @Before
     public void setUp() {
         mMuteToggles = 0;
+        mMediaKeyToggles = 0;
         mListener = new MumlaConnectionNotification.OnActionListener() {
             @Override
             public void onMuteToggled() {
                 mMuteToggles++;
+            }
+
+            @Override
+            public void onMediaKeyMuteToggled() {
+                mMediaKeyToggles++;
             }
 
             @Override
@@ -102,22 +110,25 @@ public class MumlaConnectionNotificationMediaKeyTest {
     }
 
     @Test
-    public void playDelegatesToMuteToggle() {
+    public void playDelegatesToMediaKeyToggle() {
         mCallback.onPlay();
-        assertEquals(1, mMuteToggles);
+        assertEquals(1, mMediaKeyToggles);
+        assertEquals(0, mMuteToggles);
     }
 
     @Test
-    public void pauseDelegatesToMuteToggle() {
+    public void pauseDelegatesToMediaKeyToggle() {
         mCallback.onPause();
-        assertEquals(1, mMuteToggles);
+        assertEquals(1, mMediaKeyToggles);
+        assertEquals(0, mMuteToggles);
     }
 
     @Test
     public void pauseDownTogglesAndConsumes() {
         assertTrue(mCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
-        assertEquals(1, mMuteToggles);
+        assertEquals(1, mMediaKeyToggles);
+        assertEquals(0, mMuteToggles);
     }
 
     @Test
@@ -128,13 +139,15 @@ public class MumlaConnectionNotificationMediaKeyTest {
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY, 0)));
         assertTrue(mCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HEADSETHOOK, 0)));
-        assertEquals(3, mMuteToggles);
+        assertEquals(3, mMediaKeyToggles);
+        assertEquals(0, mMuteToggles);
     }
 
     @Test
     public void keyUpConsumedWithoutToggle() {
         assertTrue(mCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
@@ -142,6 +155,7 @@ public class MumlaConnectionNotificationMediaKeyTest {
     public void autoRepeatDownConsumedWithoutToggle() {
         assertTrue(mCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 1)));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
@@ -152,6 +166,7 @@ public class MumlaConnectionNotificationMediaKeyTest {
                         mListener, pttSettings(KeyEvent.KEYCODE_MEDIA_PAUSE));
         assertTrue(pttCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
@@ -159,25 +174,29 @@ public class MumlaConnectionNotificationMediaKeyTest {
     public void unrelatedKeyFallsThrough() {
         assertFalse(mCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_UP, 0)));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
     @Test
     public void nullIntentFallsThrough() {
         assertFalse(mCallback.onMediaButtonEvent(null));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
     @Test
     public void missingKeyEventFallsThrough() {
         assertFalse(mCallback.onMediaButtonEvent(new Intent(Intent.ACTION_MEDIA_BUTTON)));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
     @Test
-    public void customMuteActionStillDelegates() {
+    public void customMuteActionUsesSilentToggle() {
         mCallback.onCustomAction(MumlaService.ACTION_MUTE, null);
         assertEquals(1, mMuteToggles);
+        assertEquals(0, mMediaKeyToggles);
     }
 
     @Test
@@ -187,6 +206,7 @@ public class MumlaConnectionNotificationMediaKeyTest {
                         mListener, disabledMediaKeySettings());
         disabledCallback.onPlay();
         disabledCallback.onPause();
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 
@@ -197,6 +217,7 @@ public class MumlaConnectionNotificationMediaKeyTest {
                         mListener, disabledMediaKeySettings());
         assertFalse(disabledCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
+        assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }
 }

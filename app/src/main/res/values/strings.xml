@@ -115,6 +115,8 @@
     <string name="mumlaDisconnected">Mumla disconnected</string>
     <string name="disconnected">Disconnected</string>
     <string name="tts_disconnected_reason">Disconnected: %s</string>
+    <string name="tts_muted">Muted</string>
+    <string name="tts_unmuted">Unmuted</string>
     <string name="channel">Channel</string>
     <string name="user">User</string>
     <string name="unknown">Unknown</string>

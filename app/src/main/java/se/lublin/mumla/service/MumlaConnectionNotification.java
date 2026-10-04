@@ -462,14 +462,14 @@ public class MumlaConnectionNotification {
         @Override
         public void onPlay() {
             if (mSettings.isMediaKeyMuteEnabled()) {
-                mListener.onMuteToggled();
+                mListener.onMediaKeyMuteToggled();
             }
         }
 
         @Override
         public void onPause() {
             if (mSettings.isMediaKeyMuteEnabled()) {
-                mListener.onMuteToggled();
+                mListener.onMediaKeyMuteToggled();
             }
         }
 
@@ -497,7 +497,7 @@ public class MumlaConnectionNotification {
             // nonzero repeat count, and toggling on each would flap
             // mute/unmute for a single hold.
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                mListener.onMuteToggled();
+                mListener.onMediaKeyMuteToggled();
             }
             return true;
         }
@@ -505,6 +505,7 @@ public class MumlaConnectionNotification {
 
     public interface OnActionListener {
         void onMuteToggled();
+        void onMediaKeyMuteToggled();
         void onDeafenToggled();
         void onOverlayToggled();
         void onCancelReconnect();

@@ -926,6 +926,25 @@ public class MumlaService extends HumlaService implements
         }
     }
 
+    /**
+     * Media-key mute toggle: same state change as {@link #onMuteToggled()},
+     * plus an optional spoken confirmation so hands-free users hear the
+     * resulting state. The master TTS switch still applies via
+     * {@link #speakTts(String)}.
+     */
+    @Override
+    public void onMediaKeyMuteToggled() {
+        IUser user = getSessionUser();
+        if (isConnectionEstablished() && user != null) {
+            boolean muted = !user.isSelfMuted();
+            boolean deafened = user.isSelfDeafened() && muted;
+            setSelfMuteDeafState(muted, deafened);
+            if (mSettings.isMediaKeyMuteTtsEnabled()) {
+                speakTts(getString(muted ? R.string.tts_muted : R.string.tts_unmuted));
+            }
+        }
+    }
+
     @Override
     public void onDeafenToggled() {
         IUser user = getSessionUser();

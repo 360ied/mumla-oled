@@ -96,6 +96,9 @@ public class Settings {
     public static final String PREF_MEDIA_KEY_MUTE = "mediaKeyMute";
     public static final Boolean DEFAULT_MEDIA_KEY_MUTE = true;
 
+    public static final String PREF_MEDIA_KEY_MUTE_TTS = "mediaKeyMuteTts";
+    public static final Boolean DEFAULT_MEDIA_KEY_MUTE_TTS = true;
+
     public static final String PREF_USE_TTS = "useTts";
     public static final Boolean DEFAULT_USE_TTS = true;
 
@@ -368,6 +371,10 @@ public class Settings {
 
     public boolean isMediaKeyMuteEnabled() {
         return preferences.getBoolean(PREF_MEDIA_KEY_MUTE, DEFAULT_MEDIA_KEY_MUTE);
+    }
+
+    public boolean isMediaKeyMuteTtsEnabled() {
+        return preferences.getBoolean(PREF_MEDIA_KEY_MUTE_TTS, DEFAULT_MEDIA_KEY_MUTE_TTS);
     }
 
     public void setNotificationStyle(String style) {
