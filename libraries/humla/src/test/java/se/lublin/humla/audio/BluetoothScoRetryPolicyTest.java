@@ -28,8 +28,9 @@ import junit.framework.TestCase;
  * callers, so no budget branch exists to pin for those reasons.
  *
  * <p>The full manager needs a platform {@code Context} and main-looper
- * {@code Handler}, so manager-level coverage lives under Robolectric in
- * {@code BluetoothScoManagerLeAudioTest}; this truth table is the
+ * {@code Handler}, so non-timing manager-level coverage lives under
+ * Robolectric in {@code BluetoothScoManagerLeAudioTest}; timeout and
+ * retry remain truth-table-only by design, and this truth table is the
  * JVM-testable seam for the bring-up matrix.
  */
 public class BluetoothScoRetryPolicyTest extends TestCase {

@@ -50,9 +50,9 @@ import java.util.Objects;
  * <p>Two platform backends sit behind one interface, selected by API level:
  * <ul>
  *   <li>API 31+: {@code setCommunicationDevice()} with a voice-route
- *       ({@code TYPE_BLUETOOTH_SCO} or {@code TYPE_BLE_HEADSET}) device from
- *       {@code getAvailableCommunicationDevices()}, observed via
- *       {@code OnCommunicationDeviceChangedListener}.</li>
+ *       ({@code TYPE_BLUETOOTH_SCO}, plus {@code TYPE_BLE_HEADSET} on
+ *       API 33+) device from {@code getAvailableCommunicationDevices()},
+ *       observed via {@code OnCommunicationDeviceChangedListener}.</li>
  *   <li>Below 31: legacy {@code startBluetoothSco()} / {@code stopBluetoothSco()},
  *       observed via the {@code ACTION_SCO_AUDIO_STATE_UPDATED} broadcast
  *       (available since API 14, so no intent fallback is needed).</li>
@@ -63,7 +63,12 @@ import java.util.Objects;
  * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
- * the sequence instead of interleaving with it. Observer register/teardown
+ * the sequence instead of interleaving with it. Residual: connect and
+ * disconnect deliver outside the monitor with no generation guard (only
+ * failure delivery has one), so an off-main-thread {@code stop()} landing
+ * between the state flip and delivery can emit one phantom callback; all
+ * platform callbacks originate on the main thread, keeping the window
+ * negligible. Observer register/teardown
  * take the monitor themselves; their IPC is idempotent and fast. Route
  * release and mode restore always run outside the monitor. All listener
  * callbacks run outside the monitor: {@code onScoConnected} and

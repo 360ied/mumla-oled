@@ -80,7 +80,7 @@ public class BluetoothVoiceRouteDeviceTest {
     }
 
     @Test
-    @Config(sdk = 30)
+    @Config(sdk = 32)
     public void testBleHeadsetRejectedBelow33() {
         assertFalse("TYPE_BLE_HEADSET must not be a voice route below API 33",
                 BluetoothScoManager.isVoiceRouteDevice(
@@ -88,5 +88,13 @@ public class BluetoothVoiceRouteDeviceTest {
         assertTrue("TYPE_BLUETOOTH_SCO stays a voice route below API 33",
                 BluetoothScoManager.isVoiceRouteDevice(
                         AudioDeviceInfo.TYPE_BLUETOOTH_SCO));
+    }
+
+    @Test
+    @Config(sdk = 33)
+    public void testBleHeadsetAcceptedOn33() {
+        assertTrue("TYPE_BLE_HEADSET must be a voice route on API 33",
+                BluetoothScoManager.isVoiceRouteDevice(
+                        AudioDeviceInfo.TYPE_BLE_HEADSET));
     }
 }
