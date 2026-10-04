@@ -437,6 +437,11 @@ public class MumlaConnectionNotification {
      *
      * <p>Named (rather than anonymous) for direct Robolectric coverage of
      * the dispatch rules.
+     *
+     * <p>Note: with two-way Bluetooth (SCO) headsets, hook/pause presses
+     * made while the SCO link is still coming up after joining are consumed
+     * by the telephony stack and never arrive here as media keys. That
+     * settle window is OS behavior outside this callback's reach.
      */
     static class MediaSessionCallback extends MediaSessionCompat.Callback {
         private final OnActionListener mListener;
