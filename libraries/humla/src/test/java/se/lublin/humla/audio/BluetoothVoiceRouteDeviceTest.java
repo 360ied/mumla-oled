@@ -74,9 +74,15 @@ public class BluetoothVoiceRouteDeviceTest {
         assertFalse("Builtin speaker is not a voice route",
                 BluetoothScoManager.isVoiceRouteDevice(
                         AudioDeviceInfo.TYPE_BUILTIN_SPEAKER));
-        assertFalse("Unrelated endpoints are not voice routes",
+        assertFalse("FM is a representative non-voice route",
                 BluetoothScoManager.isVoiceRouteDevice(
                         AudioDeviceInfo.TYPE_FM));
+        assertFalse("Unknown endpoints are never voice routes",
+                BluetoothScoManager.isVoiceRouteDevice(
+                        AudioDeviceInfo.TYPE_UNKNOWN));
+        assertFalse("Wired headsets are not voice routes",
+                BluetoothScoManager.isVoiceRouteDevice(
+                        AudioDeviceInfo.TYPE_WIRED_HEADSET));
     }
 
     @Test

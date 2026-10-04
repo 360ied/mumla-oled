@@ -63,20 +63,21 @@ import java.util.Objects;
  * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
- * the sequence instead of interleaving with it. Residual: connect and
- * disconnect deliver outside the monitor with no generation guard (only
- * failure delivery has one), so an off-main-thread {@code stop()} landing
- * between the state flip and delivery can emit one phantom callback; all
- * platform callbacks originate on the main thread, keeping the window
- * negligible. Observer register/teardown
+ * the sequence instead of interleaving with it. Connect and disconnect
+ * delivery carry the same generation guard as failure delivery (see
+ * below), so a concurrent {@code stop()} between the state flip and
+ * delivery emits nothing; all platform callbacks originate on the main
+ * thread regardless. Observer register/teardown
  * take the monitor themselves; their IPC is idempotent and fast. Route
  * release and mode restore always run outside the monitor. All listener
  * callbacks run outside the monitor: {@code onScoConnected} and
  * {@code onScoDisconnected} originate on main-thread platform callbacks;
  * {@code onScoFailed} is always posted to the main handler and dropped when
  * its session generation is stale, so {@code stop()} itself never invokes
- * a failure callback. Connect and disconnect delivery carry no such guard
- * (see residual above): one phantom remains possible in the stated window.
+ * a failure callback. Connect delivery carries the same guard twice: the
+ * fast-path post captures its session epoch and drops when stale, and the
+ * state flip re-checks the generation before invoking the listener — as
+ * does disconnect delivery — so {@code stop()} never fires callbacks.
  */
 public class BluetoothScoManager {
     private static final String TAG = "BluetoothScoManager";
@@ -268,7 +269,7 @@ public class BluetoothScoManager {
      * Tears down the link and restores the previous audio mode. Idempotent and
      * safe to call when idle; a failed bring-up may still hold a requested
      * route, so release is guarded by the hold flag. Never fires listener callbacks:
-     * the generation bump drops any already-posted failure on delivery.
+     * the generation bump drops any already-posted failure or stale connect on delivery.
      */
     public void stop() {
         final int savedMode;
@@ -384,17 +385,10 @@ public class BluetoothScoManager {
             return null;
         }
         if (isScoActiveNow()) {
-            // Already on SCO (preselected route or idempotent re-request):
-            // complete now instead of burning the timeout waiting for a
-            // change event that will never come. The timeout stays armed as
-            // fallback; setActive (or stop) removes it.
-            armTimeout();
-            mHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    setActive();
-                }
-            });
+            // Already on the voice route (preselected route or idempotent
+            // re-request): complete now instead of burning the timeout
+            // waiting for a change event that will never come.
+            postFastPathConnect(epoch);
             return null;
         }
         armTimeout();
@@ -437,21 +431,16 @@ public class BluetoothScoManager {
         }
         if (isScoActiveNow()) {
             // See modern fast-path above.
-            armTimeout();
-            mHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    setActive();
-                }
-            });
+            postFastPathConnect(epoch);
             return null;
         }
         armTimeout();
         return null;
     }
 
-    // Whether SCO audio is currently routed, independent of the state
-    // machine. Fail-closed false: doubt falls through to event-driven setup.
+    // Whether the Bluetooth voice route is currently selected, independent
+    // of the state machine. Fail-closed false: doubt falls through to
+    // event-driven setup.
     private boolean isScoActiveNow() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -582,7 +571,7 @@ public class BluetoothScoManager {
             fail(REASON_TIMEOUT);
             return;
         }
-        Log.i(TAG, "SCO bring-up attempt timed out, retrying");
+        Log.i(TAG, "Voice-route bring-up attempt timed out, retrying");
         // Clear observers and any half-requested route before re-attempting.
         teardownObservers();
         releaseRouteIfHeld();
@@ -595,15 +584,56 @@ public class BluetoothScoManager {
         attemptBringUp();
     }
 
+    // Single home for the preselected-route fast path (modern + legacy
+    // backends): complete now instead of burning the timeout waiting for a
+    // change event that will never come. The timeout stays armed as
+    // fallback; setActiveIfCurrent (or stop) removes it. Captures the
+    // session epoch so a stale post from a stopped session can never
+    // activate its successor (start-stop-start interleave).
+    private void postFastPathConnect(int epoch) {
+        armTimeout();
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                setActiveIfCurrent(epoch);
+            }
+        });
+    }
+
+    // Epoch-guarded fast-path entry: drops the connect when stop() or a
+    // newer start() has since moved the session on.
+    private void setActiveIfCurrent(int epoch) {
+        synchronized (this) {
+            if (mState != STATE_STARTING || epoch != mGeneration) {
+                Log.i(TAG, "Dropping stale voice-route connect post");
+                return;
+            }
+        }
+        setActive();
+    }
+
     private void setActive() {
+        final int generation;
         synchronized (this) {
             if (mState != STATE_STARTING) {
                 return;
             }
             mState = STATE_ACTIVE;
+            generation = mGeneration;
             mHandler.removeCallbacks(mTimeoutRunnable);
         }
-        Log.i(TAG, "Bluetooth SCO connected");
+        // Generation re-check: an off-main-thread stop() landing between
+        // the flip above and delivery must emit nothing, honoring stop()'s
+        // never-callbacks contract.
+        final boolean current;
+        synchronized (this) {
+            current = generation == mGeneration;
+        }
+        if (!current) {
+            Log.i(TAG, "Dropping stale voice-route connect callback");
+            return;
+        }
+        Log.i(TAG, "Bluetooth voice route connected");
         // Main-thread origin (broadcast, device listener, or timeout), so a
         // direct call preserves connected-then-callback ordering.
         mListener.onScoConnected();
@@ -612,11 +642,13 @@ public class BluetoothScoManager {
     private void dropActiveLink() {
         final int savedMode;
         final boolean owned;
+        final int generation;
         synchronized (this) {
             if (mState != STATE_ACTIVE) {
                 return;
             }
             mState = STATE_IDLE;
+            generation = mGeneration;
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
             savedMode = mSavedMode;
@@ -627,7 +659,17 @@ public class BluetoothScoManager {
         if (owned) {
             restoreMode(savedMode);
         }
-        Log.i(TAG, "Bluetooth SCO disconnected");
+        // Same generation re-check as setActive: a concurrent stop() owns
+        // teardown from here and must be the only voice of the session.
+        final boolean current;
+        synchronized (this) {
+            current = generation == mGeneration;
+        }
+        if (!current) {
+            Log.i(TAG, "Dropping stale voice-route disconnect callback");
+            return;
+        }
+        Log.i(TAG, "Bluetooth voice route disconnected");
         // Main-thread origin; see setActive.
         mListener.onScoDisconnected();
     }
@@ -652,7 +694,7 @@ public class BluetoothScoManager {
         if (owned) {
             restoreMode(savedMode);
         }
-        Log.w(TAG, "Bluetooth SCO failed: " + reason);
+        Log.w(TAG, "Bluetooth voice route failed: " + reason);
         // Always posted: failures can surface on the start() caller's thread.
         // The generation check drops delivery when stop() or a newer start()
         // has since moved on, honoring stop()'s never-callbacks contract.
@@ -666,7 +708,7 @@ public class BluetoothScoManager {
                 if (current) {
                     mListener.onScoFailed(reason);
                 } else {
-                    Log.i(TAG, "Dropping stale SCO failure callback: " + reason);
+                    Log.i(TAG, "Dropping stale voice-route failure callback: " + reason);
                 }
             }
         });
@@ -700,7 +742,7 @@ public class BluetoothScoManager {
                 mAudioManager.stopBluetoothSco();
             }
         } catch (Exception e) {
-            Log.w(TAG, "SCO route release threw", e);
+            Log.w(TAG, "Voice-route release threw", e);
         }
     }
 
@@ -802,6 +844,10 @@ public class BluetoothScoManager {
                 mContext.unregisterReceiver(mLegacyReceiver);
             } catch (IllegalArgumentException ignored) {
                 // Already unregistered; teardown is idempotent by design.
+            } catch (Exception e) {
+                // Any other failure must not abort the atomic state flip
+                // around teardown; the reference is still cleared below.
+                Log.w(TAG, "Legacy receiver unregister threw", e);
             }
             mLegacyReceiver = null;
         }

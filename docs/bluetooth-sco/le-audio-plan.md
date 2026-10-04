@@ -97,9 +97,8 @@ not opportunistic scope.
   and (guarded) `TYPE_BLE_HEADSET`. Pure like `shouldRetryBringUp`, so the
   existing JVM truth-table test style applies.
 - `findScoDevice()`: iterate the communication-device list collecting both
-  accepted types, return BLE first. Single-device fast-path structure
-  unchanged (its behavior still widens: a lone BLE endpoint now completes
-  early).
+  accepted types, return BLE first. Loop structure unchanged (its behavior
+  still widens: a lone BLE endpoint now completes early).
 - `isScoActiveNow()` and `onModernDeviceChanged()`: replace the inline
   `type == TYPE_BLUETOOTH_SCO` comparisons with the predicate.
 - `isHeadsetConnected()`: comment-only touch recording that LE Audio needs
@@ -131,8 +130,7 @@ not opportunistic scope.
   `setAvailableCommunicationDevices`, refusal driven through platform
   `setCommunicationDevice` via shadow `lockCommunicationDevice`, and
   `callOnCommunicationDeviceChangedListeners`) proved sufficient for all
-  of the above (spike-verified; the branch's tests are the standing proof).
-  The first Robolectric run downloads
+  of the above. The first Robolectric run downloads
   the `android-all` runtime (network needed once); record the SDK pin
   next to the dependency as `:app` does.
 - Must keep passing (`BluetoothScoRetryPolicyTest` carries a javadoc-only
