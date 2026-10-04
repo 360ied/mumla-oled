@@ -68,6 +68,13 @@ public class MumlaConnectionNotificationMediaKeyTest {
         return Settings.createForTesting(prefs);
     }
 
+    private static Settings disabledMediaKeyPttSettings() {
+        FakeSharedPreferences prefs = new FakeSharedPreferences();
+        prefs.edit().putBoolean(Settings.PREF_MEDIA_KEY_MUTE, false)
+                .putInt(Settings.PREF_PUSH_KEY, KeyEvent.KEYCODE_MEDIA_PAUSE).commit();
+        return Settings.createForTesting(prefs);
+    }
+
     private static Intent mediaButtonIntent(int action, int keyCode, int repeatCount) {
         KeyEvent event = new KeyEvent(0, 0, action, keyCode, repeatCount);
         Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
@@ -217,6 +224,24 @@ public class MumlaConnectionNotificationMediaKeyTest {
                         mListener, disabledMediaKeySettings());
         assertFalse(disabledCallback.onMediaButtonEvent(
                 mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
+        assertEquals(0, mMediaKeyToggles);
+        assertEquals(0, mMuteToggles);
+    }
+
+    @Test
+    public void disabledPttBoundKeyFallsThroughInert() {
+        MumlaConnectionNotification.MediaSessionCallback disabledPttCallback =
+                new MumlaConnectionNotification.MediaSessionCallback(
+                        mListener, disabledMediaKeyPttSettings());
+        assertFalse(disabledPttCallback.onMediaButtonEvent(
+                mediaButtonIntent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE, 0)));
+        assertEquals(0, mMediaKeyToggles);
+        assertEquals(0, mMuteToggles);
+    }
+
+    @Test
+    public void unknownCustomActionIgnored() {
+        mCallback.onCustomAction("se.lublin.mumla.action.BOGUS", null);
         assertEquals(0, mMediaKeyToggles);
         assertEquals(0, mMuteToggles);
     }

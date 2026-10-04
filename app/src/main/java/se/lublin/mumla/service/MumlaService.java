@@ -924,7 +924,7 @@ public class MumlaService extends HumlaService implements
     /**
      * Applies a self-mute toggle, collapsing deafen into mute.
      *
-     * @return the applied muted target, or null when disconnected,
+     * @return the requested muted target, or null when disconnected,
      * unsynchronized, or userless, so toggle entry points stay no-ops
      * instead of throwing on a teardown race.
      */
@@ -972,7 +972,8 @@ public class MumlaService extends HumlaService implements
             return;
         }
         if (user != null) {
-            setSelfMuteDeafState(!user.isSelfDeafened(), !user.isSelfDeafened());
+            boolean deafened = !user.isSelfDeafened();
+            setSelfMuteDeafState(deafened, deafened);
         }
     }
 
