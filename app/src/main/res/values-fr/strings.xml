@@ -70,8 +70,6 @@
     <string name="generateCertSuccess">Votre certificat a été défini et enregistré sous %s</string>
     <string name="generateCertFailure">Échec de la génération du certificat.</string>
     <string name="generateCertProgress">Génération d\'un certificat…</string>
-    <string name="search">Rechercher</string>
-    <string name="searchHint">Rechercher des salons et des utilisateurs</string>
     <string name="quickConnect">Connexion rapide</string>
     <string name="connect">Connexion</string>
     <string name="edit">Modifier</string>
@@ -149,11 +147,6 @@
 \n
 \nTentative de reconnexion…</string>
     <string name="default_">Défaut</string>
-    <plurals name="search_channel_users">
-        <item quantity="one">%d utilisateur</item>
-        <item quantity="many">%d utilisateurs</item>
-        <item quantity="other">%d utilisateurs</item>
-    </plurals>
     <plurals name="notification_unread_many">
         <item quantity="one">%d nouveau message</item>
         <item quantity="many">%d nouveaux messages</item>

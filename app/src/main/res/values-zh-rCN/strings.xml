@@ -71,8 +71,6 @@
     <string name="generateCertSuccess">您的证书已被设置并保存为 %s</string>
     <string name="generateCertFailure">无法生成证书。</string>
     <string name="generateCertProgress">正在生成证书…</string>
-    <string name="search">搜索</string>
-    <string name="searchHint">搜索频道与用户</string>
     <string name="quickConnect">快速连接</string>
     <string name="connect">连接</string>
     <string name="edit">编辑</string>
@@ -154,9 +152,6 @@
     <string name="grant_perm_microphone">请授予麦克风权限。</string>
     <string name="grant_perm_draw_over_apps">请授予在其他应用上层显示权限。</string>
     <string name="default_">默认</string>
-    <plurals name="search_channel_users">
-        <item quantity="other">%d 名用户</item>
-    </plurals>
     <plurals name="notification_unread_many">
         <item quantity="other">%d 条新消息</item>
     </plurals>

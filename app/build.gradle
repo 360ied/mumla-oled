@@ -123,10 +123,6 @@ android {
         ignoreWarnings = false
         quiet = false
     }
-    applicationVariants.all { variant ->
-        variant.resValue "string", "search_suggest_authority", "${variant.applicationId}.channel.ChannelSearchProvider"
-    }
-
     packaging {
         resources {
             excludes += [

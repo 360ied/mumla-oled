@@ -97,8 +97,6 @@
     <string name="generateCertSuccess">Your certificate has been set and saved as %s</string>
     <string name="generateCertFailure">Could not generate certificate.</string>
     <string name="generateCertProgress">Generating certificate…</string>
-    <string name="search">Search</string>
-    <string name="searchHint">Search channels and users</string>
     <string name="quickConnect">Quick Connect</string>
     <string name="connect">Connect</string>
     <string name="edit">Edit</string>
@@ -196,10 +194,6 @@
     <string name="image_confirm_send">Send this image?</string>
     <string name="image_too_large">Image is too large to send to server.</string>
 
-    <plurals name="search_channel_users">
-        <item quantity="one">%d user</item>
-        <item quantity="other">%d users</item>
-    </plurals>
     <plurals name="notification_unread_many">
         <item quantity="one">%d new message</item>
         <item quantity="other">%d new messages</item>

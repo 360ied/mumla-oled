@@ -17,10 +17,8 @@
 
 package se.lublin.mumla.channel;
 
-import android.app.SearchManager;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.database.CursorWrapper;
 import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.os.RemoteException;
@@ -35,8 +33,6 @@ import android.view.ViewGroup;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.view.ActionMode;
-import androidx.appcompat.widget.SearchView;
-import androidx.core.view.MenuItemCompat;
 import androidx.preference.PreferenceManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -243,43 +239,6 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         inflater.inflate(R.menu.fragment_channel_list, menu);
-
-        MenuItem searchItem = menu.findItem(R.id.menu_search);
-        SearchManager searchManager = (SearchManager) getActivity().getSystemService(Context.SEARCH_SERVICE);
-
-        final SearchView searchView = (SearchView)MenuItemCompat.getActionView(searchItem);
-        searchView.setSearchableInfo(searchManager.getSearchableInfo(getActivity().getComponentName()));
-        searchView.setOnSuggestionListener(new SearchView.OnSuggestionListener() {
-            @Override
-            public boolean onSuggestionSelect(int i) {
-                return false;
-            }
-
-            @Override
-            public boolean onSuggestionClick(int i) {
-                if (getService() == null || !getService().isConnected())
-                    return false;
-                CursorWrapper cursor = (CursorWrapper) searchView.getSuggestionsAdapter().getItem(i);
-                int typeColumn = cursor.getColumnIndex(SearchManager.SUGGEST_COLUMN_INTENT_EXTRA_DATA);
-                int dataIdColumn = cursor.getColumnIndex(SearchManager.SUGGEST_COLUMN_INTENT_DATA);
-                String itemType = cursor.getString(typeColumn);
-                int itemId = cursor.getInt(dataIdColumn);
-
-                IHumlaSession session = getService().HumlaSession();
-                if(ChannelSearchProvider.INTENT_DATA_CHANNEL.equals(itemType)) {
-                    if(session.getSessionChannel().getId() != itemId) {
-                        session.joinChannel(itemId);
-                    } else {
-                        scrollToChannel(itemId);
-                    }
-                    return true;
-                } else if(ChannelSearchProvider.INTENT_DATA_USER.equals(itemType)) {
-                    scrollToUser(itemId);
-                    return true;
-                }
-                return false;
-            }
-        });
     }
 
     @Override
@@ -309,8 +268,6 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
 
             getActivity().supportInvalidateOptionsMenu();
             return true;
-        } else if (itemId == R.id.menu_search) {
-            return false;
         }
 
         return super.onOptionsItemSelected(item);
