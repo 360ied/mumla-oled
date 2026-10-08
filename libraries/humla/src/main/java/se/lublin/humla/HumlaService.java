@@ -1449,10 +1449,90 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setSelfMuteDeafState(boolean mute, boolean deaf) {
+        // Coerce centrally to mirror murmur (murmur/Messages.cpp) and
+        // desktop: deaf implies mute, unmute implies undeafen. The packet
+        // and the optimistic mirror below derive from the same pair so a
+        // coercion mismatch can never flap for one RTT.
+        if (deaf) mute = true;
+        if (!mute) deaf = false;
         Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
         usb.setSelfMute(mute);
         usb.setSelfDeaf(deaf);
         getConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState);
+        applyOptimisticSelfMuteDeaf(mute, deaf);
+    }
+
+    /**
+     * Desktop-parity optimistic self-mute/deafen: apply the requested state
+     * to the local model and capture gate immediately, treating the server
+     * echo as the confirm. murmur applies self_mute/self_deaf from self
+     * unconditionally (no permission check; spoofed writes from others are
+     * silently dropped), so no rollback is needed: TCP ordering guarantees
+     * echoes arrive in request order and the state converges on the last
+     * request. Other users' mute (admin {@code mute}/{@code deaf}) stays
+     * pessimistic in {@link #setMuteDeafState}.
+     *
+     * <p>Mirroring into the {@link User} object (rather than rebinding every
+     * UI reader) fans the update out through the existing
+     * {@code onUserStateUpdated} path: menu icons, notification, settings
+     * persistence, and TTS suppression all follow with no UI edits. The echo
+     * then becomes a no-op via the unchanged guard in
+     * {@link ModelHandler#messageUserState}.
+     *
+     * <p>Accepted transients (both convergent via the echo): the capture gate
+     * is pushed before the model write, so if the session user is not yet
+     * visible the mic follows desired state up to a round trip ahead of the
+     * UI; and the chat log line is best-effort (dropped if a disconnect
+     * interleaves, since logging re-gates on synchronization while the state
+     * change itself does not).
+     */
+    private void applyOptimisticSelfMuteDeaf(boolean mute, boolean deaf) {
+        HumlaConnection connection = mConnection;
+        ModelHandler modelHandler = mModelHandler;
+        // sendTCPMessage silently drops when disconnected; never show a
+        // state the server never saw.
+        if (connection == null || modelHandler == null || !connection.isSynchronized())
+            return;
+        // Push the capture gate before the model: desired state is
+        // authoritative even when the model user isn't visible yet (e.g.
+        // the reconnect restore racing the initial UserState dump). Snapshot
+        // the handler: disconnect nulls the field from another thread.
+        AudioHandler audioHandler = mAudioHandler;
+        if (audioHandler != null)
+            audioHandler.setSelfMutedOptimistic(mute);
+        final int session;
+        try {
+            session = connection.getSession();
+        } catch (NotSynchronizedException e) {
+            return;
+        }
+        // Same monitor as ModelHandler.messageUserState, which writes these
+        // fields on the TCP reader thread.
+        synchronized (modelHandler) {
+            User self = modelHandler.getUser(session);
+            if (self == null)
+                return;
+            boolean changed = false;
+            if (self.isSelfMuted() != mute) {
+                self.setSelfMuted(mute);
+                changed = true;
+            }
+            if (self.isSelfDeafened() != deaf) {
+                self.setSelfDeafened(deaf);
+                changed = true;
+            }
+            if (changed) {
+                // Log here, at the toggle site like desktop's MainWindow: the
+                // echo's log is suppressed as unchanged (see ModelHandler).
+                if (mute && deaf)
+                    logInfo(getString(R.string.chat_notify_muted_deafened));
+                else if (mute)
+                    logInfo(getString(R.string.chat_notify_muted));
+                else
+                    logInfo(getString(R.string.chat_notify_unmuted));
+                mCallbacks.onUserStateUpdated(self);
+            }
+        }
     }
 
     public void registerObserver(IHumlaObserver observer) {

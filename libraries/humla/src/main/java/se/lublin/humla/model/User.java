@@ -34,12 +34,15 @@ public class User implements IUser, Comparable<User> {
     private ByteString mTextureHash;
     private String mHash;
 
-    private boolean mMuted;
-    private boolean mDeafened;
-    private boolean mSuppressed;
+    private volatile boolean mMuted;
+    private volatile boolean mDeafened;
+    private volatile boolean mSuppressed;
 
-    private boolean mSelfMuted;
-    private boolean mSelfDeafened;
+    // Volatile: the optimistic self-mute path writes these on the main thread
+    // while the server-echo path writes them on the TCP reader thread, and
+    // UI readers observe them lock-free (mirrors mLocalMuted below).
+    private volatile boolean mSelfMuted;
+    private volatile boolean mSelfDeafened;
 
     private boolean mPrioritySpeaker;
     private boolean mRecording;
@@ -172,8 +175,12 @@ public class User implements IUser, Comparable<User> {
         return mMuted;
     }
 
-    public void setMuted(boolean mMuted) {
-        this.mMuted = mMuted;
+    public void setMuted(boolean muted) {
+        this.mMuted = muted;
+        // Desktop parity (ClientUser::setMute): keep the admin pair coherent
+        // the same way murmur coerces its broadcast.
+        if (!muted)
+            mDeafened = false;
     }
 
     @Override
@@ -181,8 +188,11 @@ public class User implements IUser, Comparable<User> {
         return mDeafened;
     }
 
-    public void setDeafened(boolean mDeafened) {
-        this.mDeafened = mDeafened;
+    public void setDeafened(boolean deafened) {
+        this.mDeafened = deafened;
+        // Desktop parity (ClientUser::setDeaf): deaf implies mute.
+        if (deafened)
+            mMuted = true;
     }
 
     @Override
@@ -190,8 +200,8 @@ public class User implements IUser, Comparable<User> {
         return mSuppressed;
     }
 
-    public void setSuppressed(boolean mSuppressed) {
-        this.mSuppressed = mSuppressed;
+    public void setSuppressed(boolean suppressed) {
+        this.mSuppressed = suppressed;
     }
 
     @Override
@@ -199,8 +209,15 @@ public class User implements IUser, Comparable<User> {
         return mSelfMuted;
     }
 
-    public void setSelfMuted(boolean mSelfMuted) {
-        this.mSelfMuted = mSelfMuted;
+    public void setSelfMuted(boolean muted) {
+        this.mSelfMuted = muted;
+        // Desktop parity (ClientUser::setSelfMute): unmute implies undeafen.
+        // murmur coerces the same way server-side; mirroring it here keeps
+        // single-field packets (e.g. a deaf-only initial-state broadcast,
+        // which omits self_mute) from leaving an incoherent mute=false,
+        // deaf=true pair behind.
+        if (!muted)
+            mSelfDeafened = false;
     }
 
     @Override
@@ -208,8 +225,11 @@ public class User implements IUser, Comparable<User> {
         return mSelfDeafened;
     }
 
-    public void setSelfDeafened(boolean mSelfDeafened) {
-        this.mSelfDeafened = mSelfDeafened;
+    public void setSelfDeafened(boolean deafened) {
+        this.mSelfDeafened = deafened;
+        // Desktop parity (ClientUser::setSelfDeaf): deaf implies mute.
+        if (deafened)
+            mSelfMuted = true;
     }
 
     @Override

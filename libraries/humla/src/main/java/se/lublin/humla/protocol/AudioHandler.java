@@ -78,12 +78,29 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mInitialized;
     private volatile boolean mSelfMuted;
     private volatile boolean mServerMuted;
+    /**
+     * Moderator-applied deafening, tracked separately so a deaf-only packet
+     * (murmur's else-if broadcast form omits the paired mute) still closes
+     * the gate. Mirrors User.setDeafened coercion; like the rest of the gate
+     * it is read and written under synchronized(this).
+     */
+    private volatile boolean mServerDeafened;
     private volatile boolean mSuppressed;
-    private boolean mHalfDuplex;
+    /**
+     * Once the client has expressed a desired self-mute, the gate follows
+     * only that: echoes are delayed copies of our own in-order requests and
+     * carry no newer information, so a stale echo must never move the gate
+     * (rapid mute-unmute-mute would otherwise transiently reopen the mic
+     * while the UI shows muted). No reset is needed: the handler instance is
+     * per-connection, and intra-connection pipeline recreations re-seed the
+     * gate from the optimistically updated User in {@link #initialize}.
+     */
+    private volatile boolean mOptimisticSelfMuteActive;
+    private final boolean mHalfDuplex;
     private volatile boolean mScoActive;
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
     // hardcodes preprocessor-on and no production path can reach off.
-    private boolean mPreprocessorEnabled;
+    private final boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
     private volatile boolean mTalking;
 
@@ -175,8 +192,9 @@ public class AudioHandler extends HumlaNetworkListener
         setCodec(codec);
         mSelfMuted = self.isSelfMuted();
         mServerMuted = self.isMuted();
+        mServerDeafened = self.isDeafened();
         mSuppressed = self.isSuppressed();
-        boolean isMuted = mSelfMuted || mServerMuted || mSuppressed;
+        boolean isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed;
 
         mOutput.startPlaying(mScoActive ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
         mInitialized = true;
@@ -208,6 +226,26 @@ public class AudioHandler extends HumlaNetworkListener
         if (mInput != null && mInitialized) {
             startRecording();
         }
+    }
+
+    /**
+     * Applies an optimistic self-mute gate to the capture pipeline.
+     *
+     * Desktop parity: Mumble's AudioInput reads the local desired-state
+     * (Global::get().s.bMute) every frame, so the mic cuts on click rather
+     * than after the server-echo RTT. The echo remains the model confirm
+     * (see ModelHandler); the gate echo in {@link #messageUserState} is
+     * ignored once an optimistic value exists.
+     *
+     * @param muted the effective mute target after central deaf-implies-mute
+     *              coercion (see HumlaService.setSelfMuteDeafState); must be
+     *              true whenever the user is deafened.
+     */
+    public synchronized void setSelfMutedOptimistic(boolean muted) {
+        mSelfMuted = muted;
+        mOptimisticSelfMuteActive = true;
+        if (!mInitialized) return;
+        updateMuteState(mServerMuted || mSelfMuted || mServerDeafened || mSuppressed);
     }
 
     public boolean isInitialized() {
@@ -382,25 +420,38 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     @Override
-    public void messageUserState(Mumble.UserState msg) {
+    public synchronized void messageUserState(Mumble.UserState msg) {
         if (!mInitialized) return;
 
         if (msg.hasSession() && msg.getSession() == mSession) {
             boolean changed = false;
-            if (msg.hasMute()) {
+            if (msg.hasMute() && mServerMuted != msg.getMute()) {
                 mServerMuted = msg.getMute();
                 changed = true;
             }
-            if (msg.hasSelfMute()) {
+            if (msg.hasSelfMute() && !mOptimisticSelfMuteActive
+                    && mSelfMuted != msg.getSelfMute()) {
                 mSelfMuted = msg.getSelfMute();
                 changed = true;
             }
-            if (msg.hasSuppress()) {
+            // Fail-closed murmur parity: a deaf-only broadcast omits self_mute
+            // (murmur/Messages.cpp else-if form), but deaf implies mute. This
+            // only ever closes the mic, so it is latch-independent and safe
+            // under every interleaving.
+            if (msg.hasSelfDeaf() && msg.getSelfDeaf() && !mSelfMuted) {
+                mSelfMuted = true;
+                changed = true;
+            }
+            if (msg.hasSuppress() && mSuppressed != msg.getSuppress()) {
                 mSuppressed = msg.getSuppress();
                 changed = true;
             }
+            if (msg.hasDeaf() && mServerDeafened != msg.getDeaf()) {
+                mServerDeafened = msg.getDeaf();
+                changed = true;
+            }
             if (changed) {
-                updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
+                updateMuteState(mServerMuted || mSelfMuted || mServerDeafened || mSuppressed);
             }
         }
     }

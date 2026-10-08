@@ -22,7 +22,8 @@ import junit.framework.TestCase;
 import java.util.Set;
 
 /**
- * Unit tests verifying User equals/hashCode contract, compareTo ordering, and listening channels.
+ * Unit tests verifying User equals/hashCode contract, compareTo ordering, listening channels,
+ * and self/admin mute-deafen coercion.
  */
 public class UserTest extends TestCase {
 
@@ -77,5 +78,56 @@ public class UserTest extends TestCase {
         }
         user.removeListeningChannel(5);
         assertFalse(user.isListeningTo(5));
+    }
+
+    public void testSelfMuteDeafenCoercionMatchesDesktop() {
+        // Desktop parity (ClientUser::setSelfMute/setSelfDeaf) and murmur:
+        // deaf implies mute, unmute implies undeafen.
+        User user = new User(1, "Alice");
+
+        user.setSelfDeafened(true);
+        assertTrue(user.isSelfDeafened());
+        assertTrue(user.isSelfMuted());
+
+        user.setSelfMuted(false);
+        assertFalse(user.isSelfMuted());
+        assertFalse(user.isSelfDeafened());
+
+        user.setSelfMuted(true);
+        assertTrue(user.isSelfMuted());
+        assertFalse(user.isSelfDeafened());
+
+        user.setSelfDeafened(false);
+        assertFalse(user.isSelfDeafened());
+        assertTrue(user.isSelfMuted());
+    }
+
+    public void testAdminMuteDeafenCoercionMatchesDesktop() {
+        // Same coercion for moderator-applied state (ClientUser::setMute/setDeaf).
+        User user = new User(1, "Alice");
+
+        user.setDeafened(true);
+        assertTrue(user.isDeafened());
+        assertTrue(user.isMuted());
+
+        user.setMuted(false);
+        assertFalse(user.isMuted());
+        assertFalse(user.isDeafened());
+    }
+
+    public void testAdminMuteDeafenAsymmetryPreserved() {
+        // Clearing deaf must not clear mute; setting mute must not set deaf.
+        // Mirrors desktop ClientUser::setDeaf (no clear on false).
+        User user = new User(1, "Alice");
+
+        user.setMuted(true);
+        user.setDeafened(false);
+        assertTrue(user.isMuted());
+        assertFalse(user.isDeafened());
+
+        user.setDeafened(true);
+        user.setDeafened(false);
+        assertTrue(user.isMuted());
+        assertFalse(user.isDeafened());
     }
 }
