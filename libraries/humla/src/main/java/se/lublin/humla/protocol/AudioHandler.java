@@ -210,6 +210,22 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
+    /**
+     * Applies an optimistic self-mute gate to the capture pipeline.
+     *
+     * Desktop parity: Mumble's AudioInput reads the local desired-state
+     * (Global::get().s.bMute) every frame, so the mic cuts on click rather
+     * than after the server-echo RTT. The echo in {@link #messageUserState}
+     * remains the confirm and corrects any drift.
+     *
+     * @param muted the requested self-mute target.
+     */
+    public void setSelfMutedOptimistic(boolean muted) {
+        mSelfMuted = muted;
+        if (!mInitialized) return;
+        updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
+    }
+
     public boolean isInitialized() {
         return mInitialized;
     }

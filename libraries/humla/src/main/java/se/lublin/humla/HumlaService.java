@@ -1449,10 +1449,74 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setSelfMuteDeafState(boolean mute, boolean deaf) {
+        // Coerce centrally to mirror murmur (murmur/Messages.cpp) and
+        // desktop: deaf implies mute, unmute implies undeafen. The packet
+        // and the optimistic mirror below derive from the same pair so a
+        // coercion mismatch can never flap for one RTT.
+        if (deaf) mute = true;
+        if (!mute) deaf = false;
         Mumble.UserState.Builder usb = Mumble.UserState.newBuilder();
         usb.setSelfMute(mute);
         usb.setSelfDeaf(deaf);
         getConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState);
+        applyOptimisticSelfMuteDeaf(mute, deaf);
+    }
+
+    /**
+     * Desktop-parity optimistic self-mute/deafen: apply the requested state
+     * to the local model and capture gate immediately, treating the server
+     * echo as the confirm. murmur applies self_mute/self_deaf from self
+     * unconditionally (no permission check; spoofed writes from others are
+     * silently dropped), so no rollback is needed: TCP ordering guarantees
+     * echoes arrive in request order and the state converges on the last
+     * request. Other users' mute (admin {@code mute}/{@code deaf}) stays
+     * pessimistic in {@link #setMuteDeafState}.
+     *
+     * <p>Mirroring into the {@link User} object (rather than rebinding every
+     * UI reader) fans the update out through the existing
+     * {@code onUserStateUpdated} path: menu icons, notification, settings
+     * persistence, and TTS suppression all follow with no UI edits. The echo
+     * then becomes a no-op via the unchanged guard in
+     * {@link ModelHandler#messageUserState}.
+     */
+    private void applyOptimisticSelfMuteDeaf(boolean mute, boolean deaf) {
+        HumlaConnection connection = mConnection;
+        ModelHandler modelHandler = mModelHandler;
+        // sendTCPMessage silently drops when disconnected; never show a
+        // state the server never saw.
+        if (connection == null || modelHandler == null || !connection.isSynchronized())
+            return;
+        final int session;
+        try {
+            session = connection.getSession();
+        } catch (NotSynchronizedException e) {
+            return;
+        }
+        User self = modelHandler.getUser(session);
+        if (self == null)
+            return;
+        boolean changed = false;
+        if (self.isSelfMuted() != mute) {
+            self.setSelfMuted(mute);
+            changed = true;
+        }
+        if (self.isSelfDeafened() != deaf) {
+            self.setSelfDeafened(deaf);
+            changed = true;
+        }
+        if (mAudioHandler != null)
+            mAudioHandler.setSelfMutedOptimistic(mute);
+        if (changed) {
+            // Log here, at the toggle site like desktop's MainWindow: the
+            // echo's log is suppressed as unchanged (see ModelHandler).
+            if (mute && deaf)
+                logInfo(getString(R.string.chat_notify_muted_deafened));
+            else if (mute)
+                logInfo(getString(R.string.chat_notify_muted));
+            else
+                logInfo(getString(R.string.chat_notify_unmuted));
+            mCallbacks.onUserStateUpdated(self);
+        }
     }
 
     public void registerObserver(IHumlaObserver observer) {

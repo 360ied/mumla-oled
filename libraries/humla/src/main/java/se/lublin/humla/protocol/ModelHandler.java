@@ -307,12 +307,18 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             mLogger.logInfo(mContext.getString(R.string.chat_notify_connected, MessageFormatter.highlightString(user.getName())));
 
         if(msg.hasSelfDeaf() || msg.hasSelfMute()) {
+            // Desktop parity: the self echo is the confirm, not the event.
+            // The toggle site already applied these values optimistically and
+            // logged, so only log when the echo actually changes something.
+            // (Other users' self-mute in the same channel always logs.)
+            boolean selfMuteChanged = msg.hasSelfMute() && user.isSelfMuted() != msg.getSelfMute();
+            boolean selfDeafChanged = msg.hasSelfDeaf() && user.isSelfDeafened() != msg.getSelfDeaf();
             if(msg.hasSelfMute())
                 user.setSelfMuted(msg.getSelfMute());
             if(msg.hasSelfDeaf())
                 user.setSelfDeafened(msg.getSelfDeaf());
 
-            if (self != null) {
+            if ((selfMuteChanged || selfDeafChanged) && self != null) {
                 Channel userChan = user.getChannel();
                 if (user.getSession() != self.getSession() && userChan != null && userChan.equals(self.getChannel())) {
                     if (user.isSelfMuted() && user.isSelfDeafened())
