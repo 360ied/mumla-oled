@@ -22,7 +22,8 @@ import junit.framework.TestCase;
 import java.util.Set;
 
 /**
- * Unit tests verifying User equals/hashCode contract, compareTo ordering, and listening channels.
+ * Unit tests verifying User equals/hashCode contract, compareTo ordering, listening channels,
+ * and self/admin mute-deafen coercion.
  */
 public class UserTest extends TestCase {
 
@@ -99,5 +100,18 @@ public class UserTest extends TestCase {
         user.setSelfDeafened(false);
         assertFalse(user.isSelfDeafened());
         assertTrue(user.isSelfMuted());
+    }
+
+    public void testAdminMuteDeafenCoercionMatchesDesktop() {
+        // Same coercion for moderator-applied state (ClientUser::setMute/setDeaf).
+        User user = new User(1, "Alice");
+
+        user.setDeafened(true);
+        assertTrue(user.isDeafened());
+        assertTrue(user.isMuted());
+
+        user.setMuted(false);
+        assertFalse(user.isMuted());
+        assertFalse(user.isDeafened());
     }
 }

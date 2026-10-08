@@ -1495,9 +1495,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return;
         // Push the capture gate before the model: desired state is
         // authoritative even when the model user isn't visible yet (e.g.
-        // the reconnect restore racing the initial UserState dump).
-        if (mAudioHandler != null)
-            mAudioHandler.setSelfMutedOptimistic(mute);
+        // the reconnect restore racing the initial UserState dump). Snapshot
+        // the handler: disconnect nulls the field from another thread.
+        AudioHandler audioHandler = mAudioHandler;
+        if (audioHandler != null)
+            audioHandler.setSelfMutedOptimistic(mute);
         final int session;
         try {
             session = connection.getSession();

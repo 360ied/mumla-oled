@@ -307,18 +307,20 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
             mLogger.logInfo(mContext.getString(R.string.chat_notify_connected, MessageFormatter.highlightString(user.getName())));
 
         if(msg.hasSelfDeaf() || msg.hasSelfMute()) {
-            // Desktop parity: the self echo is the confirm, not the event.
-            // The toggle site already applied these values optimistically and
-            // logged, so only log when the echo actually changes something.
-            // (Other users' self-mute in the same channel always logs.)
-            boolean selfMuteChanged = msg.hasSelfMute() && user.isSelfMuted() != msg.getSelfMute();
-            boolean selfDeafChanged = msg.hasSelfDeaf() && user.isSelfDeafened() != msg.getSelfDeaf();
+            // Desktop parity (Messages.cpp logs OtherSelfMute only): the self
+            // echo is pure confirm and never logs; the toggle site owns the
+            // self line (see HumlaService). Logging here would re-log stale
+            // echoes on rapid toggles. Other users' transitions still log on
+            // change: duplicate packets are anti-spam-suppressed, an
+            // intentional divergence from desktop's unconditional re-log.
+            boolean otherChanged = (msg.hasSelfMute() && user.isSelfMuted() != msg.getSelfMute())
+                    || (msg.hasSelfDeaf() && user.isSelfDeafened() != msg.getSelfDeaf());
             if(msg.hasSelfMute())
                 user.setSelfMuted(msg.getSelfMute());
             if(msg.hasSelfDeaf())
                 user.setSelfDeafened(msg.getSelfDeaf());
 
-            if ((selfMuteChanged || selfDeafChanged) && self != null) {
+            if (otherChanged && self != null) {
                 Channel userChan = user.getChannel();
                 if (user.getSession() != self.getSession() && userChan != null && userChan.equals(self.getChannel())) {
                     if (user.isSelfMuted() && user.isSelfDeafened())
@@ -327,13 +329,6 @@ public class ModelHandler extends HumlaTCPMessageListener.Stub {
                         mLogger.logInfo(mContext.getString(R.string.chat_notify_now_muted, MessageFormatter.highlightString(user.getName())));
                     else
                         mLogger.logInfo(mContext.getString(R.string.chat_notify_now_unmuted, MessageFormatter.highlightString(user.getName())));
-                } else if (user.getSession() == self.getSession()) {
-                    if (user.isSelfMuted() && user.isSelfDeafened())
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_muted_deafened));
-                    else if (user.isSelfMuted())
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_muted));
-                    else
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_unmuted));
                 }
             }
         }

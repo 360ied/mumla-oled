@@ -81,7 +81,10 @@ public class ModelHandlerSelfMuteTest extends TestCase {
                 .setSelfDeaf(deaf);
     }
 
-    public void testSelfEchoLogsOnlyOnChange() {
+    public void testSelfEchoNeverLogs() {
+        // Desktop parity: self lines are owned by the toggle site
+        // (HumlaService.applyOptimisticSelfMuteDeaf); the echo is pure
+        // confirm. A stale echo from a rapid toggle must not re-log.
         CountingLogger logger = new CountingLogger();
         CountingObserver observer = new CountingObserver();
         ModelHandler handler = new ModelHandler(
@@ -95,23 +98,19 @@ public class ModelHandlerSelfMuteTest extends TestCase {
         logger.infoCount = 0;
         observer.userStateUpdatedCount = 0;
 
-        // First transition: logs once, notifies once.
+        // Confirm, duplicate, toggle back: notify each time, never log.
         handler.messageUserState(selfMuteState(true, false).build());
-        assertEquals(1, logger.infoCount);
-        assertEquals(1, observer.userStateUpdatedCount);
-
-        // Duplicate echo of the optimistic value: no second log line.
-        // The observer still fires: desktop emits muteDeafStateChanged
-        // unconditionally, and downstream readers are idempotent, so the
-        // confirm stays a cheap refresh rather than special-cased silence.
         handler.messageUserState(selfMuteState(true, false).build());
-        assertEquals(1, logger.infoCount);
-        assertEquals(2, observer.userStateUpdatedCount);
-
-        // Genuine transition back: logs again.
         handler.messageUserState(selfMuteState(false, false).build());
-        assertEquals(2, logger.infoCount);
+        assertEquals(0, logger.infoCount);
         assertEquals(3, observer.userStateUpdatedCount);
+        assertFalse(handler.getUser(1).isSelfMuted());
+
+        // Stale echo of the superseded mute: applies state, still no line.
+        handler.messageUserState(selfMuteState(true, false).build());
+        assertEquals(0, logger.infoCount);
+        assertEquals(4, observer.userStateUpdatedCount);
+        assertTrue(handler.getUser(1).isSelfMuted());
     }
 
     public void testOtherUserSelfMuteStillLogs() {
