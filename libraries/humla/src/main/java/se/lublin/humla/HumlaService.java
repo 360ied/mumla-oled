@@ -1486,36 +1486,43 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // state the server never saw.
         if (connection == null || modelHandler == null || !connection.isSynchronized())
             return;
+        // Push the capture gate before the model: desired state is
+        // authoritative even when the model user isn't visible yet (e.g.
+        // the reconnect restore racing the initial UserState dump).
+        if (mAudioHandler != null)
+            mAudioHandler.setSelfMutedOptimistic(mute);
         final int session;
         try {
             session = connection.getSession();
         } catch (NotSynchronizedException e) {
             return;
         }
-        User self = modelHandler.getUser(session);
-        if (self == null)
-            return;
-        boolean changed = false;
-        if (self.isSelfMuted() != mute) {
-            self.setSelfMuted(mute);
-            changed = true;
-        }
-        if (self.isSelfDeafened() != deaf) {
-            self.setSelfDeafened(deaf);
-            changed = true;
-        }
-        if (mAudioHandler != null)
-            mAudioHandler.setSelfMutedOptimistic(mute);
-        if (changed) {
-            // Log here, at the toggle site like desktop's MainWindow: the
-            // echo's log is suppressed as unchanged (see ModelHandler).
-            if (mute && deaf)
-                logInfo(getString(R.string.chat_notify_muted_deafened));
-            else if (mute)
-                logInfo(getString(R.string.chat_notify_muted));
-            else
-                logInfo(getString(R.string.chat_notify_unmuted));
-            mCallbacks.onUserStateUpdated(self);
+        // Same monitor as ModelHandler.messageUserState, which writes these
+        // fields on the TCP reader thread.
+        synchronized (modelHandler) {
+            User self = modelHandler.getUser(session);
+            if (self == null)
+                return;
+            boolean changed = false;
+            if (self.isSelfMuted() != mute) {
+                self.setSelfMuted(mute);
+                changed = true;
+            }
+            if (self.isSelfDeafened() != deaf) {
+                self.setSelfDeafened(deaf);
+                changed = true;
+            }
+            if (changed) {
+                // Log here, at the toggle site like desktop's MainWindow: the
+                // echo's log is suppressed as unchanged (see ModelHandler).
+                if (mute && deaf)
+                    logInfo(getString(R.string.chat_notify_muted_deafened));
+                else if (mute)
+                    logInfo(getString(R.string.chat_notify_muted));
+                else
+                    logInfo(getString(R.string.chat_notify_unmuted));
+                mCallbacks.onUserStateUpdated(self);
+            }
         }
     }
 

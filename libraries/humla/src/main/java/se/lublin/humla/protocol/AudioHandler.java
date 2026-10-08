@@ -79,6 +79,15 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mSelfMuted;
     private volatile boolean mServerMuted;
     private volatile boolean mSuppressed;
+    /**
+     * Once the client has expressed a desired self-mute, the gate follows
+     * only that: echoes are delayed copies of our own in-order requests and
+     * carry no newer information, so a stale echo must never move the gate
+     * (rapid mute-unmute-mute would otherwise transiently reopen the mic
+     * while the UI shows muted). Per-connection handler instance, so no
+     * reset is needed: a fresh session starts unmuted with no latch.
+     */
+    private volatile boolean mOptimisticSelfMuteActive;
     private boolean mHalfDuplex;
     private volatile boolean mScoActive;
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
@@ -215,13 +224,15 @@ public class AudioHandler extends HumlaNetworkListener
      *
      * Desktop parity: Mumble's AudioInput reads the local desired-state
      * (Global::get().s.bMute) every frame, so the mic cuts on click rather
-     * than after the server-echo RTT. The echo in {@link #messageUserState}
-     * remains the confirm and corrects any drift.
+     * than after the server-echo RTT. The echo remains the model confirm
+     * (see ModelHandler); the gate echo in {@link #messageUserState} is
+     * ignored once an optimistic value exists.
      *
      * @param muted the requested self-mute target.
      */
     public void setSelfMutedOptimistic(boolean muted) {
         mSelfMuted = muted;
+        mOptimisticSelfMuteActive = true;
         if (!mInitialized) return;
         updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
     }
@@ -407,7 +418,7 @@ public class AudioHandler extends HumlaNetworkListener
                 mServerMuted = msg.getMute();
                 changed = true;
             }
-            if (msg.hasSelfMute()) {
+            if (msg.hasSelfMute() && !mOptimisticSelfMuteActive) {
                 mSelfMuted = msg.getSelfMute();
                 changed = true;
             }

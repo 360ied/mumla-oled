@@ -101,7 +101,9 @@ public class ModelHandlerSelfMuteTest extends TestCase {
         assertEquals(1, observer.userStateUpdatedCount);
 
         // Duplicate echo of the optimistic value: no second log line.
-        // The observer still fires (idempotent refresh, as on desktop).
+        // The observer still fires: desktop emits muteDeafStateChanged
+        // unconditionally, and downstream readers are idempotent, so the
+        // confirm stays a cheap refresh rather than special-cased silence.
         handler.messageUserState(selfMuteState(true, false).build());
         assertEquals(1, logger.infoCount);
         assertEquals(2, observer.userStateUpdatedCount);
@@ -129,6 +131,36 @@ public class ModelHandlerSelfMuteTest extends TestCase {
         // Other user in the same (root) channel muting still logs.
         handler.messageUserState(Mumble.UserState.newBuilder()
                 .setSession(2).setSelfMute(true).setSelfDeaf(false).build());
+        assertEquals(1, logger.infoCount);
+    }
+
+    public void testDeafOnlyPacketCoheresAndLogsDeafened() {
+        // murmur's initial-state broadcast sends deaf-only (omitting
+        // self_mute) for deafened users; without setter coercion this left
+        // an incoherent mute=false/deaf=true pair that mis-logged.
+        CountingLogger logger = new CountingLogger();
+        CountingObserver observer = new CountingObserver();
+        ModelHandler handler = new ModelHandler(
+                createTestContext(), observer, logger, null, null);
+
+        handler.messageServerSync(Mumble.ServerSync.newBuilder().setSession(1).build());
+        handler.messageUserState(Mumble.UserState.newBuilder()
+                .setSession(1).setName("self").build());
+        handler.messageUserState(Mumble.UserState.newBuilder()
+                .setSession(2).setName("other").build());
+
+        logger.infoCount = 0;
+
+        handler.messageUserState(Mumble.UserState.newBuilder()
+                .setSession(2).setSelfDeaf(true).build());
+
+        // Setter coercion keeps the pair coherent despite self_mute being absent.
+        assertTrue(handler.getUser(2).isSelfMuted());
+        assertTrue(handler.getUser(2).isSelfDeafened());
+        // Exactly one log, and the coherent both-true state can only reach
+        // the muted_deafened branch (the old incoherent pair mis-logged
+        // "unmuted"). Line identity isn't assertable here: Context#getString
+        // is final and returns null under stub android.jar.
         assertEquals(1, logger.infoCount);
     }
 }
