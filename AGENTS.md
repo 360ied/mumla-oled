@@ -3,7 +3,7 @@
 ## Repository Architecture
 - **Monorepo Layout**:
   - `app/` (`:app`): Android application UI, activities, fragments, overlay, preferences.
-  - `libraries/humla/` (`:libraries:humla`): In-tree core library with Mumble protocol engine, background service, JNI audio pipeline (`rnnoise`, Oboe/AAudio), and codec bindings.
+  - `libraries/humla/` (`:libraries:humla`): In-tree core library with Mumble protocol engine, background service, JNI audio pipeline (native Opus/RNNoise DSP engines over `AudioRecord`/`AudioTrack`; no Oboe/AAudio), and codec bindings.
 - **Third-Party Submodules**: External native codecs and processing libraries are submodules registered directly in the root `.gitmodules` (not nested inside another submodule):
   - `libraries/humla/src/main/jni/{opus, rnnoise}`
 
