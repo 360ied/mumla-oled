@@ -34,9 +34,9 @@ public class User implements IUser, Comparable<User> {
     private ByteString mTextureHash;
     private String mHash;
 
-    private boolean mMuted;
-    private boolean mDeafened;
-    private boolean mSuppressed;
+    private volatile boolean mMuted;
+    private volatile boolean mDeafened;
+    private volatile boolean mSuppressed;
 
     // Volatile: the optimistic self-mute path writes these on the main thread
     // while the server-echo path writes them on the TCP reader thread, and
@@ -200,8 +200,8 @@ public class User implements IUser, Comparable<User> {
         return mSuppressed;
     }
 
-    public void setSuppressed(boolean mSuppressed) {
-        this.mSuppressed = mSuppressed;
+    public void setSuppressed(boolean suppressed) {
+        this.mSuppressed = suppressed;
     }
 
     @Override

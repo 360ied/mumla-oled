@@ -114,4 +114,20 @@ public class UserTest extends TestCase {
         assertFalse(user.isMuted());
         assertFalse(user.isDeafened());
     }
+
+    public void testAdminMuteDeafenAsymmetryPreserved() {
+        // Clearing deaf must not clear mute; setting mute must not set deaf.
+        // Mirrors desktop ClientUser::setDeaf (no clear on false).
+        User user = new User(1, "Alice");
+
+        user.setMuted(true);
+        user.setDeafened(false);
+        assertTrue(user.isMuted());
+        assertFalse(user.isDeafened());
+
+        user.setDeafened(true);
+        user.setDeafened(false);
+        assertTrue(user.isMuted());
+        assertFalse(user.isDeafened());
+    }
 }

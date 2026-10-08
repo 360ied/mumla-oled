@@ -78,6 +78,13 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mInitialized;
     private volatile boolean mSelfMuted;
     private volatile boolean mServerMuted;
+    /**
+     * Moderator-applied deafening, tracked separately so a deaf-only packet
+     * (murmur's else-if broadcast form omits the paired mute) still closes
+     * the gate. Mirrors User.setDeafened coercion; like the rest of the gate
+     * it is read and written under synchronized(this).
+     */
+    private volatile boolean mServerDeafened;
     private volatile boolean mSuppressed;
     /**
      * Once the client has expressed a desired self-mute, the gate follows
@@ -89,11 +96,11 @@ public class AudioHandler extends HumlaNetworkListener
      * gate from the optimistically updated User in {@link #initialize}.
      */
     private volatile boolean mOptimisticSelfMuteActive;
-    private boolean mHalfDuplex;
+    private final boolean mHalfDuplex;
     private volatile boolean mScoActive;
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
     // hardcodes preprocessor-on and no production path can reach off.
-    private boolean mPreprocessorEnabled;
+    private final boolean mPreprocessorEnabled;
     private boolean mAdaptiveLevelerEnabled;
     private volatile boolean mTalking;
 
@@ -185,8 +192,9 @@ public class AudioHandler extends HumlaNetworkListener
         setCodec(codec);
         mSelfMuted = self.isSelfMuted();
         mServerMuted = self.isMuted();
+        mServerDeafened = self.isDeafened();
         mSuppressed = self.isSuppressed();
-        boolean isMuted = mSelfMuted || mServerMuted || mSuppressed;
+        boolean isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed;
 
         mOutput.startPlaying(mScoActive ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
         mInitialized = true;
@@ -237,7 +245,7 @@ public class AudioHandler extends HumlaNetworkListener
         mSelfMuted = muted;
         mOptimisticSelfMuteActive = true;
         if (!mInitialized) return;
-        updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
+        updateMuteState(mServerMuted || mSelfMuted || mServerDeafened || mSuppressed);
     }
 
     public boolean isInitialized() {
@@ -438,8 +446,12 @@ public class AudioHandler extends HumlaNetworkListener
                 mSuppressed = msg.getSuppress();
                 changed = true;
             }
+            if (msg.hasDeaf() && mServerDeafened != msg.getDeaf()) {
+                mServerDeafened = msg.getDeaf();
+                changed = true;
+            }
             if (changed) {
-                updateMuteState(mServerMuted || mSelfMuted || mSuppressed);
+                updateMuteState(mServerMuted || mSelfMuted || mServerDeafened || mSuppressed);
             }
         }
     }
