@@ -38,8 +38,11 @@ public class User implements IUser, Comparable<User> {
     private boolean mDeafened;
     private boolean mSuppressed;
 
-    private boolean mSelfMuted;
-    private boolean mSelfDeafened;
+    // Volatile: the optimistic self-mute path writes these on the main thread
+    // while the server-echo path writes them on the TCP reader thread, and
+    // UI readers observe them lock-free (mirrors mLocalMuted below).
+    private volatile boolean mSelfMuted;
+    private volatile boolean mSelfDeafened;
 
     private boolean mPrioritySpeaker;
     private boolean mRecording;

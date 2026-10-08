@@ -1478,6 +1478,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * persistence, and TTS suppression all follow with no UI edits. The echo
      * then becomes a no-op via the unchanged guard in
      * {@link ModelHandler#messageUserState}.
+     *
+     * <p>Accepted transients (both convergent via the echo): the capture gate
+     * is pushed before the model write, so if the session user is not yet
+     * visible the mic follows desired state up to a round trip ahead of the
+     * UI; and the chat log line is best-effort (dropped if a disconnect
+     * interleaves, since logging re-gates on synchronization while the state
+     * change itself does not).
      */
     private void applyOptimisticSelfMuteDeaf(boolean mute, boolean deaf) {
         HumlaConnection connection = mConnection;
