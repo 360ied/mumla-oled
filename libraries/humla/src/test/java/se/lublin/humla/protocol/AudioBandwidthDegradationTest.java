@@ -99,13 +99,11 @@ public class AudioBandwidthDegradationTest extends TestCase {
     }
 
     /**
-     * Six-frame (120 ms) packets are already maximal: under a cap only the
-     * bitrate degrades, never the packet size.
+     * Six-frame (120 ms) packets are already maximal: under a 32 kbps cap
+     * only the bitrate degrades, stepping 40000 -> 24000 at a fixed 7049 bps
+     * overhead, while the packet size stays 6.
      */
     public void testSixFramesDegradeBitrateOnly() {
-        AudioHandler.EffectiveAudioConfig config =
-                AudioHandler.computeEffectiveConfig(40000, 6, 32000);
-        assertEquals(6, config.framesPerPacket);
-        assertTrue(config.bitrate < 40000);
+        assertConfig(24000, 6, 40000, 6, 32000);
     }
 }

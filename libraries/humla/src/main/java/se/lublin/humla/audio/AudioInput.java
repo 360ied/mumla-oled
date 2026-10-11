@@ -58,7 +58,18 @@ public class AudioInput implements Runnable {
         mAudioSource = audioSource;
 
         mAudioRecord = setupAudioRecord(audioSource);
-        enableAudioEffects();
+        try {
+            enableAudioEffects();
+        } catch (Throwable t) {
+            // enableAudioEffects catches Exception per effect, but an Error
+            // would otherwise abandon the just-created record (held mic).
+            try {
+                mAudioRecord.release();
+            } catch (Exception ignored) {
+            }
+            mAudioRecord = null;
+            throw t;
+        }
     }
 
     private AudioRecord setupAudioRecord(int audioSource) throws AudioInitializationException {
