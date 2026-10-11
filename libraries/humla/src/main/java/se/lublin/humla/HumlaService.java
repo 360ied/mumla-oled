@@ -195,6 +195,23 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             applyAudioRoute("device route changed", false);
         }
     };
+    /**
+     * One-shot settle recheck for voice-by-absence: BT profiles attach
+     * staggered (HFP/ACL first, A2DP sink seconds later), so the first
+     * device edge can see no media sink and slam the call onto
+     * speakerphone-voice. Entering voice without SCO arms one delayed
+     * recompute to catch the lagging A2DP edge even if it posts no second
+     * callback; still absent means a genuinely sink-less phone, correctly
+     * left on voice. Armed only on entry (not while already voice), so at
+     * most one extra recompute per transition — never a loop.
+     */
+    private static final long ROUTE_SETTLE_RECHECK_MS = 2500;
+    private final Runnable mRouteSettleRecompute = new Runnable() {
+        @Override
+        public void run() {
+            applyAudioRoute("media settle recheck", false);
+        }
+    };
 
     // Set in onDestroy: posted teardowns (SCO notify) check it before
     // touching route audio on a dead service.
@@ -513,6 +530,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         releaseVoiceMode();
         if (mDeviceCallback != null) {
             mHandler.removeCallbacks(mRouteRecompute);
+            mHandler.removeCallbacks(mRouteSettleRecompute);
             try {
                 if (mAudioManager != null) {
                     mAudioManager.unregisterAudioDeviceCallback(mDeviceCallback);
@@ -750,6 +768,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // it via updateBluetoothScoRoute when still requested.
         stopScoWithNotify();
         releaseVoiceMode();
+        // No live call remains for a settle recheck to recover.
+        mHandler.removeCallbacks(mRouteSettleRecompute);
 
         mCallbacks.onDisconnected(e);
     }
@@ -1150,6 +1170,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // so no concurrent funnel rewrite is expected; a surprise concurrent
         // rewrite would at worst cause one redundant idempotent reload.
         boolean before = mAppliedVoiceRoute;
+        // A fresh edge supersedes any pending settle recheck below.
+        mHandler.removeCallbacks(mRouteSettleRecompute);
         boolean voice = updateRouteBuilder();
         if (mConnectionState == ConnectionState.CONNECTED) {
             applyVoiceMode(voice);
@@ -1177,6 +1199,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // Else: disconnected with an unchanged route (e.g. headset plugged
         // while idle) — no pipeline, no cues to refresh; skip the fan-out
         // so observers don't rebuild route audio pointlessly.
+        if (voice && !mScoRouteActive && !mMediaRouteSelected && !before
+                && mConnectionState == ConnectionState.CONNECTED) {
+            // Just entered voice-by-absence on a live call (see settle note
+            // above): recheck once for a lagging A2DP edge.
+            mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
+        }
     }
 
     /**
