@@ -20,6 +20,7 @@ package se.lublin.humla.audio;
 
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.audiofx.AcousticEchoCanceler;
 import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
 import android.os.Build;
@@ -43,6 +44,7 @@ public class AudioInput implements Runnable {
     private final AudioInputListener mListener;
     private final int mAudioSource;
     private volatile AudioRecord mAudioRecord;
+    private volatile AcousticEchoCanceler mAec;
     private volatile NoiseSuppressor mNs;
     private volatile AutomaticGainControl mAgc;
 
@@ -103,6 +105,29 @@ public class AudioInput implements Runnable {
     private synchronized void enableAudioEffects() {
         if (mAudioRecord == null) return;
         int sessionId = mAudioRecord.getAudioSessionId();
+
+        // AEC first: it needs the coupled capture/render loop, which only
+        // exists on a voice route (VOICE_COMMUNICATION source +
+        // MODE_IN_COMMUNICATION + voice-routed output). On media routes
+        // isAvailable() is typically false and creation returns null —
+        // both are logged per route so field data tells us where the HAL
+        // actually couples. See docs/echo-cancellation/README.md.
+        if (AcousticEchoCanceler.isAvailable()) {
+            try {
+                mAec = AcousticEchoCanceler.create(sessionId);
+                if (mAec != null) {
+                    mAec.setEnabled(true);
+                    Log.i(TAG, "Hardware AEC enabled (source=" + mAudioSource + ")");
+                } else {
+                    Log.w(TAG, "AEC unavailable on session " + sessionId
+                            + " (source=" + mAudioSource + "): create returned null");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to enable hardware AEC: " + e.getMessage());
+            }
+        } else {
+            Log.i(TAG, "AEC not available on this device (source=" + mAudioSource + ")");
+        }
 
         if (NoiseSuppressor.isAvailable()) {
             try {
@@ -200,6 +225,13 @@ public class AudioInput implements Runnable {
     }
 
     private synchronized void releaseEffects() {
+        if (mAec != null) {
+            try {
+                mAec.release();
+            } catch (Exception ignored) {
+            }
+            mAec = null;
+        }
         if (mNs != null) {
             try {
                 mNs.release();
