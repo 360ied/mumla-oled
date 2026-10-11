@@ -207,12 +207,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      */
     private static final long ROUTE_SETTLE_RECHECK_MS = 3000;
     private static final int ROUTE_SETTLE_MAX_RECHECKS = 2;
-    private int mSettleAttempts;
-    private boolean mSettleFired;
-    // Whether a settle recheck is currently queued. Tracked explicitly
-    // (not via Handler.hasCallbacks, API 29+) so fresh edges can leave an
-    // outstanding protection in place instead of cancelling it blindly.
-    private boolean mSettlePending;
+    private volatile int mSettleAttempts;
+    private volatile boolean mSettleFired;
+    // Whether a settle recheck is queued: explicitly tracked (not via
+    // Handler.hasCallbacks, API 29+) so fresh edges can leave outstanding
+    // protection in place instead of cancelling it blindly. Touched on the
+    // main Looper and TCP-reader threads: volatile for visibility; group
+    // writes with route state stay under synchronized(this) below.
+    private volatile boolean mSettlePending;
     private final Runnable mRouteSettleRecompute = new Runnable() {
         @Override
         public void run() {
@@ -650,9 +652,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (requested && state == ConnectionState.CONNECTED
                 && scoManager != null && scoManager.isIdle()) {
-            // Legacy pre-hold, mirroring updateBluetoothScoRoute above.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            // Legacy pre-hold, mirroring updateBluetoothScoRoute above
+            // (voice decision only, for the same leak reason). Remember
+            // whether the hold predates us so the abort below only undoes
+            // what this method acquired.
+            boolean acquiredHere = false;
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    && computeVoiceRoute(mScoRouteActive, queryMediaDevicesPresent())
+                    && !mVoiceModeHeld) {
                 ensureVoiceMode();
+                acquiredHere = true;
             }
             scoManager.start();
             // Re-validate identity, state, and intent: a disable or a
@@ -662,6 +671,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
                         || !mScoRequested) {
                     scoManager.stop();
+                    if (acquiredHere) {
+                        releaseVoiceMode();
+                    }
                     return false;
                 }
             }
@@ -737,8 +749,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 counterUnrequestedSystemSco(syncClaimedHold);
             } else if (!mScoRouteActive && !mMediaRouteSelected) {
                 // Sync landed in voice-by-absence (A2DP still staggering):
-                // arm the same bounded recheck the funnel uses.
+                // arm the same bounded recheck the funnel uses, coalescing
+                // with any funnel-armed one already queued.
                 mSettleAttempts = 0;
+                mHandler.removeCallbacks(mRouteSettleRecompute);
                 mSettlePending = true;
                 mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
             }
@@ -792,7 +806,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // Media decision goes stale here (teardown clears SCO only; the next
         // funnel recomputes): refresh from a live query so gap observers see
         // truth (A2DP still attached reads media) instead of a forced value.
-        mMediaRouteSelected = queryMediaDevicesPresent();
+        // Under the group monitor like every other route write; the query
+        // itself (binder IPC) runs outside it.
+        boolean liveMedia = queryMediaDevicesPresent();
+        synchronized (this) {
+            mMediaRouteSelected = liveMedia;
+        }
 
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateBluetoothScoRoute when still requested.
@@ -1003,13 +1022,23 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return;
         }
         try {
-            if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+            int mode = mAudioManager.getMode();
+            if (mode == AudioManager.MODE_IN_COMMUNICATION) {
                 mVoiceModeHeld = true;
                 mVoiceModeClaimed = false;
                 Log.i(TAG, "VoIP mode already held, not claiming");
                 return;
             }
-            mSavedAudioMode = mAudioManager.getMode();
+            // A genuine cellular call owns the audio path: never steal
+            // MODE_IN_CALL (pre-existing steal fixed here — claim nothing,
+            // change nothing, like the pre-held IN_COMM branch above).
+            if (mode == AudioManager.MODE_IN_CALL) {
+                mVoiceModeHeld = true;
+                mVoiceModeClaimed = false;
+                Log.i(TAG, "Cellular call active, not claiming voice mode");
+                return;
+            }
+            mSavedAudioMode = mode;
             mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
             mVoiceModeHeld = true;
             mVoiceModeClaimed = true;
@@ -1229,6 +1258,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         boolean wasClaimedHold = mVoiceModeHeld && mVoiceModeClaimed;
         if (mConnectionState == ConnectionState.CONNECTED) {
             applyVoiceMode(voice);
+            if (!voice) {
+                // Media won: clear foreign SCO BEFORE (re)creating the
+                // pipeline so no media lifetime starts while HFP is up.
+                counterUnrequestedSystemSco(wasClaimedHold);
+            }
         } else {
             // Disconnected (or never connected): device attach/detach must
             // not re-acquire global IN_COMM with no pipeline and no call.
@@ -1267,7 +1301,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 mSettleAttempts += 1;
             }
             mHandler.removeCallbacks(mRouteSettleRecompute);
-            mSettlePending = false;
             mSettlePending = true;
             mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
         } else if (!voiceByAbsence || !liveCall) {
@@ -1279,11 +1312,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             // already queued or attempts exhausted): leave it exactly as
             // found — neither extend nor cancel.
             mSettlePending = wasSettlePending;
-        }
-        if (!voice) {
-            // Media won: tear down any system-raised SCO our transient
-            // voice hold may have triggered (see counter method).
-            counterUnrequestedSystemSco(wasClaimedHold);
         }
     }
 
@@ -1366,9 +1394,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             // Legacy bring-up (API < 31) runs startBluetoothSco, whose
             // platform usage holds MODE_IN_COMMUNICATION; the stripped
             // manager no longer sets it, so pre-hold here (modern
-            // setCommunicationDevice needs no mode). The funnel owns the
-            // matching release on media flips; disconnect/destroy cover rest.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            // setCommunicationDevice needs no mode). Gated on a voice
+            // decision: pre-holding for a bring-up that fails on a media
+            // route would leak the hold past the early-return teardown.
+            // The funnel owns the matching release on media flips;
+            // disconnect/destroy cover rest.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    && computeVoiceRoute(mScoRouteActive, queryMediaDevicesPresent())) {
                 ensureVoiceMode();
             }
             mScoManager.start();
