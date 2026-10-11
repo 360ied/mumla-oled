@@ -185,13 +185,43 @@ public class AudioHandler extends HumlaNetworkListener
                 modelData,
                 this);
 
-        if (mInputMode instanceof ActivityInputMode) {
-            ActivityInputMode actMode = (ActivityInputMode) mInputMode;
-            mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
-        }
+        // Anything below owns system handles (native engine above, mic
+        // below): clean up on failure so a failed connect never abandons
+        // a live native handle or a held mic.
+        try {
+            if (mInputMode instanceof ActivityInputMode) {
+                ActivityInputMode actMode = (ActivityInputMode) mInputMode;
+                mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
+            }
 
-        mInput = new AudioInput(this, mAudioSource);
-        mOutput = new AudioOutput(mContext, mOutputListener);
+            mInput = new AudioInput(this, mAudioSource);
+            mOutput = new AudioOutput(mContext, mOutputListener);
+        } catch (AudioInitializationException | RuntimeException e) {
+            // mInput was never assigned (its construction threw): only the
+            // native engine above needs destroying. (destroyInputAndEngine
+            // reads mInput and so must not run inside the constructor.)
+            try {
+                mNativeEngine.destroy();
+            } catch (Exception ignored) {
+            }
+            throw e;
+        }
+    }
+
+    /** Destroys capture + native engine made owned before a later init step failed. */
+    private void destroyInputAndEngine() {
+        try {
+            if (mInput != null) {
+                mInput.shutdown();
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            if (mNativeEngine != null) {
+                mNativeEngine.destroy();
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private static int sanitizeFramesPerPacket(int fpp) {
@@ -213,20 +243,13 @@ public class AudioHandler extends HumlaNetworkListener
         try {
             mOutput.startPlaying((mVoiceRoute || mScoActive) ? AudioManager.STREAM_VOICE_CALL
                     : AudioManager.STREAM_MUSIC);
-        } catch (AudioException e) {
-            // Constructor already owns a native engine + capture (AudioRecord
-            // + HW effects): destroy the partial pipeline before rethrow so
+        } catch (AudioException | RuntimeException e) {
+            // The constructor owns a native engine + capture (AudioRecord +
+            // HW effects): destroy the partial pipeline before rethrow so
             // the caller never abandons a half-built handler holding the mic.
-            try {
-                mInput.shutdown();
-            } catch (Exception ignored) {
-            }
-            try {
-                if (mNativeEngine != null) {
-                    mNativeEngine.destroy();
-                }
-            } catch (Exception ignored) {
-            }
+            // RuntimeException is caught too: an unchecked throw from
+            // startPlaying (e.g. SecurityException) must not skip teardown.
+            destroyInputAndEngine();
             throw e;
         }
         // The stream int is route intent on the voice route (see field):
@@ -240,10 +263,11 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     private void startRecording() {
-        synchronized (mInput) {
-            if (!mInput.isRecording()) {
-                mInput.startRecording();
-            }
+        // No outer hold on mInput: AudioInput entry points self-synchronize
+        // and join outside their monitor; holding it here would re-pin the
+        // lock across startRecording's bounded join.
+        if (!mInput.isRecording()) {
+            mInput.startRecording();
         }
     }
 
@@ -450,9 +474,10 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public synchronized void shutdown() {
-        synchronized (mInput) {
-            mInput.shutdown();
-        }
+        // Never hold mInput across shutdown: it joins the capture thread,
+        // which needs the AudioInput monitor for release/enableEffects.
+        // (Same shape as the mOutput rule below.)
+        mInput.shutdown();
         // Never hold mOutput across stopPlaying: it joins the render thread,
         // which needs the AudioOutput monitor each loop to observe shutdown
         // and exit. Holding it here deadlocks disconnect (main in join,
@@ -716,8 +741,11 @@ public class AudioHandler extends HumlaNetworkListener
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
-        // Plain like neighbors: the builder is configured single-threaded on
-        // the service main thread; only the built handler's mScoActive is volatile.
+        // Plain like neighbors: most fields are programmed on the service
+        // main thread, while the route group (sco/voice/source/stream) is
+        // written under the HumlaService monitor (updateRouteBuilder and
+        // stopScoWithNotify are synchronized); only the built handler's
+        // mScoActive is volatile.
         private boolean mScoEnabled;
         // Defaults true to preserve step-2a behavior until the service
         // route policy drives it (C2); the service sets this explicitly

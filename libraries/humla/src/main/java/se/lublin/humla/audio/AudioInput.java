@@ -240,9 +240,21 @@ public class AudioInput implements Runnable {
 
     public void shutdown() {
         Thread thread;
+        AudioRecord recordToStop;
         synchronized (this) {
             mRecording = false;
             thread = mRecordThread;
+            recordToStop = mAudioRecord;
+        }
+        // Unblock a thread parked in blocking read() first: interrupt()
+        // alone does not wake AudioRecord.read(). Mirrors stopRecording.
+        if (recordToStop != null) {
+            try {
+                if (recordToStop.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    recordToStop.stop();
+                }
+            } catch (Exception ignored) {
+            }
         }
         if (thread != null) {
             thread.interrupt();
@@ -378,7 +390,26 @@ public class AudioInput implements Runnable {
                     } catch (Exception ignored) {
                     }
                 }
+                // Same shutdown guards as the preamble above: a racing
+                // shutdown must not resurrect capture on this path either.
+                if (!mRecording || Thread.currentThread().isInterrupted()) {
+                    mRecording = false;
+                    return;
+                }
                 mAudioRecord = setupAudioRecord(mAudioSource);
+                if (!mRecording || Thread.currentThread().isInterrupted()) {
+                    AudioRecord fresh = mAudioRecord;
+                    mAudioRecord = null;
+                    releaseEffects();
+                    if (fresh != null) {
+                        try {
+                            fresh.release();
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    mRecording = false;
+                    return;
+                }
                 enableAudioEffects();
                 mAudioRecord.startRecording();
             } catch (Exception ex) {

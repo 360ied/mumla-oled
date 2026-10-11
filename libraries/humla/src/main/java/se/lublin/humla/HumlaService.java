@@ -202,10 +202,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private Handler mHandler;
     private HumlaCallbacks mCallbacks;
 
-    private HumlaConnection mConnection;
+    private volatile HumlaConnection mConnection;
     private volatile ConnectionState mConnectionState;
-    private ModelHandler mModelHandler;
-    private AudioHandler mAudioHandler;
+    // Plain pipeline/model fields were a cross-thread hazard once the
+    // device-callback funnel started reading them off the main thread:
+    // disconnect writes them on connection threads. Volatile for visibility;
+    // group transitions stay under the service monitor (see below).
+    private volatile ModelHandler mModelHandler;
+    private volatile AudioHandler mAudioHandler;
 
     private ActivityInputMode mActivityInputMode;
     private ToggleInputMode mToggleInputMode;
@@ -841,9 +845,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * Stops SCO and clears the confirmed-route flag, emitting route-change
      * notifications when a live link was up. stop() itself never callbacks,
      * so synchronous teardowns must notify explicitly or volume, cues, and
-     * menu state strand on the voice route.
+     * menu state strand on the voice route. Synchronized: confirmed-state
+     * transitions are serialized with applyScoRoute, and the builder write
+     * below joins the updateRouteBuilder group under the same monitor so a
+     * racing recompute cannot lose or resurrect the SCO selection.
      */
-    private void stopScoWithNotify() {
+    private synchronized void stopScoWithNotify() {
         if (mScoManager == null) {
             return;
         }
@@ -1018,8 +1025,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * flag, and effective source/stream. Voice keeps the handset-derived
      * stream (earpiece vs speakerphone intent); media is always MIC/MUSIC.
      * Returns the applied voice decision for mode handling by the caller.
+     * Synchronized: the builder is otherwise main-thread-confined, and this
+     * keeps the SCO/stream/source group mutually exclusive with the
+     * teardown write in stopScoWithNotify.
      */
-    private boolean updateRouteBuilder() {
+    private synchronized boolean updateRouteBuilder() {
         boolean sco = mScoRouteActive;
         boolean media = !sco && queryMediaDevicesPresent();
         mMediaDevicesPresent = media;
