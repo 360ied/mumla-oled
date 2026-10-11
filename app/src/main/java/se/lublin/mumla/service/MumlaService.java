@@ -134,7 +134,8 @@ public class MumlaService extends HumlaService implements
         // Shared canonicalization with TLS pinning (trim + trailing-dot +
         // lowercase); IPv6 literals pass through unchanged. Password is
         // deliberately excluded: chat-log identity must survive password
-        // corrections (see MumlaActivity.isSameServer for the connect no-op).
+        // corrections (see MumlaActivity.isSameServer, which compares the
+        // password separately to force a reconnect on change).
         String rawHost = server.getHost() != null ? server.getHost().trim() : "";
         String host = se.lublin.humla.net.TlsHostnameVerifier.canonicalizeHost(rawHost);
         if (host == null) {
@@ -422,10 +423,18 @@ public class MumlaService extends HumlaService implements
                     NotificationSanitizer.sanitizeActor(message.getActorName()),
                     NotificationSanitizer.sanitizeBody(ttsMessage));
 
-            // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened
-            if (formattedTtsMessage.length() <= TTS_THRESHOLD &&
-                    getSessionUser() != null &&
-                    !getSessionUser().isSelfDeafened()) {
+            // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened.
+            // Single guarded read: getSessionUser() throws when unsynchronized,
+            // and a second call could observe a different user after a race.
+            // A teardown-racing message still gets logged; only TTS is skipped.
+            boolean selfDeafened = true;
+            try {
+                IUser sessionUser = getSessionUser();
+                selfDeafened = sessionUser != null && sessionUser.isSelfDeafened();
+            } catch (IllegalStateException e) {
+                Log.w(TAG, "TTS check after unsync; skipping speech");
+            }
+            if (formattedTtsMessage.length() <= TTS_THRESHOLD && !selfDeafened) {
                 speakTts(formattedTtsMessage);
             }
 
