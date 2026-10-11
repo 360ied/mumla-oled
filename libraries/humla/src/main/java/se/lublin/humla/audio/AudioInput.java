@@ -306,24 +306,26 @@ public class AudioInput implements Runnable {
     }
 
     private synchronized void releaseEffects() {
+        // Throwable per effect: one failing release (even fatal) must not
+        // abandon the remaining native handles.
         if (mAec != null) {
             try {
                 mAec.release();
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
             mAec = null;
         }
         if (mNs != null) {
             try {
                 mNs.release();
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
             mNs = null;
         }
         if (mAgc != null) {
             try {
                 mAgc.release();
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
             mAgc = null;
         }
@@ -388,7 +390,9 @@ public class AudioInput implements Runnable {
                 return;
             } catch (Throwable t) {
                 // An Error must not strand mRecording on a dead thread:
-                // clear the flag so a later start can recover, then rethrow.
+                // clear the flag so a later start can recover, then rethrow
+                // with a breadcrumb (sibling Exception paths all log).
+                Log.e(TAG, "Capture thread fatal error: " + t);
                 mRecording = false;
                 throw t;
             }
@@ -438,9 +442,16 @@ public class AudioInput implements Runnable {
                 mRecording = false;
                 return;
             } catch (Throwable t) {
+                Log.e(TAG, "Capture thread fatal error: " + t);
                 mRecording = false;
                 throw t;
             }
+        } catch (Throwable t) {
+            // Non-ISE throwables from the initial start (the ISE path with
+            // its recreation is above): free the flag with a breadcrumb.
+            Log.e(TAG, "Capture thread fatal error: " + t);
+            mRecording = false;
+            throw t;
         }
 
         final short[] buffer = new short[FRAME_SIZE];
@@ -496,6 +507,7 @@ public class AudioInput implements Runnable {
                             mRecording = false;
                             break;
                         } catch (Throwable t) {
+                            Log.e(TAG, "Capture thread fatal error: " + t);
                             mRecording = false;
                             throw t;
                         }
@@ -512,6 +524,7 @@ public class AudioInput implements Runnable {
             Log.w(TAG, "Exception in AudioInput capture loop: " + e.getMessage());
             mRecording = false;
         } catch (Throwable t) {
+            Log.e(TAG, "Capture thread fatal error: " + t);
             mRecording = false;
             throw t;
         }

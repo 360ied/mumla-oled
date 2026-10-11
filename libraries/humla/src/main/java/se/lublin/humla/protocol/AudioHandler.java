@@ -207,41 +207,43 @@ public class AudioHandler extends HumlaNetworkListener
             AudioInput input = new AudioInput(this, mAudioSource);
             try {
                 mOutput = new AudioOutput(mContext, mOutputListener);
-            } catch (RuntimeException e) {
+            } catch (Throwable t) {
                 // Output construction failed after capture was already
-                // holding the mic: shut it down before propagating.
+                // holding the mic: shut it down before propagating. Errors
+                // must not leak either (same path as Exceptions).
                 try {
                     input.shutdown();
-                } catch (Exception ignored) {
+                } catch (Throwable ignored) {
                 }
-                throw e;
+                throw t;
             }
             mInput = input;
-        } catch (AudioInitializationException | RuntimeException e) {
-            // mInput was never assigned (its construction threw): only the
-            // native engine above needs destroying. (destroyInputAndEngine
-            // reads mInput and so must not run inside the constructor.)
+        } catch (Throwable t) {
+            // Covers AudioInput construction too: destroy the native engine
+            // on any failure, checked or fatal, without masking the original.
             try {
                 mNativeEngine.destroy();
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
-            throw e;
+            throw t;
         }
     }
 
     /** Destroys capture + native engine made owned before a later init step failed. */
     private void destroyInputAndEngine() {
+        // Best-effort teardown must never mask the original failure, fatal
+        // or otherwise: Throwable guards throughout, original rethrown.
         try {
             if (mInput != null) {
                 mInput.shutdown();
             }
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
         try {
             if (mNativeEngine != null) {
                 mNativeEngine.destroy();
             }
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
     }
 
@@ -264,14 +266,14 @@ public class AudioHandler extends HumlaNetworkListener
         try {
             mOutput.startPlaying((mVoiceRoute || mScoActive) ? AudioManager.STREAM_VOICE_CALL
                     : AudioManager.STREAM_MUSIC);
-        } catch (AudioException | RuntimeException e) {
+        } catch (Throwable t) {
             // The constructor owns a native engine + capture (AudioRecord +
             // HW effects): destroy the partial pipeline before rethrow so
             // the caller never abandons a half-built handler holding the mic.
-            // RuntimeException is caught too: an unchecked throw from
-            // startPlaying (e.g. SecurityException) must not skip teardown.
+            // Throwable-wide: an unchecked or fatal throw from startPlaying
+            // (e.g. SecurityException) must not skip teardown either.
             destroyInputAndEngine();
-            throw e;
+            throw t;
         }
         // The stream int is route intent on the voice route (see field):
         // earpiece vs speakerphone. Set explicitly both ways — the flag is

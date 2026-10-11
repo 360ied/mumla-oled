@@ -196,6 +196,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
     };
 
+    // Set in onDestroy: posted teardowns (SCO notify) check it before
+    // touching route audio on a dead service.
+    private volatile boolean mDestroyed = false;
     private byte mVoiceTargetId;
     private WhisperTargetList mWhisperTargetList;
 
@@ -486,6 +489,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public void onDestroy() {
         super.onDestroy();
+        mDestroyed = true;
         mReconnectAttempts = 0;
         setReconnecting(false);
         if (mWakeLock != null && mWakeLock.isHeld()) {
@@ -499,9 +503,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         // Same builder group as the funnel/teardown paths: clear under the
         // monitor so a racing recompute cannot resurrect SCO after destroy.
+        // Media/applied resets ride along: all three are one route snapshot.
         synchronized (this) {
             mAudioBuilder.setScoEnabled(false);
             mScoRouteActive = false;
+            mMediaRouteSelected = false;
+            mAppliedVoiceRoute = true;
         }
         releaseVoiceMode();
         if (mDeviceCallback != null) {
@@ -515,8 +522,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
             mDeviceCallback = null;
         }
-        mMediaRouteSelected = false;
-        mAppliedVoiceRoute = true;
         releaseWifiLock();
     }
 
@@ -614,12 +619,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (requested && state == ConnectionState.CONNECTED
                 && scoManager != null && scoManager.isIdle()) {
             scoManager.start();
-            // Re-validate identity, not just state: a disconnect/reconnect
-            // cycle during bring-up must not leave a stray attempt running
-            // against a newer connection (stop() never callbacks, so this
-            // is silent and safe).
+            // Re-validate identity, state, and intent: a disable or a
+            // disconnect/reconnect cycle during bring-up must not leave
+            // a stray attempt running (stop() never callbacks, silent).
             synchronized (this) {
-                if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED) {
+                if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
+                        || !mScoRequested) {
                     scoManager.stop();
                     return false;
                 }
@@ -736,6 +741,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mAudioHandler = null;
         mVoiceTargetId = 0;
         mWhisperTargetList.clear();
+        // Media decision goes stale here (teardown clears SCO only; the next
+        // funnel recomputes): reset so queries during the gap report voice
+        // instead of a dead-route media decision.
+        mMediaRouteSelected = false;
 
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateBluetoothScoRoute when still requested.
@@ -905,6 +914,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (mDestroyed) {
+                        return;
+                    }
                     if (mScoManager != null && mScoManager.isActive()) {
                         // Re-connected since teardown queued: fresh callbacks
                         // own the UI; a stale false must not overwrite them.
@@ -1004,12 +1016,20 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * outside it so a slow HAL never pins the disconnect path.
      */
     private void applyScoRoute(boolean active, String reason) {
+        final boolean logUnchanged;
         synchronized (this) {
             if (active == mScoRouteActive) {
-                Log.i(TAG, "SCO route unchanged, skipping reload (" + reason + ").");
-                return;
+                // Log outside the block below: keep the critical section to
+                // the flip alone.
+                logUnchanged = true;
+            } else {
+                mScoRouteActive = active;
+                logUnchanged = false;
             }
-            mScoRouteActive = active;
+        }
+        if (logUnchanged) {
+            Log.i(TAG, "SCO route unchanged, skipping reload (" + reason + ").");
+            return;
         }
         applyAudioRoute(reason, false);
         // Re-validate: a teardown racing this route may have flipped the
