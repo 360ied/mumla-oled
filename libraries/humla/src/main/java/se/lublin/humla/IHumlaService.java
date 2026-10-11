@@ -27,7 +27,11 @@ import se.lublin.humla.util.IHumlaObserver;
  * The long-term goal for this class is to migrate of the complexity out of this class into a
  * HumlaProtocol class that is owned by a {@link se.lublin.humla.net.HumlaConnection}.
  * <br><br>
- * Calls are not guaranteed to be thread-safe, so only call the binder from the main thread.
+ * Calls that only read volatile route/connection state
+ * ({@link #isConnected}, {@link #isBluetoothScoActive},
+ * {@link #isMediaRouteActive}) are safe from any thread. Calls that mutate
+ * connection or audio state should be made from the main thread unless their
+ * documentation states otherwise.
  * Service state changes related to connection state are only guaranteed to work if isConnected()
  * is checked to be true.
  * <br><br>
@@ -51,9 +55,15 @@ public interface IHumlaService {
     boolean isBluetoothScoActive();
 
     /**
+     * @return true if a media sink (BT A2DP / BLE / wired headset) currently routes
+     *         output. While true (and SCO inactive) the pipeline runs the
+     *         media triple to preserve A2DP quality.
+     */
+    boolean isMediaRouteActive();
+
+    /**
      * Re-asserts SCO bring-up when requested but idle, e.g. after a failed
-     * attempt. No UI caller remains (both toggles share the requested-state
-     * preference and retry by flipping off and on); retained for internal use.
+     * attempt. Retained as the manual-retry entry for the SCO fallback path.
      * @return true if bring-up was (re)started, false if there was nothing
      *         to do (link up, starting, unrequested, or disconnected).
      */

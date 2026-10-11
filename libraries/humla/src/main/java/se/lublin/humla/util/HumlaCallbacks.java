@@ -22,6 +22,8 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import se.lublin.humla.BuildConfig;
+
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
@@ -30,6 +32,11 @@ import se.lublin.humla.net.HandshakeFailure;
 /**
  * A composite wrapper around Humla observers to easily broadcast to each observer.
  * Created by andrew on 12/07/14.
+ *
+ * <p>Fan-out isolates failures: a throwing observer is logged and the rest
+ * still run. Only {@code RuntimeException} is caught — an {@code Error} still
+ * aborts the broadcast. Registration rejects {@code null} fail-fast while
+ * unregistration tolerates it for defensive call sites.
  */
 public class HumlaCallbacks implements IHumlaObserver {
     private final Set<IHumlaObserver> mCallbacks;
@@ -39,150 +46,139 @@ public class HumlaCallbacks implements IHumlaObserver {
     }
 
     public void registerObserver(IHumlaObserver observer) {
+        java.util.Objects.requireNonNull(observer, "observer");
         mCallbacks.add(observer);
     }
 
     public void unregisterObserver(IHumlaObserver observer) {
+        if (observer == null) return;
         mCallbacks.remove(observer);
     }
 
     @Override
     public void onConnected() {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onConnected();
-        }
+        broadcast(o -> o.onConnected());
     }
 
     @Override
     public void onConnecting() {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onConnecting();
-        }
+        broadcast(o -> o.onConnecting());
     }
 
     @Override
     public void onDisconnected(HumlaException e) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onDisconnected(e);
-        }
+        broadcast(o -> o.onDisconnected(e));
     }
 
     @Override
     public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onTLSHandshakeFailed(chain, failure, verifiedHost);
-        }
+        broadcast(o -> o.onTLSHandshakeFailed(chain, failure, verifiedHost));
     }
 
     @Override
     public void onChannelAdded(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelAdded(channel);
-        }
+        broadcast(o -> o.onChannelAdded(channel));
     }
 
     @Override
     public void onChannelStateUpdated(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelStateUpdated(channel);
-        }
+        broadcast(o -> o.onChannelStateUpdated(channel));
     }
 
     @Override
     public void onChannelRemoved(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelRemoved(channel);
-        }
+        broadcast(o -> o.onChannelRemoved(channel));
     }
 
     @Override
     public void onChannelPermissionsUpdated(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelPermissionsUpdated(channel);
-        }
+        broadcast(o -> o.onChannelPermissionsUpdated(channel));
     }
 
     @Override
     public void onUserConnected(IUser user) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserConnected(user);
-        }
+        broadcast(o -> o.onUserConnected(user));
     }
 
     @Override
     public void onUserStateUpdated(IUser user) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserStateUpdated(user);
-        }
+        broadcast(o -> o.onUserStateUpdated(user));
     }
 
     @Override
     public void onUserTalkStateUpdated(IUser user) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserTalkStateUpdated(user);
-        }
+        broadcast(o -> o.onUserTalkStateUpdated(user));
     }
 
     @Override
     public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserJoinedChannel(user, newChannel, oldChannel);
-        }
+        broadcast(o -> o.onUserJoinedChannel(user, newChannel, oldChannel));
     }
 
     @Override
     public void onUserRemoved(IUser user, String reason) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserRemoved(user, reason);
-        }
+        broadcast(o -> o.onUserRemoved(user, reason));
     }
 
     @Override
     public void onPermissionDenied(String reason) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onPermissionDenied(reason);
-        }
+        broadcast(o -> o.onPermissionDenied(reason));
     }
 
     @Override
     public void onMessageLogged(IMessage message) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onMessageLogged(message);
-        }
+        broadcast(o -> o.onMessageLogged(message));
     }
 
     @Override
     public void onVoiceTargetChanged(VoiceTargetMode mode) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onVoiceTargetChanged(mode);
-        }
+        broadcast(o -> o.onVoiceTargetChanged(mode));
     }
 
     @Override
     public void onBluetoothScoChanged(boolean active) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onBluetoothScoChanged(active);
-        }
+        broadcast(o -> o.onBluetoothScoChanged(active));
+    }
+
+    @Override
+    public void onAudioRouteChanged() {
+        broadcast(o -> o.onAudioRouteChanged());
     }
 
     @Override
     public void onLogInfo(String message) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onLogInfo(message);
-        }
+        broadcast(o -> o.onLogInfo(message));
     }
 
     @Override
     public void onLogWarning(String message) {
-        for (IHumlaObserver observer : mCallbacks) {
-            observer.onLogWarning(message);
-        }
+        broadcast(o -> o.onLogWarning(message));
     }
 
     @Override
     public void onLogError(String message) {
+        broadcast(o -> o.onLogError(message));
+    }
+
+    /** Fan-out with per-observer isolation: a throwing observer is logged and the rest still run. */
+    private interface ObserverCall {
+        void call(IHumlaObserver observer);
+    }
+
+    private void broadcast(ObserverCall call) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onLogError(message);
+            try {
+                call.call(observer);
+            } catch (RuntimeException observerError) {
+                // Full traces in debug only: a persistently-throwing observer
+                // on a high-frequency callback must not spam logcat.
+                if (BuildConfig.DEBUG) {
+                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+                } else {
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
+                }
+            }
         }
     }
 }

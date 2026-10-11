@@ -131,7 +131,16 @@ public class MumlaService extends HumlaService implements
         if (server.isSaved()) {
             return "id:" + server.getId();
         }
-        String host = server.getHost() != null ? server.getHost().toLowerCase(Locale.ROOT) : "";
+        // Shared canonicalization with TLS pinning (trim + trailing-dot +
+        // lowercase); IPv6 literals pass through unchanged. Password is
+        // deliberately excluded: chat-log identity must survive password
+        // corrections (see MumlaActivity.isSameServer, which compares the
+        // password separately to force a reconnect on change).
+        String rawHost = server.getHost() != null ? server.getHost().trim() : "";
+        String host = se.lublin.humla.net.TlsHostnameVerifier.canonicalizeHost(rawHost);
+        if (host == null) {
+            host = "";
+        }
         int port = server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT;
         String user = server.getUsername() != null ? server.getUsername() : "";
         return "endpoint:" + host + ":" + port + ":" + user;
@@ -414,10 +423,18 @@ public class MumlaService extends HumlaService implements
                     NotificationSanitizer.sanitizeActor(message.getActorName()),
                     NotificationSanitizer.sanitizeBody(ttsMessage));
 
-            // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened
-            if (formattedTtsMessage.length() <= TTS_THRESHOLD &&
-                    getSessionUser() != null &&
-                    !getSessionUser().isSelfDeafened()) {
+            // Read if TTS is enabled, the message is less than threshold, is a text message, and not deafened.
+            // Single guarded read: getSessionUser() throws when unsynchronized,
+            // and a second call could observe a different user after a race.
+            // A teardown-racing message still gets logged; only TTS is skipped.
+            boolean selfDeafened = true;
+            try {
+                IUser sessionUser = getSessionUser();
+                selfDeafened = sessionUser != null && sessionUser.isSelfDeafened();
+            } catch (IllegalStateException e) {
+                Log.w(TAG, "TTS check after unsync; skipping speech");
+            }
+            if (formattedTtsMessage.length() <= TTS_THRESHOLD && !selfDeafened) {
                 speakTts(formattedTtsMessage);
             }
 
@@ -486,11 +503,12 @@ public class MumlaService extends HumlaService implements
     }
 
     /**
-     * Refreshes route-dependent cue audio after a confirmed SCO change.
-     * The pipeline owns voice routing; this owns the PTT SoundPool.
+     * Refreshes route-dependent cue audio after a confirmed route change
+     * (SCO or media-sink). The pipeline owns voice routing; this owns the
+     * PTT SoundPool.
      */
     @Override
-    protected void onScoRouteChanged() {
+    protected void onAudioRouteChanged() {
         initSoundPool();
         setProximitySensorOn(shouldUseProximitySensor());
     }
@@ -508,8 +526,9 @@ public class MumlaService extends HumlaService implements
     void initSoundPool() {
         releaseSoundPool();
         try {
-            boolean voiceRoute = mSettings != null
-                    && (mSettings.isHandsetMode() || isBluetoothScoActive());
+            // Voice cues follow voice output; media routes (BT A2DP/wired)
+            // keep music-stream cues on A2DP volume. SCO implies voice.
+            boolean voiceRoute = !isMediaRouteActive();
             int streamType = voiceRoute
                     ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
             int usage = voiceRoute
@@ -753,6 +772,9 @@ public class MumlaService extends HumlaService implements
      */
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        if (key == null) {
+            return;
+        }
         Bundle changedExtras = new Bundle();
         boolean requiresReconnect = false;
         switch (key) {

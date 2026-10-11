@@ -79,4 +79,47 @@ public class MumlaActivityTest extends TestCase {
         assertFalse(MumlaActivity.isSameServer(null, server));
         assertFalse(MumlaActivity.isSameServer(server, null));
     }
+
+    public void testIsSameServer_SavedSameIdDifferentPassword() {
+        Server a = new Server(42, "A", "mumble.example.com", 64738, "alice", "old");
+        Server b = new Server(42, "B", "mumble.example.com", 64738, "alice", "new");
+        assertFalse(MumlaActivity.isSameServer(a, b));
+    }
+
+    public void testIsSameServer_UnsavedSameEndpointDifferentPassword() {
+        Server a = new Server(-1, "A", "mumble.example.com", 64738, "alice", "old");
+        Server b = new Server(-1, "B", "mumble.example.com", 64738, "alice", "new");
+        assertFalse(MumlaActivity.isSameServer(a, b));
+    }
+
+    public void testIsSameServer_NullPasswordEqualsEmpty() {
+        Server nullPw = new Server(-1, "A", "mumble.example.com", 64738, "alice", null);
+        Server emptyPw = new Server(-1, "B", "mumble.example.com", 64738, "alice", "");
+        assertTrue(MumlaActivity.isSameServer(nullPw, emptyPw));
+        assertTrue(MumlaActivity.isSameServer(emptyPw, nullPw));
+    }
+
+    public void testIsSameServer_TrailingDotHostEquals() {
+        Server dotted = new Server(-1, "A", "mumble.example.com.", 64738, "alice", "");
+        Server plain = new Server(-1, "B", "mumble.example.com", 64738, "alice", "");
+        assertTrue(MumlaActivity.isSameServer(dotted, plain));
+    }
+
+    public void testIsSameServer_WhitespaceHostTrimmed() {
+        Server padded = new Server(-1, "A", "  mumble.example.com  ", 64738, "alice", "");
+        Server plain = new Server(-1, "B", "mumble.example.com", 64738, "alice", "");
+        assertTrue(MumlaActivity.isSameServer(padded, plain));
+    }
+
+    public void testIsSameServer_NullHostEqualsEmpty() {
+        Server nullHost = new Server(-1, "A", null, 64738, "alice", "");
+        Server emptyHost = new Server(-1, "B", "", 64738, "alice", "");
+        assertTrue(MumlaActivity.isSameServer(nullHost, emptyHost));
+    }
+
+    public void testIsSameServer_NullUsernameEqualsEmpty() {
+        Server nullUser = new Server(-1, "A", "mumble.example.com", 64738, null, "");
+        Server emptyUser = new Server(-1, "B", "mumble.example.com", 64738, "", "");
+        assertTrue(MumlaActivity.isSameServer(nullUser, emptyUser));
+    }
 }

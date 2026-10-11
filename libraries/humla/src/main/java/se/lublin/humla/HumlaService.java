@@ -21,6 +21,10 @@ package se.lublin.humla;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioDeviceCallback;
+import android.media.AudioDeviceInfo;
+import android.media.AudioManager;
+import android.media.MediaRecorder;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -100,6 +104,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_DETECTION_THRESHOLD = "detection_threshold";
     public static final String EXTRAS_AMPLITUDE_BOOST = "amplitude_boost";
     public static final String EXTRAS_TRANSMIT_MODE = "transmit_mode";
+    /**
+     * @deprecated Fixed 48 kHz end to end; accepted for compatibility but
+     * ignored (see AudioHandler.Builder.setInputSampleRate). Senders keep
+     * emitting it so older services still parse the bundle.
+     */
+    @Deprecated
     public static final String EXTRAS_INPUT_RATE = "input_frequency";
     public static final String EXTRAS_INPUT_QUALITY = "input_quality";
     /** @deprecated Obsolete since 0.18.2; Opus is mandatory and legacy codecs are dropped. */
@@ -108,6 +118,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_FORCE_TCP = "force_tcp";
     public static final String EXTRAS_CLIENT_NAME = "client_name";
     public static final String EXTRAS_ACCESS_TOKENS = "access_tokens";
+    /**
+     * @deprecated Route policy owns the capture source for platform AEC
+     * (voice routes use VOICE_COMMUNICATION, media routes use MIC).
+     * Accepted for compatibility but ignored; see updateRouteBuilder.
+     */
+    @Deprecated
     public static final String EXTRAS_AUDIO_SOURCE = "audio_source";
     public static final String EXTRAS_AUDIO_STREAM = "audio_stream";
     public static final String EXTRAS_FRAMES_PER_PACKET = "frames_per_packet";
@@ -145,9 +161,83 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     // updateBluetoothScoRoute, retryBluetoothSco, and the route callbacks.
     // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
     private volatile boolean mScoRequested;
-    private BluetoothScoManager mScoManager;
-    private boolean mScoRouteActive;
+    // Assigned once in onCreate, never reassigned: safe to dereference from
+    // connection threads, but volatile to match this file's discipline for
+    // cross-thread route fields (a stale null is the only real hazard).
+    private volatile BluetoothScoManager mScoManager;
+    // Written on the main thread (applyScoRoute) and in the disconnect path
+    // (stopScoWithNotify), which HumlaConnection invokes on TCP-reader
+    // threads; read on both. Volatile for visibility; confirmed-flag flips
+    // are serialized in fine-grained synchronized blocks (see applyScoRoute,
+    // stopScoWithNotify, updateRouteBuilderLocked), while the funnel, device
+    // query, IPC, and fan-out they trigger run outside the service monitor.
+    private volatile boolean mScoRouteActive;
+    // VoIP mode ownership (one owner: this route policy — never the pipeline
+    // and never the SCO manager alone). Held for voice routes so capture-side
+    // effects attach into a coupled HAL loop, released for media routes and
+    // on disconnect/destroy. Claimed tracks whether WE set IN_COMM: a
+    // pre-held mode (phone call, concurrent SCO) is never cleared by us.
+    private AudioManager mAudioManager;
+    // Route/mode ownership fields below are touched on the main thread and
+    // in the disconnect path on connection threads: volatile for visibility,
+    // with ensure/release/apply serialized via synchronized methods so a
+    // device callback racing a disconnect cannot corrupt the restore baseline.
+    private volatile int mSavedAudioMode = AudioManager.MODE_NORMAL;
+    private volatile boolean mVoiceModeHeld;
+    private volatile boolean mVoiceModeClaimed;
+    // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
+    // SCO absence). Present sinks select the media triple; SCO and the bare
+    // phone stay voice (computeVoiceRoute). Listener is API 23+; below that
+    // voice always. Named for what it stores (the gated decision, not raw
+    // presence): recomputed from the live query on every route application.
+    private volatile boolean mMediaRouteSelected;
+    private volatile boolean mAppliedVoiceRoute = true;
+    // Default MUSIC means speakerphone-voice until settings arrive: the voice
+    // triple maps any non-VOICE_CALL stream to speakerphone (see AudioHandler
+    // init), so do not "fix" this to STREAM_VOICE_CALL (that would flip the
+    // default to earpiece).
+    private volatile int mHandsetAudioStream = AudioManager.STREAM_MUSIC;
+    private AudioDeviceCallback mDeviceCallback;
+    private final Runnable mRouteRecompute = new Runnable() {
+        @Override
+        public void run() {
+            applyAudioRoute("device route changed", false);
+        }
+    };
+    /**
+     * One-shot settle recheck for voice-by-absence: BT profiles attach
+     * staggered (HFP/ACL first, A2DP sink seconds later), so the first
+     * device edge can see no media sink and slam the call onto
+     * speakerphone-voice. Entering voice without SCO arms delayed
+     * recomputes to catch the lagging A2DP edge even if it posts no second
+     * callback; still absent means a genuinely sink-less phone, correctly
+     * left on voice. Bounded to two extra checks (~3s, ~6s) per episode —
+     * never a loop — covering typical profile-stagger windows.
+     */
+    private static final long ROUTE_SETTLE_RECHECK_MS = 3000;
+    private static final int ROUTE_SETTLE_MAX_RECHECKS = 2;
+    private volatile int mSettleAttempts;
+    private volatile boolean mSettleFired;
+    // Whether a settle recheck is queued. Set only beside a post, cleared
+    // on dispatch, reset, or teardown — never restored from a snapshot —
+    // so the flag can never claim protection no callback provides.
+    // Single writes only (volatile suffices); Handler.hasCallbacks needs
+    // API 29+, minSdk here is 21.
+    private volatile boolean mSettlePending;
+    private final Runnable mRouteSettleRecompute = new Runnable() {
+        @Override
+        public void run() {
+            // Dispatch consumes the queued protection: clear the flag so a
+            // later fresh edge can arm anew (funnel top also clears fired).
+            mSettlePending = false;
+            mSettleFired = true;
+            applyAudioRoute("media settle recheck", false);
+        }
+    };
 
+    // Set in onDestroy: posted teardowns (SCO notify) check it before
+    // touching route audio on a dead service.
+    private volatile boolean mDestroyed = false;
     private byte mVoiceTargetId;
     private WhisperTargetList mWhisperTargetList;
 
@@ -156,17 +246,24 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private Handler mHandler;
     private HumlaCallbacks mCallbacks;
 
-    private HumlaConnection mConnection;
+    private volatile HumlaConnection mConnection;
     private volatile ConnectionState mConnectionState;
-    private ModelHandler mModelHandler;
-    private AudioHandler mAudioHandler;
+    // Plain pipeline/model fields were a cross-thread hazard once the
+    // device-callback funnel started reading them off the main thread:
+    // disconnect writes them on connection threads. Volatile for visibility
+    // only, not atomic group transitions: readers pair them with the
+    // volatile mConnectionState gate (see applyAudioRoute), never a lock.
+    private volatile ModelHandler mModelHandler;
+    private volatile AudioHandler mAudioHandler;
 
     private ActivityInputMode mActivityInputMode;
     private ToggleInputMode mToggleInputMode;
     private ContinuousInputMode mContinuousInputMode;
 
-    private boolean mReconnecting;
-    private int mReconnectAttempts = 0;
+    // Written from main (start/connect UI) and connection threads
+    // (disconnect path): volatile so reconnect UI never strands on stale state.
+    private volatile boolean mReconnecting;
+    private volatile int mReconnectAttempts = 0;
     private Runnable mReconnectRunnable;
     private ConnectivityManager.NetworkCallback mNetworkCallback;
     private boolean mNetworkCallbackRegistered = false;
@@ -175,8 +272,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             new AudioHandler.AudioEncodeListener() {
                 @Override
                 public void onAudioEncoded(byte[] data, int length) {
-                    if(mConnection != null && mConnection.isSynchronized()) {
-                        mConnection.sendUDPMessage(data, length, false);
+                    HumlaConnection connection = mConnection;
+                    if (connection != null && connection.isSynchronized()) {
+                        connection.sendUDPMessage(data, length, false);
                     }
                 }
 
@@ -200,7 +298,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                                 currentUser.setTalkState(talking ? TalkState.TALKING : TalkState.PASSIVE);
                                 mCallbacks.onUserTalkStateUpdated(currentUser);
                             } catch (NotSynchronizedException e) {
-                                e.printStackTrace();
+                                Log.w(TAG, "Talking-state update after unsync", e);
                             }
                         }
                     });
@@ -367,6 +465,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     }
                 });
         mConnectionState = ConnectionState.DISCONNECTED;
+        try {
+            mAudioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP mode: no AudioManager", e);
+            mAudioManager = null;
+        }
         mScoManager = new BluetoothScoManager(this, new BluetoothScoManager.Listener() {
             @Override
             public void onScoConnected() {
@@ -390,6 +494,31 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                         Toast.LENGTH_LONG).show();
             }
         });
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                mDeviceCallback = new AudioDeviceCallback() {
+                    @Override
+                    public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+                        logDeviceTypes("added", added);
+                        onRouteDevicesChanged();
+                        maybeStartRequestedSco(added);
+                    }
+
+                    @Override
+                    public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+                        logDeviceTypes("removed", removed);
+                        onRouteDevicesChanged();
+                    }
+                };
+                if (mAudioManager != null) {
+                    mAudioManager.registerAudioDeviceCallback(mDeviceCallback, mHandler);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Route device listener failed", e);
+                mDeviceCallback = null;
+            }
+            mMediaRouteSelected = queryMediaDevicesPresent();
+        }
         mToggleInputMode = new ToggleInputMode();
         mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
         mContinuousInputMode = new ContinuousInputMode();
@@ -402,6 +531,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     @Override
     public void onDestroy() {
         super.onDestroy();
+        mDestroyed = true;
         mReconnectAttempts = 0;
         setReconnecting(false);
         if (mWakeLock != null && mWakeLock.isHeld()) {
@@ -413,8 +543,31 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mScoManager != null) {
             mScoManager.stop();
         }
-        mAudioBuilder.setScoEnabled(false);
-        mScoRouteActive = false;
+        // Same builder group as the funnel/teardown paths: clear under the
+        // monitor so a racing recompute cannot resurrect SCO after destroy.
+        // Media/applied resets ride along: all three are one route snapshot.
+        synchronized (this) {
+            mAudioBuilder.setScoEnabled(false);
+            mScoRouteActive = false;
+            mMediaRouteSelected = false;
+            mAppliedVoiceRoute = true;
+        }
+        releaseVoiceMode();
+        if (mDeviceCallback != null) {
+            try {
+                if (mAudioManager != null) {
+                    mAudioManager.unregisterAudioDeviceCallback(mDeviceCallback);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Route device listener removal failed", e);
+            }
+            mDeviceCallback = null;
+        }
+        // Unconditional: the funnel arms settle on any API (pre-M queries
+        // always read absent), so teardown must clear it on every API too.
+        mHandler.removeCallbacks(mRouteRecompute);
+        mHandler.removeCallbacks(mRouteSettleRecompute);
+        mSettlePending = false;
         releaseWifiLock();
     }
 
@@ -458,7 +611,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
             mConnection.connect(mServer.getHost(), mServer.getPort());
         } catch (HumlaException e) {
-            e.printStackTrace();
+            Log.e(TAG, "Connect failed", e);
             onConnectionDisconnected(e);
         }
     }
@@ -483,11 +636,60 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         return mScoManager != null && mScoManager.isActive();
     }
 
+    /**
+     * Whether a media sink (BT A2DP / BLE / wired headset) currently routes output.
+     * While true (and SCO inactive) the pipeline runs the media triple to
+     * preserve A2DP quality; platform AEC is out of scope there by design.
+     * Derived from the confirmed route flag (not the live manager query) so
+     * pipeline, cues, and volume observers never diverge mid-callback.
+     */
+    @Override
+    public boolean isMediaRouteActive() {
+        return mMediaRouteSelected && !mScoRouteActive;
+    }
+
     @Override
     public boolean retryBluetoothSco() {
-        if (mScoRequested && mConnectionState == ConnectionState.CONNECTED
-                && mScoManager != null && mScoManager.isIdle()) {
-            mScoManager.start();
+        // Copy to locals before IPC so a torn read is impossible; the copy
+        // is not group-atomic versus writers (post-start re-validation +
+        // manager idempotence absorb any tearing — that is the real guard).
+        final boolean requested;
+        final ConnectionState state;
+        final BluetoothScoManager scoManager;
+        final HumlaConnection connection;
+        synchronized (this) {
+            requested = mScoRequested;
+            state = mConnectionState;
+            scoManager = mScoManager;
+            connection = mConnection;
+        }
+        if (requested && state == ConnectionState.CONNECTED
+                && scoManager != null && scoManager.isIdle()) {
+            // Legacy pre-hold, mirroring updateBluetoothScoRoute above
+            // (voice decision only, for the same leak reason). Remember
+            // whether the hold predates us so the abort below only undoes
+            // what this method acquired.
+            boolean acquiredHere = false;
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    && computeVoiceRoute(mScoRouteActive, queryMediaDevicesPresent())
+                    && !mVoiceModeHeld) {
+                ensureVoiceMode();
+                acquiredHere = true;
+            }
+            scoManager.start();
+            // Re-validate identity, state, and intent: a disable or a
+            // disconnect/reconnect cycle during bring-up must not leave
+            // a stray attempt running (stop() never callbacks, silent).
+            synchronized (this) {
+                if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
+                        || !mScoRequested) {
+                    scoManager.stop();
+                    if (acquiredHere) {
+                        releaseVoiceMode();
+                    }
+                    return false;
+                }
+            }
             return true;
         }
         return false;
@@ -550,12 +752,33 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
 
         try {
+            boolean voice = updateRouteBuilder();
+            // See funnel: only our own claimed hold implicates us in any
+            // system SCO raised during it.
+            boolean syncClaimedHold = mVoiceModeHeld && mVoiceModeClaimed;
+            applyVoiceMode(voice);
             createAudioHandler();
+            if (!voice) {
+                counterUnrequestedSystemSco(syncClaimedHold);
+            } else if (!mScoRouteActive && !mMediaRouteSelected) {
+                // Sync landed in voice-by-absence (A2DP still staggering):
+                // arm the same bounded recheck the funnel uses, coalescing
+                // with any funnel-armed one already queued.
+                mSettleAttempts = 0;
+                mHandler.removeCallbacks(mRouteSettleRecompute);
+                mSettlePending = true;
+                mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
+            }
         } catch (AudioException e) {
-            e.printStackTrace();
+            Log.e(TAG, "Audio pipeline creation failed", e);
             onConnectionWarning(e.getMessage());
         }
         updateBluetoothScoRoute();
+        // First creation bypasses the funnel: push route-dependent audio
+        // (cues, proximity) explicitly so an A2DP-attached first connect
+        // does not leave them on the voice stream until the next flap.
+        onAudioRouteChanged();
+        mCallbacks.onAudioRouteChanged();
 
         mCallbacks.onConnected();
     }
@@ -593,10 +816,23 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mAudioHandler = null;
         mVoiceTargetId = 0;
         mWhisperTargetList.clear();
+        // Media decision goes stale here (teardown clears SCO only; the next
+        // funnel recomputes): refresh from a live query so gap observers see
+        // truth (A2DP still attached reads media) instead of a forced value.
+        // Under the group monitor like every other route write; the query
+        // itself (binder IPC) runs outside it.
+        boolean liveMedia = queryMediaDevicesPresent();
+        synchronized (this) {
+            mMediaRouteSelected = liveMedia;
+        }
 
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateBluetoothScoRoute when still requested.
         stopScoWithNotify();
+        releaseVoiceMode();
+        // No live call remains for a settle recheck to recover.
+        mHandler.removeCallbacks(mRouteSettleRecompute);
+        mSettlePending = false;
 
         mCallbacks.onDisconnected(e);
     }
@@ -737,7 +973,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * Stops SCO and clears the confirmed-route flag, emitting route-change
      * notifications when a live link was up. stop() itself never callbacks,
      * so synchronous teardowns must notify explicitly or volume, cues, and
-     * menu state strand on the voice route.
+     * menu state strand on the voice route. Only the confirmed-flag/builder
+     * section holds the service monitor (serialized with applyScoRoute and
+     * the route builder group); manager IPC and the posted notify stay
+     * outside so the lock never pins across slow work. Media selection is
+     * left for the next funnel recompute, which owns it.
      */
     private void stopScoWithNotify() {
         if (mScoManager == null) {
@@ -745,8 +985,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         boolean wasActive = mScoManager.isActive();
         mScoManager.stop();
-        mAudioBuilder.setScoEnabled(false);
-        mScoRouteActive = false;
+        synchronized (this) {
+            mAudioBuilder.setScoEnabled(false);
+            mScoRouteActive = false;
+        }
         if (wasActive) {
             // Posted: teardown callers (disconnect, destroy, mid-call disable)
             // may run off the main thread, but hook and observers are
@@ -755,12 +997,21 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    if (mDestroyed) {
+                        return;
+                    }
                     if (mScoManager != null && mScoManager.isActive()) {
                         // Re-connected since teardown queued: fresh callbacks
                         // own the UI; a stale false must not overwrite them.
                         return;
                     }
-                    onScoRouteChanged();
+                    if (mScoRouteActive) {
+                        // A newer link confirmed while this teardown was
+                        // queued (bring-up won the race after our flag flip):
+                        // its own connected-notify carries the truth.
+                        return;
+                    }
+                    onAudioRouteChanged();
                     mCallbacks.onBluetoothScoChanged(false);
                 }
             });
@@ -768,31 +1019,398 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Invoked on the main thread after every confirmed SCO route change,
-     * after the pipeline reload. Subclasses override to refresh
-     * route-dependent audio that the pipeline does not own (e.g. cue streams).
-     * Overrides must be idempotent and non-blocking, and must not call back
-     * into configureExtras; this also runs when no pipeline exists.
+     * Invoked on the main thread after every confirmed audio-route change
+     * (SCO or media-sink), after the pipeline reload. Subclasses override to
+     * refresh route-dependent audio that the pipeline does not own (e.g. cue
+     * streams). Overrides must be idempotent and non-blocking, and must not
+     * call back into configureExtras; this also runs when no pipeline exists.
      */
-    protected void onScoRouteChanged() {
+    protected void onAudioRouteChanged() {
+    }
+
+    /**
+     * Holds MODE_IN_COMMUNICATION for the voice route. Called before every
+     * pipeline creation so capture-side effects attach into an already-coupled
+     * HAL loop, never while the pipeline runs. Recreate-safe: re-holding an
+     * already-held mode is idempotent and never re-saves. A pre-held mode
+     * (phone call, concurrent SCO bring-up) counts as held but unclaimed,
+     * so release below never clears someone else's mode.
+     */
+    private synchronized void ensureVoiceMode() {
+        if (mAudioManager == null || mVoiceModeHeld) {
+            return;
+        }
+        try {
+            int mode = mAudioManager.getMode();
+            // Externally held (phone call setup or another app): claim
+            // nothing and change nothing. Deliberately leaves mVoiceModeHeld
+            // unset so the next voice pass retries the claim — setting it
+            // here would starve the voice route of IN_COMM after the
+            // external holder lets go (no release path re-arms a marker
+            // that was never a real hold).
+            if (mode == AudioManager.MODE_IN_COMMUNICATION) {
+                Log.i(TAG, "VoIP mode already held, not claiming");
+                return;
+            }
+            // A genuine cellular call owns the audio path: never steal
+            // MODE_IN_CALL either, for the same liveness reason.
+            if (mode == AudioManager.MODE_IN_CALL) {
+                Log.i(TAG, "Cellular call active, not claiming voice mode");
+                return;
+            }
+            mSavedAudioMode = mode;
+            mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+            mVoiceModeHeld = true;
+            mVoiceModeClaimed = true;
+            Log.i(TAG, "VoIP mode held (was " + mSavedAudioMode + ")");
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP mode hold failed", e);
+        }
+    }
+
+    /**
+     * Releases a held voice mode, guarded like BluetoothScoManager: an
+     * unclaimed (pre-held) mode is never touched, and a claimed one is only
+     * restored while our IN_COMM is still current, so a phone call or another
+     * app that moved it since is never clobbered.
+     */
+    private synchronized void releaseVoiceMode() {
+        if (mAudioManager == null || !mVoiceModeHeld) {
+            return;
+        }
+        boolean claimed = mVoiceModeClaimed;
+        mVoiceModeHeld = false;
+        mVoiceModeClaimed = false;
+        if (!claimed) {
+            return;
+        }
+        try {
+            if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+                mAudioManager.setMode(mSavedAudioMode);
+                Log.i(TAG, "VoIP mode released (restored " + mSavedAudioMode + ")");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP mode release failed", e);
+        }
+    }
+
+    /**
+     * Route truth table: confirmed SCO forces the voice triple; otherwise a
+     * present media sink (BT A2DP / wired headset) selects media, and its
+     * absence keeps voice. Package-visible for the JVM truth-table test,
+     * mirroring BluetoothScoManager.shouldRetryBringUp.
+     */
+    static boolean computeVoiceRoute(boolean scoActive, boolean mediaDevicesPresent) {
+        return scoActive || !mediaDevicesPresent;
     }
 
     /**
      * Applies a confirmed route to the pipeline, cue hook, and observers in
-     * that order. All three route callbacks converge here. Skips reload and
-     * notify when the applied route is unchanged (e.g. a failure that never
-     * went active); the failure toast is the caller's job, not this method's.
+     * that order. All route callbacks (SCO, media-sink) converge here via
+     * applyAudioRoute below; this entry keeps the SCO-specific observer push
+     * truthful while the route push carries output-routing state. Skips
+     * everything when the confirmed SCO state is unchanged (e.g. a failure
+     * that never went active); the failure toast is the caller's job.
+     * Only the confirmed-flag flip holds the service monitor (serialized
+     * with the teardown path); the funnel, IPC, and fan-out below run
+     * outside it so a slow HAL never pins the disconnect path.
      */
     private void applyScoRoute(boolean active, String reason) {
-        if (active == mScoRouteActive) {
+        final boolean logUnchanged;
+        synchronized (this) {
+            if (active == mScoRouteActive) {
+                // Log outside the block below: keep the critical section to
+                // the flip alone.
+                logUnchanged = true;
+            } else {
+                mScoRouteActive = active;
+                logUnchanged = false;
+            }
+        }
+        if (logUnchanged) {
             Log.i(TAG, "SCO route unchanged, skipping reload (" + reason + ").");
             return;
         }
-        mScoRouteActive = active;
-        mAudioBuilder.setScoEnabled(active);
-        reloadAudioForRoute(reason);
-        onScoRouteChanged();
+        applyAudioRoute(reason, false);
+        // Re-validate: a teardown racing this route may have flipped the
+        // flag while the funnel ran; its own notify carries the newer state.
+        synchronized (this) {
+            if (active != mScoRouteActive) {
+                return;
+            }
+        }
         mCallbacks.onBluetoothScoChanged(active);
+    }
+
+    /** Debounce for device attach/detach flurries: one recompute per burst. */
+    private static final long ROUTE_RECOMPUTE_DEBOUNCE_MS = 300;
+
+    /**
+     * Debounced device-listener entry: attach/detach flurries converge into
+     * one route application instead of one pipeline recreate per event.
+     */
+    private void onRouteDevicesChanged() {
+        mHandler.removeCallbacks(mRouteRecompute);
+        mHandler.postDelayed(mRouteRecompute, ROUTE_RECOMPUTE_DEBOUNCE_MS);
+    }
+
+    /**
+     * Synchronous media-sink presence: BT A2DP / BLE / wired/USB headset
+     * outputs currently attached. API 23+ only; below that always false
+     * (voice). BLE/LE Audio and hearing aids ride the media path like A2DP
+     * per the echo-cancellation plan (accepted gap: no AEC there); only the
+     * SCO path ever selects voice over Bluetooth.
+     */
+    private boolean queryMediaDevicesPresent() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || mAudioManager == null) {
+            return false;
+        }
+        try {
+            AudioDeviceInfo[] outputs = mAudioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+            if (outputs == null) {
+                return false;
+            }
+            StringBuilder seen = new StringBuilder();
+            boolean found = false;
+            for (AudioDeviceInfo device : outputs) {
+                if (device == null) {
+                    continue;
+                }
+                int type = device.getType();
+                if (seen.length() > 0) {
+                    seen.append(',');
+                }
+                seen.append(type);
+                switch (type) {
+                    case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                    case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                    case AudioDeviceInfo.TYPE_BLE_SPEAKER:
+                    case AudioDeviceInfo.TYPE_HEARING_AID:
+                    case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+                    case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
+                    case AudioDeviceInfo.TYPE_USB_HEADSET:
+                    case AudioDeviceInfo.TYPE_USB_DEVICE:
+                        found = true;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            // INFO, not DEBUG: recomputes are rare (edges/settings/sync) and
+            // this line settles every "was A2DP visible?" question in the field.
+            Log.i(TAG, "Media-sink query: outputs=[" + seen + "] media=" + found);
+            return found;
+        } catch (Exception e) {
+            Log.w(TAG, "Media-sink query failed", e);
+        }
+        return false;
+    }
+
+    /**
+     * Pushes the current route decision into the builder: voice flag, SCO
+     * flag, and effective source/stream. Voice keeps the handset-derived
+     * stream (earpiece vs speakerphone intent); media is always MIC/MUSIC.
+     * Returns the applied voice decision for mode handling by the caller.
+     * The device query runs outside the monitor (binder IPC); only the
+     * flag/builder group below holds it, mutually exclusive with the
+     * teardown write in stopScoWithNotify.
+     */
+    private boolean updateRouteBuilder() {
+        boolean mediaPresent = queryMediaDevicesPresent();
+        synchronized (this) {
+            return updateRouteBuilderLocked(mediaPresent);
+        }
+    }
+
+    /** Route decision + builder group; caller holds the service monitor. */
+    private boolean updateRouteBuilderLocked(boolean mediaPresent) {
+        boolean sco = mScoRouteActive;
+        boolean media = !sco && mediaPresent;
+        mMediaRouteSelected = media;
+        boolean voice = computeVoiceRoute(sco, media);
+        mAppliedVoiceRoute = voice;
+        mAudioBuilder.setScoEnabled(sco);
+        mAudioBuilder.setVoiceRouteEnabled(voice);
+        if (voice) {
+            mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION);
+            mAudioBuilder.setAudioStream(sco ? AudioManager.STREAM_VOICE_CALL : mHandsetAudioStream);
+        } else {
+            mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            mAudioBuilder.setAudioStream(AudioManager.STREAM_MUSIC);
+        }
+        return voice;
+    }
+
+    private void applyVoiceMode(boolean voice) {
+        if (voice) {
+            ensureVoiceMode();
+        } else {
+            releaseVoiceMode();
+        }
+    }
+
+    /**
+     * Single funnel for every live route change: recomputes the decision,
+     * holds or releases the voice mode around pipeline creation (mode first,
+     * capture after, per the HAL coupling requirement), then refreshes cues
+     * and observers. Skips the reload when the applied route is unchanged
+     * unless forceReload (settings path) demands it.
+     */
+    private void applyAudioRoute(String reason, boolean forceReload) {
+        // Snapshot outside the group lock: all funnel callers are main-Looper
+        // confined (device recompute, settings, SCO callbacks, posted sync),
+        // so no concurrent funnel rewrite is expected; a surprise concurrent
+        // rewrite would at worst cause one redundant idempotent reload.
+        boolean before = mAppliedVoiceRoute;
+        // Settle bookkeeping: consume the fired flag. Fresh edges never
+        // cancel outstanding protection here — arming below re-posts when
+        // still uncovered — and nothing ever restores the pending flag
+        // without posting, so the flag can never claim protection no
+        // callback provides (no wedge). Volatile suffices: no
+        // read-modify-restore spans threads, only single writes.
+        boolean settle = mSettleFired;
+        mSettleFired = false;
+        boolean voice = updateRouteBuilder();
+        // Capture before applyVoiceMode clears it: did WE hold the mode for
+        // the episode now ending? Only our own claimed hold implicates us in
+        // any system SCO raised during it (see counter method below).
+        boolean wasClaimedHold = mVoiceModeHeld && mVoiceModeClaimed;
+        if (mConnectionState == ConnectionState.CONNECTED) {
+            applyVoiceMode(voice);
+            if (!voice) {
+                // Media won: clear foreign SCO BEFORE (re)creating the
+                // pipeline so no media lifetime starts while HFP is up.
+                counterUnrequestedSystemSco(wasClaimedHold);
+            }
+        } else {
+            // Disconnected (or never connected): device attach/detach must
+            // not re-acquire global IN_COMM with no pipeline and no call.
+            // The next sync re-holds via onConnectionSynchronized.
+            releaseVoiceMode();
+        }
+        if ((forceReload || voice != before) && mAudioHandler != null && mAudioHandler.isInitialized()
+                && mConnectionState == ConnectionState.CONNECTED) {
+            try {
+                createAudioHandler();
+                Log.i(TAG, reason + "; audio pipeline recreated (" + (voice ? "voice" : "media") + ").");
+            } catch (AudioException e) {
+                Log.e(TAG, "Route-change audio reload failed", e);
+                onConnectionWarning(e.getMessage());
+            }
+        }
+        boolean routeChanged = forceReload || voice != before;
+        if (routeChanged) {
+            onAudioRouteChanged();
+            mCallbacks.onAudioRouteChanged();
+        }
+        // Else: unchanged route — observers query live state on demand and
+        // the SCO bit has its own direct emit, so skip the heavy cue rebuild
+        // (SoundPool/proximity) on every irrelevant device edge.
+        boolean voiceByAbsence = voice && !mScoRouteActive && !mMediaRouteSelected;
+        boolean liveCall = mConnectionState == ConnectionState.CONNECTED;
+        if (voiceByAbsence && liveCall && (!settle || mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
+            // Fresh edge (!settle, entering or already-voice) or budgeted
+            // settle follow-up: exactly one check queued. Fresh edges reset
+            // the budget — each real BT change deserves full cover; settle
+            // runs consume it. No blind restore anywhere: the flag is set
+            // only beside a post, cleared on dispatch/teardown/reset.
+            if (!settle) {
+                mSettleAttempts = 0;
+            } else {
+                mSettleAttempts += 1;
+            }
+            mHandler.removeCallbacks(mRouteSettleRecompute);
+            mSettlePending = true;
+            mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
+        } else if (!voiceByAbsence || !liveCall) {
+            mHandler.removeCallbacks(mRouteSettleRecompute);
+            mSettlePending = false;
+            mSettleAttempts = 0;
+        }
+        // Else (settle budget exhausted): the dispatched check already
+        // cleared the flag; rest without cover until a fresh edge re-arms.
+    }
+
+    /**
+     * Tears down system-raised SCO audio that our transient voice hold may
+     * have triggered. When HFP attaches during a voice-by-absence window,
+     * the platform auto-establishes SCO (IN_COMM reads as an active call)
+     * even though SCO was never requested — and that link persists after we
+     * release the mode and flip to media, stranding the user on HFP instead
+     * of A2DP. Runs only when leaving a claimed hold for media with SCO
+     * unrequested and system SCO currently on; never touches our own
+     * confirmed SCO, and never runs while disconnected. Skipped during a
+     * genuine cellular call (MODE_IN_CALL): carrier SCO is never ours to
+     * tear down. That check is racy in principle; accepted against the
+     * certain stranding it repairs.
+     */
+    private void counterUnrequestedSystemSco(boolean wasClaimedHold) {
+        if (mAudioManager == null) {
+            return;
+        }
+        if (!wasClaimedHold || mScoRequested || mScoRouteActive) {
+            return;
+        }
+        if (mConnectionState != ConnectionState.CONNECTED) {
+            return;
+        }
+        try {
+            if (mAudioManager.getMode() == AudioManager.MODE_IN_CALL) {
+                return;
+            }
+        } catch (Exception e) {
+            return;
+        }
+        if (!isSystemScoOn()) {
+            return;
+        }
+        try {
+            // Mirror our manager's own release: the communication-device
+            // path on S+ (where legacy stop is unreliable against a
+            // device-path selection), legacy stop below.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                mAudioManager.clearCommunicationDevice();
+            } else {
+                mAudioManager.stopBluetoothSco();
+            }
+            Log.i(TAG, "Cleared unrequested system SCO after media flip");
+        } catch (Exception e) {
+            Log.w(TAG, "Unrequested SCO clear failed", e);
+        }
+    }
+
+    /** Whether platform SCO audio is currently up, independent of our manager. */
+    private boolean isSystemScoOn() {
+        if (mAudioManager == null) {
+            return false;
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioDeviceInfo info = mAudioManager.getCommunicationDevice();
+                return info != null && info.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
+            } else {
+                @SuppressWarnings("deprecation")
+                boolean on = mAudioManager.isBluetoothScoOn();
+                return on;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+    /** One-line field diagnostic: which device types an edge carried. */
+    private void logDeviceTypes(String edge, AudioDeviceInfo[] devices) {
+        if (devices == null) {
+            Log.i(TAG, "Route devices " + edge + ": none");
+            return;
+        }
+        StringBuilder types = new StringBuilder();
+        for (AudioDeviceInfo device : devices) {
+            if (types.length() > 0) {
+                types.append(',');
+            }
+            types.append(device == null ? -1 : device.getType());
+        }
+        Log.i(TAG, "Route devices " + edge + ": [" + types + "]");
     }
 
     /**
@@ -805,6 +1423,18 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return;
         }
         if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
+            // Legacy bring-up (API < 31) runs startBluetoothSco, whose
+            // platform usage holds MODE_IN_COMMUNICATION; the stripped
+            // manager no longer sets it, so pre-hold here (modern
+            // setCommunicationDevice needs no mode). Gated on a voice
+            // decision: pre-holding for a bring-up that fails on a media
+            // route would leak the hold past the early-return teardown.
+            // The funnel owns the matching release on media flips;
+            // disconnect/destroy cover rest.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+                    && computeVoiceRoute(mScoRouteActive, queryMediaDevicesPresent())) {
+                ensureVoiceMode();
+            }
             mScoManager.start();
         } else if (!mScoManager.isIdle()) {
             // Skip the platform round-trip when already idle; stop() is safe
@@ -814,20 +1444,73 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Recreates the audio pipeline so a route change takes effect on both
-     * capture and playback. Route callbacks (already on the main thread)
-     * converge here; no-ops unless the pipeline is live.
+     * Starts a requested-but-idle SCO bring-up when an HFP device attaches
+     * mid-call. Bring-up otherwise only runs at sync and on toggle changes,
+     * so a headset powered on later (e.g. after an earlier NO_DEVICE
+     * failure) would never establish SCO until the next toggle. Runs only
+     * from IDLE while requested and connected; the manager itself drops
+     * duplicate starts, and failure still reports through the normal toast.
+     * Runs on the main Looper (device callback thread).
+     *
+     * <p>Trigger coverage: a classic-HFP SCO entry in the added array is
+     * the fast path. Some HALs surface HFP only via A2DP-then-nothing (or
+     * stagger it past the callback), so any Bluetooth output add also
+     * polls the manager's own availability query before giving up — the
+     * same query bring-up itself uses pre-audio. LE Audio rides the media
+     * path by design and needs no trigger. Below API 23 no device callback
+     * exists (minSdk 21): sync and toggle paths still cover those devices,
+     * late power-on does not.
+     *
+     * <p>Each triggering edge may re-toast on persistent failure
+     * (permission denied, no device): accepted as edge-driven feedback.
      */
-    private void reloadAudioForRoute(String reason) {
-        if (mAudioHandler != null && mAudioHandler.isInitialized()
-                && mConnectionState == ConnectionState.CONNECTED) {
-            try {
-                createAudioHandler();
-                Log.i(TAG, reason + "; audio pipeline recreated.");
-            } catch (AudioException e) {
-                Log.e(TAG, "Route-change audio reload failed", e);
-                onConnectionWarning(e.getMessage());
+    private void maybeStartRequestedSco(AudioDeviceInfo[] added) {
+        // Main-serialized with the toggle path (both main-Looper) with
+        // volatile reads; unlike binder-originated retryBluetoothSco this
+        // needs no snapshot block, only the post-start re-validation below.
+        if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || mScoManager == null) {
+            return;
+        }
+        if (!mScoManager.isIdle()) {
+            return;
+        }
+        if (added == null) {
+            return;
+        }
+        boolean scoInAdded = false;
+        boolean anyBtInAdded = false;
+        for (AudioDeviceInfo device : added) {
+            if (device == null) {
+                continue;
             }
+            switch (device.getType()) {
+                case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                    scoInAdded = true;
+                    break;
+                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                case AudioDeviceInfo.TYPE_BLE_SPEAKER:
+                    anyBtInAdded = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        // Fast path: HFP surfaced directly. Fallback: any BT add with an
+        // SCO device actually available (A2DP-first stagger, quiet HALs).
+        // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
+        if (!scoInAdded && !(anyBtInAdded && mScoManager.isScoDeviceAvailable())) {
+            return;
+        }
+        Log.i(TAG, "Bluetooth headset attached with SCO requested; starting bring-up");
+        HumlaConnection connection = mConnection;
+        updateBluetoothScoRoute();
+        // A disconnect may have raced us (state still reads CONNECTED
+        // until the async teardown flips it): mirror the retry
+        // re-validation so a stale start cannot outlive teardown.
+        if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
+                || !mScoRequested) {
+            mScoManager.stop();
         }
     }
 
@@ -839,9 +1522,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private static boolean bundleHasOtherAudioKeys(Bundle extras) {
         return extras.containsKey(EXTRAS_AMPLITUDE_BOOST)
                 || extras.containsKey(EXTRAS_TRANSMIT_MODE)
-                || extras.containsKey(EXTRAS_INPUT_RATE)
                 || extras.containsKey(EXTRAS_INPUT_QUALITY)
-                || extras.containsKey(EXTRAS_AUDIO_SOURCE)
                 || extras.containsKey(EXTRAS_AUDIO_STREAM)
                 || extras.containsKey(EXTRAS_FRAMES_PER_PACKET)
                 || extras.containsKey(EXTRAS_HALF_DUPLEX)
@@ -958,7 +1639,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioBuilder.setInputMode(inputMode);
         }
         if (extras.containsKey(EXTRAS_INPUT_RATE)) {
-            mAudioBuilder.setInputSampleRate(extras.getInt(EXTRAS_INPUT_RATE));
+            // Ignored: fixed 48 kHz (see deprecation above). Deliberately
+            // excluded from bundleHasOtherAudioKeys so a rate-only change
+            // cannot reload the pipeline for a no-op.
+            Log.d(TAG, "Ignoring deprecated EXTRAS_INPUT_RATE; capture is fixed 48 kHz");
         }
         if (extras.containsKey(EXTRAS_INPUT_QUALITY)) {
             mAudioBuilder.setTargetBitrate(extras.getInt(EXTRAS_INPUT_QUALITY));
@@ -978,10 +1662,18 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
         }
         if (extras.containsKey(EXTRAS_AUDIO_SOURCE)) {
-            mAudioBuilder.setAudioSource(extras.getInt(EXTRAS_AUDIO_SOURCE));
+            // Ignored: route policy owns the capture source (see
+            // updateRouteBuilder). Debug-level: the app sender still emits
+            // the deprecated key on every connect.
+            Log.d(TAG, "Ignoring deprecated EXTRAS_AUDIO_SOURCE; route policy owns the source");
         }
         if (extras.containsKey(EXTRAS_AUDIO_STREAM)) {
-            mAudioBuilder.setAudioStream(extras.getInt(EXTRAS_AUDIO_STREAM));
+            // Handset-derived intent (earpiece vs speakerphone voice); the
+            // route policy re-derives the effective stream before every
+            // pipeline creation, so mid-call toggles apply on recreate.
+            // Funnel-only: no direct builder write here (it would be
+            // overwritten by the reload below anyway).
+            mHandsetAudioStream = extras.getInt(EXTRAS_AUDIO_STREAM);
         }
         if (extras.containsKey(EXTRAS_FRAMES_PER_PACKET)) {
             int fpp = extras.getInt(EXTRAS_FRAMES_PER_PACKET);
@@ -1058,9 +1750,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // Reload audio subsystem if initialized. Guarded on CONNECTED as well
         // as initialization: a disconnect racing a settings change must not
         // resurrect the pipeline (or trip the DEBUG assertion inside).
+        // Routed through the single funnel so source/stream/mode follow the
+        // current route instead of the raw bundle values.
         if (!suppressReload && mAudioHandler != null && mAudioHandler.isInitialized()
                 && mConnectionState == ConnectionState.CONNECTED) {
-            createAudioHandler();
+            applyAudioRoute("settings changed", true);
             Log.i(TAG, "Audio subsystem reloaded after settings change.");
         }
         return reconnectNeeded;

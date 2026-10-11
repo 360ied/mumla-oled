@@ -20,6 +20,7 @@ package se.lublin.humla.protocol;
 
 import android.content.Context;
 import android.media.AudioManager;
+import android.util.Log;
 
 import com.google.protobuf.ByteString;
 
@@ -53,8 +54,12 @@ import se.lublin.humla.util.HumlaNetworkListener;
 public class AudioHandler extends HumlaNetworkListener
         implements AudioInput.AudioInputListener, NativeAudioInputEngine.AudioInputEngineListener {
 
+    // Canonical 48 kHz / 480-sample (10 ms) framing shared with AudioInput
+    // and the native engine: keep all three in agreement (no single source;
+    // JNI and the capture layer each need their own constants).
     public static final int SAMPLE_RATE = 48000;
     public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
+    private static final String TAG = "AudioHandler";
 
     private final Context mContext;
     private final HumlaLogger mLogger;
@@ -67,10 +72,27 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile int mSession;
     private HumlaUDPMessageType mCodec;
 
+    // Route intent, not a literal stream: on the voice route, VOICE_CALL
+    // selects earpiece, anything else speakerphone (see initialize()).
+    // On the media route the value is ignored for output (always MUSIC).
     private final int mAudioStream;
     private final int mAudioSource;
+    /**
+     * Voice route (VoIP triple) vs media route. Set only at pipeline
+     * creation from the service route policy, mirroring setScoEnabled:
+     * live pipelines are recreated to apply changes.
+     */
+    private volatile boolean mVoiceRoute = true;
     private volatile int mBitrate;
     private volatile int mFramesPerPacket;
+    /**
+     * Construction-time targets that bandwidth adaptation degrades from and
+     * restores to (upstream parity: AudioInput reseeds from settings on
+     * every adjustBandwidth). Seeding from the live degraded values would
+     * ratchet quality down permanently after a transient cap.
+     */
+    private final int mTargetBitrate;
+    private final int mTargetFramesPerPacket;
     private volatile FramesPerPacketListener mFramesPerPacketListener;
     private final IInputMode mInputMode;
     private final float mAmplitudeBoost;
@@ -109,6 +131,8 @@ public class AudioHandler extends HumlaNetworkListener
 
     // Pre-allocated packet buffers for zero heap allocation on audio path
     private final Object mPacketBufferLock = new Object();
+    // Guards the live bitrate/fpp pair so readers never see a torn mix.
+    private final Object mBandwidthLock = new Object();
     private final byte[] mProtobufPacketBuffer = new byte[2048];
     private final byte[] mLegacyPacketBuffer = new byte[1024];
     private final PacketBuffer mLegacyDataStream = new PacketBuffer(mLegacyPacketBuffer, 1024);
@@ -137,6 +161,8 @@ public class AudioHandler extends HumlaNetworkListener
         mAudioStream = audioStream;
         mBitrate = targetBitrate;
         mFramesPerPacket = sanitizeFramesPerPacket(targetFramesPerPacket);
+        mTargetBitrate = targetBitrate;
+        mTargetFramesPerPacket = sanitizeFramesPerPacket(targetFramesPerPacket);
         mInputMode = inputMode;
         mAmplitudeBoost = amplitudeBoost;
         mHalfDuplex = halfDuplexEnabled;
@@ -171,13 +197,56 @@ public class AudioHandler extends HumlaNetworkListener
                 modelData,
                 this);
 
-        if (mInputMode instanceof ActivityInputMode) {
-            ActivityInputMode actMode = (ActivityInputMode) mInputMode;
-            mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
-        }
+        // Anything below owns system handles (native engine above, mic
+        // below): clean up on failure so a failed connect never abandons
+        // a live native handle or a held mic.
+        try {
+            if (mInputMode instanceof ActivityInputMode) {
+                ActivityInputMode actMode = (ActivityInputMode) mInputMode;
+                mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
+            }
 
-        mInput = new AudioInput(this, mAudioSource);
-        mOutput = new AudioOutput(mContext, mOutputListener);
+            AudioInput input = new AudioInput(this, mAudioSource);
+            try {
+                mOutput = new AudioOutput(mContext, mOutputListener);
+            } catch (Throwable t) {
+                // Output construction failed after capture was already
+                // holding the mic: shut it down before propagating. Errors
+                // must not leak either (same path as Exceptions).
+                try {
+                    input.shutdown();
+                } catch (Throwable ignored) {
+                }
+                throw t;
+            }
+            mInput = input;
+        } catch (Throwable t) {
+            // Covers AudioInput construction too: destroy the native engine
+            // on any failure, checked or fatal, without masking the original.
+            try {
+                mNativeEngine.destroy();
+            } catch (Throwable ignored) {
+            }
+            throw t;
+        }
+    }
+
+    /** Destroys capture + native engine made owned before a later init step failed. */
+    private void destroyInputAndEngine() {
+        // Best-effort teardown must never mask the original failure, fatal
+        // or otherwise: Throwable guards throughout, original rethrown.
+        try {
+            if (mInput != null) {
+                mInput.shutdown();
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (mNativeEngine != null) {
+                mNativeEngine.destroy();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static int sanitizeFramesPerPacket(int fpp) {
@@ -196,16 +265,34 @@ public class AudioHandler extends HumlaNetworkListener
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed;
 
-        mOutput.startPlaying(mScoActive ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
+        try {
+            mOutput.startPlaying((mVoiceRoute || mScoActive) ? AudioManager.STREAM_VOICE_CALL
+                    : AudioManager.STREAM_MUSIC);
+        } catch (Throwable t) {
+            // The constructor owns a native engine + capture (AudioRecord +
+            // HW effects): destroy the partial pipeline before rethrow so
+            // the caller never abandons a half-built handler holding the mic.
+            // Throwable-wide: an unchecked or fatal throw from startPlaying
+            // (e.g. SecurityException) must not skip teardown either.
+            destroyInputAndEngine();
+            throw t;
+        }
+        // The stream int is route intent on the voice route (see field):
+        // earpiece vs speakerphone. Set explicitly both ways — the flag is
+        // global AudioManager state and a speaker-then-earpiece recreate
+        // must clear it; media routes clear it for hygiene (voice-call
+        // routing ignores it there, but no stale flag may leak across).
+        setSpeakerphone(mVoiceRoute && !mScoActive && mAudioStream != AudioManager.STREAM_VOICE_CALL);
         mInitialized = true;
         updateMuteState(isMuted);
     }
 
     private void startRecording() {
-        synchronized (mInput) {
-            if (!mInput.isRecording()) {
-                mInput.startRecording();
-            }
+        // No outer hold on mInput: AudioInput entry points self-synchronize
+        // and join outside their monitor; holding it here would re-pin the
+        // lock across startRecording's bounded join.
+        if (!mInput.isRecording()) {
+            mInput.startRecording();
         }
     }
 
@@ -274,6 +361,24 @@ public class AudioHandler extends HumlaNetworkListener
         mCodec = codec;
     }
 
+    /** Explicit earpiece/speakerphone routing for the voice route. */
+    private void setSpeakerphone(boolean on) {
+        AudioManager audioManager = null;
+        try {
+            audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP route: no AudioManager (" + e.getMessage() + ")");
+            return;
+        }
+        if (audioManager == null) return;
+        try {
+            audioManager.setSpeakerphoneOn(on);
+            Log.i(TAG, "VoIP route: speakerphone " + (on ? "on" : "off"));
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP route: setSpeakerphoneOn threw (" + e.getMessage() + ")");
+        }
+    }
+
     public int getAudioStream() {
         return mAudioStream;
     }
@@ -286,8 +391,11 @@ public class AudioHandler extends HumlaNetworkListener
         return SAMPLE_RATE;
     }
 
+    /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     public int getBitrate() {
-        return mBitrate;
+        synchronized (mBandwidthLock) {
+            return mBitrate;
+        }
     }
 
     /**
@@ -301,6 +409,8 @@ public class AudioHandler extends HumlaNetworkListener
         int degradedBitrate = bitrate;
         int degradedFpp = framesPerPacket;
 
+        // fpp==6 is already the largest packet: no growth branch applies by
+        // design, so only the bitrate loop below degrades (pinned by test).
         if (HumlaConnection.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth) {
             if (degradedFpp <= 4 && maxBandwidth <= 32000) {
                 degradedFpp = 4;
@@ -319,29 +429,47 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     private void setMaxBandwidth(int maxBandwidth) {
-        EffectiveAudioConfig config = computeEffectiveConfig(mBitrate, mFramesPerPacket, maxBandwidth);
-        if (config.bitrate == mBitrate && config.framesPerPacket == mFramesPerPacket) {
-            return;
+        // Seed from construction targets, not live values, so a relaxed or
+        // cleared cap restores quality instead of ratcheting (see fields).
+        EffectiveAudioConfig config = computeEffectiveConfig(mTargetBitrate, mTargetFramesPerPacket, maxBandwidth);
+        // Decide and publish under one lock (single main/TCP-serialized
+        // writer today; the lock documents it), then fan out and re-drive
+        // outside: torn pairs would misreport bandwidth, and callbacks must
+        // never run while holding this lock. The no-op check lives inside
+        // too so check-then-write cannot interleave.
+        final EffectiveAudioConfig applied;
+        final int oldFramesPerPacket;
+        final boolean changed;
+        synchronized (mBandwidthLock) {
+            changed = config.bitrate != mBitrate || config.framesPerPacket != mFramesPerPacket;
+            if (!changed) {
+                return;
+            }
+            oldFramesPerPacket = mFramesPerPacket;
+            mBitrate = config.bitrate;
+            mFramesPerPacket = config.framesPerPacket;
+            applied = config;
         }
-        int oldFramesPerPacket = mFramesPerPacket;
-        mBitrate = config.bitrate;
-        mFramesPerPacket = config.framesPerPacket;
         if (mNativeEngine != null) {
-            mNativeEngine.setBitrate(mBitrate);
-            mNativeEngine.setFramesPerPacket(mFramesPerPacket);
+            mNativeEngine.setBitrate(applied.bitrate);
+            mNativeEngine.setFramesPerPacket(applied.framesPerPacket);
         }
         mLogger.logInfo(mContext.getString(R.string.audio_max_bandwidth,
-                maxBandwidth / 1000, mBitrate / 1000, mFramesPerPacket * Constants.FRAME_DURATION_MS));
-        if (config.framesPerPacket != oldFramesPerPacket) {
+                maxBandwidth / 1000, applied.bitrate / 1000,
+                applied.framesPerPacket * Constants.FRAME_DURATION_MS));
+        if (applied.framesPerPacket != oldFramesPerPacket) {
             FramesPerPacketListener listener = mFramesPerPacketListener; // volatile read
             if (listener != null) {
-                listener.onEffectiveFramesPerPacketChanged(config.framesPerPacket);
+                listener.onEffectiveFramesPerPacketChanged(applied.framesPerPacket);
             }
         }
     }
 
+    /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     public int getFramesPerPacket() {
-        return mFramesPerPacket;
+        synchronized (mBandwidthLock) {
+            return mFramesPerPacket;
+        }
     }
 
     public void setFramesPerPacketListener(FramesPerPacketListener listener) {
@@ -367,6 +495,15 @@ public class AudioHandler extends HumlaNetworkListener
         mScoActive = scoEnabled;
     }
 
+    /**
+     * Selects the VoIP triple (voice source/mode/usage) vs the media path.
+     * Set only at pipeline creation from the service route policy, mirroring
+     * setScoEnabled: live pipelines must be recreated to apply it.
+     */
+    public void setVoiceRouteEnabled(boolean voiceRoute) {
+        mVoiceRoute = voiceRoute;
+    }
+
     public void setAdaptiveLevelerEnabled(boolean enabled) {
         mAdaptiveLevelerEnabled = enabled;
         if (mNativeEngine != null) {
@@ -379,13 +516,16 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public int getCurrentBandwidth() {
-        return HumlaConnection.calculateAudioBandwidth(mBitrate, mFramesPerPacket);
+        synchronized (mBandwidthLock) {
+            return HumlaConnection.calculateAudioBandwidth(mBitrate, mFramesPerPacket);
+        }
     }
 
     public synchronized void shutdown() {
-        synchronized (mInput) {
-            mInput.shutdown();
-        }
+        // Never hold mInput across shutdown: it joins the capture thread,
+        // which needs the AudioInput monitor for release/enableEffects.
+        // (Same shape as the mOutput rule below.)
+        mInput.shutdown();
         // Never hold mOutput across stopPlaying: it joins the render thread,
         // which needs the AudioOutput monitor each loop to observe shutdown
         // and exit. Holding it here deadlocks disconnect (main in join,
@@ -416,7 +556,27 @@ public class AudioHandler extends HumlaNetworkListener
 
     @Override
     public void messageServerSync(Mumble.ServerSync msg) {
+        // Match the sibling guards: post-shutdown delivery must not re-log
+        // or re-drive the (destroyed) native engine.
+        if (!mInitialized) {
+            return;
+        }
         setMaxBandwidth(msg.hasMaxBandwidth() ? msg.getMaxBandwidth() : -1);
+    }
+
+    @Override
+    public void messageServerConfig(Mumble.ServerConfig msg) {
+        // Upstream parity (AudioInput::setMaxBandwidth from ServerConfig):
+        // a mid-call admin cap change re-degrades the encoder without a
+        // reconnect. Same guard as ServerSync above. Absent field is a
+        // no-op (murmur always sets it live; only the pre-registration
+        // burst omits it, which never reaches this handler).
+        if (!mInitialized) {
+            return;
+        }
+        if (msg.hasMaxBandwidth()) {
+            setMaxBandwidth(msg.getMaxBandwidth());
+        }
     }
 
     @Override
@@ -500,7 +660,16 @@ public class AudioHandler extends HumlaNetworkListener
 
     @Override
     public void onAudioPacketEncoded(byte[] data, int length, int frames, boolean isTerminator, long frameNumber) {
+        // length is authoritative; frames is informational from the native
+        // engine (actual frames are implicit in length). Zero-length
+        // terminators never occur: the native engine encodes silence instead
+        // of emitting empty terminators, so length<=0 is safely dropped —
+        // with a warning when a terminator is dropped, since that would
+        // strand the peer's talking indicator if the native contract changes.
         if (data == null || length <= 0 || mEncodeListener == null) {
+            if (isTerminator && length <= 0 && data != null && mEncodeListener != null) {
+                Log.w(TAG, "Dropping zero-length terminator; peer talk state may strand");
+            }
             return;
         }
 
@@ -522,32 +691,47 @@ public class AudioHandler extends HumlaNetworkListener
                     mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
                     System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
                     mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+                } else {
+                    Log.w(TAG, "Dropping oversize protobuf audio packet (" + totalLen + " bytes)");
                 }
             } else {
-                int flags = 0;
-                flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
-                flags |= mTargetId & 0x1F;
-
-                mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
-                mLegacyDataStream.rewind();
-                mLegacyDataStream.skip(1);
-                mLegacyDataStream.writeLong(frameNumber);
-
-                long header = length & ((1 << 13) - 1);
-                if (isTerminator) {
-                    header |= (1 << 13);
+                // Worst case: 1 flag byte + 2 varints (<=10 bytes each) +
+                // payload. Pre-check so overflow drops with a log instead of
+                // throwing BufferOverflowException to the native thread.
+                if (21 + length > mLegacyPacketBuffer.length) {
+                    Log.w(TAG, "Dropping oversize legacy audio packet (payload " + length + " bytes)");
+                    return;
                 }
-                mLegacyDataStream.writeLong(header);
-                mLegacyDataStream.append(data, length);
+                try {
+                    int flags = 0;
+                    flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
+                    flags |= mTargetId & 0x1F;
 
-                int totalLen = mLegacyDataStream.size();
-                mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
+                    mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
+                    mLegacyDataStream.rewind();
+                    mLegacyDataStream.skip(1);
+                    mLegacyDataStream.writeLong(frameNumber);
+
+                    long header = length & ((1 << 13) - 1);
+                    if (isTerminator) {
+                        header |= (1 << 13);
+                    }
+                    mLegacyDataStream.writeLong(header);
+                    mLegacyDataStream.append(data, length);
+
+                    int totalLen = mLegacyDataStream.size();
+                    mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
+                } catch (java.nio.BufferOverflowException e) {
+                    Log.w(TAG, "Dropping legacy audio packet after buffer overflow", e);
+                }
             }
         }
     }
 
     @Override
-    public void onTalkingStateChanged(boolean isTalking, float peakEnergy) {
+    public synchronized void onTalkingStateChanged(boolean isTalking, float peakEnergy) {
+        // Synchronized: concurrent native callbacks must not duplicate or
+        // drop transitions via check-then-act on mTalking.
         if (mTalking != isTalking) {
             mTalking = isTalking;
             if (mEncodeListener != null) {
@@ -630,9 +814,17 @@ public class AudioHandler extends HumlaNetworkListener
         private int mInputSampleRate;
         private float mAmplitudeBoost;
         private boolean mHalfDuplexEnabled;
-        // Plain like neighbors: the builder is configured single-threaded on
-        // the service main thread; only the built handler's mScoActive is volatile.
+        // Plain like neighbors: most fields are programmed on the service
+        // main thread, while the route group (sco/voice/source/stream) is
+        // written under the HumlaService monitor (fine-grained blocks in
+        // updateRouteBuilderLocked, stopScoWithNotify, and onDestroy; the
+        // device query itself runs outside it); only the built handler's
+        // mScoActive is volatile.
         private boolean mScoEnabled;
+        // Defaults true to preserve step-2a behavior until the service
+        // route policy drives it (C2); the service sets this explicitly
+        // on every route application either way.
+        private boolean mVoiceRouteEnabled = true;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;
         private AudioEncodeListener mEncodeListener;
@@ -640,12 +832,12 @@ public class AudioHandler extends HumlaNetworkListener
         private AudioOutput.AudioOutputListener mTalkingListener;
 
         public Builder setContext(Context context) {
-            mContext = context;
+            mContext = java.util.Objects.requireNonNull(context, "context");
             return this;
         }
 
         public Builder setLogger(HumlaLogger logger) {
-            mLogger = logger;
+            mLogger = java.util.Objects.requireNonNull(logger, "logger");
             return this;
         }
 
@@ -673,6 +865,12 @@ public class AudioHandler extends HumlaNetworkListener
             return mTargetFramesPerPacket;
         }
 
+        /**
+         * @deprecated Fixed 48 kHz end to end: AudioInput and the native
+         * engine hardcode 48000/480 by design, so this value is accepted
+         * and ignored. Retained for API compatibility; do not rely on it.
+         */
+        @Deprecated
         public Builder setInputSampleRate(int inputSampleRate) {
             mInputSampleRate = inputSampleRate;
             return this;
@@ -697,13 +895,22 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
+        /**
+         * Selects the VoIP triple vs the media path. Pass the service
+         * route policy value (see {@link AudioHandler#setVoiceRouteEnabled}).
+         */
+        public Builder setVoiceRouteEnabled(boolean voiceRouteEnabled) {
+            mVoiceRouteEnabled = voiceRouteEnabled;
+            return this;
+        }
+
         public Builder setAdaptiveLevelerEnabled(boolean adaptiveLevelerEnabled) {
             mAdaptiveLevelerEnabled = adaptiveLevelerEnabled;
             return this;
         }
 
         public Builder setEncodeListener(AudioEncodeListener encodeListener) {
-            mEncodeListener = encodeListener;
+            mEncodeListener = java.util.Objects.requireNonNull(encodeListener, "encodeListener");
             return this;
         }
 
@@ -718,7 +925,7 @@ public class AudioHandler extends HumlaNetworkListener
         }
 
         public Builder setInputMode(IInputMode inputMode) {
-            mInputMode = inputMode;
+            mInputMode = java.util.Objects.requireNonNull(inputMode, "inputMode");
             return this;
         }
 
@@ -731,6 +938,7 @@ public class AudioHandler extends HumlaNetworkListener
                     mEncodeListener, mTalkingListener);
             handler.setFramesPerPacketListener(mFramesPerPacketListener);
             handler.setScoEnabled(mScoEnabled);
+            handler.setVoiceRouteEnabled(mVoiceRouteEnabled);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
         }

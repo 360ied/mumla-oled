@@ -20,7 +20,6 @@ package se.lublin.mumla.app;
 import android.content.Context;
 import android.content.Intent;
 import android.media.AudioManager;
-import android.media.MediaRecorder;
 import android.os.AsyncTask;
 
 import java.util.ArrayList;
@@ -39,25 +38,34 @@ import se.lublin.mumla.util.MumlaTrustStore;
  * Created by andrew on 20/08/14.
  */
 public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
-    private Context mContext;
-    private MumlaDatabase mDatabase;
-    private Settings mSettings;
+    private final Context mContext;
+    private final MumlaDatabase mDatabase;
+    private final Settings mSettings;
 
     public ServerConnectTask(Context context, MumlaDatabase database) {
-        mContext = context;
+        // Application context: this task can outlive the activity across
+        // rotation, and every use here (resources, intents, startService)
+        // is safe on the application context.
+        mContext = context.getApplicationContext();
         mDatabase = database;
-        mSettings = Settings.getInstance(context);
+        mSettings = Settings.getInstance(mContext);
     }
 
     @Override
     protected Intent doInBackground(Server... params) {
+        if (params == null || params.length == 0 || params[0] == null) {
+            return null;
+        }
         Server server = params[0];
 
         /* Convert input method defined in settings to an integer format used by Humla. */
         int inputMethod = mSettings.getHumlaInputMethod();
 
-        int audioSource = mSettings.isHandsetMode() ?
-                MediaRecorder.AudioSource.DEFAULT : MediaRecorder.AudioSource.MIC;
+        // Route intent only (earpiece vs speakerphone voice triple): the
+        // service route policy derives the effective source (voice routes
+        // capture VOICE_COMMUNICATION, media routes MIC) and stream before
+        // every pipeline creation; see HumlaService.updateRouteBuilder.
+        // (EXTRAS_AUDIO_SOURCE is deprecated and intentionally not sent.)
         // Voice-call stream only pre-confirm when handset mode is on: the
         // service selects it on confirmed SCO, so starting there early would
         // misroute the failure fallback. See EXTRAS_BLUETOOTH_SCO.
@@ -75,8 +83,7 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         connectIntent.putExtra(HumlaService.EXTRAS_INPUT_RATE, mSettings.getInputSampleRate());
         connectIntent.putExtra(HumlaService.EXTRAS_INPUT_QUALITY, mSettings.getInputQuality());
         connectIntent.putExtra(HumlaService.EXTRAS_FORCE_TCP, mSettings.isTcpForced());
-        connectIntent.putStringArrayListExtra(HumlaService.EXTRAS_ACCESS_TOKENS, (ArrayList<String>) mDatabase.getAccessTokens(server.getId()));
-        connectIntent.putExtra(HumlaService.EXTRAS_AUDIO_SOURCE, audioSource);
+        connectIntent.putStringArrayListExtra(HumlaService.EXTRAS_ACCESS_TOKENS, new ArrayList<>(mDatabase.getAccessTokens(server.getId())));
         connectIntent.putExtra(HumlaService.EXTRAS_AUDIO_STREAM, audioStream);
         connectIntent.putExtra(HumlaService.EXTRAS_FRAMES_PER_PACKET, mSettings.getFramesPerPacket());
         connectIntent.putExtra(HumlaService.EXTRAS_TRUST_STORE, MumlaTrustStore.getTrustStorePath(mContext));
@@ -86,8 +93,8 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         connectIntent.putExtra(HumlaService.EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
         connectIntent.putExtra(HumlaService.EXTRAS_ADAPTIVE_LEVELER, mSettings.isAdaptiveLevelerEnabled());
         if (server.isSaved()) {
-            ArrayList<Integer> muteHistory = (ArrayList<Integer>) mDatabase.getLocalMutedUsers(server.getId());
-            ArrayList<Integer> ignoreHistory = (ArrayList<Integer>) mDatabase.getLocalIgnoredUsers(server.getId());
+            ArrayList<Integer> muteHistory = new ArrayList<>(mDatabase.getLocalMutedUsers(server.getId()));
+            ArrayList<Integer> ignoreHistory = new ArrayList<>(mDatabase.getLocalIgnoredUsers(server.getId()));
             connectIntent.putExtra(HumlaService.EXTRAS_LOCAL_MUTE_HISTORY, muteHistory);
             connectIntent.putExtra(HumlaService.EXTRAS_LOCAL_IGNORE_HISTORY, ignoreHistory);
         }

@@ -89,4 +89,21 @@ public class AudioBandwidthDegradationTest extends TestCase {
     public void testInvalidFramesPerPacketSanitized() {
         assertConfig(40000, 2, 40000, 3, -1);
     }
+
+    /**
+     * Invalid frames-per-packet under a generous cap degrades nothing and
+     * sanitizes to the default at the end (3 takes no growth branch).
+     */
+    public void testInvalidFramesPerPacketCappedSanitized() {
+        assertConfig(40000, 2, 40000, 3, 256000);
+    }
+
+    /**
+     * Six-frame (120 ms) packets are already maximal: under a 32 kbps cap
+     * only the bitrate degrades, stepping 40000 -> 24000 at a fixed 7049 bps
+     * overhead, while the packet size stays 6.
+     */
+    public void testSixFramesDegradeBitrateOnly() {
+        assertConfig(24000, 6, 40000, 6, 32000);
+    }
 }
