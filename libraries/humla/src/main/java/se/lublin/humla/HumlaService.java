@@ -199,16 +199,20 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * One-shot settle recheck for voice-by-absence: BT profiles attach
      * staggered (HFP/ACL first, A2DP sink seconds later), so the first
      * device edge can see no media sink and slam the call onto
-     * speakerphone-voice. Entering voice without SCO arms one delayed
-     * recompute to catch the lagging A2DP edge even if it posts no second
+     * speakerphone-voice. Entering voice without SCO arms delayed
+     * recomputes to catch the lagging A2DP edge even if it posts no second
      * callback; still absent means a genuinely sink-less phone, correctly
-     * left on voice. Armed only on entry (not while already voice), so at
-     * most one extra recompute per transition — never a loop.
+     * left on voice. Bounded to two extra checks (~3s, ~6s) per episode —
+     * never a loop — covering typical profile-stagger windows.
      */
-    private static final long ROUTE_SETTLE_RECHECK_MS = 2500;
+    private static final long ROUTE_SETTLE_RECHECK_MS = 3000;
+    private static final int ROUTE_SETTLE_MAX_RECHECKS = 2;
+    private int mSettleAttempts;
+    private boolean mSettleFired;
     private final Runnable mRouteSettleRecompute = new Runnable() {
         @Override
         public void run() {
+            mSettleFired = true;
             applyAudioRoute("media settle recheck", false);
         }
     };
@@ -710,8 +714,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
         try {
             boolean voice = updateRouteBuilder();
+            // See funnel: only our own claimed hold implicates us in any
+            // system SCO raised during it.
+            boolean syncClaimedHold = mVoiceModeHeld && mVoiceModeClaimed;
             applyVoiceMode(voice);
             createAudioHandler();
+            if (!voice) {
+                counterUnrequestedSystemSco(syncClaimedHold);
+            }
         } catch (AudioException e) {
             Log.e(TAG, "Audio pipeline creation failed", e);
             onConnectionWarning(e.getMessage());
@@ -1090,11 +1100,18 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             if (outputs == null) {
                 return false;
             }
+            StringBuilder seen = new StringBuilder();
+            boolean found = false;
             for (AudioDeviceInfo device : outputs) {
                 if (device == null) {
                     continue;
                 }
-                switch (device.getType()) {
+                int type = device.getType();
+                if (seen.length() > 0) {
+                    seen.append(',');
+                }
+                seen.append(type);
+                switch (type) {
                     case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
                     case AudioDeviceInfo.TYPE_BLE_HEADSET:
                     case AudioDeviceInfo.TYPE_BLE_SPEAKER:
@@ -1103,11 +1120,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     case AudioDeviceInfo.TYPE_WIRED_HEADPHONES:
                     case AudioDeviceInfo.TYPE_USB_HEADSET:
                     case AudioDeviceInfo.TYPE_USB_DEVICE:
-                        return true;
+                        found = true;
+                        break;
                     default:
                         break;
                 }
             }
+            // INFO, not DEBUG: recomputes are rare (edges/settings/sync) and
+            // this line settles every "was A2DP visible?" question in the field.
+            Log.i(TAG, "Media-sink query: outputs=[" + seen + "] media=" + found);
+            return found;
         } catch (Exception e) {
             Log.w(TAG, "Media-sink query failed", e);
         }
@@ -1170,9 +1192,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // so no concurrent funnel rewrite is expected; a surprise concurrent
         // rewrite would at worst cause one redundant idempotent reload.
         boolean before = mAppliedVoiceRoute;
-        // A fresh edge supersedes any pending settle recheck below.
+        // A fresh edge supersedes any pending settle recheck below. The
+        // settle flag marks this run as settle-originated (same Looper, no race).
+        boolean settle = mSettleFired;
+        mSettleFired = false;
         mHandler.removeCallbacks(mRouteSettleRecompute);
         boolean voice = updateRouteBuilder();
+        // Capture before applyVoiceMode clears it: did WE hold the mode for
+        // the episode now ending? Only our own claimed hold implicates us in
+        // any system SCO raised during it (see counter method below).
+        boolean wasClaimedHold = mVoiceModeHeld && mVoiceModeClaimed;
         if (mConnectionState == ConnectionState.CONNECTED) {
             applyVoiceMode(voice);
         } else {
@@ -1202,11 +1231,75 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (voice && !mScoRouteActive && !mMediaRouteSelected && !before
                 && mConnectionState == ConnectionState.CONNECTED) {
             // Just entered voice-by-absence on a live call (see settle note
-            // above): recheck once for a lagging A2DP edge.
+            // above): recheck for a lagging A2DP edge.
+            mSettleAttempts = 0;
             mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
+        } else if (voice && !mScoRouteActive && !mMediaRouteSelected && settle
+                && mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1
+                && mConnectionState == ConnectionState.CONNECTED) {
+            // Settle recheck still seeing absence: one bounded follow-up for
+            // long staggers, then rest on the decision (a later edge re-arms
+            // on entry if the route ever leaves voice first).
+            mSettleAttempts += 1;
+            mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
+        } else if (!voice || mScoRouteActive || mConnectionState != ConnectionState.CONNECTED) {
+            mSettleAttempts = 0;
+        }
+        if (!voice) {
+            // Media won: tear down any system-raised SCO our transient
+            // voice hold may have triggered (see counter method).
+            counterUnrequestedSystemSco(wasClaimedHold);
         }
     }
 
+    /**
+     * Tears down system-raised SCO audio that our transient voice hold may
+     * have triggered. When HFP attaches during a voice-by-absence window,
+     * the platform auto-establishes SCO (IN_COMM reads as an active call)
+     * even though SCO was never requested — and that link persists after we
+     * release the mode and flip to media, stranding the user on HFP instead
+     * of A2DP. Runs only when leaving a claimed hold for media with SCO
+     * unrequested and system SCO currently on; never touches our own
+     * confirmed SCO, and never runs while disconnected. Residual risk: an
+     * overlapping genuine phone call's SCO would also match — accepted as
+     * vanishingly rare next to the certain stranding it repairs.
+     */
+    private void counterUnrequestedSystemSco(boolean wasClaimedHold) {
+        if (!wasClaimedHold || mScoRequested || mScoRouteActive) {
+            return;
+        }
+        if (mConnectionState != ConnectionState.CONNECTED) {
+            return;
+        }
+        if (!isSystemScoOn()) {
+            return;
+        }
+        try {
+            mAudioManager.stopBluetoothSco();
+            Log.i(TAG, "Stopped unrequested system SCO after media flip");
+        } catch (Exception e) {
+            Log.w(TAG, "Unrequested SCO stop failed", e);
+        }
+    }
+
+    /** Whether platform SCO audio is currently up, independent of our manager. */
+    private boolean isSystemScoOn() {
+        if (mAudioManager == null) {
+            return false;
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                AudioDeviceInfo info = mAudioManager.getCommunicationDevice();
+                return info != null && info.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
+            } else {
+                @SuppressWarnings("deprecation")
+                boolean on = mAudioManager.isBluetoothScoOn();
+                return on;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
     /**
      * Starts or stops SCO bring-up to match the requested toggle and the
      * connection state. Safe to call redundantly: the manager ignores
