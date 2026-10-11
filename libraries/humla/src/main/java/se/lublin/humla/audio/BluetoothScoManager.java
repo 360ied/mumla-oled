@@ -54,19 +54,26 @@ import java.util.Objects;
  *       (available since API 14, so no intent fallback is needed).</li>
  * </ul>
  *
- * <p>Locking: {@code mState}, {@code mAttempts}, {@code mSavedMode},
- * {@code mModeOwned}, {@code mModeExternallyOwned}, {@code mGeneration}, {@code mRouteHeld},
+ * <p>Locking: {@code mState}, {@code mAttempts}, {@code mGeneration}, {@code mRouteHeld},
  * {@code mRouteHeldEpoch},
  * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
  * the sequence instead of interleaving with it. Observer register/teardown
  * take the monitor themselves; their IPC is idempotent and fast. Route
- * release and mode restore always run outside the monitor. All listener
+ * release always runs outside the monitor. All listener
  * callbacks run outside the monitor: {@code onScoConnected} and
  * {@code onScoDisconnected} originate on main-thread platform callbacks;
  * {@code onScoFailed} is always posted to the main handler and dropped when
  * its session generation is stale, so {@code stop()} truly never callbacks.
+ *
+ * <p>AudioManager mode is deliberately NOT owned here. The service route
+ * policy ({@code HumlaService}) is the single owner of
+ * {@code MODE_IN_COMMUNICATION}: it holds the mode for the whole voice-route
+ * duration, which covers confirmed SCO sessions. Setting it here as well
+ * made the service classify our own hold as externally owned and give up
+ * its claim, stranding the mode on later media switches — so this manager
+ * only selects and releases the SCO route, never the mode.
  */
 public class BluetoothScoManager {
     private static final String TAG = "BluetoothScoManager";
@@ -114,12 +121,6 @@ public class BluetoothScoManager {
 
     private int mState = STATE_IDLE;
     private int mAttempts;
-    private int mSavedMode = AudioManager.MODE_NORMAL;
-    private boolean mModeOwned;
-    // True when IN_COMM was already held at start() by another owner (the
-    // service route policy, or a phone call): snapshot without claiming, and
-    // skip the restore on stop/fail/drop so we never clear someone else's mode.
-    private boolean mModeExternallyOwned;
     private int mGeneration;
     private boolean mRouteHeld;
     // Generation that holds the route request (see markRouteHeld): stale
@@ -198,86 +199,34 @@ public class BluetoothScoManager {
             fail(REASON_PERMISSION);
             return;
         }
-        final int currentMode;
-        try {
-            currentMode = mAudioManager.getMode();
-        } catch (Exception e) {
-            Log.w(TAG, "getMode threw", e);
-            fail(REASON_ERROR);
-            return;
-        }
-        synchronized (this) {
-            if (mState != STATE_STARTING) {
-                return; // stopped concurrently; nothing was changed yet.
-            }
-            mSavedMode = currentMode;
-            // Another owner (the service route policy holding IN_COMM, or a
-            // phone call) is already in communication mode: snapshot without
-            // claiming, and skip the restore on stop/fail/drop so we never
-            // clear someone else's mode.
-            mModeExternallyOwned = (currentMode == AudioManager.MODE_IN_COMMUNICATION);
-        }
-        try {
-            mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-        } catch (Exception e) {
-            Log.w(TAG, "setMode threw", e);
-            fail(REASON_ERROR);
-            return;
-        }
-        final boolean stopped;
-        synchronized (this) {
-            stopped = mState != STATE_STARTING;
-            if (!stopped) {
-                mModeOwned = true;
-            }
-        }
-        if (stopped) {
-            // Stopped while setMode was in flight: undo the mode change,
-            // which stop() could not know about. Outside the monitor: IPC.
-            try {
-                if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
-                    mAudioManager.setMode(currentMode);
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "setMode undo threw", e);
-            }
-            return;
-        }
         // Outside the monitor: bring-up IPC must never pin the lock that
-        // main-thread callbacks and stop() need.
+        // main-thread callbacks and stop() need. (No mode work here: the
+        // service route policy owns MODE_IN_COMMUNICATION; see class note.)
         attemptBringUp();
     }
 
     /**
-     * Tears down the link and restores the previous audio mode. Idempotent and
-     * safe to call when idle; a failed bring-up may still hold a requested
-     * route, so release is guarded by the hold flag. Never fires listener callbacks:
-     * the generation bump drops any already-posted failure on delivery.
+     * Tears down the link. Idempotent and safe to call when idle; a failed
+     * bring-up may still hold a requested route, so release is guarded by
+     * the hold flag. Never fires listener callbacks: the generation bump
+     * drops any already-posted failure on delivery. AudioManager mode is
+     * owned by the service route policy, never touched here (see class note).
      */
     public void stop() {
-        final int savedMode;
-        final boolean owned;
         synchronized (this) {
             // One atomic unit with the flip: callback removal, observer
             // teardown, and the generation bump cannot interleave with a
             // concurrent bring-up's register/arm, matching fail() and
             // dropActiveLink(). Unregister calls are idempotent and fast;
-            // route release and mode restore stay outside the monitor.
+            // route release stays outside the monitor.
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
             mState = STATE_IDLE;
-            savedMode = mSavedMode;
-            owned = mModeOwned && !mModeExternallyOwned;
-            mModeOwned = false;
-            mModeExternallyOwned = false;
             ++mGeneration;
         }
         // Guarded release: a stale hold must never clear another app's
         // routing selection.
         releaseRouteIfHeld();
-        if (owned) {
-            restoreMode(savedMode);
-        }
     }
 
     /** True when no bring-up is in progress and no link is up. */
@@ -598,8 +547,6 @@ public class BluetoothScoManager {
     }
 
     private void dropActiveLink() {
-        final int savedMode;
-        final boolean owned;
         synchronized (this) {
             if (mState != STATE_ACTIVE) {
                 return;
@@ -607,23 +554,14 @@ public class BluetoothScoManager {
             mState = STATE_IDLE;
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
-            savedMode = mSavedMode;
-            owned = mModeOwned && !mModeExternallyOwned;
-            mModeOwned = false;
-            mModeExternallyOwned = false;
         }
         releaseRouteIfHeld();
-        if (owned) {
-            restoreMode(savedMode);
-        }
         Log.i(TAG, "Bluetooth SCO disconnected");
         // Main-thread origin; see setActive.
         mListener.onScoDisconnected();
     }
 
     private void fail(String reason) {
-        final int savedMode;
-        final boolean owned;
         final int generation;
         synchronized (this) {
             if (mState == STATE_IDLE) {
@@ -632,16 +570,9 @@ public class BluetoothScoManager {
             mState = STATE_IDLE;
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
-            savedMode = mSavedMode;
-            owned = mModeOwned && !mModeExternallyOwned;
-            mModeOwned = false;
-            mModeExternallyOwned = false;
             generation = mGeneration;
         }
         releaseRouteIfHeld();
-        if (owned) {
-            restoreMode(savedMode);
-        }
         Log.w(TAG, "Bluetooth SCO failed: " + reason);
         // Always posted: failures can surface on the start() caller's thread.
         // The generation check drops delivery when stop() or a newer start()
@@ -712,18 +643,6 @@ public class BluetoothScoManager {
             }
         } catch (Exception e) {
             Log.w(TAG, "SCO route release threw", e);
-        }
-    }
-
-    private void restoreMode(int savedMode) {
-        try {
-            // Only touch the mode if SCO setup changed it; a phone call or
-            // another app may have legitimately moved it since.
-            if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
-                mAudioManager.setMode(savedMode);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Audio mode restore threw", e);
         }
     }
 
