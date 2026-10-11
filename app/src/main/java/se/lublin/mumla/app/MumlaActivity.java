@@ -129,6 +129,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private boolean mPermPostNotificationsAsked = false;
     private boolean mPermBluetoothAsked = false;
     private static final String STATE_SERVER_PENDING = "server_pending";
+    private static final String STATE_RECONNECT_TARGET = "reconnect_target";
     private static final String STATE_POST_NOTIF_ASKED = "post_notif_asked";
     private static final String STATE_BT_ASKED = "bt_asked";
 
@@ -150,12 +151,16 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     // reject-retry flows): unregistered in onDisconnected, or in onPause /
     // onDestroy if the activity dies first, so a stale callback can never
     // drive connectToServer on a destroyed activity with a closed database.
+    // The target Server survives separately so a pause-dropped intent can
+    // resume on rebind instead of vanishing silently.
     private HumlaObserver mReconnectObserver;
+    private Server mPendingReconnectServer;
 
     /** Registers a one-shot reconnect observer, replacing any pending one. */
-    private void setReconnectObserver(HumlaObserver observer) {
+    private void setReconnectObserver(HumlaObserver observer, Server target) {
         clearReconnectObserver();
         mReconnectObserver = observer;
+        mPendingReconnectServer = target;
         if (mService != null) {
             mService.registerObserver(observer);
         }
@@ -169,6 +174,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             }
             mReconnectObserver = null;
         }
+        mPendingReconnectServer = null;
     }
     // Tracks bindService success: the bind uses no BIND_AUTO_CREATE, so no
     // connection exists on a fresh launch before the first connect, and an
@@ -187,10 +193,31 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService = ((MumlaService.MumlaBinder) service).getService();
             mService.setSuppressNotifications(true);
             mService.registerObserver(mObserver);
-            // Re-arm a one-shot reconnect stored while unbound (its setter
-            // skips registration without a service); harmless if already set.
-            if (mReconnectObserver != null) {
-                mService.registerObserver(mReconnectObserver);
+            // Resume a switch/retry intent dropped by a pause (the observer
+            // was cleared, but the target survives): already-connected
+            // re-arms and disconnects, otherwise connect directly. Fires at
+            // most once — clear first so a second bind cannot double-drive.
+            if (mPendingReconnectServer != null) {
+                Server pending = mPendingReconnectServer;
+                clearReconnectObserver();
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                if (mService.isConnected()) {
+                    setReconnectObserver(new HumlaObserver() {
+                        @Override
+                        public void onDisconnected(HumlaException e) {
+                            clearReconnectObserver();
+                            if (isFinishing() || isDestroyed()) {
+                                return;
+                            }
+                            connectToServer(pending);
+                        }
+                    }, pending);
+                    mService.disconnect();
+                } else {
+                    connectToServer(pending);
+                }
             }
             mService.clearChatNotifications(); // Clear chat notifications on resume.
             mDrawerAdapter.notifyDataSetChanged();
@@ -213,9 +240,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         @Override
         public void onServiceDisconnected(ComponentName name) {
             mBound = false;
-            // The dead service's callback set is gone; drop the reference so
-            // a short-lived disconnect does not root the activity. A wanted
-            // reconnect is re-issued by the user (see PEDANTIC-1 tradeoff).
+            // The dead service's callback set is gone; drop the observer
+            // reference so a short-lived disconnect does not root the
+            // activity. The target Server persists for manual re-issue.
             mReconnectObserver = null;
             mService = null;
         }
@@ -224,6 +251,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private final HumlaObserver mObserver = new HumlaObserver() {
         @Override
         public void onConnected() {
+            // A pending switch/retry is moot once connected: clear it so a
+            // later unrelated drop cannot hijack toward a stale target.
+            clearReconnectObserver();
             if (mSettings.shouldStartUpInPinnedMode()) {
                 loadDrawerFragment(DrawerAdapter.ITEM_PINNED_CHANNELS);
             } else {
@@ -462,8 +492,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 mServerPendingPerm =
                         savedInstanceState.getParcelable(STATE_SERVER_PENDING, Server.class);
+                mPendingReconnectServer =
+                        savedInstanceState.getParcelable(STATE_RECONNECT_TARGET, Server.class);
             } else {
                 mServerPendingPerm = savedInstanceState.getParcelable(STATE_SERVER_PENDING);
+                mPendingReconnectServer = savedInstanceState.getParcelable(STATE_RECONNECT_TARGET);
             }
         }
         setContentView(R.layout.activity_main);
@@ -851,6 +884,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             default:
                 // Unknown id (e.g. a stale EXTRA_DRAWER_FRAGMENT): show
                 // favourites instead of leaving the content frame empty.
+                // Loud in debug: a genuinely unknown internal id is a
+                // programming error, not a stale extra.
+                if (BuildConfig.DEBUG) {
+                    throw new AssertionError("Unknown drawer fragment id: " + fragmentId);
+                }
                 Log.w(TAG, "Unknown drawer fragment id " + fragmentId + "; showing favourites");
                 fragmentClass = FavouriteServerListFragment.class;
                 break;
@@ -880,6 +918,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         outState.putBoolean(STATE_BT_ASKED, mPermBluetoothAsked);
         outState.putBoolean(STATE_POST_NOTIF_ASKED, mPermPostNotificationsAsked);
         outState.putParcelable(STATE_SERVER_PENDING, mServerPendingPerm);
+        outState.putParcelable(STATE_RECONNECT_TARGET, mPendingReconnectServer);
     }
 
     public void connectToServer(final Server server) {
@@ -961,9 +1000,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                             @Override
                             public void onDisconnected(HumlaException e) {
                                 clearReconnectObserver();
+                                if (isFinishing() || isDestroyed()) {
+                                    return;
+                                }
                                 connectToServer(server);
                             }
-                        });
+                        }, server);
                         svc.disconnect();
                     })
                     .setNegativeButton(android.R.string.cancel, null)
@@ -1168,9 +1210,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                                     @Override
                                     public void onDisconnected(HumlaException e) {
                                         clearReconnectObserver();
+                                        if (isFinishing() || isDestroyed()) {
+                                            return;
+                                        }
                                         connectToServer(server1);
                                     }
-                                });
+                                }, server1);
                                 svc.disconnect();
                             } else {
                                 connectToServer(server1);

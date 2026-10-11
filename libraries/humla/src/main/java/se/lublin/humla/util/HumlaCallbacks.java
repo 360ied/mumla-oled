@@ -57,369 +57,118 @@ public class HumlaCallbacks implements IHumlaObserver {
 
     @Override
     public void onConnected() {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onConnected();
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onConnected());
     }
 
     @Override
     public void onConnecting() {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onConnecting();
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onConnecting());
     }
 
     @Override
     public void onDisconnected(HumlaException e) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onDisconnected(e);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onDisconnected(e));
     }
 
     @Override
     public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onTLSHandshakeFailed(chain, failure, verifiedHost);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onTLSHandshakeFailed(chain, failure, verifiedHost));
     }
 
     @Override
     public void onChannelAdded(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onChannelAdded(channel);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onChannelAdded(channel));
     }
 
     @Override
     public void onChannelStateUpdated(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onChannelStateUpdated(channel);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onChannelStateUpdated(channel));
     }
 
     @Override
     public void onChannelRemoved(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onChannelRemoved(channel);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onChannelRemoved(channel));
     }
 
     @Override
     public void onChannelPermissionsUpdated(IChannel channel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onChannelPermissionsUpdated(channel);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onChannelPermissionsUpdated(channel));
     }
 
     @Override
     public void onUserConnected(IUser user) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onUserConnected(user);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onUserConnected(user));
     }
 
     @Override
     public void onUserStateUpdated(IUser user) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onUserStateUpdated(user);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onUserStateUpdated(user));
     }
 
     @Override
     public void onUserTalkStateUpdated(IUser user) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onUserTalkStateUpdated(user);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onUserTalkStateUpdated(user));
     }
 
     @Override
     public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onUserJoinedChannel(user, newChannel, oldChannel);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onUserJoinedChannel(user, newChannel, oldChannel));
     }
 
     @Override
     public void onUserRemoved(IUser user, String reason) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onUserRemoved(user, reason);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onUserRemoved(user, reason));
     }
 
     @Override
     public void onPermissionDenied(String reason) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onPermissionDenied(reason);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onPermissionDenied(reason));
     }
 
     @Override
     public void onMessageLogged(IMessage message) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onMessageLogged(message);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onMessageLogged(message));
     }
 
     @Override
     public void onVoiceTargetChanged(VoiceTargetMode mode) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onVoiceTargetChanged(mode);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onVoiceTargetChanged(mode));
     }
 
     @Override
     public void onBluetoothScoChanged(boolean active) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onBluetoothScoChanged(active);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onBluetoothScoChanged(active));
     }
 
     @Override
     public void onAudioRouteChanged() {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onAudioRouteChanged();
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onAudioRouteChanged());
     }
 
     @Override
     public void onLogInfo(String message) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onLogInfo(message);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onLogInfo(message));
     }
 
     @Override
     public void onLogWarning(String message) {
-        for (IHumlaObserver observer : mCallbacks) {
-            try {
-                observer.onLogWarning(message);
-            } catch (RuntimeException observerError) {
-                // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
-                if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
-                } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
-                            + " threw, continuing fan-out: " + observerError);
-                }
-            }
-        }
+        broadcast(o -> o.onLogWarning(message));
     }
 
     @Override
     public void onLogError(String message) {
+        broadcast(o -> o.onLogError(message));
+    }
+
+    /** Fan-out with per-observer isolation: a throwing observer is logged and the rest still run. */
+    private interface ObserverCall {
+        void call(IHumlaObserver observer);
+    }
+
+    private void broadcast(ObserverCall call) {
         for (IHumlaObserver observer : mCallbacks) {
             try {
-                observer.onLogError(message);
+                call.call(observer);
             } catch (RuntimeException observerError) {
                 // Full traces in debug only: a persistently-throwing observer
                 // on a high-frequency callback must not spam logcat.
