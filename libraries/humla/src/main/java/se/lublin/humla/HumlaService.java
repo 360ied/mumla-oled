@@ -209,9 +209,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private static final int ROUTE_SETTLE_MAX_RECHECKS = 2;
     private int mSettleAttempts;
     private boolean mSettleFired;
+    // Whether a settle recheck is currently queued. Tracked explicitly
+    // (not via Handler.hasCallbacks, API 29+) so fresh edges can leave an
+    // outstanding protection in place instead of cancelling it blindly.
+    private boolean mSettlePending;
     private final Runnable mRouteSettleRecompute = new Runnable() {
         @Override
         public void run() {
+            // Dispatch consumes the queued protection: clear the flag so a
+            // later fresh edge can arm anew (funnel top also clears fired).
+            mSettlePending = false;
             mSettleFired = true;
             applyAudioRoute("media settle recheck", false);
         }
@@ -533,8 +540,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         releaseVoiceMode();
         if (mDeviceCallback != null) {
-            mHandler.removeCallbacks(mRouteRecompute);
-            mHandler.removeCallbacks(mRouteSettleRecompute);
             try {
                 if (mAudioManager != null) {
                     mAudioManager.unregisterAudioDeviceCallback(mDeviceCallback);
@@ -544,6 +549,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
             mDeviceCallback = null;
         }
+        // Unconditional: the funnel arms settle on any API (pre-M queries
+        // always read absent), so teardown must clear it on every API too.
+        mHandler.removeCallbacks(mRouteRecompute);
+        mHandler.removeCallbacks(mRouteSettleRecompute);
+        mSettlePending = false;
         releaseWifiLock();
     }
 
@@ -640,6 +650,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (requested && state == ConnectionState.CONNECTED
                 && scoManager != null && scoManager.isIdle()) {
+            // Legacy pre-hold, mirroring updateBluetoothScoRoute above.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                ensureVoiceMode();
+            }
             scoManager.start();
             // Re-validate identity, state, and intent: a disable or a
             // disconnect/reconnect cycle during bring-up must not leave
@@ -721,6 +735,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             createAudioHandler();
             if (!voice) {
                 counterUnrequestedSystemSco(syncClaimedHold);
+            } else if (!mScoRouteActive && !mMediaRouteSelected) {
+                // Sync landed in voice-by-absence (A2DP still staggering):
+                // arm the same bounded recheck the funnel uses.
+                mSettleAttempts = 0;
+                mSettlePending = true;
+                mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
             }
         } catch (AudioException e) {
             Log.e(TAG, "Audio pipeline creation failed", e);
@@ -770,9 +790,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         mVoiceTargetId = 0;
         mWhisperTargetList.clear();
         // Media decision goes stale here (teardown clears SCO only; the next
-        // funnel recomputes): reset so queries during the gap report voice
-        // instead of a dead-route media decision.
-        mMediaRouteSelected = false;
+        // funnel recomputes): refresh from a live query so gap observers see
+        // truth (A2DP still attached reads media) instead of a forced value.
+        mMediaRouteSelected = queryMediaDevicesPresent();
 
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateBluetoothScoRoute when still requested.
@@ -780,6 +800,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         releaseVoiceMode();
         // No live call remains for a settle recheck to recover.
         mHandler.removeCallbacks(mRouteSettleRecompute);
+        mSettlePending = false;
 
         mCallbacks.onDisconnected(e);
     }
@@ -1192,11 +1213,15 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // so no concurrent funnel rewrite is expected; a surprise concurrent
         // rewrite would at worst cause one redundant idempotent reload.
         boolean before = mAppliedVoiceRoute;
-        // A fresh edge supersedes any pending settle recheck below. The
-        // settle flag marks this run as settle-originated (same Looper, no race).
+        // Settle bookkeeping (same Looper, no race): consume the fired flag
+        // and note whether a check is outstanding. A fresh edge must NOT
+        // cancel outstanding protection — the lagging A2DP edge it precedes
+        // may post no callback of its own — so removal happens only in the
+        // deciding branches below, never unconditionally here.
         boolean settle = mSettleFired;
         mSettleFired = false;
-        mHandler.removeCallbacks(mRouteSettleRecompute);
+        boolean wasSettlePending = mSettlePending;
+        mSettlePending = false;
         boolean voice = updateRouteBuilder();
         // Capture before applyVoiceMode clears it: did WE hold the mode for
         // the episode now ending? Only our own claimed hold implicates us in
@@ -1221,29 +1246,39 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
         }
         boolean routeChanged = forceReload || voice != before;
-        if (routeChanged || mConnectionState == ConnectionState.CONNECTED) {
+        if (routeChanged) {
             onAudioRouteChanged();
             mCallbacks.onAudioRouteChanged();
         }
-        // Else: disconnected with an unchanged route (e.g. headset plugged
-        // while idle) — no pipeline, no cues to refresh; skip the fan-out
-        // so observers don't rebuild route audio pointlessly.
-        if (voice && !mScoRouteActive && !mMediaRouteSelected && !before
-                && mConnectionState == ConnectionState.CONNECTED) {
-            // Just entered voice-by-absence on a live call (see settle note
-            // above): recheck for a lagging A2DP edge.
-            mSettleAttempts = 0;
+        // Else: unchanged route — observers query live state on demand and
+        // the SCO bit has its own direct emit, so skip the heavy cue rebuild
+        // (SoundPool/proximity) on every irrelevant device edge.
+        boolean voiceByAbsence = voice && !mScoRouteActive && !mMediaRouteSelected;
+        boolean liveCall = mConnectionState == ConnectionState.CONNECTED;
+        if (voiceByAbsence && liveCall
+                && (!before || (settle && mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1)
+                        || (!settle && !wasSettlePending))) {
+            // Entering, settle follow-up, or fresh edge with no protection
+            // outstanding: (re-)arm the bounded recheck. Fresh edges reset
+            // the attempt budget — each real BT change deserves full cover.
+            if (!before || !settle) {
+                mSettleAttempts = 0;
+            } else {
+                mSettleAttempts += 1;
+            }
+            mHandler.removeCallbacks(mRouteSettleRecompute);
+            mSettlePending = false;
+            mSettlePending = true;
             mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
-        } else if (voice && !mScoRouteActive && !mMediaRouteSelected && settle
-                && mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1
-                && mConnectionState == ConnectionState.CONNECTED) {
-            // Settle recheck still seeing absence: one bounded follow-up for
-            // long staggers, then rest on the decision (a later edge re-arms
-            // on entry if the route ever leaves voice first).
-            mSettleAttempts += 1;
-            mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS);
-        } else if (!voice || mScoRouteActive || mConnectionState != ConnectionState.CONNECTED) {
+        } else if (!voiceByAbsence || !liveCall) {
+            mHandler.removeCallbacks(mRouteSettleRecompute);
+            mSettlePending = false;
             mSettleAttempts = 0;
+        } else {
+            // Still voice-by-absence with protection outstanding (settle
+            // already queued or attempts exhausted): leave it exactly as
+            // found — neither extend nor cancel.
+            mSettlePending = wasSettlePending;
         }
         if (!voice) {
             // Media won: tear down any system-raised SCO our transient
@@ -1260,25 +1295,43 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * release the mode and flip to media, stranding the user on HFP instead
      * of A2DP. Runs only when leaving a claimed hold for media with SCO
      * unrequested and system SCO currently on; never touches our own
-     * confirmed SCO, and never runs while disconnected. Residual risk: an
-     * overlapping genuine phone call's SCO would also match — accepted as
-     * vanishingly rare next to the certain stranding it repairs.
+     * confirmed SCO, and never runs while disconnected. Skipped during a
+     * genuine cellular call (MODE_IN_CALL): carrier SCO is never ours to
+     * tear down. That check is racy in principle; accepted against the
+     * certain stranding it repairs.
      */
     private void counterUnrequestedSystemSco(boolean wasClaimedHold) {
+        if (mAudioManager == null) {
+            return;
+        }
         if (!wasClaimedHold || mScoRequested || mScoRouteActive) {
             return;
         }
         if (mConnectionState != ConnectionState.CONNECTED) {
             return;
         }
+        try {
+            if (mAudioManager.getMode() == AudioManager.MODE_IN_CALL) {
+                return;
+            }
+        } catch (Exception e) {
+            return;
+        }
         if (!isSystemScoOn()) {
             return;
         }
         try {
-            mAudioManager.stopBluetoothSco();
-            Log.i(TAG, "Stopped unrequested system SCO after media flip");
+            // Mirror our manager's own release: the communication-device
+            // path on S+ (where legacy stop is unreliable against a
+            // device-path selection), legacy stop below.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                mAudioManager.clearCommunicationDevice();
+            } else {
+                mAudioManager.stopBluetoothSco();
+            }
+            Log.i(TAG, "Cleared unrequested system SCO after media flip");
         } catch (Exception e) {
-            Log.w(TAG, "Unrequested SCO stop failed", e);
+            Log.w(TAG, "Unrequested SCO clear failed", e);
         }
     }
 
@@ -1310,6 +1363,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return;
         }
         if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
+            // Legacy bring-up (API < 31) runs startBluetoothSco, whose
+            // platform usage holds MODE_IN_COMMUNICATION; the stripped
+            // manager no longer sets it, so pre-hold here (modern
+            // setCommunicationDevice needs no mode). The funnel owns the
+            // matching release on media flips; disconnect/destroy cover rest.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                ensureVoiceMode();
+            }
             mScoManager.start();
         } else if (!mScoManager.isIdle()) {
             // Skip the platform round-trip when already idle; stop() is safe

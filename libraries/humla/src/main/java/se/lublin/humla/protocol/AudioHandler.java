@@ -131,6 +131,8 @@ public class AudioHandler extends HumlaNetworkListener
 
     // Pre-allocated packet buffers for zero heap allocation on audio path
     private final Object mPacketBufferLock = new Object();
+    // Guards the live bitrate/fpp pair so readers never see a torn mix.
+    private final Object mBandwidthLock = new Object();
     private final byte[] mProtobufPacketBuffer = new byte[2048];
     private final byte[] mLegacyPacketBuffer = new byte[1024];
     private final PacketBuffer mLegacyDataStream = new PacketBuffer(mLegacyPacketBuffer, 1024);
@@ -431,8 +433,12 @@ public class AudioHandler extends HumlaNetworkListener
             return;
         }
         int oldFramesPerPacket = mFramesPerPacket;
-        mBitrate = config.bitrate;
-        mFramesPerPacket = config.framesPerPacket;
+        // Publish the pair atomically: torn bitrate/fpp reads (e.g. from
+        // getCurrentBandwidth on another thread) would misreport bandwidth.
+        synchronized (mBandwidthLock) {
+            mBitrate = config.bitrate;
+            mFramesPerPacket = config.framesPerPacket;
+        }
         if (mNativeEngine != null) {
             mNativeEngine.setBitrate(mBitrate);
             mNativeEngine.setFramesPerPacket(mFramesPerPacket);
@@ -495,7 +501,9 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public int getCurrentBandwidth() {
-        return HumlaConnection.calculateAudioBandwidth(mBitrate, mFramesPerPacket);
+        synchronized (mBandwidthLock) {
+            return HumlaConnection.calculateAudioBandwidth(mBitrate, mFramesPerPacket);
+        }
     }
 
     public synchronized void shutdown() {
@@ -533,6 +541,11 @@ public class AudioHandler extends HumlaNetworkListener
 
     @Override
     public void messageServerSync(Mumble.ServerSync msg) {
+        // Match the sibling guards: post-shutdown delivery must not re-log
+        // or re-drive the (destroyed) native engine.
+        if (!mInitialized) {
+            return;
+        }
         setMaxBandwidth(msg.hasMaxBandwidth() ? msg.getMaxBandwidth() : -1);
     }
 

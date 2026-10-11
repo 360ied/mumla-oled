@@ -167,6 +167,9 @@ public class AudioInput implements Runnable {
                         Log.w(TAG, "NS enable failed (source=" + mAudioSource
                                 + " session=" + sessionId + " res=" + res + ")");
                     }
+                } else {
+                    Log.w(TAG, "NS unavailable on session " + sessionId
+                            + " (source=" + mAudioSource + "): create returned null");
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Failed to enable hardware NS: " + e.getMessage());
@@ -185,6 +188,9 @@ public class AudioInput implements Runnable {
                         Log.w(TAG, "AGC enable failed (source=" + mAudioSource
                                 + " session=" + sessionId + " res=" + res + ")");
                     }
+                } else {
+                    Log.w(TAG, "AGC unavailable on session " + sessionId
+                            + " (source=" + mAudioSource + "): create returned null");
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Failed to enable hardware AGC: " + e.getMessage());
