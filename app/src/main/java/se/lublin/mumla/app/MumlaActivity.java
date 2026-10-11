@@ -236,8 +236,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         }
                     }, pending);
                     mService.disconnect();
-                } else if (mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING
-                        || mService.isReconnecting()) {
+                } else if (mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
                     // In-flight attempt owns the transition: serialize the
                     // pending target behind it like the reject-retry flow.
                     setReconnectObserver(new HumlaObserver() {
@@ -251,6 +250,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         }
                     }, pending);
                 } else {
+                    // Idle or backoff-armed with no live socket: the service
+                    // disarms backoff on explicit connect, so go direct
+                    // instead of waiting out up to 25s of timer. (Cancel
+                    // first so no parallel attempt can race the new one.)
+                    mService.cancelReconnect();
                     connectToServer(pending);
                 }
             }
@@ -499,6 +503,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mPermissionDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                     .setTitle(R.string.perm_denied)
                     .setMessage(reason)
+                    .setPositiveButton(android.R.string.ok, null)
                     .show();
         }
     };
@@ -545,8 +550,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (mService != null && mService.isConnected()) {
-                    Server current = mService.getTargetServer();
+                final IMumlaService svc = mService;
+                if (svc != null && svc.isConnected()) {
+                    Server current = svc.getTargetServer();
                     String currentName = current != null ? current.getName() : null;
                     if (currentName == null) currentName = "";
                     if (mBackPressDialog != null) {
@@ -556,7 +562,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     mBackPressDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                             .setMessage(getString(R.string.disconnectSure, currentName))
                             .setPositiveButton(R.string.confirm, (dialog, which) -> {
-                                mService.disconnect();
+                                final IMumlaService confirmSvc = mService;
+                                if (confirmSvc != null) {
+                                    confirmSvc.disconnect();
+                                }
                                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
                             })
                             .setNegativeButton(android.R.string.cancel, null)
