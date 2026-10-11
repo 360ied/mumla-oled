@@ -134,6 +134,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     private AlertDialog mConnectingDialog;
     private AlertDialog mErrorDialog;
+    // Switch-server confirmation: tracked like the error/connect dialogs so
+    // onPause can dismiss it (its positive button arms a reconnect intent
+    // that onPause deliberately drops — see clearReconnectObserver).
+    private AlertDialog mSwitchDialog;
     private AlertDialog mCertDialog;
     // Dedicated host for the first-run certificate guide. It carries an
     // OnDismissListener with first-run side effects that must never fire for
@@ -183,6 +187,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService = ((MumlaService.MumlaBinder) service).getService();
             mService.setSuppressNotifications(true);
             mService.registerObserver(mObserver);
+            // Re-arm a one-shot reconnect stored while unbound (its setter
+            // skips registration without a service); harmless if already set.
+            if (mReconnectObserver != null) {
+                mService.registerObserver(mReconnectObserver);
+            }
             mService.clearChatNotifications(); // Clear chat notifications on resume.
             mDrawerAdapter.notifyDataSetChanged();
             // Re-sync volume routing: onCreate ran pre-bind (MUSIC), and a
@@ -204,6 +213,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         @Override
         public void onServiceDisconnected(ComponentName name) {
             mBound = false;
+            // The dead service's callback set is gone; drop the reference so
+            // a short-lived disconnect does not root the activity. A wanted
+            // reconnect is re-issued by the user (see PEDANTIC-1 tradeoff).
+            mReconnectObserver = null;
             mService = null;
         }
     };
@@ -576,10 +589,18 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     @Override
     protected void onPause() {
         super.onPause();
-        if (mErrorDialog != null)
+        if (mErrorDialog != null) {
             mErrorDialog.dismiss();
-        if (mConnectingDialog != null)
+            mErrorDialog = null;
+        }
+        if (mConnectingDialog != null) {
             mConnectingDialog.dismiss();
+            mConnectingDialog = null;
+        }
+        if (mSwitchDialog != null) {
+            mSwitchDialog.dismiss();
+            mSwitchDialog = null;
+        }
         dismissCertDialog();
         dismissFirstRunDialog();
 
@@ -828,7 +849,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 startActivity(prefIntent);
                 return;
             default:
-                return;
+                // Unknown id (e.g. a stale EXTRA_DRAWER_FRAGMENT): show
+                // favourites instead of leaving the content frame empty.
+                Log.w(TAG, "Unknown drawer fragment id " + fragmentId + "; showing favourites");
+                fragmentClass = FavouriteServerListFragment.class;
+                break;
         }
         Fragment fragment = Fragment.instantiate(this, fragmentClass.getName(), args);
         getSupportFragmentManager().beginTransaction()
@@ -924,7 +949,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 Toast.makeText(this, R.string.already_connected, Toast.LENGTH_SHORT).show();
                 return;
             }
-            new MaterialAlertDialogBuilder(this)
+            mSwitchDialog = new MaterialAlertDialogBuilder(this)
                     .setMessage(R.string.reconnect_dialog_message)
                     .setPositiveButton(R.string.connect, (dialog, which) -> {
                         // Register an observer to reconnect to the new server once disconnected.
@@ -1062,9 +1087,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private void updateConnectionState(IHumlaService service) {
         if (mConnectingDialog != null) {
             mConnectingDialog.dismiss();
+            mConnectingDialog = null;
         }
-        if (mErrorDialog != null)
+        if (mErrorDialog != null) {
             mErrorDialog.dismiss();
+            mErrorDialog = null;
+        }
 
         if (service == null) {
             return;
@@ -1090,22 +1118,22 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 break;
             case CONNECTION_LOST:
                 // Only bother the user if the error hasn't already been shown.
-                if (getService() != null && !getService().isErrorShown()) {
-                    // TODO? bail out if service gone -- it is happening!
-                    if (getService() == null) {
-                        break;
-                    }
+                // Single capture: the service is perished-checkable once here
+                // instead of re-querying getService() at every step.
+                final IMumlaService lostSvc = getService();
+                if (lostSvc != null && !lostSvc.isErrorShown()) {
                     MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(MumlaActivity.this);
                     builder.setTitle(getString(R.string.connectionRefused));
-                    HumlaException error = getService().getConnectionError();
-                    if (error != null && service.isReconnecting()) {
+                    HumlaException error = lostSvc.getConnectionError();
+                    if (error != null && lostSvc.isReconnecting()) {
                         builder.setMessage(error.getMessage() + "\n\n"
                                 + getString(R.string.attempting_reconnect,
                                 error.getCause() != null ? error.getCause().getMessage() : "unknown"));
                         builder.setPositiveButton(R.string.cancel_reconnect, (dialog, which) -> {
-                            if (getService() != null) {
-                                getService().cancelReconnect();
-                                getService().markErrorShown();
+                            final IMumlaService cancelSvc = getService();
+                            if (cancelSvc != null) {
+                                cancelSvc.cancelReconnect();
+                                cancelSvc.markErrorShown();
                             }
                         });
                     } else if (error != null &&
