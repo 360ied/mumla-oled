@@ -168,13 +168,23 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     /** Drops any pending one-shot reconnect observer without firing it. */
     private void clearReconnectObserver() {
+        dropReconnectObserver();
+        mPendingReconnectServer = null;
+    }
+
+    /**
+     * Unregisters the pending observer but keeps the target Server, so a
+     * pause-dropped intent can resume on rebind. Use at lifecycle seams
+     * (pause/disconnect); use {@link #clearReconnectObserver} when the
+     * intent itself is consumed or invalidated.
+     */
+    private void dropReconnectObserver() {
         if (mReconnectObserver != null) {
             if (mService != null) {
                 mService.unregisterObserver(mReconnectObserver);
             }
             mReconnectObserver = null;
         }
-        mPendingReconnectServer = null;
     }
     // Tracks bindService success: the bind uses no BIND_AUTO_CREATE, so no
     // connection exists on a fresh launch before the first connect, and an
@@ -203,7 +213,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 if (isFinishing() || isDestroyed()) {
                     return;
                 }
-                if (mService.isConnected()) {
+                if (mService.isConnected() && isSameServer(mService.getTargetServer(), pending)) {
+                    // Already where the intent pointed: nothing to do.
+                } else if (mService.isConnected()) {
+                    // Still on the old server (disconnect in flight at pause):
+                    // re-arm and finish the switch like the original tap.
+                    // (A concurrent auto-reconnect to a *different* server is
+                    // indistinguishable here; re-arming preserves the explicit
+                    // user tap over the silent one — accepted tradeoff.)
                     setReconnectObserver(new HumlaObserver() {
                         @Override
                         public void onDisconnected(HumlaException e) {
@@ -215,6 +232,20 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         }
                     }, pending);
                     mService.disconnect();
+                } else if (mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING
+                        || mService.isReconnecting()) {
+                    // In-flight attempt owns the transition: serialize the
+                    // pending target behind it like the reject-retry flow.
+                    setReconnectObserver(new HumlaObserver() {
+                        @Override
+                        public void onDisconnected(HumlaException e) {
+                            clearReconnectObserver();
+                            if (isFinishing() || isDestroyed()) {
+                                return;
+                            }
+                            connectToServer(pending);
+                        }
+                    }, pending);
                 } else {
                     connectToServer(pending);
                 }
@@ -241,9 +272,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         public void onServiceDisconnected(ComponentName name) {
             mBound = false;
             // The dead service's callback set is gone; drop the observer
-            // reference so a short-lived disconnect does not root the
-            // activity. The target Server persists for manual re-issue.
-            mReconnectObserver = null;
+            // but keep the target so rebind can resume the intent.
+            dropReconnectObserver();
             mService = null;
         }
     };
@@ -647,8 +677,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
         // A pending switch-server/retry observer must not outlive the
         // activity: its onDisconnected would drive connectToServer (and the
-        // database) on a dead instance.
-        clearReconnectObserver();
+        // database) on a dead instance. The target survives for resume.
+        dropReconnectObserver();
         if (mBound) {
             try {
                 unbindService(mConnection);
@@ -884,10 +914,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             default:
                 // Unknown id (e.g. a stale EXTRA_DRAWER_FRAGMENT): show
                 // favourites instead of leaving the content frame empty.
-                // Loud in debug: a genuinely unknown internal id is a
-                // programming error, not a stale extra.
-                if (BuildConfig.DEBUG) {
-                    throw new AssertionError("Unknown drawer fragment id: " + fragmentId);
+                // Loud in debug only for internal misuse: the id space
+                // mixes internal headers (never valid content) with truly
+                // arbitrary intent extras, and only the former is ours.
+                if (BuildConfig.DEBUG && (fragmentId == DrawerAdapter.HEADER_CONNECTED_SERVER
+                        || fragmentId == DrawerAdapter.HEADER_SERVERS
+                        || fragmentId == DrawerAdapter.HEADER_GENERAL)) {
+                    throw new AssertionError("Internal drawer header used as content: " + fragmentId);
                 }
                 Log.w(TAG, "Unknown drawer fragment id " + fragmentId + "; showing favourites");
                 fragmentClass = FavouriteServerListFragment.class;
@@ -922,6 +955,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     public void connectToServer(final Server server) {
+        // A fresh explicit intent invalidates any stale pending reconnect:
+        // without this, a later rebind would chase the old target instead.
+        clearReconnectObserver();
         mServerPendingPerm = server;
         connectToServerWithPerm();
     }
@@ -987,6 +1023,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             if (isSameServer(mService.getTargetServer(), server)) {
                 Toast.makeText(this, R.string.already_connected, Toast.LENGTH_SHORT).show();
                 return;
+            }
+            // Dismiss-before-assign: rapid taps must not orphan a shown
+            // dialog by overwriting its only tracked reference.
+            if (mSwitchDialog != null) {
+                mSwitchDialog.dismiss();
+                mSwitchDialog = null;
             }
             mSwitchDialog = new MaterialAlertDialogBuilder(this)
                     .setMessage(R.string.reconnect_dialog_message)
