@@ -486,11 +486,12 @@ public class MumlaService extends HumlaService implements
     }
 
     /**
-     * Refreshes route-dependent cue audio after a confirmed SCO change.
-     * The pipeline owns voice routing; this owns the PTT SoundPool.
+     * Refreshes route-dependent cue audio after a confirmed route change
+     * (SCO or media-sink). The pipeline owns voice routing; this owns the
+     * PTT SoundPool.
      */
     @Override
-    protected void onScoRouteChanged() {
+    protected void onAudioRouteChanged() {
         initSoundPool();
         setProximitySensorOn(shouldUseProximitySensor());
     }
@@ -508,9 +509,9 @@ public class MumlaService extends HumlaService implements
     void initSoundPool() {
         releaseSoundPool();
         try {
-            // Step 2a (experiment): unified voice path — cues always ride
-            // the voice stream. (Step 2b reintroduces route-dependence.)
-            boolean voiceRoute = true;
+            // Voice cues follow voice output; media routes (BT A2DP/wired)
+            // keep music-stream cues on A2DP volume. SCO implies voice.
+            boolean voiceRoute = !isMediaRouteActive();
             int streamType = voiceRoute
                     ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
             int usage = voiceRoute

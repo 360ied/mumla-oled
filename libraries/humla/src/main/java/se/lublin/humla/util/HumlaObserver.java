@@ -115,6 +115,11 @@ public class HumlaObserver implements IHumlaObserver {
     }
 
     @Override
+    public void onAudioRouteChanged() {
+
+    }
+
+    @Override
     public void onLogInfo(String message) {
 
     }

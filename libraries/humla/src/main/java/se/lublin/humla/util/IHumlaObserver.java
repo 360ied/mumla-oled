@@ -67,6 +67,14 @@ public interface IHumlaObserver {
      */
     void onBluetoothScoChanged(boolean active);
 
+    /**
+     * Called on the main thread after every confirmed audio-route change
+     * (voice triple vs media path, SCO or media-sink driven), after the
+     * pipeline reload. Use it to follow output routing (e.g. volume stream);
+     * SCO-specific UI belongs in onBluetoothScoChanged.
+     */
+    void onAudioRouteChanged();
+
     void onLogInfo(String message);
 
     void onLogWarning(String message);

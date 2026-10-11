@@ -233,6 +233,16 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
 
         @Override
+        public void onAudioRouteChanged() {
+            // Media-sink transitions change nothing in the preference
+            // snapshot and never touch SCO state: volume keys follow the
+            // live route instead.
+            setVolumeControlStream(useVoiceCallVolume() ?
+                    AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+            supportInvalidateOptionsMenu();
+        }
+
+        @Override
         public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
             if (chain == null || chain.length == 0 || chain[0] == null) {
                 return;
@@ -620,12 +630,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
      * failed bring-up that falls back to phone audio.
      */
     /**
-     * Step 2a (experiment): output is always voice-routed, so volume
-     * keys always ride the voice-call stream. (Step 2b reintroduces
-     * route-dependence for BT media.)
+     * Volume keys follow output routing: voice-call stream on voice routes
+     * (the AEC path), music stream on media routes (A2DP volume). Pre-bind
+     * default is voice (matches the no-sink route); the route push corrects
+     * it right after bind when a media sink is present.
      */
     private boolean useVoiceCallVolume() {
-        return true;
+        return mService == null || !mService.isMediaRouteActive();
     }
 
     /**

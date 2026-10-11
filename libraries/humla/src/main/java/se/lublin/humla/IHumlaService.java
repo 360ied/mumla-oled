@@ -51,6 +51,13 @@ public interface IHumlaService {
     boolean isBluetoothScoActive();
 
     /**
+     * @return true if a media sink (BT A2DP / wired headset) currently routes
+     *         output. While true (and SCO inactive) the pipeline runs the
+     *         media triple to preserve A2DP quality.
+     */
+    boolean isMediaRouteActive();
+
+    /**
      * Re-asserts SCO bring-up when requested but idle, e.g. after a failed
      * attempt. No UI caller remains (both toggles share the requested-state
      * preference and retry by flipping off and on); retained for internal use.
