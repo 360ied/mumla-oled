@@ -161,7 +161,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     // updateBluetoothScoRoute, retryBluetoothSco, and the route callbacks.
     // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
     private volatile boolean mScoRequested;
-    private BluetoothScoManager mScoManager;
+    // Assigned once in onCreate, never reassigned: safe to dereference from
+    // connection threads, but volatile to match this file's discipline for
+    // cross-thread route fields (a stale null is the only real hazard).
+    private volatile BluetoothScoManager mScoManager;
     // Written on the main thread (applyScoRoute) and in the disconnect path
     // (stopScoWithNotify), which HumlaConnection invokes on TCP-reader
     // threads; read on both. Volatile for visibility; confirmed-flag flips
@@ -496,12 +499,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 mDeviceCallback = new AudioDeviceCallback() {
                     @Override
                     public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+                        logDeviceTypes("added", added);
                         onRouteDevicesChanged();
                         maybeStartRequestedSco(added);
                     }
 
                     @Override
                     public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+                        logDeviceTypes("removed", removed);
                         onRouteDevicesChanged();
                     }
                 };
@@ -1391,6 +1396,22 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return false;
         }
     }
+    /** One-line field diagnostic: which device types an edge carried. */
+    private void logDeviceTypes(String edge, AudioDeviceInfo[] devices) {
+        if (devices == null) {
+            Log.i(TAG, "Route devices " + edge + ": none");
+            return;
+        }
+        StringBuilder types = new StringBuilder();
+        for (AudioDeviceInfo device : devices) {
+            if (types.length() > 0) {
+                types.append(',');
+            }
+            types.append(device == null ? -1 : device.getType());
+        }
+        Log.i(TAG, "Route devices " + edge + ": [" + types + "]");
+    }
+
     /**
      * Starts or stops SCO bring-up to match the requested toggle and the
      * connection state. Safe to call redundantly: the manager ignores
@@ -1429,8 +1450,22 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * from IDLE while requested and connected; the manager itself drops
      * duplicate starts, and failure still reports through the normal toast.
      * Runs on the main Looper (device callback thread).
+     *
+     * <p>Coverage note: the trigger is a classic-HFP SCO device surfacing
+     * in the added array. Connected HFP is visible to the communication-
+     * device query without starting audio (the same query the manager
+     * itself uses pre-audio), so A2DP-first stagger still triggers when HFP
+     * lands; LE Audio rides the media path by design and needs no trigger.
+     * Below API 23 no device callback exists (minSdk 21): sync and toggle
+     * paths still cover those devices, late power-on does not.
+     *
+     * <p>Each triggering edge may re-toast on persistent failure
+     * (permission denied, no device): accepted as edge-driven feedback.
      */
     private void maybeStartRequestedSco(AudioDeviceInfo[] added) {
+        // Main-serialized with the toggle path (both main-Looper) with
+        // volatile reads; unlike binder-originated retryBluetoothSco this
+        // needs no snapshot block, only the post-start re-validation below.
         if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || mScoManager == null) {
             return;
         }
@@ -1442,8 +1477,16 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         for (AudioDeviceInfo device : added) {
             if (device != null && device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                Log.i(TAG, "BT SCO device attached with SCO requested; starting bring-up");
+                Log.i(TAG, "Bluetooth SCO device attached with SCO requested; starting bring-up");
+                HumlaConnection connection = mConnection;
                 updateBluetoothScoRoute();
+                // A disconnect may have raced us (state still reads CONNECTED
+                // until the async teardown flips it): mirror the retry
+                // re-validation so a stale start cannot outlive teardown.
+                if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
+                        || !mScoRequested) {
+                    mScoManager.stop();
+                }
                 return;
             }
         }
