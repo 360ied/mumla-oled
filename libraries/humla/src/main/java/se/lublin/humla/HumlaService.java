@@ -104,6 +104,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     public static final String EXTRAS_DETECTION_THRESHOLD = "detection_threshold";
     public static final String EXTRAS_AMPLITUDE_BOOST = "amplitude_boost";
     public static final String EXTRAS_TRANSMIT_MODE = "transmit_mode";
+    /**
+     * @deprecated Fixed 48 kHz end to end; accepted for compatibility but
+     * ignored (see AudioHandler.Builder.setInputSampleRate). Senders keep
+     * emitting it so older services still parse the bundle.
+     */
+    @Deprecated
     public static final String EXTRAS_INPUT_RATE = "input_frequency";
     public static final String EXTRAS_INPUT_QUALITY = "input_quality";
     /** @deprecated Obsolete since 0.18.2; Opus is mandatory and legacy codecs are dropped. */
@@ -1416,7 +1422,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private static boolean bundleHasOtherAudioKeys(Bundle extras) {
         return extras.containsKey(EXTRAS_AMPLITUDE_BOOST)
                 || extras.containsKey(EXTRAS_TRANSMIT_MODE)
-                || extras.containsKey(EXTRAS_INPUT_RATE)
                 || extras.containsKey(EXTRAS_INPUT_QUALITY)
                 || extras.containsKey(EXTRAS_AUDIO_STREAM)
                 || extras.containsKey(EXTRAS_FRAMES_PER_PACKET)
@@ -1534,7 +1539,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mAudioBuilder.setInputMode(inputMode);
         }
         if (extras.containsKey(EXTRAS_INPUT_RATE)) {
-            mAudioBuilder.setInputSampleRate(extras.getInt(EXTRAS_INPUT_RATE));
+            // Ignored: fixed 48 kHz (see deprecation above). Deliberately
+            // excluded from bundleHasOtherAudioKeys so a rate-only change
+            // cannot reload the pipeline for a no-op.
+            Log.d(TAG, "Ignoring deprecated EXTRAS_INPUT_RATE; capture is fixed 48 kHz");
         }
         if (extras.containsKey(EXTRAS_INPUT_QUALITY)) {
             mAudioBuilder.setTargetBitrate(extras.getInt(EXTRAS_INPUT_QUALITY));

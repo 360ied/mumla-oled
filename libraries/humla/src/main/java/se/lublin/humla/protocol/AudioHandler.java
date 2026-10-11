@@ -432,11 +432,14 @@ public class AudioHandler extends HumlaNetworkListener
         // Decide and publish under one lock (single main/TCP-serialized
         // writer today; the lock documents it), then fan out and re-drive
         // outside: torn pairs would misreport bandwidth, and callbacks must
-        // never run while holding this lock.
+        // never run while holding this lock. The no-op check lives inside
+        // too so check-then-write cannot interleave.
         final EffectiveAudioConfig applied;
         final int oldFramesPerPacket;
+        final boolean changed;
         synchronized (mBandwidthLock) {
-            if (config.bitrate == mBitrate && config.framesPerPacket == mFramesPerPacket) {
+            changed = config.bitrate != mBitrate || config.framesPerPacket != mFramesPerPacket;
+            if (!changed) {
                 return;
             }
             oldFramesPerPacket = mFramesPerPacket;
