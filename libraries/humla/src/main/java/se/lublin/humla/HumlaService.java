@@ -209,11 +209,11 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private static final int ROUTE_SETTLE_MAX_RECHECKS = 2;
     private volatile int mSettleAttempts;
     private volatile boolean mSettleFired;
-    // Whether a settle recheck is queued: explicitly tracked (not via
-    // Handler.hasCallbacks, API 29+) so fresh edges can leave outstanding
-    // protection in place instead of cancelling it blindly. Touched on the
-    // main Looper and TCP-reader threads: volatile for visibility; group
-    // writes with route state stay under synchronized(this) below.
+    // Whether a settle recheck is queued. Set only beside a post, cleared
+    // on dispatch, reset, or teardown — never restored from a snapshot —
+    // so the flag can never claim protection no callback provides.
+    // Single writes only (volatile suffices); Handler.hasCallbacks needs
+    // API 29+, minSdk here is 21.
     private volatile boolean mSettlePending;
     private final Runnable mRouteSettleRecompute = new Runnable() {
         @Override
@@ -1023,18 +1023,19 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         try {
             int mode = mAudioManager.getMode();
+            // Externally held (phone call setup or another app): claim
+            // nothing and change nothing. Deliberately leaves mVoiceModeHeld
+            // unset so the next voice pass retries the claim — setting it
+            // here would starve the voice route of IN_COMM after the
+            // external holder lets go (no release path re-arms a marker
+            // that was never a real hold).
             if (mode == AudioManager.MODE_IN_COMMUNICATION) {
-                mVoiceModeHeld = true;
-                mVoiceModeClaimed = false;
                 Log.i(TAG, "VoIP mode already held, not claiming");
                 return;
             }
             // A genuine cellular call owns the audio path: never steal
-            // MODE_IN_CALL (pre-existing steal fixed here — claim nothing,
-            // change nothing, like the pre-held IN_COMM branch above).
+            // MODE_IN_CALL either, for the same liveness reason.
             if (mode == AudioManager.MODE_IN_CALL) {
-                mVoiceModeHeld = true;
-                mVoiceModeClaimed = false;
                 Log.i(TAG, "Cellular call active, not claiming voice mode");
                 return;
             }
@@ -1242,15 +1243,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // so no concurrent funnel rewrite is expected; a surprise concurrent
         // rewrite would at worst cause one redundant idempotent reload.
         boolean before = mAppliedVoiceRoute;
-        // Settle bookkeeping (same Looper, no race): consume the fired flag
-        // and note whether a check is outstanding. A fresh edge must NOT
-        // cancel outstanding protection — the lagging A2DP edge it precedes
-        // may post no callback of its own — so removal happens only in the
-        // deciding branches below, never unconditionally here.
+        // Settle bookkeeping: consume the fired flag. Fresh edges never
+        // cancel outstanding protection here — arming below re-posts when
+        // still uncovered — and nothing ever restores the pending flag
+        // without posting, so the flag can never claim protection no
+        // callback provides (no wedge). Volatile suffices: no
+        // read-modify-restore spans threads, only single writes.
         boolean settle = mSettleFired;
         mSettleFired = false;
-        boolean wasSettlePending = mSettlePending;
-        mSettlePending = false;
         boolean voice = updateRouteBuilder();
         // Capture before applyVoiceMode clears it: did WE hold the mode for
         // the episode now ending? Only our own claimed hold implicates us in
@@ -1289,13 +1289,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // (SoundPool/proximity) on every irrelevant device edge.
         boolean voiceByAbsence = voice && !mScoRouteActive && !mMediaRouteSelected;
         boolean liveCall = mConnectionState == ConnectionState.CONNECTED;
-        if (voiceByAbsence && liveCall
-                && (!before || (settle && mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1)
-                        || (!settle && !wasSettlePending))) {
-            // Entering, settle follow-up, or fresh edge with no protection
-            // outstanding: (re-)arm the bounded recheck. Fresh edges reset
-            // the attempt budget — each real BT change deserves full cover.
-            if (!before || !settle) {
+        if (voiceByAbsence && liveCall && (!settle || mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
+            // Fresh edge (!settle, entering or already-voice) or budgeted
+            // settle follow-up: exactly one check queued. Fresh edges reset
+            // the budget — each real BT change deserves full cover; settle
+            // runs consume it. No blind restore anywhere: the flag is set
+            // only beside a post, cleared on dispatch/teardown/reset.
+            if (!settle) {
                 mSettleAttempts = 0;
             } else {
                 mSettleAttempts += 1;
@@ -1307,12 +1307,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mHandler.removeCallbacks(mRouteSettleRecompute);
             mSettlePending = false;
             mSettleAttempts = 0;
-        } else {
-            // Still voice-by-absence with protection outstanding (settle
-            // already queued or attempts exhausted): leave it exactly as
-            // found — neither extend nor cancel.
-            mSettlePending = wasSettlePending;
         }
+        // Else (settle budget exhausted): the dispatched check already
+        // cleared the flag; rest without cover until a fresh edge re-arms.
     }
 
     /**
