@@ -497,6 +497,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     @Override
                     public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
                         onRouteDevicesChanged();
+                        maybeStartRequestedSco(added);
                     }
 
                     @Override
@@ -998,6 +999,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                         // own the UI; a stale false must not overwrite them.
                         return;
                     }
+                    if (mScoRouteActive) {
+                        // A newer link confirmed while this teardown was
+                        // queued (bring-up won the race after our flag flip):
+                        // its own connected-notify carries the truth.
+                        return;
+                    }
                     onAudioRouteChanged();
                     mCallbacks.onBluetoothScoChanged(false);
                 }
@@ -1411,6 +1418,34 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             // Skip the platform round-trip when already idle; stop() is safe
             // but needlessly releases and bumps the callback generation.
             mScoManager.stop();
+        }
+    }
+
+    /**
+     * Starts a requested-but-idle SCO bring-up when an HFP device attaches
+     * mid-call. Bring-up otherwise only runs at sync and on toggle changes,
+     * so a headset powered on later (e.g. after an earlier NO_DEVICE
+     * failure) would never establish SCO until the next toggle. Runs only
+     * from IDLE while requested and connected; the manager itself drops
+     * duplicate starts, and failure still reports through the normal toast.
+     * Runs on the main Looper (device callback thread).
+     */
+    private void maybeStartRequestedSco(AudioDeviceInfo[] added) {
+        if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || mScoManager == null) {
+            return;
+        }
+        if (!mScoManager.isIdle()) {
+            return;
+        }
+        if (added == null) {
+            return;
+        }
+        for (AudioDeviceInfo device : added) {
+            if (device != null && device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+                Log.i(TAG, "BT SCO device attached with SCO requested; starting bring-up");
+                updateBluetoothScoRoute();
+                return;
+            }
         }
     }
 
