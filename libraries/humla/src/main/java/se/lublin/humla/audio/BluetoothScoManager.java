@@ -442,6 +442,27 @@ public class BluetoothScoManager {
         return null;
     }
 
+    /**
+     * Whether an SCO-capable device is currently available for bring-up,
+     * without starting anything. Used by the service attach trigger as a
+     * fallback when the added array carries no SCO entry itself (A2DP-first
+     * stagger, HALs that surface SCO only in the availability query).
+     * Fail-closed false on any error: doubt falls through to event-driven
+     * setup, never to a blind bring-up attempt. Public for the service
+     * route policy (same library, adjacent package).
+     */
+    public boolean isScoDeviceAvailable() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                return findScoDevice() != null;
+            } else {
+                return isHeadsetConnected();
+            }
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void onModernDeviceChanged(AudioDeviceInfo device, int epoch) {
         final boolean scoNow;
         final int state;

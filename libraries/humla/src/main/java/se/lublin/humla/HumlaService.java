@@ -650,8 +650,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public boolean retryBluetoothSco() {
-        // Snapshot under a short block, bring-up outside: holding the service
-        // monitor across SCO IPC pins the disconnect teardown flip.
+        // Copy to locals before IPC so a torn read is impossible; the copy
+        // is not group-atomic versus writers (post-start re-validation +
+        // manager idempotence absorb any tearing — that is the real guard).
         final boolean requested;
         final ConnectionState state;
         final BluetoothScoManager scoManager;
@@ -1451,13 +1452,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * duplicate starts, and failure still reports through the normal toast.
      * Runs on the main Looper (device callback thread).
      *
-     * <p>Coverage note: the trigger is a classic-HFP SCO device surfacing
-     * in the added array. Connected HFP is visible to the communication-
-     * device query without starting audio (the same query the manager
-     * itself uses pre-audio), so A2DP-first stagger still triggers when HFP
-     * lands; LE Audio rides the media path by design and needs no trigger.
-     * Below API 23 no device callback exists (minSdk 21): sync and toggle
-     * paths still cover those devices, late power-on does not.
+     * <p>Trigger coverage: a classic-HFP SCO entry in the added array is
+     * the fast path. Some HALs surface HFP only via A2DP-then-nothing (or
+     * stagger it past the callback), so any Bluetooth output add also
+     * polls the manager's own availability query before giving up — the
+     * same query bring-up itself uses pre-audio. LE Audio rides the media
+     * path by design and needs no trigger. Below API 23 no device callback
+     * exists (minSdk 21): sync and toggle paths still cover those devices,
+     * late power-on does not.
      *
      * <p>Each triggering edge may re-toast on persistent failure
      * (permission denied, no device): accepted as edge-driven feedback.
@@ -1475,20 +1477,40 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (added == null) {
             return;
         }
+        boolean scoInAdded = false;
+        boolean anyBtInAdded = false;
         for (AudioDeviceInfo device : added) {
-            if (device != null && device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                Log.i(TAG, "Bluetooth SCO device attached with SCO requested; starting bring-up");
-                HumlaConnection connection = mConnection;
-                updateBluetoothScoRoute();
-                // A disconnect may have raced us (state still reads CONNECTED
-                // until the async teardown flips it): mirror the retry
-                // re-validation so a stale start cannot outlive teardown.
-                if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
-                        || !mScoRequested) {
-                    mScoManager.stop();
-                }
-                return;
+            if (device == null) {
+                continue;
             }
+            switch (device.getType()) {
+                case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+                    scoInAdded = true;
+                    break;
+                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
+                case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                case AudioDeviceInfo.TYPE_BLE_SPEAKER:
+                    anyBtInAdded = true;
+                    break;
+                default:
+                    break;
+            }
+        }
+        // Fast path: HFP surfaced directly. Fallback: any BT add with an
+        // SCO device actually available (A2DP-first stagger, quiet HALs).
+        // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
+        if (!scoInAdded && !(anyBtInAdded && mScoManager.isScoDeviceAvailable())) {
+            return;
+        }
+        Log.i(TAG, "Bluetooth headset attached with SCO requested; starting bring-up");
+        HumlaConnection connection = mConnection;
+        updateBluetoothScoRoute();
+        // A disconnect may have raced us (state still reads CONNECTED
+        // until the async teardown flips it): mirror the retry
+        // re-validation so a stale start cannot outlive teardown.
+        if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
+                || !mScoRequested) {
+            mScoManager.stop();
         }
     }
 
