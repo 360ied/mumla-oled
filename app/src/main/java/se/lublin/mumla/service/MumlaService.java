@@ -508,8 +508,9 @@ public class MumlaService extends HumlaService implements
     void initSoundPool() {
         releaseSoundPool();
         try {
-            boolean voiceRoute = mSettings != null
-                    && (mSettings.isHandsetMode() || isBluetoothScoActive());
+            // Step 2a (experiment): unified voice path — cues always ride
+            // the voice stream. (Step 2b reintroduces route-dependence.)
+            boolean voiceRoute = true;
             int streamType = voiceRoute
                     ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
             int usage = voiceRoute

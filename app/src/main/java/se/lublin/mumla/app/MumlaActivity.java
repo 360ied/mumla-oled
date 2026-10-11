@@ -619,11 +619,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
      * toggle) keeps keys coherent with the actual route, including after a
      * failed bring-up that falls back to phone audio.
      */
+    /**
+     * Step 2a (experiment): output is always voice-routed, so volume
+     * keys always ride the voice-call stream. (Step 2b reintroduces
+     * route-dependence for BT media.)
+     */
     private boolean useVoiceCallVolume() {
-        if (mSettings.isHandsetMode()) {
-            return true;
-        }
-        return mService != null && mService.isBluetoothScoActive();
+        return true;
     }
 
     /**

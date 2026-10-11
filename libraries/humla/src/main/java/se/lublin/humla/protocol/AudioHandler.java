@@ -67,8 +67,14 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile int mSession;
     private HumlaUDPMessageType mCodec;
 
+    // Step 2a (experiment): this int is route intent, not a literal
+    // stream — VOICE_CALL selects the earpiece voice triple, anything
+    // else the speakerphone voice triple. Output is always voice-routed;
+    // there is no media path anymore. See initialize().
     private final int mAudioStream;
     private final int mAudioSource;
+    private final AudioManager mAudioManager;
+    private final int mSavedAudioMode;
     private volatile int mBitrate;
     private volatile int mFramesPerPacket;
     private volatile FramesPerPacketListener mFramesPerPacketListener;
@@ -148,6 +154,33 @@ public class AudioHandler extends HumlaNetworkListener
         mTargetId = targetId;
         mAudioSource = audioSource;
 
+        // Close the HAL echo loop BEFORE AudioRecord is created below:
+        // voice source + IN_COMM mode + voice-routed output is the
+        // all-or-nothing triple platform AEC requires, and capture-side
+        // effects (AEC/NS/AGC) attach at AudioInput construction, so the
+        // mode must already be held. Restored in shutdown().
+        AudioManager audioManager = null;
+        int savedMode = AudioManager.MODE_NORMAL;
+        try {
+            audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+        } catch (Exception e) {
+            mLogger.logWarning("VoIP mode: no AudioManager (" + e.getMessage() + ")");
+        }
+        if (audioManager != null) {
+            try {
+                savedMode = audioManager.getMode();
+            } catch (Exception ignored) {
+            }
+            try {
+                audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                mLogger.logInfo("VoIP mode: held MODE_IN_COMMUNICATION (was " + savedMode + ")");
+            } catch (Exception e) {
+                mLogger.logWarning("VoIP mode: setMode threw (" + e.getMessage() + ")");
+            }
+        }
+        mAudioManager = audioManager;
+        mSavedAudioMode = savedMode;
+
         int nativeMode = NativeAudioInputEngine.INPUT_MODE_VOICE_ACTIVITY;
         if (mInputMode instanceof ToggleInputMode) {
             nativeMode = NativeAudioInputEngine.INPUT_MODE_PUSH_TO_TALK;
@@ -196,7 +229,12 @@ public class AudioHandler extends HumlaNetworkListener
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed;
 
-        mOutput.startPlaying(mScoActive ? AudioManager.STREAM_VOICE_CALL : mAudioStream);
+        mOutput.startPlaying(AudioManager.STREAM_VOICE_CALL);
+        // The connect-time stream int is route intent (see field): voice
+        // output always, speakerphone unless earpiece was requested. Set
+        // explicitly both ways — the flag is global AudioManager state
+        // and a speaker-then-earpiece recreate must clear it.
+        setSpeakerphone(!mScoActive && mAudioStream != AudioManager.STREAM_VOICE_CALL);
         mInitialized = true;
         updateMuteState(isMuted);
     }
@@ -272,6 +310,17 @@ public class AudioHandler extends HumlaNetworkListener
 
     public void setCodec(HumlaUDPMessageType codec) {
         mCodec = codec;
+    }
+
+    /** Explicit earpiece/speakerphone routing for the unified voice path. */
+    private void setSpeakerphone(boolean on) {
+        if (mAudioManager == null) return;
+        try {
+            mAudioManager.setSpeakerphoneOn(on);
+            mLogger.logInfo("VoIP route: speakerphone " + (on ? "on" : "off"));
+        } catch (Exception e) {
+            mLogger.logWarning("VoIP route: setSpeakerphoneOn threw (" + e.getMessage() + ")");
+        }
     }
 
     public int getAudioStream() {
@@ -383,6 +432,18 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public synchronized void shutdown() {
+        // Guarded restore mirroring BluetoothScoManager: only touch the
+        // mode if our IN_COMM is still current; a call or another app may
+        // have legitimately moved it since. Mid-call recreates flap
+        // through here (restore then re-hold in the next constructor).
+        if (mAudioManager != null) {
+            try {
+                if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+                    mAudioManager.setMode(mSavedAudioMode);
+                }
+            } catch (Exception ignored) {
+            }
+        }
         synchronized (mInput) {
             mInput.shutdown();
         }

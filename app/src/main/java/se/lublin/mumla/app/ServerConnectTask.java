@@ -56,8 +56,11 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         /* Convert input method defined in settings to an integer format used by Humla. */
         int inputMethod = mSettings.getHumlaInputMethod();
 
-        int audioSource = mSettings.isHandsetMode() ?
-                MediaRecorder.AudioSource.DEFAULT : MediaRecorder.AudioSource.MIC;
+        // Step 2a (experiment): capture is always VOICE_COMMUNICATION so
+        // the HAL can couple the AEC loop. The stream int below is route
+        // intent only (earpiece vs speakerphone voice triple) — output is
+        // always voice-routed; see AudioHandler.
+        int audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
         // Voice-call stream only pre-confirm when handset mode is on: the
         // service selects it on confirmed SCO, so starting there early would
         // misroute the failure fallback. See EXTRAS_BLUETOOTH_SCO.
