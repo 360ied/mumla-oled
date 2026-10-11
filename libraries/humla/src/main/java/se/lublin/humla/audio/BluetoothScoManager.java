@@ -55,7 +55,7 @@ import java.util.Objects;
  * </ul>
  *
  * <p>Locking: {@code mState}, {@code mAttempts}, {@code mSavedMode},
- * {@code mModeOwned}, {@code mGeneration}, {@code mRouteHeld},
+ * {@code mModeOwned}, {@code mModeExternallyOwned}, {@code mGeneration}, {@code mRouteHeld},
  * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
@@ -115,6 +115,10 @@ public class BluetoothScoManager {
     private int mAttempts;
     private int mSavedMode = AudioManager.MODE_NORMAL;
     private boolean mModeOwned;
+    // True when IN_COMM was already held at start() by another owner (the
+    // service route policy, or a phone call): snapshot without claiming, and
+    // skip the restore on stop/fail/drop so we never clear someone else's mode.
+    private boolean mModeExternallyOwned;
     private int mGeneration;
     private boolean mRouteHeld;
 
@@ -195,6 +199,11 @@ public class BluetoothScoManager {
                 return; // stopped concurrently; nothing was changed yet.
             }
             mSavedMode = currentMode;
+            // Another owner (the service route policy holding IN_COMM, or a
+            // phone call) is already in communication mode: snapshot without
+            // claiming, and skip the restore on stop/fail/drop so we never
+            // clear someone else's mode.
+            mModeExternallyOwned = (currentMode == AudioManager.MODE_IN_COMMUNICATION);
         }
         try {
             mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
@@ -246,8 +255,9 @@ public class BluetoothScoManager {
             teardownObservers();
             mState = STATE_IDLE;
             savedMode = mSavedMode;
-            owned = mModeOwned;
+            owned = mModeOwned && !mModeExternallyOwned;
             mModeOwned = false;
+            mModeExternallyOwned = false;
             ++mGeneration;
         }
         // Guarded release: a stale hold must never clear another app's
@@ -566,8 +576,9 @@ public class BluetoothScoManager {
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
             savedMode = mSavedMode;
-            owned = mModeOwned;
+            owned = mModeOwned && !mModeExternallyOwned;
             mModeOwned = false;
+            mModeExternallyOwned = false;
         }
         releaseRouteIfHeld();
         if (owned) {
@@ -590,8 +601,9 @@ public class BluetoothScoManager {
             mHandler.removeCallbacks(mTimeoutRunnable);
             teardownObservers();
             savedMode = mSavedMode;
-            owned = mModeOwned;
+            owned = mModeOwned && !mModeExternallyOwned;
             mModeOwned = false;
+            mModeExternallyOwned = false;
             generation = mGeneration;
         }
         releaseRouteIfHeld();

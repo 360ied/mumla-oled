@@ -21,6 +21,7 @@ package se.lublin.humla;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -147,6 +148,15 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private volatile boolean mScoRequested;
     private BluetoothScoManager mScoManager;
     private boolean mScoRouteActive;
+    // VoIP mode ownership (one owner: this route policy — never the pipeline
+    // and never the SCO manager alone). Held for voice routes so capture-side
+    // effects attach into a coupled HAL loop, released for media routes and
+    // on disconnect/destroy. Claimed tracks whether WE set IN_COMM: a
+    // pre-held mode (phone call, concurrent SCO) is never cleared by us.
+    private AudioManager mAudioManager;
+    private int mSavedAudioMode = AudioManager.MODE_NORMAL;
+    private boolean mVoiceModeHeld;
+    private boolean mVoiceModeClaimed;
 
     private byte mVoiceTargetId;
     private WhisperTargetList mWhisperTargetList;
@@ -367,6 +377,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                     }
                 });
         mConnectionState = ConnectionState.DISCONNECTED;
+        try {
+            mAudioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP mode: no AudioManager", e);
+            mAudioManager = null;
+        }
         mScoManager = new BluetoothScoManager(this, new BluetoothScoManager.Listener() {
             @Override
             public void onScoConnected() {
@@ -415,6 +431,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         mAudioBuilder.setScoEnabled(false);
         mScoRouteActive = false;
+        releaseVoiceMode();
         releaseWifiLock();
     }
 
@@ -550,6 +567,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
 
         try {
+            ensureVoiceMode();
             createAudioHandler();
         } catch (AudioException e) {
             e.printStackTrace();
@@ -597,6 +615,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateBluetoothScoRoute when still requested.
         stopScoWithNotify();
+        releaseVoiceMode();
 
         mCallbacks.onDisconnected(e);
     }
@@ -778,6 +797,71 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
+     * Holds MODE_IN_COMMUNICATION for the voice route. Called before every
+     * pipeline creation so capture-side effects attach into an already-coupled
+     * HAL loop, never while the pipeline runs. Recreate-safe: re-holding an
+     * already-held mode is idempotent and never re-saves. A pre-held mode
+     * (phone call, concurrent SCO bring-up) counts as held but unclaimed,
+     * so release below never clears someone else's mode.
+     */
+    private void ensureVoiceMode() {
+        if (mAudioManager == null || mVoiceModeHeld) {
+            return;
+        }
+        try {
+            if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+                mVoiceModeHeld = true;
+                mVoiceModeClaimed = false;
+                Log.i(TAG, "VoIP mode already held, not claiming");
+                return;
+            }
+            mSavedAudioMode = mAudioManager.getMode();
+            mAudioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+            mVoiceModeHeld = true;
+            mVoiceModeClaimed = true;
+            Log.i(TAG, "VoIP mode held (was " + mSavedAudioMode + ")");
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP mode hold failed", e);
+        }
+    }
+
+    /**
+     * Releases a held voice mode, guarded like BluetoothScoManager: an
+     * unclaimed (pre-held) mode is never touched, and a claimed one is only
+     * restored while our IN_COMM is still current, so a phone call or another
+     * app that moved it since is never clobbered.
+     */
+    private void releaseVoiceMode() {
+        if (mAudioManager == null || !mVoiceModeHeld) {
+            return;
+        }
+        boolean claimed = mVoiceModeClaimed;
+        mVoiceModeHeld = false;
+        mVoiceModeClaimed = false;
+        if (!claimed) {
+            return;
+        }
+        try {
+            if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
+                mAudioManager.setMode(mSavedAudioMode);
+                Log.i(TAG, "VoIP mode released (restored " + mSavedAudioMode + ")");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP mode release failed", e);
+        }
+    }
+
+    /**
+     * Route truth table: confirmed SCO forces the voice triple; otherwise a
+     * present media sink (BT A2DP / wired headset) selects media, and its
+     * absence keeps voice. Package-visible for the JVM truth-table test,
+     * mirroring BluetoothScoManager.shouldRetryBringUp.
+     */
+    static boolean computeVoiceRoute(boolean scoActive, boolean mediaDevicesPresent) {
+        return scoActive || !mediaDevicesPresent;
+    }
+
+    /**
      * Applies a confirmed route to the pipeline, cue hook, and observers in
      * that order. All three route callbacks converge here. Skips reload and
      * notify when the applied route is unchanged (e.g. a failure that never
@@ -822,6 +906,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mAudioHandler != null && mAudioHandler.isInitialized()
                 && mConnectionState == ConnectionState.CONNECTED) {
             try {
+                ensureVoiceMode();
                 createAudioHandler();
                 Log.i(TAG, reason + "; audio pipeline recreated.");
             } catch (AudioException e) {

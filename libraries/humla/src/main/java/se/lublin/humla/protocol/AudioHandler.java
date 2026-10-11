@@ -20,6 +20,7 @@ package se.lublin.humla.protocol;
 
 import android.content.Context;
 import android.media.AudioManager;
+import android.util.Log;
 
 import com.google.protobuf.ByteString;
 
@@ -55,6 +56,7 @@ public class AudioHandler extends HumlaNetworkListener
 
     public static final int SAMPLE_RATE = 48000;
     public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
+    private static final String TAG = "AudioHandler";
 
     private final Context mContext;
     private final HumlaLogger mLogger;
@@ -67,14 +69,17 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile int mSession;
     private HumlaUDPMessageType mCodec;
 
-    // Step 2a (experiment): this int is route intent, not a literal
-    // stream — VOICE_CALL selects the earpiece voice triple, anything
-    // else the speakerphone voice triple. Output is always voice-routed;
-    // there is no media path anymore. See initialize().
+    // Route intent, not a literal stream: on the voice route, VOICE_CALL
+    // selects earpiece, anything else speakerphone (see initialize()).
+    // On the media route the value is ignored for output (always MUSIC).
     private final int mAudioStream;
     private final int mAudioSource;
-    private final AudioManager mAudioManager;
-    private final int mSavedAudioMode;
+    /**
+     * Voice route (VoIP triple) vs media route. Set only at pipeline
+     * creation from the service route policy, mirroring setScoEnabled:
+     * live pipelines are recreated to apply changes.
+     */
+    private volatile boolean mVoiceRoute = true;
     private volatile int mBitrate;
     private volatile int mFramesPerPacket;
     private volatile FramesPerPacketListener mFramesPerPacketListener;
@@ -154,33 +159,6 @@ public class AudioHandler extends HumlaNetworkListener
         mTargetId = targetId;
         mAudioSource = audioSource;
 
-        // Close the HAL echo loop BEFORE AudioRecord is created below:
-        // voice source + IN_COMM mode + voice-routed output is the
-        // all-or-nothing triple platform AEC requires, and capture-side
-        // effects (AEC/NS/AGC) attach at AudioInput construction, so the
-        // mode must already be held. Restored in shutdown().
-        AudioManager audioManager = null;
-        int savedMode = AudioManager.MODE_NORMAL;
-        try {
-            audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        } catch (Exception e) {
-            mLogger.logWarning("VoIP mode: no AudioManager (" + e.getMessage() + ")");
-        }
-        if (audioManager != null) {
-            try {
-                savedMode = audioManager.getMode();
-            } catch (Exception ignored) {
-            }
-            try {
-                audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                mLogger.logInfo("VoIP mode: held MODE_IN_COMMUNICATION (was " + savedMode + ")");
-            } catch (Exception e) {
-                mLogger.logWarning("VoIP mode: setMode threw (" + e.getMessage() + ")");
-            }
-        }
-        mAudioManager = audioManager;
-        mSavedAudioMode = savedMode;
-
         int nativeMode = NativeAudioInputEngine.INPUT_MODE_VOICE_ACTIVITY;
         if (mInputMode instanceof ToggleInputMode) {
             nativeMode = NativeAudioInputEngine.INPUT_MODE_PUSH_TO_TALK;
@@ -229,12 +207,14 @@ public class AudioHandler extends HumlaNetworkListener
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed;
 
-        mOutput.startPlaying(AudioManager.STREAM_VOICE_CALL);
-        // The connect-time stream int is route intent (see field): voice
-        // output always, speakerphone unless earpiece was requested. Set
-        // explicitly both ways — the flag is global AudioManager state
-        // and a speaker-then-earpiece recreate must clear it.
-        setSpeakerphone(!mScoActive && mAudioStream != AudioManager.STREAM_VOICE_CALL);
+        mOutput.startPlaying((mVoiceRoute || mScoActive) ? AudioManager.STREAM_VOICE_CALL
+                : AudioManager.STREAM_MUSIC);
+        // The stream int is route intent on the voice route (see field):
+        // earpiece vs speakerphone. Set explicitly both ways — the flag is
+        // global AudioManager state and a speaker-then-earpiece recreate
+        // must clear it; media routes clear it for hygiene (voice-call
+        // routing ignores it there, but no stale flag may leak across).
+        setSpeakerphone(mVoiceRoute && !mScoActive && mAudioStream != AudioManager.STREAM_VOICE_CALL);
         mInitialized = true;
         updateMuteState(isMuted);
     }
@@ -312,14 +292,21 @@ public class AudioHandler extends HumlaNetworkListener
         mCodec = codec;
     }
 
-    /** Explicit earpiece/speakerphone routing for the unified voice path. */
+    /** Explicit earpiece/speakerphone routing for the voice route. */
     private void setSpeakerphone(boolean on) {
-        if (mAudioManager == null) return;
+        AudioManager audioManager = null;
         try {
-            mAudioManager.setSpeakerphoneOn(on);
-            mLogger.logInfo("VoIP route: speakerphone " + (on ? "on" : "off"));
+            audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
         } catch (Exception e) {
-            mLogger.logWarning("VoIP route: setSpeakerphoneOn threw (" + e.getMessage() + ")");
+            Log.w(TAG, "VoIP route: no AudioManager (" + e.getMessage() + ")");
+            return;
+        }
+        if (audioManager == null) return;
+        try {
+            audioManager.setSpeakerphoneOn(on);
+            Log.i(TAG, "VoIP route: speakerphone " + (on ? "on" : "off"));
+        } catch (Exception e) {
+            Log.w(TAG, "VoIP route: setSpeakerphoneOn threw (" + e.getMessage() + ")");
         }
     }
 
@@ -416,6 +403,15 @@ public class AudioHandler extends HumlaNetworkListener
         mScoActive = scoEnabled;
     }
 
+    /**
+     * Selects the VoIP triple (voice source/mode/usage) vs the media path.
+     * Set only at pipeline creation from the service route policy, mirroring
+     * setScoEnabled: live pipelines must be recreated to apply it.
+     */
+    public void setVoiceRouteEnabled(boolean voiceRoute) {
+        mVoiceRoute = voiceRoute;
+    }
+
     public void setAdaptiveLevelerEnabled(boolean enabled) {
         mAdaptiveLevelerEnabled = enabled;
         if (mNativeEngine != null) {
@@ -432,18 +428,6 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     public synchronized void shutdown() {
-        // Guarded restore mirroring BluetoothScoManager: only touch the
-        // mode if our IN_COMM is still current; a call or another app may
-        // have legitimately moved it since. Mid-call recreates flap
-        // through here (restore then re-hold in the next constructor).
-        if (mAudioManager != null) {
-            try {
-                if (mAudioManager.getMode() == AudioManager.MODE_IN_COMMUNICATION) {
-                    mAudioManager.setMode(mSavedAudioMode);
-                }
-            } catch (Exception ignored) {
-            }
-        }
         synchronized (mInput) {
             mInput.shutdown();
         }
@@ -694,6 +678,10 @@ public class AudioHandler extends HumlaNetworkListener
         // Plain like neighbors: the builder is configured single-threaded on
         // the service main thread; only the built handler's mScoActive is volatile.
         private boolean mScoEnabled;
+        // Defaults true to preserve step-2a behavior until the service
+        // route policy drives it (C2); the service sets this explicitly
+        // on every route application either way.
+        private boolean mVoiceRouteEnabled = true;
         private boolean mAdaptiveLevelerEnabled = true;
         private IInputMode mInputMode;
         private AudioEncodeListener mEncodeListener;
@@ -758,6 +746,15 @@ public class AudioHandler extends HumlaNetworkListener
             return this;
         }
 
+        /**
+         * Selects the VoIP triple vs the media path. Pass the service
+         * route policy value (see {@link AudioHandler#setVoiceRouteEnabled}).
+         */
+        public Builder setVoiceRouteEnabled(boolean voiceRouteEnabled) {
+            mVoiceRouteEnabled = voiceRouteEnabled;
+            return this;
+        }
+
         public Builder setAdaptiveLevelerEnabled(boolean adaptiveLevelerEnabled) {
             mAdaptiveLevelerEnabled = adaptiveLevelerEnabled;
             return this;
@@ -792,6 +789,7 @@ public class AudioHandler extends HumlaNetworkListener
                     mEncodeListener, mTalkingListener);
             handler.setFramesPerPacketListener(mFramesPerPacketListener);
             handler.setScoEnabled(mScoEnabled);
+            handler.setVoiceRouteEnabled(mVoiceRouteEnabled);
             handler.initialize(self, maxBandwidth, codec);
             return handler;
         }
