@@ -139,6 +139,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     // onPause can dismiss it (its positive button arms a reconnect intent
     // that onPause deliberately drops — see clearReconnectObserver).
     private AlertDialog mSwitchDialog;
+    // Permission-denied notice and back-press disconnect confirmation:
+    // tracked for the same pause-dismissal so rotation cannot leak them.
+    private AlertDialog mPermissionDialog;
+    private AlertDialog mBackPressDialog;
     private AlertDialog mCertDialog;
     // Dedicated host for the first-run certificate guide. It carries an
     // OnDismissListener with first-run side effects that must never fire for
@@ -488,7 +492,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
         @Override
         public void onPermissionDenied(String reason) {
-            new MaterialAlertDialogBuilder(MumlaActivity.this)
+            if (mPermissionDialog != null) {
+                mPermissionDialog.dismiss();
+                mPermissionDialog = null;
+            }
+            mPermissionDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                     .setTitle(R.string.perm_denied)
                     .setMessage(reason)
                     .show();
@@ -541,7 +549,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     Server current = mService.getTargetServer();
                     String currentName = current != null ? current.getName() : null;
                     if (currentName == null) currentName = "";
-                    new MaterialAlertDialogBuilder(MumlaActivity.this)
+                    if (mBackPressDialog != null) {
+                        mBackPressDialog.dismiss();
+                        mBackPressDialog = null;
+                    }
+                    mBackPressDialog = new MaterialAlertDialogBuilder(MumlaActivity.this)
                             .setMessage(getString(R.string.disconnectSure, currentName))
                             .setPositiveButton(R.string.confirm, (dialog, which) -> {
                                 mService.disconnect();
@@ -663,6 +675,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (mSwitchDialog != null) {
             mSwitchDialog.dismiss();
             mSwitchDialog = null;
+        }
+        if (mPermissionDialog != null) {
+            mPermissionDialog.dismiss();
+            mPermissionDialog = null;
+        }
+        if (mBackPressDialog != null) {
+            mBackPressDialog.dismiss();
+            mBackPressDialog = null;
         }
         dismissCertDialog();
         dismissFirstRunDialog();
@@ -932,6 +952,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
                 .commit();
         DrawerAdapter.DrawerRow row = mDrawerAdapter.getItemWithId(fragmentId);
+        // Headers are not content: show the favourites title under
+        // favourites content instead of a stale header caption.
+        if (row instanceof DrawerAdapter.DrawerHeader) {
+            row = mDrawerAdapter.getItemWithId(DrawerAdapter.ITEM_FAVOURITES);
+        }
         if (row != null) {
             if (getSupportActionBar() != null) {
                 getSupportActionBar().setTitle(row.title);
@@ -955,9 +980,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     public void connectToServer(final Server server) {
-        // A fresh explicit intent invalidates any stale pending reconnect:
-        // without this, a later rebind would chase the old target instead.
-        clearReconnectObserver();
+        // NOTE: stale pending-reconnect invalidation happens at the commit
+        // point below (before ServerConnectTask), not here: permission and
+        // CONNECTING guards may ignore this tap, and must not destroy an
+        // armed retry along the way.
         mServerPendingPerm = server;
         connectToServerWithPerm();
     }
@@ -1056,6 +1082,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
         // Ignore rapid taps while a connection attempt is already in progress;
         // each tap would otherwise spawn a parallel connection attempt.
+        // (No stale-intent clear on this path: the tap is dropped, so an
+        // armed retry behind the in-flight attempt must survive it.)
         if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
             if (isSameServer(mService.getTargetServer(), server)) {
                 Toast.makeText(this, R.string.mumlaConnecting, Toast.LENGTH_SHORT).show();
@@ -1065,6 +1093,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return;
         }
 
+        // Commit point: a fresh explicit intent invalidates any stale
+        // pending reconnect so a later rebind cannot chase the old target.
+        clearReconnectObserver();
         ServerConnectTask connectTask = new ServerConnectTask(this, mDatabase);
         connectTask.execute(server);
     }
