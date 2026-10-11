@@ -55,7 +55,7 @@ public interface IHumlaService {
     boolean isBluetoothScoActive();
 
     /**
-     * @return true if a media sink (BT A2DP / wired headset) currently routes
+     * @return true if a media sink (BT A2DP / BLE / wired headset) currently routes
      *         output. While true (and SCO inactive) the pipeline runs the
      *         media triple to preserve A2DP quality.
      */

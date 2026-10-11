@@ -56,7 +56,7 @@ import java.util.Objects;
  *
  * <p>Locking: {@code mState}, {@code mAttempts}, {@code mSavedMode},
  * {@code mModeOwned}, {@code mModeExternallyOwned}, {@code mGeneration}, {@code mRouteHeld},
- * {@code mRouteHeldEpoch}, {@code mDeviceListenerEpoch}, {@code mLegacyReceiverEpoch},
+ * {@code mRouteHeldEpoch},
  * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
@@ -129,10 +129,6 @@ public class BluetoothScoManager {
 
     private BroadcastReceiver mLegacyReceiver;
     private AudioManager.OnCommunicationDeviceChangedListener mDeviceListener;
-    // Epoch captured when each observer was registered: queued platform
-    // callbacks carry their session epoch and are dropped when stale.
-    private int mDeviceListenerEpoch = -1;
-    private int mLegacyReceiverEpoch = -1;
 
     private final Runnable mTimeoutRunnable = new Runnable() {
         @Override
@@ -752,7 +748,6 @@ public class BluetoothScoManager {
             return true;
         }
         final int epoch = mGeneration;
-        mDeviceListenerEpoch = epoch;
         mDeviceListener = new AudioManager.OnCommunicationDeviceChangedListener() {
             @Override
             public void onCommunicationDeviceChanged(AudioDeviceInfo device) {
@@ -781,7 +776,6 @@ public class BluetoothScoManager {
             return true;
         }
         final int epoch = mGeneration;
-        mLegacyReceiverEpoch = epoch;
         mLegacyReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {

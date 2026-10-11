@@ -79,4 +79,16 @@ public class MumlaActivityTest extends TestCase {
         assertFalse(MumlaActivity.isSameServer(null, server));
         assertFalse(MumlaActivity.isSameServer(server, null));
     }
+
+    public void testIsSameServer_SavedSameIdDifferentPassword() {
+        Server a = new Server(42, "A", "mumble.example.com", 64738, "alice", "old");
+        Server b = new Server(42, "B", "mumble.example.com", 64738, "alice", "new");
+        assertFalse(MumlaActivity.isSameServer(a, b));
+    }
+
+    public void testIsSameServer_UnsavedSameEndpointDifferentPassword() {
+        Server a = new Server(-1, "A", "mumble.example.com", 64738, "alice", "old");
+        Server b = new Server(-1, "B", "mumble.example.com", 64738, "alice", "new");
+        assertFalse(MumlaActivity.isSameServer(a, b));
+    }
 }

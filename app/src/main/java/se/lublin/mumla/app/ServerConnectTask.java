@@ -20,7 +20,6 @@ package se.lublin.mumla.app;
 import android.content.Context;
 import android.content.Intent;
 import android.media.AudioManager;
-import android.media.MediaRecorder;
 import android.os.AsyncTask;
 
 import java.util.ArrayList;
@@ -62,11 +61,11 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         /* Convert input method defined in settings to an integer format used by Humla. */
         int inputMethod = mSettings.getHumlaInputMethod();
 
-        // Step 2a (experiment): capture is always VOICE_COMMUNICATION so
-        // the HAL can couple the AEC loop. The stream int below is route
-        // intent only (earpiece vs speakerphone voice triple) — output is
-        // always voice-routed; see AudioHandler.
-        int audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
+        // Route intent only (earpiece vs speakerphone voice triple): the
+        // service route policy derives the effective source (voice routes
+        // capture VOICE_COMMUNICATION, media routes MIC) and stream before
+        // every pipeline creation; see HumlaService.updateRouteBuilder.
+        // (EXTRAS_AUDIO_SOURCE is deprecated and intentionally not sent.)
         // Voice-call stream only pre-confirm when handset mode is on: the
         // service selects it on confirmed SCO, so starting there early would
         // misroute the failure fallback. See EXTRAS_BLUETOOTH_SCO.
@@ -85,7 +84,6 @@ public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
         connectIntent.putExtra(HumlaService.EXTRAS_INPUT_QUALITY, mSettings.getInputQuality());
         connectIntent.putExtra(HumlaService.EXTRAS_FORCE_TCP, mSettings.isTcpForced());
         connectIntent.putStringArrayListExtra(HumlaService.EXTRAS_ACCESS_TOKENS, new ArrayList<>(mDatabase.getAccessTokens(server.getId())));
-        connectIntent.putExtra(HumlaService.EXTRAS_AUDIO_SOURCE, audioSource);
         connectIntent.putExtra(HumlaService.EXTRAS_AUDIO_STREAM, audioStream);
         connectIntent.putExtra(HumlaService.EXTRAS_FRAMES_PER_PACKET, mSettings.getFramesPerPacket());
         connectIntent.putExtra(HumlaService.EXTRAS_TRUST_STORE, MumlaTrustStore.getTrustStorePath(mContext));

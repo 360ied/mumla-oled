@@ -638,7 +638,9 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (mDrawerToggle.onOptionsItemSelected(item))
             return true;
         if (item.getItemId() == R.id.action_disconnect) {
-            getService().disconnect();
+            if (getService() != null) {
+                getService().disconnect();
+            }
             return true;
         }
         return false;
@@ -799,7 +801,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 .replace(R.id.content_frame, fragment, fragmentClass.getName())
                 .setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
                 .commit();
-        requireNonNull(getSupportActionBar()).setTitle(mDrawerAdapter.getItemWithId(fragmentId).title);
+        DrawerAdapter.DrawerRow row = mDrawerAdapter.getItemWithId(fragmentId);
+        if (row != null) {
+            requireNonNull(getSupportActionBar()).setTitle(row.title);
+        }
     }
 
     @Override
@@ -1055,6 +1060,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         });
                     } else if (error != null &&
                             error.getReason() == HumlaException.HumlaDisconnectReason.REJECT &&
+                            error.getReject() != null &&
                             (error.getReject().getType() == Mumble.Reject.RejectType.WrongUserPW ||
                                     error.getReject().getType() == Mumble.Reject.RejectType.WrongServerPW)) {
                         final EditText passwordField = new EditText(this);

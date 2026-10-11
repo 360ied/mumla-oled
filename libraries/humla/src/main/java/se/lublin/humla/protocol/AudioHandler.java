@@ -595,8 +595,13 @@ public class AudioHandler extends HumlaNetworkListener
         // length is authoritative; frames is informational from the native
         // engine (actual frames are implicit in length). Zero-length
         // terminators never occur: the native engine encodes silence instead
-        // of emitting empty terminators, so length<=0 is safely dropped.
+        // of emitting empty terminators, so length<=0 is safely dropped —
+        // with a warning when a terminator is dropped, since that would
+        // strand the peer's talking indicator if the native contract changes.
         if (data == null || length <= 0 || mEncodeListener == null) {
+            if (isTerminator && length <= 0 && data != null && mEncodeListener != null) {
+                Log.w(TAG, "Dropping zero-length terminator; peer talk state may strand");
+            }
             return;
         }
 

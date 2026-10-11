@@ -174,12 +174,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private volatile int mSavedAudioMode = AudioManager.MODE_NORMAL;
     private volatile boolean mVoiceModeHeld;
     private volatile boolean mVoiceModeClaimed;
-    // Media-route detection (BT A2DP / wired/USB headset outputs). Present
-    // sinks select the media triple; SCO and the bare phone stay voice
-    // (computeVoiceRoute). Listener is API 23+; below that voice always.
-    // mMediaDevicesPresent is volatile: written on the main-thread device
-    // callback, read wherever routes are applied.
-    private volatile boolean mMediaDevicesPresent;
+    // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
+    // SCO absence). Present sinks select the media triple; SCO and the bare
+    // phone stay voice (computeVoiceRoute). Listener is API 23+; below that
+    // voice always. Named for what it stores (the gated decision, not raw
+    // presence): recomputed from the live query on every route application.
+    private volatile boolean mMediaRouteSelected;
     private volatile boolean mAppliedVoiceRoute = true;
     // Default MUSIC means speakerphone-voice until settings arrive: the voice
     // triple maps any non-VOICE_CALL stream to speakerphone (see AudioHandler
@@ -467,7 +467,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 Log.w(TAG, "Route device listener failed", e);
                 mDeviceCallback = null;
             }
-            mMediaDevicesPresent = queryMediaDevicesPresent();
+            mMediaRouteSelected = queryMediaDevicesPresent();
         }
         mToggleInputMode = new ToggleInputMode();
         mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
@@ -506,7 +506,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
             mDeviceCallback = null;
         }
-        mMediaDevicesPresent = false;
+        mMediaRouteSelected = false;
         mAppliedVoiceRoute = true;
         releaseWifiLock();
     }
@@ -585,7 +585,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      */
     @Override
     public boolean isMediaRouteActive() {
-        return mMediaDevicesPresent && !mScoRouteActive;
+        return mMediaRouteSelected && !mScoRouteActive;
     }
 
     @Override
@@ -1032,7 +1032,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private synchronized boolean updateRouteBuilder() {
         boolean sco = mScoRouteActive;
         boolean media = !sco && queryMediaDevicesPresent();
-        mMediaDevicesPresent = media;
+        mMediaRouteSelected = media;
         boolean voice = computeVoiceRoute(sco, media);
         mAppliedVoiceRoute = voice;
         mAudioBuilder.setScoEnabled(sco);
@@ -1083,8 +1083,14 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 onConnectionWarning(e.getMessage());
             }
         }
-        onAudioRouteChanged();
-        mCallbacks.onAudioRouteChanged();
+        boolean routeChanged = forceReload || voice != before;
+        if (routeChanged || mConnectionState == ConnectionState.CONNECTED) {
+            onAudioRouteChanged();
+            mCallbacks.onAudioRouteChanged();
+        }
+        // Else: disconnected with an unchanged route (e.g. headset plugged
+        // while idle) — no pipeline, no cues to refresh; skip the fan-out
+        // so observers don't rebuild route audio pointlessly.
     }
 
     /**
@@ -1252,16 +1258,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (extras.containsKey(EXTRAS_AUDIO_SOURCE)) {
             // Ignored: route policy owns the capture source (see
-            // updateRouteBuilder). Logged so a stale setting is visible
-            // instead of silently discarded.
-            Log.i(TAG, "Ignoring deprecated EXTRAS_AUDIO_SOURCE; route policy owns the source");
+            // updateRouteBuilder). Debug-level: the app sender still emits
+            // the deprecated key on every connect.
+            Log.d(TAG, "Ignoring deprecated EXTRAS_AUDIO_SOURCE; route policy owns the source");
         }
         if (extras.containsKey(EXTRAS_AUDIO_STREAM)) {
             // Handset-derived intent (earpiece vs speakerphone voice); the
             // route policy re-derives the effective stream before every
             // pipeline creation, so mid-call toggles apply on recreate.
+            // Funnel-only: no direct builder write here (it would be
+            // overwritten by the reload below anyway).
             mHandsetAudioStream = extras.getInt(EXTRAS_AUDIO_STREAM);
-            mAudioBuilder.setAudioStream(mHandsetAudioStream);
         }
         if (extras.containsKey(EXTRAS_FRAMES_PER_PACKET)) {
             int fpp = extras.getInt(EXTRAS_FRAMES_PER_PACKET);
