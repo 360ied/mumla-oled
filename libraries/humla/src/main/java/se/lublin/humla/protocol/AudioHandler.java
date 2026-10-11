@@ -54,6 +54,9 @@ import se.lublin.humla.util.HumlaNetworkListener;
 public class AudioHandler extends HumlaNetworkListener
         implements AudioInput.AudioInputListener, NativeAudioInputEngine.AudioInputEngineListener {
 
+    // Canonical 48 kHz / 480-sample (10 ms) framing shared with AudioInput
+    // and the native engine: keep all three in agreement (no single source;
+    // JNI and the capture layer each need their own constants).
     public static final int SAMPLE_RATE = 48000;
     public static final int FRAME_SIZE = SAMPLE_RATE / 100; // 480 samples @ 10ms
     private static final String TAG = "AudioHandler";
@@ -207,8 +210,25 @@ public class AudioHandler extends HumlaNetworkListener
         mSuppressed = self.isSuppressed();
         boolean isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed;
 
-        mOutput.startPlaying((mVoiceRoute || mScoActive) ? AudioManager.STREAM_VOICE_CALL
-                : AudioManager.STREAM_MUSIC);
+        try {
+            mOutput.startPlaying((mVoiceRoute || mScoActive) ? AudioManager.STREAM_VOICE_CALL
+                    : AudioManager.STREAM_MUSIC);
+        } catch (AudioException e) {
+            // Constructor already owns a native engine + capture (AudioRecord
+            // + HW effects): destroy the partial pipeline before rethrow so
+            // the caller never abandons a half-built handler holding the mic.
+            try {
+                mInput.shutdown();
+            } catch (Exception ignored) {
+            }
+            try {
+                if (mNativeEngine != null) {
+                    mNativeEngine.destroy();
+                }
+            } catch (Exception ignored) {
+            }
+            throw e;
+        }
         // The stream int is route intent on the voice route (see field):
         // earpiece vs speakerphone. Set explicitly both ways — the flag is
         // global AudioManager state and a speaker-then-earpiece recreate
@@ -337,6 +357,8 @@ public class AudioHandler extends HumlaNetworkListener
         int degradedBitrate = bitrate;
         int degradedFpp = framesPerPacket;
 
+        // fpp==6 is already the largest packet: no growth branch applies by
+        // design, so only the bitrate loop below degrades (pinned by test).
         if (HumlaConnection.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth) {
             if (degradedFpp <= 4 && maxBandwidth <= 32000) {
                 degradedFpp = 4;
@@ -545,6 +567,10 @@ public class AudioHandler extends HumlaNetworkListener
 
     @Override
     public void onAudioPacketEncoded(byte[] data, int length, int frames, boolean isTerminator, long frameNumber) {
+        // length is authoritative; frames is informational from the native
+        // engine (actual frames are implicit in length). Zero-length
+        // terminators never occur: the native engine encodes silence instead
+        // of emitting empty terminators, so length<=0 is safely dropped.
         if (data == null || length <= 0 || mEncodeListener == null) {
             return;
         }
@@ -567,32 +593,47 @@ public class AudioHandler extends HumlaNetworkListener
                     mProtobufPacketBuffer[0] = 0x00; // Protobuf Audio header
                     System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.length);
                     mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen);
+                } else {
+                    Log.w(TAG, "Dropping oversize protobuf audio packet (" + totalLen + " bytes)");
                 }
             } else {
-                int flags = 0;
-                flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
-                flags |= mTargetId & 0x1F;
-
-                mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
-                mLegacyDataStream.rewind();
-                mLegacyDataStream.skip(1);
-                mLegacyDataStream.writeLong(frameNumber);
-
-                long header = length & ((1 << 13) - 1);
-                if (isTerminator) {
-                    header |= (1 << 13);
+                // Worst case: 1 flag byte + 2 varints (<=10 bytes each) +
+                // payload. Pre-check so overflow drops with a log instead of
+                // throwing BufferOverflowException to the native thread.
+                if (21 + length > mLegacyPacketBuffer.length) {
+                    Log.w(TAG, "Dropping oversize legacy audio packet (payload " + length + " bytes)");
+                    return;
                 }
-                mLegacyDataStream.writeLong(header);
-                mLegacyDataStream.append(data, length);
+                try {
+                    int flags = 0;
+                    flags |= HumlaUDPMessageType.UDPVoiceOpus.ordinal() << 5;
+                    flags |= mTargetId & 0x1F;
 
-                int totalLen = mLegacyDataStream.size();
-                mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
+                    mLegacyPacketBuffer[0] = (byte) (flags & 0xFF);
+                    mLegacyDataStream.rewind();
+                    mLegacyDataStream.skip(1);
+                    mLegacyDataStream.writeLong(frameNumber);
+
+                    long header = length & ((1 << 13) - 1);
+                    if (isTerminator) {
+                        header |= (1 << 13);
+                    }
+                    mLegacyDataStream.writeLong(header);
+                    mLegacyDataStream.append(data, length);
+
+                    int totalLen = mLegacyDataStream.size();
+                    mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen);
+                } catch (java.nio.BufferOverflowException e) {
+                    Log.w(TAG, "Dropping legacy audio packet after buffer overflow", e);
+                }
             }
         }
     }
 
     @Override
-    public void onTalkingStateChanged(boolean isTalking, float peakEnergy) {
+    public synchronized void onTalkingStateChanged(boolean isTalking, float peakEnergy) {
+        // Synchronized: concurrent native callbacks must not duplicate or
+        // drop transitions via check-then-act on mTalking.
         if (mTalking != isTalking) {
             mTalking = isTalking;
             if (mEncodeListener != null) {
@@ -689,12 +730,12 @@ public class AudioHandler extends HumlaNetworkListener
         private AudioOutput.AudioOutputListener mTalkingListener;
 
         public Builder setContext(Context context) {
-            mContext = context;
+            mContext = java.util.Objects.requireNonNull(context, "context");
             return this;
         }
 
         public Builder setLogger(HumlaLogger logger) {
-            mLogger = logger;
+            mLogger = java.util.Objects.requireNonNull(logger, "logger");
             return this;
         }
 
@@ -761,7 +802,7 @@ public class AudioHandler extends HumlaNetworkListener
         }
 
         public Builder setEncodeListener(AudioEncodeListener encodeListener) {
-            mEncodeListener = encodeListener;
+            mEncodeListener = java.util.Objects.requireNonNull(encodeListener, "encodeListener");
             return this;
         }
 
@@ -776,7 +817,7 @@ public class AudioHandler extends HumlaNetworkListener
         }
 
         public Builder setInputMode(IInputMode inputMode) {
-            mInputMode = inputMode;
+            mInputMode = java.util.Objects.requireNonNull(inputMode, "inputMode");
             return this;
         }
 

@@ -21,6 +21,7 @@ package se.lublin.humla.audio;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.audiofx.AcousticEchoCanceler;
+import android.media.audiofx.AudioEffect;
 import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
 import android.os.Build;
@@ -68,8 +69,11 @@ public class AudioInput implements Runnable {
             throw new AudioInitializationException("Invalid buffer size returned for 48kHz audio capture.");
         }
 
-        // Ensure buffer size is at least 4x frame size and aligned
-        int bufferSize = Math.max(minBufferSize, FRAME_SIZE * 2 * 4);
+        // Ensure buffer size is at least 4x frame size and aligned to a
+        // whole number of 10 ms frames (frameBytes = 960 for 16-bit mono).
+        int frameBytes = FRAME_SIZE * 2;
+        int minWanted = Math.max(minBufferSize, frameBytes * 4);
+        int bufferSize = ((minWanted + frameBytes - 1) / frameBytes) * frameBytes;
 
         AudioRecord record;
         try {
@@ -90,7 +94,7 @@ public class AudioInput implements Runnable {
                         AudioFormat.CHANNEL_IN_MONO,
                         AudioFormat.ENCODING_PCM_16BIT, bufferSize);
             }
-        } catch (IllegalArgumentException | UnsupportedOperationException e) {
+        } catch (IllegalArgumentException | UnsupportedOperationException | SecurityException e) {
             throw new AudioInitializationException("Failed to instantiate AudioRecord: " + e.getMessage(), e);
         }
 
@@ -116,8 +120,14 @@ public class AudioInput implements Runnable {
             try {
                 mAec = AcousticEchoCanceler.create(sessionId);
                 if (mAec != null) {
-                    mAec.setEnabled(true);
-                    Log.i(TAG, "Hardware AEC enabled (source=" + mAudioSource + ")");
+                    int res = mAec.setEnabled(true);
+                    if (res == AudioEffect.SUCCESS) {
+                        Log.i(TAG, "Hardware AEC enabled (source=" + mAudioSource
+                                + " session=" + sessionId + ")");
+                    } else {
+                        Log.w(TAG, "AEC enable failed (source=" + mAudioSource
+                                + " session=" + sessionId + " res=" + res + ")");
+                    }
                 } else {
                     Log.w(TAG, "AEC unavailable on session " + sessionId
                             + " (source=" + mAudioSource + "): create returned null");
@@ -133,8 +143,14 @@ public class AudioInput implements Runnable {
             try {
                 mNs = NoiseSuppressor.create(sessionId);
                 if (mNs != null) {
-                    mNs.setEnabled(true);
-                    Log.i(TAG, "Hardware Noise Suppressor enabled");
+                    int res = mNs.setEnabled(true);
+                    if (res == AudioEffect.SUCCESS) {
+                        Log.i(TAG, "Hardware Noise Suppressor enabled (source=" + mAudioSource
+                                + " session=" + sessionId + ")");
+                    } else {
+                        Log.w(TAG, "NS enable failed (source=" + mAudioSource
+                                + " session=" + sessionId + " res=" + res + ")");
+                    }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Failed to enable hardware NS: " + e.getMessage());
@@ -145,8 +161,14 @@ public class AudioInput implements Runnable {
             try {
                 mAgc = AutomaticGainControl.create(sessionId);
                 if (mAgc != null) {
-                    mAgc.setEnabled(true);
-                    Log.i(TAG, "Hardware Automatic Gain Control enabled");
+                    int res = mAgc.setEnabled(true);
+                    if (res == AudioEffect.SUCCESS) {
+                        Log.i(TAG, "Hardware Automatic Gain Control enabled (source=" + mAudioSource
+                                + " session=" + sessionId + ")");
+                    } else {
+                        Log.w(TAG, "AGC enable failed (source=" + mAudioSource
+                                + " session=" + sessionId + " res=" + res + ")");
+                    }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Failed to enable hardware AGC: " + e.getMessage());
@@ -154,17 +176,30 @@ public class AudioInput implements Runnable {
         }
     }
 
-    public synchronized void startRecording() {
-        if (mRecording) return;
-        if (mRecordThread != null && mRecordThread.isAlive()) {
-            boolean interrupted = false;
-            try {
-                mRecordThread.interrupt();
-                mRecordThread.join(200);
-            } catch (InterruptedException e) {
-                interrupted = true;
+    public void startRecording() {
+        Thread stale;
+        synchronized (this) {
+            if (mRecording) return;
+            stale = (mRecordThread != null && mRecordThread.isAlive()) ? mRecordThread : null;
+            if (stale == null) {
+                mRecordThread = null;
+                mRecording = true;
+                mRecordThread = new Thread(this, "MumlaAudioInput");
+                mRecordThread.start();
+                return;
             }
-            if (mRecordThread.isAlive()) {
+        }
+        // Join outside the monitor: the capture thread needs this monitor
+        // for enable/releaseEffects, and must never be blocked by a join.
+        boolean interrupted = false;
+        try {
+            stale.interrupt();
+            stale.join(200);
+        } catch (InterruptedException e) {
+            interrupted = true;
+        }
+        synchronized (this) {
+            if (stale.isAlive()) {
                 Log.w(TAG, "Previous capture thread still alive after timeout, postponing startRecording");
                 if (interrupted) Thread.currentThread().interrupt();
                 return;
@@ -172,17 +207,24 @@ public class AudioInput implements Runnable {
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
+            if (mRecording) return;
             mRecordThread = null;
+            mRecording = true;
+            mRecordThread = new Thread(this, "MumlaAudioInput");
+            mRecordThread.start();
         }
-        mRecording = true;
-        mRecordThread = new Thread(this, "MumlaAudioInput");
-        mRecordThread.start();
     }
 
-    public synchronized void stopRecording() {
-        if (!mRecording) return;
-        mRecording = false;
-        AudioRecord record = mAudioRecord;
+    public void stopRecording() {
+        AudioRecord record;
+        Thread thread;
+        synchronized (this) {
+            if (!mRecording) return;
+            mRecording = false;
+            record = mAudioRecord;
+            thread = mRecordThread;
+        }
+        // Blocking IPC (stop) and signaling run outside the monitor.
         if (record != null) {
             try {
                 if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
@@ -191,18 +233,26 @@ public class AudioInput implements Runnable {
             } catch (Exception ignored) {
             }
         }
-        if (mRecordThread != null) {
-            mRecordThread.interrupt();
+        if (thread != null) {
+            thread.interrupt();
         }
     }
 
-    public synchronized void shutdown() {
-        stopRecording();
-        if (mRecordThread != null) {
+    public void shutdown() {
+        Thread thread;
+        synchronized (this) {
+            mRecording = false;
+            thread = mRecordThread;
+        }
+        if (thread != null) {
+            thread.interrupt();
+        }
+        // Join outside the monitor for the same reason as startRecording.
+        if (thread != null) {
             boolean interrupted = false;
-            while (mRecordThread.isAlive()) {
+            while (thread.isAlive()) {
                 try {
-                    mRecordThread.join();
+                    thread.join();
                     break;
                 } catch (InterruptedException e) {
                     interrupted = true;
@@ -211,11 +261,14 @@ public class AudioInput implements Runnable {
             if (interrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+        AudioRecord record;
+        synchronized (this) {
             mRecordThread = null;
+            record = mAudioRecord;
+            mAudioRecord = null;
         }
         releaseEffects();
-        AudioRecord record = mAudioRecord;
-        mAudioRecord = null;
         if (record != null) {
             try {
                 record.release();
@@ -264,6 +317,11 @@ public class AudioInput implements Runnable {
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
 
+        // Shutdown may have landed between startRecording and this thread's
+        // first instruction: never create a record that nobody will drain.
+        if (!mRecording) {
+            return;
+        }
         if (mAudioRecord == null || mAudioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
             try {
                 releaseEffects();
@@ -275,10 +333,30 @@ public class AudioInput implements Runnable {
                     } catch (Exception ignored) {
                     }
                 }
+                if (!mRecording || Thread.currentThread().isInterrupted()) {
+                    mRecording = false;
+                    return;
+                }
                 mAudioRecord = setupAudioRecord(mAudioSource);
+                if (!mRecording || Thread.currentThread().isInterrupted()) {
+                    // shutdown() raced preamble creation: release the
+                    // just-created record instead of leaking the mic.
+                    AudioRecord fresh = mAudioRecord;
+                    mAudioRecord = null;
+                    releaseEffects();
+                    if (fresh != null) {
+                        try {
+                            fresh.release();
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    mRecording = false;
+                    return;
+                }
                 enableAudioEffects();
             } catch (AudioInitializationException e) {
                 Log.e(TAG, "AudioRecord initialization failed, capture thread aborting: " + e.getMessage());
+                mRecording = false;
                 return;
             }
         }
@@ -305,11 +383,13 @@ public class AudioInput implements Runnable {
                 mAudioRecord.startRecording();
             } catch (Exception ex) {
                 Log.e(TAG, "AudioRecord recreation failed: " + ex.getMessage());
+                mRecording = false;
                 return;
             }
         }
 
         final short[] buffer = new short[FRAME_SIZE];
+        int consecutiveReadErrors = 0;
 
         try {
             while (mRecording && !Thread.currentThread().isInterrupted()) {
@@ -319,17 +399,50 @@ public class AudioInput implements Runnable {
                 }
                 int read = record.read(buffer, 0, FRAME_SIZE);
                 if (read > 0) {
+                    consecutiveReadErrors = 0;
                     if (mListener != null) {
                         mListener.onAudioInputReceived(buffer, read);
                     }
                 } else if (read == 0) {
+                    consecutiveReadErrors = 0;
                     try {
                         Thread.sleep(2);
                     } catch (InterruptedException e) {
                         break;
                     }
                 } else {
-                    Log.e(TAG, "AudioRecord read error: " + read);
+                    consecutiveReadErrors++;
+                    if (consecutiveReadErrors == 1 || consecutiveReadErrors % 50 == 0) {
+                        Log.e(TAG, "AudioRecord read error: " + read
+                                + " (consecutive=" + consecutiveReadErrors + ")");
+                    }
+                    if (read == AudioRecord.ERROR_DEAD_OBJECT) {
+                        Log.e(TAG, "AudioRecord dead object, recreating capture");
+                        try {
+                            releaseEffects();
+                            AudioRecord stale = mAudioRecord;
+                            mAudioRecord = null;
+                            if (stale != null) {
+                                try {
+                                    stale.release();
+                                } catch (Exception ignored) {
+                                }
+                            }
+                            if (!mRecording || Thread.currentThread().isInterrupted()) {
+                                mRecording = false;
+                                break;
+                            }
+                            mAudioRecord = setupAudioRecord(mAudioSource);
+                            enableAudioEffects();
+                            mAudioRecord.startRecording();
+                            consecutiveReadErrors = 0;
+                        } catch (Exception ex) {
+                            Log.e(TAG, "AudioRecord recreation after dead object failed: " + ex.getMessage());
+                            mRecording = false;
+                            break;
+                        }
+                        continue;
+                    }
                     try {
                         Thread.sleep(10);
                     } catch (InterruptedException e) {
@@ -339,6 +452,7 @@ public class AudioInput implements Runnable {
             }
         } catch (Exception e) {
             Log.w(TAG, "Exception in AudioInput capture loop: " + e.getMessage());
+            mRecording = false;
         }
 
         try {
@@ -351,6 +465,11 @@ public class AudioInput implements Runnable {
     }
 
     public interface AudioInputListener {
+        /**
+         * Delivered on the capture thread with a shared reused buffer:
+         * the callee must copy before returning, and must handle
+         * partial reads (frameSize &lt; FRAME_SIZE).
+         */
         void onAudioInputReceived(short[] frame, int frameSize);
     }
 }

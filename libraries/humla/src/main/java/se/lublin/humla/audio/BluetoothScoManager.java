@@ -56,6 +56,7 @@ import java.util.Objects;
  *
  * <p>Locking: {@code mState}, {@code mAttempts}, {@code mSavedMode},
  * {@code mModeOwned}, {@code mModeExternallyOwned}, {@code mGeneration}, {@code mRouteHeld},
+ * {@code mRouteHeldEpoch}, {@code mDeviceListenerEpoch}, {@code mLegacyReceiverEpoch},
  * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
@@ -121,9 +122,17 @@ public class BluetoothScoManager {
     private boolean mModeExternallyOwned;
     private int mGeneration;
     private boolean mRouteHeld;
+    // Generation that holds the route request (see markRouteHeld): stale
+    // abort paths only release their own epoch so a newer session's route
+    // is never cleared by an older session's teardown.
+    private int mRouteHeldEpoch = -1;
 
     private BroadcastReceiver mLegacyReceiver;
     private AudioManager.OnCommunicationDeviceChangedListener mDeviceListener;
+    // Epoch captured when each observer was registered: queued platform
+    // callbacks carry their session epoch and are dropped when stale.
+    private int mDeviceListenerEpoch = -1;
+    private int mLegacyReceiverEpoch = -1;
 
     private final Runnable mTimeoutRunnable = new Runnable() {
         @Override
@@ -152,6 +161,12 @@ public class BluetoothScoManager {
                         long connectTimeoutMs, int maxAttempts) {
         Objects.requireNonNull(context, "context");
         Objects.requireNonNull(listener, "listener");
+        if (connectTimeoutMs < 0) {
+            throw new IllegalArgumentException("connectTimeoutMs must be >= 0");
+        }
+        if (maxAttempts < 1) {
+            throw new IllegalArgumentException("maxAttempts must be >= 1");
+        }
         mContext = context.getApplicationContext();
         mListener = listener;
         mConnectTimeoutMs = connectTimeoutMs;
@@ -180,6 +195,7 @@ public class BluetoothScoManager {
             mState = STATE_STARTING;
             mAttempts = 0;
             mRouteHeld = false;
+            mRouteHeldEpoch = -1;
             ++mGeneration;
         }
         if (!hasConnectPermission()) {
@@ -351,9 +367,9 @@ public class BluetoothScoManager {
         markRouteHeld();
         if (!isStartingEpoch(epoch)) {
             // Stopped after the request landed: undo it, since stop() ran
-            // before the request existed. The generation guard drops racing
-            // callbacks.
-            releaseRouteIfHeld();
+            // before the request existed. Epoch-scoped: a newer session may
+            // hold its own route by now, which this stale path must not clear.
+            releaseRouteIfHeldForEpoch(epoch);
             return null;
         }
         if (isScoActiveNow()) {
@@ -365,7 +381,11 @@ public class BluetoothScoManager {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    setActive();
+                    if (isStartingEpoch(epoch)) {
+                        setActive();
+                    } else {
+                        Log.i(TAG, "Dropping stale SCO fast-path activation");
+                    }
                 }
             });
             return null;
@@ -405,7 +425,7 @@ public class BluetoothScoManager {
         }
         markRouteHeld();
         if (!isStartingEpoch(epoch)) {
-            releaseRouteIfHeld();
+            releaseRouteIfHeldForEpoch(epoch);
             return null;
         }
         if (isScoActiveNow()) {
@@ -414,7 +434,11 @@ public class BluetoothScoManager {
             mHandler.post(new Runnable() {
                 @Override
                 public void run() {
-                    setActive();
+                    if (isStartingEpoch(epoch)) {
+                        setActive();
+                    } else {
+                        Log.i(TAG, "Dropping stale SCO fast-path activation");
+                    }
                 }
             });
             return null;
@@ -473,12 +497,19 @@ public class BluetoothScoManager {
         return null;
     }
 
-    private void onModernDeviceChanged(AudioDeviceInfo device) {
+    private void onModernDeviceChanged(AudioDeviceInfo device, int epoch) {
         final boolean scoNow;
         final int state;
+        final int currentEpoch;
         synchronized (this) {
             state = mState;
+            currentEpoch = mGeneration;
             scoNow = device != null && device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
+        }
+        if (epoch != currentEpoch) {
+            // Queued callback from a torn-down session: a newer start() owns
+            // the route now and this stale event must not move the machine.
+            return;
         }
         if (state == STATE_STARTING && scoNow) {
             setActive();
@@ -490,12 +521,17 @@ public class BluetoothScoManager {
         // failing fast here would turn every blip into a fallback.
     }
 
-    private void onLegacyStateChanged(int audioState) {
+    private void onLegacyStateChanged(int audioState, int epoch) {
         final int state;
         final int attempts;
+        final int currentEpoch;
         synchronized (this) {
             state = mState;
             attempts = mAttempts;
+            currentEpoch = mGeneration;
+        }
+        if (epoch != currentEpoch) {
+            return;
         }
         if (audioState == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
             if (state == STATE_STARTING) {
@@ -638,6 +674,7 @@ public class BluetoothScoManager {
         synchronized (this) {
             held = mRouteHeld;
             mRouteHeld = false;
+            mRouteHeldEpoch = -1;
         }
         if (held) {
             releaseRoute();
@@ -647,6 +684,26 @@ public class BluetoothScoManager {
     private void markRouteHeld() {
         synchronized (this) {
             mRouteHeld = true;
+            mRouteHeldEpoch = mGeneration;
+        }
+    }
+
+    /**
+     * Epoch-scoped release for stale abort paths: only clears the hold when
+     * it still belongs to the given session generation. Authoritative
+     * teardowns (stop/fail/drop/timeout) use {@link #releaseRouteIfHeld}.
+     */
+    private void releaseRouteIfHeldForEpoch(int epoch) {
+        final boolean release;
+        synchronized (this) {
+            release = mRouteHeld && mRouteHeldEpoch == epoch;
+            if (release) {
+                mRouteHeld = false;
+                mRouteHeldEpoch = -1;
+            }
+        }
+        if (release) {
+            releaseRoute();
         }
     }
 
@@ -694,7 +751,14 @@ public class BluetoothScoManager {
         if (mDeviceListener != null) {
             return true;
         }
-        mDeviceListener = this::onModernDeviceChanged;
+        final int epoch = mGeneration;
+        mDeviceListenerEpoch = epoch;
+        mDeviceListener = new AudioManager.OnCommunicationDeviceChangedListener() {
+            @Override
+            public void onCommunicationDeviceChanged(AudioDeviceInfo device) {
+                onModernDeviceChanged(device, epoch);
+            }
+        };
         try {
             mAudioManager.addOnCommunicationDeviceChangedListener(
                     mContext.getMainExecutor(), mDeviceListener);
@@ -716,6 +780,8 @@ public class BluetoothScoManager {
         if (mLegacyReceiver != null) {
             return true;
         }
+        final int epoch = mGeneration;
+        mLegacyReceiverEpoch = epoch;
         mLegacyReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
@@ -729,7 +795,7 @@ public class BluetoothScoManager {
                 if (state == -1) {
                     return;
                 }
-                onLegacyStateChanged(state);
+                onLegacyStateChanged(state, epoch);
             }
         };
         IntentFilter filter =
