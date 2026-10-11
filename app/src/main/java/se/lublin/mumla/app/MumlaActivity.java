@@ -143,6 +143,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private AlertDialog mFirstRunDialog;
     // True while the first-run certificate generation task owns StartupAction.
     private boolean mFirstRunGenerateInFlight = false;
+    // Tracks bindService success: the bind uses no BIND_AUTO_CREATE, so no
+    // connection exists on a fresh launch before the first connect, and an
+    // unconditional unbindService would throw IllegalArgumentException.
+    private boolean mBound;
 
     /**
      * List of fragments to be notified about service state changes.
@@ -152,6 +156,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private final ServiceConnection mConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
+            mBound = true;
             mService = ((MumlaService.MumlaBinder) service).getService();
             mService.setSuppressNotifications(true);
             mService.registerObserver(mObserver);
@@ -175,6 +180,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
+            mBound = false;
             mService = null;
         }
     };
@@ -433,8 +439,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             @Override
             public void handleOnBackPressed() {
                 if (mService != null && mService.isConnected()) {
+                    Server current = mService.getTargetServer();
+                    String currentName = current != null ? current.getName() : null;
+                    if (currentName == null) currentName = "";
                     new MaterialAlertDialogBuilder(MumlaActivity.this)
-                            .setMessage(getString(R.string.disconnectSure, mService.getTargetServer().getName()))
+                            .setMessage(getString(R.string.disconnectSure, currentName))
                             .setPositiveButton(R.string.confirm, (dialog, which) -> {
                                 mService.disconnect();
                                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES);
@@ -533,7 +542,12 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     protected void onResume() {
         super.onResume();
         Intent connectIntent = new Intent(this, MumlaService.class);
-        bindService(connectIntent, mConnection, 0);
+        try {
+            mBound = bindService(connectIntent, mConnection, 0);
+        } catch (Exception e) {
+            Log.w(TAG, "Service bind failed", e);
+            mBound = false;
+        }
     }
 
     @Override
@@ -554,7 +568,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService.unregisterObserver(mObserver);
             mService.setSuppressNotifications(false);
         }
-        unbindService(mConnection);
+        if (mBound) {
+            try {
+                unbindService(mConnection);
+            } catch (IllegalArgumentException e) {
+                Log.w(TAG, "Service already unbound", e);
+            }
+            mBound = false;
+        }
     }
 
     /**
@@ -623,12 +644,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         return false;
     }
 
-    /**
-     * Volume keys follow the voice-call stream when the handset path is in
-     * use or a SCO link is confirmed up. Confirmed state (not the raw
-     * toggle) keeps keys coherent with the actual route, including after a
-     * failed bring-up that falls back to phone audio.
-     */
     /**
      * Volume keys follow output routing: voice-call stream on voice routes
      * (the AEC path), music stream on media routes (A2DP volume). Pre-bind
@@ -756,9 +771,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 break;
             case DrawerAdapter.ITEM_ACCESS_TOKENS:
                 fragmentClass = AccessTokenFragment.class;
-                Server connectedServer = getService().getTargetServer();
+                IMumlaService bound = getService();
+                Server connectedServer = bound != null ? bound.getTargetServer() : null;
+                if (connectedServer == null) {
+                    fragmentClass = FavouriteServerListFragment.class;
+                    break;
+                }
                 args.putLong("server", connectedServer.getId());
-                args.putStringArrayList("access_tokens", (ArrayList<String>) mDatabase.getAccessTokens(connectedServer.getId()));
+                args.putStringArrayList("access_tokens", new ArrayList<>(mDatabase.getAccessTokens(connectedServer.getId())));
                 break;
             case DrawerAdapter.ITEM_PINNED_CHANNELS:
                 fragmentClass = ChannelFragment.class;
@@ -893,11 +913,16 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         if (a == null || b == null) {
             return a == b;
         }
+        // A corrected password must reconnect, not no-op: compare it even
+        // when the endpoint identity matches (saved or unsaved).
+        String pwA = a.getPassword();
+        String pwB = b.getPassword();
+        boolean samePassword = pwA != null ? pwA.equals(pwB) : pwB == null;
         if (a.isSaved() && b.isSaved()) {
-            return a.getId() == b.getId();
+            return a.getId() == b.getId() && samePassword;
         }
         // Fall back to the chat-log identity convention (normalized endpoint + username).
-        return MumlaService.getServerKey(a).equals(MumlaService.getServerKey(b));
+        return samePassword && MumlaService.getServerKey(a).equals(MumlaService.getServerKey(b));
     }
 
     @Override
@@ -1134,7 +1159,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     public String getConnectedServerName() {
         if (mService != null && mService.isConnected()) {
             Server server = mService.getTargetServer();
-            return server.getName().isEmpty() ? server.getHost() : server.getName();
+            String name = server != null ? server.getName() : null;
+            if (name == null || name.isEmpty()) {
+                name = server != null ? server.getHost() : null;
+            }
+            return name != null ? name : "";
         }
         if (BuildConfig.DEBUG)
             throw new RuntimeException("getConnectedServerName should only be called if connected!");

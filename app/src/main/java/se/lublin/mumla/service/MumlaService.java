@@ -131,7 +131,15 @@ public class MumlaService extends HumlaService implements
         if (server.isSaved()) {
             return "id:" + server.getId();
         }
-        String host = server.getHost() != null ? server.getHost().toLowerCase(Locale.ROOT) : "";
+        // Shared canonicalization with TLS pinning (trim + trailing-dot +
+        // lowercase); IPv6 literals pass through unchanged. Password is
+        // deliberately excluded: chat-log identity must survive password
+        // corrections (see MumlaActivity.isSameServer for the connect no-op).
+        String rawHost = server.getHost() != null ? server.getHost().trim() : "";
+        String host = se.lublin.humla.net.TlsHostnameVerifier.canonicalizeHost(rawHost);
+        if (host == null) {
+            host = "";
+        }
         int port = server.getPort() > 0 ? server.getPort() : Constants.DEFAULT_PORT;
         String user = server.getUsername() != null ? server.getUsername() : "";
         return "endpoint:" + host + ":" + port + ":" + user;
@@ -755,6 +763,9 @@ public class MumlaService extends HumlaService implements
      */
     @Override
     public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        if (key == null) {
+            return;
+        }
         Bundle changedExtras = new Bundle();
         boolean requiresReconnect = false;
         switch (key) {
