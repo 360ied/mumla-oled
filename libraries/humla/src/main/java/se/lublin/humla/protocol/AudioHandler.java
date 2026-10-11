@@ -391,8 +391,11 @@ public class AudioHandler extends HumlaNetworkListener
         return SAMPLE_RATE;
     }
 
+    /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     public int getBitrate() {
-        return mBitrate;
+        synchronized (mBandwidthLock) {
+            return mBitrate;
+        }
     }
 
     /**
@@ -462,8 +465,11 @@ public class AudioHandler extends HumlaNetworkListener
         }
     }
 
+    /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     public int getFramesPerPacket() {
-        return mFramesPerPacket;
+        synchronized (mBandwidthLock) {
+            return mFramesPerPacket;
+        }
     }
 
     public void setFramesPerPacketListener(FramesPerPacketListener listener) {
@@ -562,11 +568,15 @@ public class AudioHandler extends HumlaNetworkListener
     public void messageServerConfig(Mumble.ServerConfig msg) {
         // Upstream parity (AudioInput::setMaxBandwidth from ServerConfig):
         // a mid-call admin cap change re-degrades the encoder without a
-        // reconnect. Same guard as ServerSync above.
+        // reconnect. Same guard as ServerSync above. Absent field is a
+        // no-op (murmur always sets it live; only the pre-registration
+        // burst omits it, which never reaches this handler).
         if (!mInitialized) {
             return;
         }
-        setMaxBandwidth(msg.hasMaxBandwidth() ? msg.getMaxBandwidth() : -1);
+        if (msg.hasMaxBandwidth()) {
+            setMaxBandwidth(msg.getMaxBandwidth());
+        }
     }
 
     @Override

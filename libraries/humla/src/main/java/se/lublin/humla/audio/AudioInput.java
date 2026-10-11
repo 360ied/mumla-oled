@@ -252,7 +252,7 @@ public class AudioInput implements Runnable {
                 if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
                     record.stop();
                 }
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
         }
         if (thread != null) {
@@ -275,7 +275,7 @@ public class AudioInput implements Runnable {
                 if (recordToStop.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
                     recordToStop.stop();
                 }
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
         }
         if (thread != null) {
@@ -306,7 +306,7 @@ public class AudioInput implements Runnable {
         if (record != null) {
             try {
                 record.release();
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
         }
     }
@@ -366,7 +366,7 @@ public class AudioInput implements Runnable {
                 if (staleRecord != null) {
                     try {
                         staleRecord.release();
-                    } catch (Exception ignored) {
+                    } catch (Throwable ignored) {
                     }
                 }
                 if (!mRecording || Thread.currentThread().isInterrupted()) {
@@ -383,7 +383,7 @@ public class AudioInput implements Runnable {
                     if (fresh != null) {
                         try {
                             fresh.release();
-                        } catch (Exception ignored) {
+                        } catch (Throwable ignored) {
                         }
                     }
                     mRecording = false;
@@ -418,7 +418,7 @@ public class AudioInput implements Runnable {
                 if (staleRecord != null) {
                     try {
                         staleRecord.release();
-                    } catch (Exception ignored) {
+                    } catch (Throwable ignored) {
                     }
                 }
                 // Same shutdown guards as the preamble above: a racing
@@ -435,7 +435,7 @@ public class AudioInput implements Runnable {
                     if (fresh != null) {
                         try {
                             fresh.release();
-                        } catch (Exception ignored) {
+                        } catch (Throwable ignored) {
                         }
                     }
                     mRecording = false;
@@ -497,7 +497,7 @@ public class AudioInput implements Runnable {
                             if (stale != null) {
                                 try {
                                     stale.release();
-                                } catch (Exception ignored) {
+                                } catch (Throwable ignored) {
                                 }
                             }
                             if (!mRecording || Thread.currentThread().isInterrupted()) {
@@ -540,7 +540,7 @@ public class AudioInput implements Runnable {
             if (record != null && record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
                 record.stop();
             }
-        } catch (Exception ignored) {
+        } catch (Throwable ignored) {
         }
     }
 
