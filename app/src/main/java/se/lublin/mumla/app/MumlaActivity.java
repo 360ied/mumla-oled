@@ -17,8 +17,6 @@
 
 package se.lublin.mumla.app;
 
-import static java.util.Objects.requireNonNull;
-
 import android.Manifest;
 import android.content.ComponentName;
 import android.content.DialogInterface;
@@ -143,6 +141,31 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     private AlertDialog mFirstRunDialog;
     // True while the first-run certificate generation task owns StartupAction.
     private boolean mFirstRunGenerateInFlight = false;
+
+    // The latest one-shot reconnect observer (switch-server and
+    // reject-retry flows): unregistered in onDisconnected, or in onPause /
+    // onDestroy if the activity dies first, so a stale callback can never
+    // drive connectToServer on a destroyed activity with a closed database.
+    private HumlaObserver mReconnectObserver;
+
+    /** Registers a one-shot reconnect observer, replacing any pending one. */
+    private void setReconnectObserver(HumlaObserver observer) {
+        clearReconnectObserver();
+        mReconnectObserver = observer;
+        if (mService != null) {
+            mService.registerObserver(observer);
+        }
+    }
+
+    /** Drops any pending one-shot reconnect observer without firing it. */
+    private void clearReconnectObserver() {
+        if (mReconnectObserver != null) {
+            if (mService != null) {
+                mService.unregisterObserver(mReconnectObserver);
+            }
+            mReconnectObserver = null;
+        }
+    }
     // Tracks bindService success: the bind uses no BIND_AUTO_CREATE, so no
     // connection exists on a fresh launch before the first connect, and an
     // unconditional unbindService would throw IllegalArgumentException.
@@ -568,6 +591,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             mService.unregisterObserver(mObserver);
             mService.setSuppressNotifications(false);
         }
+        // A pending switch-server/retry observer must not outlive the
+        // activity: its onDisconnected would drive connectToServer (and the
+        // database) on a dead instance.
+        clearReconnectObserver();
         if (mBound) {
             try {
                 unbindService(mConnection);
@@ -612,6 +639,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     protected void onDestroy() {
+        clearReconnectObserver();
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.unregisterOnSharedPreferenceChangeListener(this);
         mDatabase.close();
@@ -620,7 +648,13 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
+        if (menu == null) {
+            return super.onPrepareOptionsMenu(menu);
+        }
         MenuItem disconnectButton = menu.findItem(R.id.action_disconnect);
+        if (disconnectButton == null) {
+            return super.onPrepareOptionsMenu(menu);
+        }
         disconnectButton.setVisible(mService != null && mService.isConnected());
 
         return super.onPrepareOptionsMenu(menu);
@@ -803,7 +837,15 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                 .commit();
         DrawerAdapter.DrawerRow row = mDrawerAdapter.getItemWithId(fragmentId);
         if (row != null) {
-            requireNonNull(getSupportActionBar()).setTitle(row.title);
+            if (getSupportActionBar() != null) {
+                getSupportActionBar().setTitle(row.title);
+            }
+        } else {
+            // Unknown id (e.g. a stale EXTRA_DRAWER_FRAGMENT): fall back to
+            // the app title so TalkBack still announces a sane screen name.
+            if (getSupportActionBar() != null) {
+                getSupportActionBar().setTitle(R.string.app_name);
+            }
         }
     }
 
@@ -886,14 +928,18 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     .setMessage(R.string.reconnect_dialog_message)
                     .setPositiveButton(R.string.connect, (dialog, which) -> {
                         // Register an observer to reconnect to the new server once disconnected.
-                        mService.registerObserver(new HumlaObserver() {
+                        final IMumlaService svc = getService();
+                        if (svc == null) {
+                            return;
+                        }
+                        setReconnectObserver(new HumlaObserver() {
                             @Override
                             public void onDisconnected(HumlaException e) {
+                                clearReconnectObserver();
                                 connectToServer(server);
-                                mService.unregisterObserver(this);
                             }
                         });
-                        mService.disconnect();
+                        svc.disconnect();
                     })
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
@@ -919,10 +965,14 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
             return a == b;
         }
         // A corrected password must reconnect, not no-op: compare it even
-        // when the endpoint identity matches (saved or unsaved).
+        // when the endpoint identity matches (saved or unsaved). Null and
+        // empty both mean "no password" (DB columns are nullable while the
+        // edit dialog produces ""), so normalize before comparing.
         String pwA = a.getPassword();
         String pwB = b.getPassword();
-        boolean samePassword = pwA != null ? pwA.equals(pwB) : pwB == null;
+        if (pwA == null) pwA = "";
+        if (pwB == null) pwB = "";
+        boolean samePassword = pwA.equals(pwB);
         if (a.isSaved() && b.isSaved()) {
             return a.getId() == b.getId() && samePassword;
         }
@@ -1070,7 +1120,11 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                         builder.setMessage(error.getMessage());
                         builder.setView(passwordField);
                         builder.setPositiveButton(R.string.reconnect, (dialog, which) -> {
-                            Server server1 = getService().getTargetServer();
+                            final IMumlaService svc = getService();
+                            if (svc == null) {
+                                return;
+                            }
+                            Server server1 = svc.getTargetServer();
                             if (server1 == null) {
                                 return;
                             }
@@ -1079,17 +1133,17 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                             if (server1.isSaved()) {
                                 mDatabase.updateServer(server1);
                             }
-                            if (mService != null && mService.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
+                            if (svc.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
                                 // Serialize the retry behind the in-flight attempt, mirroring
                                 // the already-connected flow: reconnect once it tears down.
-                                mService.registerObserver(new HumlaObserver() {
+                                setReconnectObserver(new HumlaObserver() {
                                     @Override
                                     public void onDisconnected(HumlaException e) {
+                                        clearReconnectObserver();
                                         connectToServer(server1);
-                                        mService.unregisterObserver(this);
                                     }
                                 });
-                                mService.disconnect();
+                                svc.disconnect();
                             } else {
                                 connectToServer(server1);
                             }

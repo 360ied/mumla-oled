@@ -32,6 +32,11 @@ import se.lublin.humla.net.HandshakeFailure;
 /**
  * A composite wrapper around Humla observers to easily broadcast to each observer.
  * Created by andrew on 12/07/14.
+ *
+ * <p>Fan-out isolates failures: a throwing observer is logged and the rest
+ * still run. Only {@code RuntimeException} is caught — an {@code Error} still
+ * aborts the broadcast. Registration rejects {@code null} fail-fast while
+ * unregistration tolerates it for defensive call sites.
  */
 public class HumlaCallbacks implements IHumlaObserver {
     private final Set<IHumlaObserver> mCallbacks;
@@ -61,7 +66,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -78,7 +84,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -95,7 +102,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -112,7 +120,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -129,7 +138,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -146,7 +156,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -163,7 +174,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -180,7 +192,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -197,7 +210,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -214,7 +228,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -231,7 +246,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -248,7 +264,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -265,7 +282,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -282,7 +300,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -299,7 +318,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -316,7 +336,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -333,7 +354,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -350,7 +372,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -367,7 +390,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -384,7 +408,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }
@@ -401,7 +426,8 @@ public class HumlaCallbacks implements IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
                 } else {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out: " + observerError);
+                    android.util.Log.w("HumlaCallbacks", "Observer " + observer.getClass().getName()
+                            + " threw, continuing fan-out: " + observerError);
                 }
             }
         }

@@ -91,4 +91,17 @@ public class MumlaActivityTest extends TestCase {
         Server b = new Server(-1, "B", "mumble.example.com", 64738, "alice", "new");
         assertFalse(MumlaActivity.isSameServer(a, b));
     }
+
+    public void testIsSameServer_NullPasswordEqualsEmpty() {
+        Server nullPw = new Server(-1, "A", "mumble.example.com", 64738, "alice", null);
+        Server emptyPw = new Server(-1, "B", "mumble.example.com", 64738, "alice", "");
+        assertTrue(MumlaActivity.isSameServer(nullPw, emptyPw));
+        assertTrue(MumlaActivity.isSameServer(emptyPw, nullPw));
+    }
+
+    public void testIsSameServer_TrailingDotHostEquals() {
+        Server dotted = new Server(-1, "A", "mumble.example.com.", 64738, "alice", "");
+        Server plain = new Server(-1, "B", "mumble.example.com", 64738, "alice", "");
+        assertTrue(MumlaActivity.isSameServer(dotted, plain));
+    }
 }
