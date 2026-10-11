@@ -85,6 +85,14 @@ public class AudioHandler extends HumlaNetworkListener
     private volatile boolean mVoiceRoute = true;
     private volatile int mBitrate;
     private volatile int mFramesPerPacket;
+    /**
+     * Construction-time targets that bandwidth adaptation degrades from and
+     * restores to (upstream parity: AudioInput reseeds from settings on
+     * every adjustBandwidth). Seeding from the live degraded values would
+     * ratchet quality down permanently after a transient cap.
+     */
+    private final int mTargetBitrate;
+    private final int mTargetFramesPerPacket;
     private volatile FramesPerPacketListener mFramesPerPacketListener;
     private final IInputMode mInputMode;
     private final float mAmplitudeBoost;
@@ -151,6 +159,8 @@ public class AudioHandler extends HumlaNetworkListener
         mAudioStream = audioStream;
         mBitrate = targetBitrate;
         mFramesPerPacket = sanitizeFramesPerPacket(targetFramesPerPacket);
+        mTargetBitrate = targetBitrate;
+        mTargetFramesPerPacket = sanitizeFramesPerPacket(targetFramesPerPacket);
         mInputMode = inputMode;
         mAmplitudeBoost = amplitudeBoost;
         mHalfDuplex = halfDuplexEnabled;
@@ -194,8 +204,19 @@ public class AudioHandler extends HumlaNetworkListener
                 mNativeEngine.setVadThresholds(actMode.getVadMax(), actMode.getVadMin());
             }
 
-            mInput = new AudioInput(this, mAudioSource);
-            mOutput = new AudioOutput(mContext, mOutputListener);
+            AudioInput input = new AudioInput(this, mAudioSource);
+            try {
+                mOutput = new AudioOutput(mContext, mOutputListener);
+            } catch (RuntimeException e) {
+                // Output construction failed after capture was already
+                // holding the mic: shut it down before propagating.
+                try {
+                    input.shutdown();
+                } catch (Exception ignored) {
+                }
+                throw e;
+            }
+            mInput = input;
         } catch (AudioInitializationException | RuntimeException e) {
             // mInput was never assigned (its construction threw): only the
             // native engine above needs destroying. (destroyInputAndEngine
@@ -401,7 +422,9 @@ public class AudioHandler extends HumlaNetworkListener
     }
 
     private void setMaxBandwidth(int maxBandwidth) {
-        EffectiveAudioConfig config = computeEffectiveConfig(mBitrate, mFramesPerPacket, maxBandwidth);
+        // Seed from construction targets, not live values, so a relaxed or
+        // cleared cap restores quality instead of ratcheting (see fields).
+        EffectiveAudioConfig config = computeEffectiveConfig(mTargetBitrate, mTargetFramesPerPacket, maxBandwidth);
         if (config.bitrate == mBitrate && config.framesPerPacket == mFramesPerPacket) {
             return;
         }
@@ -748,8 +771,9 @@ public class AudioHandler extends HumlaNetworkListener
         private boolean mHalfDuplexEnabled;
         // Plain like neighbors: most fields are programmed on the service
         // main thread, while the route group (sco/voice/source/stream) is
-        // written under the HumlaService monitor (updateRouteBuilder and
-        // stopScoWithNotify are synchronized); only the built handler's
+        // written under the HumlaService monitor (fine-grained blocks in
+        // updateRouteBuilderLocked, stopScoWithNotify, and onDestroy; the
+        // device query itself runs outside it); only the built handler's
         // mScoActive is volatile.
         private boolean mScoEnabled;
         // Defaults true to preserve step-2a behavior until the service

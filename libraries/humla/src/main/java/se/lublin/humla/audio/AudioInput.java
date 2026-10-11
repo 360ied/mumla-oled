@@ -62,10 +62,15 @@ public class AudioInput implements Runnable {
             enableAudioEffects();
         } catch (Throwable t) {
             // enableAudioEffects catches Exception per effect, but an Error
-            // would otherwise abandon the just-created record (held mic).
+            // would otherwise abandon the record and any already-enabled
+            // effects. releaseEffects is reentrant and thread-free here.
+            try {
+                releaseEffects();
+            } catch (Throwable ignored) {
+            }
             try {
                 mAudioRecord.release();
-            } catch (Exception ignored) {
+            } catch (Throwable ignored) {
             }
             mAudioRecord = null;
             throw t;
@@ -381,6 +386,11 @@ public class AudioInput implements Runnable {
                 Log.e(TAG, "AudioRecord initialization failed, capture thread aborting: " + e.getMessage());
                 mRecording = false;
                 return;
+            } catch (Throwable t) {
+                // An Error must not strand mRecording on a dead thread:
+                // clear the flag so a later start can recover, then rethrow.
+                mRecording = false;
+                throw t;
             }
         }
 
@@ -427,6 +437,9 @@ public class AudioInput implements Runnable {
                 Log.e(TAG, "AudioRecord recreation failed: " + ex.getMessage());
                 mRecording = false;
                 return;
+            } catch (Throwable t) {
+                mRecording = false;
+                throw t;
             }
         }
 
@@ -482,6 +495,9 @@ public class AudioInput implements Runnable {
                             Log.e(TAG, "AudioRecord recreation after dead object failed: " + ex.getMessage());
                             mRecording = false;
                             break;
+                        } catch (Throwable t) {
+                            mRecording = false;
+                            throw t;
                         }
                         continue;
                     }
@@ -495,6 +511,9 @@ public class AudioInput implements Runnable {
         } catch (Exception e) {
             Log.w(TAG, "Exception in AudioInput capture loop: " + e.getMessage());
             mRecording = false;
+        } catch (Throwable t) {
+            mRecording = false;
+            throw t;
         }
 
         try {

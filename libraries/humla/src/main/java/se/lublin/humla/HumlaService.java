@@ -159,8 +159,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     // Written on the main thread (applyScoRoute) and in the disconnect path
     // (stopScoWithNotify), which HumlaConnection invokes on TCP-reader
     // threads; read on both. Volatile for visibility; confirmed-flag flips
-    // are serialized in fine-grained synchronized blocks, while the funnel,
-    // IPC, and fan-out they trigger run outside the service monitor.
+    // are serialized in fine-grained synchronized blocks (see applyScoRoute,
+    // stopScoWithNotify, updateRouteBuilderLocked), while the funnel, device
+    // query, IPC, and fan-out they trigger run outside the service monitor.
     private volatile boolean mScoRouteActive;
     // VoIP mode ownership (one owner: this route policy — never the pipeline
     // and never the SCO manager alone). Held for voice routes so capture-side
@@ -217,8 +218,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private ToggleInputMode mToggleInputMode;
     private ContinuousInputMode mContinuousInputMode;
 
-    private boolean mReconnecting;
-    private int mReconnectAttempts = 0;
+    // Written from main (start/connect UI) and connection threads
+    // (disconnect path): volatile so reconnect UI never strands on stale state.
+    private volatile boolean mReconnecting;
+    private volatile int mReconnectAttempts = 0;
     private Runnable mReconnectRunnable;
     private ConnectivityManager.NetworkCallback mNetworkCallback;
     private boolean mNetworkCallbackRegistered = false;
@@ -494,8 +497,12 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         if (mScoManager != null) {
             mScoManager.stop();
         }
-        mAudioBuilder.setScoEnabled(false);
-        mScoRouteActive = false;
+        // Same builder group as the funnel/teardown paths: clear under the
+        // monitor so a racing recompute cannot resurrect SCO after destroy.
+        synchronized (this) {
+            mAudioBuilder.setScoEnabled(false);
+            mScoRouteActive = false;
+        }
         releaseVoiceMode();
         if (mDeviceCallback != null) {
             mHandler.removeCallbacks(mRouteRecompute);
@@ -591,16 +598,31 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     @Override
-    public synchronized boolean retryBluetoothSco() {
-        if (mScoRequested && mConnectionState == ConnectionState.CONNECTED
-                && mScoManager != null && mScoManager.isIdle()) {
-            mScoManager.start();
-            // Re-validate: a disconnect racing the bring-up must not leave
-            // a stray SCO attempt running with no pipeline (stop() never
-            // callbacks, so this is silent and safe).
-            if (mConnectionState != ConnectionState.CONNECTED) {
-                mScoManager.stop();
-                return false;
+    public boolean retryBluetoothSco() {
+        // Snapshot under a short block, bring-up outside: holding the service
+        // monitor across SCO IPC pins the disconnect teardown flip.
+        final boolean requested;
+        final ConnectionState state;
+        final BluetoothScoManager scoManager;
+        final HumlaConnection connection;
+        synchronized (this) {
+            requested = mScoRequested;
+            state = mConnectionState;
+            scoManager = mScoManager;
+            connection = mConnection;
+        }
+        if (requested && state == ConnectionState.CONNECTED
+                && scoManager != null && scoManager.isIdle()) {
+            scoManager.start();
+            // Re-validate identity, not just state: a disconnect/reconnect
+            // cycle during bring-up must not leave a stray attempt running
+            // against a newer connection (stop() never callbacks, so this
+            // is silent and safe).
+            synchronized (this) {
+                if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED) {
+                    scoManager.stop();
+                    return false;
+                }
             }
             return true;
         }
@@ -664,14 +686,19 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
 
         try {
-            updateRouteBuilder();
-            applyVoiceMode(mAppliedVoiceRoute);
+            boolean voice = updateRouteBuilder();
+            applyVoiceMode(voice);
             createAudioHandler();
         } catch (AudioException e) {
             Log.e(TAG, "Audio pipeline creation failed", e);
             onConnectionWarning(e.getMessage());
         }
         updateBluetoothScoRoute();
+        // First creation bypasses the funnel: push route-dependent audio
+        // (cues, proximity) explicitly so an A2DP-attached first connect
+        // does not leave them on the voice stream until the next flap.
+        onAudioRouteChanged();
+        mCallbacks.onAudioRouteChanged();
 
         mCallbacks.onConnected();
     }
@@ -856,8 +883,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * so synchronous teardowns must notify explicitly or volume, cues, and
      * menu state strand on the voice route. Only the confirmed-flag/builder
      * section holds the service monitor (serialized with applyScoRoute and
-     * the route builder group); manager IPC, the media query, and the
-     * posted notify stay outside so the lock never pins across slow work.
+     * the route builder group); manager IPC and the posted notify stay
+     * outside so the lock never pins across slow work. Media selection is
+     * left for the next funnel recompute, which owns it.
      */
     private void stopScoWithNotify() {
         if (mScoManager == null) {
@@ -865,13 +893,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         boolean wasActive = mScoManager.isActive();
         mScoManager.stop();
-        boolean freshMedia = queryMediaDevicesPresent();
         synchronized (this) {
             mAudioBuilder.setScoEnabled(false);
             mScoRouteActive = false;
-            // Refresh the gated decision too: with A2DP still attached the
-            // posted cue rebuild must pick the media stream, not voice.
-            mMediaRouteSelected = freshMedia;
         }
         if (wasActive) {
             // Posted: teardown callers (disconnect, destroy, mid-call disable)
@@ -988,8 +1012,18 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             mScoRouteActive = active;
         }
         applyAudioRoute(reason, false);
+        // Re-validate: a teardown racing this route may have flipped the
+        // flag while the funnel ran; its own notify carries the newer state.
+        synchronized (this) {
+            if (active != mScoRouteActive) {
+                return;
+            }
+        }
         mCallbacks.onBluetoothScoChanged(active);
     }
+
+    /** Debounce for device attach/detach flurries: one recompute per burst. */
+    private static final long ROUTE_RECOMPUTE_DEBOUNCE_MS = 300;
 
     /**
      * Debounced device-listener entry: attach/detach flurries converge into
@@ -997,7 +1031,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      */
     private void onRouteDevicesChanged() {
         mHandler.removeCallbacks(mRouteRecompute);
-        mHandler.postDelayed(mRouteRecompute, 300);
+        mHandler.postDelayed(mRouteRecompute, ROUTE_RECOMPUTE_DEBOUNCE_MS);
     }
 
     /**
@@ -1045,13 +1079,21 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * flag, and effective source/stream. Voice keeps the handset-derived
      * stream (earpiece vs speakerphone intent); media is always MIC/MUSIC.
      * Returns the applied voice decision for mode handling by the caller.
-     * Synchronized: the builder is otherwise main-thread-confined, and this
-     * keeps the SCO/stream/source group mutually exclusive with the
+     * The device query runs outside the monitor (binder IPC); only the
+     * flag/builder group below holds it, mutually exclusive with the
      * teardown write in stopScoWithNotify.
      */
-    private synchronized boolean updateRouteBuilder() {
+    private boolean updateRouteBuilder() {
+        boolean mediaPresent = queryMediaDevicesPresent();
+        synchronized (this) {
+            return updateRouteBuilderLocked(mediaPresent);
+        }
+    }
+
+    /** Route decision + builder group; caller holds the service monitor. */
+    private boolean updateRouteBuilderLocked(boolean mediaPresent) {
         boolean sco = mScoRouteActive;
-        boolean media = !sco && queryMediaDevicesPresent();
+        boolean media = !sco && mediaPresent;
         mMediaRouteSelected = media;
         boolean voice = computeVoiceRoute(sco, media);
         mAppliedVoiceRoute = voice;
@@ -1083,6 +1125,10 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * unless forceReload (settings path) demands it.
      */
     private void applyAudioRoute(String reason, boolean forceReload) {
+        // Snapshot outside the group lock: all funnel callers are main-Looper
+        // confined (device recompute, settings, SCO callbacks, posted sync),
+        // so no concurrent funnel rewrite is expected; a surprise concurrent
+        // rewrite would at worst cause one redundant idempotent reload.
         boolean before = mAppliedVoiceRoute;
         boolean voice = updateRouteBuilder();
         if (mConnectionState == ConnectionState.CONNECTED) {
