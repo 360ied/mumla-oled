@@ -429,26 +429,32 @@ public class AudioHandler extends HumlaNetworkListener
         // Seed from construction targets, not live values, so a relaxed or
         // cleared cap restores quality instead of ratcheting (see fields).
         EffectiveAudioConfig config = computeEffectiveConfig(mTargetBitrate, mTargetFramesPerPacket, maxBandwidth);
-        if (config.bitrate == mBitrate && config.framesPerPacket == mFramesPerPacket) {
-            return;
-        }
-        int oldFramesPerPacket = mFramesPerPacket;
-        // Publish the pair atomically: torn bitrate/fpp reads (e.g. from
-        // getCurrentBandwidth on another thread) would misreport bandwidth.
+        // Decide and publish under one lock (single main/TCP-serialized
+        // writer today; the lock documents it), then fan out and re-drive
+        // outside: torn pairs would misreport bandwidth, and callbacks must
+        // never run while holding this lock.
+        final EffectiveAudioConfig applied;
+        final int oldFramesPerPacket;
         synchronized (mBandwidthLock) {
+            if (config.bitrate == mBitrate && config.framesPerPacket == mFramesPerPacket) {
+                return;
+            }
+            oldFramesPerPacket = mFramesPerPacket;
             mBitrate = config.bitrate;
             mFramesPerPacket = config.framesPerPacket;
+            applied = config;
         }
         if (mNativeEngine != null) {
-            mNativeEngine.setBitrate(mBitrate);
-            mNativeEngine.setFramesPerPacket(mFramesPerPacket);
+            mNativeEngine.setBitrate(applied.bitrate);
+            mNativeEngine.setFramesPerPacket(applied.framesPerPacket);
         }
         mLogger.logInfo(mContext.getString(R.string.audio_max_bandwidth,
-                maxBandwidth / 1000, mBitrate / 1000, mFramesPerPacket * Constants.FRAME_DURATION_MS));
-        if (config.framesPerPacket != oldFramesPerPacket) {
+                maxBandwidth / 1000, applied.bitrate / 1000,
+                applied.framesPerPacket * Constants.FRAME_DURATION_MS));
+        if (applied.framesPerPacket != oldFramesPerPacket) {
             FramesPerPacketListener listener = mFramesPerPacketListener; // volatile read
             if (listener != null) {
-                listener.onEffectiveFramesPerPacketChanged(config.framesPerPacket);
+                listener.onEffectiveFramesPerPacketChanged(applied.framesPerPacket);
             }
         }
     }
@@ -543,6 +549,17 @@ public class AudioHandler extends HumlaNetworkListener
     public void messageServerSync(Mumble.ServerSync msg) {
         // Match the sibling guards: post-shutdown delivery must not re-log
         // or re-drive the (destroyed) native engine.
+        if (!mInitialized) {
+            return;
+        }
+        setMaxBandwidth(msg.hasMaxBandwidth() ? msg.getMaxBandwidth() : -1);
+    }
+
+    @Override
+    public void messageServerConfig(Mumble.ServerConfig msg) {
+        // Upstream parity (AudioInput::setMaxBandwidth from ServerConfig):
+        // a mid-call admin cap change re-degrades the encoder without a
+        // reconnect. Same guard as ServerSync above.
         if (!mInitialized) {
             return;
         }
@@ -835,6 +852,12 @@ public class AudioHandler extends HumlaNetworkListener
             return mTargetFramesPerPacket;
         }
 
+        /**
+         * @deprecated Fixed 48 kHz end to end: AudioInput and the native
+         * engine hardcode 48000/480 by design, so this value is accepted
+         * and ignored. Retained for API compatibility; do not rely on it.
+         */
+        @Deprecated
         public Builder setInputSampleRate(int inputSampleRate) {
             mInputSampleRate = inputSampleRate;
             return this;

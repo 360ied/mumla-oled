@@ -145,7 +145,7 @@ public class AudioInput implements Runnable {
                                 + " session=" + sessionId + " res=" + res + ")");
                     }
                 } else {
-                    Log.w(TAG, "AEC unavailable on session " + sessionId
+                    Log.i(TAG, "AEC unavailable on session " + sessionId
                             + " (source=" + mAudioSource + "): create returned null");
                 }
             } catch (Exception e) {
@@ -168,7 +168,7 @@ public class AudioInput implements Runnable {
                                 + " session=" + sessionId + " res=" + res + ")");
                     }
                 } else {
-                    Log.w(TAG, "NS unavailable on session " + sessionId
+                    Log.i(TAG, "NS unavailable on session " + sessionId
                             + " (source=" + mAudioSource + "): create returned null");
                 }
             } catch (Exception e) {
@@ -189,7 +189,7 @@ public class AudioInput implements Runnable {
                                 + " session=" + sessionId + " res=" + res + ")");
                     }
                 } else {
-                    Log.w(TAG, "AGC unavailable on session " + sessionId
+                    Log.i(TAG, "AGC unavailable on session " + sessionId
                             + " (source=" + mAudioSource + "): create returned null");
                 }
             } catch (Exception e) {
