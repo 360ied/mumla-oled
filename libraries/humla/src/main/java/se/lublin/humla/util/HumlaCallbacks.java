@@ -39,157 +39,243 @@ public class HumlaCallbacks implements IHumlaObserver {
     }
 
     public void registerObserver(IHumlaObserver observer) {
+        java.util.Objects.requireNonNull(observer, "observer");
         mCallbacks.add(observer);
     }
 
     public void unregisterObserver(IHumlaObserver observer) {
+        if (observer == null) return;
         mCallbacks.remove(observer);
     }
 
     @Override
     public void onConnected() {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onConnected();
+            try {
+                observer.onConnected();
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onConnecting() {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onConnecting();
+            try {
+                observer.onConnecting();
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onDisconnected(HumlaException e) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onDisconnected(e);
+            try {
+                observer.onDisconnected(e);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onTLSHandshakeFailed(chain, failure, verifiedHost);
+            try {
+                observer.onTLSHandshakeFailed(chain, failure, verifiedHost);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onChannelAdded(IChannel channel) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelAdded(channel);
+            try {
+                observer.onChannelAdded(channel);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onChannelStateUpdated(IChannel channel) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelStateUpdated(channel);
+            try {
+                observer.onChannelStateUpdated(channel);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onChannelRemoved(IChannel channel) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelRemoved(channel);
+            try {
+                observer.onChannelRemoved(channel);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onChannelPermissionsUpdated(IChannel channel) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onChannelPermissionsUpdated(channel);
+            try {
+                observer.onChannelPermissionsUpdated(channel);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onUserConnected(IUser user) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserConnected(user);
+            try {
+                observer.onUserConnected(user);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onUserStateUpdated(IUser user) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserStateUpdated(user);
+            try {
+                observer.onUserStateUpdated(user);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onUserTalkStateUpdated(IUser user) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserTalkStateUpdated(user);
+            try {
+                observer.onUserTalkStateUpdated(user);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserJoinedChannel(user, newChannel, oldChannel);
+            try {
+                observer.onUserJoinedChannel(user, newChannel, oldChannel);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onUserRemoved(IUser user, String reason) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onUserRemoved(user, reason);
+            try {
+                observer.onUserRemoved(user, reason);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onPermissionDenied(String reason) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onPermissionDenied(reason);
+            try {
+                observer.onPermissionDenied(reason);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onMessageLogged(IMessage message) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onMessageLogged(message);
+            try {
+                observer.onMessageLogged(message);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onVoiceTargetChanged(VoiceTargetMode mode) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onVoiceTargetChanged(mode);
+            try {
+                observer.onVoiceTargetChanged(mode);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onBluetoothScoChanged(boolean active) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onBluetoothScoChanged(active);
+            try {
+                observer.onBluetoothScoChanged(active);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onAudioRouteChanged() {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onAudioRouteChanged();
+            try {
+                observer.onAudioRouteChanged();
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onLogInfo(String message) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onLogInfo(message);
+            try {
+                observer.onLogInfo(message);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onLogWarning(String message) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onLogWarning(message);
+            try {
+                observer.onLogWarning(message);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 
     @Override
     public void onLogError(String message) {
         for (IHumlaObserver observer : mCallbacks) {
-            observer.onLogError(message);
+            try {
+                observer.onLogError(message);
+            } catch (RuntimeException observerError) {
+                android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError);
+            }
         }
     }
 }
