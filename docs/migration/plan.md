@@ -14,22 +14,24 @@ Three migrations, one branch:
    `ReconnectController`, `AudioRoutePolicy`). The `HumlaNetworkThread`
    executor trio (including its dead receive executor), the
    stringly-typed `configureExtras` bundle, and the `AsyncTask`s go away.
-   The ~40-method `IHumlaSession` facade is split into role interfaces.
+   The 48-method `IHumlaSession` facade is split into role interfaces.
 2. **Data layer → Room + DataStore + Hilt.** Hand SQL in
-   [`MumlaSQLiteDatabase`](../../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java),
-   the 65-method
-   [`Settings`](../../../app/src/main/java/se/lublin/mumla/Settings.java)
+   [`MumlaSQLiteDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java),
+   the 48-accessor
+   [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.java)
    blob, and the pref→bundle→effect double dispatch become Room
    entities, a typed `ConfigDelta`, and an injected graph.
 3. **UI → Compose, internals only.** Fragments, `RecyclerView` adapters,
-   and the six-dialog `MumlaActivity` bookkeeping become Compose screens
+   and the seven dialog fields of `MumlaActivity` become Compose screens
    with `ViewModel` state holders and Navigation. See "UI parity" below.
 
 ## Fences (do not touch)
 
-- [`audio_engine`](../../../libraries/humla/src/main/jni/audio_engine/)
+- [`audio_engine`](../../libraries/humla/src/main/jni/audio_engine/)
   and its JNI facades: no behavior changes. The host native suite must
   stay green for every slice.
+- `../../libraries/humla/src/main/jni/crypto/` (OCB2 `CryptState`, JNI bridge):
+  same treatment — C++ frozen, Java facades convert syntactically only.
 - Protocol parity with upstream Mumble schemas and behavior stays exact.
 - FOSS flavor, Nix dev shell, and 3-ABI packaging stay as-is.
 - Binder surface frozen: `IMumlaService`/`IHumlaService`/`IHumlaSession`
@@ -54,7 +56,7 @@ rewrite:
 ## Proposed slice order (each an atomic commit, always green)
 
 1. minSdk 33 + legacy deletion (decided: Pixel 4a floor — deletes
-   M/N/O/Q/R/S/TIRAMISU gates including the SCO legacy path).
+   M/N/O/Q/R/S/S_V2/TIRAMISU gates including the SCO legacy path and the `ChannelChatFragment` storage branch).
 2. Hilt + Room + DataStore data layer (mechanical, no UX).
 3. Kotlin conversion of `libraries/humla` (syntax first).
 4. Coroutines service core (the real debt kill).
@@ -84,7 +86,7 @@ adopt them from slice 1:
   Views→Compose) as a doc in this directory and review it like code.
   Bun's `PORTING.md` plus a lifetimes table were reviewed before a
   single file was converted.
-- **Trial slice.** Convert one leaf file/screen end-to-end (implement +
+- **Trial slice is slice 1.** The minSdk-33 deletion is deletion-only with zero new dependencies: run implement + review + fix on it before fanning out.
   review + fix) before fanning out. Calibrate the workflow on the trial,
   not on the whole tree.
 - **Split implementer and reviewer contexts.** The agent that writes a

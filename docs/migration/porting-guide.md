@@ -6,9 +6,9 @@ first, then the offending file. Converters follow it literally; reviewers
 check conformance to it.
 
 Scope reminder: the native DSP in
-[`audio_engine`](../../../libraries/humla/src/main/jni/audio_engine/) is
+[`audio_engine`](../../libraries/humla/src/main/jni/audio_engine/) is
 fenced off. Its Java JNI facades convert syntactically only — method
-signatures and threading semantics frozen.
+signatures and threading semantics frozen. Same treatment for `../../libraries/humla/src/main/jni/crypto/` (OCB2 `CryptState`, JNI bridge).
 
 ## 0. Baseline: minSdk 33 (Pixel 4a floor, decided)
 
@@ -18,31 +18,33 @@ three-person userbase, so the floor is set by hardware on hand — revisit
 only if the fleet changes. Delete, don't convert:
 
 - All `M` (23) gates: pre-M `AudioRecord`/`AudioTrack` constructors in
-  [`AudioInput`](../../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)
+  [`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)
   and
-  [`AudioOutput`](../../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java),
+  [`AudioOutput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java),
   `getBufferSizeInFrames` fallback, `MumlaService`/`HumlaService`
   M-gated branches, `AudioDeviceCallback` M registration gate.
-- All `N` (24–25) gates: e.g. `PinnedTlsSocketFactory` behavior split.
+- All `N` (24–25) gates (`PinnedTlsSocketFactory:62`, `HumlaService:907`; enumerate any remainder with `grep SDK_INT` — the rule is delete every gate below 33 except `UPSIDE_DOWN_CAKE`).
 - All `O` (26) gates: notification-channel creation checks in
   `MumlaConnectionNotification`/`MumlaMessageNotification`,
   `MumlaHotCorner`/`MumlaOverlay` O branches.
-- All `Q` (29) gates: gesture-exclusion and overlay Q branches.
+- All `Q` (29) gates: gesture-exclusion and hot-corner Q branches (`MumlaHotCorner`; `MumlaOverlay` is O/R only).
 - All `R` (30) gates: overlay R branches (`@TargetApi(R)` goes away).
 - All `S` (31) gates, **including the `BluetoothScoManager`
   modern/legacy duality**: the pre-S broadcast-receiver bring-up
-  (`bringUpLegacy`, legacy receiver, `REASON_NO_DEVICE` legacy paths)
+  (`bringUpLegacy` and the legacy broadcast receiver)
   is deleted outright — only the communication-device path survives.
+  `REASON_NO_DEVICE` is shared with the modern path and stays.
   Same for the pre-S voice-mode pre-hold branches in `HumlaService`/
   `MumlaService`.
+- All `S_V2` (32) gates: the `ChannelChatFragment` storage branch (`SDK_INT <= S_V2`) — dead at 33, delete the legacy side.
 - All `TIRAMISU` (33) gates: `POST_NOTIFICATIONS` permission flow goes
   unguarded.
 
 Stays: `UPSIDE_DOWN_CAKE` (34) branches only (e.g. in
 `MumlaConnectionNotification`). One gate class left in the whole tree.
 
-Newly unguarded at 28: `Context.getMainExecutor()`, notification
-channels, `AudioRecord.Builder`/`AudioTrack.Builder` everywhere.
+Newly unguarded by the bump: `Context.getMainExecutor()` (28), notification
+channels (26), `AudioRecord.Builder`/`AudioTrack.Builder` (23) — call all of them unconditionally.
 
 ## 1. Java → Kotlin (syntax layer)
 
@@ -90,8 +92,8 @@ The rule: **network/audio threads parse; a confined scope mutates.**
 | `ConnectivityManager.NetworkCallback`, `AudioDeviceCallback`, `BroadcastReceiver`s | `callbackFlow` adapters, collected in the service scope |
 | Talking-state hops (`mHandler.post` from capture thread, `mMainHandler.post` from native render callback) | `serviceScope.launch { ... }` — still a hop to the confined scope, same ordering |
 | `AsyncTask` (`ServerConnectTask`, `ServerInfoTask`, `MumlaCertificateGenerateTask`) | `suspend` functions + `viewModelScope`/`lifecycleScope`; `ServerConnectTask` keeps application-context semantics (it outlives rotation today) |
-| Ad-hoc SRV single-thread executors | One shared `Dispatchers.IO` call with `withTimeout(800)` |
-| Capture `MumlaAudioInput` thread + render thread (`URGENT_AUDIO`, blocking `read`/`write`/`wait`) | **Stay raw threads.** Blocking audio IO is not suspendible; only the control plane (start/stop/join bookkeeping) moves into the scope. Join/interrupt/notify pairing stays exactly as-is |
+| Ad-hoc SRV single-thread executors | One shared `Dispatchers.IO` call with `withTimeout(800.milliseconds)` |
+| Capture `AudioInput` thread + render (`AudioOutput`) thread (`URGENT_AUDIO`, blocking `read`/`write`/`wait`) | **Stay raw threads.** Blocking audio IO is not suspendible; only the control plane (start/stop/join bookkeeping) moves into the scope. Join/interrupt/notify pairing stays exactly as-is |
 
 Services: extend `LifecycleService` (decided — no attachment to the
 current `Service` base) and use `lifecycleScope` as the service scope.
@@ -105,7 +107,7 @@ Never use `GlobalScope`.
   minimally. `Server` stays a single `@Entity @Parcelize` class (DB row,
   parcel, and UI model in one) — no separate layers.
 - **`Settings` blob → DataStore (Preferences flavor):** typed preferences;
-  the 65 getters become typed keys with defaults in one place.
+  the 48 accessors become typed keys with defaults in one place.
 - **Pref→bundle→effect double dispatch → typed `ConfigDelta`.**
   `MumlaService.onSharedPreferenceChanged` and
   `HumlaService.configureExtras` collapse into `apply(ConfigDelta)`; the
@@ -126,7 +128,7 @@ Visual/structural parity is a hard guardrail (see
   becomes a route map, same order, same back stack.
 - `RecyclerView` + adapter + `ViewHolder` → `LazyColumn` + `key()`;
   `onBindViewHolder` listener nests become plain lambdas on state.
-- Each of the six `MumlaActivity` dialogs → `Dialog` composable behind a
+- Each of the seven `MumlaActivity` dialog fields (six plus the first-run host; `mCertDialog` covers three TLS variants) → `Dialog` composable behind a
   single `DialogHost` holding today's dismissal semantics
   (pause-dismissal, dismiss-before-assign).
 - `DrawerLayout` → `ModalNavigationDrawer`, options menu → `TopAppBar`

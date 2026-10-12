@@ -5,7 +5,7 @@ shaping the migration before any worktree is scaffolded.
 
 ## Goal
 
-Kill tech debt in Mumla OLED: the god classes, the
+Kill tech debt in Mumla OLED: the god classes (`HumlaService`, `MumlaService`, `MumlaActivity` dialog/permission/reconnect bookkeeping), the
 `Handler`/`volatile`/`synchronized` folk discipline, the deprecated
 `AsyncTask`s, the hand-rolled SQLite and the `Settings`
 `SharedPreferences` blob, and the Fragments/`RecyclerView`/adapter
@@ -17,11 +17,13 @@ machinery. See [plan](plan.md) for execution.
   DataStore + Hilt data layer, Compose UI rewrite. Details in
   [plan](plan.md).
 - **Native audio is fenced off.** The C++ DSP engines under
-  [`audio_engine`](../../../libraries/humla/src/main/jni/audio_engine/)
-  and their JNI boundary are brand-new, well-tested code the author is
-  satisfied with. No RIIR, no behavior touch. The native suite stays a
+  [`audio_engine`](../../libraries/humla/src/main/jni/audio_engine/)
+  and their JNI boundary are recent, natively tested code. No rewrite-it-in-Rust (RIIR), no behavior touch. The native suite stays a
   gate for every slice. (The earlier Rust-core option is explicitly
   rejected.)
+- **Crypto JNI fenced with audio.** `../../libraries/humla/src/main/jni/crypto/`
+  (OCB2 `CryptState`, JNI bridge) gets the same treatment: C++ frozen,
+  Java facades convert syntactically only.
 - **Compose rewrite is internals-only.** The user-facing UI of Mumla OLED
   must look and feel exactly the same: same `res/` visuals, same
   navigation structure, same dialogs and copy. Internals get gutted,
@@ -29,10 +31,10 @@ machinery. See [plan](plan.md) for execution.
 - **Solo-dev big-bang.** One long-lived migration branch in a dedicated
   worktree. `master` drift is controlled by choice, and a feature freeze
   for the migration period is accepted: the app is considered
-  feature-complete with echo cancellation as the cherry on top.
+  feature-complete with echo cancellation already shipped.
 - **minSdk 33, permanent.** The oldest fleet device is a Pixel 4a
   (Android 13 max), and the userbase is three people — so the floor
-  costs nothing and deletes every version gate except `UPSIDE_DOWN_CAKE`.
+  costs nothing for this fleet and deletes every version gate except `UPSIDE_DOWN_CAKE`.
   Revisit only if the fleet changes.
 - **Services become `LifecycleService`.** No attachment to the current
   `Service` base; `lifecycleScope` is the service coroutine scope.
@@ -43,13 +45,13 @@ machinery. See [plan](plan.md) for execution.
   the next bump is a one-line diff.
 - **Trial slice is the minSdk-33 deletion.** Deletion-only, zero new
   dependencies — it proves the worktree plus `check.sh` loop before
-  anything irreversible. Leaf Kotlin conversion goes second.
-- **DataStore flavor is Preferences.** The 65 key-value getters map 1:1
+  anything irreversible. Afterwards, follow the slice order in [plan](plan.md) (data layer next).
+- **DataStore flavor is Preferences.** The 48 accessors map 1:1
   onto Preferences keys plus a typed wrapper; Proto schemas would add a
   serialization layer for no gain at this scale.
 - **`Server` stays one class.** Single `@Entity @Parcelize` class serving
   as DB row, parcel, and UI model — separate layers would tax every
-  call site for a second concept that will never arrive.
+  call site with no foreseeable second consumer.
 - **Binder surface frozen.** `IMumlaService`/`IHumlaService`/`IHumlaSession`
   stay compatible for the whole migration; refactoring happens strictly
   behind them. Improvements to the surface are post-migration work.
