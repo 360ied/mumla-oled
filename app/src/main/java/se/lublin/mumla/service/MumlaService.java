@@ -30,7 +30,6 @@ import android.media.SoundPool;
 import android.net.Uri;
 import android.annotation.SuppressLint;
 import android.os.Binder;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -899,9 +898,6 @@ public class MumlaService extends HumlaService implements
      * Below 31 the manifest flags are install-time, so always true.
      */
     private boolean hasBluetoothConnectGrant() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return true;
-        }
         return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
                 == PackageManager.PERMISSION_GRANTED;
     }
@@ -1059,8 +1055,7 @@ public class MumlaService extends HumlaService implements
     }
 
     private boolean checkAndRequestOverlayPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+        if (!android.provider.Settings.canDrawOverlays(getApplicationContext())) {
             try {
                 Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:" + getPackageName()));
@@ -1166,8 +1161,7 @@ public class MumlaService extends HumlaService implements
         if (mChannelOverlay != null) {
             boolean shouldShow = isConnectionEstablished() && mSettings.isOverlayShown();
             if (shouldShow) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                        && !android.provider.Settings.canDrawOverlays(getApplicationContext())) {
+                if (!android.provider.Settings.canDrawOverlays(getApplicationContext())) {
                     return;
                 }
                 if (!mChannelOverlay.isShown()) {

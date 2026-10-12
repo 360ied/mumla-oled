@@ -73,7 +73,7 @@ android {
     def gitDescribe = gitDescribeRaw.replaceFirst(/^v(?=\d)/, "")
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 33
         targetSdk 36
 
         applicationId "se.lublin.mumla"

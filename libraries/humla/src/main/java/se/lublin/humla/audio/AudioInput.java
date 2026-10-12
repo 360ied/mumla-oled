@@ -24,7 +24,6 @@ import android.media.audiofx.AcousticEchoCanceler;
 import android.media.audiofx.AudioEffect;
 import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
-import android.os.Build;
 import android.os.Process;
 import android.util.Log;
 
@@ -93,23 +92,17 @@ public class AudioInput implements Runnable {
 
         AudioRecord record;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                AudioFormat format = new AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                        .build();
+            AudioFormat format = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build();
 
-                record = new AudioRecord.Builder()
-                        .setAudioSource(audioSource)
-                        .setAudioFormat(format)
-                        .setBufferSizeInBytes(bufferSize)
-                        .build();
-            } else {
-                record = new AudioRecord(audioSource, SAMPLE_RATE,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT, bufferSize);
-            }
+            record = new AudioRecord.Builder()
+                    .setAudioSource(audioSource)
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build();
         } catch (IllegalArgumentException | UnsupportedOperationException | SecurityException e) {
             throw new AudioInitializationException("Failed to instantiate AudioRecord: " + e.getMessage(), e);
         }

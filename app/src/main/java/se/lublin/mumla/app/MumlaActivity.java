@@ -26,7 +26,6 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.media.AudioManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.text.InputType;
@@ -532,15 +531,10 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     savedInstanceState.getBoolean(STATE_BT_ASKED, false);
             mPermPostNotificationsAsked =
                     savedInstanceState.getBoolean(STATE_POST_NOTIF_ASKED, false);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                mServerPendingPerm =
-                        savedInstanceState.getParcelable(STATE_SERVER_PENDING, Server.class);
-                mPendingReconnectServer =
-                        savedInstanceState.getParcelable(STATE_RECONNECT_TARGET, Server.class);
-            } else {
-                mServerPendingPerm = savedInstanceState.getParcelable(STATE_SERVER_PENDING);
-                mPendingReconnectServer = savedInstanceState.getParcelable(STATE_RECONNECT_TARGET);
-            }
+            mServerPendingPerm =
+                    savedInstanceState.getParcelable(STATE_SERVER_PENDING, Server.class);
+            mPendingReconnectServer =
+                    savedInstanceState.getParcelable(STATE_RECONNECT_TARGET, Server.class);
         }
         setContentView(R.layout.activity_main);
 
@@ -1008,7 +1002,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         }
 
         if (mSettings.isBluetoothHeadset()
-                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
                 && ContextCompat.checkSelfPermission(MumlaActivity.this,
                         Manifest.permission.BLUETOOTH_CONNECT)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -1029,7 +1022,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
                     Toast.LENGTH_LONG).show();
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !mPermPostNotificationsAsked) {
+        if (!mPermPostNotificationsAsked) {
             // Mark asked before requesting: a cancelled dialog must not loop.
             mPermPostNotificationsAsked = true;
             if (ContextCompat.checkSelfPermission(MumlaActivity.this,

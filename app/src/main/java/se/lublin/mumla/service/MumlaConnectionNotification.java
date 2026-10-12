@@ -336,7 +336,7 @@ public class MumlaConnectionNotification {
      * Called to update/create the service's foreground Mumla notification.
      */
     private Notification createNotification() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !sChannelCreated) {
+        if (!sChannelCreated) {
             String channelName = mService.getString(R.string.connected);
             NotificationManager manager = mService.getSystemService(NotificationManager.class);
             if (manager != null) {

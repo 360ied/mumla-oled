@@ -18,17 +18,10 @@
 package se.lublin.humla.audio;
 
 import android.Manifest;
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothManager;
-import android.bluetooth.BluetoothProfile;
-import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -44,19 +37,13 @@ import java.util.Objects;
  * silent without a state broadcast. This manager hides that behind a small state
  * machine with a connect timeout, one retry, and automatic fallback reporting.
  *
- * <p>Two platform backends sit behind one interface, selected by API level:
- * <ul>
- *   <li>API 31+: {@code setCommunicationDevice()} with a {@code TYPE_BLUETOOTH_SCO}
- *       device from {@code getAvailableCommunicationDevices()}, observed via
- *       {@code OnCommunicationDeviceChangedListener}.</li>
- *   <li>Below 31: legacy {@code startBluetoothSco()} / {@code stopBluetoothSco()},
- *       observed via the {@code ACTION_SCO_AUDIO_STATE_UPDATED} broadcast
- *       (available since API 14, so no intent fallback is needed).</li>
- * </ul>
+ * <p>SCO link bring-up runs on the single platform backend:
+ * {@code setCommunicationDevice()} with a {@code TYPE_BLUETOOTH_SCO} device
+ * from {@code getAvailableCommunicationDevices()}, observed via
+ * {@code OnCommunicationDeviceChangedListener}.
  *
  * <p>Locking: {@code mState}, {@code mAttempts}, {@code mGeneration}, {@code mRouteHeld},
- * {@code mRouteHeldEpoch},
- * {@code mLegacyReceiver}, and {@code mDeviceListener} are guarded by the
+ * {@code mRouteHeldEpoch}, and {@code mDeviceListener} are guarded by the
  * manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
  * the sequence instead of interleaving with it. Observer register/teardown
@@ -128,7 +115,6 @@ public class BluetoothScoManager {
     // is never cleared by an older session's teardown.
     private int mRouteHeldEpoch = -1;
 
-    private BroadcastReceiver mLegacyReceiver;
     private AudioManager.OnCommunicationDeviceChangedListener mDeviceListener;
 
     private final Runnable mTimeoutRunnable = new Runnable() {
@@ -247,12 +233,7 @@ public class BluetoothScoManager {
             mAttempts++;
             epoch = mGeneration;
         }
-        String failure;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            failure = bringUpModern(epoch);
-        } else {
-            failure = bringUpLegacy(epoch);
-        }
+        String failure = bringUpModern(epoch);
         if (failure != null) {
             fail(failure);
         }
@@ -339,93 +320,15 @@ public class BluetoothScoManager {
         return null;
     }
 
-    // Returns a REASON_* on failure, null on success or concurrent-stop abort.
-    private String bringUpLegacy(int epoch) {
-        if (!isStartingEpoch(epoch)) {
-            return null;
-        }
-        if (!isHeadsetConnected()) {
-            return REASON_NO_DEVICE;
-        }
-        try {
-            if (!registerLegacyReceiver()) {
-                return REASON_ERROR;
-            }
-        } catch (SecurityException e) {
-            Log.w(TAG, "Legacy SCO receiver denied", e);
-            return REASON_PERMISSION;
-        }
-        if (!isStartingEpoch(epoch)) {
-            teardownObservers();
-            return null;
-        }
-        try {
-            mAudioManager.startBluetoothSco();
-        } catch (SecurityException e) {
-            Log.w(TAG, "startBluetoothSco denied", e);
-            return REASON_PERMISSION;
-        } catch (Exception e) {
-            Log.w(TAG, "startBluetoothSco threw", e);
-            return REASON_ERROR;
-        }
-        markRouteHeld();
-        if (!isStartingEpoch(epoch)) {
-            releaseRouteIfHeldForEpoch(epoch);
-            return null;
-        }
-        if (isScoActiveNow()) {
-            // See modern fast-path above.
-            armTimeout();
-            mHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    if (isStartingEpoch(epoch)) {
-                        setActive();
-                    } else {
-                        Log.i(TAG, "Dropping stale SCO fast-path activation");
-                    }
-                }
-            });
-            return null;
-        }
-        armTimeout();
-        return null;
-    }
-
     // Whether SCO audio is currently routed, independent of the state
     // machine. Fail-closed false: doubt falls through to event-driven setup.
     private boolean isScoActiveNow() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                AudioDeviceInfo current = mAudioManager.getCommunicationDevice();
-                return current != null
-                        && current.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
-            } else {
-                return isBluetoothScoOnLegacy();
-            }
+            AudioDeviceInfo current = mAudioManager.getCommunicationDevice();
+            return current != null
+                    && current.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
         } catch (Exception e) {
             return false;
-        }
-    }
-
-    // Legacy path runs below API 31 only, where this query is not deprecated.
-    @SuppressWarnings("deprecation")
-    private boolean isBluetoothScoOnLegacy() {
-        return mAudioManager.isBluetoothScoOn();
-    }
-
-    // Fail-open HFP presence check: any doubt preserves the timeout fallback.
-    private boolean isHeadsetConnected() {
-        try {
-            BluetoothManager manager =
-                    (BluetoothManager) mContext.getSystemService(Context.BLUETOOTH_SERVICE);
-            BluetoothAdapter adapter = manager != null ? manager.getAdapter() : null;
-            return adapter != null
-                    && adapter.getProfileConnectionState(BluetoothProfile.HEADSET)
-                            == BluetoothProfile.STATE_CONNECTED;
-        } catch (Exception e) {
-            Log.w(TAG, "Headset presence check threw", e);
-            return true;
         }
     }
 
@@ -453,11 +356,7 @@ public class BluetoothScoManager {
      */
     public boolean isScoDeviceAvailable() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                return findScoDevice() != null;
-            } else {
-                return isHeadsetConnected();
-            }
+            return findScoDevice() != null;
         } catch (Exception e) {
             return false;
         }
@@ -485,47 +384,6 @@ public class BluetoothScoManager {
         // A system move to a non-SCO device mid-bring-up is left to burn the
         // attempt timeout: selections flap transiently during routing, and
         // failing fast here would turn every blip into a fallback.
-    }
-
-    private void onLegacyStateChanged(int audioState, int epoch) {
-        final int state;
-        final int attempts;
-        final int currentEpoch;
-        synchronized (this) {
-            state = mState;
-            attempts = mAttempts;
-            currentEpoch = mGeneration;
-        }
-        if (epoch != currentEpoch) {
-            return;
-        }
-        if (audioState == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
-            if (state == STATE_STARTING) {
-                setActive();
-            }
-            return;
-        }
-        if (audioState != AudioManager.SCO_AUDIO_STATE_DISCONNECTED
-                && audioState != AudioManager.SCO_AUDIO_STATE_ERROR) {
-            return;
-        }
-        if (state == STATE_STARTING) {
-            // Only an explicit stack error acts here: stale DISCONNECTED
-            // broadcasts are benign link chatter and must not burn the retry
-            // budget (the modern path ignores mid-bring-up moves likewise).
-            if (audioState == AudioManager.SCO_AUDIO_STATE_ERROR) {
-                if (!shouldRetryBringUp(attempts, mMaxAttempts)) {
-                    fail(REASON_ERROR);
-                    return;
-                }
-                // Otherwise retry or give up on the timeout path's terms by
-                // re-arming immediately.
-                mHandler.removeCallbacks(mTimeoutRunnable);
-                mHandler.post(mTimeoutRunnable);
-            }
-        } else if (state == STATE_ACTIVE) {
-            dropActiveLink();
-        }
     }
 
     private void onConnectTimeout() {
@@ -657,11 +515,7 @@ public class BluetoothScoManager {
 
     private void releaseRoute() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                mAudioManager.clearCommunicationDevice();
-            } else {
-                mAudioManager.stopBluetoothSco();
-            }
+            mAudioManager.clearCommunicationDevice();
         } catch (Exception e) {
             Log.w(TAG, "SCO route release threw", e);
         }
@@ -673,9 +527,6 @@ public class BluetoothScoManager {
     }
 
     private boolean hasConnectPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return true;
-        }
         return mContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
                 == PackageManager.PERMISSION_GRANTED;
     }
@@ -709,55 +560,8 @@ public class BluetoothScoManager {
         return true;
     }
 
-    // Self-locking; see registerDeviceListener. The legacy path runs below
-    // API 31 only, so no export-flag branch is needed here.
-    private synchronized boolean registerLegacyReceiver() {
-        if (mLegacyReceiver != null) {
-            return true;
-        }
-        final int epoch = mGeneration;
-        mLegacyReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (intent == null
-                        || !AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED.equals(intent.getAction())) {
-                    return;
-                }
-                // Unknown states are ignored, never errors: a malformed
-                // broadcast must not fail a healthy bring-up.
-                int state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1);
-                if (state == -1) {
-                    return;
-                }
-                onLegacyStateChanged(state, epoch);
-            }
-        };
-        IntentFilter filter =
-                new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED);
-        try {
-            mContext.registerReceiver(mLegacyReceiver, filter);
-        } catch (SecurityException e) {
-            Log.w(TAG, "Legacy SCO receiver denied", e);
-            mLegacyReceiver = null;
-            throw e;
-        } catch (Exception e) {
-            Log.w(TAG, "Legacy SCO receiver registration threw", e);
-            mLegacyReceiver = null;
-            return false;
-        }
-        return true;
-    }
-
     private synchronized void teardownObservers() {
-        if (mLegacyReceiver != null) {
-            try {
-                mContext.unregisterReceiver(mLegacyReceiver);
-            } catch (IllegalArgumentException ignored) {
-                // Already unregistered; teardown is idempotent by design.
-            }
-            mLegacyReceiver = null;
-        }
-        if (mDeviceListener != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (mDeviceListener != null) {
             try {
                 mAudioManager.removeOnCommunicationDeviceChangedListener(mDeviceListener);
             } catch (Exception e) {

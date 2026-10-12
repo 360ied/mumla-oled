@@ -17,11 +17,9 @@
 
 package se.lublin.mumla.service;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Insets;
 import android.graphics.PixelFormat;
-import android.os.Build;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
@@ -32,6 +30,7 @@ import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 
+import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -252,9 +251,7 @@ public class MumlaOverlay {
         mOverlayParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                        ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                        : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
@@ -286,17 +283,14 @@ public class MumlaOverlay {
         }
     }
 
-    @TargetApi(Build.VERSION_CODES.R)
+    @NonNull
     private Insets getSystemBarInsets() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
-            // Ignoring visibility (rather than getInsets) bakes hidden bars into the
-            // pinned margins so the overlay never slides under a transient system bar
-            // when bars reappear (e.g. swipe-in gesture navigation).
-            return metrics.getWindowInsets().getInsetsIgnoringVisibility(
-                    WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-        }
-        return null;
+        WindowMetrics metrics = mWindowManager.getCurrentWindowMetrics();
+        // Ignoring visibility (rather than getInsets) bakes hidden bars into the
+        // pinned margins so the overlay never slides under a transient system bar
+        // when bars reappear (e.g. swipe-in gesture navigation).
+        return metrics.getWindowInsets().getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
     }
 
     /**
@@ -333,17 +327,14 @@ public class MumlaOverlay {
     }
 
     private int getSideMargin(DisplayMetrics dm, Insets insets, String placement) {
-        int sideInset = 0;
-        if (insets != null) {
-            boolean isLeft = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
-                    || Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT.equals(placement);
-            sideInset = isLeft ? insets.left : insets.right;
-        }
+        boolean isLeft = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
+                || Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT.equals(placement);
+        int sideInset = isLeft ? insets.left : insets.right;
         return resolveSideMarginPx(Math.max(0, sideInset), dm.density);
     }
 
     private int getTopMargin(DisplayMetrics dm, Insets insets) {
-        int insetTop = insets != null ? Math.max(0, insets.top) : 0;
+        int insetTop = Math.max(0, insets.top);
         if (insetTop > 0) {
             return resolveEdgeMarginPx(insetTop, 0, DEFAULT_TOP_MARGIN_DP, dm.density);
         }
@@ -356,7 +347,7 @@ public class MumlaOverlay {
     }
 
     private int getBottomMargin(DisplayMetrics dm, Insets insets) {
-        int insetBottom = insets != null ? Math.max(0, insets.bottom) : 0;
+        int insetBottom = Math.max(0, insets.bottom);
         if (insetBottom > 0) {
             return resolveEdgeMarginPx(insetBottom, 0, DEFAULT_BOTTOM_MARGIN_DP, dm.density);
         }

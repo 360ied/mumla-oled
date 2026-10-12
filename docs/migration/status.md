@@ -62,4 +62,4 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 1 — minSdk 33 + legacy deletion (trial slice), per [slices](slices.md).
+Slice 2 — Hilt + Room + DataStore data layer, per [slices](slices.md).

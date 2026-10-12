@@ -28,7 +28,6 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -84,15 +83,12 @@ public class MumlaMessageNotification {
         PendingIntent pendingIntent = PendingIntent.getActivity(mContext, 0,
                 channelListIntent, FLAG_CANCEL_CURRENT | FLAG_IMMUTABLE);
 
-        String channelId = "";
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            channelId = "message_channel";
-            String channelName = mContext.getString(R.string.messageReceived);
-            NotificationChannel chan = new NotificationChannel(channelId, channelName,
-                    NotificationManager.IMPORTANCE_DEFAULT);
-            NotificationManager manager = mContext.getSystemService(NotificationManager.class);
-            manager.createNotificationChannel(chan);
-        }
+        String channelId = "message_channel";
+        String channelName = mContext.getString(R.string.messageReceived);
+        NotificationChannel chan = new NotificationChannel(channelId, channelName,
+                NotificationManager.IMPORTANCE_DEFAULT);
+        NotificationManager notificationManager = mContext.getSystemService(NotificationManager.class);
+        notificationManager.createNotificationChannel(chan);
         NotificationCompat.Builder builder =
                 new NotificationCompat.Builder(mContext, channelId);
 
@@ -110,9 +106,8 @@ public class MumlaMessageNotification {
 
         final NotificationManagerCompat manager = NotificationManagerCompat.from(mContext);
         Notification notification = builder.build();
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                ContextCompat.checkSelfPermission(mContext,
-                        Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(mContext,
+                Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
             manager.notify(NOTIFICATION_ID, notification);
         }
     }

@@ -251,7 +251,7 @@ public class ServerEditFragment extends DialogFragment {
     }
 
     private Server getServer() {
-        return getArguments().getParcelable(ARGUMENT_SERVER);
+        return getArguments().getParcelable(ARGUMENT_SERVER, Server.class);
     }
 
     private Action getAction() {

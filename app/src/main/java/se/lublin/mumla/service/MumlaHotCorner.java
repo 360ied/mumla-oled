@@ -23,7 +23,6 @@ import android.content.Intent;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.net.Uri;
-import android.os.Build;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -76,15 +75,13 @@ public class MumlaHotCorner implements View.OnTouchListener {
             @Override
             public void onLayoutChange(View v, int left, int top, int right, int bottom,
                                        int oldLeft, int oldTop, int oldRight, int oldBottom) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    int width = right - left;
-                    int height = bottom - top;
-                    if (width > 0 && height > 0) {
-                        if (width != mLastWidth || height != mLastHeight) {
-                            mLastWidth = width;
-                            mLastHeight = height;
-                            refreshGestureExclusion();
-                        }
+                int width = right - left;
+                int height = bottom - top;
+                if (width > 0 && height > 0) {
+                    if (width != mLastWidth || height != mLastHeight) {
+                        mLastWidth = width;
+                        mLastHeight = height;
+                        refreshGestureExclusion();
                     }
                 }
             }
@@ -92,9 +89,7 @@ public class MumlaHotCorner implements View.OnTouchListener {
 
         mParams = new WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                        ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                        : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                         | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
@@ -160,21 +155,19 @@ public class MumlaHotCorner implements View.OnTouchListener {
             return;
         }
         if (shown) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (!android.provider.Settings.canDrawOverlays(mContext)) {
-                    Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + mContext.getPackageName()));
-                    showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    try {
-                        mContext.startActivity(showSetting);
-                        Toast.makeText(mContext, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
-                    } catch (Exception e) {
-                        // OEM builds without the overlay-permission activity: no
-                        // settings screen exists, so no grant toast either.
-                        Log.e(TAG, "Failed to open overlay permission settings", e);
-                    }
-                    return;
+            if (!android.provider.Settings.canDrawOverlays(mContext)) {
+                Intent showSetting = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + mContext.getPackageName()));
+                showSetting.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                try {
+                    mContext.startActivity(showSetting);
+                    Toast.makeText(mContext, R.string.grant_perm_draw_over_apps, Toast.LENGTH_LONG).show();
+                } catch (Exception e) {
+                    // OEM builds without the overlay-permission activity: no
+                    // settings screen exists, so no grant toast either.
+                    Log.e(TAG, "Failed to open overlay permission settings", e);
                 }
+                return;
             }
             try {
                 mWindowManager.addView(mView, mParams);
@@ -207,7 +200,7 @@ public class MumlaHotCorner implements View.OnTouchListener {
      * view has no size yet. The view is never null after construction.
      */
     public void refreshGestureExclusion() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown) {
+        if (!mShown) {
             return;
         }
         int width = mView.getWidth();
@@ -224,7 +217,7 @@ public class MumlaHotCorner implements View.OnTouchListener {
      * view has its post-rotation size (ODD-05).
      */
     public void refreshGestureExclusionDeferred() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !mShown) {
+        if (!mShown) {
             return;
         }
         if (!mView.post(this::refreshGestureExclusion)) {

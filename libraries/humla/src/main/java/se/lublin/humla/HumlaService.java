@@ -27,12 +27,9 @@ import android.media.AudioManager;
 import android.media.MediaRecorder;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
-import android.net.NetworkRequest;
 import android.net.wifi.WifiManager;
 import android.os.Binder;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -494,31 +491,29 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                         Toast.LENGTH_LONG).show();
             }
         });
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                mDeviceCallback = new AudioDeviceCallback() {
-                    @Override
-                    public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
-                        logDeviceTypes("added", added);
-                        onRouteDevicesChanged();
-                        maybeStartRequestedSco(added);
-                    }
-
-                    @Override
-                    public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
-                        logDeviceTypes("removed", removed);
-                        onRouteDevicesChanged();
-                    }
-                };
-                if (mAudioManager != null) {
-                    mAudioManager.registerAudioDeviceCallback(mDeviceCallback, mHandler);
+        try {
+            mDeviceCallback = new AudioDeviceCallback() {
+                @Override
+                public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+                    logDeviceTypes("added", added);
+                    onRouteDevicesChanged();
+                    maybeStartRequestedSco(added);
                 }
-            } catch (Exception e) {
-                Log.w(TAG, "Route device listener failed", e);
-                mDeviceCallback = null;
+
+                @Override
+                public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+                    logDeviceTypes("removed", removed);
+                    onRouteDevicesChanged();
+                }
+            };
+            if (mAudioManager != null) {
+                mAudioManager.registerAudioDeviceCallback(mDeviceCallback, mHandler);
             }
-            mMediaRouteSelected = queryMediaDevicesPresent();
+        } catch (Exception e) {
+            Log.w(TAG, "Route device listener failed", e);
+            mDeviceCallback = null;
         }
+        mMediaRouteSelected = queryMediaDevicesPresent();
         mToggleInputMode = new ToggleInputMode();
         mActivityInputMode = new ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX);
         mContinuousInputMode = new ContinuousInputMode();
@@ -665,17 +660,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
         if (requested && state == ConnectionState.CONNECTED
                 && scoManager != null && scoManager.isIdle()) {
-            // Legacy pre-hold, mirroring updateBluetoothScoRoute above
-            // (voice decision only, for the same leak reason). Remember
-            // whether the hold predates us so the abort below only undoes
-            // what this method acquired.
-            boolean acquiredHere = false;
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
-                    && computeVoiceRoute(mScoRouteActive, queryMediaDevicesPresent())
-                    && !mVoiceModeHeld) {
-                ensureVoiceMode();
-                acquiredHere = true;
-            }
             scoManager.start();
             // Re-validate identity, state, and intent: a disable or a
             // disconnect/reconnect cycle during bring-up must not leave
@@ -684,9 +668,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 if (mConnection != connection || mConnectionState != ConnectionState.CONNECTED
                         || !mScoRequested) {
                     scoManager.stop();
-                    if (acquiredHere) {
-                        releaseVoiceMode();
-                    }
                     return false;
                 }
             }
@@ -904,14 +885,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                         }
                     };
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    cm.registerDefaultNetworkCallback(mNetworkCallback);
-                } else {
-                    NetworkRequest request = new NetworkRequest.Builder()
-                            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                            .build();
-                    cm.registerNetworkCallback(request, mNetworkCallback);
-                }
+                cm.registerDefaultNetworkCallback(mNetworkCallback);
                 mNetworkCallbackRegistered = true;
             }
         } catch (Exception e) {
@@ -1162,7 +1136,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * SCO path ever selects voice over Bluetooth.
      */
     private boolean queryMediaDevicesPresent() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || mAudioManager == null) {
+        if (mAudioManager == null) {
             return false;
         }
         try {
@@ -1368,11 +1342,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             // Mirror our manager's own release: the communication-device
             // path on S+ (where legacy stop is unreliable against a
             // device-path selection), legacy stop below.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                mAudioManager.clearCommunicationDevice();
-            } else {
-                mAudioManager.stopBluetoothSco();
-            }
+            mAudioManager.clearCommunicationDevice();
             Log.i(TAG, "Cleared unrequested system SCO after media flip");
         } catch (Exception e) {
             Log.w(TAG, "Unrequested SCO clear failed", e);
@@ -1385,14 +1355,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return false;
         }
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                AudioDeviceInfo info = mAudioManager.getCommunicationDevice();
-                return info != null && info.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
-            } else {
-                @SuppressWarnings("deprecation")
-                boolean on = mAudioManager.isBluetoothScoOn();
-                return on;
-            }
+            AudioDeviceInfo info = mAudioManager.getCommunicationDevice();
+            return info != null && info.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO;
         } catch (Exception e) {
             return false;
         }
@@ -1423,18 +1387,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             return;
         }
         if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
-            // Legacy bring-up (API < 31) runs startBluetoothSco, whose
-            // platform usage holds MODE_IN_COMMUNICATION; the stripped
-            // manager no longer sets it, so pre-hold here (modern
-            // setCommunicationDevice needs no mode). Gated on a voice
-            // decision: pre-holding for a bring-up that fails on a media
-            // route would leak the hold past the early-return teardown.
-            // The funnel owns the matching release on media flips;
-            // disconnect/destroy cover rest.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S
-                    && computeVoiceRoute(mScoRouteActive, queryMediaDevicesPresent())) {
-                ensureVoiceMode();
-            }
             mScoManager.start();
         } else if (!mScoManager.isIdle()) {
             // Skip the platform round-trip when already idle; stop() is safe
@@ -1599,7 +1551,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         boolean reconnectNeeded = false;
         boolean suppressReload = false;
         if (extras.containsKey(EXTRAS_SERVER)) {
-            mServer = extras.getParcelable(EXTRAS_SERVER);
+            mServer = extras.getParcelable(EXTRAS_SERVER, Server.class);
             reconnectNeeded = true;
         }
         if (extras.containsKey(EXTRAS_CERTIFICATE)) {

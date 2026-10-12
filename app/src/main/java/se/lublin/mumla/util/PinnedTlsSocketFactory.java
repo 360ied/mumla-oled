@@ -17,7 +17,6 @@
 
 package se.lublin.mumla.util;
 
-import android.os.Build;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -59,18 +58,14 @@ public final class PinnedTlsSocketFactory extends SSLSocketFactory {
     public Socket createSocket(Socket s, String host, int port, boolean autoClose)
             throws IOException {
         SSLSocket socket = (SSLSocket) mDelegate.createSocket(s, host, port, autoClose);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try {
-                SSLParameters params = socket.getSSLParameters();
-                params.setServerNames(Collections.singletonList(new SNIHostName(mSniHostname)));
-                socket.setSSLParameters(params);
-            } catch (IllegalArgumentException ignored) {
-                // IP-literal or otherwise invalid SNI name: send no SNI. The handshake
-                // then succeeds only on a matching default cert or fails closed.
-            }
+        try {
+            SSLParameters params = socket.getSSLParameters();
+            params.setServerNames(Collections.singletonList(new SNIHostName(mSniHostname)));
+            socket.setSSLParameters(params);
+        } catch (IllegalArgumentException ignored) {
+            // IP-literal or otherwise invalid SNI name: send no SNI. The handshake
+            // then succeeds only on a matching default cert or fails closed.
         }
-        // Below N (minSdk 21): SNIHostName is unavailable, so no SNI override — the handshake
-        // either succeeds on the server's default cert or fails closed. Never insecure.
         return socket;
     }
 

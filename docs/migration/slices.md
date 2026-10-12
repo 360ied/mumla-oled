@@ -62,7 +62,14 @@ for agent-reviewed slices. The binder surface
    minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).
 4. Baseline: `./scripts/check.sh` green before any slice-1 edit.
 
-## Slice 1 — minSdk 33 + legacy deletion (trial slice)
+## Slice 1 — minSdk 33 + legacy deletion (DONE 2026-10-12, `check.sh` green)
+
+- minSdk 21 → 33 (`:app`, `:libraries:humla`); deleted every gate below 33
+  except `UPSIDE_DOWN_CAKE`, the SCO legacy duality, the `ChannelChatFragment`
+  storage branch, deprecated `getParcelable` overloads, and always-true
+  branches. Gate-grep, assemble, `lintFossDebug`, and `check.sh` green.
+- Manual gate still owed: boot + connect + voice on the Pixel 4a floor and one
+  modern device (SCO/A2DP/overlay/notification) — needs hardware, not done here.
 
 Config: `minSdkVersion 21 → 33` in `app/build.gradle` and
 `libraries/humla/build.gradle`. Then the full site inventory below —

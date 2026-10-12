@@ -23,7 +23,6 @@ import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
@@ -96,39 +95,28 @@ public class AudioOutput implements Runnable,
                 + trackBytes + " bytes (system min " + minBytes + ")");
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                // Legacy stream types are superseded by AudioAttributes on
-                // API 23+; map voice-call routing explicitly, media otherwise.
-                final int usage = (audioStream == AudioManager.STREAM_VOICE_CALL)
-                        ? AudioAttributes.USAGE_VOICE_COMMUNICATION
-                        : AudioAttributes.USAGE_MEDIA;
-                AudioAttributes attributes = new AudioAttributes.Builder()
-                        .setUsage(usage)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build();
-                AudioFormat format = new AudioFormat.Builder()
-                        .setSampleRate(AudioHandler.SAMPLE_RATE)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build();
-                AudioTrack.Builder builder = new AudioTrack.Builder()
-                        .setAudioAttributes(attributes)
-                        .setAudioFormat(format)
-                        .setBufferSizeInBytes(trackBytes)
-                        .setTransferMode(AudioTrack.MODE_STREAM);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    builder.setPerformanceMode(
-                            AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
-                }
-                mAudioTrack = builder.build();
-            } else {
-                mAudioTrack = new AudioTrack(audioStream,
-                        AudioHandler.SAMPLE_RATE,
-                        AudioFormat.CHANNEL_OUT_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        trackBytes,
-                        AudioTrack.MODE_STREAM);
-            }
+            // Legacy stream types are superseded by AudioAttributes;
+            // map voice-call routing explicitly, media otherwise.
+            final int usage = (audioStream == AudioManager.STREAM_VOICE_CALL)
+                    ? AudioAttributes.USAGE_VOICE_COMMUNICATION
+                    : AudioAttributes.USAGE_MEDIA;
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                    .setUsage(usage)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            AudioFormat format = new AudioFormat.Builder()
+                    .setSampleRate(AudioHandler.SAMPLE_RATE)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build();
+            AudioTrack.Builder builder = new AudioTrack.Builder()
+                    .setAudioAttributes(attributes)
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(trackBytes)
+                    .setTransferMode(AudioTrack.MODE_STREAM);
+            builder.setPerformanceMode(
+                    AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
+            mAudioTrack = builder.build();
         } catch (IllegalArgumentException | UnsupportedOperationException e) {
             throw new AudioInitializationException(e);
         }
@@ -247,10 +235,7 @@ public class AudioOutput implements Runnable,
         // backend asks for exactly the frames it is about to play. The
         // bound still covers the track's minimum buffer so the sink never
         // starves while the loop idles between wakeups.
-        final int trackFrames =
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                        ? mAudioTrack.getBufferSizeInFrames()
-                        : RENDER_SAMPLES * 2; // pre-M: write-blocking bounds
+        final int trackFrames = mAudioTrack.getBufferSizeInFrames();
         final Pacer pacer = new Pacer(RENDER_SAMPLES, trackFrames);
         final short[] mix = new short[RENDER_SAMPLES];
         renderLoop:
