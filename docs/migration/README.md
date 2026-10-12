@@ -30,15 +30,16 @@ machinery. See [plan](plan.md) for execution.
   worktree. `master` drift is controlled by choice, and a feature freeze
   for the migration period is accepted: the app is considered
   feature-complete with echo cancellation as the cherry on top.
+- **minSdk 33, permanent.** The oldest fleet device is a Pixel 4a
+  (Android 13 max), and the userbase is three people — so the floor
+  costs nothing and deletes every version gate except `UPSIDE_DOWN_CAKE`.
+  Revisit only if the fleet changes.
 - **Forward-only history, no autonomous landing.** Per repository policy,
   the migration branch is merged into `master` only on explicit request,
   never autonomously.
 
 ## Open questions
 
-- **minSdk bump?** Currently 21. Bumping (e.g. 26+) would delete the
-  legacy Bluetooth/`AudioTrack`/`AudioRecord`/SRV paths and shrink every
-  slice, at the cost of dropping old devices. Undecided.
 - **Slice granularity** inside the big-bang branch (see [plan](plan.md)
   for the proposed order).
 - **Screenshot-regression harness** choice for the Compose parity gate.

@@ -10,25 +10,36 @@ Scope reminder: the native DSP in
 fenced off. Its Java JNI facades convert syntactically only — method
 signatures and threading semantics frozen.
 
-## 0. Baseline: minSdk 28
+## 0. Baseline: minSdk 33 (Pixel 4a floor, decided)
 
-The migration targets minSdk 28 (decided). Delete, don't convert:
+The migration targets minSdk 33: the oldest fleet device is a Pixel 4a,
+which runs Android 13 (API 33) at most. This is a single-dev app with a
+three-person userbase, so the floor is set by hardware on hand — revisit
+only if the fleet changes. Delete, don't convert:
 
 - All `M` (23) gates: pre-M `AudioRecord`/`AudioTrack` constructors in
   [`AudioInput`](../../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)
   and
   [`AudioOutput`](../../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java),
   `getBufferSizeInFrames` fallback, `MumlaService`/`HumlaService`
-  M-gated branches.
+  M-gated branches, `AudioDeviceCallback` M registration gate.
 - All `N` (24–25) gates: e.g. `PinnedTlsSocketFactory` behavior split.
 - All `O` (26) gates: notification-channel creation checks in
   `MumlaConnectionNotification`/`MumlaMessageNotification`,
   `MumlaHotCorner`/`MumlaOverlay` O branches.
+- All `Q` (29) gates: gesture-exclusion and overlay Q branches.
+- All `R` (30) gates: overlay R branches (`@TargetApi(R)` goes away).
+- All `S` (31) gates, **including the `BluetoothScoManager`
+  modern/legacy duality**: the pre-S broadcast-receiver bring-up
+  (`bringUpLegacy`, legacy receiver, `REASON_NO_DEVICE` legacy paths)
+  is deleted outright — only the communication-device path survives.
+  Same for the pre-S voice-mode pre-hold branches in `HumlaService`/
+  `MumlaService`.
+- All `TIRAMISU` (33) gates: `POST_NOTIFICATIONS` permission flow goes
+  unguarded.
 
-Stays (still guarded): `Q` (29), `R` (30), `S` (31), `TIRAMISU` (33),
-`UPSIDE_DOWN_CAKE` (34) branches — including the `BluetoothScoManager`
-modern/legacy duality, which only dies at a future 31+ bump. Do not try
-to unify it in this migration; convert both paths as-is.
+Stays: `UPSIDE_DOWN_CAKE` (34) branches only (e.g. in
+`MumlaConnectionNotification`). One gate class left in the whole tree.
 
 Newly unguarded at 28: `Context.getMainExecutor()`, notification
 channels, `AudioRecord.Builder`/`AudioTrack.Builder` everywhere.

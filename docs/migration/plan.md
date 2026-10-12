@@ -48,7 +48,8 @@ rewrite:
 
 ## Proposed slice order (each an atomic commit, always green)
 
-1. minSdk decision + legacy deletion (if approved).
+1. minSdk 33 + legacy deletion (decided: Pixel 4a floor — deletes
+   M/N/O/Q/R/S/TIRAMISU gates including the SCO legacy path).
 2. Hilt + Room + DataStore data layer (mechanical, no UX).
 3. Kotlin conversion of `libraries/humla` (syntax first).
 4. Coroutines service core (the real debt kill).
