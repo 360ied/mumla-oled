@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2016 Andrew Comminos <andrew@comminos.com>
- * Copyright (C) 2026 Brian Zhu
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.audio.inputmode;
+package se.lublin.humla.audio.inputmode
 
 /**
  * Push-To-Talk (PTT) Toggle Input Mode.
@@ -24,32 +23,19 @@ package se.lublin.humla.audio.inputmode;
  * Modern non-blocking implementation: does not freeze or suspend the audio capture thread,
  * ensuring continuous zero-jitter buffer draining and responsive metering.
  */
-public class ToggleInputMode implements IInputMode {
-    private volatile boolean mInputOn;
+class ToggleInputMode : IInputMode {
+    @Volatile
+    var isTalkingOn: Boolean = false
 
-    public ToggleInputMode() {
-        mInputOn = false;
+    fun toggleTalkingOn() {
+        isTalkingOn = !isTalkingOn
     }
 
-    public void toggleTalkingOn() {
-        setTalkingOn(!mInputOn);
+    override fun shouldTransmit(pcm: ShortArray, length: Int): Boolean {
+        return isTalkingOn
     }
 
-    public boolean isTalkingOn() {
-        return mInputOn;
-    }
-
-    public void setTalkingOn(boolean talking) {
-        mInputOn = talking;
-    }
-
-    @Override
-    public boolean shouldTransmit(short[] pcm, int length) {
-        return mInputOn;
-    }
-
-    @Override
-    public void waitForInput() {
+    override fun waitForInput() {
         // Non-blocking: no thread freezing
     }
 }

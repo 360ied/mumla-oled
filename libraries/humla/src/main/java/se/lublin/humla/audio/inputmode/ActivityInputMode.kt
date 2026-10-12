@@ -16,9 +16,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.audio.inputmode;
+package se.lublin.humla.audio.inputmode
 
-import se.lublin.humla.audio.NativeAudioInputEngine;
+import se.lublin.humla.audio.NativeAudioInputEngine
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Modern Voice Activity Detection (VAD) Input Mode.
@@ -26,44 +28,37 @@ import se.lublin.humla.audio.NativeAudioInputEngine;
  * Uses dual-threshold hysteresis (activation threshold vadMax, deactivation threshold vadMin)
  * with a 250ms hangover hold timer.
  */
-public class ActivityInputMode implements IInputMode {
-    public static final float DEFAULT_VAD_MAX = NativeAudioInputEngine.DEFAULT_VAD_MAX;
-    public static final float DEFAULT_VAD_MIN = NativeAudioInputEngine.DEFAULT_VAD_MIN;
-    public static final int DEFAULT_HOLD_FRAMES = NativeAudioInputEngine.DEFAULT_HOLD_FRAMES;
+class ActivityInputMode(detectionThreshold: Float) : IInputMode {
+    companion object {
+        const val DEFAULT_VAD_MAX = NativeAudioInputEngine.DEFAULT_VAD_MAX
+        const val DEFAULT_VAD_MIN = NativeAudioInputEngine.DEFAULT_VAD_MIN
+        const val DEFAULT_HOLD_FRAMES = NativeAudioInputEngine.DEFAULT_HOLD_FRAMES
+    }
 
-    private float mVadMax;
-    private float mVadMin;
+    var vadMax: Float
+        private set
+    var vadMin: Float
+        private set
 
-    public ActivityInputMode(float detectionThreshold) {
-        float vadMax = Math.max(0.0f, Math.min(detectionThreshold, 1.0f));
-        float vadMin = Math.max(0.0f, vadMax * 0.7f);
-        mVadMax = vadMax;
-        mVadMin = vadMin;
+    init {
+        val vadMaxValue = max(0.0f, min(detectionThreshold, 1.0f))
+        vadMax = vadMaxValue
+        vadMin = max(0.0f, vadMaxValue * 0.7f)
     }
 
     /**
      * Unused in the active pipeline. Voice activity detection and speech-gating
      * are executed natively in C++ via {@link se.lublin.humla.audio.NativeAudioInputEngine}.
      */
-    @Override
-    public boolean shouldTransmit(short[] pcm, int length) {
-        return false;
+    override fun shouldTransmit(pcm: ShortArray, length: Int): Boolean {
+        return false
     }
 
-    @Override
-    public void waitForInput() {
+    override fun waitForInput() {
     }
 
-    public void setThreshold(float threshold) {
-        mVadMax = Math.max(0.0f, Math.min(threshold, 1.0f));
-        mVadMin = Math.max(0.0f, mVadMax * 0.7f);
-    }
-
-    public float getVadMax() {
-        return mVadMax;
-    }
-
-    public float getVadMin() {
-        return mVadMin;
+    fun setThreshold(threshold: Float) {
+        vadMax = max(0.0f, min(threshold, 1.0f))
+        vadMin = max(0.0f, vadMax * 0.7f)
     }
 }
