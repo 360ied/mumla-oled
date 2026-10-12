@@ -122,10 +122,14 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   mutable properties (copy to locals), stdlib `compareTo(..., ignoreCase)`
   over Java `compareToIgnoreCase`, `Byte` ranges iterate as `Int` (no
   `Byte.rangeTo`).
+- `da0d3003` — batch 4 (`audio/inputmode/*`, 4 files): `IInputMode` with
+  `ShortArray`; `ActivityInputMode` clamped dual-threshold init with private
+  setters (VAD defaults stay `const val` from the native facade);
+  `ToggleInputMode` volatile flag as an `isTalkingOn` property.
 - Verification so far: full `testFossDebugUnitTest` green per batch
   (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
   observer/voice-target suites). Full `check.sh` owed at the slice boundary.
 
 ## Next
 
-Slice 3 batch 4 — `audio/inputmode/*`, per [slices](slices.md).
+Slice 3 batch 5 — `audio/*`, per [slices](slices.md).
