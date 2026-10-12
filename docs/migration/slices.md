@@ -24,10 +24,10 @@ for agent-reviewed slices. The binder surface
      2.x line renders dialogs/popups as real windows, which the dialog
      parity gate needs. **Fork:** if the plugin requires Gradle 9+
      (wrapper here is 8.13), either upgrade the wrapper (recorded as its
-     own commit) or fall back to the Paparazzi 1.3.x stable line, in which case dialogs are gated on-device only (overriding the README fallback line, which describes this fork branch).
+     own commit) or fall back to the Paparazzi 1.3.x stable line, in which case dialogs are gated on-device only (overriding the README fallback line, which describes this fork branch). The spike lands in slice 0 and its outcome is recorded here before slice 1 starts.
 3. Apply plugins: `org.jetbrains.kotlin.android` (both modules),
    `com.google.devtools.ksp`, `com.google.dagger.hilt.android`,
-   `org.jetbrains.kotlin.plugin.parcelize`, `app.cash.paparazzi` (app module). minSdk stays 21.
+   `org.jetbrains.kotlin.plugin.parcelize`, `app.cash.paparazzi` (app module). minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).
 4. Baseline: `./scripts/check.sh` green before any slice-1 edit.
 
 ## Slice 1 — minSdk 33 + legacy deletion (trial slice)
@@ -35,13 +35,14 @@ for agent-reviewed slices. The binder surface
 Config: `minSdkVersion 21 → 33` in `app/build.gradle` and
 `libraries/humla/build.gradle`. Then the full site inventory below —
 every row is a deletion, no conversions. (Line numbers are pre-slice;
-`S` = 31, `S_V2` = 32.)
+`S` = 31, `S_V2` = 32. Inventory verified against master `9fef92e1`;
+re-run the gate-grep at slice-1 start and correct drift before deleting.)
 
 ### App module (`:app`)
 
 | Site | Gate | Disposition |
 |---|---|---|
-| `MumlaActivity.java:535` TIRAMISU `getParcelable` | typed-vs-deprecated | Keep typed branch only; delete `else` |
+| `MumlaActivity.java:535-542` TIRAMISU `getParcelable` | typed-vs-deprecated | Keep typed branch only; delete `else` |
 | `MumlaActivity.java:541-542` deprecated `getParcelable(String)` | deprecation | Switch both calls to typed `getParcelable(key, Server.class)` |
 | `MumlaActivity.java:1011` S `BLUETOOTH_CONNECT` | `SDK_INT >= S &&` | Delete the version clause; permission exists at 33 |
 | `MumlaActivity.java:1032` TIRAMISU notifications | `SDK_INT >= TIRAMISU &&` | Delete the version clause; keep the asked-flag + grant flow |
@@ -89,8 +90,8 @@ code), `MumlaImageGetter.java:393` (comment noting no gate),
 
 ### Slice-1 verification
 
-- `grep -rn "VERSION_CODES\.\(M\|N\|O\|Q\|R\|S\|S_V2\|TIRAMISU\)\b"` over
-  main sources (`app/src/main`, `libraries/humla/src/main`) returns only the U site; Android lint clean (`nix develop --command ./gradlew lintFossDebug`; confirm `check.sh` coverage at trial).
+- `grep -rEn "VERSION_CODES\.(M|N|O|Q|R|S|S_V2|TIRAMISU)\b"` over
+  main sources (`app/src/main`, `libraries/humla/src/main`) returns only the U site; Android lint clean via explicit `nix develop --command ./gradlew lintFossDebug` (outside `check.sh`, which covers tests+native only).
 - `./scripts/check.sh` green (JVM + native).
 - Boot + connect + voice on the Pixel 4a (floor) and one modern device;
   SCO connect/disconnect, A2DP attach, overlay show/hide, notification
@@ -115,11 +116,11 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   and map columns.
 - **DAOs mirror `MumlaDatabase` (24 data methods; 27 declared incl. `open`/`close` + default `addCertificate` overload)** one-for-one; keep method
   names so call sites diff minimally (servers 4 + comments 2 + pinned 4 +
-  tokens 3 + localMute 3 + localIgnore 3 + certificates 5 = 24). In-memory Room replaces
+  tokens 3 + localMute 3 + localIgnore 3 + certificates 5 = 24; the default overload delegates and needs no DAO). Room opens the existing `mumble.db` at version 9 and migrates v9 → v10 via an explicit `Migration` (or `autoMigration`) — destructive fallback is forbidden, the fleet has real data. In-memory Room replaces
   `MumlaSQLiteDatabase` behind the `MumlaDatabase` interface.
 - **DataStore (Preferences):** the 46 `Settings` instance read accessors (get/is/should; excludes `getInstance`, static `isPttKeyBound`, and setters, which pair with their getter's key)
   (`Settings.java`, getter/setter groups: input, PTT/hot-corner, certs,
-  notifications/TTS, overlay, audio) become typed keys with defaults.
+  notifications/TTS, overlay, audio) become typed keys with defaults. Fleet settings survive via `SharedPreferencesMigration` + a per-key defaults table (defaults = today's `DEFAULT_*` constants); no key may silently reset.
 - **`ConfigDelta`:** replaces the pref→bundle→effect double dispatch
   (`MumlaService.onSharedPreferenceChanged` :774 +
   `HumlaService.configureExtras` :1598 collapse into `apply(ConfigDelta)`;
@@ -129,7 +130,7 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   access_tokens, audio_stream, frames_per_packet, trust_store+password+
   format, half_duplex, local_mute_history, local_ignore_history,
   adaptive_leveler, bluetooth_sco; deprecated input_rate/audio_source
-  stay ignored as today; deprecated-unwritten `EXTRAS_AUTO_RECONNECT`,
+  stay ignored as today. Side-effect-only prefs that never touch the bundle get delta keys with appliers too: theme (`applyTheme`), overlay shown/placement, TTS engine/short-messages (`initTts`), PTT sound flag, talk-broadcast register/unregister, hot-corner gravity, handset proximity sensor; deprecated-unwritten `EXTRAS_AUTO_RECONNECT`,
   `EXTRAS_AUTO_RECONNECT_DELAY`, `EXTRAS_USE_OPUS` are dropped (never written by any sender).
 - **Hilt modules (new Kotlin files — Kotlin plugin lands in slice 0, so
   new files are Kotlin from birth):** `DatabaseModule` (provides
@@ -137,6 +138,8 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   and the `MumlaDatabase` binding), `SettingsModule` (provides
   `DataStore<Preferences>` + `SettingsRepository`; `@ApplicationContext`
   needs no module). No `ServiceModule` yet — nothing new to provide.
+  Entry points: `@HiltAndroidApp` on `MumlaApplication` in this slice;
+  `@AndroidEntryPoint` lands on converted activities/fragments/services as their slices convert (services with the `LifecycleService` switch in slice 4).
   Provider interfaces (`HumlaServiceProvider`, `DatabaseProvider`) die
   later in slice 5 with the Kotlin conversion of their call sites.
 - **Files touched:** `db/*` (4) + 17 new app files (`ServerEntity`,
@@ -188,7 +191,7 @@ Verification: existing humla JVM tests (`AudioRoutePolicyTest`,
 | Route debounce/settle `postDelayed` (`:1152-1154` debounce 300 ms; `:768-770,1322-1326` settle rechecks) | cancellable `debounceJob`/`settleJob` | `AudioRoutePolicyTest` |
 | `HumlaNetworkThread` 3 executors (`HumlaNetworkThread:50-52`, incl. dead receive executor; send path `:73-83`, main hop `:87`) | deleted; one `ConnectionScope` (`SupervisorJob` + `Dispatchers.IO`), writes via `Mutex` | `Mumble15ProtocolTest`, `HumlaSSLSocketFactoryTest` kept green |
 | Ping `ScheduledExecutorService` self-chain (`HumlaConnection:90,313-320,359-368,406,585`) | `while (isActive) { sendKeepalivePing(); delay(interval) }` | **new:** `PingIntervalTest` (bootstrap-vs-steady); `AdaptiveKeepaliveTest`, `HumlaUDPPingTest` kept green |
-| `HumlaUDP` queue + `mSendLock` head-drop | `Channel(capacity, DROP_OLDEST)`; consumer becomes an `IO` loop | `HumlaUDPSendQueueTest`, `HumlaUDPReceiveThreadTest` kept green |
+| `HumlaUDP` queue + `mSendLock` head-drop | `Channel` with explicit capacity mirroring `calculateQueueCapacity(FPP)` (~200 ms) + recalculation on `setTargetFramesPerPacket` (same policy, incl. the `setSendQueueCapacity` override path); consumer becomes an `IO` loop | `HumlaUDPSendQueueTest`, `HumlaUDPReceiveThreadTest` kept green |
 | SCO epoch + `Handler` timeout (`BluetoothScoManager`, 8 s timeout) | cancellation *is* the epoch; `withTimeoutOrNull(8000)` | `BluetoothScoRetryPolicyTest` kept green |
 | `ModelHandler` `synchronized` writers | single-threaded model dispatcher; `ConcurrentHashMap`s stay (UDP-thread reads) | `ModelHandlerSelfMuteTest`, `ModelHandlerTopologyTest`, `ModelHandlerUserRemoveTest` kept green |
 | `HumlaCallbacks` set fan-out | interface kept; backed by set or `SharedFlow`, per-observer isolation kept | observer tests |
@@ -235,7 +238,7 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
   9 subjects (loading / content / error × light / dark / OLED). New files:
   `theme/Theme.kt`, `theme/Tokens.kt`, `ServerInfoViewModel.kt`, `ServerInfoScreen.kt` + route entry.
 - Verification: all 9 goldens pass; old-vs-new screenshots compared
-  by eye on the Pixel 4a; `./scripts/check.sh`.
+  by eye on the Pixel 4a; `./scripts/check.sh`. Paparazzi runs with fixed device/theme/locale config; golden churn is triaged in the slice commit.
 
 ## Slice 7 — Compose screens (leaf-to-root, dialogs last)
 
@@ -266,7 +269,7 @@ wired to a flow). `CircleDrawable` → Canvas equivalent in Compose.
 
 `MumlaActivity` shell + `DialogHost` convert last → delete Fragment navigation
 (`MumlaActivity.loadDrawerFragment`, `DrawerAdapter` routes, back-stack transactions → NavHost route map);
-drawer becomes `ModalNavigationDrawer`. Final gate: full torture matrix
+drawer becomes `ModalNavigationDrawer`. Interop during slices 6–7: converted screens mount as NavHost routes; not-yet-converted screens stay mounted as Fragment-wrapped routes — the only sanctioned shim, and it dies with Fragment navigation (converted code itself carries no shims). Final gate: full torture matrix
 (rotate mid-dialog, switch mid-connect, deny mid-flow) on the Pixel 4a
 plus one modern device, `./scripts/check.sh`, and a landing checklist
 (merge requested explicitly — never autonomous).

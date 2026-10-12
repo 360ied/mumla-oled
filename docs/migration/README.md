@@ -65,9 +65,7 @@ machinery. See [plan](plan.md) for execution.
 
 ## Open questions
 
-- **Slice granularity** inside the big-bang branch (see [plan](plan.md)
-  for the proposed order) — decided slice-by-slice as the migration
-  proceeds.
+- **Slice granularity** inside the big-bang branch: the 8-slice spine in [plan](plan.md)/[slices](slices.md) is fixed; granularity *within* a slice is decided as it proceeds.
 
 ## Files
 

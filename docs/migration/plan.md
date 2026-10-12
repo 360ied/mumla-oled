@@ -17,7 +17,7 @@ Three migrations, one branch:
    The 48-method `IHumlaSession` facade stays frozen throughout (a role-interface split is post-migration follow-up work).
 2. **Data layer → Room + DataStore + Hilt.** Hand SQL in
    [`MumlaSQLiteDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java),
-   the 48-accessor
+   the 46-accessor
    [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.java)
    blob, and the pref→bundle→effect double dispatch become Room
    entities, a typed `ConfigDelta`, and an injected graph.
@@ -77,6 +77,7 @@ Concrete per-slice plan (file lists, pins, verification) lives in
   documentation-only commits are exempt per repository policy.
 - Landing into `master` is a separate, explicitly requested action —
   never autonomous. No pushing, no worktree deletion without request.
+- Urgent `master` bugfix during the freeze: fix on `master`, then cherry-pick into the migration branch (forward-only history preserved).
 
 ## Agentic execution tactics (learned from Bun's Zig→Rust rewrite)
 
