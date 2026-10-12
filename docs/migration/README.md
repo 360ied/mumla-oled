@@ -38,7 +38,7 @@ machinery. See [plan](plan.md) for execution.
   Revisit only if the fleet changes.
 - **Services become `LifecycleService`.** No attachment to the current
   `Service` base; `lifecycleScope` is the service coroutine scope.
-- **Dependencies: pinned in [slices](slices.md) Slice 0** (verified 2026-10-12; re-verify at scaffold). Single `libs.versions.toml`, single Compose BOM, KSP (not kapt).
+- **Dependencies: pinned in [slices](slices.md) Slice 0** (verified 2026-10-12; re-verify at scaffold). Single `libs.versions.toml`, single Compose BOM, kapt + TODO (no stable KSP for Kotlin 2.4 at scaffold — see slices.md forks for the KSP/Hilt/Paparazzi outcomes).
 - **Trial slice is the minSdk-33 deletion.** Deletion-only, zero new
   dependencies — it proves the worktree plus `check.sh` loop before
   anything irreversible. Afterwards, follow the slice order in [plan](plan.md) (data layer next).

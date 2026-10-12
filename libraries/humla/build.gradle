@@ -17,16 +17,16 @@
 
 import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform
 
-buildscript {
-    repositories {
-        mavenCentral()
-        google()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.2'
-    }
+// Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
+// KSP fork: no stable KSP for Kotlin 2.4 at scaffold, so kapt + TODO.
+// TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.hilt)
 }
-apply plugin: 'com.android.library'
 
 repositories {
     mavenCentral()
@@ -39,6 +39,10 @@ dependencies {
     implementation 'org.jetbrains:annotations:26.1.0'
     implementation 'org.minidns:minidns-hla:1.0.5'
     implementation 'org.minidns:minidns-android21:1.0.5'
+    // Migration Slice 0 scaffold: Hilt plugin requires the runtime on the classpath.
+    // No code uses it yet.
+    implementation libs.hilt.android
+    kapt libs.hilt.compiler
     testImplementation 'junit:junit:4.13.2'
 }
 

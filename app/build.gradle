@@ -15,16 +15,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-buildscript {
-    repositories {
-        mavenCentral()
-        google()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.2'
-    }
+// Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
+// KSP fork: no stable KSP for Kotlin 2.4 at scaffold, so kapt + TODO.
+// TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.hilt)
+    // Paparazzi DEFERRED to slice 6 (see catalog note): applying it breaks AGP 8.13.2.
+    // alias(libs.plugins.paparazzi)
 }
-apply plugin: 'com.android.application'
 
 repositories {
     mavenCentral()
@@ -165,6 +167,10 @@ dependencies {
     implementation 'androidx.preference:preference:1.2.1'
     implementation 'androidx.media:media:1.7.0'
     implementation 'org.jsoup:jsoup:1.23.2'
+    // Migration Slice 0 scaffold: Hilt plugin requires the runtime on the classpath.
+    // No code uses it yet (first consumer is Slice 2's DatabaseModule/SettingsModule).
+    implementation libs.hilt.android
+    kapt libs.hilt.compiler
 
     testImplementation 'junit:junit:4.13.2'
     // Robolectric pilot for the comment-dialog fragment tests; pinned: verify @Config(sdk) support before bumping.

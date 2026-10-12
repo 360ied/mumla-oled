@@ -21,4 +21,12 @@
 
 
 
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
 include ':libraries:humla', ':app'

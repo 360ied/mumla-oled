@@ -1,0 +1,91 @@
+# Copyright (C) 2026 Brian Zhu
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Migration Slice 0 scaffold (docs/migration/slices.md).
+# Single source of truth for modern-stack pins. Floors are binding, patches float.
+# Verified 2026-10-12 at scaffold; re-verify when consuming new artifacts in later slices.
+#
+# KSP fork (ordered, not open): no stable KSP for Kotlin 2.4 on Maven Central
+# at scaffold (latest symbol-processing-api is 2.3.12), so new files use kapt
+# with a TODO to migrate when a stable KSP 2.4 line lands.
+# TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+# (An earlier scaffold draft used KSP 2.3.12 + Kotlin 2.3.21 while Kotlin 2.4.21
+# was under suspicion; suspicion cleared — see versions note above.)
+
+[versions]
+agp = "8.13.2"
+# Kotlin re-verification (2026-10-12): the original 2.4.21 pin was suspected after a
+# MergeResources failure, but the failure bisected to the Paparazzi plugin (see
+# paparazzi note below) — not to Kotlin. 2.4.21 is therefore reinstated as the
+# floor (AGP 8.13.2 is inside its supported range). If a future failure bisects
+# cleanly to KGP 2.4 (Paparazzi absent), fall back to 2.3.21 + KSP 2.3.12.
+kotlin = "2.4.21"
+# KSP fork (ordered, not open): no stable KSP for Kotlin 2.4 on Maven Central
+# at scaffold (latest symbol-processing-api is 2.3.12), so kapt + TODO.
+# TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+coroutines = "1.11.0"
+compose-bom = "2026.09.00"
+navigation-compose = "2.10.2"
+activity-compose = "1.13.0"
+hilt-navigation-compose = "1.4.0"
+lifecycle = "2.11.0"
+# Hilt fork (ordered, not open): Hilt >= 2.59 requires AGP 9 (dagger-2.59 release
+# notes, Jan 2026); this repo stays on AGP 8.13.2, so the last AGP-8-compatible
+# line 2.58 is pinned. Revisit only with an AGP 9 upgrade (out of migration scope).
+# NOTE for slice 7: re-verify androidx-hilt 1.4.0 against Hilt 2.58 when adding
+# hilt-navigation-compose; downgrade androidx-hilt if its transitive floor moved.
+hilt = "2.58"
+androidx-hilt = "1.4.0"
+room = "2.8.5"
+datastore-preferences = "1.2.1"
+# Paparazzi fork (RESOLVED 2026-10-12, AGP-incompatibility — not the Gradle fork
+# slices.md anticipated): applying app.cash.paparazzi 2.0.0-alpha05.1 ANYWHERE in
+# the build (app module or root `apply false`) breaks AGP 8.13.2 resource merging
+# build-wide (`MergedResourceWriterRequest` NoSuchMethodError in
+# :libraries:humla:packageDebugResources; bisected with all other plugins off).
+# The 2.x line targets the AGP 9 era; the 1.3.x fallback is dead (layoutlib caps
+# at compileSdk 35, project is on 36). Paparazzi is therefore DEFERRED to slice 6:
+# re-evaluate then (stable 2.0.0 / AGP situation may have moved). The version pin
+# stays below as the re-evaluation starting point. A Gradle 9.x wrapper upgrade
+# was NOT attempted — the conflict is with AGP 8.13.2's tools, not with Gradle.
+paparazzi = "2.0.0-alpha05.1"
+
+[libraries]
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
+lifecycle-service = { module = "androidx.lifecycle:lifecycle-service", version.ref = "lifecycle" }
+lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
+hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
+androidx-hilt-compiler = { module = "androidx.hilt:hilt-compiler", version.ref = "androidx-hilt" }
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore-preferences" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
+kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+paparazzi = { id = "app.cash.paparazzi", version.ref = "paparazzi" }
