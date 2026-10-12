@@ -73,6 +73,24 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   `hilt-navigation-compose` in slice 7.
 - kapt → KSP when a stable KSP for Kotlin 2.4 lands.
 
+## Slice 2 — Data layer (DONE 2026-10-12, `check.sh` green)
+
+- `0b44fc2a` — Room v10 (`MumlaRoomDatabase` behind `MumlaDatabase`, 7
+  entities/DAOs, `MIGRATION_9_10` recreating all tables for validator-exact
+  shapes), `MumlaSQLiteDatabase` deleted; `AppDataStore` + `SettingsRepository`
+  (41-key snapshot, `SharedPreferencesMigration`, key-diff listener bridge);
+  Hilt `@HiltAndroidApp` + `DatabaseModule` + `SettingsModule`.
+- `2c464334` — `Settings` rewritten over the repository (surface kept, theme
+  and language added); `ConfigDelta` replaces the pref→bundle→effect
+  dispatch (`HumlaService.apply`, `MumlaService` delta dispatch + appliers,
+  slim `ServerConnectTask` carrying only the server id); `MumlaApplication`
+  reads theme and language from `Settings`. Tests ported (in-memory Room +
+  v9→v10 migration test, DataStore doubles, fake deleted).
+- All 17 `ConfigDelta` keys round-trip audited; comment seen-tracking now
+  compares text (was blob-vs-text, never matched). Lint + assemble green.
+- Owed: on-device connect/voice/reconnect-toast pass; R8/release still
+  deferred to pre-landing.
+
 ## Next
 
-Slice 2 — Hilt + Room + DataStore data layer, per [slices](slices.md).
+Slice 3 — Kotlin conversion of `:libraries:humla`, per [slices](slices.md).
