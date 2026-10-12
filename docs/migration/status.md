@@ -126,10 +126,16 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   `ShortArray`; `ActivityInputMode` clamped dual-threshold init with private
   setters (VAD defaults stay `const val` from the native facade);
   `ToggleInputMode` volatile flag as an `isTalkingOn` property.
+- `e5c0339d` — batch 5 (`audio/*`, 6 files): capture/render threads with
+  shutdown-race guards literal; JNI facades syntactic only (`@Synchronized`
+  preserved, static natives verified byte-identical via `javap`); `Pacer`
+  test-visible members `@JvmField`; package test seams widened to public
+  (Kotlin has no package visibility); `finalize` drops its super call.
 - Verification so far: full `testFossDebugUnitTest` green per batch
   (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
-  observer/voice-target suites). Full `check.sh` owed at the slice boundary.
+  `AudioOutputPacerTest`, `NativeAudioOutputEngineTest`, observer/
+  voice-target suites). Full `check.sh` owed at the slice boundary.
 
 ## Next
 
-Slice 3 batch 5 — `audio/*`, per [slices](slices.md).
+Slice 3 batch 6 — `net/*`, per [slices](slices.md).
