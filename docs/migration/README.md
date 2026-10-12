@@ -1,7 +1,9 @@
 # Mumla OLED Modernization Migration
 
-Status: planning. No code yet — this directory is the scratch pad for
-shaping the migration before any worktree is scaffolded.
+Status: in progress. Slice 0 landed on branch `migration/full-modern`
+(see [status](status.md) for the progress log); no `master` impact — the root
+repository stays on `master` and the migration branch merges only on explicit
+request.
 
 ## Goal
 
@@ -72,3 +74,4 @@ machinery. See [plan](plan.md) for execution.
 - [plan](plan.md) — scope, fences, slice order, guardrails, verification.
 - [porting-guide](porting-guide.md) — the mechanical Java→Kotlin/coroutines/Room/Compose mapping converters follow literally.
 - [slices](slices.md) — the concrete per-slice work plan (inventories, pins, verification).
+- [status](status.md) — progress log: what landed, fork outcomes, spike record, outstanding debt.
