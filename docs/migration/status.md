@@ -140,6 +140,13 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   widened to public (`filterTlsProtocols`, UDP queue seams, connection ping
   internals; `HumlaSSLSocketFactoryTest` overrides widened to match);
   `finalize` drops its super call.
+- `ca55913c` — batch 7 (`protocol/*`, 4 files): listener `Stub`s become open
+  classes with open overrides; `ModelHandler` accessors become properties with
+  `synchronized` preserved exactly; `AudioHandler` keeps zero-alloc buffers,
+  bandwidth-lock pairing, and `Builder` literally (`EffectiveAudioConfig`
+  fields stay `@JvmField`). Follow-up fixes this batch surfaced: null-clearable
+  `ByteString` setters go nullable across `IUser`/`User`, and
+  `HumlaNetworkListener` methods go open (batch 2 left them final).
 - Verification so far: full `testFossDebugUnitTest` green per batch
   (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
   `AudioOutputPacerTest`, `NativeAudioOutputEngineTest`, observer/
@@ -147,4 +154,4 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 3 batch 7 — `protocol/*`, per [slices](slices.md).
+Slice 3 batch 8 — `IHumlaService`/`IHumlaSession`, per [slices](slices.md).
