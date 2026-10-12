@@ -147,6 +147,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   fields stay `@JvmField`). Follow-up fixes this batch surfaced: null-clearable
   `ByteString` setters go nullable across `IUser`/`User`, and
   `HumlaNetworkListener` methods go open (batch 2 left them final).
+- `dcbfc4cd` — batch 8 (`IHumlaService`, `IHumlaSession`): syntax only, surface
+  frozen (factory name, contracts, `Throws` kept); object returns go nullable
+  where the docs promise null so the still-Java `HumlaService` implements freely.
 - Verification so far: full `testFossDebugUnitTest` green per batch
   (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
   `AudioOutputPacerTest`, `NativeAudioOutputEngineTest`, observer/
@@ -154,4 +157,4 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 3 batch 8 — `IHumlaService`/`IHumlaSession`, per [slices](slices.md).
+Slice 3 batch 9 — `HumlaService` (the god), per [slices](slices.md).
