@@ -35,7 +35,7 @@ import se.lublin.humla.net.HumlaCertificateGenerator;
 import se.lublin.mumla.R;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
-import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.db.MumlaRoomDatabase;
 
 public class MumlaCertificateGenerateTask extends AsyncTask<Void, Void, DatabaseCertificate> {
     private static final String TAG = MumlaCertificateGenerateTask.class.getSimpleName();
@@ -68,7 +68,7 @@ public class MumlaCertificateGenerateTask extends AsyncTask<Void, Void, Database
             SimpleDateFormat dateFormat = new SimpleDateFormat(DATE_FORMAT, Locale.getDefault());
             String fileName = context.getString(R.string.certificate_export_format, dateFormat.format(new Date()));
 
-            MumlaDatabase database = new MumlaSQLiteDatabase(context);
+            MumlaDatabase database = MumlaRoomDatabase.getInstance(context);
             DatabaseCertificate dc = database.addCertificate(fileName, baos.toByteArray());
             database.close();
             return dc;

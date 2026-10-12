@@ -174,8 +174,18 @@ dependencies {
     // No code uses it yet (first consumer is Slice 2's DatabaseModule/SettingsModule).
     implementation libs.hilt.android
     kapt libs.hilt.compiler
+    // Migration Slice 2 data layer: Room + DataStore + coroutines. Room compiler
+    // and androidx-hilt compiler run under kapt (no stable KSP for Kotlin 2.4).
+    implementation libs.coroutines.core
+    implementation libs.room.runtime
+    implementation libs.room.ktx
+    implementation libs.datastore.preferences
+    kapt libs.room.compiler
+    kapt libs.androidx.hilt.compiler
 
     testImplementation 'junit:junit:4.13.2'
     // Robolectric pilot for the comment-dialog fragment tests; pinned: verify @Config(sdk) support before bumping.
     testImplementation 'org.robolectric:robolectric:4.15.1'
+    // Migration Slice 2: MigrationTestHelper for the v9 -> v10 DB migration test.
+    testImplementation libs.room.testing
 }

@@ -14,9 +14,11 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.preference.PreferenceManager;
 
+import dagger.hilt.android.HiltAndroidApp;
 import se.lublin.humla.HumlaService;
 import se.lublin.mumla.R;
 
+@HiltAndroidApp
 public class MumlaApplication extends Application implements SharedPreferences.OnSharedPreferenceChangeListener {
     @Override
     public void onCreate() {

@@ -92,7 +92,7 @@ import se.lublin.mumla.channel.ServerInfoFragment;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.DatabaseProvider;
 import se.lublin.mumla.db.MumlaDatabase;
-import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.db.MumlaRoomDatabase;
 import se.lublin.mumla.preference.MumlaCertificateGenerateTask;
 import se.lublin.mumla.preference.SettingsActivity;
 import se.lublin.mumla.servers.FavouriteServerListFragment;
@@ -577,7 +577,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         preferences.registerOnSharedPreferenceChangeListener(this);
 
-        mDatabase = new MumlaSQLiteDatabase(this); // TODO add support for cloud storage
+        mDatabase = MumlaRoomDatabase.getInstance(this); // TODO add support for cloud storage
         mDatabase.open();
 
         mDrawerLayout = findViewById(R.id.drawer_layout);

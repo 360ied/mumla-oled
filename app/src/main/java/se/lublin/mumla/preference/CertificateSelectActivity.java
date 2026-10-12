@@ -37,7 +37,7 @@ import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
-import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.db.MumlaRoomDatabase;
 import se.lublin.mumla.app.BaseActivity;
 
 /**
@@ -53,7 +53,7 @@ public class CertificateSelectActivity extends BaseActivity implements DialogInt
         Settings settings = Settings.getInstance(this);
         mCertificates = new ArrayList<>();
         mCertificates.add(new NoCertificateItem(getString(R.string.no_certificate), settings));
-        MumlaDatabase database = new MumlaSQLiteDatabase(this);
+        MumlaDatabase database = MumlaRoomDatabase.getInstance(this);
         for (DatabaseCertificate certificate : database.getCertificates()) {
             mCertificates.add(new CertificateItem(certificate, settings));
         }

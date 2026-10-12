@@ -66,7 +66,7 @@ import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
-import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.db.MumlaRoomDatabase;
 import se.lublin.mumla.app.BaseActivity;
 
 /**
@@ -323,7 +323,7 @@ public class CertificateImportActivity extends BaseActivity {
             // (secrets-at-rest-plan), so convert here and zero the char[] immediately.
             String passwordStr = (password != null && password.length > 0) ? new String(password) : null;
             zeroPassword(password);
-            MumlaDatabase database = new MumlaSQLiteDatabase(CertificateImportActivity.this);
+            MumlaDatabase database = MumlaRoomDatabase.getInstance(CertificateImportActivity.this);
             DatabaseCertificate certificate = database.addCertificate(fileName, certBytes, passwordStr);
             database.close();
 

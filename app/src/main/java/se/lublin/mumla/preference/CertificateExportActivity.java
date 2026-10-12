@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
 import se.lublin.mumla.R;
 import se.lublin.mumla.db.DatabaseCertificate;
 import se.lublin.mumla.db.MumlaDatabase;
-import se.lublin.mumla.db.MumlaSQLiteDatabase;
+import se.lublin.mumla.db.MumlaRoomDatabase;
 import se.lublin.mumla.app.BaseActivity;
 
 /**
@@ -69,7 +69,7 @@ public class CertificateExportActivity extends BaseActivity implements DialogInt
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mDatabase = new MumlaSQLiteDatabase(this);
+        mDatabase = MumlaRoomDatabase.getInstance(this);
         mCertificates = mDatabase.getCertificates();
 
         if (savedInstanceState != null && savedInstanceState.containsKey(STATE_PENDING_CERT_ID)) {
