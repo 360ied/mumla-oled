@@ -102,9 +102,10 @@ Never use `GlobalScope`.
 - **Hand SQL → Room:** entities for servers, certificates, access tokens,
   local mute/ignore history. DAOs replace `MumlaDatabase` methods
   one-for-one; keep method names where possible so call sites diff
-  minimally.
-- **`Settings` blob → DataStore:** typed preferences; the 65 getters
-  become typed keys with defaults in one place.
+  minimally. `Server` stays a single `@Entity @Parcelize` class (DB row,
+  parcel, and UI model in one) — no separate layers.
+- **`Settings` blob → DataStore (Preferences flavor):** typed preferences;
+  the 65 getters become typed keys with defaults in one place.
 - **Pref→bundle→effect double dispatch → typed `ConfigDelta`.**
   `MumlaService.onSharedPreferenceChanged` and
   `HumlaService.configureExtras` collapse into `apply(ConfigDelta)`; the

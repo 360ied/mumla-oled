@@ -32,6 +32,9 @@ Three migrations, one branch:
   stay green for every slice.
 - Protocol parity with upstream Mumble schemas and behavior stays exact.
 - FOSS flavor, Nix dev shell, and 3-ABI packaging stay as-is.
+- Binder surface frozen: `IMumlaService`/`IHumlaService`/`IHumlaSession`
+  stay compatible for the whole migration; refactoring happens strictly
+  behind them.
 
 ## UI parity (hard guardrail)
 
@@ -41,8 +44,10 @@ rewrite:
 - Same `res/` visuals (theme, colors, dimens, drawables, copy), same
   navigation structure and order, same dialog titles/buttons/semantics
   (including pause-dismissal and rapid-tap behavior).
-- Theme ported once into a Compose `MaterialTheme` via tokens — no
-  hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
+- Theme ported once into a Compose **M2** `MaterialTheme` (`androidx.compose.material`)
+  via tokens — no hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
+- Screenshot regression runs **Paparazzi** per component in the worktree loop;
+  emulator/device shots cover only dialogs, overlay, drawer gestures, and rotation.
 - `ChannelFragmentDensityTest` and the comment-dialog tests carry over;
   a test needing a rewrite is a smell that behavior moved.
 

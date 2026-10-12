@@ -36,6 +36,31 @@ machinery. See [plan](plan.md) for execution.
   Revisit only if the fleet changes.
 - **Services become `LifecycleService`.** No attachment to the current
   `Service` base; `lifecycleScope` is the service coroutine scope.
+- **Dependencies: latest stable at scaffold, pinned in a version catalog.**
+  Kotlin 2.1+ (2.2 if stable), matching coroutines, Compose BOM (single
+  BOM, no hand-pinned artifacts), Hilt 2.5x via KSP (not kapt), current
+  Room, AndroidX Lifecycle. A new `libs.versions.toml` holds every pin so
+  the next bump is a one-line diff.
+- **Trial slice is the minSdk-33 deletion.** Deletion-only, zero new
+  dependencies — it proves the worktree plus `check.sh` loop before
+  anything irreversible. Leaf Kotlin conversion goes second.
+- **DataStore flavor is Preferences.** The 65 key-value getters map 1:1
+  onto Preferences keys plus a typed wrapper; Proto schemas would add a
+  serialization layer for no gain at this scale.
+- **`Server` stays one class.** Single `@Entity @Parcelize` class serving
+  as DB row, parcel, and UI model — separate layers would tax every
+  call site for a second concept that will never arrive.
+- **Binder surface frozen.** `IMumlaService`/`IHumlaService`/`IHumlaSession`
+  stay compatible for the whole migration; refactoring happens strictly
+  behind them. Improvements to the surface are post-migration work.
+- **Compose M2 (`androidx.compose.material`).** Its defaults descend from
+  the same tokens as the AppCompat/Material-1.13 views being matched;
+  M3 would fight the screenshot gate on every component.
+- **Screenshots: Paparazzi primary, on-device checklist for dialogs.**
+  Paparazzi (JVM, no emulator) runs per-component regression inside the
+  worktree loop; emulator/device shots cover only what Paparazzi cannot
+  (dialogs, overlay, drawer gestures, rotation). Existing JVM tests
+  (`ChannelFragmentDensityTest` et al.) backstop numerically.
 - **Forward-only history, no autonomous landing.** Per repository policy,
   the migration branch is merged into `master` only on explicit request,
   never autonomously.
@@ -43,8 +68,8 @@ machinery. See [plan](plan.md) for execution.
 ## Open questions
 
 - **Slice granularity** inside the big-bang branch (see [plan](plan.md)
-  for the proposed order).
-- **Screenshot-regression harness** choice for the Compose parity gate.
+  for the proposed order) — decided slice-by-slice as the migration
+  proceeds.
 
 ## Files
 
