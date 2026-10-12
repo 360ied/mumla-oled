@@ -67,6 +67,47 @@ rewrite:
 - Landing into `master` is a separate, explicitly requested action —
   never autonomous. No pushing, no worktree deletion without request.
 
+## Agentic execution tactics (learned from Bun's Zig→Rust rewrite)
+
+Bun's 11-day, ~535K-line agentic rewrite (see References) is the
+closest public precedent for this migration. Its tactics apply directly;
+adopt them from slice 1:
+
+- **Porting guide first.** Before converting, write down the mechanical
+  mapping (Java→Kotlin idioms, `Handler`→coroutine, prefs→DataStore,
+  Views→Compose) as a doc in this directory and review it like code.
+  Bun's `PORTING.md` plus a lifetimes table were reviewed before a
+  single file was converted.
+- **Trial slice.** Convert one leaf file/screen end-to-end (implement +
+  review + fix) before fanning out. Calibrate the workflow on the trial,
+  not on the whole tree.
+- **Split implementer and reviewer contexts.** The agent that writes a
+  slice must not be the one that reviews it; reviewers get the diff only
+  and assume it is wrong. Review attribution goes in the commit message.
+- **Fix the process, not the code.** When a class of defect recurs
+  (parity drift, missed dismissal path), edit the porting guide or the
+  slice checklist — not just the offending file.
+- **Compiler and tests as work queues.** Group failures by slice/package
+  and work them off in batches; `./scripts/check.sh` plus the screenshot
+  gates are the merge oracle for every slice.
+- **Workflow hygiene.** Agents in the migration worktree commit single
+  files/slices only; no `git stash`, `git reset --hard`, or slow
+  repo-wide commands inside the loop. Shard work across a bounded number
+  of worktree checkouts; disk space caps the shard count.
+- **Big-bang, not strangler, inside the branch.** Temporary compat shims
+  that "will be deleted later" are the main way incremental migrations
+  rot; prefer converting each slice completely.
+
+## References
+
+- Jarred Sumner, "Rewriting Bun in Rust" (Bun blog) — the primary
+  source for the tactics above: mechanical port, prep docs, trial run,
+  adversarial review, compiler-errors-as-work-queue.
+  <https://bun.com/blog/bun-in-rust>
+- oven-sh/bun `docs/rust-rewrite-plan.md` — strangler-fig plan and
+  memory-safety motivation.
+  <https://github.com/oven-sh/bun/blob/master/docs/rust-rewrite-plan.md>
+
 ## Verification per slice
 
 - `./scripts/check.sh` (JVM + native suites) green.
