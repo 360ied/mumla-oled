@@ -70,6 +70,8 @@ for agent-reviewed slices. The binder surface
   branches. Gate-grep, assemble, `lintFossDebug`, and `check.sh` green.
 - Manual gate still owed: boot + connect + voice on the Pixel 4a floor and one
   modern device (SCO/A2DP/overlay/notification) — needs hardware, not done here.
+  UPDATE 2026-10-12: basic functionality verified on-device post-install; deeper
+  torture (SCO flap, A2DP stagger, overlay drag/rotate) still open.
 
 Config: `minSdkVersion 21 → 33` in `app/build.gradle` and
 `libraries/humla/build.gradle`. Then the full site inventory below —
