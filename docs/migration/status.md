@@ -75,8 +75,15 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Review
 
-- Pedantic review fan-out (6 slices, `reviewer` agents) running over the
-  full worktree diff; synthesis and fixes to follow before slice 3.
+- Pedantic review fan-out (6 slices, `reviewer` agents) completed; synthesis
+  concurred on two blockers (dual-bus split-brain, duplicate-listener leak)
+  plus smaller defects (manifest minSdk, jvmTarget, `<9` migration path,
+  `close()` scope, P1 overlay guard, stale docs/imports).
+- `295754b6` fixes all concurred items: DataStore-backed `PreferenceDataStore`
+  in the fragment base, both custom dialogs and all four listeners ported,
+  `Migration(8, 10)`, listener-bridge unit test, toolchain/hygiene batch.
+  Contested/downgraded (runBlocking interim, pre-existing nits) recorded as
+  debt, not fixed. `check.sh` + assemble + lint green.
 
 ## Slice 2 — Data layer (DONE 2026-10-12, `check.sh` green)
 
