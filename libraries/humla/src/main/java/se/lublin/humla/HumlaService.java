@@ -105,7 +105,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     private AudioHandler.Builder mAudioBuilder;
     private int mTransmitMode;
     private boolean mHalfDuplex;
-    // Volatile: written in configureExtras, read across service threads in
+    // Volatile: written in apply, read across service threads in
     // updateBluetoothScoRoute, retryBluetoothSco, and the route callbacks.
     // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
     private volatile boolean mScoRequested;
@@ -169,8 +169,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     // Whether a settle recheck is queued. Set only beside a post, cleared
     // on dispatch, reset, or teardown — never restored from a snapshot —
     // so the flag can never claim protection no callback provides.
-    // Single writes only (volatile suffices); Handler.hasCallbacks needs
-    // API 29+, minSdk here is 21.
+    // Single writes only (volatile suffices). Handler.hasCallbacks needs
+    // API 29+, well below the minSdk 33 floor.
     private volatile boolean mSettlePending;
     private final Runnable mRouteSettleRecompute = new Runnable() {
         @Override
@@ -344,10 +344,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
                 }
                 try {
                     apply(delta);
-                } catch (AudioException e) {
-                    Log.e(TAG, "Attempted to initialize audio in onStartCommand erroneously.", e);
-                    stopSelfIfIdle(startId);
-                    return START_NOT_STICKY;
                 } catch (IllegalArgumentException e) {
                     Log.w(TAG, "Ignoring invalid service configuration.", e);
                     stopSelfIfIdle(startId);
@@ -960,7 +956,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * (SCO or media-sink), after the pipeline reload. Subclasses override to
      * refresh route-dependent audio that the pipeline does not own (e.g. cue
      * streams). Overrides must be idempotent and non-blocking, and must not
-     * call back into configureExtras; this also runs when no pipeline exists.
+     * call back into apply; this also runs when no pipeline exists.
      */
     protected void onAudioRouteChanged() {
     }
@@ -1372,9 +1368,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
      * stagger it past the callback), so any Bluetooth output add also
      * polls the manager's own availability query before giving up — the
      * same query bring-up itself uses pre-audio. LE Audio rides the media
-     * path by design and needs no trigger. Below API 23 no device callback
-     * exists (minSdk 21): sync and toggle paths still cover those devices,
-     * late power-on does not.
+     * path by design and needs no trigger. Device callbacks exist on all
+     * supported devices (minSdk 33): sync and toggle paths still cover those
+     * devices, late power-on does not.
      *
      * <p>Each triggering edge may re-toast on persistent failure
      * (permission denied, no device): accepted as edge-driven feedback.
@@ -1491,12 +1487,13 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     /**
      * Loads all defined settings from the given delta into the HumlaService.
      * Null fields are unchanged. Some settings may only take effect after a
-     * reconnect.
+     * reconnect. Nothing inside throws; the pipeline recreate funnels through
+     * applyAudioRoute, which handles AudioException internally.
      * @param delta A one-shot configuration command.
      * @return true if a reconnect is required for changes to take effect.
      * @see se.lublin.humla.HumlaService
      */
-    public boolean apply(ConfigDelta delta) throws AudioException {
+    public boolean apply(ConfigDelta delta) {
         boolean reconnectNeeded = false;
         boolean suppressReload = false;
         if (delta.getServer() != null) {
@@ -2183,8 +2180,8 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     @Override
     public void setVoiceTargetId(byte targetId) {
-        // Mask, not Byte.toUnsignedInt: the latter needs API 26 and this
-        // module is minSdk 21 without core-library desugaring.
+        // Mask, not Byte.toUnsignedInt: avoids the dependency (historical
+        // minSdk-21 era without core-library desugaring).
         if ((targetId & 0xFF) > 0x1F) {
             throw new IllegalArgumentException(
                     "Target ID must be at most 5 bits: " + (targetId & 0xFF));

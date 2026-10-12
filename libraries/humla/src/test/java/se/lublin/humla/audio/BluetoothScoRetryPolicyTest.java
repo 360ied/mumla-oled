@@ -21,8 +21,8 @@ import junit.framework.TestCase;
 
 /**
  * Pins the pure SCO retry-budget decision in {@link BluetoothScoManager}
- * (ODD-23). The timeout path (`onConnectTimeout`) and the stack-error path
- * (`onLegacyStateChanged`) share {@code shouldRetryBringUp}: another attempt
+ * (ODD-23). The timeout path (`onConnectTimeout`) shares
+ * {@code shouldRetryBringUp}: another attempt
  * remains while fewer than {@code maxAttempts} attempts have run, otherwise
  * the bring-up fails. Refusal and no-device fail unconditionally in their
  * callers, so no budget branch exists to pin for those reasons.

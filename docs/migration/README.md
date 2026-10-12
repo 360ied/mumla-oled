@@ -40,7 +40,7 @@ machinery. See [plan](plan.md) for execution.
   Revisit only if the fleet changes.
 - **Services become `LifecycleService`.** No attachment to the current
   `Service` base; `lifecycleScope` is the service coroutine scope.
-- **Dependencies: pinned in [slices](slices.md) Slice 0** (verified 2026-10-12; re-verify at scaffold). Single `libs.versions.toml`, single Compose BOM, kapt + TODO (no stable KSP for Kotlin 2.4 at scaffold — see slices.md forks for the KSP/Hilt/Paparazzi outcomes).
+- **Dependencies: pinned in [slices](slices.md) Slice 0** (verified 2026-10-12; re-verify at scaffold). Single modern-stack `libs.versions.toml`, single Compose BOM, kapt + TODO (no stable KSP for Kotlin 2.4 at scaffold — see slices.md forks for the KSP/Hilt/Paparazzi outcomes).
 - **Toolchain: AGP 9.0.1 + Gradle 9.1.0.** Adopted at the end of slice 0 (proven in the `spike/agp9` worktree) to unblock Hilt 2.60; AGP 9 opt-outs (`newDsl=false`, `builtInKotlin=false`) isolate the bump from DSL migration. Outstanding: new-DSL/built-in-Kotlin migration, release/R8 verification (deferred to pre-landing, explicitly accepted).
 - **Trial slice is the minSdk-33 deletion.** Deletion-only, zero new
   dependencies — it proves the worktree plus `check.sh` loop before

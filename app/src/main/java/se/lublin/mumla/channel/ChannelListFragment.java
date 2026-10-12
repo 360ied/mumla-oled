@@ -18,7 +18,6 @@
 package se.lublin.mumla.channel;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.os.RemoteException;
@@ -33,7 +32,6 @@ import android.view.ViewGroup;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.view.ActionMode;
-import androidx.preference.PreferenceManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -50,7 +48,7 @@ import se.lublin.mumla.Settings;
 import se.lublin.mumla.db.DatabaseProvider;
 import se.lublin.mumla.util.HumlaServiceFragment;
 
-public class ChannelListFragment extends HumlaServiceFragment implements OnChannelClickListener, OnUserClickListener, SharedPreferences.OnSharedPreferenceChangeListener {
+public class ChannelListFragment extends HumlaServiceFragment implements OnChannelClickListener, OnUserClickListener, Settings.OnSettingChangedListener {
     private static final String TAG = ChannelListFragment.class.getName();
 
     private IHumlaObserver mServiceObserver = new HumlaObserver() {
@@ -164,8 +162,7 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
             throw new ClassCastException(getActivity().toString()+" must implement DatabaseProvider");
         }
         mSettings = Settings.getInstance(context);
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
-        preferences.registerOnSharedPreferenceChangeListener(this);
+        mSettings.registerListener(this);
     }
 
     @Override
@@ -187,8 +184,7 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     @Override
     public void onDestroy() {
         super.onDestroy();
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
-        preferences.unregisterOnSharedPreferenceChangeListener(this);
+        mSettings.unregisterListener(this);
         if (mChannelListAdapter != null) {
             mChannelListAdapter.clearAvatarCache();
         }
@@ -340,7 +336,7 @@ public class ChannelListFragment extends HumlaServiceFragment implements OnChann
     }
 
     @Override
-    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+    public void onSettingChanged(String key) {
         if (Settings.PREF_SHOW_USER_COUNT.equals(key) && mChannelListAdapter != null) {
             mChannelListAdapter.setShowChannelUserCount(mSettings.shouldShowUserCount());
         }

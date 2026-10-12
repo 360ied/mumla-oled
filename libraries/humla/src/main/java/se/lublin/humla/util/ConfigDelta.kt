@@ -91,7 +91,11 @@ data class ConfigDelta(
             localMuteHistory != null || localIgnoreHistory != null || clientName != null ||
             audioStream != null
 
-    /** Whether any audio-affecting field besides the SCO request is set. */
+    /**
+     * Whether any audio-affecting field besides the SCO request is set.
+     * Detection threshold is excluded: it applies directly to the input mode
+     * plus a live handler call, so it needs no pipeline reload.
+     */
     fun hasOtherAudioKeys(): Boolean =
         amplitudeBoost != null || transmitMode != null || inputQuality != null ||
             audioStream != null || framesPerPacket != null || halfDuplex != null ||
@@ -125,11 +129,27 @@ data class ConfigDelta(
         var ttsEngine: Optional<String>? = null
 
         fun build(): ConfigDelta = ConfigDelta(
-            server, certificate, forceTcp, trustStore, transmitMode,
-            detectionThreshold, amplitudeBoost, inputQuality, framesPerPacket,
-            halfDuplex, bluetoothSco, adaptiveLeveler, accessTokens,
-            localMuteHistory, localIgnoreHistory, clientName, audioStream,
-            theme, overlayShown, overlayPlacement, ttsEngine,
+            server = server,
+            certificate = certificate,
+            forceTcp = forceTcp,
+            trustStore = trustStore,
+            transmitMode = transmitMode,
+            detectionThreshold = detectionThreshold,
+            amplitudeBoost = amplitudeBoost,
+            inputQuality = inputQuality,
+            framesPerPacket = framesPerPacket,
+            halfDuplex = halfDuplex,
+            bluetoothSco = bluetoothSco,
+            adaptiveLeveler = adaptiveLeveler,
+            accessTokens = accessTokens,
+            localMuteHistory = localMuteHistory,
+            localIgnoreHistory = localIgnoreHistory,
+            clientName = clientName,
+            audioStream = audioStream,
+            theme = theme,
+            overlayShown = overlayShown,
+            overlayPlacement = overlayPlacement,
+            ttsEngine = ttsEngine,
         )
     }
 }

@@ -17,7 +17,6 @@
 
 package se.lublin.mumla.channel;
 
-import android.content.SharedPreferences;
 import android.content.res.TypedArray;
 import android.os.Bundle;
 import android.util.Log;
@@ -36,7 +35,6 @@ import android.widget.TextView;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentPagerAdapter;
-import androidx.preference.PreferenceManager;
 import androidx.viewpager.widget.PagerTabStrip;
 import androidx.viewpager.widget.ViewPager;
 
@@ -62,7 +60,8 @@ import se.lublin.mumla.util.HumlaServiceFragment;
  * Class to encapsulate both a ChannelListFragment and ChannelChatFragment.
  * Created by andrew on 02/08/13.
  */
-public class ChannelFragment extends HumlaServiceFragment implements SharedPreferences.OnSharedPreferenceChangeListener, ChatTargetProvider {
+public class ChannelFragment extends HumlaServiceFragment implements Settings.OnSettingChangedListener, ChatTargetProvider {
+    private Settings mSettings;
     private static final String TAG = ChannelFragment.class.getName();
 
     private ViewPager mViewPager;
@@ -204,8 +203,8 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     public void onActivityCreated(Bundle savedInstanceState) {
         super.onActivityCreated(savedInstanceState);
 
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
-        preferences.registerOnSharedPreferenceChangeListener(this);
+        mSettings = Settings.getInstance(getActivity());
+        mSettings.registerListener(this);
 
         if(mViewPager != null) { // Phone
             ChannelFragmentPagerAdapter pagerAdapter = new ChannelFragmentPagerAdapter(getChildFragmentManager());
@@ -292,8 +291,7 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
             mTalkButton.setActivated(false);
             mTalkButton.setPressed(false);
         }
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
-        preferences.unregisterOnSharedPreferenceChangeListener(this);
+        mSettings.unregisterListener(this);
         // Release the detached hierarchy: the service observer outlives the
         // view (until onDestroy), and its callbacks null-guard these fields.
         mViewPager = null;
@@ -444,7 +442,7 @@ public class ChannelFragment extends HumlaServiceFragment implements SharedPrefe
     }
 
     @Override
-    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+    public void onSettingChanged(String key) {
         if(Settings.PREF_INPUT_METHOD.equals(key)
             || Settings.PREF_PUSH_BUTTON_HIDE_KEY.equals(key)
             || Settings.PREF_PTT_BUTTON_HEIGHT.equals(key))

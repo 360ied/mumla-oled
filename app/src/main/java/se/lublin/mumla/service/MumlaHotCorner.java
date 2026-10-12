@@ -193,10 +193,10 @@ public class MumlaHotCorner implements View.OnTouchListener {
 
     /**
      * Reapplies the system gesture exclusion rects without checking for a
-     * dimension change. Android 10+ (Q+) invalidates exclusion rects on display
-     * rotation, and because the hot corner view has a fixed size, the size-gated
-     * layout listener alone would skip the reapplication after rotation (ODD-05).
-     * Does nothing on API < Q, when the hot corner is not shown, or when the
+     * dimension change. Rotation invalidates exclusion rects while the hot
+     * corner view has a fixed size, so the size-gated layout listener alone
+     * would skip the reapplication after rotation (ODD-05).
+     * Does nothing when the hot corner is not shown, or when the
      * view has no size yet. The view is never null after construction.
      */
     public void refreshGestureExclusion() {

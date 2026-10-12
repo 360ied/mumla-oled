@@ -22,7 +22,6 @@ import android.content.ComponentName;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.media.AudioManager;
@@ -53,7 +52,6 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentTransaction;
-import androidx.preference.PreferenceManager;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -574,9 +572,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
 
         setStayAwake(mSettings.shouldStayAwake());
 
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        preferences.registerOnSharedPreferenceChangeListener(this);
-
         mDatabase = MumlaRoomDatabase.getInstance(this); // TODO add support for cloud storage
         mDatabase.open();
 
@@ -747,8 +742,6 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     @Override
     protected void onDestroy() {
         clearReconnectObserver();
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        preferences.unregisterOnSharedPreferenceChangeListener(this);
         mDatabase.close();
         super.onDestroy();
     }
@@ -1342,8 +1335,8 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
     }
 
     @Override
-    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, @Nullable String key) {
-        super.onSharedPreferenceChanged(sharedPreferences, key);
+    public void onSettingChanged(String key) {
+        super.onSettingChanged(key);
         if (key == null) {
             return;
         }

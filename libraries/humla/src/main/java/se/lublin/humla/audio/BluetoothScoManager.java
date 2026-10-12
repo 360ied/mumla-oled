@@ -32,9 +32,9 @@ import java.util.Objects;
 /**
  * Owns the Bluetooth SCO (HFP) audio route for a voice session.
  *
- * <p>SCO link bring-up is asynchronous and unreliable: {@code startBluetoothSco()}
+ * <p>SCO link bring-up is asynchronous and unreliable: the platform call
  * returns before the link exists, establishment takes seconds, and failure is
- * silent without a state broadcast. This manager hides that behind a small state
+ * silent without a state callback. This manager hides that behind a small state
  * machine with a connect timeout, one retry, and automatic fallback reporting.
  *
  * <p>SCO link bring-up runs on the single platform backend:

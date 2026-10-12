@@ -24,13 +24,13 @@ for agent-reviewed slices. The binder surface
      `coroutines = "1.11.0"`
    - `compose-bom = "2026.09.00"` (pins `compose-material3 1.4.0`),
      no hand-pinned Compose artifacts
-   - `navigation-compose = "2.10.2"`, `activity-compose = "1.13.0"`, `hilt-navigation-compose = "1.4.0"`, `lifecycle-runtime-compose` (in `lifecycle 2.11.0`)
+   - `navigation-compose = "2.10.2"`, `activity-compose = "1.13.0"`, `hilt-navigation-compose = "1.4.0"`
    - `hilt = "2.60.1"` (`com.google.dagger`; restored — the AGP 9 adoption
      below satisfies its AGP >= 9 requirement; the 2.58 cap applied only to the
      AGP 8.13 era), `androidx-hilt = "1.4.0"`
      (re-verify against Hilt 2.60 when adding `hilt-navigation-compose` in slice 7)
    - `room = "2.8.5"` (`androidx.room`; not the `room3` 3.0.x line)
-   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`), `datastore-preferences = "1.2.1"`
+   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`, `runtime-compose`), `datastore-preferences = "1.2.1"`
    - `paparazzi = "2.0.0-alpha05.1"` — alpha accepted deliberately: the
      2.x line renders dialogs/popups as real windows, which the dialog
      parity gate needs. **Paparazzi fork (RESOLVED 2026-10-12: disqualified on

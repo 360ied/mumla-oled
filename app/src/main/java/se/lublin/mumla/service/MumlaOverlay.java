@@ -326,14 +326,14 @@ public class MumlaOverlay {
         return (int) (SIDE_MARGIN_DP * density);
     }
 
-    private int getSideMargin(DisplayMetrics dm, Insets insets, String placement) {
+    private int getSideMargin(DisplayMetrics dm, @NonNull Insets insets, String placement) {
         boolean isLeft = Settings.OVERLAY_PLACEMENT_TOP_LEFT.equals(placement)
                 || Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT.equals(placement);
         int sideInset = isLeft ? insets.left : insets.right;
         return resolveSideMarginPx(Math.max(0, sideInset), dm.density);
     }
 
-    private int getTopMargin(DisplayMetrics dm, Insets insets) {
+    private int getTopMargin(DisplayMetrics dm, @NonNull Insets insets) {
         int insetTop = Math.max(0, insets.top);
         if (insetTop > 0) {
             return resolveEdgeMarginPx(insetTop, 0, DEFAULT_TOP_MARGIN_DP, dm.density);
@@ -346,7 +346,7 @@ public class MumlaOverlay {
         return resolveEdgeMarginPx(0, statusBarHeight, DEFAULT_TOP_MARGIN_DP, dm.density);
     }
 
-    private int getBottomMargin(DisplayMetrics dm, Insets insets) {
+    private int getBottomMargin(DisplayMetrics dm, @NonNull Insets insets) {
         int insetBottom = Math.max(0, insets.bottom);
         if (insetBottom > 0) {
             return resolveEdgeMarginPx(insetBottom, 0, DEFAULT_BOTTOM_MARGIN_DP, dm.density);

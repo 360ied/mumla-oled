@@ -36,7 +36,7 @@ public class MumlaApplication extends Application implements Settings.OnSettingC
         switch (key) {
             case Settings.PREF_LANGUAGE:
                 String language = mSettings.getLanguage();
-                setApplicationLocales(language.equals("system") ? getEmptyLocaleList() : forLanguageTags(language));
+                setApplicationLocales(language.equals(Settings.DEFAULT_LANGUAGE) ? getEmptyLocaleList() : forLanguageTags(language));
                 break;
             case Settings.PREF_THEME:
                 applyTheme(mSettings);
@@ -48,7 +48,7 @@ public class MumlaApplication extends Application implements Settings.OnSettingC
         Settings settings = Settings.getInstance(context);
         applyTheme(settings);
         String theme = settings.getTheme();
-        if ("forceBlack".equals(theme)) {
+        if (Settings.DEFAULT_THEME.equals(theme)) {
             context.setTheme(R.style.Theme_Mumla_Oled);
         }
     }
@@ -62,15 +62,15 @@ public class MumlaApplication extends Application implements Settings.OnSettingC
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
                 break;
             case "forceDark":
-            case "forceBlack":
+            case Settings.DEFAULT_THEME:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
                 break;
-            case "system":
+            case Settings.DEFAULT_LANGUAGE:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
                 break;
             default:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
-                settings.setTheme("forceBlack");
+                settings.setTheme(Settings.DEFAULT_THEME);
                 break;
         }
     }

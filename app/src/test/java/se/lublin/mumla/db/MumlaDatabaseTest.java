@@ -269,6 +269,54 @@ public class MumlaDatabaseTest {
             // the old insert()), and the PK now guards the table.
             mdb.addLocalMutedUser(1L, 11);
             assertEquals(1, mdb.getLocalMutedUsers(1L).size());
+
+            // AUTOINCREMENT continuity across the rename: the migrated row kept
+            // id 1, so the next insert takes 2.
+            Server extra = new Server(-1, "m", "h2", 64738, "u", null);
+            mdb.addServer(extra);
+            assertEquals(2L, extra.getId());
+        } finally {
+            migrated.close();
+            deleteDbFiles(dbFile);
+        }
+    }
+
+    private static final String V8_CERTIFICATES =
+            "CREATE TABLE certificates (`_id` INTEGER PRIMARY KEY AUTOINCREMENT," +
+            "`data` BLOB NOT NULL,`name` TEXT NOT NULL);";
+
+    public void testMigration8To10PreservesData() {
+        File dbFile = context.getDatabasePath("migrate-test-8.db");
+        deleteDbFiles(dbFile);
+        assertTrue(dbFile.getParentFile().mkdirs() || dbFile.getParentFile().isDirectory());
+        SQLiteDatabase v8 = SQLiteDatabase.openOrCreateDatabase(dbFile, null);
+        v8.execSQL(V9_SERVER);
+        v8.execSQL(V9_FAVOURITES);
+        v8.execSQL(V9_TOKENS);
+        v8.execSQL(V9_COMMENTS);
+        v8.execSQL(V9_LOCAL_MUTE);
+        v8.execSQL(V9_LOCAL_IGNORE);
+        v8.execSQL(V8_CERTIFICATES);
+        v8.execSQL("INSERT INTO `server` (`name`,`host`,`port`,`username`,`password`)" +
+                " VALUES ('n','h',64738,'u','p');");
+        v8.execSQL("INSERT INTO `certificates` (`data`,`name`) VALUES (x'0102','c.p12');");
+        v8.setVersion(8);
+        v8.close();
+
+        MumlaRoomDatabase migrated = androidx.room.Room.databaseBuilder(
+                context, MumlaRoomDatabase.class, "migrate-test-8.db")
+                .addMigrations(MumlaRoomDatabase.getMIGRATION_8_10(),
+                        MumlaRoomDatabase.getMIGRATION_9_10())
+                .allowMainThreadQueries()
+                .build();
+        try {
+            MumlaDatabase mdb = migrated;
+            assertEquals("h", mdb.getServers().get(0).getHost());
+            assertEquals("c.p12", mdb.getCertificates().get(0).getName());
+            assertTrue(Arrays.equals(new byte[]{1, 2},
+                    mdb.getCertificateData(mdb.getCertificates().get(0).getId())));
+            assertNull("v8 certificates had no password column",
+                    mdb.getCertificatePassword(mdb.getCertificates().get(0).getId()));
         } finally {
             migrated.close();
             deleteDbFiles(dbFile);
@@ -278,6 +326,7 @@ public class MumlaDatabaseTest {
     private static void deleteDbFiles(File dbFile) {
         new File(dbFile.getPath() + "-wal").delete();
         new File(dbFile.getPath() + "-shm").delete();
+        new File(dbFile.getPath() + "-journal").delete();
         dbFile.delete();
     }
 }

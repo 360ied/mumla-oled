@@ -53,6 +53,13 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
+    kotlin {
+        compilerOptions {
+            // Match the Java toolchain: without this Kotlin defaults to 1.8 bytecode.
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
+    }
+
     base {
         archivesName = "mumla"
     }
@@ -188,4 +195,6 @@ dependencies {
     testImplementation 'org.robolectric:robolectric:4.15.1'
     // Migration Slice 2: MigrationTestHelper for the v9 -> v10 DB migration test.
     testImplementation libs.room.testing
+    // Listener-bridge unit test (TestDispatcher + setMain).
+    testImplementation libs.coroutines.test
 }

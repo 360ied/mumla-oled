@@ -40,8 +40,8 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
             // A NeutralButton causes onDialogClosed to be called with positiveResult==false,
             // so we persist manually here.
             if (preference.callChangeListener(mCurrentValue)) {
-                requireNonNull(preference.getSharedPreferences())
-                        .edit().putInt(preference.getKey(), mCurrentValue).apply();
+                requireNonNull(preference.getPreferenceDataStore())
+                        .putInt(preference.getKey(), mCurrentValue);
             }
         });
     }
@@ -56,7 +56,7 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
 
         mValueView = view.findViewById(R.id.key_select_value_view);
         KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
-        int stored = requireNonNull(preference.getSharedPreferences())
+        int stored = requireNonNull(preference.getPreferenceDataStore())
                 .getInt(preference.getKey(), Settings.DEFAULT_PUSH_KEY);
         // Normalize the legacy pre-ODD-07 reset value (0) to the -1 sentinel on
         // load, so pressing OK re-persists -1 and storage converges (round-2 D4).
@@ -98,8 +98,8 @@ public class KeySelectPreferenceDialogFragment extends PreferenceDialogFragmentC
         if (positiveResult) {
             KeySelectDialogPreference preference = (KeySelectDialogPreference) getPreference();
             if (preference.callChangeListener(mCurrentValue)) {
-                requireNonNull(preference.getSharedPreferences())
-                        .edit().putInt(preference.getKey(), mCurrentValue).apply();
+                requireNonNull(preference.getPreferenceDataStore())
+                        .putInt(preference.getKey(), mCurrentValue);
             }
         }
     }

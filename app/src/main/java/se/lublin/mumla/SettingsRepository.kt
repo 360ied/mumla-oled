@@ -282,7 +282,10 @@ class SettingsRepository @Inject constructor(
         if (collectScope == null) {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             collectScope = scope
-            var previous: PrefSnapshot? = null
+            // Baseline captured synchronously: a write landing between
+            // registration and collector start must still diff (the
+            // collector's own first emission would otherwise swallow it).
+            var previous: PrefSnapshot? = snapshotBlocking()
             scope.launch {
                 snapshot.collect { current ->
                     val prev = previous
@@ -333,8 +336,8 @@ class SettingsRepository @Inject constructor(
             useTts = this[Keys.USE_TTS] ?: Settings.DEFAULT_USE_TTS,
             ttsEngine = this[Keys.TTS_ENGINE],
             shortTtsMessages = this[Keys.SHORT_TTS_MESSAGES] ?: Settings.DEFAULT_SHORT_TTS_MESSAGES,
-            theme = this[Keys.THEME] ?: "forceBlack",
-            language = this[Keys.LANGUAGE] ?: "system",
+            theme = this[Keys.THEME] ?: Settings.DEFAULT_THEME,
+            language = this[Keys.LANGUAGE] ?: Settings.DEFAULT_LANGUAGE,
             pttButtonHeight = this[Keys.PTT_BUTTON_HEIGHT] ?: Settings.DEFAULT_PTT_BUTTON_HEIGHT,
             certificateId = this[Keys.CERTIFICATE_ID] ?: -1L,
             defaultUsername = this[Keys.DEFAULT_USERNAME] ?: Settings.DEFAULT_DEFAULT_USERNAME,

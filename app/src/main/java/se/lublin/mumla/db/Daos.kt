@@ -26,9 +26,12 @@ import androidx.room.Update
 /**
  * DAOs mirroring [MumlaDatabase] one-for-one (migration slice 2); method
  * names match the hand-SQL originals so call sites diff minimally. Conflict
- * strategies mirror the old `insert()`/`replace()` semantics: plain inserts
- * return -1 on conflict without throwing (mute/ignore use IGNORE to match),
- * comments use REPLACE like the old `replace()` call.
+ * strategies: mute/ignore use IGNORE (old `insert()` returned -1 without
+ * throwing); comments use REPLACE like the old `replace()` call — which also
+ * dedupes repeats under the new composite PK (old table allowed duplicates,
+ * but `isCommentSeen` only queries who+comment, so results are unchanged).
+ * Plain `@Insert` elsewhere is ABORT (throws on conflict); unreachable by
+ * construction today (autoincrement PKs, no UNIQUE columns, `copy(id = 0)`).
  */
 @Dao
 interface ServerDao {

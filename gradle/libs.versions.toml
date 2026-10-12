@@ -33,9 +33,6 @@ agp = "9.0.1"
 # If a future failure bisects cleanly to KGP 2.4 (Paparazzi absent), fall back
 # to 2.3.21 + KSP 2.3.12.
 kotlin = "2.4.21"
-# KSP fork (ordered, not open): no stable KSP for Kotlin 2.4 on Maven Central
-# at scaffold (latest symbol-processing-api is 2.3.12), so kapt + TODO.
-# TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
 coroutines = "1.11.0"
 compose-bom = "2026.09.00"
 navigation-compose = "2.10.2"
@@ -61,6 +58,7 @@ paparazzi = "2.0.0-alpha05.1"
 
 [libraries]
 coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }

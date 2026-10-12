@@ -120,7 +120,7 @@ Never use `GlobalScope`.
 
   ```kotlin
   data class CertRef(val data: ByteArray, val password: String?)
-  data class TrustStoreRef(val path: String, val password: String?, val format: String?)
+  data class TrustStoreRef(val path: String?, val password: String?, val format: String?)
   data class ConfigDelta(
       val server: Server? = null,
       val certificate: CertRef? = null,
@@ -135,13 +135,24 @@ Never use `GlobalScope`.
       val bluetoothSco: Boolean? = null,
       val adaptiveLeveler: Boolean? = null,
       val accessTokens: List<String>? = null, // live-sent, no reload
+      val localMuteHistory: List<Int>? = null, // connect-time only
+      val localIgnoreHistory: List<Int>? = null, // connect-time only
+      val clientName: String? = null, // connect-time only
+      val audioStream: Int? = null, // handset-derived, funnel-only
       val theme: String? = null,             // applier: applyTheme
       val overlayShown: Boolean? = null,     // applier: updateOverlayVisibility
       val overlayPlacement: String? = null,  // applier: updateOverlayPosition
       // ttsEngine needs tri-state (unchanged vs system-default vs engine pkg):
-      val ttsEngine: java.util.Optional<String>? = null,
+      val ttsEngine: java.util.Optional<String>? = null, // applier: initTts
   )
   ```
+
+  Notes (slice-2 amendments, reviewed with the code): `path` is nullable
+  because an uninitialized trust store is null (system store); Java callers
+  build deltas via the nested `Builder` (data-class `copy()` has no Java
+  defaults); `hasCore()` gates the service call, `hasOtherAudioKeys()`
+  preserves the old reload-suppression set (threshold excluded — applied
+  directly, no reload needed).
 - **Provider interfaces → Hilt:** `HumlaServiceProvider`,
   `DatabaseProvider` and manual singletons become `@Module`s;
   `@Singleton`/`@ServiceScoped` match today's lifetimes. Existing

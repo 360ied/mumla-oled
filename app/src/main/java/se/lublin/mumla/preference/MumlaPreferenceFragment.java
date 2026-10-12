@@ -13,6 +13,18 @@ import se.lublin.mumla.R;
 
 public abstract class MumlaPreferenceFragment extends PreferenceFragmentCompat {
     @Override
+    public void onCreate(Bundle savedInstanceState) {
+        // Bind the DataStore bridge before inflation: setPreferencesFromResource
+        // consults the manager's store on bind, so this must precede
+        // super.onCreate (which triggers onCreatePreferences in subclasses).
+        // getPreferenceManager() lazily creates the manager; safe pre-super
+        // (fragment is attached by onCreate).
+        getPreferenceManager().setPreferenceDataStore(
+                new DataStorePreferenceDataStore(requireContext()));
+        super.onCreate(savedInstanceState);
+    }
+
+    @Override
     public boolean onPreferenceTreeClick(Preference preference) {
         final String fragment = preference.getFragment();
         if (fragment != null) {

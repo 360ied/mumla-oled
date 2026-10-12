@@ -70,9 +70,12 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun close() {
-        // Intentional no-op: this is a process-lifetime singleton shared by
-        // activities, services, and Hilt. Closing under one consumer breaks
-        // the rest; the process owns the lifecycle (as before, in practice).
+        // No-op for the shared singleton only: activities, services, and Hilt
+        // share the process-lifetime instance, so closing under one consumer
+        // breaks the rest. Directly-built instances (tests) close normally.
+        if (this !== instance) {
+            super.close()
+        }
     }
 
     override fun getServers(): List<Server> = io {
@@ -102,14 +105,14 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun isCommentSeen(hash: String, commentHash: ByteArray): Boolean =
-        io { commentDao().count(hash, String(commentHash)) > 0 }
+        io { commentDao().count(hash, String(commentHash, Charsets.UTF_8)) > 0 }
 
     override fun markCommentSeen(hash: String, commentHash: ByteArray) {
         io {
             commentDao().insert(
                 CommentEntity(
                     who = hash,
-                    comment = String(commentHash),
+                    comment = String(commentHash, Charsets.UTF_8),
                     // Pre-existing quirk, preserved: stores the literal
                     // "datetime('now')" instead of evaluating it (filed
                     // separately; the value is never read).
@@ -199,7 +202,7 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
                     context.applicationContext,
                     MumlaRoomDatabase::class.java,
                     DATABASE_NAME,
-                ).addMigrations(MIGRATION_9_10).build().also { instance = it }
+                ).addMigrations(MIGRATION_8_10, MIGRATION_9_10).build().also { instance = it }
             }
 
         /**
@@ -212,66 +215,85 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
          */
         @JvmStatic
         val MIGRATION_9_10 = object : Migration(9, 10) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                recreate(
-                    db, "server",
-                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER, " +
-                        "`username` TEXT NOT NULL, `password` TEXT)",
-                    "`_id`, `name`, `host`, `port`, `username`, `password`",
-                )
-                recreate(
-                    db, "favourites",
-                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`channel` TEXT NOT NULL, `server` INTEGER NOT NULL)",
-                    "`_id`, `channel`, `server`",
-                )
-                recreate(
-                    db, "tokens",
-                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`value` TEXT NOT NULL, `server` INTEGER NOT NULL)",
-                    "`_id`, `value`, `server`",
-                )
-                recreate(
-                    db, "comments",
-                    "(`who` TEXT NOT NULL, `comment` TEXT NOT NULL, `seen` TEXT NOT NULL, " +
-                        "PRIMARY KEY(`who`, `comment`, `seen`))",
-                    "`who`, `comment`, `seen`",
-                )
-                recreate(
-                    db, "local_mute",
-                    "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
-                        "PRIMARY KEY(`server`, `user`))",
-                    "`server`, `user`",
-                )
-                recreate(
-                    db, "local_ignore",
-                    "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
-                        "PRIMARY KEY(`server`, `user`))",
-                    "`server`, `user`",
-                )
-                recreate(
-                    db, "certificates",
-                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
-                        "`data` BLOB NOT NULL, `name` TEXT NOT NULL, `password` TEXT)",
-                    "`_id`, `data`, `name`, `password`",
-                )
-            }
+            override fun migrate(db: SupportSQLiteDatabase) = migrateFrom(db, hasCertPassword = true)
+        }
 
-            private fun recreate(
-                db: SupportSQLiteDatabase,
-                table: String,
-                definition: String,
-                columns: String,
-            ) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS `" + table + "_new` " + definition)
-                db.execSQL(
-                    "INSERT INTO `" + table + "_new` (" + columns + ") " +
-                        "SELECT " + columns + " FROM `" + table + "`",
-                )
-                db.execSQL("DROP TABLE `" + table + "`")
-                db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
-            }
+        /**
+         * v8 → v10 for stragglers predating the certificate-password column
+         * (DB v9 shipped 2026-09-13): identical to 9 → 10 except `password`
+         * migrates as NULL. Pre-v8 databases (2020-era) are unsupported.
+         */
+        @JvmStatic
+        val MIGRATION_8_10 = object : Migration(8, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) = migrateFrom(db, hasCertPassword = false)
+        }
+
+        private fun migrateFrom(db: SupportSQLiteDatabase, hasCertPassword: Boolean) {
+            recreate(
+                db, "server",
+                "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER, " +
+                    "`username` TEXT NOT NULL, `password` TEXT)",
+                "`_id`, `name`, `host`, `port`, `username`, `password`",
+            )
+            recreate(
+                db, "favourites",
+                "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`channel` TEXT NOT NULL, `server` INTEGER NOT NULL)",
+                "`_id`, `channel`, `server`",
+            )
+            recreate(
+                db, "tokens",
+                "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`value` TEXT NOT NULL, `server` INTEGER NOT NULL)",
+                "`_id`, `value`, `server`",
+            )
+            recreate(
+                db, "comments",
+                "(`who` TEXT NOT NULL, `comment` TEXT NOT NULL, `seen` TEXT NOT NULL, " +
+                    "PRIMARY KEY(`who`, `comment`, `seen`))",
+                "`who`, `comment`, `seen`",
+            )
+            recreate(
+                db, "local_mute",
+                "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`server`, `user`))",
+                "`server`, `user`",
+            )
+            recreate(
+                db, "local_ignore",
+                "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`server`, `user`))",
+                "`server`, `user`",
+            )
+            recreate(
+                db, "certificates",
+                "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "`data` BLOB NOT NULL, `name` TEXT NOT NULL, `password` TEXT)",
+                "`_id`, `data`, `name`, `password`",
+                // v8 has no password column: migrate it as NULL.
+                selectColumns = if (hasCertPassword) {
+                    "`_id`, `data`, `name`, `password`"
+                } else {
+                    "`_id`, `data`, `name`, NULL"
+                },
+            )
+        }
+
+        private fun recreate(
+            db: SupportSQLiteDatabase,
+            table: String,
+            definition: String,
+            columns: String,
+            selectColumns: String = columns,
+        ) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS `" + table + "_new` " + definition)
+            db.execSQL(
+                "INSERT INTO `" + table + "_new` (" + columns + ") " +
+                    "SELECT " + selectColumns + " FROM `" + table + "`",
+            )
+            db.execSQL("DROP TABLE `" + table + "`")
+            db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
         }
 
         private fun ServerEntity.toModel(): Server =

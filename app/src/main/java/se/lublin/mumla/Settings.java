@@ -122,7 +122,9 @@ public class Settings {
     public static final boolean DEFAULT_SHORT_TTS_MESSAGES = true;
 
     public static final String PREF_THEME = "theme";
+    public static final String DEFAULT_THEME = "forceBlack";
     public static final String PREF_LANGUAGE = "language";
+    public static final String DEFAULT_LANGUAGE = "system";
 
     public static final String PREF_PTT_BUTTON_HEIGHT = "pttButtonHeight";
     public static final int DEFAULT_PTT_BUTTON_HEIGHT = 50;
@@ -231,6 +233,11 @@ public class Settings {
     public void registerListener(OnSettingChangedListener listener) {
         java.util.function.Consumer<String> adapter = listener::onSettingChanged;
         synchronized (listenerAdapters) {
+            // Re-registering the same listener refreshes nothing: without this
+            // guard the old adapter would stay live in the repository and fire twice.
+            if (listenerAdapters.containsKey(listener)) {
+                return;
+            }
             listenerAdapters.put(listener, adapter);
         }
         repository.registerListener(adapter);
@@ -561,8 +568,7 @@ public class Settings {
     }
 
     public String getOverlayPlacement() {
-        String placement = snapshot().getOverlayPlacement();
-        return placement != null ? placement : DEFAULT_OVERLAY_PLACEMENT;
+        return snapshot().getOverlayPlacement();
     }
 
     public void setOverlayPlacement(String placement) {

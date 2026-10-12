@@ -54,7 +54,6 @@ import java.util.Optional;
 
 import se.lublin.humla.Constants;
 import se.lublin.humla.HumlaService;
-import se.lublin.humla.exception.AudioException;
 import se.lublin.humla.model.Channel;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
@@ -791,7 +790,9 @@ public class MumlaService extends HumlaService implements
                 /* Convert input method defined in settings to an integer format used by Humla. */
                 int inputMethod = mSettings.getHumlaInputMethod();
                 builder.setTransmitMode(inputMethod);
-                mChannelOverlay.setPushToTalkShown(inputMethod == Constants.TRANSMIT_PUSH_TO_TALK);
+                if (mChannelOverlay != null) {
+                    mChannelOverlay.setPushToTalkShown(inputMethod == Constants.TRANSMIT_PUSH_TO_TALK);
+                }
                 updateHotCornerVisibility();
                 break;
             case Settings.PREF_HANDSET_MODE:
@@ -843,7 +844,9 @@ public class MumlaService extends HumlaService implements
                 if (mSettings.isBluetoothHeadset() && !hasBluetoothConnectGrant()) {
                     // Either toggle flips without the runtime grant: revert
                     // with a hint instead of pushing a doomed delta. Only
-                    // the connect flow requests the grant first.
+                    // the connect flow requests the grant first. The write-back
+                    // re-enters onSettingChanged once; the second pass takes
+                    // the non-revert branch and terminates.
                     mSettings.setBluetoothHeadset(false);
                     Toast.makeText(this, R.string.grant_perm_bluetooth, Toast.LENGTH_LONG).show();
                     break;
@@ -882,12 +885,8 @@ public class MumlaService extends HumlaService implements
             return;
         }
         if (delta.hasCore()) {
-            try {
-                // Reconfigure the service appropriately.
-                requiresReconnect |= apply(delta);
-            } catch (AudioException e) {
-                e.printStackTrace();
-            }
+            // Reconfigure the service appropriately.
+            requiresReconnect |= apply(delta);
         }
 
         if (requiresReconnect && isConnectionEstablished()) {
@@ -1154,6 +1153,8 @@ public class MumlaService extends HumlaService implements
                 Log.e(TAG, "Failed to open overlay permission settings", e);
             }
             mSettings.setOverlayShown(false);
+            // Write-back re-enters onSettingChanged once with shown=false;
+            // the second pass takes the non-revert branch and terminates.
             updateConnectedNotification();
             return false;
         }
