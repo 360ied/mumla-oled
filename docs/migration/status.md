@@ -25,6 +25,19 @@ hilt-navigation-compose `1.4.0`, lifecycle `2.11.0`, androidx-hilt `1.4.0`,
 Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 (pinned, NOT applied — deferred, see below).
 
+## Slice 1 — minSdk 33 + legacy deletion (DONE 2026-10-12, `check.sh` green)
+
+- `7f876cfc` (+143/−470) — minSdk 21 → 33 both modules; deleted every gate
+  below 33 except `UPSIDE_DOWN_CAKE`: the SCO legacy duality (`bringUpLegacy`,
+  broadcast receiver, `isHeadsetConnected`, both pre-S voice pre-holds), pre-M
+  audio constructors, the `ChannelChatFragment` storage branch + permission
+  machinery, deprecated `getParcelable` overloads, always-true branches, and
+  orphaned imports. Gate-grep returns only the U site; assemble +
+  `lintFossDebug` + `check.sh` green.
+- `8abec58b` — on-device result: fossDebug installed on hardware, basic
+  functionality (boot/connect/voice) confirmed by the user. Deeper torture
+  (SCO flap, A2DP stagger, overlay drag/rotate, notification paths) still open.
+
 ## Fork outcomes (all bisected 2026-10-12)
 
 - **Kotlin 2.4.21 stands.** A `MergeResources` failure initially suspected KGP
