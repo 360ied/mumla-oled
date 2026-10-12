@@ -27,7 +27,7 @@ import se.lublin.mumla.R;
 
 public class AuthenticationSettingsFragment extends MumlaPreferenceFragment {
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreateMumlaPreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_authentication, rootKey);
     }
 

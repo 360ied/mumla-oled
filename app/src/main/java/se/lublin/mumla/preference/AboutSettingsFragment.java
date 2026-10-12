@@ -14,7 +14,7 @@ public class AboutSettingsFragment extends MumlaPreferenceFragment {
     private static final String VERSION_KEY = "version";
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreateMumlaPreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_about, rootKey);
 
         String summary = String.format("%s (code %s)\nFOSS flavor", BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE);

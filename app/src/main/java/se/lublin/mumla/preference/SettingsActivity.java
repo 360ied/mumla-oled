@@ -64,7 +64,7 @@ public class SettingsActivity extends BaseActivity {
 
     public static class RootPreferenceFragment extends MumlaPreferenceFragment {
         @Override
-        public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+        public void onCreateMumlaPreferences(Bundle savedInstanceState, String rootKey) {
             setPreferencesFromResource(R.xml.preference_headers, rootKey);
         }
     }

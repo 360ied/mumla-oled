@@ -31,7 +31,7 @@ import se.lublin.mumla.R;
 public class GeneralSettingsFragment extends MumlaPreferenceFragment {
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreateMumlaPreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_general, rootKey);
 
         setupMediaKeyMuteDependency();

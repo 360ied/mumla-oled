@@ -13,7 +13,7 @@ import se.lublin.mumla.R;
 
 public class AppearanceSettingsFragment extends MumlaPreferenceFragment {
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreateMumlaPreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings_appearance, rootKey);
 
         ListPreference languagePreference = findPreference(PREF_LANGUAGE);
