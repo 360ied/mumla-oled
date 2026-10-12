@@ -107,7 +107,7 @@ Never use `GlobalScope`.
   minimally. `Server` stays a single `@Entity @Parcelize` class (DB row,
   parcel, and UI model in one) — no separate layers.
 - **`Settings` blob → DataStore (Preferences flavor):** typed preferences;
-  the 48 read accessors (counting rule in slices.md) become typed keys with defaults in one place.
+  the 46 read accessors (counting rule in slices.md) become typed keys with defaults in one place.
 - **Pref→bundle→effect double dispatch → typed `ConfigDelta`.**
   `MumlaService.onSharedPreferenceChanged` and
   `HumlaService.configureExtras` collapse into `apply(ConfigDelta)`; the

@@ -104,25 +104,25 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
 - **Entities (7 tables, same file, same schema — Room opens the existing
   `mumble.db` at version 9; `fallbackToDestructiveMigration` is forbidden,
   the fleet has real data):**
-  `server(_id AUTOINCREMENT, name, host, port, username, password)` |
-  `favourites(_id, channel TEXT, server INTEGER)` |
-  `tokens(_id, value TEXT, server INTEGER)` |
-  `comments(who, comment, seen DATE — no PK)` |
-  `local_mute(server, user, UNIQUE(server,user))` |
-  `local_ignore(server, user, UNIQUE(server,user))` |
-  `certificates(_id, data BLOB, name, password?)`. `Server` becomes
+  `server(_id INTEGER PRIMARY KEY AUTOINCREMENT, name/host/username TEXT NOT NULL, port INTEGER, password TEXT)` |
+  `favourites(_id PK AUTOINCREMENT, channel TEXT NOT NULL, server INTEGER NOT NULL)` |
+  `tokens(_id PK AUTOINCREMENT, value TEXT NOT NULL, server INTEGER NOT NULL)` |
+  `comments(who TEXT NOT NULL, comment TEXT NOT NULL, seen TEXT NOT NULL — no PK; stores `datetime('now')` strings, so keep a TEXT column, no Date TypeConverter)` |
+  `local_mute(server INTEGER NOT NULL, user INTEGER NOT NULL, UNIQUE(server,user))` |
+  `local_ignore(server INTEGER NOT NULL, user INTEGER NOT NULL, UNIQUE(server,user))` |
+  `certificates(_id PK AUTOINCREMENT, data BLOB NOT NULL, name TEXT NOT NULL, password TEXT)`. `Server` becomes
   `@Entity @Parcelize` later (slice 5); in this slice keep the Java class
   and map columns.
 - **DAOs mirror `MumlaDatabase` (24 data methods; 27 declared incl. `open`/`close` + default `addCertificate` overload)** one-for-one; keep method
   names so call sites diff minimally (servers 4 + comments 2 + pinned 4 +
   tokens 3 + localMute 3 + localIgnore 3 + certificates 5 = 24). In-memory Room replaces
   `MumlaSQLiteDatabase` behind the `MumlaDatabase` interface.
-- **DataStore (Preferences):** the 48 `Settings` read accessors (get/is/should groups; excludes `getInstance`/statics and pairs setters with their getter's key)
+- **DataStore (Preferences):** the 46 `Settings` instance read accessors (get/is/should; excludes `getInstance`, static `isPttKeyBound`, and setters, which pair with their getter's key)
   (`Settings.java`, getter/setter groups: input, PTT/hot-corner, certs,
   notifications/TTS, overlay, audio) become typed keys with defaults.
 - **`ConfigDelta`:** replaces the pref→bundle→effect double dispatch
-  (`MumlaService.onSharedPreferenceChanged` ~L774 +
-  `HumlaService.configureExtras` ~L1598 collapse into `apply(ConfigDelta)`;
+  (`MumlaService.onSharedPreferenceChanged` :774 +
+  `HumlaService.configureExtras` :1598 collapse into `apply(ConfigDelta)`;
   the stringly `EXTRAS_*` bundle dies. Round-trip checklist — every key
   must survive (server, certificate+password, detection_threshold,
   amplitude_boost, transmit_mode, input_quality, force_tcp, client_name,
@@ -133,7 +133,7 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   `EXTRAS_AUTO_RECONNECT_DELAY`, `EXTRAS_USE_OPUS` are dropped (never written by any sender).
 - **Hilt modules (new Kotlin files — Kotlin plugin lands in slice 0, so
   new files are Kotlin from birth):** `DatabaseModule` (provides
-  `Room.databaseBuilder(ctx, MumlaRoomDatabase, "mumble.db")`, all 7 DAOs,
+  `Room.databaseBuilder(@ApplicationContext context, MumlaRoomDatabase::class.java, "mumble.db").build()`, all 7 DAOs,
   and the `MumlaDatabase` binding), `SettingsModule` (provides
   `DataStore<Preferences>` + `SettingsRepository`; `@ApplicationContext`
   needs no module). No `ServiceModule` yet — nothing new to provide.
@@ -144,10 +144,10 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   `LocalIgnoreEntity`, `CertificateEntity`, `MumlaRoomDatabase`,
   `ServerDao`, `PinnedDao`, `TokenDao`, `CommentDao`, `LocalMuteDao`,
   `LocalIgnoreDao`, `CertificateDao`, `DatabaseModule`,
-  `SettingsRepository`; `ConfigDelta` goes in humla `util/`),
+  `SettingsRepository`; `ConfigDelta.kt` goes in humla `util/`),
   `Settings.java` (internals rewritten, surface kept), `MumlaService`
   pref switch, `HumlaService` `configureExtras`, `Server.java` column
-  mapping, `FakeSharedPreferences` + `MumlaDatabaseTest`/`SettingsOverlayTest`.
+  mapping (`libraries/humla/.../model/Server.java`; `@Ignore` transient `mResolvedHost`/`mResolvedPort` + SRV logic), `FakeSharedPreferences` + `MumlaDatabaseTest`/`SettingsOverlayTest`.
 - **Verification:** `./scripts/check.sh`; `MumlaDatabaseTest` ported to
   in-memory Room; `FakeSharedPreferences` replaced by a DataStore test
   double; all six `Settings*Test` green against the DataStore-backed
@@ -158,17 +158,18 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
 
 ## Slice 3 — Kotlin conversion, `:libraries:humla` (syntax first)
 
-62 files minus generated protobuf (`Mumble.java`, `MumbleUDP.java` —
-never touched). Batches in dependency order, ~one package per commit:
+62 files total, 60 to convert (minus generated protobuf (`Mumble.java`, `MumbleUDP.java` —
+never touched)). Batches in dependency order, ~one package per commit:
 
 1. `exception/*` (4: `AudioException`, `AudioInitializationException`, `NotConnectedException`, `NotSynchronizedException`) + `Constants.java`
 2. `util/*` (10: `HumlaCallbacks`, `HumlaDisconnectedException`, `HumlaException`, `HumlaLogger`, `HumlaNetworkListener`, `HumlaObserver`, `IHumlaObserver`, `MessageFormatter`, `MumbleURLParser`, `VoiceTargetMode`)
-3. `model/*` (13 files + `Server` deferred: `User`, `Channel`, `Message`, whisper targets…; `Server` converts in slice 5)
+3. `model/*` (13 files + `Server` deferred: `Channel`, `IChannel`, `IMessage`, `IServerSettings`, `IUser`, `Message`, `ServerSettings`, `TalkState`, `User`, `WhisperTarget`, `WhisperTargetChannel`, `WhisperTargetList`, `WhisperTargetUsers`; `Server` converts in slice 5)
 4. `audio/inputmode/*` (4: `ActivityInputMode`, `ContinuousInputMode`, `IInputMode`, `ToggleInputMode`)
-5. `audio/*` (6) — JNI facades (`NativeAudioInputEngine`,
-   `NativeAudioOutputEngine`) convert
+5. `audio/*` (6: `AudioInput`, `AudioOutput`, `BluetoothScoManager` convert normally;
+   `NativeAudioInputEngine`, `NativeAudioOutputEngine` convert
    **syntactically only**: `@Synchronized` preserved, native signatures
-   byte-identical, no new allocations in encode/decode paths
+   byte-identical, no new allocations in encode/decode paths;
+   `InvalidSampleRateException` converts as a plain exception — note it lives in `audio/`, not `exception/`)
 6. `net/*` (14: `CryptState`, `FrameValidator`, `PacketBuffer` first; `HumlaTCP`/`HumlaUDP` next; `HumlaConnection` last; remainder — `HandshakeFailure`, `HumlaCertificateGenerator`, `HumlaSSLSocketFactory`, `HumlaTCPMessageType`, `HumlaUDPMessageType`, `Permissions`, `TlsHostnameVerifier` — with their users; `HumlaNetworkThread`: convert surface only, deleted in slice 4)
 7. `protocol/*` (4: `AudioHandler`, `HumlaTCPMessageListener`, `HumlaUDPMessageListener`, `ModelHandler`)
 8. `IHumlaService`, `IHumlaSession` (surface frozen, syntax only)
@@ -186,7 +187,7 @@ Verification: existing humla JVM tests (`AudioRoutePolicyTest`,
 | Reconnect runnable + disarm (`:890-969`: `mReconnectRunnable`, `removeCallbacks` at `:896,940,958`, `postDelayed` at `:969`; settle/recompute disarm at `:568-569,768,834`) | `reconnectJob` + `cancel()`; backoff delays via `delay()` | **new:** `ReconnectBackoffTest` (delay sequence incl. 25 s cap) |
 | Route debounce/settle `postDelayed` (`:1152-1154` debounce 300 ms; `:768-770,1322-1326` settle rechecks) | cancellable `debounceJob`/`settleJob` | `AudioRoutePolicyTest` |
 | `HumlaNetworkThread` 3 executors (`HumlaNetworkThread:50-52`, incl. dead receive executor; send path `:73-83`, main hop `:87`) | deleted; one `ConnectionScope` (`SupervisorJob` + `Dispatchers.IO`), writes via `Mutex` | `Mumble15ProtocolTest`, `HumlaSSLSocketFactoryTest` kept green |
-| Ping `ScheduledExecutorService` self-chain (`HumlaConnection:90,313-320,391,406,585`) | `while (isActive) { sendKeepalivePing(); delay(interval) }` | **new:** `PingIntervalTest` (bootstrap-vs-steady); `AdaptiveKeepaliveTest`, `HumlaUDPPingTest` kept green |
+| Ping `ScheduledExecutorService` self-chain (`HumlaConnection:90,313-320,359-368,406,585`) | `while (isActive) { sendKeepalivePing(); delay(interval) }` | **new:** `PingIntervalTest` (bootstrap-vs-steady); `AdaptiveKeepaliveTest`, `HumlaUDPPingTest` kept green |
 | `HumlaUDP` queue + `mSendLock` head-drop | `Channel(capacity, DROP_OLDEST)`; consumer becomes an `IO` loop | `HumlaUDPSendQueueTest`, `HumlaUDPReceiveThreadTest` kept green |
 | SCO epoch + `Handler` timeout (`BluetoothScoManager`, 8 s timeout) | cancellation *is* the epoch; `withTimeoutOrNull(8000)` | `BluetoothScoRetryPolicyTest` kept green |
 | `ModelHandler` `synchronized` writers | single-threaded model dispatcher; `ConcurrentHashMap`s stay (UDP-thread reads) | `ModelHandlerSelfMuteTest`, `ModelHandlerTopologyTest`, `ModelHandlerUserRemoveTest` kept green |
@@ -204,7 +205,7 @@ storm, SCO flap, A2DP stagger, route flip mid-call).
 from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from slice 3's model batch):
 
 1. `util/*` (11: `BitmapUtils`, `ChatLinkPolicy`, `HtmlUtils`, `HumlaServiceFragment`, `HumlaServiceProvider`, `ModelUtils`, `MumbleImageGetter`, `MumlaTrustStore`, `NotificationSanitizer`, `PinnedTlsSocketFactory`, `SsrfHostPolicy`)
-2. `db` leftovers (`MumlaSQLiteDatabase` deletion, `DatabaseProvider` removal with its call sites, `DatabaseCertificate` disposition)
+2. `db` leftovers (`MumlaSQLiteDatabase` deletion, `DatabaseProvider` removal with its call sites, `DatabaseCertificate` → data class, `MumlaDatabase` interface → Kotlin, facade kept — closes the 74-file loop: 11+4+6+9+18+17+7+1+1)
 3. `servers/*` (6: `FavouriteServerAdapter`, `FavouriteServerListFragment`, `ServerAdapter`, `ServerEditFragment`, `ServerInfoResponse`, `ServerInfoTask`)
 4. `service/*` + `service/ipc` (9: `IChatMessage`, `IMumlaService`, `MumlaConnectionNotification`, `MumlaHotCorner`, `MumlaMessageNotification`, `MumlaOverlay`, `OverlayLayout`, `TalkBroadcastReceiver` —
    `MumlaService` itself last)
@@ -223,11 +224,11 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 
 - Port `themes.xml` (`Theme.Mumla`/`Theme.Mumla.Oled`, colors, type,
   dimens) into a Compose **Material3** `MaterialTheme` via tokens —
-  three schemes: light (`md_theme_light_primary #3949ab`, `onPrimary #ffffff`,
-  `primary_darker #212b64` for pttPressed), dark (`md_theme_dark_primary #001b2b`,
-  `primary_lighter #002b45`, `primary_lighter_more #0093eb` for high-contrast buttons,
-  `onPrimary #1795c2`), OLED (`black #000000` surfaces + `overlay_pill_background #d9000000`).
-  Talk-state ripples (`ripple_talk_state_on/disabled/suppressed/server_muted/server_deafened`) become state colors, not ripples.
+  three schemes: light (`md_theme_light_primary #3949ab`, `md_theme_light_onPrimary #ffffff`,
+  `md_theme_light_primary_darker #212b64` for pttPressed), dark (`md_theme_dark_primary #001b2b`,
+  `md_theme_dark_onPrimary #1795c2`, `md_theme_dark_primary_lighter #002b45` for pttPressed,
+  `md_theme_dark_primary_lighter_more #0093eb` for high-contrast buttons), OLED (`black #000000` surfaces + `overlay_pill_background #d9000000`).
+  Talk-state colors (`ripple_talk_state_on`, `_disabled`, `_suppressed`, `_server_muted`, `_server_deafened`) become state colors, not ripples.
 - Paparazzi goldens infrastructure (per slice 0 fork decision).
 - First screen: `ServerInfoFragment` → `ServerInfo` route + `ServerInfoViewModel`
   (its poll executor becomes a `StateFlow` + `collectAsState`); first goldens recorded:
@@ -248,7 +249,7 @@ Per-screen table (source → route + ViewModel → golden subjects → gate):
 | ChannelChat | `ChannelChatFragment` + `ChatTarget*` (+ `MumbleImageGetter` pipeline stays) | `ChannelChatViewModel` | chat / image-send × 3 | — |
 | Comments | `Abstract`/`User`/`ChannelDescription` fragments | `CommentDialogs` | each dialog × 3 | teardown tests green |
 | AccessToken | `AccessTokenFragment` | `AccessTokenViewModel` | dialog × 3 | — |
-| Settings | 5 header fragments + `MumlaPreferenceFragment` + `SettingsActivity` + `KeySelect`/`SeekBar` dialogs | DataStore-backed directly | each screen × 3 | — |
+| Settings | 5 header fragments + `MumlaPreferenceFragment` + `SettingsActivity` + `KeySelect`/`SeekBar` dialogs + cert management (`CertificateExport/Generate/Import/SelectActivity`, `ServerCertificateClearActivity`, `MumlaCertificateGenerateTask` — owned by the Authentication route) | DataStore-backed directly | each screen × 3 | — |
 | Drawer | `DrawerAdapter` (items server/pinned/info/tokens/favourites/settings) | route map | open / closed × 3 | — |
 | Shell | `MumlaActivity` + `BaseActivity` + news dialog (`DialogUtils`) | `ConnectFlow`, `PermissionFlow` state holders | — | full torture matrix |
 | DialogHost | all 7 fields (connecting/error/switch/permission/back-press/cert[3 TLS variants]/first-run) | dialog state | each dialog × 3 | dismissal semantics intact |
