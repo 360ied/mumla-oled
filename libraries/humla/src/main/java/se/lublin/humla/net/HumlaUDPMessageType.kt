@@ -15,37 +15,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.net;
+package se.lublin.humla.net
 
-/**
- * Message types pulled from the Mumble project's 'Message.h' for protocol version 1.2.4.
- */
-public enum HumlaTCPMessageType {
-    Version,
-    UDPTunnel,
-    Authenticate,
-    Ping,
-    Reject,
-    ServerSync,
-    ChannelRemove,
-    ChannelState,
-    UserRemove,
-    UserState,
-    BanList,
-    TextMessage,
-    PermissionDenied,
-    ACL,
-    QueryUsers,
-    CryptSetup,
-    ContextActionModify,
-    ContextAction,
-    UserList,
-    VoiceTarget,
-    PermissionQuery,
-    CodecVersion,
-    UserStats,
-    RequestBlob,
-    ServerConfig,
-    SuggestConfig,
-    PluginDataTransmission
+enum class HumlaUDPMessageType {
+    @Deprecated("Legacy CELT alpha codec, retained for protocol parity")
+    UDPVoiceCELTAlpha,
+    UDPPing,
+    @Deprecated("Legacy Speex codec, retained for protocol parity")
+    UDPVoiceSpeex,
+    @Deprecated("Legacy CELT beta codec, retained for protocol parity")
+    UDPVoiceCELTBeta,
+    UDPVoiceOpus
 }

@@ -244,12 +244,12 @@ public class HumlaSSLSocketFactoryTest {
         }
 
         @Override
-        Socket createPlainSocket(String host, int port, int timeoutMs) {
+        public Socket createPlainSocket(String host, int port, int timeoutMs) {
             return plainSocket;
         }
 
         @Override
-        SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
+        public SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
             sslSocket.attach((RecordingSocket) plainSocket);
             return sslSocket;
         }
@@ -295,7 +295,7 @@ public class HumlaSSLSocketFactoryTest {
     public void createSocketClosesPlainSocketWhenLayeringThrows() throws Exception {
         TestableFactory factory = new TestableFactory(new String[]{"TLSv1.2"}) {
             @Override
-            SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
+            public SSLSocket layerTlsSocket(Socket plainSocket, String host, int port) throws IOException {
                 throw new IOException("layer boom");
             }
         };

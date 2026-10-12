@@ -15,7 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.net;
+package se.lublin.humla.net
 
 /**
  * Validates server-controlled TCP protobuf frame headers before any payload
@@ -23,21 +23,20 @@ package se.lublin.humla.net;
  * JVM. Mirrors upstream {@code Connection::socketRead}, which disconnects on
  * frames over {@code 0x7fffff} bytes.
  */
-public final class FrameValidator {
+object FrameValidator {
     /** Maximum accepted TCP protobuf frame payload, matching upstream Mumble. */
-    public static final int MAX_FRAME_BYTES = 0x7fffff;
+    const val MAX_FRAME_BYTES = 0x7fffff
+
     /** Message-type universe size, hoisted out of the per-frame hot path. */
-    public static final int MESSAGE_TYPE_COUNT = HumlaTCPMessageType.values().length;
+    @JvmField
+    val MESSAGE_TYPE_COUNT: Int = HumlaTCPMessageType.entries.size
 
     /** Validation outcome; callers abort the connection on anything but NONE. */
-    public enum FrameError {
+    enum class FrameError {
         NONE,
         BAD_TYPE,
         NEGATIVE_LENGTH,
         OVERLARGE_LENGTH
-    }
-
-    private FrameValidator() {
     }
 
     /**
@@ -45,20 +44,22 @@ public final class FrameValidator {
      * checked first ({@code readShort} is signed), then length bounds, so a
      * bad type with a bad length still reports BAD_TYPE.
      */
-    public static FrameError validateFrame(short messageType, int messageLength, int messageTypeCount) {
+    @JvmStatic
+    fun validateFrame(messageType: Short, messageLength: Int, messageTypeCount: Int): FrameError {
         if (messageType < 0 || messageType >= messageTypeCount) {
-            return FrameError.BAD_TYPE;
+            return FrameError.BAD_TYPE
         }
         if (messageLength < 0) {
-            return FrameError.NEGATIVE_LENGTH;
+            return FrameError.NEGATIVE_LENGTH
         }
         if (messageLength > MAX_FRAME_BYTES) {
-            return FrameError.OVERLARGE_LENGTH;
+            return FrameError.OVERLARGE_LENGTH
         }
-        return FrameError.NONE;
+        return FrameError.NONE
     }
 
-    public static FrameError validateFrame(short messageType, int messageLength) {
-        return validateFrame(messageType, messageLength, MESSAGE_TYPE_COUNT);
+    @JvmStatic
+    fun validateFrame(messageType: Short, messageLength: Int): FrameError {
+        return validateFrame(messageType, messageLength, MESSAGE_TYPE_COUNT)
     }
 }
