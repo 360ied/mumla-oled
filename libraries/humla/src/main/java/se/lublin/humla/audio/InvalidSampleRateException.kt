@@ -15,18 +15,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.audio;
+package se.lublin.humla.audio
 
 /**
  * Created by andrew on 23/04/14.
  */
-@SuppressWarnings("serial")
- public class InvalidSampleRateException extends Exception {
-    public InvalidSampleRateException(Exception e) {
-        super(e);
-    }
+class InvalidSampleRateException : Exception {
+    constructor(e: Exception?) : super(e)
 
-    public InvalidSampleRateException(String message) {
-        super(message);
-    }
+    constructor(message: String?) : super(message)
 }
