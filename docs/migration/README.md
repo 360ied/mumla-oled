@@ -46,3 +46,4 @@ machinery. See [plan](plan.md) for execution.
 ## Files
 
 - [plan](plan.md) — scope, fences, slice order, guardrails, verification.
+- [porting-guide](porting-guide.md) — the mechanical Java→Kotlin/coroutines/Room/Compose mapping converters follow literally.
