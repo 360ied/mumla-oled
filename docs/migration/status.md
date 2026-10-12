@@ -131,6 +131,15 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   preserved, static natives verified byte-identical via `javap`); `Pacer`
   test-visible members `@JvmField`; package test seams widened to public
   (Kotlin has no package visibility); `finalize` drops its super call.
+- `3e9fe745` — batch 6 (`net/*`, 14 files): `CryptState` syntactic only
+  (`@Synchronized` preserved, native signatures verified byte-identical via
+  `javap`, static `nativeIsSupported` kept on the outer class via `@JvmStatic`);
+  `HumlaNetworkThread` keeps its send-executor check bug literally for slice 4
+  to delete; `HumlaTCP`/`HumlaUDP`/`HumlaConnection` preserve threading, SRV
+  lookup, frame validation, and ping scheduling exactly; package test seams
+  widened to public (`filterTlsProtocols`, UDP queue seams, connection ping
+  internals; `HumlaSSLSocketFactoryTest` overrides widened to match);
+  `finalize` drops its super call.
 - Verification so far: full `testFossDebugUnitTest` green per batch
   (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
   `AudioOutputPacerTest`, `NativeAudioOutputEngineTest`, observer/
@@ -138,4 +147,4 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 3 batch 6 — `net/*`, per [slices](slices.md).
+Slice 3 batch 7 — `protocol/*`, per [slices](slices.md).

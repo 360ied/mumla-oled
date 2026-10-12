@@ -250,7 +250,7 @@ never touched)). Batches in dependency order, ~one package per commit:
    **syntactically only**: `@Synchronized` preserved, native signatures
    byte-identical, no new allocations in encode/decode paths;
    `InvalidSampleRateException` converts as a plain exception — note it lives in `audio/`, not `exception/`) (DONE `e5c0339d`)
-6. `net/*` (14: `CryptState` (syntactically only, like the Native* engines — crypto JNI bridge frozen), `FrameValidator`, `PacketBuffer` first; `HumlaTCP`/`HumlaUDP` next; `HumlaConnection` last; remainder — `HandshakeFailure`, `HumlaCertificateGenerator`, `HumlaSSLSocketFactory`, `HumlaTCPMessageType`, `HumlaUDPMessageType`, `Permissions`, `TlsHostnameVerifier` — with their users; `HumlaNetworkThread`: convert surface only, deleted in slice 4)
+6. `net/*` (14: `CryptState` (syntactically only, like the Native* engines — crypto JNI bridge frozen), `FrameValidator`, `PacketBuffer` first; `HumlaTCP`/`HumlaUDP` next; `HumlaConnection` last; remainder — `HandshakeFailure`, `HumlaCertificateGenerator`, `HumlaSSLSocketFactory`, `HumlaTCPMessageType`, `HumlaUDPMessageType`, `Permissions`, `TlsHostnameVerifier` — with their users; `HumlaNetworkThread`: convert surface only, deleted in slice 4) (DONE `3e9fe745`)
 7. `protocol/*` (4: `AudioHandler`, `HumlaTCPMessageListener`, `HumlaUDPMessageListener`, `ModelHandler`)
 8. `IHumlaService`, `IHumlaSession` (surface frozen, syntax only)
 9. `HumlaService.java` last (the god, converted but not yet restructured)
