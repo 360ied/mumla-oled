@@ -1098,7 +1098,7 @@ public class MumlaActivity extends BaseActivity implements ListView.OnItemClickL
         // Commit point: a fresh explicit intent invalidates any stale
         // pending reconnect so a later rebind cannot chase the old target.
         clearReconnectObserver();
-        ServerConnectTask connectTask = new ServerConnectTask(this, mDatabase);
+        ServerConnectTask connectTask = new ServerConnectTask(this);
         connectTask.execute(server);
     }
 

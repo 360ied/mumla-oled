@@ -3,63 +3,61 @@ package se.lublin.mumla.app;
 import static androidx.appcompat.app.AppCompatDelegate.setApplicationLocales;
 import static androidx.core.os.LocaleListCompat.forLanguageTags;
 import static androidx.core.os.LocaleListCompat.getEmptyLocaleList;
-import static se.lublin.mumla.Settings.PREF_LANGUAGE;
-import static se.lublin.mumla.Settings.PREF_THEME;
 
 import android.app.Application;
 import android.content.Context;
-import android.content.SharedPreferences;
 
-import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatDelegate;
-import androidx.preference.PreferenceManager;
 
 import dagger.hilt.android.HiltAndroidApp;
 import se.lublin.humla.HumlaService;
 import se.lublin.mumla.R;
+import se.lublin.mumla.Settings;
 
 @HiltAndroidApp
-public class MumlaApplication extends Application implements SharedPreferences.OnSharedPreferenceChangeListener {
+public class MumlaApplication extends Application implements Settings.OnSettingChangedListener {
+    private Settings mSettings;
+
     @Override
     public void onCreate() {
         super.onCreate();
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        applyTheme(preferences);
-        preferences.registerOnSharedPreferenceChangeListener(this);
+        mSettings = Settings.getInstance(this);
+        applyTheme(mSettings);
+        mSettings.registerListener(this);
 
         HumlaService.init(this);
     }
 
     @Override
-    public void onSharedPreferenceChanged(SharedPreferences preferences, @Nullable String key) {
+    public void onSettingChanged(String key) {
         if (key == null) {
             return;
         }
         switch (key) {
-            case PREF_LANGUAGE:
-                String language = preferences.getString(PREF_LANGUAGE, "system");
+            case Settings.PREF_LANGUAGE:
+                String language = mSettings.getLanguage();
                 setApplicationLocales(language.equals("system") ? getEmptyLocaleList() : forLanguageTags(language));
                 break;
-            case PREF_THEME:
-                applyTheme(preferences);
+            case Settings.PREF_THEME:
+                applyTheme(mSettings);
                 break;
         }
     }
 
     public static void applyTheme(Context context) {
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
-        applyTheme(preferences);
-        String theme = preferences.getString(PREF_THEME, "forceBlack");
+        Settings settings = Settings.getInstance(context);
+        applyTheme(settings);
+        String theme = settings.getTheme();
         if ("forceBlack".equals(theme)) {
             context.setTheme(R.style.Theme_Mumla_Oled);
         }
     }
 
-    private static void applyTheme(SharedPreferences preferences) {
+    private static void applyTheme(Settings settings) {
         // The "system" and "force*" values are new (see preference_notranslate.xml).
         // We let other (older) value result in system default theme, and write that
         // to the preference store.
-        switch (preferences.getString(PREF_THEME, "forceBlack")) {
+        switch (settings.getTheme()) {
             case "forceLight":
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
                 break;
@@ -72,7 +70,7 @@ public class MumlaApplication extends Application implements SharedPreferences.O
                 break;
             default:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
-                preferences.edit().putString(PREF_THEME, "forceBlack").apply();
+                settings.setTheme("forceBlack");
                 break;
         }
     }

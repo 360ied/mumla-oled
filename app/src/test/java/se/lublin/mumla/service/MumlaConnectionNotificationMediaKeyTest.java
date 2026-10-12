@@ -30,7 +30,9 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
-import se.lublin.mumla.FakeSharedPreferences;
+import se.lublin.mumla.TestDataStores;
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
 import se.lublin.mumla.Settings;
 
 /**
@@ -53,26 +55,26 @@ public class MumlaConnectionNotificationMediaKeyTest {
     private MumlaConnectionNotification.MediaSessionCallback mCallback;
 
     private static Settings unboundPttSettings() {
-        return Settings.createForTesting(new FakeSharedPreferences());
+        return Settings.createForTesting(TestDataStores.create());
     }
 
     private static Settings pttSettings(int pttKey) {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, pttKey).commit();
-        return Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), pttKey);
+        return Settings.createForTesting(store);
     }
 
     private static Settings disabledMediaKeySettings() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        prefs.edit().putBoolean(Settings.PREF_MEDIA_KEY_MUTE, false).commit();
-        return Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_MEDIA_KEY_MUTE), false);
+        return Settings.createForTesting(store);
     }
 
     private static Settings disabledMediaKeyPttSettings() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        prefs.edit().putBoolean(Settings.PREF_MEDIA_KEY_MUTE, false)
-                .putInt(Settings.PREF_PUSH_KEY, KeyEvent.KEYCODE_MEDIA_PAUSE).commit();
-        return Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_MEDIA_KEY_MUTE), false);
+        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_MEDIA_PAUSE);
+        return Settings.createForTesting(store);
     }
 
     private static Intent mediaButtonIntent(int action, int keyCode, int repeatCount) {

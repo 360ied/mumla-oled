@@ -21,7 +21,7 @@ import junit.framework.TestCase;
 
 import android.view.KeyEvent;
 
-import se.lublin.mumla.FakeSharedPreferences;
+import se.lublin.mumla.TestDataStores;
 import se.lublin.mumla.R;
 
 public class MumlaConnectionNotificationTest extends TestCase {
@@ -146,7 +146,7 @@ public class MumlaConnectionNotificationTest extends TestCase {
 
     public void testNotificationInstanceHooks() {
         se.lublin.mumla.Settings settings = se.lublin.mumla.Settings.createForTesting(
-                new FakeSharedPreferences(new java.util.HashMap<>()));
+                TestDataStores.create());
         MumlaConnectionNotification notification = new MumlaConnectionNotification(null, null, settings);
         assertSame(settings, notification.getSettings());
         assertFalse(notification.isMediaSessionActive());

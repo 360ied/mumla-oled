@@ -21,7 +21,6 @@ import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.media.AudioAttributes;
@@ -30,7 +29,6 @@ import android.media.SoundPool;
 import android.net.Uri;
 import android.annotation.SuppressLint;
 import android.os.Binder;
-import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.speech.tts.TextToSpeech;
@@ -38,8 +36,6 @@ import android.util.Log;
 import android.widget.Toast;
 
 import androidx.core.content.ContextCompat;
-
-import androidx.preference.PreferenceManager;
 
 import se.lublin.mumla.app.MumlaApplication;
 
@@ -54,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 import se.lublin.humla.Constants;
 import se.lublin.humla.HumlaService;
@@ -65,12 +62,19 @@ import se.lublin.humla.model.IUser;
 import se.lublin.humla.model.Message;
 import se.lublin.humla.model.Server;
 import se.lublin.humla.model.TalkState;
+import se.lublin.humla.util.CertRef;
+import se.lublin.humla.util.ConfigDelta;
+import se.lublin.humla.util.TrustStoreRef;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaObserver;
+import se.lublin.mumla.BuildConfig;
 import se.lublin.mumla.R;
 import se.lublin.mumla.Settings;
+import se.lublin.mumla.db.MumlaDatabase;
+import se.lublin.mumla.db.MumlaRoomDatabase;
 import se.lublin.mumla.service.ipc.TalkBroadcastReceiver;
 import se.lublin.mumla.util.HtmlUtils;
+import se.lublin.mumla.util.MumlaTrustStore;
 import se.lublin.mumla.util.NotificationSanitizer;
 
 /**
@@ -78,15 +82,21 @@ import se.lublin.mumla.util.NotificationSanitizer;
  * Created by andrew on 28/07/13.
  */
 public class MumlaService extends HumlaService implements
-        SharedPreferences.OnSharedPreferenceChangeListener,
+        Settings.OnSettingChangedListener,
         MumlaConnectionNotification.OnActionListener, IMumlaService {
     private static final String TAG = MumlaService.class.getName();
+
+    /** CONNECT intent extra: database id of the saved server (-1 if unsaved). */
+    public static final String EXTRA_SERVER_ID = "server_id";
+    /** CONNECT intent extra: full parcel, only for unsaved (ad-hoc) servers. */
+    public static final String EXTRA_SERVER = "server";
 
     /** Undocumented constant that permits a proximity-sensing wake lock. */
     public static final int PROXIMITY_SCREEN_OFF_WAKE_LOCK = 32;
     public static final int TTS_THRESHOLD = 250; // Maximum number of characters to read
 
     Settings mSettings;
+    private MumlaDatabase mDatabase;
     private MumlaConnectionNotification mNotification;
     private MumlaMessageNotification mMessageNotification;
     /** Channel view overlay. */
@@ -608,11 +618,11 @@ public class MumlaService extends HumlaService implements
 
         // Register for preference changes
         mSettings = Settings.getInstance(this);
+        mDatabase = MumlaRoomDatabase.getInstance(this);
         mPTTSoundEnabled = mSettings.isPttSoundEnabled();
         initSoundPool();
         mShortTtsMessagesEnabled = mSettings.isShortTextToSpeechMessagesEnabled();
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        preferences.registerOnSharedPreferenceChangeListener(this);
+        mSettings.registerListener(this);
 
         // Manually set theme to style overlay views
         // XML <application> theme does NOT do this!
@@ -651,8 +661,7 @@ public class MumlaService extends HumlaService implements
             mChannelOverlay.hide();
         }
 
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        preferences.unregisterOnSharedPreferenceChangeListener(this);
+        mSettings.unregisterListener(this);
         unregisterTalkReceiver();
 
         unregisterObserver(mObserver);
@@ -767,32 +776,32 @@ public class MumlaService extends HumlaService implements
 
     /**
      * Called when the user makes a change to their preferences.
-     * Should update all preferences relevant to the service.
+     * Builds a one-shot delta for the changed key, runs the app-layer side
+     * effects, and applies the core fields to the service.
      */
     @Override
-    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+    public void onSettingChanged(String key) {
         if (key == null) {
             return;
         }
-        Bundle changedExtras = new Bundle();
+        ConfigDelta.Builder builder = new ConfigDelta.Builder();
         boolean requiresReconnect = false;
         switch (key) {
             case Settings.PREF_INPUT_METHOD:
                 /* Convert input method defined in settings to an integer format used by Humla. */
                 int inputMethod = mSettings.getHumlaInputMethod();
-                changedExtras.putInt(HumlaService.EXTRAS_TRANSMIT_MODE, inputMethod);
+                builder.setTransmitMode(inputMethod);
                 mChannelOverlay.setPushToTalkShown(inputMethod == Constants.TRANSMIT_PUSH_TO_TALK);
                 updateHotCornerVisibility();
                 break;
             case Settings.PREF_HANDSET_MODE:
                 setProximitySensorOn(shouldUseProximitySensor());
-                changedExtras.putInt(HumlaService.EXTRAS_AUDIO_STREAM, mSettings.isHandsetMode() ?
-                                     AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+                builder.setAudioStream(mSettings.isHandsetMode() ?
+                        AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
                 initSoundPool();
                 break;
             case Settings.PREF_THRESHOLD:
-                changedExtras.putFloat(HumlaService.EXTRAS_DETECTION_THRESHOLD,
-                        mSettings.getDetectionThreshold());
+                builder.setDetectionThreshold(mSettings.getDetectionThreshold());
                 break;
             case Settings.PREF_HOT_CORNER_KEY:
                 if (mHotCorner != null) {
@@ -803,25 +812,19 @@ public class MumlaService extends HumlaService implements
             case Settings.PREF_USE_TTS:
                 // Intentional fall through: rebind the engine either way.
             case Settings.PREF_TTS_ENGINE:
-                initTts();
+                builder.setTtsEngine(Optional.ofNullable(mSettings.getTtsEngine()));
                 break;
             case Settings.PREF_SHORT_TTS_MESSAGES:
                 mShortTtsMessagesEnabled = mSettings.isShortTextToSpeechMessagesEnabled();
                 break;
             case Settings.PREF_THEME:
-                MumlaApplication.applyTheme(this);
+                builder.setTheme(mSettings.getTheme());
                 break;
             case Settings.PREF_OVERLAY_SHOWN:
-                if (mSettings.isOverlayShown() && !checkAndRequestOverlayPermission()) {
-                    return;
-                }
-                updateOverlayVisibility();
-                updateConnectedNotification();
+                builder.setOverlayShown(mSettings.isOverlayShown());
                 break;
             case Settings.PREF_OVERLAY_PLACEMENT:
-                if (mChannelOverlay != null && mChannelOverlay.isShown()) {
-                    mChannelOverlay.updatePosition();
-                }
+                builder.setOverlayPlacement(mSettings.getOverlayPlacement());
                 break;
             case Settings.PREF_NOTIFICATION_STYLE:
                 if (isConnectionEstablished()) {
@@ -831,40 +834,35 @@ public class MumlaService extends HumlaService implements
                 }
                 break;
             case Settings.PREF_AMPLITUDE_BOOST:
-                changedExtras.putFloat(EXTRAS_AMPLITUDE_BOOST,
-                        mSettings.getAmplitudeBoostMultiplier());
+                builder.setAmplitudeBoost(mSettings.getAmplitudeBoostMultiplier());
                 break;
             case Settings.PREF_HALF_DUPLEX:
-                changedExtras.putBoolean(EXTRAS_HALF_DUPLEX, mSettings.isHalfDuplex());
+                builder.setHalfDuplex(mSettings.isHalfDuplex());
                 break;
             case Settings.PREF_BLUETOOTH_HEADSET:
                 if (mSettings.isBluetoothHeadset() && !hasBluetoothConnectGrant()) {
                     // Either toggle flips without the runtime grant: revert
-                    // with a hint instead of pushing a doomed extra. Only
+                    // with a hint instead of pushing a doomed delta. Only
                     // the connect flow requests the grant first.
                     mSettings.setBluetoothHeadset(false);
                     Toast.makeText(this, R.string.grant_perm_bluetooth, Toast.LENGTH_LONG).show();
                     break;
                 }
-                changedExtras.putBoolean(EXTRAS_BLUETOOTH_SCO, mSettings.isBluetoothHeadset());
+                builder.setBluetoothSco(mSettings.isBluetoothHeadset());
                 setProximitySensorOn(shouldUseProximitySensor());
                 initSoundPool();
                 break;
             case Settings.PREF_ADAPTIVE_LEVELER_ENABLED:
-                changedExtras.putBoolean(EXTRAS_ADAPTIVE_LEVELER,
-                        mSettings.isAdaptiveLevelerEnabled());
+                builder.setAdaptiveLeveler(mSettings.isAdaptiveLevelerEnabled());
                 break;
             case Settings.PREF_PTT_SOUND:
                 mPTTSoundEnabled = mSettings.isPttSoundEnabled();
                 break;
             case Settings.PREF_INPUT_QUALITY:
-                changedExtras.putInt(EXTRAS_INPUT_QUALITY, mSettings.getInputQuality());
-                break;
-            case Settings.PREF_INPUT_RATE:
-                changedExtras.putInt(EXTRAS_INPUT_RATE, mSettings.getInputSampleRate());
+                builder.setInputQuality(mSettings.getInputQuality());
                 break;
             case Settings.PREF_FRAMES_PER_PACKET:
-                changedExtras.putInt(EXTRAS_FRAMES_PER_PACKET, mSettings.getFramesPerPacket());
+                builder.setFramesPerPacket(mSettings.getFramesPerPacket());
                 break;
             case Settings.PREF_CERT_ID:
             case Settings.PREF_FORCE_TCP:
@@ -879,10 +877,14 @@ public class MumlaService extends HumlaService implements
                 }
                 break;
         }
-        if (changedExtras.size() > 0) {
+        ConfigDelta delta = builder.build();
+        if (!applySideEffects(delta)) {
+            return;
+        }
+        if (delta.hasCore()) {
             try {
                 // Reconfigure the service appropriately.
-                requiresReconnect |= configureExtras(changedExtras);
+                requiresReconnect |= apply(delta);
             } catch (AudioException e) {
                 e.printStackTrace();
             }
@@ -891,6 +893,92 @@ public class MumlaService extends HumlaService implements
         if (requiresReconnect && isConnectionEstablished()) {
             Toast.makeText(this, R.string.change_requires_reconnect, Toast.LENGTH_LONG).show();
         }
+    }
+
+    /**
+     * Runs the app-layer side effects for delta presence signals (theme,
+     * overlay, TTS engine). Returns false when handling consumed the change
+     * and the caller must stop (overlay permission revert skips the
+     * reconnect toast, as before).
+     */
+    private boolean applySideEffects(ConfigDelta delta) {
+        if (delta.getTheme() != null) {
+            MumlaApplication.applyTheme(this);
+        }
+        if (delta.getOverlayShown() != null) {
+            if (mSettings.isOverlayShown() && !checkAndRequestOverlayPermission()) {
+                return false;
+            }
+            updateOverlayVisibility();
+            updateConnectedNotification();
+        }
+        if (delta.getOverlayPlacement() != null) {
+            if (mChannelOverlay != null && mChannelOverlay.isShown()) {
+                mChannelOverlay.updatePosition();
+            }
+        }
+        if (delta.getTtsEngine() != null) {
+            initTts();
+        }
+        return true;
+    }
+
+    @Override
+    protected ConfigDelta buildConnectDelta(Intent intent) {
+        long serverId = intent.getLongExtra(EXTRA_SERVER_ID, -1);
+        Server server = null;
+        if (serverId != -1) {
+            // Database is the source of truth for saved servers; the parcel
+            // path below serves unsaved (ad-hoc) servers only.
+            for (Server candidate : mDatabase.getServers()) {
+                if (candidate.getId() == serverId) {
+                    server = candidate;
+                    break;
+                }
+            }
+            if (server == null) {
+                return null;
+            }
+        } else {
+            server = intent.getParcelableExtra(EXTRA_SERVER, Server.class);
+            if (server == null) {
+                return null;
+            }
+        }
+
+        ConfigDelta.Builder builder = new ConfigDelta.Builder();
+        builder.setServer(server);
+        builder.setClientName(getString(R.string.app_name) + " " + BuildConfig.VERSION_NAME);
+        builder.setTransmitMode(mSettings.getHumlaInputMethod());
+        builder.setDetectionThreshold(mSettings.getDetectionThreshold());
+        builder.setAmplitudeBoost(mSettings.getAmplitudeBoostMultiplier());
+        builder.setInputQuality(mSettings.getInputQuality());
+        builder.setForceTcp(mSettings.isTcpForced());
+        builder.setAccessTokens(mDatabase.getAccessTokens(server.getId()));
+        builder.setAudioStream(mSettings.isHandsetMode() ?
+                AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC);
+        builder.setFramesPerPacket(mSettings.getFramesPerPacket());
+        builder.setTrustStore(new TrustStoreRef(
+                MumlaTrustStore.getTrustStorePath(this),
+                MumlaTrustStore.getTrustStorePassword(),
+                MumlaTrustStore.getTrustStoreFormat()));
+        builder.setHalfDuplex(mSettings.isHalfDuplex());
+        builder.setBluetoothSco(mSettings.isBluetoothHeadset());
+        builder.setAdaptiveLeveler(mSettings.isAdaptiveLevelerEnabled());
+        if (server.isSaved()) {
+            builder.setLocalMuteHistory(mDatabase.getLocalMutedUsers(server.getId()));
+            builder.setLocalIgnoreHistory(mDatabase.getLocalIgnoredUsers(server.getId()));
+        }
+        if (mSettings.isUsingCertificate()) {
+            long certificateId = mSettings.getDefaultCertificate();
+            byte[] certificate = mDatabase.getCertificateData(certificateId);
+            String certificatePassword = mDatabase.getCertificatePassword(certificateId);
+            if (certificate != null) {
+                builder.setCertificate(new CertRef(certificate, certificatePassword));
+            }
+            // TODO(acomminos): handle the case where a certificate's data is unavailable.
+        }
+        return builder.build();
     }
 
     /**

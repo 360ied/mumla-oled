@@ -17,6 +17,9 @@
 
 package se.lublin.mumla;
 
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
+
 import junit.framework.TestCase;
 
 /**
@@ -29,48 +32,48 @@ import junit.framework.TestCase;
 public class SettingsInputRateTest extends TestCase {
 
     public void testDefaultRateWhenUnset() {
-        Settings settings = Settings.createForTesting(new FakeSharedPreferences());
+        Settings settings = Settings.createForTesting(TestDataStores.create());
         assertEquals("Unset rate must resolve to the 48 kHz default", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testValidRateStringRoundTrip() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putString(Settings.PREF_INPUT_RATE, "22050").commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "22050");
         assertEquals("Valid rate string must parse through", 22050,
                 settings.getInputSampleRate());
     }
 
     public void testCorruptedRateStringFallsBack() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putString(Settings.PREF_INPUT_RATE, "fast").commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "fast");
         assertEquals("Garbage rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testEmptyRateStringFallsBack() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putString(Settings.PREF_INPUT_RATE, "").commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "");
         assertEquals("Empty rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testOverflowingRateStringFallsBack() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putString(Settings.PREF_INPUT_RATE, "9999999999").commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "9999999999");
         assertEquals("Out-of-int-range rate must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testWhitespacePaddedRateStringFallsBack() {
         // parseInt does not trim: padded input falls back rather than passing.
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putString(Settings.PREF_INPUT_RATE, " 48000 ").commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), " 48000 ");
         assertEquals("Padded rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }

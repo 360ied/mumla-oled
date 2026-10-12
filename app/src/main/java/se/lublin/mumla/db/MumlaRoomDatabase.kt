@@ -80,7 +80,9 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun addServer(server: Server) {
-        val id = io { serverDao().insert(server.toEntity()) }
+        // The passed id (usually the -1 unsaved sentinel) is ignored, mirroring
+        // the old insert without _id: SQLite assigns a fresh rowid.
+        val id = io { serverDao().insert(server.toEntity().copy(id = 0)) }
         server.id = id
     }
 
@@ -201,42 +203,74 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
             }
 
         /**
-         * v9 → v10: the six identical tables migrate untouched (empty path —
-         * Room copies them as-is). The other three are recreated with
-         * data-preserving INSERT…SELECT:
-         * - `comments`: `seen` gains TEXT affinity (was DATE) and the table a
-         *   composite primary key (Room requires one).
-         * - `local_mute` / `local_ignore`: the bare UNIQUE constraint becomes
-         *   an explicit `PRIMARY KEY(server, user)` — identical duplicate
-         *   rejection, and the shape Room validates on open.
+         * v9 → v10: every table is recreated with data-preserving
+         * INSERT...SELECT so the result validates exactly against the entity
+         * schema. Three tables change shape (see class docs); the other four
+         * gain only the explicit `NOT NULL` on their `_id` primary keys,
+         * which Room's validator requires (SQLite reports bare
+         * `INTEGER PRIMARY KEY` as nullable in PRAGMA table_info).
          */
+        @JvmStatic
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `comments_new` " +
-                        "(`who` TEXT NOT NULL, `comment` TEXT NOT NULL, `seen` TEXT NOT NULL, " +
+                recreate(
+                    db, "server",
+                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER, " +
+                        "`username` TEXT NOT NULL, `password` TEXT)",
+                    "`_id`, `name`, `host`, `port`, `username`, `password`",
+                )
+                recreate(
+                    db, "favourites",
+                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`channel` TEXT NOT NULL, `server` INTEGER NOT NULL)",
+                    "`_id`, `channel`, `server`",
+                )
+                recreate(
+                    db, "tokens",
+                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`value` TEXT NOT NULL, `server` INTEGER NOT NULL)",
+                    "`_id`, `value`, `server`",
+                )
+                recreate(
+                    db, "comments",
+                    "(`who` TEXT NOT NULL, `comment` TEXT NOT NULL, `seen` TEXT NOT NULL, " +
                         "PRIMARY KEY(`who`, `comment`, `seen`))",
+                    "`who`, `comment`, `seen`",
                 )
-                db.execSQL(
-                    "INSERT INTO `comments_new` (`who`, `comment`, `seen`) " +
-                        "SELECT `who`, `comment`, `seen` FROM `comments`",
+                recreate(
+                    db, "local_mute",
+                    "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`server`, `user`))",
+                    "`server`, `user`",
                 )
-                db.execSQL("DROP TABLE `comments`")
-                db.execSQL("ALTER TABLE `comments_new` RENAME TO `comments`")
+                recreate(
+                    db, "local_ignore",
+                    "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`server`, `user`))",
+                    "`server`, `user`",
+                )
+                recreate(
+                    db, "certificates",
+                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`data` BLOB NOT NULL, `name` TEXT NOT NULL, `password` TEXT)",
+                    "`_id`, `data`, `name`, `password`",
+                )
+            }
 
-                for (table in listOf("local_mute", "local_ignore")) {
-                    db.execSQL(
-                        "CREATE TABLE IF NOT EXISTS `" + table + "_new` " +
-                            "(`server` INTEGER NOT NULL, `user` INTEGER NOT NULL, " +
-                            "PRIMARY KEY(`server`, `user`))",
-                    )
-                    db.execSQL(
-                        "INSERT INTO `" + table + "_new` (`server`, `user`) " +
-                            "SELECT `server`, `user` FROM `" + table + "`",
-                    )
-                    db.execSQL("DROP TABLE `" + table + "`")
-                    db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
-                }
+            private fun recreate(
+                db: SupportSQLiteDatabase,
+                table: String,
+                definition: String,
+                columns: String,
+            ) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `" + table + "_new` " + definition)
+                db.execSQL(
+                    "INSERT INTO `" + table + "_new` (" + columns + ") " +
+                        "SELECT " + columns + " FROM `" + table + "`",
+                )
+                db.execSQL("DROP TABLE `" + table + "`")
+                db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
             }
         }
 

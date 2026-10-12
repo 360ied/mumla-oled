@@ -200,6 +200,9 @@ class MutablePrefs {
 class SettingsRepository @Inject constructor(
     private val store: DataStore<Preferences>,
 ) {
+    // Java interop: java.util.function.Consumer (void methods) rather than Kotlin
+    // function types or fun interfaces (Unit return) so Java lambdas and method
+    // references compile without Unit adapters.
     private object Keys {
         val AUDIO_INPUT_METHOD = stringPreferencesKey("audioInputMethod")
         val VAD_THRESHOLD = intPreferencesKey("vadThreshold")
@@ -253,21 +256,28 @@ class SettingsRepository @Inject constructor(
         }
 
     suspend fun update(transform: MutablePrefs.() -> Unit) {
-        val pending = MutablePrefs().apply(transform)
-        store.edit { prefs -> pending.writeback(prefs) }
+        doUpdate(MutablePrefs().apply(transform))
     }
 
-    fun updateBlocking(transform: MutablePrefs.() -> Unit) =
-        runBlocking(Dispatchers.IO) { update(transform) }
+    fun updateBlocking(update: java.util.function.Consumer<MutablePrefs>) =
+        runBlocking(Dispatchers.IO) {
+            val pending = MutablePrefs()
+            update.accept(pending)
+            doUpdate(pending)
+        }
+
+    private suspend fun doUpdate(pending: MutablePrefs) {
+        store.edit { prefs -> pending.writeback(prefs) }
+    }
 
     // Legacy listener bridge: diff consecutive snapshots per key and fire the
     // legacy PREF_* key strings, preserving MumlaService/MumlaApplication
     // dispatch with zero service changes.
-    private val listeners = mutableSetOf<(String) -> Unit>()
+    private val listeners = mutableSetOf<java.util.function.Consumer<String>>()
     private var collectScope: CoroutineScope? = null
 
     @Synchronized
-    fun registerListener(listener: (String) -> Unit) {
+    fun registerListener(listener: java.util.function.Consumer<String>) {
         listeners.add(listener)
         if (collectScope == null) {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -288,7 +298,7 @@ class SettingsRepository @Inject constructor(
     }
 
     @Synchronized
-    fun unregisterListener(listener: (String) -> Unit) {
+    fun unregisterListener(listener: java.util.function.Consumer<String>) {
         listeners.remove(listener)
         if (listeners.isEmpty()) {
             collectScope?.cancel()
@@ -297,10 +307,10 @@ class SettingsRepository @Inject constructor(
     }
 
     private fun fire(key: String) {
-        val targets: List<(String) -> Unit>
+        val targets: List<java.util.function.Consumer<String>>
         synchronized(this) { targets = listeners.toList() }
         for (listener in targets) {
-            listener(key)
+            listener.accept(key)
         }
     }
 

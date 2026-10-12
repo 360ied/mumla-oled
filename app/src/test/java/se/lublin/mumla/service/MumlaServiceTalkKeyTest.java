@@ -22,7 +22,9 @@ import junit.framework.TestCase;
 import se.lublin.humla.Constants;
 import se.lublin.humla.model.TalkState;
 import se.lublin.humla.model.User;
-import se.lublin.mumla.FakeSharedPreferences;
+import se.lublin.mumla.TestDataStores;
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
 import se.lublin.mumla.Settings;
 
 public class MumlaServiceTalkKeyTest extends TestCase {
@@ -106,10 +108,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyCancel_WhenTalkingAndHoldPtt_StopsTalking() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, false).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), false);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.setTalking(true);
@@ -121,10 +123,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyCancel_WhenTogglePtt_PreservesTalking() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, true).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), true);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.setTalking(true);
@@ -136,10 +138,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyCancel_WhenNotConnected_NoOp() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, false).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), false);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.setConnected(false);
@@ -152,10 +154,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyCancel_WhenVoiceActivityMode_NoOp() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_VOICE);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, false).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), false);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.setTalking(true);
@@ -167,10 +169,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyCancel_WhenContinuousMode_NoOp() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_CONTINUOUS);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, false).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), false);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.setTalking(true);
@@ -182,10 +184,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyCancel_WhenAlreadyNotTalking_NoOp() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, false).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), false);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.setTalking(false);
@@ -197,10 +199,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyDownAndUp_HoldMode() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, false).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), false);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         assertFalse(service.isTalking());
@@ -215,10 +217,10 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testOnTalkKeyDownAndUp_ToggleMode() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT);
-        prefs.edit().putBoolean(Settings.PREF_PTT_TOGGLE, true).commit();
+        TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_PTT_TOGGLE), true);
 
         TestTalkKeyService service = new TestTalkKeyService(settings);
         assertFalse(service.isTalking());
@@ -237,8 +239,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_ActivationAndDeactivation() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
@@ -256,8 +258,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_ConsecutiveStates_NoDuplicateCues() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
@@ -275,8 +277,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_DisabledSetting_NoCues() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = false;
 
@@ -292,8 +294,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_NonPttMode_NoCues() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
         service.setTransmitMode(Constants.TRANSMIT_VOICE_ACTIVITY);
@@ -310,8 +312,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_DifferentUser_Ignored() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
@@ -327,8 +329,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_ShoutingAndWhispering_TreatedAsTalking() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
@@ -348,8 +350,8 @@ public class MumlaServiceTalkKeyTest extends TestCase {
     }
 
     public void testPttAudioCue_DisconnectResetsState() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 

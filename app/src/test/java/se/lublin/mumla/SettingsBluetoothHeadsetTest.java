@@ -37,13 +37,13 @@ public class SettingsBluetoothHeadsetTest extends TestCase {
     public void testDefaultOff() {
         assertFalse("Two-way Bluetooth must default to off",
                 Settings.DEFAULT_BLUETOOTH_HEADSET);
-        Settings settings = Settings.createForTesting(new FakeSharedPreferences());
+        Settings settings = Settings.createForTesting(TestDataStores.create());
         assertFalse("Unconfigured preference must resolve to off",
                 settings.isBluetoothHeadset());
     }
 
     public void testRequestedStateRoundTrip() {
-        Settings settings = Settings.createForTesting(new FakeSharedPreferences());
+        Settings settings = Settings.createForTesting(TestDataStores.create());
         settings.setBluetoothHeadset(true);
         assertTrue("Enabling must persist the request", settings.isBluetoothHeadset());
         settings.setBluetoothHeadset(false);

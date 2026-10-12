@@ -30,7 +30,6 @@ import android.net.Network;
 import android.net.NetworkInfo;
 import android.net.wifi.WifiManager;
 import android.os.Binder;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -72,11 +71,14 @@ import se.lublin.humla.net.HumlaUDPMessageType;
 import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.protocol.AudioHandler;
 import se.lublin.humla.protocol.ModelHandler;
+import se.lublin.humla.util.CertRef;
+import se.lublin.humla.util.ConfigDelta;
 import se.lublin.humla.util.HumlaCallbacks;
 import se.lublin.humla.util.HumlaDisconnectedException;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.HumlaLogger;
 import se.lublin.humla.util.IHumlaObserver;
+import se.lublin.humla.util.TrustStoreRef;
 import se.lublin.humla.util.VoiceTargetMode;
 
 public class HumlaService extends Service implements IHumlaService, IHumlaSession, HumlaConnection.HumlaConnectionListener, HumlaLogger {
@@ -84,60 +86,9 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
 
     /**
      * An action to immediately connect to a given Mumble server.
-     * Requires that {@link #EXTRAS_SERVER} is provided.
+     * Requires a server (see {@link #buildConnectDelta}).
      */
     public static final String ACTION_CONNECT = "se.lublin.humla.CONNECT";
-
-    /** A {@link Server} specifying the server to connect to. */
-    public static final String EXTRAS_SERVER = "server";
-    /** @deprecated Auto-reconnect is now unconditionally enabled. */
-    @Deprecated
-    public static final String EXTRAS_AUTO_RECONNECT = "auto_reconnect";
-    /** @deprecated Auto-reconnect uses dynamic exponential backoff. */
-    @Deprecated
-    public static final String EXTRAS_AUTO_RECONNECT_DELAY = "auto_reconnect_delay";
-    public static final String EXTRAS_CERTIFICATE = "certificate";
-    public static final String EXTRAS_CERTIFICATE_PASSWORD = "certificate_password";
-    public static final String EXTRAS_DETECTION_THRESHOLD = "detection_threshold";
-    public static final String EXTRAS_AMPLITUDE_BOOST = "amplitude_boost";
-    public static final String EXTRAS_TRANSMIT_MODE = "transmit_mode";
-    /**
-     * @deprecated Fixed 48 kHz end to end; accepted for compatibility but
-     * ignored (see AudioHandler.Builder.setInputSampleRate). Senders keep
-     * emitting it so older services still parse the bundle.
-     */
-    @Deprecated
-    public static final String EXTRAS_INPUT_RATE = "input_frequency";
-    public static final String EXTRAS_INPUT_QUALITY = "input_quality";
-    /** @deprecated Obsolete since 0.18.2; Opus is mandatory and legacy codecs are dropped. */
-    @Deprecated
-    public static final String EXTRAS_USE_OPUS = "use_opus";
-    public static final String EXTRAS_FORCE_TCP = "force_tcp";
-    public static final String EXTRAS_CLIENT_NAME = "client_name";
-    public static final String EXTRAS_ACCESS_TOKENS = "access_tokens";
-    /**
-     * @deprecated Route policy owns the capture source for platform AEC
-     * (voice routes use VOICE_COMMUNICATION, media routes use MIC).
-     * Accepted for compatibility but ignored; see updateRouteBuilder.
-     */
-    @Deprecated
-    public static final String EXTRAS_AUDIO_SOURCE = "audio_source";
-    public static final String EXTRAS_AUDIO_STREAM = "audio_stream";
-    public static final String EXTRAS_FRAMES_PER_PACKET = "frames_per_packet";
-    /** An optional path to a trust store for CA certificates. */
-    public static final String EXTRAS_TRUST_STORE = "trust_store";
-    /** The trust store's password. */
-    public static final String EXTRAS_TRUST_STORE_PASSWORD = "trust_store_password";
-    /** The trust store's format. */
-    public static final String EXTRAS_TRUST_STORE_FORMAT = "trust_store_format";
-    public static final String EXTRAS_HALF_DUPLEX = "half_duplex";
-    /** A list of users that should be local muted upon connection. */
-    public static final String EXTRAS_LOCAL_MUTE_HISTORY = "local_mute_history";
-    /** A list of users that should be local ignored upon connection. */
-    public static final String EXTRAS_LOCAL_IGNORE_HISTORY = "local_ignore_history";
-    public static final String EXTRAS_ADAPTIVE_LEVELER = "adaptive_leveler";
-    /** Request Bluetooth SCO headset routing for this connection. */
-    public static final String EXTRAS_BLUETOOTH_SCO = "bluetooth_sco";
 
     // Service settings
     private Server mServer;
@@ -357,36 +308,48 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
         }
     }
 
+    /**
+     * Builds the connect-time [ConfigDelta] from the CONNECT intent.
+     *
+     * Base implementation returns null (humla has no database or settings);
+     * the app layer overrides it to load the server, certificate, tokens,
+     * and history from its database plus the current settings. Returning
+     * null (or a delta without a server) rejects the intent as malformed.
+     */
+    protected ConfigDelta buildConnectDelta(Intent intent) {
+        return null;
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null) {
             boolean isConnect = ACTION_CONNECT.equals(intent.getAction());
-            Bundle extras = intent.getExtras();
-            if (isConnect && (extras == null || !extras.containsKey(EXTRAS_SERVER))) {
-                // Malformed CONNECT: log and ignore. Never throw from
-                // onStartCommand (crash primitive) and never proceed to
-                // configureExtras/connect() on the malformed intent.
-                Log.w(TAG, ACTION_CONNECT + " requires a server provided in extras; ignoring.");
-                stopSelfIfIdle(startId);
-                return START_NOT_STICKY;
-            }
             if (isConnect && mConnectionState == ConnectionState.CONNECTING) {
                 // Ignore duplicate connect requests while a connection attempt is already
                 // in progress; each would otherwise spawn a parallel connection. Guarded
-                // here (before configureExtras) so the in-flight attempt's target server
+                // here (before apply) so the in-flight attempt's target server
                 // isn't overwritten by the duplicate request.
                 Log.v(TAG, "Ignoring duplicate connect request while already connecting");
                 return START_NOT_STICKY;
             }
-            if (extras != null) {
+            if (isConnect) {
+                ConfigDelta delta = buildConnectDelta(intent);
+                if (delta == null || delta.getServer() == null) {
+                    // Malformed CONNECT: log and ignore. Never throw from
+                    // onStartCommand (crash primitive) and never proceed to
+                    // apply/connect() on the malformed intent.
+                    Log.w(TAG, ACTION_CONNECT + " requires a server; ignoring.");
+                    stopSelfIfIdle(startId);
+                    return START_NOT_STICKY;
+                }
                 try {
-                    configureExtras(extras);
+                    apply(delta);
                 } catch (AudioException e) {
                     Log.e(TAG, "Attempted to initialize audio in onStartCommand erroneously.", e);
                     stopSelfIfIdle(startId);
                     return START_NOT_STICKY;
                 } catch (IllegalArgumentException e) {
-                    Log.w(TAG, "Ignoring invalid service extras.", e);
+                    Log.w(TAG, "Ignoring invalid service configuration.", e);
                     stopSelfIfIdle(startId);
                     return START_NOT_STICKY;
                 }
@@ -1467,21 +1430,6 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Whether a settings bundle carries audio-affecting keys beyond the
-     * Bluetooth toggle, which alone never justifies a pipeline reload.
-     * Detection threshold is excluded: it applies live via setVadThresholds.
-     */
-    private static boolean bundleHasOtherAudioKeys(Bundle extras) {
-        return extras.containsKey(EXTRAS_AMPLITUDE_BOOST)
-                || extras.containsKey(EXTRAS_TRANSMIT_MODE)
-                || extras.containsKey(EXTRAS_INPUT_QUALITY)
-                || extras.containsKey(EXTRAS_AUDIO_STREAM)
-                || extras.containsKey(EXTRAS_FRAMES_PER_PACKET)
-                || extras.containsKey(EXTRAS_HALF_DUPLEX)
-                || extras.containsKey(EXTRAS_ADAPTIVE_LEVELER);
-    }
-
-    /**
      * Instantiates an audio handler with the current service settings, destroying any previous
      * handler. Requires synchronization with the server, as the maximum bandwidth and session must
      * be known.
@@ -1511,7 +1459,7 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Validates a trust-store path for {@link #configureExtras}. The null
+     * Validates a trust-store path for {@link #apply}. The null
      * (system store) common case always passes. Non-null paths must
      * canonical-resolve under the app files directory and must end in
      * '.bks'. Canonicalisation resolves any '..' segments, so a separate
@@ -1541,39 +1489,45 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
     }
 
     /**
-     * Loads all defined settings from the given bundle into the HumlaService.
-     * Some settings may only take effect after a reconnect.
-     * @param extras A bundle with settings.
+     * Loads all defined settings from the given delta into the HumlaService.
+     * Null fields are unchanged. Some settings may only take effect after a
+     * reconnect.
+     * @param delta A one-shot configuration command.
      * @return true if a reconnect is required for changes to take effect.
      * @see se.lublin.humla.HumlaService
      */
-    public boolean configureExtras(Bundle extras) throws AudioException {
+    public boolean apply(ConfigDelta delta) throws AudioException {
         boolean reconnectNeeded = false;
         boolean suppressReload = false;
-        if (extras.containsKey(EXTRAS_SERVER)) {
-            mServer = extras.getParcelable(EXTRAS_SERVER, Server.class);
+        if (delta.getServer() != null) {
+            mServer = delta.getServer();
             reconnectNeeded = true;
         }
-        if (extras.containsKey(EXTRAS_CERTIFICATE)) {
-            mCertificate = extras.getByteArray(EXTRAS_CERTIFICATE);
+        if (delta.getCertificate() != null) {
+            CertRef certificate = delta.getCertificate();
+            mCertificate = certificate.getData();
             reconnectNeeded = true;
+            // A null password keeps the previous one, mirroring the old
+            // bundle where an absent password key left it untouched.
+            if (certificate.getPassword() != null) {
+                mCertificatePassword = certificate.getPassword();
+            }
         }
-        if (extras.containsKey(EXTRAS_CERTIFICATE_PASSWORD)) {
-            mCertificatePassword = extras.getString(EXTRAS_CERTIFICATE_PASSWORD);
-            reconnectNeeded = true;
-        }
-        if (extras.containsKey(EXTRAS_DETECTION_THRESHOLD)) {
-            mActivityInputMode.setThreshold(extras.getFloat(EXTRAS_DETECTION_THRESHOLD));
+        Float detectionThreshold = delta.getDetectionThreshold();
+        if (detectionThreshold != null) {
+            mActivityInputMode.setThreshold(detectionThreshold);
             if (mAudioHandler != null) {
                 mAudioHandler.setVadThresholds(mActivityInputMode.getVadMax(),
                                                mActivityInputMode.getVadMin());
             }
         }
-        if (extras.containsKey(EXTRAS_AMPLITUDE_BOOST)) {
-            mAudioBuilder.setAmplitudeBoost(extras.getFloat(EXTRAS_AMPLITUDE_BOOST));
+        Float amplitudeBoost = delta.getAmplitudeBoost();
+        if (amplitudeBoost != null) {
+            mAudioBuilder.setAmplitudeBoost(amplitudeBoost);
         }
-        if (extras.containsKey(EXTRAS_TRANSMIT_MODE)) {
-            mTransmitMode = extras.getInt(EXTRAS_TRANSMIT_MODE);
+        Integer transmitMode = delta.getTransmitMode();
+        if (transmitMode != null) {
+            mTransmitMode = transmitMode;
             IInputMode inputMode;
             switch (mTransmitMode) {
                 case Constants.TRANSMIT_PUSH_TO_TALK:
@@ -1590,93 +1544,79 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
             mAudioBuilder.setInputMode(inputMode);
         }
-        if (extras.containsKey(EXTRAS_INPUT_RATE)) {
-            // Ignored: fixed 48 kHz (see deprecation above). Deliberately
-            // excluded from bundleHasOtherAudioKeys so a rate-only change
-            // cannot reload the pipeline for a no-op.
-            Log.d(TAG, "Ignoring deprecated EXTRAS_INPUT_RATE; capture is fixed 48 kHz");
+        Integer inputQuality = delta.getInputQuality();
+        if (inputQuality != null) {
+            mAudioBuilder.setTargetBitrate(inputQuality);
         }
-        if (extras.containsKey(EXTRAS_INPUT_QUALITY)) {
-            mAudioBuilder.setTargetBitrate(extras.getInt(EXTRAS_INPUT_QUALITY));
-        }
-        if (extras.containsKey(EXTRAS_FORCE_TCP)) {
-            mForceTcp = extras.getBoolean(EXTRAS_FORCE_TCP);
+        Boolean forceTcp = delta.getForceTcp();
+        if (forceTcp != null) {
+            mForceTcp = forceTcp;
             reconnectNeeded = true;
         }
-        if (extras.containsKey(EXTRAS_CLIENT_NAME)) {
-            mClientName = extras.getString(EXTRAS_CLIENT_NAME);
+        if (delta.getClientName() != null) {
+            mClientName = delta.getClientName();
             reconnectNeeded = true;
         }
-        if (extras.containsKey(EXTRAS_ACCESS_TOKENS)) {
-            mAccessTokens = extras.getStringArrayList(EXTRAS_ACCESS_TOKENS);
+        if (delta.getAccessTokens() != null) {
+            mAccessTokens = delta.getAccessTokens();
             if (mConnection != null && mConnection.isConnected()) {
                 mConnection.sendAccessTokens(mAccessTokens);
             }
         }
-        if (extras.containsKey(EXTRAS_AUDIO_SOURCE)) {
-            // Ignored: route policy owns the capture source (see
-            // updateRouteBuilder). Debug-level: the app sender still emits
-            // the deprecated key on every connect.
-            Log.d(TAG, "Ignoring deprecated EXTRAS_AUDIO_SOURCE; route policy owns the source");
-        }
-        if (extras.containsKey(EXTRAS_AUDIO_STREAM)) {
+        Integer audioStream = delta.getAudioStream();
+        if (audioStream != null) {
             // Handset-derived intent (earpiece vs speakerphone voice); the
             // route policy re-derives the effective stream before every
             // pipeline creation, so mid-call toggles apply on recreate.
             // Funnel-only: no direct builder write here (it would be
             // overwritten by the reload below anyway).
-            mHandsetAudioStream = extras.getInt(EXTRAS_AUDIO_STREAM);
+            mHandsetAudioStream = audioStream;
         }
-        if (extras.containsKey(EXTRAS_FRAMES_PER_PACKET)) {
-            int fpp = extras.getInt(EXTRAS_FRAMES_PER_PACKET);
+        Integer framesPerPacket = delta.getFramesPerPacket();
+        if (framesPerPacket != null) {
+            int fpp = framesPerPacket;
             mAudioBuilder.setTargetFramesPerPacket(fpp);
             if (mConnection != null) {
                 mConnection.setTargetFramesPerPacket(fpp);
             }
         }
-        if (extras.containsKey(EXTRAS_TRUST_STORE)) {
-            String trustStore = extras.getString(EXTRAS_TRUST_STORE);
-            if (isTrustStorePathAllowed(trustStore)) {
-                mTrustStore = trustStore;
+        if (delta.getTrustStore() != null) {
+            TrustStoreRef trustStore = delta.getTrustStore();
+            String trustStorePath = trustStore.getPath();
+            if (isTrustStorePathAllowed(trustStorePath)) {
+                mTrustStore = trustStorePath;
                 reconnectNeeded = true;
                 // Password and format describe the store at this path, so
                 // they are only applied together with an accepted path.
-                if (extras.containsKey(EXTRAS_TRUST_STORE_PASSWORD)) {
-                    mTrustStorePassword = extras.getString(EXTRAS_TRUST_STORE_PASSWORD);
+                if (trustStore.getPassword() != null) {
+                    mTrustStorePassword = trustStore.getPassword();
                 }
-                if (extras.containsKey(EXTRAS_TRUST_STORE_FORMAT)) {
-                    mTrustStoreFormat = extras.getString(EXTRAS_TRUST_STORE_FORMAT);
+                if (trustStore.getFormat() != null) {
+                    mTrustStoreFormat = trustStore.getFormat();
                 }
             } else {
                 Log.w(TAG, "Rejected trust store path (must be a .bks file under the app files directory); "
                         + "keeping previous trust store settings.");
             }
-        } else {
-            if (extras.containsKey(EXTRAS_TRUST_STORE_PASSWORD)) {
-                mTrustStorePassword = extras.getString(EXTRAS_TRUST_STORE_PASSWORD);
-                reconnectNeeded = true;
-            }
-            if (extras.containsKey(EXTRAS_TRUST_STORE_FORMAT)) {
-                mTrustStoreFormat = extras.getString(EXTRAS_TRUST_STORE_FORMAT);
-                reconnectNeeded = true;
-            }
         }
-        if (extras.containsKey(EXTRAS_HALF_DUPLEX)) {
-            mHalfDuplex = extras.getBoolean(EXTRAS_HALF_DUPLEX);
+        Boolean halfDuplex = delta.getHalfDuplex();
+        if (halfDuplex != null) {
+            mHalfDuplex = halfDuplex;
         }
-        if (extras.containsKey(EXTRAS_HALF_DUPLEX) || extras.containsKey(EXTRAS_TRANSMIT_MODE)) {
+        if (delta.getHalfDuplex() != null || delta.getTransmitMode() != null) {
             mAudioBuilder.setHalfDuplexEnabled(
                     mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex);
         }
-        if (extras.containsKey(EXTRAS_BLUETOOTH_SCO)) {
-            boolean requested = extras.getBoolean(EXTRAS_BLUETOOTH_SCO);
+        Boolean bluetoothSco = delta.getBluetoothSco();
+        if (bluetoothSco != null) {
+            boolean requested = bluetoothSco;
             // A fresh enable skips the end-of-method reload only when the
             // bundle holds nothing else audio-affecting: the confirmed
             // callback then performs the single pipeline recreate on the
             // SCO route. Bundled audio changes reload immediately (and the
             // callback reloads once more on confirm); the connect-time
             // bundle never reloads here since no handler exists yet.
-            suppressReload = !bundleHasOtherAudioKeys(extras)
+            suppressReload = !delta.hasOtherAudioKeys()
                     && (requested || !mScoRequested);
             mScoRequested = requested;
             if (!requested) {
@@ -1687,16 +1627,17 @@ public class HumlaService extends Service implements IHumlaService, IHumlaSessio
             }
             updateBluetoothScoRoute();
         }
-        if (extras.containsKey(EXTRAS_LOCAL_MUTE_HISTORY)) {
-            mLocalMuteHistory = extras.getIntegerArrayList(EXTRAS_LOCAL_MUTE_HISTORY);
+        if (delta.getLocalMuteHistory() != null) {
+            mLocalMuteHistory = delta.getLocalMuteHistory();
             reconnectNeeded = true;
         }
-        if (extras.containsKey(EXTRAS_LOCAL_IGNORE_HISTORY)) {
-            mLocalIgnoreHistory = extras.getIntegerArrayList(EXTRAS_LOCAL_IGNORE_HISTORY);
+        if (delta.getLocalIgnoreHistory() != null) {
+            mLocalIgnoreHistory = delta.getLocalIgnoreHistory();
             reconnectNeeded = true;
         }
-        if (extras.containsKey(EXTRAS_ADAPTIVE_LEVELER)) {
-            mAudioBuilder.setAdaptiveLevelerEnabled(extras.getBoolean(EXTRAS_ADAPTIVE_LEVELER));
+        Boolean adaptiveLeveler = delta.getAdaptiveLeveler();
+        if (adaptiveLeveler != null) {
+            mAudioBuilder.setAdaptiveLevelerEnabled(adaptiveLeveler);
         }
 
         // Reload audio subsystem if initialized. Guarded on CONNECTED as well

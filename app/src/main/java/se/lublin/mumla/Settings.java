@@ -18,22 +18,33 @@
 package se.lublin.mumla;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.view.Gravity;
 import android.view.KeyEvent;
 
 import androidx.annotation.NonNull;
-import androidx.preference.PreferenceManager;
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import se.lublin.humla.Constants;
 
 /**
  * Singleton settings class for universal access to the app's preferences.
+ *
+ * Migration slice 2: backed by the Preferences DataStore via
+ * {@link SettingsRepository} instead of SharedPreferences. The public surface
+ * (keys, defaults, accessors, validation) is unchanged — fleet settings
+ * survive through `SharedPreferencesMigration` with no silent resets.
+ *
+ * Threading (interim): the surface is synchronous, so every call bridges to
+ * the store with a blocking read/write on DataStore's in-memory cache.
  *
  * @author morlunk
  */
@@ -192,26 +203,51 @@ public class Settings {
         ARRAY_INPUT_METHODS.add(ARRAY_INPUT_METHOD_CONTINUOUS);
     }
 
-    private final SharedPreferences preferences;
+    /** Listener for settings changes; delivers the legacy PREF_* key strings. */
+    public interface OnSettingChangedListener {
+        void onSettingChanged(String key);
+    }
+
+    private final SettingsRepository repository;
+    private final Map<OnSettingChangedListener, java.util.function.Consumer<String>> listenerAdapters =
+            new HashMap<>();
 
     public static Settings getInstance(Context context) {
-        return new Settings(context);
+        return new Settings(AppDataStore.INSTANCE.get(context));
     }
 
-    private Settings(Context ctx) {
-        preferences = PreferenceManager.getDefaultSharedPreferences(ctx);
+    Settings(DataStore<Preferences> store) {
+        repository = new SettingsRepository(store);
     }
 
-    Settings(SharedPreferences prefs) {
-        preferences = prefs;
+    public static Settings createForTesting(DataStore<Preferences> store) {
+        return new Settings(store);
     }
 
-    public static Settings createForTesting(SharedPreferences prefs) {
-        return new Settings(prefs);
+    private PrefSnapshot snapshot() {
+        return repository.snapshotBlocking();
+    }
+
+    public void registerListener(OnSettingChangedListener listener) {
+        java.util.function.Consumer<String> adapter = listener::onSettingChanged;
+        synchronized (listenerAdapters) {
+            listenerAdapters.put(listener, adapter);
+        }
+        repository.registerListener(adapter);
+    }
+
+    public void unregisterListener(OnSettingChangedListener listener) {
+        java.util.function.Consumer<String> adapter;
+        synchronized (listenerAdapters) {
+            adapter = listenerAdapters.remove(listener);
+        }
+        if (adapter != null) {
+            repository.unregisterListener(adapter);
+        }
     }
 
     public String getInputMethod() {
-        String method = preferences.getString(PREF_INPUT_METHOD, ARRAY_INPUT_METHOD_VOICE);
+        String method = snapshot().getAudioInputMethod();
         if(!ARRAY_INPUT_METHODS.contains(method)) {
             // Set default method for users who used to use handset mode before removal.
             method = ARRAY_INPUT_METHOD_VOICE;
@@ -239,7 +275,7 @@ public class Settings {
         if(ARRAY_INPUT_METHOD_VOICE.equals(inputMethod) ||
                 ARRAY_INPUT_METHOD_PTT.equals(inputMethod) ||
                 ARRAY_INPUT_METHOD_CONTINUOUS.equals(inputMethod)) {
-            preferences.edit().putString(PREF_INPUT_METHOD, inputMethod).apply();
+            repository.updateBlocking(prefs -> prefs.setAudioInputMethod(inputMethod));
         } else {
             throw new RuntimeException("Invalid input method " + inputMethod);
         }
@@ -247,26 +283,26 @@ public class Settings {
 
     public int getInputSampleRate() {
         try {
-            return Integer.parseInt(preferences.getString(PREF_INPUT_RATE, DEFAULT_RATE));
-        } catch (NumberFormatException | ClassCastException e) {
+            return Integer.parseInt(snapshot().getInputQuality());
+        } catch (NumberFormatException e) {
             return Integer.parseInt(DEFAULT_RATE);
         }
     }
 
     public int getInputQuality() {
-        return preferences.getInt(Settings.PREF_INPUT_QUALITY, DEFAULT_INPUT_QUALITY);
+        return snapshot().getInputBitrate();
     }
 
     public float getAmplitudeBoostMultiplier() {
-        return (float)preferences.getInt(Settings.PREF_AMPLITUDE_BOOST, DEFAULT_AMPLITUDE_BOOST)/100;
+        return (float)snapshot().getInputVolume()/100;
     }
 
     public float getDetectionThreshold() {
-        return (float)preferences.getInt(PREF_THRESHOLD, DEFAULT_THRESHOLD)/100;
+        return (float)snapshot().getVadThreshold()/100;
     }
 
     public int getPushToTalkKey() {
-        return preferences.getInt(PREF_PUSH_KEY, DEFAULT_PUSH_KEY);
+        return snapshot().getTalkKey();
     }
 
     /**
@@ -281,7 +317,7 @@ public class Settings {
     }
 
     public String getHotCorner() {
-        return preferences.getString(PREF_HOT_CORNER_KEY, DEFAULT_HOT_CORNER);
+        return snapshot().getHotCorner();
     }
 
     /**
@@ -293,7 +329,7 @@ public class Settings {
      * @return true if a hot corner should be shown.
      */
     public boolean isHotCornerEnabled() {
-        String hc = preferences.getString(PREF_HOT_CORNER_KEY, DEFAULT_HOT_CORNER);
+        String hc = snapshot().getHotCorner();
         return ARRAY_HOT_CORNER_TOP_LEFT.equals(hc)
                 || ARRAY_HOT_CORNER_TOP_RIGHT.equals(hc)
                 || ARRAY_HOT_CORNER_BOTTOM_LEFT.equals(hc)
@@ -321,7 +357,7 @@ public class Settings {
 
     /* @return the height of PTT button in dp */
     public int getPTTButtonHeight() {
-        int height = preferences.getInt(Settings.PREF_PTT_BUTTON_HEIGHT, DEFAULT_PTT_BUTTON_HEIGHT);
+        int height = snapshot().getPttButtonHeight();
         if (height <= 0) {
             return DEFAULT_PTT_BUTTON_HEIGHT;
         }
@@ -334,31 +370,31 @@ public class Settings {
      * @return The default certificate's ID, or a negative integer if not set.
      */
     public long getDefaultCertificate() {
-        return preferences.getLong(PREF_CERT_ID, -1);
+        return snapshot().getCertificateId();
     }
 
     public String getDefaultUsername() {
-        return preferences.getString(PREF_DEFAULT_USERNAME, DEFAULT_DEFAULT_USERNAME);
+        return snapshot().getDefaultUsername();
     }
 
     public boolean isPushToTalkToggle() {
-        return preferences.getBoolean(PREF_PTT_TOGGLE, DEFAULT_PTT_TOGGLE);
+        return snapshot().getTogglePtt();
     }
 
     public boolean isPushToTalkButtonShown() {
-        return !preferences.getBoolean(PREF_PUSH_BUTTON_HIDE_KEY, DEFAULT_PUSH_BUTTON_HIDE);
+        return !snapshot().getHidePtt();
     }
 
     public boolean isChatNotifyEnabled() {
-        return preferences.getBoolean(PREF_CHAT_NOTIFY, DEFAULT_CHAT_NOTIFY);
+        return snapshot().getChatNotify();
     }
 
     public boolean isTalkBroadcastAllowed() {
-        return preferences.getBoolean(PREF_ALLOW_TALK_BROADCAST, DEFAULT_ALLOW_TALK_BROADCAST);
+        return snapshot().getAllowTalkBroadcast();
     }
 
     public String getNotificationStyle() {
-        String style = preferences.getString(PREF_NOTIFICATION_STYLE, DEFAULT_NOTIFICATION_STYLE);
+        String style = snapshot().getNotificationStyle();
         if (!NOTIFICATION_STYLE_MEDIA.equals(style) && !NOTIFICATION_STYLE_BIGTEXT.equals(style)) {
             return DEFAULT_NOTIFICATION_STYLE;
         }
@@ -370,27 +406,29 @@ public class Settings {
     }
 
     public boolean isMediaKeyMuteEnabled() {
-        return preferences.getBoolean(PREF_MEDIA_KEY_MUTE, DEFAULT_MEDIA_KEY_MUTE);
+        return snapshot().getMediaKeyMute();
     }
 
     public boolean isMediaKeyMuteTtsEnabled() {
-        return preferences.getBoolean(PREF_MEDIA_KEY_MUTE_TTS, DEFAULT_MEDIA_KEY_MUTE_TTS);
+        return snapshot().getMediaKeyMuteTts();
     }
 
     public void setNotificationStyle(String style) {
         if (NOTIFICATION_STYLE_BIGTEXT.equals(style) || NOTIFICATION_STYLE_MEDIA.equals(style)) {
-            preferences.edit().putString(PREF_NOTIFICATION_STYLE, style).apply();
+            repository.updateBlocking(prefs -> {
+                prefs.setNotificationStyle(style);
+            });
         } else {
             throw new IllegalArgumentException("Invalid notification style: " + style);
         }
     }
 
     public boolean isTextToSpeechEnabled() {
-        return preferences.getBoolean(PREF_USE_TTS, DEFAULT_USE_TTS);
+        return snapshot().getUseTts();
     }
 
     public boolean isShortTextToSpeechMessagesEnabled() {
-        return preferences.getBoolean(PREF_SHORT_TTS_MESSAGES, DEFAULT_SHORT_TTS_MESSAGES);
+        return snapshot().getShortTtsMessages();
     }
 
     /**
@@ -398,7 +436,7 @@ public class Settings {
      * or null to use the system default engine.
      */
     public String getTtsEngine() {
-        String pkg = preferences.getString(PREF_TTS_ENGINE, null);
+        String pkg = snapshot().getTtsEngine();
         if (pkg == null || pkg.equals(TTS_ENGINE_SYSTEM_DEFAULT))
             return null;
         return pkg;
@@ -409,82 +447,92 @@ public class Settings {
      * or the system default if pkg is null.
      */
     public void setTtsEngine(String pkg) {
-        if (pkg == null)
-            preferences.edit().remove(PREF_TTS_ENGINE).apply();
-        else
-            preferences.edit().putString(PREF_TTS_ENGINE, pkg).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setTtsEngine(pkg == null ? Optional.empty() : Optional.of(pkg));
+            });
     }
 
     public boolean isTcpForced() {
-        return preferences.getBoolean(PREF_FORCE_TCP, DEFAULT_FORCE_TCP);
+        return snapshot().getForceTcp();
     }
 
     public boolean isMuted() {
-        return preferences.getBoolean(PREF_MUTED, DEFAULT_MUTED);
+        return snapshot().getMuted();
     }
 
     public boolean isDeafened() {
-        return preferences.getBoolean(PREF_DEAFENED, DEFAULT_DEAFENED);
+        return snapshot().getDeafened();
     }
 
     public boolean isFirstRun() {
-        return preferences.getBoolean(PREF_FIRST_RUN, DEFAULT_FIRST_RUN);
+        return snapshot().getFirstRun();
     }
 
     public boolean shouldLoadExternalImages() {
-        return preferences.getBoolean(PREF_LOAD_IMAGES, DEFAULT_LOAD_IMAGES);
+        return snapshot().getLoadImages();
     }
 
     public void setMutedAndDeafened(boolean muted, boolean deafened) {
-        preferences.edit().putBoolean(PREF_MUTED, muted || deafened).putBoolean(PREF_DEAFENED, deafened).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setMuted(muted || deafened);
+            prefs.setDeafened(deafened);
+            });
     }
 
     public void setFirstRun(boolean run) {
-        preferences.edit().putBoolean(PREF_FIRST_RUN, run).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setFirstRun(run);
+            });
     }
 
     public int getFramesPerPacket() {
         try {
-            return Integer.parseInt(preferences.getString(PREF_FRAMES_PER_PACKET, DEFAULT_FRAMES_PER_PACKET));
-        } catch (NumberFormatException | ClassCastException e) {
+            return Integer.parseInt(snapshot().getAudioPerPacket());
+        } catch (NumberFormatException e) {
             return Constants.DEFAULT_FRAMES_PER_PACKET;
         }
     }
 
     public boolean isHalfDuplex() {
-        return preferences.getBoolean(PREF_HALF_DUPLEX, DEFAULT_HALF_DUPLEX);
+        return snapshot().getHalfDuplex();
     }
 
     public boolean isHandsetMode() {
-        return preferences.getBoolean(PREF_HANDSET_MODE, DEFAULT_HANDSET_MODE);
+        return snapshot().getHandsetMode();
     }
 
     public boolean isBluetoothHeadset() {
-        return preferences.getBoolean(PREF_BLUETOOTH_HEADSET, DEFAULT_BLUETOOTH_HEADSET);
+        return snapshot().getBluetoothHeadset();
     }
 
     public void setBluetoothHeadset(boolean enabled) {
-        preferences.edit().putBoolean(PREF_BLUETOOTH_HEADSET, enabled).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setBluetoothHeadset(enabled);
+            });
     }
 
     public boolean isPttSoundEnabled() {
-        return preferences.getBoolean(PREF_PTT_SOUND, DEFAULT_PTT_SOUND);
+        return snapshot().getPttSound();
     }
 
     public boolean isAdaptiveLevelerEnabled() {
-        return preferences.getBoolean(PREF_ADAPTIVE_LEVELER_ENABLED, DEFAULT_ADAPTIVE_LEVELER_ENABLED);
+        return snapshot().getAdaptiveLeveler();
     }
 
     public boolean shouldStayAwake() {
-        return preferences.getBoolean(PREF_STAY_AWAKE, DEFAULT_STAY_AWAKE);
+        return snapshot().getStayAwake();
     }
 
     public void setDefaultCertificateId(long defaultCertificateId) {
-        preferences.edit().putLong(PREF_CERT_ID, defaultCertificateId).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setCertificateId(defaultCertificateId);
+            });
     }
 
     public void disableCertificate() {
-        preferences.edit().putLong(PREF_CERT_ID, -1).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setCertificateId(-1L);
+            });
     }
 
     public boolean isUsingCertificate() {
@@ -495,28 +543,32 @@ public class Settings {
      * @return true if the user count should be shown next to channels.
      */
     public boolean shouldShowUserCount() {
-        return preferences.getBoolean(PREF_SHOW_USER_COUNT, DEFAULT_SHOW_USER_COUNT);
+        return snapshot().getShowUserCount();
     }
 
     public boolean shouldStartUpInPinnedMode() {
-        return preferences.getBoolean(PREF_START_UP_IN_PINNED_MODE, DEFAULT_START_UP_IN_PINNED_MODE);
+        return snapshot().getStartUpInPinnedMode();
     }
 
     public boolean isOverlayShown() {
-        return preferences.getBoolean(PREF_OVERLAY_SHOWN, DEFAULT_OVERLAY_SHOWN);
+        return snapshot().getOverlayShown();
     }
 
     public void setOverlayShown(boolean shown) {
-        preferences.edit().putBoolean(PREF_OVERLAY_SHOWN, shown).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setOverlayShown(shown);
+            });
     }
 
     public String getOverlayPlacement() {
-        String placement = preferences.getString(PREF_OVERLAY_PLACEMENT, DEFAULT_OVERLAY_PLACEMENT);
+        String placement = snapshot().getOverlayPlacement();
         return placement != null ? placement : DEFAULT_OVERLAY_PLACEMENT;
     }
 
     public void setOverlayPlacement(String placement) {
-        preferences.edit().putString(PREF_OVERLAY_PLACEMENT, placement).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setOverlayPlacement(placement);
+            });
     }
 
     public boolean isOverlayPinned() {
@@ -542,27 +594,49 @@ public class Settings {
     }
 
     public int getOverlayPosX(int defaultX) {
-        return preferences.getInt(PREF_OVERLAY_POS_X, defaultX);
+        Integer x = snapshot().getOverlayPosX();
+        return x != null ? x : defaultX;
     }
 
     public int getOverlayPosY(int defaultY) {
-        return preferences.getInt(PREF_OVERLAY_POS_Y, defaultY);
+        Integer y = snapshot().getOverlayPosY();
+        return y != null ? y : defaultY;
     }
 
     public void setOverlayPosition(int x, int y) {
-        preferences.edit()
-                .putInt(PREF_OVERLAY_POS_X, x)
-                .putInt(PREF_OVERLAY_POS_Y, y)
-                .apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setOverlayPosX(x);
+            prefs.setOverlayPosY(y);
+            });
+    }
+
+    public String getTheme() {
+        return snapshot().getTheme();
+    }
+
+    public void setTheme(String theme) {
+        repository.updateBlocking(prefs -> {
+            prefs.setTheme(theme);
+            });
+    }
+
+    public String getLanguage() {
+        return snapshot().getLanguage();
+    }
+
+    public void setLanguage(String language) {
+        repository.updateBlocking(prefs -> {
+            prefs.setLanguage(language);
+            });
     }
 
     public Set<String> getNewsShownVersions() {
-        return preferences.getStringSet(PREF_NEWS_SHOWN_VERSIONS, new HashSet<>());
+        return snapshot().getNewsShownVersions();
     }
 
     public void addNewsShownVersions(@NonNull List<String> versions) {
-        // Making a copy; getStringSet docs states that the returned set must not be modified
-        Set<String> shownVersions = new HashSet<>(preferences.getStringSet(PREF_NEWS_SHOWN_VERSIONS, new HashSet<>()));
+        // Making a copy; the stored set must not be modified in place.
+        Set<String> shownVersions = new HashSet<>(snapshot().getNewsShownVersions());
         for (Iterator<String> it = versions.iterator(); it.hasNext(); ) {
             String s = it.next();
             if (s == null || s.isEmpty()) {
@@ -570,12 +644,16 @@ public class Settings {
             }
         }
         if (shownVersions.addAll(versions)) {
-            preferences.edit().putStringSet(PREF_NEWS_SHOWN_VERSIONS, shownVersions).apply();
+            final Set<String> updated = shownVersions;
+            repository.updateBlocking(prefs -> {
+                prefs.setNewsShownVersions(updated);
+            });
         }
     }
 
     public void resetNewsShownVersion() {
-        preferences.edit().putStringSet(PREF_NEWS_SHOWN_VERSIONS, new HashSet<>()).apply();
+        repository.updateBlocking(prefs -> {
+            prefs.setNewsShownVersions(new HashSet<>());
+            });
     }
-
 }
