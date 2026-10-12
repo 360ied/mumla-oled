@@ -112,5 +112,117 @@ green; no Kotlin plugin output changes behavior here.
   (`Settings.java`, getter/setter groups: input, PTT/hot-corner, certs,
   notifications/TTS, overlay, audio) become typed keys with defaults.
 - **`ConfigDelta`:** replaces the pref→bundle→effect double dispatch
-  (`MumlaService.onSharedPreferenceChanged` ~L774 + 
-...[truncated 3703 chars]
+  (`MumlaService.onSharedPreferenceChanged` ~L774 +
+  `HumlaService.configureExtras` ~L1598 collapse into `apply(ConfigDelta)`;
+  the stringly `EXTRAS_*` bundle dies. Round-trip checklist — every key
+  must survive (server, certificate+password, detection_threshold,
+  amplitude_boost, transmit_mode, input_quality, force_tcp, client_name,
+  access_tokens, audio_stream, frames_per_packet, trust_store+password+
+  format, half_duplex, local_mute_history, local_ignore_history,
+  adaptive_leveler, bluetooth_sco; deprecated input_rate/audio_source
+  stay ignored as today).
+- **Hilt modules (new Kotlin files — Kotlin plugin lands in slice 0, so
+  new files are Kotlin from birth):** `DatabaseModule` (Room db + DAOs),
+  `SettingsModule` (DataStore), `ServiceModule`. Provider interfaces
+  (`HumlaServiceProvider`, `DatabaseProvider`) die later in slice 5 with
+  the Kotlin conversion of their call sites.
+- **Files touched:** `db/*` (4) + new entities/DAOs/modules,
+  `Settings.java`, `MumlaService` pref switch, `HumlaService`
+  `configureExtras`, `Server.java` column mapping, `FakeSharedPreferences`
+  + `MumlaDatabaseTest`/`SettingsOverlayTest`.
+- **Verification:** `./scripts/check.sh`; `MumlaDatabaseTest` ported to
+  in-memory Room; every `ConfigDelta` key round-trips or the slice fails.
+
+## Slice 3 — Kotlin conversion, `:libraries:humla` (syntax first)
+
+62 files minus generated protobuf (`Mumble.java`, `MumbleUDP.java` —
+never touched). Batches in dependency order, ~one package per commit:
+
+1. `exception/*` (4) + `Constants.java`
+2. `util/*` (10: `HumlaCallbacks`, `HumlaException`, observers…)
+3. `model/*` (14: `User`, `Channel`, `Server`, `Message`, whisper targets…)
+4. `audio/inputmode/*` (4)
+5. `audio/*` (6) — JNI facades (`NativeAudioInputEngine`,
+   `NativeAudioOutputEngine`) and `CryptState` Java side convert
+   **syntactically only**: `@Synchronized` preserved, native signatures
+   byte-identical, no new allocations in encode/decode paths
+6. `net/*` (14): `CryptState`, `PacketBuffer`, `FrameValidator` first;
+   `HumlaTCP`/`HumlaUDP` next; `HumlaConnection` last
+7. `protocol/*` (4: `ModelHandler`, `AudioHandler`, listeners)
+8. `IHumlaService`, `IHumlaSession` (surface frozen, syntax only)
+9. `HumlaService.java` last (the god, converted but not yet restructured)
+
+Verification: existing humla JVM tests (`AudioRoutePolicyTest`,
+`HumlaServiceVoiceTargetTest`, `ModelHandlerSelfMuteTest`, …) green;
+`./scripts/check.sh`.
+
+## Slice 4 — Coroutines service core (the real debt kill)
+
+| Today | Becomes | Test carry-over |
+|---|---|---|
+| `mHandler` posts (talking-state, SCO notify) | `lifecycleScope.launch` hops | existing observer tests |
+| Reconnect runnable + `removeCallbacks` disarm | `reconnectJob` + `cancel()`; backoff delays via `delay()` | **new:** backoff-sequence test |
+| Route debounce/settle `postDelayed` | cancellable `debounceJob`/`settleJob` | `AudioRoutePolicyTest` |
+| `HumlaNetworkThread` 3 executors (incl. dead receive executor) | deleted; one `ConnectionScope` (`SupervisorJob` + `Dispatchers.IO`), writes via `Mutex` | connection tests |
+| Ping `ScheduledExecutorService` self-chain | `while (isActive) { sendKeepalivePing(); delay(interval) }` | ping-interval logic test |
+| `HumlaUDP` queue + `mSendLock` head-drop | `Channel(capacity, DROP_OLDEST)`; consumer becomes an `IO` loop | UDP queue-capacity tests |
+| SCO epoch + `Handler` timeout | cancellation *is* the epoch; `withTimeoutOrNull(8000)` | SCO retry/bring-up tests |
+| `ModelHandler` `synchronized` writers | single-threaded model dispatcher; `ConcurrentHashMap`s stay (UDP-thread reads) | `ModelHandlerSelfMuteTest` |
+| `HumlaCallbacks` set fan-out | interface kept; backed by set or `SharedFlow`, per-observer isolation kept | observer tests |
+| `configureExtras` bundle | `apply(ConfigDelta)` from slice 2 | round-trip checklist |
+| Capture/render audio threads | **stay raw threads** (blocking IO); only control plane moves to the scope | native suite |
+
+Verification: `./scripts/check.sh` + on-device torture (reconnect
+storm, SCO flap, A2DP stagger, route flip mid-call).
+
+## Slice 5 — Kotlin conversion, `:app` (syntax first)
+
+74 files, batches in dependency order (data-layer files already Kotlin
+from slice 2; `Server` converts here to `@Entity @Parcelize`):
+
+1. `util/*` (11) 2. `db` leftovers 3. `servers/*` (6)
+4. `service/*` helpers (8+1: notifications, overlay, hot-corner —
+   `MumlaService` itself last) 5. `channel/*` (15+3)
+6. `preference/*` (17; still `PreferenceFragment`-based — Compose comes
+   in slice 7) 7. `app/*` (7; `MumlaActivity` last)
+
+`MumlaService`/`IMumlaService` binder surface converts syntactically
+only (frozen per plan). Verification: all app JVM tests (incl.
+Robolectric comment-dialog tests) green; `./scripts/check.sh`.
+
+## Slice 6 — Compose foundation (theme + leaf + goldens)
+
+- Port `themes.xml` (`Theme.Mumla`/`Theme.Mumla.Oled`, colors, type,
+  dimens) into a Compose **Material3** `MaterialTheme` via tokens —
+  including the OLED-black scheme as a third scheme alongside light/dark.
+- Paparazzi goldens infrastructure (per slice 0 fork decision).
+- First screen: `ServerInfoFragment` → `ServerInfo` route + ViewModel
+  (its poll executor becomes `collectAsState`); first golden recorded.
+- Verification: Paparazzi golden passes; old-vs-new screenshots compared
+  by eye on the Pixel 4a; `./scripts/check.sh`.
+
+## Slice 7 — Compose screens (leaf-to-root, dialogs last)
+
+Order with per-screen gates: `FavouriteServerList` → `ServerEdit` →
+`ChannelList` (**`ChannelFragmentDensityTest` must pass unmodified**) →
+`Channel` → `ChannelChat` → comment fragments → `AccessToken` →
+preference screens (Compose + DataStore directly; `preference.xml` retires
+last) → `ChannelFragment` → `MumlaActivity` shell + `DialogHost` (all 7
+fields, dismissal semantics intact) last → delete Fragment navigation;
+drawer becomes `ModalNavigationDrawer`. Final gate: full torture matrix
+(rotate mid-dialog, switch mid-connect, deny mid-flow) on the Pixel 4a
+plus one modern device, `./scripts/check.sh`, and a landing checklist
+(merge requested explicitly — never autonomous).
+
+## Verification matrix
+
+| Slice | `check.sh` | Unit suites | Device/golden gates |
+|---|---|---|---|
+| 0 scaffold | green baseline | — | — |
+| 1 minSdk | green | all existing | gate-grep clean, 2-device boot/voice |
+| 2 data | green | Room in-memory DB tests, Settings tests | ConfigDelta round-trip |
+| 3 Kotlin humla | green | humla JVM suite | — |
+| 4 coroutines | green | route/reconnect/ping tests | torture: reconnect/SCO/A2DP |
+| 5 Kotlin app | green | app JVM + Robolectric | — |
+| 6 foundation | green | Paparazzi golden (leaf) | eye-compare on 4a |
+| 7 screens | green | per-screen goldens, density test | full torture matrix, landing checklist |
