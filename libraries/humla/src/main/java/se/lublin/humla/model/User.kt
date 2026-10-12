@@ -117,21 +117,21 @@ class User : IUser, Comparable<User> {
     override val commentHash: ByteArray?
         get() = commentHashValue?.toByteArray()
 
-    override fun setCommentHash(commentHash: ByteString) {
+    override fun setCommentHash(commentHash: ByteString?) {
         commentHashValue = commentHash
     }
 
     override val texture: ByteArray?
         get() = textureValue?.toByteArray()
 
-    override fun setTexture(texture: ByteString) {
+    override fun setTexture(texture: ByteString?) {
         textureValue = texture
     }
 
     override val textureHash: ByteArray?
         get() = textureHashValue?.toByteArray()
 
-    override fun setTextureHash(textureHash: ByteString) {
+    override fun setTextureHash(textureHash: ByteString?) {
         textureHashValue = textureHash
     }
 

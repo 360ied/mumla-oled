@@ -35,15 +35,15 @@ interface IUser {
 
     val commentHash: ByteArray?
 
-    fun setCommentHash(commentHash: ByteString)
+    fun setCommentHash(commentHash: ByteString?)
 
     val texture: ByteArray?
 
-    fun setTexture(texture: ByteString)
+    fun setTexture(texture: ByteString?)
 
     val textureHash: ByteArray?
 
-    fun setTextureHash(textureHash: ByteString)
+    fun setTextureHash(textureHash: ByteString?)
 
     fun hasTexture(): Boolean
 

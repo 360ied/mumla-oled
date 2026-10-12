@@ -27,99 +27,99 @@ import se.lublin.humla.protocol.HumlaUDPMessageListener
  * Created by andrew on 23/04/14.
  */
 open class HumlaNetworkListener : HumlaTCPMessageListener, HumlaUDPMessageListener {
-    override fun messageAuthenticate(msg: Mumble.Authenticate) {
+    open override fun messageAuthenticate(msg: Mumble.Authenticate) {
     }
 
-    override fun messageBanList(msg: Mumble.BanList) {
+    open override fun messageBanList(msg: Mumble.BanList) {
     }
 
-    override fun messageReject(msg: Mumble.Reject) {
+    open override fun messageReject(msg: Mumble.Reject) {
     }
 
-    override fun messageServerSync(msg: Mumble.ServerSync) {
+    open override fun messageServerSync(msg: Mumble.ServerSync) {
     }
 
-    override fun messageServerConfig(msg: Mumble.ServerConfig) {
+    open override fun messageServerConfig(msg: Mumble.ServerConfig) {
     }
 
-    override fun messagePermissionDenied(msg: Mumble.PermissionDenied) {
+    open override fun messagePermissionDenied(msg: Mumble.PermissionDenied) {
     }
 
-    override fun messageUDPTunnel(msg: Mumble.UDPTunnel) {
+    open override fun messageUDPTunnel(msg: Mumble.UDPTunnel) {
     }
 
-    override fun messageUserState(msg: Mumble.UserState) {
+    open override fun messageUserState(msg: Mumble.UserState) {
     }
 
-    override fun messageUserRemove(msg: Mumble.UserRemove) {
+    open override fun messageUserRemove(msg: Mumble.UserRemove) {
     }
 
-    override fun messageChannelState(msg: Mumble.ChannelState) {
+    open override fun messageChannelState(msg: Mumble.ChannelState) {
     }
 
-    override fun messageChannelRemove(msg: Mumble.ChannelRemove) {
+    open override fun messageChannelRemove(msg: Mumble.ChannelRemove) {
     }
 
-    override fun messageTextMessage(msg: Mumble.TextMessage) {
+    open override fun messageTextMessage(msg: Mumble.TextMessage) {
     }
 
-    override fun messageACL(msg: Mumble.ACL) {
+    open override fun messageACL(msg: Mumble.ACL) {
     }
 
-    override fun messageQueryUsers(msg: Mumble.QueryUsers) {
+    open override fun messageQueryUsers(msg: Mumble.QueryUsers) {
     }
 
-    override fun messagePing(msg: Mumble.Ping) {
+    open override fun messagePing(msg: Mumble.Ping) {
     }
 
-    override fun messageCryptSetup(msg: Mumble.CryptSetup) {
+    open override fun messageCryptSetup(msg: Mumble.CryptSetup) {
     }
 
-    override fun messageContextAction(msg: Mumble.ContextAction) {
+    open override fun messageContextAction(msg: Mumble.ContextAction) {
     }
 
-    override fun messageContextActionModify(msg: Mumble.ContextActionModify) {
+    open override fun messageContextActionModify(msg: Mumble.ContextActionModify) {
     }
 
-    override fun messageRemoveContextAction(msg: Mumble.ContextActionModify) {
+    open override fun messageRemoveContextAction(msg: Mumble.ContextActionModify) {
     }
 
-    override fun messageVersion(msg: Mumble.Version) {
+    open override fun messageVersion(msg: Mumble.Version) {
     }
 
-    override fun messageUserList(msg: Mumble.UserList) {
+    open override fun messageUserList(msg: Mumble.UserList) {
     }
 
-    override fun messagePermissionQuery(msg: Mumble.PermissionQuery) {
+    open override fun messagePermissionQuery(msg: Mumble.PermissionQuery) {
     }
 
-    override fun messageCodecVersion(msg: Mumble.CodecVersion) {
+    open override fun messageCodecVersion(msg: Mumble.CodecVersion) {
     }
 
-    override fun messageUserStats(msg: Mumble.UserStats) {
+    open override fun messageUserStats(msg: Mumble.UserStats) {
     }
 
-    override fun messageRequestBlob(msg: Mumble.RequestBlob) {
+    open override fun messageRequestBlob(msg: Mumble.RequestBlob) {
     }
 
-    override fun messageSuggestConfig(msg: Mumble.SuggestConfig) {
+    open override fun messageSuggestConfig(msg: Mumble.SuggestConfig) {
     }
 
-    override fun messageVoiceTarget(msg: Mumble.VoiceTarget) {
+    open override fun messageVoiceTarget(msg: Mumble.VoiceTarget) {
     }
 
-    override fun messagePluginDataTransmission(msg: Mumble.PluginDataTransmission) {
+    open override fun messagePluginDataTransmission(msg: Mumble.PluginDataTransmission) {
     }
 
-    override fun messageUDPPing(data: ByteArray) {
+    open override fun messageUDPPing(data: ByteArray) {
     }
 
-    override fun messageVoiceData(data: ByteArray, messageType: HumlaUDPMessageType) {
+    open override fun messageVoiceData(data: ByteArray, messageType: HumlaUDPMessageType) {
     }
 
-    override fun messageProtobufAudio(msg: MumbleUDP.Audio) {
+    open override fun messageProtobufAudio(msg: MumbleUDP.Audio) {
     }
 
-    override fun messageProtobufPing(msg: MumbleUDP.Ping) {
+    open override fun messageProtobufPing(msg: MumbleUDP.Ping) {
     }
 }
