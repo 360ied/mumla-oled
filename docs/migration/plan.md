@@ -14,7 +14,7 @@ Three migrations, one branch:
    `ReconnectController`, `AudioRoutePolicy`). The `HumlaNetworkThread`
    executor trio (including its dead receive executor), the
    stringly-typed `configureExtras` bundle, and the `AsyncTask`s go away.
-   The 48-method `IHumlaSession` facade is split into role interfaces.
+   The 48-method `IHumlaSession` facade stays frozen throughout (a role-interface split is post-migration follow-up work).
 2. **Data layer → Room + DataStore + Hilt.** Hand SQL in
    [`MumlaSQLiteDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java),
    the 48-accessor
@@ -30,7 +30,7 @@ Three migrations, one branch:
 - [`audio_engine`](../../libraries/humla/src/main/jni/audio_engine/)
   and its JNI facades: no behavior changes. The host native suite must
   stay green for every slice.
-- `../../libraries/humla/src/main/jni/crypto/` (OCB2 `CryptState`, JNI bridge):
+- [`crypto`](../../libraries/humla/src/main/jni/crypto/) (OCB2 `CryptState`, JNI bridge):
   same treatment — C++ frozen, Java facades convert syntactically only.
 - Protocol parity with upstream Mumble schemas and behavior stays exact.
 - FOSS flavor, Nix dev shell, and 3-ABI packaging stay as-is.
@@ -47,7 +47,7 @@ rewrite:
   navigation structure and order, same dialog titles/buttons/semantics
   (including pause-dismissal and rapid-tap behavior).
 - Theme ported once into a Compose **Material3** `MaterialTheme`
-  (the view theme extends `Theme.Material3.DayNight`) via tokens — no hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
+  (the view theme `Theme.Mumla`, via `Base.Theme.Mumla`, extends `Theme.Material3.DayNight.NoActionBar`) via tokens — no hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
 - Screenshot regression runs **Paparazzi** per component in the worktree loop;
   emulator/device shots cover only dialogs, overlay, drawer gestures, and rotation.
 - `ChannelFragmentDensityTest` and the comment-dialog tests carry over;
@@ -89,8 +89,7 @@ adopt them from slice 1:
   Views→Compose) as a doc in this directory and review it like code.
   Bun's `PORTING.md` plus a lifetimes table were reviewed before a
   single file was converted.
-- **Trial slice is slice 1.** The minSdk-33 deletion is deletion-only with zero new dependencies: run implement + review + fix on it before fanning out.
-  review + fix) before fanning out. Calibrate the workflow on the trial,
+- **Trial slice is slice 1.** The minSdk-33 deletion is deletion-only with zero new dependencies: run implement + review + fix on it before fanning out. Calibrate the workflow on the trial,
   not on the whole tree.
 - **Split implementer and reviewer contexts.** The agent that writes a
   slice must not be the one that reviews it; reviewers get the diff only

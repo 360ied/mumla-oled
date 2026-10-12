@@ -1,9 +1,9 @@
-# Migration Slices (Concrete Work Plan)
+# Migration Slices (Concrete Work Plan for Mumla OLED)
 
 Each slice is a sequence of atomic commits; every commit leaves the tree
 working and passing `./scripts/check.sh`. Reviewers check conformance to
-[porting-guide](porting-guide.md); review attribution goes in commit
-messages for agent-reviewed slices. The binder surface
+[porting-guide](porting-guide.md) (checklist: §5); review attribution goes in the commit body
+for agent-reviewed slices. The binder surface
 (`IMumlaService`/`IHumlaService`/`IHumlaSession`) stays frozen throughout.
 
 ## Slice 0 — Scaffold (no behavior change)
@@ -13,22 +13,21 @@ messages for agent-reviewed slices. The binder surface
 2. Add `gradle/libs.versions.toml` with these pins (verified 2026-10-12,
    re-verify at scaffold; floors are binding, patches float):
    - `kotlin = "2.4.21"` (AGP 8.13.2 is inside its supported range),
-     `ksp` = KSP2 line matching Kotlin 2.4.21,
-     `coroutines` = release recommended for Kotlin 2.4 (floor 1.10.x)
+     `ksp` = KSP2 build matching Kotlin 2.4.21 (resolve the exact artifact at scaffold),
+     `coroutines` = the release recommended for Kotlin 2.4 (verify at scaffold; floor 1.10.x)
    - `compose-bom = "2026.09.00"` (pins `compose-material3 1.4.0`),
      no hand-pinned Compose artifacts
    - `hilt = "2.60.1"` (`com.google.dagger`), `androidx-hilt = "1.4.0"`
    - `room = "2.8.5"` (`androidx.room`; not the `room3` 3.0.x line)
-   - `lifecycle`, `datastore-preferences` = latest stable at scaffold
+   - `lifecycle`, `datastore-preferences` = latest stable at scaffold (record exact versions in the slice-0 commit)
    - `paparazzi = "2.0.0-alpha05.1"` — alpha accepted deliberately: the
      2.x line renders dialogs/popups as real windows, which the dialog
      parity gate needs. **Fork:** if the plugin requires Gradle 9+
      (wrapper here is 8.13), either upgrade the wrapper (recorded as its
-     own commit) or fall back to the Paparazzi 1.3.x stable line and gate
-     dialogs on-device only.
+     own commit) or fall back to the Paparazzi 1.3.x stable line, in which case dialogs are gated on-device only (overriding the README fallback line, which describes this fork branch).
 3. Apply plugins: `org.jetbrains.kotlin.android` (both modules),
    `com.google.devtools.ksp`, `com.google.dagger.hilt.android`,
-   `kotlin-parcelize`, Paparazzi (app module). minSdk stays 21.
+   `org.jetbrains.kotlin.plugin.parcelize`, `app.cash.paparazzi` (app module). minSdk stays 21.
 4. Baseline: `./scripts/check.sh` green before any slice-1 edit.
 
 ## Slice 1 — minSdk 33 + legacy deletion (trial slice)
@@ -46,7 +45,7 @@ every row is a deletion, no conversions. (Line numbers are pre-slice;
 | `MumlaActivity.java:541-542` deprecated `getParcelable(String)` | deprecation | Switch both calls to typed `getParcelable(key, Server.class)` |
 | `MumlaActivity.java:1011` S `BLUETOOTH_CONNECT` | `SDK_INT >= S &&` | Delete the version clause; permission exists at 33 |
 | `MumlaActivity.java:1032` TIRAMISU notifications | `SDK_INT >= TIRAMISU &&` | Delete the version clause; keep the asked-flag + grant flow |
-| `ChannelChatFragment.java:194` S_V2 storage | `SDK_INT <= S_V2` branch | Delete legacy branch; call `imagePicker.launch` directly; remove `readPermissionRequester`, `READ_EXTERNAL_STORAGE` import (dead after) |
+| `ChannelChatFragment.java:194` S_V2 storage | `SDK_INT <= S_V2` branch | Delete legacy branch; call `imagePicker.launch` directly; remove `readPermissionRequester`, `onReadPermissionGranted`, and the now-unused `RequestPermission` / `READ_EXTERNAL_STORAGE` / `checkSelfPermission` / `PERMISSION_GRANTED` / `SDK_INT` / `Build` imports (verify each has no other use first) |
 | `MumlaMessageNotification.java:88` O channel | `SDK_INT >= O` | Delete gate; always create the channel |
 | `MumlaMessageNotification.java:113` TIRAMISU notify | `SDK_INT < TIRAMISU \|\|` | Drop the version clause; keep the grant check |
 | `MumlaHotCorner.java:79` Q layout | `SDK_INT >= Q` | Delete gate; keep body |
@@ -54,13 +53,13 @@ every row is a deletion, no conversions. (Line numbers are pre-slice;
 | `MumlaHotCorner.java:163` M overlay perm | `SDK_INT >= M &&` | Delete the version clause |
 | `MumlaHotCorner.java:210,227` Q exclusion | `SDK_INT < Q \|\|` | Delete the version clause; keep `!mShown` |
 | `MumlaOverlay.java:255` O overlay type | ternary | Always `TYPE_APPLICATION_OVERLAY` |
-| `MumlaOverlay.java:289-291` R insets | `@TargetApi(R)` + gate | Remove annotation + gate; keep `getCurrentWindowMetrics` body |
+| `MumlaOverlay.java:289-291` R insets | `@TargetApi(R)` + gate | Remove annotation + gate; keep `getCurrentWindowMetrics` body; delete `return null`, mark the method `@NonNull`, and drop now-dead `insets == null` branches at call sites |
 | `MumlaConnectionNotification.java:339` O channel | `SDK_INT >= O &&` | Delete the version clause |
 | `MumlaConnectionNotification.java:424` U foreground type | `UPSIDE_DOWN_CAKE` | **KEEP** — the sole surviving gate |
 | `MumlaService.java:902` S grant helper | `SDK_INT < S` early-true | Delete early return; keep `checkSelfPermission` |
 | `MumlaService.java:1062,1169` M overlay perm | `SDK_INT >= M &&` | Delete the version clause (both sites) |
 | `PinnedTlsSocketFactory.java:62` N SNI | `SDK_INT >= N` | Delete gate; always set SNI |
-| `ServerEditFragment.java:254` deprecated `getParcelable` | deprecation | Switch to typed `getParcelable` |
+| `ServerEditFragment.java:254` deprecated `getParcelable` | deprecation | Switch to `getArguments().getParcelable(ARGUMENT_SERVER, Server.class)` |
 
 Untouched: `MumlaOverlay.java:306` (`legacy` is a resource comment, no
 code), `MumlaImageGetter.java:393` (comment noting no gate),
@@ -81,16 +80,17 @@ code), `MumlaImageGetter.java:393` (comment noting no gate),
 | `BluetoothScoManager.java:676` S perm helper | `SDK_INT < S` early-true | Delete early return |
 | `BluetoothScoManager.java:760` S listener removal | `!= null && >= S` | Drop the version clause |
 | `HumlaService.java:497` M device callback | `SDK_INT >= M` | Delete gate; always register |
-| `HumlaService.java:673` pre-S voice pre-hold | `SDK_INT < S && …` block | Delete the whole block (modern path needs no pre-hold) |
+| `HumlaService.java:673` pre-S voice pre-hold | `SDK_INT < S && …` block (L671-680) | Delete the `acquiredHere` declaration, the `< S` block, and the `if (acquiredHere) releaseVoiceMode();` undo in the abort path below (modern path needs no pre-hold) |
 | `HumlaService.java:907` N network callback | `>= N` / `else` | Always `registerDefaultNetworkCallback` |
 | `HumlaService.java:1165` M media query | `SDK_INT < M \|\|` | Delete the version clause; keep null check |
 | `HumlaService.java:1371,1388` S SCO clear/query | `>= S` / `else` | Keep modern branch only (both) |
 | `HumlaService.java:1434` pre-S pre-hold | `SDK_INT < S && …` block | Delete the whole block |
+| `HumlaService.java:1602` deprecated `getParcelable` | deprecation | Switch to typed `getParcelable(EXTRAS_SERVER, Server.class)` |
 
 ### Slice-1 verification
 
 - `grep -rn "VERSION_CODES\.\(M\|N\|O\|Q\|R\|S\|S_V2\|TIRAMISU\)\b"` over
-  main sources returns only the U site; `NewApi` lint clean.
+  main sources (`app/src/main`, `libraries/humla/src/main`) returns only the U site; Android lint clean (`nix develop --command ./gradlew lintFossDebug`; confirm `check.sh` coverage at trial).
 - `./scripts/check.sh` green (JVM + native).
 - Boot + connect + voice on the Pixel 4a (floor) and one modern device;
   SCO connect/disconnect, A2DP attach, overlay show/hide, notification
@@ -98,17 +98,17 @@ code), `MumlaImageGetter.java:393` (comment noting no gate),
 
 ## Slice 2 — Data layer (Java; Kotlin conversion comes in slices 3/5)
 
-Room + DataStore + Hilt using Java-compatible APIs so the tree stays
-green; no Kotlin plugin output changes behavior here.
+Room + DataStore + Hilt so the tree stays
+green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin conversions of existing files here.
 
 - **Entities (7 tables in `MumlaSQLiteDatabase`) →**
   `server`, `favourites`, `tokens`, `comments`, `local_mute`,
   `local_ignore`, `certificates`. `Server` becomes `@Entity @Parcelize`
   later (slice 5); in this slice keep the Java class and map columns.
-- **DAOs mirror `MumlaDatabase` (24 methods)** one-for-one; keep method
+- **DAOs mirror `MumlaDatabase` (24 data methods; 27 declared incl. `open`/`close` + default `addCertificate` overload)** one-for-one; keep method
   names so call sites diff minimally. In-memory Room replaces
   `MumlaSQLiteDatabase` behind the `MumlaDatabase` interface.
-- **DataStore (Preferences):** the 48 `Settings` accessors
+- **DataStore (Preferences):** the 48 `Settings` read accessors (get/is/should groups; excludes `getInstance`/statics and pairs setters with their getter's key)
   (`Settings.java`, getter/setter groups: input, PTT/hot-corner, certs,
   notifications/TTS, overlay, audio) become typed keys with defaults.
 - **`ConfigDelta`:** replaces the pref→bundle→effect double dispatch
@@ -120,7 +120,8 @@ green; no Kotlin plugin output changes behavior here.
   access_tokens, audio_stream, frames_per_packet, trust_store+password+
   format, half_duplex, local_mute_history, local_ignore_history,
   adaptive_leveler, bluetooth_sco; deprecated input_rate/audio_source
-  stay ignored as today).
+  stay ignored as today; deprecated-unwritten `EXTRAS_AUTO_RECONNECT`,
+  `EXTRAS_AUTO_RECONNECT_DELAY`, `EXTRAS_USE_OPUS` are dropped (never written by any sender).
 - **Hilt modules (new Kotlin files — Kotlin plugin lands in slice 0, so
   new files are Kotlin from birth):** `DatabaseModule` (Room db + DAOs),
   `SettingsModule` (DataStore), `ServiceModule`. Provider interfaces
@@ -140,10 +141,10 @@ never touched). Batches in dependency order, ~one package per commit:
 
 1. `exception/*` (4) + `Constants.java`
 2. `util/*` (10: `HumlaCallbacks`, `HumlaException`, observers…)
-3. `model/*` (14: `User`, `Channel`, `Server`, `Message`, whisper targets…)
+3. `model/*` (13 files + `Server` deferred: `User`, `Channel`, `Message`, whisper targets…; `Server` converts in slice 5)
 4. `audio/inputmode/*` (4)
 5. `audio/*` (6) — JNI facades (`NativeAudioInputEngine`,
-   `NativeAudioOutputEngine`) and `CryptState` Java side convert
+   `NativeAudioOutputEngine`) convert
    **syntactically only**: `@Synchronized` preserved, native signatures
    byte-identical, no new allocations in encode/decode paths
 6. `net/*` (14): `CryptState`, `PacketBuffer`, `FrameValidator` first;
@@ -178,9 +179,9 @@ storm, SCO flap, A2DP stagger, route flip mid-call).
 ## Slice 5 — Kotlin conversion, `:app` (syntax first)
 
 74 files, batches in dependency order (data-layer files already Kotlin
-from slice 2; `Server` converts here to `@Entity @Parcelize`):
+from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from slice 3's model batch):
 
-1. `util/*` (11) 2. `db` leftovers 3. `servers/*` (6)
+1. `util/*` (11) 2. `db` leftovers (`MumlaSQLiteDatabase` deletion, `DatabaseProvider` removal with its call sites, `DatabaseCertificate` disposition) 3. `servers/*` (6)
 4. `service/*` helpers (8+1: notifications, overlay, hot-corner —
    `MumlaService` itself last) 5. `channel/*` (15+3)
 6. `preference/*` (17; still `PreferenceFragment`-based — Compose comes
@@ -206,9 +207,10 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 Order with per-screen gates: `FavouriteServerList` → `ServerEdit` →
 `ChannelList` (**`ChannelFragmentDensityTest` must pass unmodified**) →
 `Channel` → `ChannelChat` → comment fragments → `AccessToken` →
-preference screens (Compose + DataStore directly; `preference.xml` retires
+preference screens (Compose + DataStore directly; `res/xml/settings_*.xml` + `preference_headers.xml` retire
 last) → `ChannelFragment` → `MumlaActivity` shell + `DialogHost` (all 7
-fields, dismissal semantics intact) last → delete Fragment navigation;
+fields, dismissal semantics intact) last → delete Fragment navigation
+(`MumlaActivity.loadDrawerFragment`, `DrawerAdapter` routes, back-stack transactions → NavHost route map);
 drawer becomes `ModalNavigationDrawer`. Final gate: full torture matrix
 (rotate mid-dialog, switch mid-connect, deny mid-flow) on the Pixel 4a
 plus one modern device, `./scripts/check.sh`, and a landing checklist

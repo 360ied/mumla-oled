@@ -8,7 +8,7 @@ check conformance to it.
 Scope reminder: the native DSP in
 [`audio_engine`](../../libraries/humla/src/main/jni/audio_engine/) is
 fenced off. Its Java JNI facades convert syntactically only — method
-signatures and threading semantics frozen. Same treatment for `../../libraries/humla/src/main/jni/crypto/` (OCB2 `CryptState`, JNI bridge).
+signatures and threading semantics frozen. Same treatment for [`crypto`](../../libraries/humla/src/main/jni/crypto/) (OCB2 `CryptState`, JNI bridge).
 
 ## 0. Baseline: minSdk 33 (Pixel 4a floor, decided)
 
@@ -34,8 +34,8 @@ only if the fleet changes. Delete, don't convert:
   (`bringUpLegacy` and the legacy broadcast receiver)
   is deleted outright — only the communication-device path survives.
   `REASON_NO_DEVICE` is shared with the modern path and stays.
-  Same for the pre-S voice-mode pre-hold branches in `HumlaService`/
-  `MumlaService`.
+  Same for the pre-S voice-mode pre-hold in `HumlaService`
+  (`retryBluetoothSco`, `updateBluetoothScoRoute`).
 - All `S_V2` (32) gates: the `ChannelChatFragment` storage branch (`SDK_INT <= S_V2`) — dead at 33, delete the legacy side.
 - All `TIRAMISU` (33) gates: `POST_NOTIFICATIONS` permission flow goes
   unguarded.
@@ -107,7 +107,7 @@ Never use `GlobalScope`.
   minimally. `Server` stays a single `@Entity @Parcelize` class (DB row,
   parcel, and UI model in one) — no separate layers.
 - **`Settings` blob → DataStore (Preferences flavor):** typed preferences;
-  the 48 accessors become typed keys with defaults in one place.
+  the 48 read accessors (counting rule in slices.md) become typed keys with defaults in one place.
 - **Pref→bundle→effect double dispatch → typed `ConfigDelta`.**
   `MumlaService.onSharedPreferenceChanged` and
   `HumlaService.configureExtras` collapse into `apply(ConfigDelta)`; the
@@ -131,6 +131,7 @@ Visual/structural parity is a hard guardrail (see
 - Each of the seven `MumlaActivity` dialog fields (six plus the first-run host; `mCertDialog` covers three TLS variants) → `Dialog` composable behind a
   single `DialogHost` holding today's dismissal semantics
   (pause-dismissal, dismiss-before-assign).
+- All Compose UI uses `androidx.compose.material3` (Material3, per README/plan); no `androidx.compose.material` (M2).
 - `DrawerLayout` → `ModalNavigationDrawer`, options menu → `TopAppBar`
   actions, toasts → `SnackbarHost` — all rendering today's copy and order.
 - Custom views (`CircleDrawable`, overlay layout) → `Canvas`-based

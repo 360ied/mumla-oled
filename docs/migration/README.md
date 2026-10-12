@@ -21,7 +21,7 @@ machinery. See [plan](plan.md) for execution.
   and their JNI boundary are recent, natively tested code. No rewrite-it-in-Rust (RIIR), no behavior touch. The native suite stays a
   gate for every slice. (The earlier Rust-core option is explicitly
   rejected.)
-- **Crypto JNI fenced with audio.** `../../libraries/humla/src/main/jni/crypto/`
+- **Crypto JNI fenced with audio.** [`crypto`](../../libraries/humla/src/main/jni/crypto/)
   (OCB2 `CryptState`, JNI bridge) gets the same treatment: C++ frozen,
   Java facades convert syntactically only.
 - **Compose rewrite is internals-only.** The user-facing UI of Mumla OLED
@@ -38,15 +38,11 @@ machinery. See [plan](plan.md) for execution.
   Revisit only if the fleet changes.
 - **Services become `LifecycleService`.** No attachment to the current
   `Service` base; `lifecycleScope` is the service coroutine scope.
-- **Dependencies: latest stable at scaffold, pinned in a version catalog.**
-  Kotlin 2.1+ (2.2 if stable), matching coroutines, Compose BOM (single
-  BOM, no hand-pinned artifacts), Hilt 2.5x via KSP (not kapt), current
-  Room, AndroidX Lifecycle. A new `libs.versions.toml` holds every pin so
-  the next bump is a one-line diff.
+- **Dependencies: pinned in [slices](slices.md) Slice 0** (verified 2026-10-12; re-verify at scaffold). Single `libs.versions.toml`, single Compose BOM, KSP (not kapt).
 - **Trial slice is the minSdk-33 deletion.** Deletion-only, zero new
   dependencies — it proves the worktree plus `check.sh` loop before
   anything irreversible. Afterwards, follow the slice order in [plan](plan.md) (data layer next).
-- **DataStore flavor is Preferences.** The 48 accessors map 1:1
+- **DataStore flavor is Preferences.** The 48 read accessors (counting rule in slices.md) map 1:1
   onto Preferences keys plus a typed wrapper; Proto schemas would add a
   serialization layer for no gain at this scale.
 - **`Server` stays one class.** Single `@Entity @Parcelize` class serving
@@ -56,12 +52,12 @@ machinery. See [plan](plan.md) for execution.
   stay compatible for the whole migration; refactoring happens strictly
   behind them. Improvements to the surface are post-migration work.
 - **Compose Material3 (`androidx.compose.material3`).** The view theme
-  (`Theme.Mumla`) extends `Theme.Material3.DayNight`, so M3 is the
+  (`Theme.Mumla`, via `Base.Theme.Mumla`, extends `Theme.Material3.DayNight.NoActionBar`), so M3 is the
   parity-correct choice; M2 would fight the screenshot gate.
 - **Screenshots: Paparazzi primary, on-device checklist for dialogs.**
   Paparazzi (JVM, no emulator) runs per-component regression inside the
-  worktree loop; emulator/device shots cover only what Paparazzi cannot
-  (dialogs, overlay, drawer gestures, rotation). Existing JVM tests
+  worktree loop; emulator/device shots cover only what Paparazzi cannot under the 1.3.x fallback
+  (dialogs, overlay, drawer gestures, rotation); on the primary 2.x line dialogs are Paparazzi-gated. Existing JVM tests
   (`ChannelFragmentDensityTest` et al.) backstop numerically.
 - **Forward-only history, no autonomous landing.** Per repository policy,
   the migration branch is merged into `master` only on explicit request,
