@@ -34,6 +34,8 @@ machinery. See [plan](plan.md) for execution.
   (Android 13 max), and the userbase is three people — so the floor
   costs nothing and deletes every version gate except `UPSIDE_DOWN_CAKE`.
   Revisit only if the fleet changes.
+- **Services become `LifecycleService`.** No attachment to the current
+  `Service` base; `lifecycleScope` is the service coroutine scope.
 - **Forward-only history, no autonomous landing.** Per repository policy,
   the migration branch is merged into `master` only on explicit request,
   never autonomously.

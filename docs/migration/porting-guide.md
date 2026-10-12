@@ -93,9 +93,9 @@ The rule: **network/audio threads parse; a confined scope mutates.**
 | Ad-hoc SRV single-thread executors | One shared `Dispatchers.IO` call with `withTimeout(800)` |
 | Capture `MumlaAudioInput` thread + render thread (`URGENT_AUDIO`, blocking `read`/`write`/`wait`) | **Stay raw threads.** Blocking audio IO is not suspendible; only the control plane (start/stop/join bookkeeping) moves into the scope. Join/interrupt/notify pairing stays exactly as-is |
 
-Services: prefer extending `LifecycleService` to get `lifecycleScope`;
-otherwise own a `SupervisorJob` created in `onCreate` and cancelled in
-`onDestroy`. Never use `GlobalScope`.
+Services: extend `LifecycleService` (decided — no attachment to the
+current `Service` base) and use `lifecycleScope` as the service scope.
+Never use `GlobalScope`.
 
 ## 3. Data layer → Room + DataStore + Hilt
 
