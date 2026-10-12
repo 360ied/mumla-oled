@@ -112,7 +112,36 @@ Never use `GlobalScope`.
   `MumlaService.onSharedPreferenceChanged` and
   `HumlaService.configureExtras` collapse into `apply(ConfigDelta)`; the
   stringly `EXTRAS_*` bundle dies. Every key must survive the round trip
-  or `check.sh` + behavior tests fail the slice.
+  or `check.sh` + behavior tests fail the slice. Shape (humla `util/ConfigDelta.kt`,
+  one-shot command — constructed per change, never stored; nullable field =
+  unchanged; `apply()` skips nulls in fixed order: identity/reconnect keys →
+  audio pipeline params → live sends → side-effect appliers; returns whether
+  a reconnect is needed):
+
+  ```kotlin
+  data class CertRef(val data: ByteArray, val password: String?)
+  data class TrustStoreRef(val path: String, val password: String?, val format: String?)
+  data class ConfigDelta(
+      val server: Server? = null,
+      val certificate: CertRef? = null,
+      val forceTcp: Boolean? = null,
+      val trustStore: TrustStoreRef? = null,
+      val transmitMode: Int? = null,
+      val detectionThreshold: Float? = null,
+      val amplitudeBoost: Float? = null,
+      val inputQuality: Int? = null,
+      val framesPerPacket: Int? = null,
+      val halfDuplex: Boolean? = null,
+      val bluetoothSco: Boolean? = null,
+      val adaptiveLeveler: Boolean? = null,
+      val accessTokens: List<String>? = null, // live-sent, no reload
+      val theme: String? = null,             // applier: applyTheme
+      val overlayShown: Boolean? = null,     // applier: updateOverlayVisibility
+      val overlayPlacement: String? = null,  // applier: updateOverlayPosition
+      // ttsEngine needs tri-state (unchanged vs system-default vs engine pkg):
+      val ttsEngine: java.util.Optional<String>? = null,
+  )
+  ```
 - **Provider interfaces → Hilt:** `HumlaServiceProvider`,
   `DatabaseProvider` and manual singletons become `@Module`s;
   `@Singleton`/`@ServiceScoped` match today's lifetimes. Existing
