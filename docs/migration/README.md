@@ -42,7 +42,7 @@ machinery. See [plan](plan.md) for execution.
 - **Trial slice is the minSdk-33 deletion.** Deletion-only, zero new
   dependencies — it proves the worktree plus `check.sh` loop before
   anything irreversible. Afterwards, follow the slice order in [plan](plan.md) (data layer next).
-- **DataStore flavor is Preferences.** The 46 read accessors (counting rule in slices.md) map 1:1
+- **DataStore flavor is Preferences.** The 46 read accessors over 41 keys (counting rule in slices.md) map per-key
   onto Preferences keys plus a typed wrapper; Proto schemas would add a
   serialization layer for no gain at this scale.
 - **`Server` stays one class.** Single `@Entity @Parcelize` class serving

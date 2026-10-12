@@ -49,7 +49,7 @@ rewrite:
 - Theme ported once into a Compose **Material3** `MaterialTheme`
   (the view theme `Theme.Mumla`, via `Base.Theme.Mumla`, extends `Theme.Material3.DayNight.NoActionBar`) via tokens — no hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
 - Screenshot regression runs **Paparazzi** per component in the worktree loop;
-  emulator/device shots cover only dialogs, overlay, drawer gestures, and rotation.
+  emulator/device shots cover overlay, drawer gestures, and rotation always, plus dialogs only in the 1.3.x fallback (primary Gradle-9/2.x path gates dialogs in Paparazzi).
 - `ChannelFragmentDensityTest` and the comment-dialog tests carry over;
   a test needing a rewrite is a smell that behavior moved.
 
