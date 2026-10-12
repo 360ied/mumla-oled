@@ -103,6 +103,29 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - Owed: on-device connect/voice/reconnect-toast pass; R8/release still
   deferred to pre-landing.
 
+## Slice 3 — Kotlin conversion, `:libraries:humla` (IN PROGRESS 2026-10-12, fast suites green)
+
+- `99bb3499` — batch 1 (`exception/*` + `Constants`): identical exception
+  overloads with explicit nullable types (`AudioException` open); `Constants`
+  becomes an `object` with `const val` literals (Java switch labels keep
+  compiling) + `@JvmField`/`@JvmStatic` for derived values and functions.
+- `3b9d7144` — batch 2 (`util/*`, 10 files): nullable-parameter observer
+  trio (`HumlaObserver`/`HumlaNetworkListener` stay `open`); `HumlaException`
+  parcel layout + static `CREATOR` intact; `parseURL` keeps `@Throws` for Java
+  catch sites; `VoiceTargetMode` range mapping literal.
+- `6ddd55d3` — batch 3 (`model/*`, 13 files; `Server` deferred to slice 5):
+  accessors become properties (JVM-identical signatures); asymmetric
+  `ByteString` accessors stay explicit; self-mute coercion moves into
+  property setters; `canEnter()` stays a method pair; `IChannel.getParent`
+  narrows to `Channel` (all readers source-compatible).
+- Converter lessons (first compile caught all five): no smart-cast on
+  mutable properties (copy to locals), stdlib `compareTo(..., ignoreCase)`
+  over Java `compareToIgnoreCase`, `Byte` ranges iterate as `Int` (no
+  `Byte.rangeTo`).
+- Verification so far: full `testFossDebugUnitTest` green per batch
+  (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
+  observer/voice-target suites). Full `check.sh` owed at the slice boundary.
+
 ## Next
 
-Slice 3 — Kotlin conversion of `:libraries:humla`, per [slices](slices.md).
+Slice 3 batch 4 — `audio/inputmode/*`, per [slices](slices.md).

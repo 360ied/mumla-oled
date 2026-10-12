@@ -241,9 +241,9 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
 62 files total, 60 to convert (minus generated protobuf (`Mumble.java`, `MumbleUDP.java` —
 never touched)). Batches in dependency order, ~one package per commit:
 
-1. `exception/*` (4: `AudioException`, `AudioInitializationException`, `NotConnectedException`, `NotSynchronizedException`) + `Constants.java`
-2. `util/*` (10: `HumlaCallbacks`, `HumlaDisconnectedException`, `HumlaException`, `HumlaLogger`, `HumlaNetworkListener`, `HumlaObserver`, `IHumlaObserver`, `MessageFormatter`, `MumbleURLParser`, `VoiceTargetMode`)
-3. `model/*` (13 files + `Server` deferred: `Channel`, `IChannel`, `IMessage`, `IServerSettings`, `IUser`, `Message`, `ServerSettings`, `TalkState`, `User`, `WhisperTarget`, `WhisperTargetChannel`, `WhisperTargetList`, `WhisperTargetUsers`; `Server` converts in slice 5)
+1. `exception/*` (4: `AudioException`, `AudioInitializationException`, `NotConnectedException`, `NotSynchronizedException`) + `Constants.java` (DONE `99bb3499`)
+2. `util/*` (10: `HumlaCallbacks`, `HumlaDisconnectedException`, `HumlaException`, `HumlaLogger`, `HumlaNetworkListener`, `HumlaObserver`, `IHumlaObserver`, `MessageFormatter`, `MumbleURLParser`, `VoiceTargetMode`) (DONE `3b9d7144`)
+3. `model/*` (13 files + `Server` deferred: `Channel`, `IChannel`, `IMessage`, `IServerSettings`, `IUser`, `Message`, `ServerSettings`, `TalkState`, `User`, `WhisperTarget`, `WhisperTargetChannel`, `WhisperTargetList`, `WhisperTargetUsers`; `Server` converts in slice 5) (DONE `6ddd55d3`)
 4. `audio/inputmode/*` (4: `ActivityInputMode`, `ContinuousInputMode`, `IInputMode`, `ToggleInputMode`)
 5. `audio/*` (6: `AudioInput`, `AudioOutput`, `BluetoothScoManager` convert normally;
    `NativeAudioInputEngine`, `NativeAudioOutputEngine` convert
