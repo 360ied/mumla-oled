@@ -30,7 +30,10 @@
 
           # Centralized Android SDK and NDK configuration
           androidConfig = {
-            buildToolsVersion = "35.0.0";
+            # AGP 9.0 requires Build-Tools 36.0.0 (minimum per its compat table);
+            # adopted with the AGP 9 toolchain (was 35.0.0). aapt2Path below
+            # follows this version automatically.
+            buildToolsVersion = "36.0.0";
             platformVersions = [ "36" ];
             abiVersions = [
               "x86_64"

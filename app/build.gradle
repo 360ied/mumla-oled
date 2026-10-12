@@ -24,7 +24,8 @@ plugins {
     alias(libs.plugins.kotlin.kapt)
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.hilt)
-    // Paparazzi DEFERRED to slice 6 (see catalog note): applying it breaks AGP 8.13.2.
+    // Paparazzi deferred (see catalog): 2.0.0-alpha05.1 breaks the unit-test
+    // runtime on AGP 9 (and resource merging on AGP 8); re-evaluate at slice 6.
     // alias(libs.plugins.paparazzi)
 }
 
@@ -59,6 +60,8 @@ android {
     // gradle8: Need to enable this when defaultConfig below contains some custom BuildConfig
     buildFeatures {
         buildConfig = true
+        // AGP 9 defaults resValues off; this project uses resValue below.
+        resValues = true
     }
 
     def gitDescribeRaw = providers.exec {

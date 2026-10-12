@@ -21,16 +21,17 @@
 # at scaffold (latest symbol-processing-api is 2.3.12), so new files use kapt
 # with a TODO to migrate when a stable KSP 2.4 line lands.
 # TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
-# (An earlier scaffold draft used KSP 2.3.12 + Kotlin 2.3.21 while Kotlin 2.4.21
-# was under suspicion; suspicion cleared — see versions note above.)
 
 [versions]
-agp = "8.13.2"
-# Kotlin re-verification (2026-10-12): the original 2.4.21 pin was suspected after a
-# MergeResources failure, but the failure bisected to the Paparazzi plugin (see
-# paparazzi note below) — not to Kotlin. 2.4.21 is therefore reinstated as the
-# floor (AGP 8.13.2 is inside its supported range). If a future failure bisects
-# cleanly to KGP 2.4 (Paparazzi absent), fall back to 2.3.21 + KSP 2.3.12.
+# AGP 9 adoption (slice 0): AGP 9.0.1 + Gradle 9.1.0 (AGP 9.0 minimums), minimal
+# delta from 8.13.2/8.13. Proven by the spike/agp9 worktree (check.sh green +
+# assembleFossDebug APK). Outstanding: new-DSL/built-in-Kotlin migration,
+# release/R8 verification (deferred to pre-landing).
+agp = "9.0.1"
+# Kotlin 2.4.21 stands: an early MergeResources failure suspected KGP but
+# bisected cleanly to the Paparazzi plugin (see note below) — not to Kotlin.
+# If a future failure bisects cleanly to KGP 2.4 (Paparazzi absent), fall back
+# to 2.3.21 + KSP 2.3.12.
 kotlin = "2.4.21"
 # KSP fork (ordered, not open): no stable KSP for Kotlin 2.4 on Maven Central
 # at scaffold (latest symbol-processing-api is 2.3.12), so kapt + TODO.
@@ -41,25 +42,21 @@ navigation-compose = "2.10.2"
 activity-compose = "1.13.0"
 hilt-navigation-compose = "1.4.0"
 lifecycle = "2.11.0"
-# Hilt fork (ordered, not open): Hilt >= 2.59 requires AGP 9 (dagger-2.59 release
-# notes, Jan 2026); this repo stays on AGP 8.13.2, so the last AGP-8-compatible
-# line 2.58 is pinned. Revisit only with an AGP 9 upgrade (out of migration scope).
-# NOTE for slice 7: re-verify androidx-hilt 1.4.0 against Hilt 2.58 when adding
-# hilt-navigation-compose; downgrade androidx-hilt if its transitive floor moved.
-hilt = "2.58"
+# Hilt 2.60.1 requires AGP >= 9 (satisfied by the adoption above). NOTE for
+# slice 7: re-verify androidx-hilt 1.4.0 against Hilt 2.60 when adding
+# hilt-navigation-compose.
+hilt = "2.60.1"
 androidx-hilt = "1.4.0"
 room = "2.8.5"
 datastore-preferences = "1.2.1"
-# Paparazzi fork (RESOLVED 2026-10-12, AGP-incompatibility — not the Gradle fork
-# slices.md anticipated): applying app.cash.paparazzi 2.0.0-alpha05.1 ANYWHERE in
-# the build (app module or root `apply false`) breaks AGP 8.13.2 resource merging
-# build-wide (`MergedResourceWriterRequest` NoSuchMethodError in
-# :libraries:humla:packageDebugResources; bisected with all other plugins off).
-# The 2.x line targets the AGP 9 era; the 1.3.x fallback is dead (layoutlib caps
-# at compileSdk 35, project is on 36). Paparazzi is therefore DEFERRED to slice 6:
-# re-evaluate then (stable 2.0.0 / AGP situation may have moved). The version pin
-# stays below as the re-evaluation starting point. A Gradle 9.x wrapper upgrade
-# was NOT attempted — the conflict is with AGP 8.13.2's tools, not with Gradle.
+# Paparazzi fork (RESOLVED 2026-10-12: disqualified on AGP 8 AND AGP 9,
+# deferred to slice 6): on AGP 8 it breaks resource merging build-wide
+# (`MergedResourceWriterRequest` NoSuchMethodError); on AGP 9 it configures and
+# merges cleanly but breaks the unit-test runtime (ships `android-all` real
+# framework classes shadowing the mockable android.jar — same 7 stub-dependent
+# failures, all green with the plugin off). The 1.3.x fallback is dead
+# (layoutlib caps at compileSdk 35; project is on 36). Pin kept as the slice-6
+# re-evaluation starting point (stable 2.0.0 may have moved by then).
 paparazzi = "2.0.0-alpha05.1"
 
 [libraries]

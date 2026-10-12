@@ -12,9 +12,11 @@ for agent-reviewed slices. The binder surface
    `./scripts/worktree.py add migration/full-modern`
 2. Add `gradle/libs.versions.toml` with these pins (verified 2026-10-12,
    re-verify at scaffold; floors are binding, patches float). Scaffold outcomes
-   (bisected 2026-10-12, recorded here per the spike order below):
-   - `kotlin = "2.4.21"` (AGP 8.13.2 is inside its supported range — stands;
-     a `MergeResources` failure initially suspected KGP but bisected cleanly to
+   (bisected 2026-10-12, recorded here per the spike order below; toolchain
+   adoption at the end of slice 0 supersedes the AGP 8.13-era corrections):
+   - `agp = "9.0.1"`, Gradle wrapper `9.1.0` (AGP 9.0 minimums; adopted — see
+     toolchain note below; was 8.13.2/8.13), `kotlin = "2.4.21"` (stands; a
+     `MergeResources` failure initially suspected KGP but bisected cleanly to
      the Paparazzi plugin, not to Kotlin),
      kapt (no stable KSP for Kotlin 2.4 on Central at scaffold — latest
      `symbol-processing-api` is 2.3.12) + TODO to migrate when a stable KSP 2.4
@@ -23,30 +25,39 @@ for agent-reviewed slices. The binder surface
    - `compose-bom = "2026.09.00"` (pins `compose-material3 1.4.0`),
      no hand-pinned Compose artifacts
    - `navigation-compose = "2.10.2"`, `activity-compose = "1.13.0"`, `hilt-navigation-compose = "1.4.0"`, `lifecycle-runtime-compose` (in `lifecycle 2.11.0`)
-   - `hilt = "2.58"` (`com.google.dagger`; corrected from 2.60.1 at scaffold:
-     Hilt >= 2.59 requires AGP 9 per the dagger-2.59 release notes, and this repo
-     stays on AGP 8.13.2 — 2.58 is the last AGP-8-compatible line), `androidx-hilt = "1.4.0"`
-     (re-verify against Hilt 2.58 when adding `hilt-navigation-compose` in slice 7)
+   - `hilt = "2.60.1"` (`com.google.dagger`; restored — the AGP 9 adoption
+     below satisfies its AGP >= 9 requirement; the 2.58 cap applied only to the
+     AGP 8.13 era), `androidx-hilt = "1.4.0"`
+     (re-verify against Hilt 2.60 when adding `hilt-navigation-compose` in slice 7)
    - `room = "2.8.5"` (`androidx.room`; not the `room3` 3.0.x line)
    - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`), `datastore-preferences = "1.2.1"`
    - `paparazzi = "2.0.0-alpha05.1"` — alpha accepted deliberately: the
      2.x line renders dialogs/popups as real windows, which the dialog
-     parity gate needs. **Paparazzi fork (RESOLVED 2026-10-12: AGP-incompatible,
-     deferred to slice 6):** applying the plugin ANYWHERE in the build (app
-     module or root `apply false`) breaks AGP 8.13.2 resource merging
-     build-wide (`MergedResourceWriterRequest` NoSuchMethodError in
-     `:libraries:humla:packageDebugResources`; bisected with every other new
-     plugin off, and Kotlin 2.4.21 cleared in the same bisection). The 2.x line
-     targets the AGP 9 era; the 1.3.x fallback is dead (its layoutlib caps at
-     compileSdk 35; the project is on 36). A Gradle 9.x wrapper upgrade was NOT
-     attempted — the conflict is with AGP 8.13.2's tools, not with Gradle — so
-     the anticipated Gradle fork never materialized. Slice 0 lands WITHOUT the
-     Paparazzi plugin (pin kept in the catalog as the slice-6 re-evaluation
-     starting point); screenshot rendering is proven in slice 6, which
-     re-evaluates (stable 2.0.0 / AGP situation may have moved by then).
+     parity gate needs. **Paparazzi fork (RESOLVED 2026-10-12: disqualified on
+     AGP 8 AND AGP 9, deferred to slice 6):** on AGP 8.13.2, applying the plugin
+     ANYWHERE in the build breaks resource merging build-wide
+     (`MergedResourceWriterRequest` NoSuchMethodError; bisected with every other
+     new plugin off, Kotlin 2.4.21 cleared). On AGP 9.0.1 it configures and
+     merges cleanly but breaks the unit-test runtime instead (ships `android-all`
+     real framework classes that shadow the mockable `android.jar`: the same 7
+     stub-dependent tests fail, including the must-keep-unmodified
+     `ChannelFragmentDensityTest`; all green with the plugin off). The 1.3.x
+     fallback is dead (its layoutlib caps at compileSdk 35; the project is on
+     36). Slice 0 lands WITHOUT the Paparazzi plugin (pin kept in the catalog
+     as the slice-6 re-evaluation starting point); screenshot rendering is
+     proven in slice 6, which re-evaluates (stable 2.0.0 may have moved by then).
+   - **Toolchain adoption (end of slice 0, from the `spike/agp9` worktree):**
+     AGP `9.0.1` + Gradle `9.1.0` + Hilt `2.60.1`, with AGP 9 opt-outs
+     (`android.newDsl=false`, `android.builtInKotlin=false` in
+     `gradle.properties`) isolating the bump from DSL/behavior migration,
+     `resValues = true` for the AGP 9 default flip (the app uses `resValue`),
+     and `flake.nix` Build-Tools 35.0.0 → 36.0.0 (AGP 9 minimum). Proven by
+     `check.sh` green + `assembleFossDebug` APK in the spike. Outstanding debt:
+     full new-DSL/built-in-Kotlin migration; release/R8 verification deferred
+     to pre-landing (explicitly accepted).
 3. Apply plugins: `org.jetbrains.kotlin.android` (both modules),
    `org.jetbrains.kotlin.kapt` + TODO (KSP fork above), `com.google.dagger.hilt.android`
-   (2.58) with `hilt-android`/`hilt-compiler` scaffold deps (no code uses them yet),
+   (2.60.1) with `hilt-android`/`hilt-compiler` scaffold deps (no code uses them yet),
    `org.jetbrains.kotlin.plugin.parcelize`, Paparazzi deferred (fork above).
    minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).
 4. Baseline: `./scripts/check.sh` green before any slice-1 edit.
