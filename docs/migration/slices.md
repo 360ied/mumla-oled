@@ -138,7 +138,7 @@ code), `MumlaImageGetter.java:393` (comment noting no gate),
   SCO connect/disconnect, A2DP attach, overlay show/hide, notification
   post/dismiss.
 
-## Slice 2 — Data layer (Java; Kotlin conversion comes in slices 3/5)
+## Slice 2 — Data layer (DONE 2026-10-12, `check.sh` green)
 
 Room + DataStore + Hilt so the tree stays
 green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin conversions of existing files here.

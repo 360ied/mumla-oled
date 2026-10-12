@@ -73,6 +73,11 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   `hilt-navigation-compose` in slice 7.
 - kapt → KSP when a stable KSP for Kotlin 2.4 lands.
 
+## Review
+
+- Pedantic review fan-out (6 slices, `reviewer` agents) running over the
+  full worktree diff; synthesis and fixes to follow before slice 3.
+
 ## Slice 2 — Data layer (DONE 2026-10-12, `check.sh` green)
 
 - `0b44fc2a` — Room v10 (`MumlaRoomDatabase` behind `MumlaDatabase`, 7
