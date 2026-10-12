@@ -46,14 +46,17 @@ rewrite:
 - Same `res/` visuals (theme, colors, dimens, drawables, copy), same
   navigation structure and order, same dialog titles/buttons/semantics
   (including pause-dismissal and rapid-tap behavior).
-- Theme ported once into a Compose **M2** `MaterialTheme` (`androidx.compose.material`)
-  via tokens — no hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
+- Theme ported once into a Compose **Material3** `MaterialTheme`
+  (the view theme extends `Theme.Material3.DayNight`) via tokens — no hardcoded Compose defaults (ripples, elevations, shapes) leaking in.
 - Screenshot regression runs **Paparazzi** per component in the worktree loop;
   emulator/device shots cover only dialogs, overlay, drawer gestures, and rotation.
 - `ChannelFragmentDensityTest` and the comment-dialog tests carry over;
   a test needing a rewrite is a smell that behavior moved.
 
 ## Proposed slice order (each an atomic commit, always green)
+
+Concrete per-slice plan (file lists, pins, verification) lives in
+[slices](slices.md). Summary:
 
 1. minSdk 33 + legacy deletion (decided: Pixel 4a floor — deletes
    M/N/O/Q/R/S/S_V2/TIRAMISU gates including the SCO legacy path and the `ChannelChatFragment` storage branch).

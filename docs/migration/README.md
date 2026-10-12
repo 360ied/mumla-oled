@@ -55,9 +55,9 @@ machinery. See [plan](plan.md) for execution.
 - **Binder surface frozen.** `IMumlaService`/`IHumlaService`/`IHumlaSession`
   stay compatible for the whole migration; refactoring happens strictly
   behind them. Improvements to the surface are post-migration work.
-- **Compose M2 (`androidx.compose.material`).** Its defaults descend from
-  the same tokens as the AppCompat/Material-1.13 views being matched;
-  M3 would fight the screenshot gate on every component.
+- **Compose Material3 (`androidx.compose.material3`).** The view theme
+  (`Theme.Mumla`) extends `Theme.Material3.DayNight`, so M3 is the
+  parity-correct choice; M2 would fight the screenshot gate.
 - **Screenshots: Paparazzi primary, on-device checklist for dialogs.**
   Paparazzi (JVM, no emulator) runs per-component regression inside the
   worktree loop; emulator/device shots cover only what Paparazzi cannot
@@ -77,3 +77,4 @@ machinery. See [plan](plan.md) for execution.
 
 - [plan](plan.md) — scope, fences, slice order, guardrails, verification.
 - [porting-guide](porting-guide.md) — the mechanical Java→Kotlin/coroutines/Room/Compose mapping converters follow literally.
+- [slices](slices.md) — the concrete per-slice work plan (inventories, pins, verification).
