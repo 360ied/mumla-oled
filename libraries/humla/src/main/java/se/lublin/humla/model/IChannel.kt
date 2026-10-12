@@ -15,42 +15,40 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.model;
+package se.lublin.humla.model
 
-import java.util.List;
+interface IChannel {
+    val users: List<User>
 
-public interface IChannel {
-    List<? extends IUser> getUsers();
+    val id: Int
 
-    int getId();
+    val position: Int
 
-    int getPosition();
+    val isTemporary: Boolean
 
-    boolean isTemporary();
+    var parent: Channel?
 
-    IChannel getParent();
+    val name: String?
 
-    String getName();
+    val description: String?
 
-    String getDescription();
+    val descriptionHash: ByteArray?
 
-    byte[] getDescriptionHash();
+    val subchannels: List<Channel>
 
-    List<? extends IChannel> getSubchannels();
+    val subchannelUserCount: Int
 
-    int getSubchannelUserCount();
+    val links: List<Channel>
 
-    List<? extends IChannel> getLinks();
+    val permissions: Int
 
-    int getPermissions();
+    val maxUsers: Int
 
-    int getMaxUsers();
+    val isEnterRestricted: Boolean
 
-    boolean isEnterRestricted();
+    fun canEnter(): Boolean
 
-    boolean canEnter();
+    val isListening: Boolean
 
-    boolean isListening();
-
-    float getListeningVolume();
+    val listeningVolume: Float
 }

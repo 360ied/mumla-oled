@@ -15,21 +15,31 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.model;
+package se.lublin.humla.model
 
-import se.lublin.humla.protobuf.Mumble;
+import se.lublin.humla.protobuf.Mumble
 
 /**
+ * An abstraction around a channel whisper target.
  * Created by andrew on 28/04/16.
  */
-public class WhisperTargetUsers implements WhisperTarget {
-    @Override
-    public Mumble.VoiceTarget.Target createTarget() {
-        throw new UnsupportedOperationException(); // TODO
+class WhisperTargetChannel(
+    private val channel: IChannel,
+    private val includeLinked: Boolean,
+    private val includeSubchannels: Boolean,
+    private val groupRestriction: String?
+) : WhisperTarget {
+    override fun createTarget(): Mumble.VoiceTarget.Target {
+        val vtb = Mumble.VoiceTarget.Target.newBuilder()
+        vtb.setLinks(includeLinked)
+        vtb.setChildren(includeSubchannels)
+        if (groupRestriction != null) {
+            vtb.setGroup(groupRestriction)
+        }
+        vtb.setChannelId(channel.id)
+        return vtb.build()
     }
 
-    @Override
-    public String getName() {
-        throw new UnsupportedOperationException(); // TODO
-    }
+    override val name: String?
+        get() = channel.name
 }

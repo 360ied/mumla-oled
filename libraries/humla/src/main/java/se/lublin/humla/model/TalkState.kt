@@ -15,40 +15,39 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.model;
+package se.lublin.humla.model
 
-import android.os.Parcel;
-import android.os.Parcelable;
+import android.os.Parcel
+import android.os.Parcelable
 
 /**
  * User talk state.
  * Created by andrew on 19/04/15.
  */
-public enum TalkState implements Parcelable {
+enum class TalkState : Parcelable {
     TALKING,
     SHOUTING,
     PASSIVE,
     WHISPERING;
 
-    public static Creator<TalkState> CREATOR = new Creator<TalkState>() {
-        @Override
-        public TalkState createFromParcel(Parcel source) {
-            return TalkState.values()[source.readInt()];
-        }
-
-        @Override
-        public TalkState[] newArray(int size) {
-            return new TalkState[size];
-        }
-    };
-
-    @Override
-    public int describeContents() {
-        return 0;
+    override fun describeContents(): Int {
+        return 0
     }
 
-    @Override
-    public void writeToParcel(Parcel dest, int flags) {
-        dest.writeInt(ordinal());
+    override fun writeToParcel(dest: Parcel, flags: Int) {
+        dest.writeInt(ordinal)
+    }
+
+    companion object {
+        @JvmField
+        val CREATOR: Parcelable.Creator<TalkState> = object : Parcelable.Creator<TalkState> {
+            override fun createFromParcel(source: Parcel): TalkState {
+                return entries[source.readInt()]
+            }
+
+            override fun newArray(size: Int): Array<TalkState?> {
+                return arrayOfNulls(size)
+            }
+        }
     }
 }

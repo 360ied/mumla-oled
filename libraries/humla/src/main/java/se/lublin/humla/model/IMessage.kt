@@ -15,22 +15,20 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.model;
+package se.lublin.humla.model
 
-import java.util.List;
+interface IMessage {
+    val actor: Int
 
-public interface IMessage {
-    int getActor();
+    val actorName: String?
 
-    String getActorName();
+    val targetChannels: List<Channel>
 
-    List<Channel> getTargetChannels();
+    val targetTrees: List<Channel>
 
-    List<Channel> getTargetTrees();
+    val targetUsers: List<User>
 
-    List<User> getTargetUsers();
+    val message: String?
 
-    String getMessage();
-
-    long getReceivedTime();
+    val receivedTime: Long
 }
