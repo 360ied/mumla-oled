@@ -15,23 +15,22 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.util;
+package se.lublin.humla.util
 
-import java.net.MalformedURLException;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import se.lublin.humla.Constants;
-import se.lublin.humla.model.Server;
+import java.net.MalformedURLException
+import java.util.regex.Pattern
+import se.lublin.humla.Constants
+import se.lublin.humla.model.Server
 
 /**
  * An implementation of the Mumble URL scheme.
  * @see <a href="http://mumble.sourceforge.net/Mumble_URL">http://mumble.sourceforge.net/Mumble_URL</a>
  * Created by andrew on 03/03/14.
  */
-public class MumbleURLParser {
+object MumbleURLParser {
 
-    private static final Pattern URL_PATTERN = Pattern.compile("mumble://(([^:]+)?(:(.+?))?@)?(.+?)(:([0-9]+?))?/");
+    private val URL_PATTERN: Pattern =
+        Pattern.compile("mumble://(([^:]+)?(:(.+?))?@)?(.+?)(:([0-9]+?))?/")
 
     /**
      * Parses the passed Mumble URL into a Server object.
@@ -39,30 +38,32 @@ public class MumbleURLParser {
      * @return A server with the data specified in the Mumble URL.
      * @throws MalformedURLException if the URL cannot be parsed.
      */
-    public static Server parseURL(String url) throws MalformedURLException {
+    @JvmStatic
+    @Throws(MalformedURLException::class)
+    fun parseURL(url: String?): Server {
         if (url == null) {
-            throw new MalformedURLException("URL is null");
+            throw MalformedURLException("URL is null")
         }
-        Matcher matcher = URL_PATTERN.matcher(url);
-        if(matcher.find()) {
-            String username = matcher.group(2);
-            String password = matcher.group(4);
-            String host = matcher.group(5);
-            String portString = matcher.group(7);
-            int port = Constants.DEFAULT_PORT;
+        val matcher = URL_PATTERN.matcher(url)
+        if (matcher.find()) {
+            val username = matcher.group(2)
+            val password = matcher.group(4)
+            val host = matcher.group(5)
+            val portString = matcher.group(7)
+            var port = Constants.DEFAULT_PORT
             if (portString != null) {
                 try {
-                    port = Integer.parseInt(portString);
-                } catch (NumberFormatException e) {
-                    throw new MalformedURLException("Invalid port: " + portString);
+                    port = portString.toInt()
+                } catch (e: NumberFormatException) {
+                    throw MalformedURLException("Invalid port: " + portString)
                 }
                 if (port > 65535) {
-                    throw new MalformedURLException("Port out of range: " + portString);
+                    throw MalformedURLException("Port out of range: " + portString)
                 }
             }
-            return new Server(-1, null, host, port, username, password);
+            return Server(-1, null, host, port, username, password)
         } else {
-            throw new MalformedURLException();
+            throw MalformedURLException()
         }
     }
 }

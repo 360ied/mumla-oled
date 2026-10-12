@@ -15,57 +15,60 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.util;
+package se.lublin.humla.util
 
-import java.security.cert.X509Certificate;
-
-import se.lublin.humla.model.IChannel;
-import se.lublin.humla.model.IMessage;
-import se.lublin.humla.model.IUser;
-import se.lublin.humla.net.HandshakeFailure;
+import java.security.cert.X509Certificate
+import se.lublin.humla.model.IChannel
+import se.lublin.humla.model.IMessage
+import se.lublin.humla.model.IUser
+import se.lublin.humla.net.HandshakeFailure
 
 /**
  * Created by andrew on 18/10/15.
  */
-public interface IHumlaObserver {
-    void onConnected();
+interface IHumlaObserver {
+    fun onConnected()
 
-    void onConnecting();
+    fun onConnecting()
 
-    void onDisconnected(HumlaException e);
+    fun onDisconnected(e: HumlaException?)
 
-    void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost);
+    fun onTLSHandshakeFailed(
+        chain: Array<X509Certificate>?,
+        failure: HandshakeFailure?,
+        verifiedHost: String?
+    )
 
-    void onChannelAdded(IChannel channel);
+    fun onChannelAdded(channel: IChannel?)
 
-    void onChannelStateUpdated(IChannel channel);
+    fun onChannelStateUpdated(channel: IChannel?)
 
-    void onChannelRemoved(IChannel channel);
+    fun onChannelRemoved(channel: IChannel?)
 
-    void onChannelPermissionsUpdated(IChannel channel);
+    fun onChannelPermissionsUpdated(channel: IChannel?)
 
-    void onUserConnected(IUser user);
+    fun onUserConnected(user: IUser?)
 
-    void onUserStateUpdated(IUser user);
+    fun onUserStateUpdated(user: IUser?)
 
-    void onUserTalkStateUpdated(IUser user);
+    fun onUserTalkStateUpdated(user: IUser?)
 
-    void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel);
+    fun onUserJoinedChannel(user: IUser?, newChannel: IChannel?, oldChannel: IChannel?)
 
-    void onUserRemoved(IUser user, String reason);
+    fun onUserRemoved(user: IUser?, reason: String?)
 
-    void onPermissionDenied(String reason);
+    fun onPermissionDenied(reason: String?)
 
-    void onMessageLogged(IMessage message);
+    fun onMessageLogged(message: IMessage?)
 
-    void onVoiceTargetChanged(VoiceTargetMode mode);
+    fun onVoiceTargetChanged(mode: VoiceTargetMode?)
 
     /**
      * Called on the main thread when the Bluetooth SCO link transitions.
      * @param active true if SCO is up and carrying call audio, false on
      *               teardown or failed bring-up (phone-audio fallback).
      */
-    void onBluetoothScoChanged(boolean active);
+    fun onBluetoothScoChanged(active: Boolean)
 
     /**
      * Called on the main thread after every confirmed audio-route change
@@ -73,11 +76,11 @@ public interface IHumlaObserver {
      * pipeline reload. Use it to follow output routing (e.g. volume stream);
      * SCO-specific UI belongs in onBluetoothScoChanged.
      */
-    void onAudioRouteChanged();
+    fun onAudioRouteChanged()
 
-    void onLogInfo(String message);
+    fun onLogInfo(message: String?)
 
-    void onLogWarning(String message);
+    fun onLogWarning(message: String?)
 
-    void onLogError(String message);
+    fun onLogError(message: String?)
 }

@@ -15,25 +15,29 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.util;
+package se.lublin.humla.util
 
 /**
  * Created by andrew on 29/04/16.
  */
-public enum VoiceTargetMode {
+enum class VoiceTargetMode {
     NORMAL,
     WHISPER,
     SERVER_LOOPBACK;
 
-    public static VoiceTargetMode fromId(byte targetId) {
-        if (targetId == 0) {
-            return VoiceTargetMode.NORMAL;
-        } else if (targetId > 0 && targetId < 31) {
-            return VoiceTargetMode.WHISPER;
-        } else if (targetId == 31) {
-            return VoiceTargetMode.SERVER_LOOPBACK;
-        } else {
-            throw new IllegalArgumentException();
+    companion object {
+        @JvmStatic
+        fun fromId(targetId: Byte): VoiceTargetMode {
+            val id = targetId.toInt()
+            if (id == 0) {
+                return NORMAL
+            } else if (id in 1..30) {
+                return WHISPER
+            } else if (id == 31) {
+                return SERVER_LOOPBACK
+            } else {
+                throw IllegalArgumentException()
+            }
         }
     }
 }

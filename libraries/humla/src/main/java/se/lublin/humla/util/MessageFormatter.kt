@@ -15,24 +15,25 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.util;
+package se.lublin.humla.util
 
 /**
  * Formats strings into HTML.
  * Created by andrew on 24/08/13.
  */
-public class MessageFormatter {
+object MessageFormatter {
 
-    public static final String HIGHLIGHT_COLOR = "33b5e5";
+    const val HIGHLIGHT_COLOR = "33b5e5"
 
-    private static final String HTML_FONT_COLOR_FORMAT = "<font color=\"#%s\">%s</font>";
+    private const val HTML_FONT_COLOR_FORMAT = "<font color=\"#%s\">%s</font>"
 
     /**
-     * Highlights the passed string using the service's defined color {@link MessageFormatter#HIGHLIGHT_COLOR}.
+     * Highlights the passed string using the service's defined color [HIGHLIGHT_COLOR].
      * @param string The string to highlight.
      * @return The passed string enclosed with HTML font tags specifying the color.
      */
-    public static String highlightString(String string) {
-        return String.format(HTML_FONT_COLOR_FORMAT, HIGHLIGHT_COLOR, string);
+    @JvmStatic
+    fun highlightString(string: String?): String {
+        return String.format(HTML_FONT_COLOR_FORMAT, HIGHLIGHT_COLOR, string)
     }
 }
