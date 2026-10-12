@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2015 Andrew Comminos <andrew@comminos.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,22 +15,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.exception;
+package se.lublin.humla.exception
 
 /**
- * Created by andrew on 28/04/14.
+ * Thrown when a Humla connection has not yet been established.
+ * Created by andrew on 24/10/15.
  */
-@SuppressWarnings("serial")
-public class AudioInitializationException extends AudioException {
-    public AudioInitializationException(String message) {
-        super(message);
-    }
+class NotConnectedException : Exception {
+    constructor() : super("Not yet connected")
 
-    public AudioInitializationException(Throwable throwable) {
-        super(throwable);
-    }
-
-    public AudioInitializationException(String message, Throwable throwable) {
-        super(message, throwable);
-    }
+    constructor(message: String?) : super(message)
 }

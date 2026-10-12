@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2015 Andrew Comminos <andrew@comminos.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,22 +15,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla.exception;
+package se.lublin.humla.exception
 
 /**
- * Created by andrew on 28/04/14.
+ * Called when Humla has not yet received the ServerSync message from the server.
+ * Created by andrew on 24/10/15.
  */
-@SuppressWarnings("serial")
-public class AudioException extends Exception {
-    public AudioException(String message) {
-        super(message);
-    }
+class NotSynchronizedException : Exception {
+    constructor() : super("Not yet synchronized")
 
-    public AudioException(Throwable throwable) {
-        super(throwable);
-    }
-
-    public AudioException(String message, Throwable throwable) {
-        super(message, throwable);
-    }
+    constructor(message: String?) : super(message)
 }
