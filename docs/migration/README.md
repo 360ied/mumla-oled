@@ -56,8 +56,7 @@ machinery. See [plan](plan.md) for execution.
   parity-correct choice; M2 would fight the screenshot gate.
 - **Screenshots: Paparazzi primary, on-device checklist for dialogs.**
   Paparazzi (JVM, no emulator) runs per-component regression inside the
-  worktree loop; emulator/device shots cover only what Paparazzi cannot under the 1.3.x fallback
-  (dialogs, overlay, drawer gestures, rotation); on the primary 2.x line dialogs are Paparazzi-gated. Existing JVM tests
+  worktree loop; emulator/device shots cover only what Paparazzi cannot (overlay system windows, drawer gestures, rotation). On the primary path (Gradle 9.x + Paparazzi 2.x) dialogs are Paparazzi-gated; only if the 1.3.x fallback somehow works are dialogs on-device-only. Existing JVM tests
   (`ChannelFragmentDensityTest` et al.) backstop numerically.
 - **Forward-only history, no autonomous landing.** Per repository policy,
   the migration branch is merged into `master` only on explicit request,

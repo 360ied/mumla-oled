@@ -13,18 +13,16 @@ for agent-reviewed slices. The binder surface
 2. Add `gradle/libs.versions.toml` with these pins (verified 2026-10-12,
    re-verify at scaffold; floors are binding, patches float):
    - `kotlin = "2.4.21"` (AGP 8.13.2 is inside its supported range),
-     `ksp` = KSP2 build matching Kotlin 2.4.21 (resolve the exact artifact at scaffold),
-     `coroutines` = the release recommended for Kotlin 2.4 (verify at scaffold; floor 1.10.x)
+     `ksp` = KSP2 build matching Kotlin 2.4.21 (resolve the exact artifact at scaffold — the only unpinned entry),
+     `coroutines = "1.11.0"`
    - `compose-bom = "2026.09.00"` (pins `compose-material3 1.4.0`),
      no hand-pinned Compose artifacts
    - `hilt = "2.60.1"` (`com.google.dagger`), `androidx-hilt = "1.4.0"`
    - `room = "2.8.5"` (`androidx.room`; not the `room3` 3.0.x line)
-   - `lifecycle`, `datastore-preferences` = latest stable at scaffold (record exact versions in the slice-0 commit)
+   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`), `datastore-preferences = "1.2.1"`
    - `paparazzi = "2.0.0-alpha05.1"` — alpha accepted deliberately: the
      2.x line renders dialogs/popups as real windows, which the dialog
-     parity gate needs. **Fork:** if the plugin requires Gradle 9+
-     (wrapper here is 8.13), either upgrade the wrapper (recorded as its
-     own commit) or fall back to the Paparazzi 1.3.x stable line, in which case dialogs are gated on-device only (overriding the README fallback line, which describes this fork branch). The spike lands in slice 0 and its outcome is recorded here before slice 1 starts.
+     parity gate needs. **Gradle fork (resolved, not open):** upstream evidence (Gradle-9 compat tests targeting 9.1.0; 9.0 incompatible with Paparazzi master) says 2.x needs Gradle 9.x, and this repo's wrapper is 8.13 — so the primary path is upgrading the wrapper to Gradle 9.x as its own slice-0 commit, then applying the plugin. The 1.3.x fallback is likely dead (its layoutlib caps at compileSdk 35; the project is on 36). Spike order: try 2.0.0-alpha05.1 on 8.13 first (cheap disproof); on failure, upgrade wrapper, re-try; record the outcome here before slice 1.
 3. Apply plugins: `org.jetbrains.kotlin.android` (both modules),
    `com.google.devtools.ksp`, `com.google.dagger.hilt.android`,
    `org.jetbrains.kotlin.plugin.parcelize`, `app.cash.paparazzi` (app module). minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).
@@ -120,7 +118,40 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   `MumlaSQLiteDatabase` behind the `MumlaDatabase` interface.
 - **DataStore (Preferences):** the 46 `Settings` instance read accessors (get/is/should; excludes `getInstance`, static `isPttKeyBound`, and setters, which pair with their getter's key)
   (`Settings.java`, getter/setter groups: input, PTT/hot-corner, certs,
-  notifications/TTS, overlay, audio) become typed keys with defaults. Fleet settings survive via `SharedPreferencesMigration` + a per-key defaults table (defaults = today's `DEFAULT_*` constants); no key may silently reset.
+  notifications/TTS, overlay, audio) become typed keys with defaults. Fleet settings survive via `SharedPreferencesMigration` on the default prefs file (`<package>_preferences`, all keys) + the per-key defaults table below (defaults = today's `DEFAULT_*` constants and `getString/getInt/getBoolean` fallbacks); no key may silently reset.
+
+  | Key | Default | Notes |
+  |---|---|---|
+  | `audioInputMethod` | `"voiceActivity"` | drives `getHumlaInputMethod` |
+  | `vadThreshold` | `35` (int, read as /100) | |
+  | `talkKey` | `-1` (unset) | |
+  | `hotCorner` | `"none"` | + derived gravity |
+  | `hidePtt` | `false` (shown = !hide) | |
+  | `togglePtt` | `false` | |
+  | `input_quality` | `"48000"` (string, parsed) | misnamed: sample rate |
+  | `input_bitrate` | `40000` | |
+  | `inputVolume` | `100` (read as /100) | |
+  | `chatNotify`, `allowTalkBroadcast` | `true` | |
+  | `notification_style` | `"bigtext"` | |
+  | `mediaKeyMute`, `mediaKeyMuteTts` | `true` | |
+  | `useTts` | `true` | |
+  | `ttsEngine` | `null` (= system default) | read with null fallback |
+  | `shortTtsMessages` | `true` | |
+  | `theme` | `"forceBlack"` | read by `MumlaApplication`; drives OLED default |
+  | `language` | `"system"` | read by `MumlaApplication`; no `Settings` accessor |
+  | `pttButtonHeight` | `50` (clamp 40–400) | |
+  | `certificateId` | `-1` (none) | |
+  | `defaultUsername` | `"Mumla_User"` | |
+  | `forceTcp`, `muted`, `deafened` | `false` | |
+  | `firstRun` | `true` | |
+  | `load_images` | `false` | |
+  | `audio_per_packet` | `"2"` (string, parsed) | |
+  | `half_duplex`, `handset_mode`, `bluetooth_headset`, `ptt_sound` | `false` | |
+  | `adaptive_leveler`, `stay_awake` | `true` | |
+  | `show_user_count`, `startUpInPinnedMode`, `overlay_shown` | `false` | |
+  | `overlay_placement` | `"floating"` | |
+  | `overlay_hud_pos_x` / `_y` | caller-provided default | no fixed default |
+  | `newsShownVersions` | `{}` (empty set) | |
 - **`ConfigDelta`:** replaces the pref→bundle→effect double dispatch
   (`MumlaService.onSharedPreferenceChanged` :774 +
   `HumlaService.configureExtras` :1598 collapse into `apply(ConfigDelta)`;
@@ -136,12 +167,13 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   new files are Kotlin from birth):** `DatabaseModule` (provides
   `Room.databaseBuilder(@ApplicationContext context, MumlaRoomDatabase::class.java, "mumble.db").build()`, all 7 DAOs,
   and the `MumlaDatabase` binding), `SettingsModule` (provides
-  `DataStore<Preferences>` + `SettingsRepository`; `@ApplicationContext`
+  `DataStore<Preferences>` (file `"settings"`) + `SettingsRepository`; `@ApplicationContext`
   needs no module). No `ServiceModule` yet — nothing new to provide.
   Entry points: `@HiltAndroidApp` on `MumlaApplication` in this slice;
   `@AndroidEntryPoint` lands on converted activities/fragments/services as their slices convert (services with the `LifecycleService` switch in slice 4).
   Provider interfaces (`HumlaServiceProvider`, `DatabaseProvider`) die
   later in slice 5 with the Kotlin conversion of their call sites.
+`SettingsRepository` is `@Singleton class SettingsRepository @Inject constructor(private val store: DataStore<Preferences>)` with `val snapshot: Flow<PrefSnapshot>` (`PrefSnapshot` data class, one field per key in the table above) + `suspend fun update(transform: PrefSnapshot.() -> PrefSnapshot)`. DAOs/entities live in `se.lublin.mumla.db` (same package as today). `MIGRATION_9_10` (empty `migrate()`, schema identical) lives in `MumlaRoomDatabase.kt`.
 - **Files touched:** `db/*` (4) + 17 new app files (`ServerEntity`,
   `FavouriteEntity`, `TokenEntity`, `CommentEntity`, `LocalMuteEntity`,
   `LocalIgnoreEntity`, `CertificateEntity`, `MumlaRoomDatabase`,
@@ -187,14 +219,14 @@ Verification: existing humla JVM tests (`AudioRoutePolicyTest`,
 | Today | Becomes | Test carry-over |
 |---|---|---|
 | `mHandler` creation + talking-state/SCO posts (`HumlaService:451` creation; `:283` talking hop; `:997` SCO-notify post) | `lifecycleScope.launch` hops | existing observer tests |
-| Reconnect runnable + disarm (`:890-969`: `mReconnectRunnable`, `removeCallbacks` at `:896,940,958`, `postDelayed` at `:969`; settle/recompute disarm at `:568-569,768,834`) | `reconnectJob` + `cancel()`; backoff delays via `delay()` | **new:** `ReconnectBackoffTest` (delay sequence incl. 25 s cap) |
+| Reconnect runnable + disarm (`:890-969`: `mReconnectRunnable`, `removeCallbacks` at `:896,940,958`, `postDelayed` at `:969`; settle/recompute disarm at `:568-569,768,834`) | `reconnectJob` + `cancel()`; backoff delays via `delay()` | **new:** `ReconnectBackoffTest` (attempts→delay: 0→1000, 1→3000, 2→6000, 3→12000, ≥4→25000 — asserts the exact `getReconnectDelay` switch) |
 | Route debounce/settle `postDelayed` (`:1152-1154` debounce 300 ms; `:768-770,1322-1326` settle rechecks) | cancellable `debounceJob`/`settleJob` | `AudioRoutePolicyTest` |
-| `HumlaNetworkThread` 3 executors (`HumlaNetworkThread:50-52`, incl. dead receive executor; send path `:73-83`, main hop `:87`) | deleted; one `ConnectionScope` (`SupervisorJob` + `Dispatchers.IO`), writes via `Mutex` | `Mumble15ProtocolTest`, `HumlaSSLSocketFactoryTest` kept green |
-| Ping `ScheduledExecutorService` self-chain (`HumlaConnection:90,313-320,359-368,406,585`) | `while (isActive) { sendKeepalivePing(); delay(interval) }` | **new:** `PingIntervalTest` (bootstrap-vs-steady); `AdaptiveKeepaliveTest`, `HumlaUDPPingTest` kept green |
+| `HumlaNetworkThread` 3 executors (`HumlaNetworkThread:50-52`, incl. dead receive executor; send path `:73-83`, main hop `:87`) | deleted; one `ConnectionScope` (`SupervisorJob` + `Dispatchers.IO`), writes serialized via `Mutex` (decided over actor: single-writer FIFO is all the TCP path needs) | `Mumble15ProtocolTest`, `HumlaSSLSocketFactoryTest` kept green |
+| Ping `ScheduledExecutorService` self-chain (`HumlaConnection:90,313-320,359-368,406,585`) | `while (isActive) { sendKeepalivePing(); delay(interval) }` | **new:** `PingIntervalTest` (elapsed<30 s → 5 s; UDP-unhealthy → 5 s; else 10 s — asserts `getNextPingIntervalSeconds`); `AdaptiveKeepaliveTest`, `HumlaUDPPingTest` kept green |
 | `HumlaUDP` queue + `mSendLock` head-drop | `Channel` with explicit capacity mirroring `calculateQueueCapacity(FPP)` (~200 ms) + recalculation on `setTargetFramesPerPacket` (same policy, incl. the `setSendQueueCapacity` override path); consumer becomes an `IO` loop | `HumlaUDPSendQueueTest`, `HumlaUDPReceiveThreadTest` kept green |
 | SCO epoch + `Handler` timeout (`BluetoothScoManager`, 8 s timeout) | cancellation *is* the epoch; `withTimeoutOrNull(8000)` | `BluetoothScoRetryPolicyTest` kept green |
 | `ModelHandler` `synchronized` writers | single-threaded model dispatcher; `ConcurrentHashMap`s stay (UDP-thread reads) | `ModelHandlerSelfMuteTest`, `ModelHandlerTopologyTest`, `ModelHandlerUserRemoveTest` kept green |
-| `HumlaCallbacks` set fan-out | interface kept; backed by set or `SharedFlow`, per-observer isolation kept | observer tests |
+| `HumlaCallbacks` set fan-out | interface kept AS-IS (`ConcurrentHashMap` set + per-observer isolation already correct — decided: no `SharedFlow` migration) | observer tests |
 | `configureExtras` bundle | `apply(ConfigDelta)` from slice 2 | round-trip checklist |
 | Capture/render audio threads | **stay raw threads** (blocking IO); only control plane moves to the scope | native suite (`AudioOutputPacerTest`, `AudioOutputTest` kept green) |
 | Service base class (`extends Service` in `HumlaService`, `MumlaService`) | `extends LifecycleService`; `lifecycleScope` is the service scope (decided) | service bind/disconnect tests |
@@ -220,7 +252,7 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
    + root `Settings.java` (replaced by `SettingsRepository`; call sites migrate) + `drawable/CircleDrawable.java`
 
 `MumlaService`/`IMumlaService` binder surface converts syntactically
-only (frozen per plan). Verification: all app JVM tests (incl.
+only (frozen per plan). Procedure per file: IDE auto-converter, then reviewer pass per porting-guide §1 (no `!!`, platform types explicit, nullability reviewed). Verification: all app JVM tests (incl.
 Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 
 ## Slice 6 — Compose foundation (theme + leaf + goldens)
@@ -232,9 +264,11 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
   `md_theme_dark_onPrimary #1795c2`, `md_theme_dark_primary_lighter #002b45` for pttPressed,
   `md_theme_dark_primary_lighter_more #0093eb` for high-contrast buttons), OLED (`black #000000` surfaces + `overlay_pill_background #d9000000`).
   Talk-state colors (`ripple_talk_state_on`, `_disabled`, `_suppressed`, `_server_muted`, `_server_deafened`) become state colors, not ripples.
+- Night theme: `values-night/themes.xml` redefines `Theme.Mumla` — map every night item into the dark scheme (`textColorPrimaryInverse`/`textColorSecondaryInverse #dddddd`, `textColorLink` override, `TweakedAlertDialog`/`TweakedMaterialAlertDialog` high-contrast primary, darker `cardStyle`, dark `popupOverlay`).
+- Scheme selection follows `PREF_THEME` (default `"forceBlack"` → OLED; user override → DayNight), read from the DataStore `theme` key at startup in the `MumlaApplication` replacement; goldens prioritize OLED (the default).
 - Paparazzi goldens infrastructure (per slice 0 fork decision).
 - First screen: `ServerInfoFragment` → `ServerInfo` route + `ServerInfoViewModel`
-  (its poll executor becomes a `StateFlow` + `collectAsState`); first goldens recorded:
+  (its poll executor becomes a `StateFlow` + `collectAsState`); first goldens recorded (route `"server_info"`; `@HiltViewModel class ServerInfoViewModel @Inject constructor(...) : ViewModel() { val uiState: StateFlow<ServerInfoUiState> }`, sealed `Loading/Content/Error`):
   9 subjects (loading / content / error × light / dark / OLED). New files:
   `theme/Theme.kt`, `theme/Tokens.kt`, `ServerInfoViewModel.kt`, `ServerInfoScreen.kt` + route entry.
 - Verification: all 9 goldens pass; old-vs-new screenshots compared
@@ -269,7 +303,7 @@ wired to a flow). `CircleDrawable` → Canvas equivalent in Compose.
 
 `MumlaActivity` shell + `DialogHost` convert last → delete Fragment navigation
 (`MumlaActivity.loadDrawerFragment`, `DrawerAdapter` routes, back-stack transactions → NavHost route map);
-drawer becomes `ModalNavigationDrawer`. Interop during slices 6–7: converted screens mount as NavHost routes; not-yet-converted screens stay mounted as Fragment-wrapped routes — the only sanctioned shim, and it dies with Fragment navigation (converted code itself carries no shims). Final gate: full torture matrix
+drawer becomes `ModalNavigationDrawer`. Interop during slices 6–7: converted screens mount as NavHost routes; not-yet-converted screens stay mounted as Fragment-wrapped routes — the only sanctioned shim, and it dies with Fragment navigation (converted code itself carries no shims). Route map (`NavHost` in content_frame): `favourites`, `server_edit/{id}`, `server_info`, `channel_tree`, `channel_chat/{id}`, `comments/{session}`, `access_tokens`, `settings/general|audio|appearance|auth|about`, drawer + `DialogHost` at shell. Torture checklist (run per UI slice, full pass at slice 7): rotate mid-each-dialog (all 7), switch server mid-connect, deny each runtime permission (mic/BT/notifications), back-press while connected and while connecting, process-kill mid-call then reconnect, A2DP attach mid-call, overlay drag + rotate. Final gate: full torture matrix
 (rotate mid-dialog, switch mid-connect, deny mid-flow) on the Pixel 4a
 plus one modern device, `./scripts/check.sh`, and a landing checklist
 (merge requested explicitly — never autonomous).
@@ -280,9 +314,9 @@ plus one modern device, `./scripts/check.sh`, and a landing checklist
 |---|---|---|---|
 | 0 scaffold | green baseline | — | — |
 | 1 minSdk | green | all existing | gate-grep clean, 2-device boot/voice |
-| 2 data | green | Room in-memory DB tests, Settings tests | ConfigDelta round-trip |
+| 2 data | green | Room in-memory DB tests, 6 Settings*Test, key-defaults table | ConfigDelta round-trip (17 keys + side-effects) |
 | 3 Kotlin humla | green | humla JVM suite | — |
 | 4 coroutines | green | route/reconnect/ping tests | torture: reconnect/SCO/A2DP |
 | 5 Kotlin app | green | app JVM + Robolectric | — |
-| 6 foundation | green | Paparazzi golden (leaf) | eye-compare on 4a |
+| 6 foundation | green | 9 goldens (3 states × 3 schemes) | eye-compare on 4a, OLED-first |
 | 7 screens | green | per-screen goldens, density test | full torture matrix, landing checklist |
