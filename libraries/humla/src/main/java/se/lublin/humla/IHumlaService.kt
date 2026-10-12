@@ -15,12 +15,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.humla;
+package se.lublin.humla
 
-import se.lublin.humla.model.Server;
-import se.lublin.humla.util.HumlaDisconnectedException;
-import se.lublin.humla.util.HumlaException;
-import se.lublin.humla.util.IHumlaObserver;
+import se.lublin.humla.model.Server
+import se.lublin.humla.util.HumlaDisconnectedException
+import se.lublin.humla.util.HumlaException
+import se.lublin.humla.util.IHumlaObserver
 
 /**
  * A public interface for clients to communicate with a {@link HumlaService}.
@@ -37,29 +37,31 @@ import se.lublin.humla.util.IHumlaObserver;
  * <br><br>
  * If not explicitly stated in the method documentation, any call that depends on connection state
  * will throw IllegalStateException if disconnected or not synchronized.
+ *
+ * Syntax-only Kotlin conversion: the binder surface stays frozen throughout
+ * the migration; refactoring happens strictly behind it.
  */
-public interface IHumlaService {
-    void registerObserver(IHumlaObserver observer);
-
-    void unregisterObserver(IHumlaObserver observer);
+interface IHumlaService {
+    fun registerObserver(observer: IHumlaObserver)
+    fun unregisterObserver(observer: IHumlaObserver)
 
     /**
      * @return true if handshaking with the server has completed.
      */
-    boolean isConnected();
+    fun isConnected(): Boolean
 
     /**
      * @return true if a Bluetooth SCO headset link is currently up and carrying
      *         call audio. This is confirmed link state, not the user preference.
      */
-    boolean isBluetoothScoActive();
+    fun isBluetoothScoActive(): Boolean
 
     /**
      * @return true if a media sink (BT A2DP / BLE / wired headset) currently routes
      *         output. While true (and SCO inactive) the pipeline runs the
      *         media triple to preserve A2DP quality.
      */
-    boolean isMediaRouteActive();
+    fun isMediaRouteActive(): Boolean
 
     /**
      * Re-asserts SCO bring-up when requested but idle, e.g. after a failed
@@ -67,51 +69,51 @@ public interface IHumlaService {
      * @return true if bring-up was (re)started, false if there was nothing
      *         to do (link up, starting, unrequested, or disconnected).
      */
-    boolean retryBluetoothSco();
+    fun retryBluetoothSco(): Boolean
 
     /**
      * Disconnects from the active connection, or does nothing if no connection is active.
      */
-    void disconnect();
+    fun disconnect()
 
     /**
      * Returns the current connection state of the service.
      * @return one of {@link HumlaService.ConnectionState}.
      */
-    HumlaService.ConnectionState getConnectionState();
+    fun getConnectionState(): HumlaService.ConnectionState
 
     /**
      * If the {@link HumlaService} disconnected due to an error, returns that error.
      * @return The error causing disconnection. If the last disconnection was successful or a
      *         connection has yet to be established, returns null.
      */
-    HumlaException getConnectionError();
+    fun getConnectionError(): HumlaException?
 
     /**
      * Returns the reconnection state of the {@link HumlaService}.
      * @return true if the service will attempt to automatically reconnect in the future.
      */
-    boolean isReconnecting();
+    fun isReconnecting(): Boolean
 
     /**
      * Returns the current number of reconnection attempts made so far.
      */
-    int getReconnectAttempts();
+    fun getReconnectAttempts(): Int
 
     /**
      * Returns the backoff delay (in milliseconds) for the current reconnection attempt.
      */
-    int getReconnectDelay();
+    fun getReconnectDelay(): Int
 
     /**
      * Cancels any future reconnection attempts. Does nothing if reconnection is not in progress.
      */
-    void cancelReconnect();
+    fun cancelReconnect()
 
     /**
      * @return the server that Humla is currently connected to, was connected to, or will attempt connection to.
      */
-    Server getTargetServer();
+    fun getTargetServer(): Server?
 
     /**
      * Returns the active session with the remote, or throws an exception if no session is currently
@@ -119,5 +121,6 @@ public interface IHumlaService {
      * @return the active session.
      * @throws HumlaDisconnectedException if the connection state is not CONNECTED.
      */
-    IHumlaSession HumlaSession() throws HumlaDisconnectedException;
+    @Throws(HumlaDisconnectedException::class)
+    fun HumlaSession(): IHumlaSession
 }
