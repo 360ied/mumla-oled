@@ -103,7 +103,7 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - Owed: on-device connect/voice/reconnect-toast pass; R8/release still
   deferred to pre-landing.
 
-## Slice 3 — Kotlin conversion, `:libraries:humla` (IN PROGRESS 2026-10-12, fast suites green)
+## Slice 3 — Kotlin conversion, `:libraries:humla` (DONE 2026-10-13, `check.sh` green)
 
 - `99bb3499` — batch 1 (`exception/*` + `Constants`): identical exception
   overloads with explicit nullable types (`AudioException` open); `Constants`
@@ -147,14 +147,28 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   fields stay `@JvmField`). Follow-up fixes this batch surfaced: null-clearable
   `ByteString` setters go nullable across `IUser`/`User`, and
   `HumlaNetworkListener` methods go open (batch 2 left them final).
+- Converter lessons (later batches): Java-subclass parity needs `open` on every
+  overridable (lifecycle, interface impls, plain publics — the app and its tests
+  re-override several); `fun getX()` stays a method call (no property syntax);
+  `Byte`/`Long` literals need explicit `.toByte()`/`L` suffixes; test seams that
+  take null (e.g. `HumlaConnection(null)`) stay nullable; always run
+  `:libraries:humla:testDebugUnitTest` explicitly (root `testFossDebugUnitTest`
+  skips the flavorless humla suite).
 - `dcbfc4cd` — batch 8 (`IHumlaService`, `IHumlaSession`): syntax only, surface
   frozen (factory name, contracts, `Throws` kept); object returns go nullable
   where the docs promise null so the still-Java `HumlaService` implements freely.
-- Verification so far: full `testFossDebugUnitTest` green per batch
-  (`ModelTest`, `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
+- `9b7472d9` (+ `5e4dd138` deletion bookkeeping) — batch 9 (`HumlaService`,
+  the god, converted but not restructured): switches become exhaustive `when`;
+  ConfigDelta/model accessors go property syntax, protobuf builders keep method
+  syntax; connection/model access funnels through `requireNotNull` helpers;
+  text-message target lists skip missing entries; audio/model getters fail fast.
+- Verification: full `testFossDebugUnitTest` green per batch (`ModelTest`,
+  `ChannelLinksTest`, `WhisperTargetListTest`, `URLParserTest`,
   `AudioOutputPacerTest`, `NativeAudioOutputEngineTest`, observer/
-  voice-target suites). Full `check.sh` owed at the slice boundary.
+  voice-target suites); full `check.sh` green at the slice boundary (JVM +
+  native suites). Slice 3 complete: no `.java` remains under `:libraries:humla`
+  except `Server` (slice 5) and the generated protobuf pair (never touched).
 
 ## Next
 
-Slice 3 batch 9 — `HumlaService` (the god), per [slices](slices.md).
+Slice 4 — coroutines service core, per [slices](slices.md).
