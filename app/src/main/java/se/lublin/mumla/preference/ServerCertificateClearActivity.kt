@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Brian Zhu
+ * Copyright (C) 2016 Andrew Comminos <andrew@comminos.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,15 +15,22 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.preference;
+package se.lublin.mumla.preference
 
-import android.os.Bundle;
+import android.os.Bundle
+import android.widget.Toast
+import se.lublin.mumla.R
+import se.lublin.mumla.app.BaseActivity
+import se.lublin.mumla.util.MumlaTrustStore
 
-import se.lublin.mumla.R;
-
-public class AudioSettingsFragment extends MumlaPreferenceFragment {
-    @Override
-    public void onCreateMumlaPreferences(Bundle savedInstanceState, String rootKey) {
-        setPreferencesFromResource(R.xml.settings_audio, rootKey);
+/**
+ * Created by andrew on 13/01/16.
+ */
+class ServerCertificateClearActivity : BaseActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        MumlaTrustStore.clearTrustStore(this)
+        Toast.makeText(this, R.string.trust_cleared, Toast.LENGTH_LONG).show()
+        finish()
     }
 }
