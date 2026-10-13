@@ -70,6 +70,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     private var mHost: String? = null
     private var mPort: Int = 0
+    // Volatile: opened in runLoop (IO thread), closed in disconnect() on
+    // another thread (a stale null would miss the close and strand the
+    // blocked read loop until server/TCP timeout).
+    @Volatile
     private var mTCPSocket: SSLSocket? = null
     private var mDataInput: DataInputStream? = null
     // Volatile: read in executeOnSendThread from arbitrary sender threads,
@@ -372,11 +376,15 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
      * onTCPConnectionDisconnect. Suppresses all future errors on this connection.
      */
     fun disconnect() {
-        // Unconditional teardown first: runLoop is dispatched asynchronously,
-        // so a quick cancel can land before it sets mRunning — early-returning
-        // on !mRunning would leak the scope and let runLoop open a socket
-        // after teardown. Cancelling a scope whose loop never ran, and closing
-        // an absent socket, are safe no-ops.
+        // Flag first, close second, never early-return: the blocked read loop
+        // must observe !mRunning when close() wakes it, or error() delivers
+        // CONNECTION_ERROR and a manual disconnect schedules a reconnect
+        // (regression guard — the flag was cleared before close pre-slice-4).
+        // The unconditional scope cancel still covers a stillborn runLoop
+        // (cancel landing before dispatch): cancelling a never-ran scope and
+        // closing an absent socket are safe no-ops, and disconnect() itself
+        // stays silent (the read-loop finally remains the single delivery).
+        mRunning = false
         tcpScope?.cancel()
         tcpScope = null
         try {
@@ -386,10 +394,6 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         } catch (e: IOException) {
             e.printStackTrace()
         }
-        if (!mRunning) return
-
-        mRunning = false
-        // Socket already closed above (idempotent); scope already cancelled.
     }
 
     private fun error(desc: String, e: Exception?) {
