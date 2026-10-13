@@ -52,11 +52,12 @@ for agent-reviewed slices. The binder surface
      `gradle.properties`) isolating the bump from DSL/behavior migration,
      `resValues = true` for the AGP 9 default flip (the app uses `resValue`),
      and `flake.nix` Build-Tools 35.0.0 → 36.0.0 (AGP 9 minimum). Proven by
-     `check.sh` green + `assembleFossDebug` APK in the spike. Outstanding debt:
-     full new-DSL/built-in-Kotlin migration; release/R8 verification deferred
-     to pre-landing (explicitly accepted).
-3. Apply plugins: `org.jetbrains.kotlin.android` (both modules),
-   `org.jetbrains.kotlin.kapt` + TODO (KSP fork above), `com.google.dagger.hilt.android`
+     `check.sh` green + `assembleFossDebug` APK in the spike. New DSL +
+     built-in Kotlin adopted on `build/agp9-new-dsl`; R8 verified on
+     `build/r8-release` (8.0MB APK + modern-device pass).
+3. Apply plugins: built-in Kotlin (AGP-provides `org.jetbrains.kotlin.android`),
+   `com.android.legacy-kapt` (kapt API; KSP fork above — `kotlin-kapt` is
+   incompatible with built-in Kotlin), `com.google.dagger.hilt.android`
    (2.60.1) with `hilt-android`/`hilt-compiler` scaffold deps (no code uses them yet),
    `org.jetbrains.kotlin.plugin.parcelize`, Paparazzi deferred (fork above).
    minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).

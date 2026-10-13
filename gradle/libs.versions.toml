@@ -27,8 +27,8 @@
 # AGP 9 adoption (slice 0): AGP 9.0.1 + Gradle 9.1.0 (AGP 9.0 minimums), minimal
 # delta from 8.13.2/8.13. Proven by the spike/agp9 worktree (check.sh green +
 # assembleFossDebug APK). New DSL + built-in Kotlin adopted on
-# build/agp9-new-dsl (legacy-kapt until KSP 2.4); release/R8 verification
-# deferred to pre-landing.
+# build/agp9-new-dsl (legacy-kapt until KSP 2.4); R8 verified on
+# build/r8-release (8.0MB APK + modern-device pass, 2026-10-13).
 agp = "9.0.1"
 # Kotlin 2.4.21 stands: an early MergeResources failure suspected KGP but
 # bisected cleanly to the Paparazzi plugin (see note below) — not to Kotlin.

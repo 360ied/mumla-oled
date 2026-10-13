@@ -70,7 +70,7 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 - Compose rewrite slices 6-7 explicitly DEFERRED 2026-10-13 to
   post-landing follow-up — landing scope is slices 0-5.
-- Release + R8 verification deferred to pre-landing (explicitly accepted).
+- R8 verified 2026-10-13 on `build/r8-release` (below) — no longer owed.
 - Paparazzi re-evaluation DEFERRED with slice 6 (above).
 - `hilt-navigation-compose` re-verification DEFERRED with slice 7.
 - kapt → KSP when a stable KSP for Kotlin 2.4 lands.
@@ -102,8 +102,8 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   v9→v10 migration test, DataStore doubles, fake deleted).
 - All 17 `ConfigDelta` keys round-trip audited; comment seen-tracking now
   compares text (was blob-vs-text, never matched). Lint + assemble green.
-- Owed: R8/release still deferred to pre-landing. UPDATE 2026-10-13:
-  on-device connect/voice/reconnect-toast passes on a modern device.
+- Owed: nothing (R8 verified 2026-10-13 on `build/r8-release`, see below;
+  on-device connect/voice/reconnect-toast passes on a modern device).
 
 ## Slice 3 — Kotlin conversion, `:libraries:humla` (DONE 2026-10-13, `check.sh` green)
 
@@ -215,9 +215,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - Verification: full `./scripts/check.sh` green at the slice boundary
   (JVM + native suites, `b7326ab2`); fossDebug installed on hardware with
   basic functionality (boot/connect/voice) confirmed by the user.
-- Owed: R8/release still deferred to pre-landing (reconnect storm, SCO
-  flap, A2DP stagger, route flip mid-call verified on a modern device
-  2026-10-13; no 4a pass per 2026-10-13 decision).
+- Owed: nothing (R8 verified 2026-10-13 on `build/r8-release`, see below —
+  reconnect storm, SCO flap, A2DP stagger, route flip mid-call verified on a
+  modern device 2026-10-13; no 4a pass per 2026-10-13 decision).
 
 ## Slice 5 — Kotlin conversion, `:app` (DONE 2026-10-13, `check.sh` green)
 
@@ -275,8 +275,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   the generated protobuf pair (never touched). Tests stay Java/Kotlin
   mixed with three widenings (`playPttSound` override, `SettingsListener`
   SAM + nullability, migration chains + new v10→v11 test).
-- Owed: R8/release still deferred to pre-landing (no 4a pass per 2026-10-13
-  decision). UPDATE 2026-10-13: full app torture (SCO flap, A2DP stagger,
+- Owed: nothing (R8 verified 2026-10-13 on `build/r8-release`, see below;
+  no 4a pass per 2026-10-13 decision). UPDATE 2026-10-13: full app torture
+  (SCO flap, A2DP stagger,
   overlay drag/rotate, notification paths) passes on a modern device —
   functionality works.
 - On-device result (2026-10-13): fresh fossDebug with the review fixes
@@ -310,6 +311,21 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   through setters (documented on the class) or resolved-host invalidation is
   bypassed.
 
+## Release + R8 (VERIFIED 2026-10-13 on `build/r8-release`)
+
+- `:app:assembleFossRelease` green with R8 + `shrinkResources`: 8.0MB APK,
+  3 ABIs with native libs, `mapping.txt`/`seeds.txt` keep 4296 humla classes
+  (Room `_Impl`, Hilt, services all survive).
+- R8 emits 3× kotlin-metadata parse warnings (bundled R8 predates Kotlin 2.4)
+  — benign here, proven by the device pass below.
+- Hardware (modern device): release cold start, auto-connect, and live voice
+  with no FATAL and no `ClassNotFound`/`NoSuchMethod` — DataStore, Room,
+  protobuf, JNI, and Hilt init all survive shrinking.
+- Signing stays machine-local: gitignored `app/signing.gradle` + release
+  keystore under `.gradle-home/release-signing` (never committed); the
+  fail-closed guard still refuses release builds without them.
+
 ## Next
 
-Landing prep on slices 0-5 (R8/release verification), per [slices](slices.md). Slices 6-7 deferred.
+No open landing items: R8 verified above; remaining debt rides its own TODOs
+(Paparazzi, hilt-navigation-compose, KSP). Slices 6-7 deferred.
