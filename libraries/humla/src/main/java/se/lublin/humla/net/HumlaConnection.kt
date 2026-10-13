@@ -678,7 +678,9 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     }
 
     /**
-     * Gracefully shuts down all networking. Blocks until all network threads have stopped.
+     * Gracefully shuts down all networking. State flags settle synchronously;
+     * socket teardown continues on IO (never the caller) with the read-loop
+     * finally delivering the formal disconnect.
      */
     @Synchronized
     fun disconnect() {

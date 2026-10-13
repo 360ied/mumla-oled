@@ -70,9 +70,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     private var mHost: String? = null
     private var mPort: Int = 0
-    // Volatile: opened in runLoop (IO thread), closed in disconnect() on
-    // another thread (a stale null would miss the close and strand the
-    // blocked read loop until server/TCP timeout).
+    // Volatile: opened in runLoop (IO thread); disconnect() transfers
+    // ownership to the IO teardown (nulls here) so the racing read-loop
+    // finally skips its own close — the socket is closed exactly once,
+    // never on the caller. A stale null only skips a redundant close.
     @Volatile
     private var mTCPSocket: SSLSocket? = null
     private var mDataInput: DataInputStream? = null
@@ -101,6 +102,14 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     // neither leak the scope nor accept sends); in-flight sends are best-effort
     // on cancel, send-after-disconnect drops.
     private var tcpScope: CoroutineScope? = null
+    // Fire-and-forget teardown scope, per connection instance (reclaimed
+    // with it): socket close() performs TLS close_notify I/O and must
+    // never run on disconnect()'s caller — often the main thread
+    // (NetworkOnMainThreadException crash 2026-10-13: slice 4 moved the
+    // close off the deleted send executor onto the caller). Closing here
+    // still unblocks the read loop promptly; its finally stays the single
+    // disconnect delivery point.
+    private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     // Single final dispatcher, per HumlaTCP instance: limitedParallelism(1)
     // is a stateless factory, so one instance serializes this connection's
     // writes (plus the write Mutex) without cross-connection sharing — each
@@ -381,31 +390,40 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     }
 
     /**
-     * Disconnects gracefully. Closes the socket synchronously to unblock the
-     * read loop (suppressing post-disconnect errors via mRunning) and cancels
-     * the ConnectionScope (in-flight sends are best-effort); send-after-
-     * disconnect drops via the nulled scope. Stays silent: the read loop's
-     * finally block is the single delivery point for
-     * onTCPConnectionDisconnect. Suppresses all future errors on this connection.
+     * Disconnects gracefully. Flags down synchronously (suppressing
+     * post-disconnect errors via mRunning), cancels the ConnectionScope
+     * (in-flight sends are best-effort), and hands the socket to an IO
+     * teardown — close() performs TLS close_notify I/O and must never run
+     * on the caller, often the main thread; send-after-disconnect drops via
+     * the nulled scope. Stays silent: the read loop's finally block is the
+     * single delivery point for onTCPConnectionDisconnect. Suppresses all
+     * future errors on this connection.
      */
     fun disconnect() {
-        // Flag first, close second, never early-return: the blocked read loop
-        // must observe !mRunning when close() wakes it, or error() delivers
-        // CONNECTION_ERROR and a manual disconnect schedules a reconnect
-        // (regression guard — the flag was cleared before close pre-slice-4).
+        // Flag first, hand off second, never early-return: the blocked read loop
+        // must observe !mRunning when the teardown close() wakes it, or error()
+        // delivers CONNECTION_ERROR and a manual disconnect schedules a
+        // reconnect (regression guard — the flag was cleared before close
+        // pre-slice-4).
         // The unconditional scope cancel still covers a stillborn runLoop
         // (cancel landing before dispatch): cancelling a never-ran scope and
-        // closing an absent socket are safe no-ops, and disconnect() itself
+        // handing off an absent socket are safe no-ops, and disconnect() itself
         // stays silent (the read-loop finally remains the single delivery).
         mRunning = false
         tcpScope?.cancel()
         tcpScope = null
-        try {
-            val tcpSocket = mTCPSocket
-            if (tcpSocket != null)
-                tcpSocket.close()
-        } catch (e: IOException) {
-            e.printStackTrace()
+        // Transfer ownership: null first so the racing read-loop finally
+        // skips its own close — exactly-once close, off-caller.
+        val tcpSocket = mTCPSocket
+        mTCPSocket = null
+        if (tcpSocket != null) {
+            teardownScope.launch {
+                try {
+                    tcpSocket.close()
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
