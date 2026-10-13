@@ -15,44 +15,42 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.db;
+package se.lublin.mumla.db
 
-import java.util.List;
-
-import se.lublin.humla.model.Server;
+import se.lublin.humla.model.Server
 
 /**
  * An interface for persistent storage services (i.e. databases, cloud) to implement.
  * Created by andrew on 13/08/13.
  */
-public interface MumlaDatabase {
-    public void open();
-    public void close();
+interface MumlaDatabase {
+    fun open()
+    fun close()
 
-    public List<Server> getServers();
-    public void addServer(Server server);
-    public void updateServer(Server server);
-    public void removeServer(Server server);
+    fun getServers(): List<Server>
+    fun addServer(server: Server)
+    fun updateServer(server: Server)
+    fun removeServer(server: Server)
 
-    public boolean isCommentSeen(String hash, byte[] commentHash);
-    public void markCommentSeen(String hash, byte[] commentHash);
+    fun isCommentSeen(hash: String, commentHash: ByteArray): Boolean
+    fun markCommentSeen(hash: String, commentHash: ByteArray)
 
-    public List<Integer> getPinnedChannels(long serverId);
-    public void addPinnedChannel(long serverId, int channelId);
-    public void removePinnedChannel(long serverId, int channelId);
-    public boolean isChannelPinned(long serverId, int channelId);
+    fun getPinnedChannels(serverId: Long): List<Int>
+    fun addPinnedChannel(serverId: Long, channelId: Int)
+    fun removePinnedChannel(serverId: Long, channelId: Int)
+    fun isChannelPinned(serverId: Long, channelId: Int): Boolean
 
-    public List<String> getAccessTokens(long serverId);
-    public void addAccessToken(long serverId, String token);
-    public void removeAccessToken(long serverId, String token);
+    fun getAccessTokens(serverId: Long): List<String>
+    fun addAccessToken(serverId: Long, token: String)
+    fun removeAccessToken(serverId: Long, token: String)
 
-    public List<Integer> getLocalMutedUsers(long serverId);
-    public void addLocalMutedUser(long serverId, int userId);
-    public void removeLocalMutedUser(long serverId, int userId);
+    fun getLocalMutedUsers(serverId: Long): List<Int>
+    fun addLocalMutedUser(serverId: Long, userId: Int)
+    fun removeLocalMutedUser(serverId: Long, userId: Int)
 
-    public List<Integer> getLocalIgnoredUsers(long serverId);
-    public void addLocalIgnoredUser(long serverId, int userId);
-    public void removeLocalIgnoredUser(long serverId, int userId);
+    fun getLocalIgnoredUsers(serverId: Long): List<Int>
+    fun addLocalIgnoredUser(serverId: Long, userId: Int)
+    fun removeLocalIgnoredUser(serverId: Long, userId: Int)
 
     /**
      * Adds the given certificate binary blob to the database with an optional passphrase.
@@ -61,31 +59,31 @@ public interface MumlaDatabase {
      * @param password The PKCS12 decryption passphrase, or null if unencrypted.
      * @return A handle for the newly created certificate.
      */
-    DatabaseCertificate addCertificate(String name, byte[] certificate, String password);
+    fun addCertificate(name: String, certificate: ByteArray, password: String?): DatabaseCertificate
 
-    default DatabaseCertificate addCertificate(String name, byte[] certificate) {
-        return addCertificate(name, certificate, null);
+    fun addCertificate(name: String, certificate: ByteArray): DatabaseCertificate {
+        return addCertificate(name, certificate, null)
     }
 
-    List<DatabaseCertificate> getCertificates();
+    fun getCertificates(): List<DatabaseCertificate>
 
     /**
      * Obtains the certificate data associated with the given certificate ID.
      * @param id The certificate ID to fetch the data of.
      * @return A binary representation of a PKCS12 certificate.
      */
-    byte[] getCertificateData(long id);
+    fun getCertificateData(id: Long): ByteArray?
 
     /**
      * Obtains the certificate passphrase associated with the given certificate ID.
      * @param id The certificate ID to fetch the passphrase of.
      * @return The PKCS12 decryption passphrase, or null if unencrypted.
      */
-    String getCertificatePassword(long id);
+    fun getCertificatePassword(id: Long): String?
 
     /**
      * Removes the certificate with the given ID.
      * @param id The certificate's identifier.
      */
-    void removeCertificate(long id);
+    fun removeCertificate(id: Long)
 }
