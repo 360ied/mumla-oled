@@ -36,6 +36,9 @@ import android.util.Log
 import android.widget.Toast
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AudioOutput
@@ -227,9 +230,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mHandsetAudioStream: Int = AudioManager.STREAM_MUSIC
     private var mDeviceCallback: AudioDeviceCallback? = null
-    private val mRouteRecompute = Runnable {
-        applyAudioRoute("device route changed", false)
-    }
+    // Slice 4: Handler postDelayed chains become cancellable Jobs in the
+    // service scope. Disarm = job?.cancel(), replacing removeCallbacks
+    // one-for-one. mHandler stays only for AudioManager device-callback
+    // registration, which requires a Handler.
+    private var routeDebounceJob: Job? = null
+    private var routeSettleJob: Job? = null
+    private var reconnectJob: Job? = null
 
     @Volatile
     private var mSettleAttempts: Int = 0
@@ -237,19 +244,35 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mSettleFired: Boolean = false
 
-    // Whether a settle recheck is queued. Set only beside a post, cleared
+    // Whether a settle recheck is queued. Set only beside a launch, cleared
     // on dispatch, reset, or teardown — never restored from a snapshot —
     // so the flag can never claim protection no callback provides.
-    // Single writes only (volatile suffices). Handler.hasCallbacks needs
-    // API 29+, well below the minSdk 33 floor.
+    // Single writes only (volatile suffices).
     @Volatile
     private var mSettlePending: Boolean = false
-    private val mRouteSettleRecompute = Runnable {
-        // Dispatch consumes the queued protection: clear the flag so a
-        // later fresh edge can arm anew (funnel top also clears fired).
+
+    private fun armRouteSettle() {
+        routeSettleJob?.cancel()
+        mSettlePending = true
+        routeSettleJob = lifecycleScope.launch {
+            delay(ROUTE_SETTLE_RECHECK_MS)
+            // Dispatch consumes the queued protection: clear the flag so a
+            // later fresh edge can arm anew (funnel top also clears fired).
+            mSettlePending = false
+            mSettleFired = true
+            applyAudioRoute("media settle recheck", false)
+        }
+    }
+
+    private fun cancelRouteSettle() {
+        routeSettleJob?.cancel()
+        routeSettleJob = null
         mSettlePending = false
-        mSettleFired = true
-        applyAudioRoute("media settle recheck", false)
+    }
+
+    private fun cancelRouteDebounce() {
+        routeDebounceJob?.cancel()
+        routeDebounceJob = null
     }
 
     // Set in onDestroy: posted teardowns (SCO notify) check it before
@@ -294,7 +317,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     @Volatile
     private var mReconnectAttempts = 0
-    private var mReconnectRunnable: Runnable? = null
     private var mNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var mNetworkCallbackRegistered = false
 
@@ -308,20 +330,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
 
             override fun onTalkingStateChanged(talking: Boolean) {
-                mHandler.post {
+                lifecycleScope.launch {
                     try {
                         // If the server session is inactive, ignore this message.
                         // It's likely that this is leftover from a terminated connection.
                         if (!isSynchronized())
-                            return@post
+                            return@launch
 
                         val modelHandler = mModelHandler
                         val connection = mConnection
                         if (modelHandler == null || connection == null) {
-                            return@post
+                            return@launch
                         }
                         val currentUser = modelHandler.getUser(connection.getSession())
-                            ?: return@post
+                            ?: return@launch
 
                         currentUser.talkState =
                             if (talking) TalkState.TALKING else TalkState.PASSIVE
@@ -578,11 +600,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             mDeviceCallback = null
         }
-        // Unconditional: the funnel arms settle on any API (pre-M queries
-        // always read absent), so teardown must clear it on every API too.
-        mHandler.removeCallbacks(mRouteRecompute)
-        mHandler.removeCallbacks(mRouteSettleRecompute)
-        mSettlePending = false
+        // Unconditional: the funnel arms settle on any route edge, so teardown
+        // must clear it too.
+        cancelRouteDebounce()
+        cancelRouteSettle()
+        mSettleAttempts = 0
         releaseWifiLock()
     }
 
@@ -778,9 +800,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 // arm the same bounded recheck the funnel uses, coalescing
                 // with any funnel-armed one already queued.
                 mSettleAttempts = 0
-                mHandler.removeCallbacks(mRouteSettleRecompute)
-                mSettlePending = true
-                mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS)
+                armRouteSettle()
             }
         } catch (e: AudioException) {
             Log.e(TAG, "Audio pipeline creation failed", e)
@@ -845,8 +865,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         stopScoWithNotify()
         releaseVoiceMode()
         // No live call remains for a settle recheck to recover.
-        mHandler.removeCallbacks(mRouteSettleRecompute)
-        mSettlePending = false
+        cancelRouteSettle()
+        mSettleAttempts = 0
 
         mCallbacks.onDisconnected(e)
     }
@@ -892,14 +912,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (mNetworkCallback == null) {
                     mNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
-                            mHandler.post {
+                            lifecycleScope.launch {
                                 if (mReconnecting) {
                                     Log.v(TAG, "Network available, triggering immediate reconnect.")
-                                    val pending = mReconnectRunnable
-                                    if (pending != null) {
-                                        mHandler.removeCallbacks(pending)
-                                        mReconnectRunnable = null
-                                    }
+                                    reconnectJob?.cancel()
+                                    reconnectJob = null
                                     mReconnectAttempts++
                                     connect()
                                 }
@@ -933,38 +950,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open fun setReconnecting(reconnecting: Boolean) {
         if (!reconnecting) {
             mReconnecting = false
-            val pending = mReconnectRunnable
-            if (pending != null) {
-                mHandler.removeCallbacks(pending)
-                mReconnectRunnable = null
-            }
+            reconnectJob?.cancel()
+            reconnectJob = null
             unregisterNetworkCallback()
             return
         }
 
         mReconnecting = true
         registerNetworkCallback()
-        val delay = getReconnectDelay()
-        Log.v(TAG, "Scheduling reconnect in $delay ms (attempt $mReconnectAttempts)")
+        val delayMs = getReconnectDelay()
+        Log.v(TAG, "Scheduling reconnect in $delayMs ms (attempt $mReconnectAttempts)")
         val wakeLock = mWakeLock
         if (wakeLock != null) {
             if (wakeLock.isHeld) {
                 wakeLock.release()
             }
-            wakeLock.acquire((delay + 15000).toLong())
+            wakeLock.acquire((delayMs + 15000).toLong())
         }
-        val previous = mReconnectRunnable
-        if (previous != null) {
-            mHandler.removeCallbacks(previous)
-        }
-        val runnable = Runnable {
+        reconnectJob?.cancel()
+        reconnectJob = lifecycleScope.launch {
+            delay(delayMs.toLong())
             if (mReconnecting) {
                 mReconnectAttempts++
                 connect()
             }
         }
-        mReconnectRunnable = runnable
-        mHandler.postDelayed(runnable, delay.toLong())
     }
 
     /**
@@ -990,20 +1000,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // may run off the main thread, but hook and observers are
             // main-thread confined. Posting also orders the event after the
             // synchronous disable-path pipeline reload.
-            mHandler.post {
+            lifecycleScope.launch {
                 if (mDestroyed) {
-                    return@post
+                    return@launch
                 }
                 if (mScoManager?.isActive() == true) {
                     // Re-connected since teardown queued: fresh callbacks
                     // own the UI; a stale false must not overwrite them.
-                    return@post
+                    return@launch
                 }
                 if (mScoRouteActive) {
                     // A newer link confirmed while this teardown was
                     // queued (bring-up won the race after our flag flip):
                     // its own connected-notify carries the truth.
-                    return@post
+                    return@launch
                 }
                 onAudioRouteChanged()
                 mCallbacks.onBluetoothScoChanged(false)
@@ -1134,8 +1144,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * one route application instead of one pipeline recreate per event.
      */
     private fun onRouteDevicesChanged() {
-        mHandler.removeCallbacks(mRouteRecompute)
-        mHandler.postDelayed(mRouteRecompute, ROUTE_RECOMPUTE_DEBOUNCE_MS)
+        routeDebounceJob?.cancel()
+        routeDebounceJob = lifecycleScope.launch {
+            delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
+            applyAudioRoute("device route changed", false)
+        }
     }
 
     /**
@@ -1299,12 +1312,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             } else {
                 mSettleAttempts += 1
             }
-            mHandler.removeCallbacks(mRouteSettleRecompute)
-            mSettlePending = true
-            mHandler.postDelayed(mRouteSettleRecompute, ROUTE_SETTLE_RECHECK_MS)
+            armRouteSettle()
         } else if (!voiceByAbsence || !liveCall) {
-            mHandler.removeCallbacks(mRouteSettleRecompute)
-            mSettlePending = false
+            cancelRouteSettle()
             mSettleAttempts = 0
         }
         // Else (settle budget exhausted): the dispatched check already
