@@ -57,6 +57,9 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
     }
 
     private val inactiveLock = Object()
+    // Main-thread hop preserved literally (slice-4 control-plane migration
+    // deferred: AudioOutput is not a Service and owns no serviceScope, and the
+    // native render callback ordering depends on this exact hop).
     private val mainHandler = Handler(Looper.getMainLooper())
     private val listener: AudioOutputListener
 

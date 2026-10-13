@@ -138,6 +138,32 @@ public class URLParserTest extends TestCase {
         }
     }
 
+    public void testBareAtSignIsMalformed() {
+        try {
+            MumbleURLParser.parseURL("mumble://@server.com/");
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
+
+    public void testAtInHostIsMalformed() {
+        try {
+            MumbleURLParser.parseURL("mumble://a@b@c/");
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
+
+    public void testQueryWithoutSlash() {
+        try {
+            Server server = MumbleURLParser.parseURL("mumble://server.com?version=1.2");
+            assertEquals(server.getHost(), "server.com");
+            assertEquals(server.getPort(), Constants.DEFAULT_PORT);
+        } catch (MalformedURLException e) {
+            fail("Failed to parse URL with query.");
+        }
+    }
+
     public void testInvalidScheme() {
         String url = "grumble://server.com/";
         try {

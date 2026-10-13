@@ -128,6 +128,7 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
                 HumlaTCPMessageType.UserStats -> return Mumble.UserStats.parseFrom(data)
                 HumlaTCPMessageType.RequestBlob -> return Mumble.RequestBlob.parseFrom(data)
                 HumlaTCPMessageType.SuggestConfig -> return Mumble.SuggestConfig.parseFrom(data)
+                HumlaTCPMessageType.VoiceTarget -> return Mumble.VoiceTarget.parseFrom(data)
                 HumlaTCPMessageType.PluginDataTransmission -> return Mumble.PluginDataTransmission.parseFrom(data)
                 else -> throw InvalidProtocolBufferException("Unknown TCP data passed.")
             }
@@ -463,12 +464,17 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         mStartTimestamp = System.nanoTime()
 
         pingScope?.cancel()
-        pingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        pingScope = null
         // The new scope orphans the old loop (already cancelled above); drop
         // the reference so disarm checks never point at the dead job.
         pingJob = null
 
         val socketFactory = createSocketFactory()
+        // Scope created after the throwing factory call: a factory failure
+        // must not leak an idle SupervisorJob (pre-image leaked the executor
+        // the same way; HumlaService.connect catches HumlaException without
+        // disconnecting, so nothing would reclaim it).
+        pingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         try {
             val tcp = HumlaTCP(socketFactory)
@@ -753,6 +759,12 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
      * @param length Length of the data to send.
      * @param force Whether to avoid tunneling this data over TCP.
      */
+    /**
+     * Sends a voice packet, tunneling over TCP or via UDP per route policy.
+     * The legacy-codec workaround patches `data` in place (pre-existing
+     * contract, 0x10202 servers only): callers must not reuse the buffer
+     * afterwards — AudioHandler's zero-alloc reuse passes ownership here.
+     */
     fun sendUDPMessage(data: ByteArray, length: Int, force: Boolean) {
         if (!mConnected) return
         if (length > data.size) {
@@ -831,6 +843,11 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
                 val udp = HumlaUDP(mCryptState, this, mMainHandler, mTargetFramesPerPacket)
                 mUDP = udp
                 udp.connect(host, port)
+            } else {
+                // Dead path (host is set from the live TCP socket above): log
+                // instead of NPE-crashing the established callback, and UDP
+                // stays down while TCP carries voice via shouldForceTCP.
+                Log.w(TAG, "onTCPConnectionEstablished with null host; UDP skipped")
             }
         }
 
@@ -843,6 +860,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         verifiedHost: String?
     ) {
         disconnect()
+        // Single service-level Disconnect delivery on this path: the TCP read
+        // loop's finally still fires onTCPConnectionDisconnect afterwards, and
+        // without this guard onConnectionDisconnected would deliver twice.
+        mExceptionHandled = true
         // Explicit NPE (not requireNotNull/IAE): the original dereferenced
         // the platform-typed failure unconditionally.
         val handshakeFailure = failure ?: throw NullPointerException("failure")
@@ -976,7 +997,8 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
             HumlaTCPMessageType.VoiceTarget -> handler.messageVoiceTarget(msg as Mumble.VoiceTarget)
             HumlaTCPMessageType.PluginDataTransmission ->
                 handler.messagePluginDataTransmission(msg as Mumble.PluginDataTransmission)
-            else -> {}
+            // No else: the when is exhaustive over HumlaTCPMessageType so a new
+            // server message type fails compilation instead of dropping silently.
         }
     }
 

@@ -17,6 +17,9 @@
 
 package se.lublin.humla.model
 
+// Narrowed to concrete types (pre-image used List<? extends IUser/IChannel>
+// and IChannel getParent): only Channel/User implement these interfaces,
+// and Kotlin List covariance keeps readers compiling.
 interface IChannel {
     val users: List<User>
 

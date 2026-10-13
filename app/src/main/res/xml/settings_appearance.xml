@@ -31,7 +31,7 @@
     <ListPreference
         android:key="language"
         android:defaultValue="system"
-        app:title="@string/language"
+        android:title="@string/language"
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false" />
 

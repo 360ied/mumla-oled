@@ -21,6 +21,11 @@ import com.google.protobuf.ByteString
 
 /**
  * Created by andrew on 15/10/15.
+ *
+ * Kotlin widening note: setters are exposed for every flag (pre-image Java
+ * had only getters plus setLocalMuted/setLocalIgnored) so the self-mute
+ * coercion can live in property setters; `channel` narrows to the concrete
+ * Channel type (only User implements this interface).
  */
 interface IUser {
     val session: Int

@@ -52,5 +52,8 @@ libraries/humla/src/main/assets/rnnoise_model.bin
 # for pi coding agent
 /plans/
 
+# scratch agent progress notes (untracked working files)
+**/progress.md
+
 # Git worktrees
 /.worktrees/

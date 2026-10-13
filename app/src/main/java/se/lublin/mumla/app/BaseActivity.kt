@@ -17,8 +17,9 @@ abstract class BaseActivity : AppCompatActivity(), Settings.OnSettingChangedList
 
     override fun onDestroy() {
         super.onDestroy()
-        // NPE-exact: the original dereferenced mSettings unconditionally.
-        val settings = mSettings ?: throw NullPointerException("mSettings")
+        // Null-tolerant: if onCreate failed before assignment, there is
+        // nothing to unregister — a second throw would mask the root cause.
+        val settings = mSettings ?: return
         settings.unregisterListener(this)
     }
 

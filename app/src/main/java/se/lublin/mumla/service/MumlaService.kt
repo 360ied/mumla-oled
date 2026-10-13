@@ -528,24 +528,23 @@ open class MumlaService : HumlaService(),
                 .setAudioAttributes(attributes)
                 .build()
             mSoundPool = pool
-            if (pool != null) {
-                pool.setOnLoadCompleteListener(object : SoundPool.OnLoadCompleteListener {
-                    override fun onLoadComplete(soundPool: SoundPool?, sampleId: Int, status: Int) {
-                        if (soundPool !== mSoundPool) {
-                            return
-                        }
-                        if (status == 0) {
-                            if (sampleId == mPttOnSoundId) {
-                                mPttOnLoaded = true
-                            } else if (sampleId == mPttOffSoundId) {
-                                mPttOffLoaded = true
-                            }
+            // Non-null by construction (Builder.build() never returns null).
+            pool.setOnLoadCompleteListener(object : SoundPool.OnLoadCompleteListener {
+                override fun onLoadComplete(soundPool: SoundPool?, sampleId: Int, status: Int) {
+                    if (soundPool !== mSoundPool) {
+                        return
+                    }
+                    if (status == 0) {
+                        if (sampleId == mPttOnSoundId) {
+                            mPttOnLoaded = true
+                        } else if (sampleId == mPttOffSoundId) {
+                            mPttOffLoaded = true
                         }
                     }
-                })
-                mPttOnSoundId = pool.load(this, R.raw.ptt_on, 1)
-                mPttOffSoundId = pool.load(this, R.raw.ptt_off, 1)
-            }
+                }
+            })
+            mPttOnSoundId = pool.load(this, R.raw.ptt_on, 1)
+            mPttOffSoundId = pool.load(this, R.raw.ptt_off, 1)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize SoundPool: " + e.message)
         } catch (e: NoSuchMethodError) {
@@ -887,8 +886,16 @@ open class MumlaService : HumlaService(),
             return
         }
         if (delta.hasCore()) {
-            // Reconfigure the service appropriately.
-            requiresReconnect = requiresReconnect or apply(delta)
+            // Reconfigure the service appropriately. apply() throws IAE on
+            // unknown transmit mode (mirrors onStartCommand's guard): a
+            // corrupted stored input-method value must not crash the main
+            // thread here — log and keep the running configuration.
+            try {
+                requiresReconnect = requiresReconnect or apply(delta)
+            } catch (e: IllegalArgumentException) {
+                android.util.Log.w("MumlaService", "Ignoring invalid service configuration.", e)
+                return
+            }
         }
 
         if (requiresReconnect && isConnectionEstablished()) {

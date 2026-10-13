@@ -21,6 +21,8 @@ import com.google.protobuf.ByteString
 import java.util.Collections
 import java.util.concurrent.CopyOnWriteArraySet
 
+// Final by intent (pre-image Java was non-final, but no subclass exists
+// in-tree): documents sealing; re-open if extensibility is ever required.
 class User : IUser, Comparable<User> {
 
     override val session: Int

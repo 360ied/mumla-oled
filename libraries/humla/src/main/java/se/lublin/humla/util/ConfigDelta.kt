@@ -133,7 +133,10 @@ data class ConfigDelta(
 
         fun build(): ConfigDelta = ConfigDelta(
             server = server,
-            certificate = certificate,
+            // Defensive copies: the builder stays mutable after build, and the
+            // one-shot command must freeze at construction (apply() copies
+            // again on the way in; this protects the build→apply window).
+            certificate = certificate?.let { CertRef(it.data.copyOf(), it.password) },
             forceTcp = forceTcp,
             trustStore = trustStore,
             transmitMode = transmitMode,
@@ -144,9 +147,9 @@ data class ConfigDelta(
             halfDuplex = halfDuplex,
             bluetoothSco = bluetoothSco,
             adaptiveLeveler = adaptiveLeveler,
-            accessTokens = accessTokens,
-            localMuteHistory = localMuteHistory,
-            localIgnoreHistory = localIgnoreHistory,
+            accessTokens = accessTokens?.toList(),
+            localMuteHistory = localMuteHistory?.toList(),
+            localIgnoreHistory = localIgnoreHistory?.toList(),
             clientName = clientName,
             audioStream = audioStream,
             theme = theme,

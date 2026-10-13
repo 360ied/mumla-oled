@@ -48,6 +48,12 @@ import javax.crypto.ShortBufferException
  * object; the sender consumer re-resolves the live object per generation
  * (see `runUdp`), so no explicit lock is needed anywhere.
  *
+ * Best-effort caveat (accepted): [sendMessage] vs [disconnect] has a benign
+ * TOCTOU window (check-then-send vs drain-and-reset). A packet landing in
+ * that window dies with the discarded object (`disconnect` nulls the channel
+ * reference; the next connect builds a fresh one), guarded in practice by
+ * the `mConnected` check. Never relied upon for correctness.
+ *
  * Slice 4: the BlockingQueue + mSendLock head-drop becomes a
  * Channel(capacity, onBufferOverflow = DROP_OLDEST) with identical ~200ms
  * bound semantics and no explicit lock. The OutgoingConsumer thread becomes

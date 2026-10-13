@@ -140,10 +140,13 @@ class ChannelAdapter(context: Context?, channel: IChannel?) : RecyclerView.Adapt
             val vh = view.findViewHolderForAdapterPosition(index) as ViewHolder?
             if (vh != null) {
                 val name = user.name
-                if (vh.userName != null && name != null && !name.contentEquals(vh.userName.text)) {
+                // ViewHolder fields are non-null by construction; the dead
+                // null comparisons below only obscured that. Diff text and
+                // drawable directly.
+                if (name != null && !name.contentEquals(vh.userName.text)) {
                     vh.userName.text = name
                 }
-                if (vh.stateIcon != null) {
+                run {
                     val newState = getTalkStateDrawable(user)
                     val currentDrawable = vh.stateIcon.drawable
                     if (newState != null && currentDrawable != null) {

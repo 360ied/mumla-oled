@@ -41,6 +41,10 @@ import kotlinx.coroutines.runBlocking
  *
  * All entry points block on `Dispatchers.IO`, so plain-JVM JUnit tests can
  * use them directly with no test dispatcher.
+ *
+ * Lifetime: one temp dir + SupervisorJob scope per test, reclaimed by
+ * `deleteOnExit` at JVM exit (never cancelled mid-suite). Fine for a unit
+ * suite; do not reuse this pattern for long-lived processes.
  */
 object TestDataStores {
     @JvmStatic

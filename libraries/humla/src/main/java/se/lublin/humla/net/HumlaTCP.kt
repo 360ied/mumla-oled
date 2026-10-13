@@ -289,6 +289,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
             // Single delivery point for onTCPConnectionDisconnect (pre-image
             // semantics): disconnect() stays silent and lets this finally post.
+            // Null-tolerance here is intentional (not NPE-exact): this finally
+            // runs on every teardown including listener-less shutdown, and
+            // throwing would mask the in-flight read error. The established /
+            // handshake paths use NPE-exact listener fetches instead.
             val disconnectListener = mListener
             if (disconnectListener != null) {
                 executeOnMainThread(Runnable {

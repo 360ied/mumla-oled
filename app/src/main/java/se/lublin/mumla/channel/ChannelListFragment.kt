@@ -200,9 +200,12 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
 
     override fun onDestroy() {
         super.onDestroy()
-        // NPE-exact: the original dereferenced mSettings unconditionally.
-        val settings = mSettings ?: throw NullPointerException("mSettings")
-        settings.unregisterListener(this)
+        // Null-tolerant: if setup failed before assignment, there is nothing
+        // to unregister — a second throw would mask the root cause.
+        val settings = mSettings
+        if (settings != null) {
+            settings.unregisterListener(this)
+        }
         val adapter = mChannelListAdapter
         if (adapter != null) {
             adapter.clearAvatarCache()

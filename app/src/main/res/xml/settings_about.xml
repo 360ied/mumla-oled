@@ -32,8 +32,8 @@
         android:title="@string/version"
         app:iconSpaceReserved="false"/>
     <Preference
-        app:title="@string/app_news"
-        app:summary="@string/app_news_summary"
+        android:title="@string/app_news"
+        android:summary="@string/app_news_summary"
         app:iconSpaceReserved="false">
         <intent
             android:action="android.intent.action.VIEW"

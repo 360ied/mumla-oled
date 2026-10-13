@@ -45,7 +45,7 @@ class WhisperTargetList {
     fun append(target: WhisperTarget): Byte {
         var freeId: Byte = -1
         for (i in TARGET_MIN.toInt()..TARGET_MAX.toInt()) {
-            if (takenIds and (1 shl i) == 0) {
+            if ((takenIds and (1 shl i)) == 0) {
                 freeId = i.toByte()
                 break
             }
@@ -63,7 +63,7 @@ class WhisperTargetList {
             throw IndexOutOfBoundsException()
         }
 
-        if (takenIds and (1 shl id.toInt()) == 0) {
+        if ((takenIds and (1 shl id.toInt())) == 0) {
             return null
         }
 
@@ -75,13 +75,13 @@ class WhisperTargetList {
             throw IndexOutOfBoundsException()
         }
 
-        takenIds = takenIds and (1 shl slot.toInt()).inv()
+        takenIds = (takenIds and (1 shl slot.toInt()).inv())
     }
 
     fun spaceRemaining(): Int {
         var counter = 0
         for (i in TARGET_MIN.toInt()..TARGET_MAX.toInt()) {
-            if (takenIds and (1 shl i) == 0) {
+            if ((takenIds and (1 shl i)) == 0) {
                 counter++
             }
         }

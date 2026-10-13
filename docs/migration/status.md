@@ -188,6 +188,34 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   hardening, null-filtering over null-carrying, fail-fast talking listener.
   Guide §1 amended (openness, NPE-exact boundaries, seam widening).
 
+## Slice 4 — Coroutines service core (DONE 2026-10-13, `check.sh` green)
+
+- `940e3e38` — LifecycleService base (no behavior change) + static
+  `getReconnectDelayForAttempts` + `ReconnectBackoffTest`/`PingIntervalTest` pins.
+- `6970ddb8` — reconnect runnable → `reconnectJob`, route debounce/settle
+  → `routeDebounceJob`/`routeSettleJob` with `delay()`, talking-state/SCO
+  notify/network-available hops → `lifecycleScope.launch`.
+- `2e05feb9` — ping `ScheduledExecutorService` self-chain →
+  `SupervisorJob + IO` loop with `delay(getNextPingIntervalSeconds)`.
+- `f946dfdc` — `HumlaNetworkThread` deleted; `HumlaTCP` owns a
+  `ConnectionScope` (SupervisorJob + IO) with Mutex-serialized writes and
+  `withTimeoutOrNull(800)` SRV lookup.
+- `0f336bdd` — `HumlaUDP` BlockingQueue + lock →
+  `Channel(capacity, DROP_OLDEST)` with IO consumer loop; tests moved to
+  `getQueuedCount`/`pollQueuedPacket`/`isQueueEmpty`.
+- `ea439920` — SCO Handler timeout → scope `timeoutJob` with `delay()`;
+  `stop()` cancels the child, `destroy()` cancels the scope.
+- ModelHandler: main-thread confinement documented (Main.immediate
+  equivalent via HumlaTCP main-Looper fan-out); `ConcurrentHashMap`s and
+  `@Synchronized` retained, callbacks fan-out unchanged (no SharedFlow).
+  Network/AudioDevice callbacks hop directly into `lifecycleScope` (single
+  consumer fire-and-forget — callbackFlow adds no backpressure value here).
+- Verification: full `./scripts/check.sh` green at the slice boundary
+  (JVM + native suites, `b7326ab2`); fossDebug installed on hardware with
+  basic functionality (boot/connect/voice) confirmed by the user.
+- Owed: deeper torture still open (reconnect storm, SCO flap, A2DP stagger,
+  route flip mid-call); R8/release still deferred to pre-landing.
+
 ## Slice 5 — Kotlin conversion, `:app` (DONE 2026-10-13, `check.sh` green)
 
 - `e7ed140f` — batch 1 (`util/*`, 11 files): statics become objects with
@@ -249,34 +277,6 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - On-device result (2026-10-13): fresh fossDebug with the review fixes
   (hash-verified on hardware) — basic functionality confirmed by the user.
   Slice 6 hold lifted.
-
-## Slice 4 — Coroutines service core (DONE 2026-10-13, `check.sh` green)
-
-- `940e3e38` — LifecycleService base (no behavior change) + static
-  `getReconnectDelayForAttempts` + `ReconnectBackoffTest`/`PingIntervalTest` pins.
-- `6970ddb8` — reconnect runnable → `reconnectJob`, route debounce/settle
-  → `routeDebounceJob`/`routeSettleJob` with `delay()`, talking-state/SCO
-  notify/network-available hops → `lifecycleScope.launch`.
-- `2e05feb9` — ping `ScheduledExecutorService` self-chain →
-  `SupervisorJob + IO` loop with `delay(getNextPingIntervalSeconds)`.
-- `f946dfdc` — `HumlaNetworkThread` deleted; `HumlaTCP` owns a
-  `ConnectionScope` (SupervisorJob + IO) with Mutex-serialized writes and
-  `withTimeoutOrNull(800)` SRV lookup.
-- `0f336bdd` — `HumlaUDP` BlockingQueue + lock →
-  `Channel(capacity, DROP_OLDEST)` with IO consumer loop; tests moved to
-  `getQueuedCount`/`pollQueuedPacket`/`isQueueEmpty`.
-- `ea439920` — SCO Handler timeout → scope `timeoutJob` with `delay()`;
-  `stop()` cancels the child, `destroy()` cancels the scope.
-- ModelHandler: main-thread confinement documented (Main.immediate
-  equivalent via HumlaTCP main-Looper fan-out); `ConcurrentHashMap`s and
-  `@Synchronized` retained, callbacks fan-out unchanged (no SharedFlow).
-  Network/AudioDevice callbacks hop directly into `lifecycleScope` (single
-  consumer fire-and-forget — callbackFlow adds no backpressure value here).
-- Verification: full `./scripts/check.sh` green at the slice boundary
-  (JVM + native suites, `b7326ab2`); fossDebug installed on hardware with
-  basic functionality (boot/connect/voice) confirmed by the user.
-- Owed: deeper torture still open (reconnect storm, SCO flap, A2DP stagger,
-  route flip mid-call); R8/release still deferred to pre-landing.
 
 ## Review (slices 4+5)
 

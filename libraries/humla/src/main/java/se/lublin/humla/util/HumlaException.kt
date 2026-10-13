@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2026 Brian Zhu
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -68,34 +69,53 @@ class HumlaException : Exception, Parcelable {
 
     private constructor(parcel: Parcel) : super(
         parcel.readString(),
-        (parcel.readSerializable() as? Throwable?)
+        try {
+            parcel.readSerializable() as? Throwable?
+        } catch (e: Exception) {
+            // Corrupted parcel header: no cause.
+            null
+        }
     ) {
         reason = try {
             HumlaDisconnectReason.entries[parcel.readInt()]
-        } catch (e: RuntimeException) {
+        } catch (e: Exception) {
             HumlaDisconnectReason.OTHER_ERROR
         }
+        // Presence flags below also guard truncated parcels: every read sits
+        // inside a try that treats any Exception (checked protobuf failure
+        // included — parseFrom throws IOException, not RuntimeException) as
+        // a missing optional section.
         var reject: Mumble.Reject? = null
-        if (parcel.readInt() == 1) {
+        if (try {
+                parcel.readInt() == 1
+            } catch (e: Exception) {
+                false
+            }
+        ) {
             try {
                 val bytes = parcel.createByteArray()
                 if (bytes != null) {
                     reject = Mumble.Reject.parseFrom(bytes)
                 }
-            } catch (e: RuntimeException) {
+            } catch (e: Exception) {
                 // Ignore corrupted parcel
             }
         }
         this.reject = reject
 
         var userRemove: Mumble.UserRemove? = null
-        if (parcel.readInt() == 1) {
+        if (try {
+                parcel.readInt() == 1
+            } catch (e: Exception) {
+                false
+            }
+        ) {
             try {
                 val bytes = parcel.createByteArray()
                 if (bytes != null) {
                     userRemove = Mumble.UserRemove.parseFrom(bytes)
                 }
-            } catch (e: RuntimeException) {
+            } catch (e: Exception) {
                 // Ignore corrupted parcel
             }
         }

@@ -342,7 +342,7 @@ class Settings {
 
     fun disableCertificate() {
         repository.updateBlocking { prefs ->
-            prefs.certificateId = -1L
+            prefs.certificateId = DEFAULT_CERT_ID
         }
     }
 
@@ -458,8 +458,6 @@ class Settings {
     }
 
     companion object {
-        private val TAG: String = Settings::class.java.name
-
         const val PREF_INPUT_METHOD = "audioInputMethod"
         @JvmStatic
         val ARRAY_INPUT_METHODS: Set<String> = HashSet<String>().apply {
@@ -552,6 +550,8 @@ class Settings {
          * @see se.lublin.mumla.db.DatabaseCertificate
          */
         const val PREF_CERT_ID = "certificateId"
+        /** No certificate selected (also the DataStore fallback). */
+        const val DEFAULT_CERT_ID = -1L
 
         const val PREF_DEFAULT_USERNAME = "defaultUsername"
         // Pre-existing quirk, inherited: the XML default is locale-dependent

@@ -342,7 +342,7 @@ class SettingsRepository @Inject constructor(
             theme = this[Keys.THEME] ?: Settings.DEFAULT_THEME,
             language = this[Keys.LANGUAGE] ?: Settings.DEFAULT_LANGUAGE,
             pttButtonHeight = this[Keys.PTT_BUTTON_HEIGHT] ?: Settings.DEFAULT_PTT_BUTTON_HEIGHT,
-            certificateId = this[Keys.CERTIFICATE_ID] ?: -1L,
+            certificateId = this[Keys.CERTIFICATE_ID] ?: Settings.DEFAULT_CERT_ID,
             defaultUsername = this[Keys.DEFAULT_USERNAME] ?: Settings.DEFAULT_DEFAULT_USERNAME,
             forceTcp = this[Keys.FORCE_TCP] ?: Settings.DEFAULT_FORCE_TCP,
             muted = this[Keys.MUTED] ?: Settings.DEFAULT_MUTED,

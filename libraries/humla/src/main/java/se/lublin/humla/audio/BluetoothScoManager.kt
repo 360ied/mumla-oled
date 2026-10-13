@@ -130,6 +130,8 @@ class BluetoothScoManager {
 
     // Slice 4: Handler timeout becomes a cancellable child (withTimeout-style
     // delay); stop() cancels it, so cancellation is the epoch for the timer.
+    // Main.immediate is hardcoded (not injected like the budgets below):
+    // correct on device; JVM tests need a Main-dispatcher rule to cover this.
     private val scoScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var timeoutJob: Job? = null
 

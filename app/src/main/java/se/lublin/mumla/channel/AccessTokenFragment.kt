@@ -146,10 +146,12 @@ class AccessTokenFragment : HumlaServiceFragment() {
             // NPE-exact: the original passed getItem straight into setText/removeAccessToken.
             val token = getItem(position) ?: throw NullPointerException("item")
 
-            val title = row.findViewById(R.id.tokenItemTitle) as TextView
+            val title = row.findViewById(R.id.tokenItemTitle) as TextView?
+                ?: throw NullPointerException("tokenItemTitle")
             title.text = token
 
-            val deleteButton = row.findViewById(R.id.tokenItemDelete) as ImageButton
+            val deleteButton = row.findViewById(R.id.tokenItemDelete) as ImageButton?
+                ?: throw NullPointerException("tokenItemDelete")
             deleteButton.setOnClickListener {
                 // NPE-exact: the original dereferenced every field unconditionally.
                 val tokens = mTokens ?: throw NullPointerException("mTokens")

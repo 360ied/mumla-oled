@@ -154,6 +154,28 @@ class ServerInfoFragment : HumlaServiceFragment() {
         }
     }
 
+    // Teardown-only: navigating away destroys the view while the fragment is
+    // retained, so stop polling detached views here (slice 6/7 replaces the
+    // executor with a StateFlow; until then this mirrors onServiceUnbound).
+    // super.onDestroyView() also detaches the service observer via the
+    // HumlaServiceFragment view-lifecycle mirror (no-op here: already unbound).
+    override fun onDestroyView() {
+        val pollFuture = mPollFuture
+        if (pollFuture != null) {
+            pollFuture.cancel(true)
+            mPollFuture = null
+        }
+        mProtocolView = null
+        mOSVersionView = null
+        mTCPLatencyView = null
+        mUDPLatencyView = null
+        mHostView = null
+        mCodecView = null
+        mMaxBandwidthView = null
+        mCurrentBandwidthView = null
+        super.onDestroyView()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         mExecutorService.shutdownNow()

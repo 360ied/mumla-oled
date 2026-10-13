@@ -75,15 +75,21 @@ class MumlaMessageNotification(context: Context) {
         )
 
         val channelId = MESSAGE_CHANNEL_ID
-        val channelName = mContext.getString(R.string.messageReceived)
-        val chan = NotificationChannel(
-            channelId, channelName,
-            NotificationManager.IMPORTANCE_DEFAULT
-        )
-        val notificationManager = mContext.getSystemService(NotificationManager::class.java)
-        // NPE-exact: the original dereferenced the manager unconditionally.
-        (notificationManager ?: throw NullPointerException("notificationManager"))
-            .createNotificationChannel(chan)
+        // createNotificationChannel is idempotent but chatty: cache like
+        // MumlaConnectionNotification's sChannelCreated instead of
+        // re-creating per message.
+        if (!sChannelCreated) {
+            val channelName = mContext.getString(R.string.messageReceived)
+            val chan = NotificationChannel(
+                channelId, channelName,
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
+            val notificationManager = mContext.getSystemService(NotificationManager::class.java)
+            // NPE-exact: the original dereferenced the manager unconditionally.
+            (notificationManager ?: throw NullPointerException("notificationManager"))
+                .createNotificationChannel(chan)
+            sChannelCreated = true
+        }
         val builder = NotificationCompat.Builder(mContext, channelId)
 
         builder.setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -120,6 +126,7 @@ class MumlaMessageNotification(context: Context) {
     companion object {
         private const val NOTIFICATION_ID = 2
         private const val MESSAGE_CHANNEL_ID = "message_channel"
+        private var sChannelCreated: Boolean = false
         private val VIBRATION_PATTERN = longArrayOf(0, 100)
     }
 }

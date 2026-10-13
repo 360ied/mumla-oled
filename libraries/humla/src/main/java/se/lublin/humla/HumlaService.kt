@@ -1794,10 +1794,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun cancelReconnect() {
         mReconnectAttempts = 0
         setReconnecting(false)
-        // Only release the Doze shield when no live call holds it: cancelling
-        // a (possibly non-existent) future retry while CONNECTED must not drop
-        // the indefinite hold acquired in onConnectionSynchronized.
-        if (mConnectionState != ConnectionState.CONNECTED) {
+        // Only release the Doze shield when no live or in-flight attempt holds
+        // it: cancelling a future retry while CONNECTED must not drop the
+        // indefinite hold from onConnectionSynchronized, and cancelling while
+        // CONNECTING must not drop the 15 s hold from connect() — the TCP
+        // handshake still runs (cancelReconnect never aborts a live attempt).
+        if (mConnectionState != ConnectionState.CONNECTED &&
+            mConnectionState != ConnectionState.CONNECTING
+        ) {
             val wakeLock = mWakeLock
             if (wakeLock != null && wakeLock.isHeld) {
                 wakeLock.release()
@@ -2291,15 +2295,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun isListeningToChannel(channelId: Int): Boolean {
-        try {
-            val ch = requireModelHandler().getChannels()[channelId]
-            return ch != null && ch.isListening
-        } catch (e: NotSynchronizedException) {
-            return false
-        } catch (e: IllegalArgumentException) {
-            // Disconnected (null model handler): fail closed to false.
-            return false
-        }
+        // Fail closed when disconnected: no exception-driven control flow —
+        // requireModelHandler throws IAE on null, never NotSynchronizedException.
+        val handler = mModelHandler ?: return false
+        val ch = handler.getChannels()[channelId]
+        return ch != null && ch.isListening
     }
 
     /**

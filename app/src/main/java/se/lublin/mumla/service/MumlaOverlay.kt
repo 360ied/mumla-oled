@@ -170,8 +170,10 @@ class MumlaOverlay(service: MumlaService) {
             }
         }
 
-        // CCE-exact: the original cast to OverlayLayout unconditionally.
-        val overlayLayout = mOverlayView as OverlayLayout
+        // NPE-exact: overlay.xml roots at OverlayLayout; the original cast
+        // unconditionally (CCE on mismatch).
+        val overlayLayout = mOverlayView as OverlayLayout?
+            ?: throw NullPointerException("mOverlayView")
         val touchSlop = ViewConfiguration.get(service).scaledTouchSlop
 
         overlayLayout.setOnDispatchTouchEventListener(object : OverlayLayout.OnDispatchTouchEventListener {

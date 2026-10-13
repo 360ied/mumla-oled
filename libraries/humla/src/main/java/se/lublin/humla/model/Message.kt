@@ -27,6 +27,8 @@ import java.util.Date
  * as the actor may no longer be on the server.
  * Created by andrew on 03/12/13.
  */
+// Final by intent (pre-image Java was non-final, but no subclass exists
+// in-tree): documents sealing; re-open if extensibility is ever required.
 class Message : IMessage {
     override var actor: Int = -1
         private set

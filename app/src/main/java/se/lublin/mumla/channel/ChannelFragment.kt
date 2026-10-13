@@ -140,9 +140,11 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
             // NPE-exact: the original dereferenced getActivity() unconditionally.
             val host = activity ?: throw NullPointerException("activity")
             val a: TypedArray = host.obtainStyledAttributes(attrs)
-            val titleStripBackground = a.getColor(0, -1)
-            val titleStripColor = a.getColor(1, -1)
-            a.recycle()
+            // .use{}: the pre-image leaked on a getColor throw; parity-safe
+            // (same colors, just exception-safe recycling).
+            val (titleStripBackground, titleStripColor) = a.use {
+                Pair(it.getColor(0, -1), it.getColor(1, -1))
+            }
 
             tabStrip.setTextColor(titleStripColor)
             tabStrip.tabIndicatorColor = titleStripColor

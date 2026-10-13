@@ -60,6 +60,31 @@ class DataStorePreferenceDataStoreTest {
         assertNull(dataStore.getString("name", null))
     }
 
+    @Test
+    fun longRoundTrip() {
+        dataStore.putLong("bytes", 1234567890123L)
+        assertEquals(1234567890123L, dataStore.getLong("bytes", 0L))
+    }
+
+    @Test
+    fun floatRoundTrip() {
+        dataStore.putFloat("gain", 0.5f)
+        assertEquals(0.5f, dataStore.getFloat("gain", 0f), 0.0001f)
+    }
+
+    @Test
+    fun stringSetRoundTripAndRemoval() {
+        dataStore.putStringSet("tags", setOf("a", "b"))
+        assertEquals(setOf("a", "b"), dataStore.getStringSet("tags", null))
+        dataStore.putStringSet("tags", null)
+        assertNull(dataStore.getStringSet("tags", null))
+    }
+
+    @Test
+    fun booleanFallsBackToDefault() {
+        assertEquals(true, dataStore.getBoolean("absent", true))
+    }
+
     @Test(expected = NullPointerException::class)
     fun nullKeyThrowsNpeWithMessage() {
         dataStore.getBoolean(null, false)

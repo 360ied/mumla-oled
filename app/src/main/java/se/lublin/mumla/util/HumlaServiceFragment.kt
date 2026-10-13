@@ -76,6 +76,24 @@ abstract class HumlaServiceFragment : Fragment() {
         super.onActivityCreated(savedInstanceState)
     }
 
+    // Mirror teardown at view destroy: registration now happens in
+    // onViewCreated, so a view-only recreation (onDestroyView without
+    // onDestroy, e.g. ViewPager/backstack detach) must release the observer
+    // and clear mBound — otherwise the recreated view would skip
+    // onServiceAttached while the stale observer points at dead views.
+    // onDestroy stays as a safety net (no-op once detached here).
+    override fun onDestroyView() {
+        val provider = mServiceProvider
+        if (provider != null) {
+            provider.removeServiceFragment(this)
+            val service = provider.getService()
+            if (service != null && mBound) {
+                onServiceDetached(service)
+            }
+        }
+        super.onDestroyView()
+    }
+
     override fun onDestroy() {
         val provider = mServiceProvider
         if (provider != null) {

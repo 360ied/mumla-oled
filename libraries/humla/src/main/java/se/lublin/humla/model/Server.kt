@@ -49,6 +49,8 @@ import se.lublin.humla.Constants
  */
 @Entity(tableName = "server")
 @Parcelize
+// Final by intent (pre-image Java was non-final, but no subclass exists
+// in-tree): documents sealing; re-open if extensibility is ever required.
 class Server(
     @PrimaryKey(autoGenerate = true)
     @ColumnInfo(name = "_id")

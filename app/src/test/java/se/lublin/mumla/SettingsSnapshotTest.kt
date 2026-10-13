@@ -93,4 +93,24 @@ class SettingsSnapshotTest {
         assertEquals(7, settings.getOverlayPosX(42))
         assertEquals(9, settings.getOverlayPosY(43))
     }
+
+    @Test
+    fun pttButtonHeightClamps() {
+        TestDataStores.put(store, TestDataStores.intKey("pttButtonHeight"), 5)
+        assertEquals(Settings.MIN_PTT_BUTTON_HEIGHT, settings.pttButtonHeight)
+        TestDataStores.put(store, TestDataStores.intKey("pttButtonHeight"), 500)
+        assertEquals(Settings.MAX_PTT_BUTTON_HEIGHT, settings.pttButtonHeight)
+    }
+
+    @Test
+    fun corruptFramesPerPacketFallsBack() {
+        TestDataStores.put(store, TestDataStores.stringKey("audio_per_packet"), "fast")
+        assertEquals(se.lublin.humla.Constants.DEFAULT_FRAMES_PER_PACKET, settings.framesPerPacket)
+    }
+
+    @Test
+    fun languageDefaultsToSystem() {
+        assertEquals(Settings.DEFAULT_LANGUAGE, settings.language)
+        assertEquals("system", settings.language)
+    }
 }

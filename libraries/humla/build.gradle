@@ -94,7 +94,7 @@ android {
 
     defaultConfig {
         testApplicationId "se.lublin.humla.test"
-        testInstrumentationRunner "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         minSdkVersion 33
         targetSdk 36
 

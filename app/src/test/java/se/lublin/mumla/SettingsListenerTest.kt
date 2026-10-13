@@ -76,8 +76,17 @@ class SettingsListenerTest {
         settings.registerListener(listener)
         settings.unregisterListener(listener)
         settings.theme = "forceDark"
+        // Negative assertions need a bounded settle: DataStore IO runs
+        // off-scheduler, so advanceUntilIdle alone would pass vacuously.
+        // Liveness proof: a second registered listener must still fire.
+        val live = mutableListOf<String?>()
+        val liveListener = Settings.OnSettingChangedListener { live.add(it) }
+        settings.registerListener(liveListener)
+        settings.theme = "forceLight"
+        settleUntil { live.isNotEmpty() }
         scheduler.advanceUntilIdle()
         assertTrue("unregistered listener must stay silent", fired.isEmpty())
+        settings.unregisterListener(liveListener)
     }
 
     @Test

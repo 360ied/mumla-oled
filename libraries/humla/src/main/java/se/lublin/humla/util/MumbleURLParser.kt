@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2026 Brian Zhu
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,12 +30,14 @@ import se.lublin.humla.model.Server
  */
 object MumbleURLParser {
 
-    // Host is either a bare hostname/IPv4 or a bracketed IPv6 literal.
+    // Host is either a bare hostname/IPv4 or a bracketed IPv6 literal; userinfo
+    // (when `@` is present) must be non-empty, and the host class excludes `@`
+    // and whitespace so `a@b@c` cannot smuggle credentials into the host.
     // Port is validated to 1..65535 below; path/query (trailing slash,
-    // channel links) is accepted and ignored. Full-match: surrounding junk
-    // must not parse.
+    // channel links, `?query`) is accepted and ignored. Full-match:
+    // surrounding junk must not parse.
     private val URL_PATTERN: Pattern =
-        Pattern.compile("mumble://(([^:@/]+)?(:(.*?))?@)?(\\[[^\\]]+\\]|[^:/]+)(:([0-9]+))?(/.*)?")
+        Pattern.compile("mumble://(([^:@/\\s]+)?(:(.*?))?@)?(\\[[^\\]]+\\]|[^:@/?\\s]+)(:([0-9]+))?([/?].*)?")
 
     /**
      * Parses the passed Mumble URL into a Server object.
@@ -52,6 +55,10 @@ object MumbleURLParser {
         if (matcher.matches()) {
             val username = matcher.group(2)?.ifEmpty { null }
             val password = matcher.group(4)?.ifEmpty { null }
+            // A bare `@` with empty userinfo is not credentials — reject.
+            if (matcher.group(1) != null && username == null && password == null) {
+                throw MalformedURLException("Empty userinfo")
+            }
             val rawHost = matcher.group(5) ?: throw MalformedURLException()
             // Strip brackets from IPv6 literals ([::1] -> ::1).
             val host = if (rawHost.startsWith("[") && rawHost.endsWith("]")) {
@@ -59,7 +66,7 @@ object MumbleURLParser {
             } else {
                 rawHost
             }
-            if (host.isEmpty()) throw MalformedURLException("Empty host")
+            if (host.isBlank()) throw MalformedURLException("Empty host")
             val portString = matcher.group(7)
             var port = Constants.DEFAULT_PORT
             if (portString != null) {
