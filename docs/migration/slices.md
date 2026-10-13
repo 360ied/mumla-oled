@@ -68,10 +68,11 @@ for agent-reviewed slices. The binder surface
   except `UPSIDE_DOWN_CAKE`, the SCO legacy duality, the `ChannelChatFragment`
   storage branch, deprecated `getParcelable` overloads, and always-true
   branches. Gate-grep, assemble, `lintFossDebug`, and `check.sh` green.
-- Manual gate still owed: boot + connect + voice on the Pixel 4a floor and one
-  modern device (SCO/A2DP/overlay/notification) — needs hardware, not done here.
-  UPDATE 2026-10-12: basic functionality verified on-device post-install; deeper
-  torture (SCO flap, A2DP stagger, overlay drag/rotate) still open.
+- Manual gate (modern device only — Pixel 4a pass explicitly dropped
+  2026-10-13, no-4a-testing decision): boot + connect + voice
+  (SCO/A2DP/overlay/notification). UPDATE 2026-10-12: basic functionality
+  verified on-device post-install; UPDATE 2026-10-13: full torture passes
+  on a modern device.
 
 Config: `minSdkVersion 21 → 33` in `app/build.gradle` and
 `libraries/humla/build.gradle`. Then the full site inventory below —
@@ -134,7 +135,7 @@ code), `MumlaImageGetter.java:393` (comment noting no gate),
 - `grep -rEn "VERSION_CODES\.(M|N|O|Q|R|S|S_V2|TIRAMISU)\b"` over
   main sources (`app/src/main`, `libraries/humla/src/main`) returns only the U site; Android lint clean via explicit `nix develop --command ./gradlew lintFossDebug` (outside `check.sh`, which covers tests+native only).
 - `./scripts/check.sh` green (JVM + native).
-- Boot + connect + voice on the Pixel 4a (floor) and one modern device;
+- Boot + connect + voice on a modern device (done 2026-10-13);
   SCO connect/disconnect, A2DP attach, overlay show/hide, notification
   post/dismiss.
 
@@ -316,7 +317,7 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
   9 subjects (loading / content / error × light / dark / OLED). New files:
   `theme/Theme.kt`, `theme/Tokens.kt`, `ServerInfoViewModel.kt`, `ServerInfoScreen.kt` + route entry.
 - Verification: all 9 goldens pass; old-vs-new screenshots compared
-  by eye on the Pixel 4a; `./scripts/check.sh`. Paparazzi runs with fixed device/theme/locale config; golden churn is triaged in the slice commit.
+  by eye on a modern device; `./scripts/check.sh`. Paparazzi runs with fixed device/theme/locale config; golden churn is triaged in the slice commit.
 
 ## Slice 7 — Compose screens (DEFERRED 2026-10-13, not landing)
 
@@ -348,8 +349,7 @@ wired to a flow). `CircleDrawable` → Canvas equivalent in Compose.
 `MumlaActivity` shell + `DialogHost` convert last → delete Fragment navigation
 (`MumlaActivity.loadDrawerFragment`, `DrawerAdapter` routes, back-stack transactions → NavHost route map);
 drawer becomes `ModalNavigationDrawer` (drawer taps navigate with `popUpTo(nav-start, saveState=true)`, `launchSingleTop`; back exits — single backstack, no per-tab stacks). Routes + args: `favourites`, `server_edit/{serverId:Long}`, `server_info`, `channel_tree`, `channel_chat/{channelId:Int}`, `comments/{session:Int}`, `access_tokens`, `settings/general|audio|appearance|auth|about` (no args); ViewModels read args from `SavedStateHandle`, never from nav args directly. `DialogHost(state: DialogState, onAction)` with `sealed DialogState { None, Connecting(host), Error(msg), Switch(server), PermissionDenied(perm), BackPressConfirm, TlsMismatch(host,names), TlsFirstTrust(host), TlsChanged(host), FirstRun }`. Interop during slices 6–7: converted screens mount as NavHost routes; not-yet-converted screens stay mounted as Fragment-wrapped routes — the only sanctioned shim, and it dies with Fragment navigation (converted code itself carries no shims). Route map (`NavHost` in content_frame): `favourites`, `server_edit/{id}`, `server_info`, `channel_tree`, `channel_chat/{id}`, `comments/{session}`, `access_tokens`, `settings/general|audio|appearance|auth|about`, drawer + `DialogHost` at shell. Torture checklist (run per UI slice, full pass at slice 7): rotate mid-each-dialog (all 7), switch server mid-connect, deny each runtime permission (mic/BT/notifications), back-press while connected and while connecting, process-kill mid-call then reconnect, A2DP attach mid-call, overlay drag + rotate. Final gate: full torture matrix
-(rotate mid-dialog, switch mid-connect, deny mid-flow) on the Pixel 4a
-plus one modern device, `./scripts/check.sh`, and a landing checklist
+(rotate mid-dialog, switch mid-connect, deny mid-flow) on a modern device, `./scripts/check.sh`, and a landing checklist
 (merge requested explicitly — never autonomous).
 
 ## Verification matrix
