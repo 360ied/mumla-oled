@@ -18,11 +18,13 @@
 package se.lublin.mumla.channel
 
 import android.content.Context
+import android.util.Log
 import android.view.Menu
 import android.view.View
 import androidx.appcompat.widget.PopupMenu
 import se.lublin.humla.IHumlaService
 import se.lublin.humla.model.IChannel
+import se.lublin.humla.util.HumlaDisconnectedException
 import se.lublin.humla.util.HumlaObserver
 
 /**
@@ -61,7 +63,16 @@ class PermissionsPopupMenu(
     private fun getPermissions(): Int {
         if (mService.isConnected()) {
             return if (mChannel.id == 0) {
-                mService.HumlaSession().getPermissions()
+                // TOCTOU: popup racing teardown throws on acquisition.
+                try {
+                    mService.HumlaSession().getPermissions()
+                } catch (e: HumlaDisconnectedException) {
+                    Log.d(TAG, "permissions with torn-down session: $e")
+                    0
+                } catch (e: IllegalStateException) {
+                    Log.d(TAG, "permissions with torn-down session: $e")
+                    0
+                }
             } else {
                 mChannel.permissions
             }
@@ -69,12 +80,23 @@ class PermissionsPopupMenu(
         return 0
     }
 
+    companion object {
+        private val TAG: String = PermissionsPopupMenu::class.java.simpleName
+    }
+
     fun show() {
         mService.registerObserver(mPermissionsObserver)
         if (getPermissions() == 0) {
             // onMenuPrepare will be called once more once permissions have loaded.
             if (mService.isConnected()) {
-                mService.HumlaSession().requestPermissions(mChannel.id)
+                // Same TOCTOU as getPermissions() above.
+                try {
+                    mService.HumlaSession().requestPermissions(mChannel.id)
+                } catch (e: HumlaDisconnectedException) {
+                    Log.d(TAG, "requestPermissions with torn-down session: $e")
+                } catch (e: IllegalStateException) {
+                    Log.d(TAG, "requestPermissions with torn-down session: $e")
+                }
             }
         } else {
             mPrepareListener.onMenuPrepare(mMenu.menu, getPermissions())

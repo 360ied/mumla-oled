@@ -115,6 +115,9 @@ class MumlaMessageNotification(context: Context) {
 
         val manager = NotificationManagerCompat.from(mContext)
         val notification = builder.build()
+        // Second check is intentional, not redundant: the permission can be
+        // revoked mid-method (the early gate above also guards the unread
+        // backlog), so re-check immediately before notify().
         if (ContextCompat.checkSelfPermission(
                 mContext,
                 Manifest.permission.POST_NOTIFICATIONS

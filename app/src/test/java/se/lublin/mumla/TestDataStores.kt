@@ -42,19 +42,24 @@ import kotlinx.coroutines.runBlocking
  * All entry points block on `Dispatchers.IO`, so plain-JVM JUnit tests can
  * use them directly with no test dispatcher.
  *
- * Lifetime: one temp dir + SupervisorJob scope per test. Temp dirs are
- * removed by a JVM shutdown hook (deleteOnExit cannot remove non-empty
- * dirs, and the DataStore writes its file inside); scopes are never
- * cancelled mid-suite. Fine for a unit suite; do not reuse this pattern for
- * long-lived processes.
+ * Lifetime: one temp dir + SupervisorJob scope per test. Temp dirs share a
+ * single suite root reclaimed by one JVM shutdown hook (per-test hooks would
+ * accumulate Thread objects over the suite, and deleteOnExit cannot remove
+ * non-empty dirs). Scopes are never cancelled mid-suite. Fine for a unit
+ * suite; do not reuse this pattern for long-lived processes.
  */
 object TestDataStores {
+    private val suiteRoot: File by lazy {
+        val root = Files.createTempDirectory("datastore-tests").toFile()
+        Runtime.getRuntime().addShutdownHook(
+            Thread({ root.deleteRecursively() }, "datastore-tests-cleanup"),
+        )
+        root
+    }
+
     @JvmStatic
     fun create(): DataStore<Preferences> {
-        val dir = Files.createTempDirectory("datastore-test").toFile()
-        // Recursive delete at JVM exit: deleteOnExit() alone never removes a
-        // non-empty directory, so suites would accumulate /tmp/datastore-test*.
-        Runtime.getRuntime().addShutdownHook(Thread({ dir.deleteRecursively() }, "datastore-test-cleanup"))
+        val dir = Files.createTempDirectory(suiteRoot.toPath(), "datastore-test").toFile()
         val file = File(dir, "settings.preferences_pb")
         return PreferenceDataStoreFactory.create(
             scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),

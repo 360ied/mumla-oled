@@ -113,8 +113,8 @@ class ServerInfoFragment : HumlaServiceFragment() {
         }
         protocolView.text = getString(R.string.server_info_protocol, release)
         osVersionView.text = getString(R.string.server_info_version, session.getServerOSName(), session.getServerOSVersion())
-        tcpLatencyView.text = getString(R.string.server_info_latency, session.getTCPLatency().toFloat() * Math.pow(10.0, -3.0))
-        udpLatencyView.text = getString(R.string.server_info_latency, session.getUDPLatency().toFloat() * Math.pow(10.0, -3.0))
+        tcpLatencyView.text = getString(R.string.server_info_latency, session.getTCPLatency().toFloat() * 1e-3f)
+        udpLatencyView.text = getString(R.string.server_info_latency, session.getUDPLatency().toFloat() * 1e-3f)
         // TODO SRV note also getHost,Port?
         // NPE-exact: the original dereferenced getTargetServer() unconditionally.
         val targetServer = service.getTargetServer() ?: throw NullPointerException("targetServer")

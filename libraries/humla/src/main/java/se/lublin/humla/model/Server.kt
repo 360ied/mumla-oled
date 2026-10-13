@@ -187,16 +187,25 @@ class Server(
         var srvPort = Constants.DEFAULT_PORT
         try {
             val lookup = "_mumble._tcp.$srvHost"
+            // Executor inside a guarded region: if submit() itself throws,
+            // the finally below still shuts it down (no leak). Created per
+            // lookup; calls are already serialized by srvResolve's monitor.
             val executor = Executors.newSingleThreadExecutor()
-            val future = executor.submit<SrvResolverResult> {
-                ResolverApi.INSTANCE.resolveSrv(lookup)
-            }
             var res: SrvResolverResult? = null
             try {
-                res = future.get(800, TimeUnit.MILLISECONDS)
-            } catch (ignored: TimeoutException) {
-                future.cancel(true)
-                Log.d(TAG, "SRV lookup timed out for $lookup")
+                val future = executor.submit<SrvResolverResult> {
+                    ResolverApi.INSTANCE.resolveSrv(lookup)
+                }
+                try {
+                    res = future.get(800, TimeUnit.MILLISECONDS)
+                } catch (ignored: TimeoutException) {
+                    future.cancel(true)
+                    Log.d(TAG, "SRV lookup timed out for $lookup")
+                } catch (e: InterruptedException) {
+                    // Restore the interrupt: callers (connect path) check it.
+                    Thread.currentThread().interrupt()
+                    Log.d(TAG, "SRV lookup interrupted for $lookup", e)
+                }
             } finally {
                 executor.shutdownNow()
             }

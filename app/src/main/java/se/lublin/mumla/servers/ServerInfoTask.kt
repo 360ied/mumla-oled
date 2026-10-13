@@ -41,9 +41,15 @@ open class ServerInfoTask : AsyncTask<Server, Void, ServerInfoResponse>() {
             val buffer = ByteBuffer.allocate(12)
             buffer.putInt(0) // Request type
             buffer.putLong(target.id) // Identifier
+            // Resolve once: the reply source below is validated against this
+            // actual request address (not target.host, which may differ via
+            // SRV), so off-path spoofs can't poison the ping list. Blast
+            // radius is UI hint only, but the check is free.
+            val requestAddress = InetAddress.getByName(target.getSrvHost())
+            val requestPort = target.getSrvPort()
             val requestPacket = DatagramPacket(
                 buffer.array(), 12,
-                InetAddress.getByName(target.getSrvHost()), target.getSrvPort()
+                requestAddress, requestPort
             )
 
             // Send packet and wait for response
@@ -61,6 +67,10 @@ open class ServerInfoTask : AsyncTask<Server, Void, ServerInfoResponse>() {
 
                 if (responsePacket.length < 24) {
                     return ServerInfoResponse() // Spoofed/short reply: dummy
+                }
+                if (responsePacket.address != requestAddress || responsePacket.port != requestPort) {
+                    Log.d(TAG, "Ping reply source mismatch, dropping")
+                    return ServerInfoResponse() // Off-path reply: dummy
                 }
 
                 val latencyInMs = ((System.nanoTime() - startTime) / 1000000).toInt()

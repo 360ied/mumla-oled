@@ -117,6 +117,11 @@ class Channel : IChannel, Comparable<Channel> {
         stack.push(this)
         while (!stack.isEmpty()) {
             val ch = stack.pop()
+            // Snapshot copy protects the traversal below, but the copy itself
+            // iterates the live (non-thread-safe) list: an off-monitor
+            // mutator racing here can still CME. Writers mutate under
+            // ModelHandler's monitor while readers (UI) call this freely —
+            // pre-existing parity arrangement, retained, not widened.
             for (linked in ArrayList(ch.linkList)) {
                 // linkList's element type is non-null (addLink rejects null),
                 // so no null check: the pre-image Java guard is unreachable.

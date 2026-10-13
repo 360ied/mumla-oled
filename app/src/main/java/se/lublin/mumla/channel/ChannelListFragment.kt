@@ -237,7 +237,16 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
 
         val service = getService()
         if (service != null && service.isConnected()) {
-            val session = service.HumlaSession()
+            // TOCTOU: menu inflation racing teardown throws on acquisition.
+            val session = try {
+                service.HumlaSession()
+            } catch (e: HumlaDisconnectedException) {
+                Log.d(TAG, "menu with torn-down session: $e")
+                return
+            } catch (e: IllegalStateException) {
+                Log.d(TAG, "menu with torn-down session: $e")
+                return
+            }
             // NPE-exact: the original dereferenced getActivity() unconditionally.
             val host = activity ?: throw NullPointerException("activity")
 
@@ -269,7 +278,16 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
             return super.onOptionsItemSelected(item)
         }
 
-        val session = service.HumlaSession()
+        // Same TOCTOU as onPrepareOptionsMenu above.
+        val session = try {
+            service.HumlaSession()
+        } catch (e: HumlaDisconnectedException) {
+            Log.d(TAG, "menu action with torn-down session: $e")
+            return super.onOptionsItemSelected(item)
+        } catch (e: IllegalStateException) {
+            Log.d(TAG, "menu action with torn-down session: $e")
+            return super.onOptionsItemSelected(item)
+        }
         val itemId = item.itemId
         if (itemId == R.id.menu_mute_button) {
             val self = session.getSessionUser()

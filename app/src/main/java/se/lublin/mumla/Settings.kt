@@ -52,10 +52,9 @@ class Settings {
         java.util.concurrent.ConcurrentHashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
 
     // Widened to public: Kotlin has no package visibility (pre-image was package-private).
-    // Prefer Settings.getInstance involved parties share the single DataStore
-    // instance per process (see AppDataStore); constructing directly with a
-    // second store for the same file forks the key space. createForTesting
-    // remains the test seam.
+    // All involved parties must share the single DataStore instance per process
+    // (see AppDataStore): constructing directly with a second store for the
+    // same file forks the key space. createForTesting remains the test seam.
     constructor(store: DataStore<Preferences>) {
         repository = SettingsRepository(store)
     }
@@ -274,7 +273,9 @@ class Settings {
          */
         set(pkg) {
             repository.updateBlocking { prefs ->
-                prefs.ttsEngine = if (pkg == null) Optional.empty() else Optional.of(pkg)
+                // Normalize "" to empty: toSnapshot() reads "" back as null,
+                // so storing "" would leave a dead value in the file.
+                prefs.ttsEngine = if (pkg.isNullOrEmpty()) Optional.empty() else Optional.of(pkg)
             }
         }
 

@@ -357,8 +357,8 @@ class NativeAudioInputEngine {
     }
 
     // Finalizer backstop for a never-destroyed engine. kotlin.Any exposes no
-    // finalize to call through to (Object's is a no-op), so only destroy() runs.
-    @Throws(Throwable::class)
+    // Drops the super call: kotlin.Any exposes none and Object's is a no-op.
+    // No @Throws (matches CryptState.finalize): nobody calls this directly.
     protected fun finalize() {
         destroy()
     }

@@ -162,6 +162,12 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         renderThread.start()
     }
 
+    /**
+     * Stops playback and releases the track/engine. Safe from any thread
+     * except the render thread itself: a self-stop defers cleanup to the
+     * next external call after run() exits (see below). In-tree callers
+     * always stop from the service thread.
+     */
     fun stopPlaying() {
         val thread: Thread?
         synchronized(this) {
@@ -446,6 +452,11 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             // after at least one frame, per upstream MumbleProtocol) is not
             // another Opus frame: stop before parsing it as a header, or
             // the trailing floats decode as a garbage header + payload.
+            // Intentional tolerance divergence: upstream decodes exactly one
+            // frame then discards the whole packet on any other remainder,
+            // while this loop plays the valid prefix and drops the tail.
+            // Benign (servers never bundle Opus; single-frame packets take
+            // one iteration) and better for voice; do not "fix" to match.
             var queued = 0
             while (pds.left() > 0) {
                 if (queued > 0 && pds.left() == 3 * 4) {
@@ -506,6 +517,10 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         if (opus.isEmpty()) {
             // A terminator may carry no Opus payload; still forward the marker
             // so the voice drains instead of lingering to the miss-expiry.
+            // Intentional divergence: upstream decodeAudio_protobuf rejects
+            // empty opus_data outright; forwarding only the terminator marker
+            // is harmless (compliant servers always set opus_data) and keeps
+            // talk-state teardown prompt. Do not "fix" to match.
             if (isTerminator) {
                 engineCopy.queuePacket(session, ByteArray(0), 0, seq, flags, true)
                 signalData()

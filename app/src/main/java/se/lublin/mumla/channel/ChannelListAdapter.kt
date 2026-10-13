@@ -189,7 +189,14 @@ class ChannelListAdapter(
             cvh.mJoinButton.setOnClickListener {
                 val service = mService
                 if (service != null && service.isConnected()) {
-                    service.HumlaSession().joinChannel(channel.id)
+                    // TOCTOU: tap racing teardown throws on acquisition.
+                    try {
+                        service.HumlaSession().joinChannel(channel.id)
+                    } catch (e: HumlaDisconnectedException) {
+                        Log.d(TAG, "join with torn-down session: $e")
+                    } catch (e: IllegalStateException) {
+                        Log.d(TAG, "join with torn-down session: $e")
+                    }
                 }
             }
 
@@ -301,7 +308,15 @@ class ChannelListAdapter(
             return
         }
 
-        val session = service.HumlaSession()
+        val session = try {
+            service.HumlaSession()
+        } catch (e: HumlaDisconnectedException) {
+            Log.d(TAG, "exception in updateChannels: $e")
+            return
+        } catch (e: IllegalStateException) {
+            Log.d(TAG, "exception in updateChannels: $e")
+            return
+        }
         mNodes.clear()
         try {
             for (cid in mRootChannels) {

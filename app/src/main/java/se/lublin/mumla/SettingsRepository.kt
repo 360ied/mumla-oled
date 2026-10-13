@@ -17,6 +17,7 @@
 
 package se.lublin.mumla
 
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -259,10 +260,6 @@ class SettingsRepository @Inject constructor(
             store.data.map { it.toSnapshot() }.first()
         }
 
-    suspend fun update(transform: MutablePrefs.() -> Unit) {
-        doUpdate(MutablePrefs().apply(transform))
-    }
-
     fun updateBlocking(update: java.util.function.Consumer<MutablePrefs>) =
         runBlocking(Dispatchers.IO) {
             val pending = MutablePrefs()
@@ -323,8 +320,15 @@ class SettingsRepository @Inject constructor(
     private fun fire(key: String) {
         val targets: List<java.util.function.Consumer<String>>
         synchronized(this) { targets = listeners.toList() }
+        // Per-listener isolation like HumlaCallbacks: one throwing consumer
+        // must not starve the rest (legacy dispatch is idempotent, so a
+        // duplicate/early delivery from a re-fire is harmless).
         for (listener in targets) {
-            listener.accept(key)
+            try {
+                listener.accept(key)
+            } catch (e: RuntimeException) {
+                Log.w("SettingsRepository", "listener threw for key $key", e)
+            }
         }
     }
 

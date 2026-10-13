@@ -85,7 +85,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
          */
         @JvmStatic
         fun calculateAudioBandwidth(bitrate: Int, framesPerPacket: Int): Int {
-            // FIXME: assumes worst-case using TCP
+            // TCP without positional: upstream adds two conditional 12s
+            // (transmit-position + TCP mode) for a true worst case of
+            // 47+12+frames; this counts one (47+frames), underestimating that
+            // worst case by ~4.8 kbps @20 ms. Pre-existing formula, retained.
             var overhead = 20 + 8 + 4 + 1 + 2 + 12 + framesPerPacket
             overhead *= (800 / framesPerPacket)
             return overhead + bitrate
@@ -408,6 +411,11 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     // Widened to public: Kotlin has no package visibility; called across the library.
     // Slice 4: self-chaining ScheduledExecutorService becomes
     // while (isActive) { sendKeepalivePing(); delay(interval) } on IO.
+    // Lock note: @Synchronized here guards against concurrent schedule
+    // calls only; pingScope itself is @Volatile because connect()/disconnect()
+    // mutate it off this monitor — visibility rests on volatile, and the
+    // no-IPC-under-monitor discipline forbids widening the lock. Do not
+    // "fix" by synchronizing connect().
     @Synchronized
     fun scheduleNextPing(delaySeconds: Int) {
         val scope = pingScope ?: return
@@ -938,6 +946,8 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
 
         if (mServerVersion == 0x10202) applyLegacyCodecWorkaround(data)
         val dataType = data[0].toInt() shr 5 and 0x7
+        // The < 0 arm is dead (shr-and-0x7 is always 0-7): kept as
+        // defense-in-depth, not an oversight.
         if (dataType < 0 || dataType > HumlaUDPMessageType.values().size - 1) return // Discard invalid data types
         val udpDataType = HumlaUDPMessageType.values()[dataType]
 

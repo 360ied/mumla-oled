@@ -28,7 +28,9 @@ object BitmapUtils {
         val width = image.width
         val height = image.height
 
-        if (width < maxWidth && height < maxHeight) {
+        // Exact-size images skip the scale branch and return the original
+        // instead of an identical-size copy.
+        if (width <= maxWidth && height <= maxHeight) {
             return image
         }
 

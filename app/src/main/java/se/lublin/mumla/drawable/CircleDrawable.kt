@@ -82,11 +82,15 @@ class CircleDrawable(resources: Resources, bitmap: Bitmap) : Drawable() {
             if (this === other) return true
             if (other == null || javaClass != other.javaClass) return false
             other as CircleConstantState
-            return Objects.equals(mBitmap, other.mBitmap)
+            // Resources included: the same bitmap under different density/
+            // theme resources renders a different stroke, so the states are
+            // not interchangeable (newDrawable(res) exists for exactly this).
+            return Objects.equals(mBitmap, other.mBitmap) &&
+                Objects.equals(mResources, other.mResources)
         }
 
         override fun hashCode(): Int {
-            return mBitmap.hashCode()
+            return 31 * mBitmap.hashCode() + mResources.hashCode()
         }
     }
 

@@ -946,28 +946,20 @@ open class MumlaService : HumlaService(),
         val settings = mSettings ?: throw NullPointerException("mSettings")
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         val serverId = request.getLongExtra(EXTRA_SERVER_ID, -1)
-        var server: Server? = null
-        if (serverId != -1L) {
+        // Resolved once: both branches return early on null, so the merged
+        // value below is provably non-null (no dead Elvis needed).
+        val connected: Server? = if (serverId != -1L) {
             // Database is the source of truth for saved servers; the parcel
             // path below serves unsaved (ad-hoc) servers only.
-            for (candidate in database.getServers()) {
-                if (candidate.id == serverId) {
-                    server = candidate
-                    break
-                }
-            }
-            if (server == null) {
-                return null
-            }
+            database.getServers().firstOrNull { it.id == serverId }
         } else {
-            server = request.getParcelableExtra(EXTRA_SERVER, Server::class.java)
-            if (server == null) {
-                return null
-            }
+            request.getParcelableExtra(EXTRA_SERVER, Server::class.java)
+        }
+        if (connected == null) {
+            return null
         }
 
         val builder = ConfigDelta.Builder()
-        val connected = server ?: throw NullPointerException("server")
         builder.server = connected
         builder.clientName = getString(R.string.app_name) + " " + BuildConfig.VERSION_NAME
         builder.transmitMode = settings.humlaInputMethod

@@ -101,9 +101,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     // neither leak the scope nor accept sends); in-flight sends are best-effort
     // on cancel, send-after-disconnect drops.
     private var tcpScope: CoroutineScope? = null
-    // Single final dispatcher: rebuilt per connect() before, but
-    // limitedParallelism(1) is a stateless factory — one instance serializes
-    // every connection's writes the same way (plus the write Mutex).
+    // Single final dispatcher, per HumlaTCP instance: limitedParallelism(1)
+    // is a stateless factory, so one instance serializes this connection's
+    // writes (plus the write Mutex) without cross-connection sharing — each
+    // connection object owns its own view.
     private val sendDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val writeMutex = Mutex()
     private val mainHandler = Handler(Looper.getMainLooper())

@@ -149,7 +149,11 @@ class ServerEditFragment : DialogFragment() {
 
         val port: Int
         try {
-            port = Integer.parseInt(portEdit.text.toString())
+            // Clamp to the valid range: the dialog's validate() rejects
+            // out-of-range ports on the UI path, but createServer() is also
+            // the funnel for any programmatic caller — never persist a
+            // negative or >65535 port (0 = unconfigured sentinel, preserved).
+            port = Integer.parseInt(portEdit.text.toString()).coerceIn(0, 65535)
         } catch (ex: NumberFormatException) {
             // Setting 0, meaning that port isn't configured. Consumers of
             // Server.getPort() will have to deal with that. Like displaying

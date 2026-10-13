@@ -160,7 +160,7 @@ object TlsHostnameVerifier {
             }
             return false
         }
-        if (normalized.endsWith(".onion")) {
+        if (isOnionHost(normalized)) {
             return false
         }
         for (dnsSan in dnsSans) {

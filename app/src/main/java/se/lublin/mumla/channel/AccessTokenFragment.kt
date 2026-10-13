@@ -114,7 +114,14 @@ class AccessTokenFragment : HumlaServiceFragment() {
         database.addAccessToken(getServerId(), tokenText)
         val service = getService()
         if (service != null && service.isConnected()) {
-            service.HumlaSession().sendAccessTokens(tokens)
+            // TOCTOU: teardown between check and send throws.
+            try {
+                service.HumlaSession().sendAccessTokens(tokens)
+            } catch (e: se.lublin.humla.util.HumlaDisconnectedException) {
+                Log.w(TAG, "add-token send with torn-down session", e)
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "add-token send with torn-down session", e)
+            }
         }
     }
 
@@ -161,7 +168,14 @@ class AccessTokenFragment : HumlaServiceFragment() {
                 database.removeAccessToken(getServerId(), token)
                 val service = getService()
                 if (service != null && service.isConnected()) {
-                    service.HumlaSession().sendAccessTokens(tokens)
+                    // Same TOCTOU as the add path above.
+                    try {
+                        service.HumlaSession().sendAccessTokens(tokens)
+                    } catch (e: se.lublin.humla.util.HumlaDisconnectedException) {
+                        Log.w(TAG, "delete-token send with torn-down session", e)
+                    } catch (e: IllegalStateException) {
+                        Log.w(TAG, "delete-token send with torn-down session", e)
+                    }
                 }
             }
 

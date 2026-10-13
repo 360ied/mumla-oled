@@ -33,16 +33,17 @@ class Message : IMessage {
         private set
     override var actorName: String? = null
         private set
-    private var channelList: List<Channel> = ArrayList()
-    private var treeList: List<Channel> = ArrayList()
-    private var userList: List<User> = ArrayList()
+    // Backed by immutable empties until a ctor assigns: the 6-arg form
+    // always overwrites with defensive copies, so no throwaway allocation.
+    private var channelList: List<Channel> = emptyList()
+    private var treeList: List<Channel> = emptyList()
+    private var userList: List<User> = emptyList()
     override var message: String? = null
         private set
     override val receivedTime: Long
 
     // Single primary-equivalent ctor: the 1-arg form delegates with empty
-    // lists instead of allocating three throwaway ArrayLists that the 6-arg
-    // form immediately discards.
+    // lists (fields already default to immutable empties above).
     constructor(message: String?) : this(-1, null, emptyList(), emptyList(), emptyList(), message)
 
     constructor(

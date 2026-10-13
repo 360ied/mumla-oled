@@ -735,9 +735,8 @@ class AudioHandler : HumlaNetworkListener,
                     return
                 }
                 try {
-                    var flags = 0
-                    flags = flags or (HumlaUDPMessageType.UDPVoiceOpus.ordinal shl 5)
-                    flags = flags or (mTargetId.toInt() and 0x1F)
+                    val flags = (HumlaUDPMessageType.UDPVoiceOpus.ordinal shl 5) or
+                        (mTargetId.toInt() and 0x1F)
 
                     mLegacyPacketBuffer[0] = (flags and 0xFF).toByte()
                     mLegacyDataStream.rewind()

@@ -147,6 +147,12 @@ class HumlaCallbacks : IHumlaObserver {
             try {
                 call.call(observer)
             } catch (observerError: RuntimeException) {
+                // Never swallow coroutine cancellation as a mere observer
+                // failure (no in-tree observer throws it today; belt and
+                // braces for a future coroutine-based observer).
+                if (observerError is kotlinx.coroutines.CancellationException) {
+                    throw observerError
+                }
                 // Full traces in debug only: a persistently-throwing observer
                 // on a high-frequency callback must not spam logcat.
                 if (BuildConfig.DEBUG) {

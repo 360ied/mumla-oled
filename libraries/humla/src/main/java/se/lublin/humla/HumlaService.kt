@@ -235,8 +235,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // registration, which requires a Handler. Volatile: cancelReconnect()/
     // disconnect() are binder-reachable off-main, matching every
     // neighboring cross-thread flag in this file. The connection generation
-    // below is bumped on main (connect is main-confined) and read from the
-    // IO threads posting connection callbacks.
+    // below is bumped on main (connect is main-confined); the filtered
+    // callbacks arrive on Main via Handler posts, so volatile here is
+    // belt-and-braces visibility, not an IO-thread requirement.
     @Volatile
     private var connectionGeneration = 0
     @Volatile

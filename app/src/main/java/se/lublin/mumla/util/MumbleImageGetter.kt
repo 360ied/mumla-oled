@@ -142,7 +142,11 @@ class MumbleImageGetter : Html.ImageGetter {
         }
 
         if (source.regionMatches(0, "data:image", 0, 10, ignoreCase = true)) {
-            var bitmap = mBitmapCache.get(source)
+            // Hash data-URI keys: the raw string embeds up to 10MB of base64
+            // and would otherwise be retained as a strong LruCache key while
+            // sizeOf accounts bitmap bytes only.
+            val cacheKey = bitmapCacheKey(source)
+            var bitmap = mBitmapCache.get(cacheKey)
             if (bitmap != null) {
                 return createDrawable(bitmap)
             }
@@ -158,7 +162,7 @@ class MumbleImageGetter : Html.ImageGetter {
                     }
                     bitmap = getBase64Image(base64Data)
                     if (bitmap != null) {
-                        mBitmapCache.put(source, bitmap)
+                        mBitmapCache.put(cacheKey, bitmap)
                         return createDrawable(bitmap)
                     }
                 }
@@ -172,11 +176,6 @@ class MumbleImageGetter : Html.ImageGetter {
         val bitmap = mBitmapCache.get(source)
         if (bitmap != null) {
             return createDrawable(bitmap)
-        }
-
-        // Avoid re-fetching failed URLs
-        if (mFailedDownloads.contains(source)) {
-            return null
         }
 
         if (mSettings.shouldLoadExternalImages) {
@@ -224,6 +223,19 @@ class MumbleImageGetter : Html.ImageGetter {
 
         drawable.setBounds(0, 0, bounds.width, bounds.height)
         return drawable
+    }
+
+    /**
+     * Cache key for bitmaps: data URIs hash to a fixed-size digest (see
+     * above); remote URLs key by string (short, debuggable).
+     */
+    private fun bitmapCacheKey(source: String): String {
+        if (!source.regionMatches(0, "data:image", 0, 10, ignoreCase = true)) {
+            return source
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(source.toByteArray(Charsets.UTF_8))
+        return "data:sha256:" + hash.joinToString("") { "%02x".format(it) }
     }
 
     private fun fetchURLImageAsync(source: String) {

@@ -62,15 +62,24 @@ object SsrfHostPolicy {
         if (host == null) {
             return null
         }
+        // Fixpoint loop: "[::1]." must lose both the dot and the brackets.
+        // Bracket-strip-then-dot-strip alone leaves "[::1]." bracketed
+        // (fail-closed overblock); alternating to a fixpoint handles any
+        // nesting the trim produces.
         var normalized = host.trim()
-        if (normalized.length >= 2 &&
-            normalized[0] == '[' &&
-            normalized[normalized.length - 1] == ']'
-        ) {
-            normalized = normalized.substring(1, normalized.length - 1).trim()
-        }
-        while (normalized.endsWith(".")) {
-            normalized = normalized.substring(0, normalized.length - 1)
+        while (true) {
+            val dotted = normalized.trimEnd('.')
+            val unbracketed =
+                if (dotted.length >= 2 && dotted[0] == '[' && dotted[dotted.length - 1] == ']') {
+                    dotted.substring(1, dotted.length - 1)
+                } else {
+                    dotted
+                }
+            val next = unbracketed.trim()
+            if (next == normalized) {
+                break
+            }
+            normalized = next
         }
         return normalized.lowercase(Locale.ROOT)
     }

@@ -417,9 +417,11 @@ class AudioInput : Runnable {
         }
 
         try {
-            val record = audioRecord
-            if (record != null) {
-                record.startRecording()
+            // Fresh volatile read (not the preamble `record` above): the
+            // device may have been recreated between the two reads.
+            val liveRecord = audioRecord
+            if (liveRecord != null) {
+                liveRecord.startRecording()
             }
         } catch (e: IllegalStateException) {
             Log.w(TAG, "Failed to start recording, recreating AudioRecord: " + e.message)
@@ -478,11 +480,12 @@ class AudioInput : Runnable {
 
         try {
             while (recording && !Thread.currentThread().isInterrupted) {
-                val record = audioRecord
-                if (record == null) {
+                // Fresh read per quantum: stop()/recreate swaps the field.
+                val liveRecord = audioRecord
+                if (liveRecord == null) {
                     break
                 }
-                val read = record.read(buffer, 0, FRAME_SIZE)
+                val read = liveRecord.read(buffer, 0, FRAME_SIZE)
                 if (read > 0) {
                     consecutiveReadErrors = 0
                     val listenerCopy = listener
@@ -550,9 +553,9 @@ class AudioInput : Runnable {
         }
 
         try {
-            val record = audioRecord
-            if (record != null && record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                record.stop()
+            val liveRecord = audioRecord
+            if (liveRecord != null && liveRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                liveRecord.stop()
             }
         } catch (ignored: Throwable) {
         }
