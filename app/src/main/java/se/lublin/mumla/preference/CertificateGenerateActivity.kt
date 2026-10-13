@@ -41,7 +41,7 @@ class CertificateGenerateActivity : BaseActivity() {
                 }
 
                 val settings = Settings.getInstance(this@CertificateGenerateActivity)
-                settings.setDefaultCertificateId(result.id)
+                settings.defaultCertificateId = result.id
                 showCompletionDialog(result)
             }
         }

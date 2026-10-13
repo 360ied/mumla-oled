@@ -58,14 +58,15 @@ class MumlaConnectionNotification {
     private var mOverlayShown: Boolean = false
 
     private constructor(service: Service?, listener: OnActionListener?) :
-        this(service, listener, Settings.getInstance(service))
+        this(service, listener, service?.let { Settings.getInstance(it) })
 
     // Widened to public: Kotlin has no package visibility (was package-visible
     // in Java for the same-package service and its tests).
     constructor(service: Service?, listener: OnActionListener?, settings: Settings?) {
         mService = service
         mListener = listener
-        mSettings = settings ?: Settings.getInstance(service)
+        // NPE-exact: the original dereferenced service unconditionally for the default.
+        mSettings = settings ?: Settings.getInstance(service ?: throw NullPointerException("service"))
         mActionsShown = false
         mReconnectingShown = false
         mMuted = false

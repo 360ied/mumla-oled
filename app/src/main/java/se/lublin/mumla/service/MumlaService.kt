@@ -190,13 +190,16 @@ open class MumlaService : HumlaService(),
 
     private fun updateConnectedNotification() {
         val server = getTargetServer()
-        val serverName = if (server?.name != null && server.name.isNotEmpty()) {
-            server.name
+        val rawName = server?.name
+        val serverName = if (!rawName.isNullOrEmpty()) {
+            rawName
         } else {
             server?.host ?: getString(R.string.app_name)
         }
-        val hostInfo = if (server?.host != null) {
-            server.host + ":" + (if (server.port > 0) server.port else Constants.DEFAULT_PORT)
+        val host = server?.host
+        val hostInfo = if (host != null) {
+            val port = server?.port ?: 0
+            host + ":" + (if (port > 0) port else Constants.DEFAULT_PORT)
         } else {
             null
         }
@@ -227,8 +230,9 @@ open class MumlaService : HumlaService(),
     private val mObserver: HumlaObserver = object : HumlaObserver() {
         override fun onConnecting() {
             val server = getTargetServer()
-            val serverName = if (server?.name != null && server.name.isNotEmpty()) {
-                server.name
+            val rawName = server?.name
+            val serverName = if (!rawName.isNullOrEmpty()) {
+                rawName
             } else {
                 server?.host ?: getString(R.string.app_name)
             }
@@ -269,13 +273,16 @@ open class MumlaService : HumlaService(),
                 mWasReconnecting = true
                 val errorMsg = e?.message ?: getString(R.string.mumlaDisconnected)
                 val server = getTargetServer()
-                val serverName = if (server?.name != null && server.name.isNotEmpty()) {
-                    server.name
+                val rawName = server?.name
+                val serverName = if (!rawName.isNullOrEmpty()) {
+                    rawName
                 } else {
                     server?.host
                 }
-                val hostInfo = if (server?.host != null) {
-                    server.host + ":" + (if (server.port > 0) server.port else Constants.DEFAULT_PORT)
+                val host = server?.host
+                val hostInfo = if (host != null) {
+                    val port = server?.port ?: 0
+                    host + ":" + (if (port > 0) port else Constants.DEFAULT_PORT)
                 } else {
                     null
                 }
@@ -842,7 +849,7 @@ open class MumlaService : HumlaService(),
                     // the connect flow requests the grant first. The write-back
                     // re-enters onSettingChanged once; the second pass takes
                     // the non-revert branch and terminates.
-                    settings.setBluetoothHeadset(false)
+                    settings.isBluetoothHeadset = false
                     Toast.makeText(this, R.string.grant_perm_bluetooth, Toast.LENGTH_LONG).show()
                     return
                 }
@@ -968,7 +975,7 @@ open class MumlaService : HumlaService(),
         builder.halfDuplex = settings.isHalfDuplex
         builder.bluetoothSco = settings.isBluetoothHeadset
         builder.adaptiveLeveler = settings.isAdaptiveLevelerEnabled
-        if (connected.isSaved) {
+        if (connected.isSaved()) {
             builder.localMuteHistory = database.getLocalMutedUsers(connected.id)
             builder.localIgnoreHistory = database.getLocalIgnoredUsers(connected.id)
         }
@@ -1154,7 +1161,7 @@ open class MumlaService : HumlaService(),
                 Log.e(TAG, "Failed to open overlay permission settings", e)
             }
             val settings = mSettings ?: throw NullPointerException("mSettings")
-            settings.setOverlayShown(false)
+            settings.isOverlayShown = false
             // Write-back re-enters onSettingChanged once with shown=false;
             // the second pass takes the non-revert branch and terminates.
             updateConnectedNotification()
@@ -1169,7 +1176,7 @@ open class MumlaService : HumlaService(),
         }
         val settings = mSettings ?: throw NullPointerException("mSettings")
         if (settings.isOverlayShown != showOverlay) {
-            settings.setOverlayShown(showOverlay)
+            settings.isOverlayShown = showOverlay
         } else {
             updateOverlayVisibility()
             updateConnectedNotification()
@@ -1383,7 +1390,7 @@ open class MumlaService : HumlaService(),
             if (server == null) {
                 return ""
             }
-            if (server.isSaved) {
+            if (server.isSaved()) {
                 return "id:" + server.id
             }
             // Shared canonicalization with TLS pinning (trim + trailing-dot +

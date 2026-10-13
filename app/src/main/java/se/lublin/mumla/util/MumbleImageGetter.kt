@@ -171,7 +171,7 @@ class MumbleImageGetter : Html.ImageGetter {
             return null
         }
 
-        if (mSettings.shouldLoadExternalImages()) {
+        if (mSettings.shouldLoadExternalImages) {
             fetchURLImageAsync(source)
         }
 

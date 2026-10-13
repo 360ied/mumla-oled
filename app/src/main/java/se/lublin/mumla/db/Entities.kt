@@ -33,27 +33,11 @@ import androidx.room.PrimaryKey
  *   including the pre-existing `datetime('now')` literal (separate bug file).
  * - `local_mute` / `local_ignore` gain an explicit `PRIMARY KEY(server, user)`
  *   replacing the bare UNIQUE constraint — identical duplicate rejection.
- * `Server` itself stays the hand-written Java model in this slice (it becomes
- * `@Entity @Parcelize` in slice 5); entities map to/from it in
- * [MumlaRoomDatabase].
+ * - `server` follows the nullability of the single Server model since slice 5
+ *   (`MIGRATION_10_11`): `name`/`host`/`username` nullable for parcel
+ *   round-trips, `port` NOT NULL. `Server` itself is the `@Entity`, so no
+ *   mapping layer remains.
  */
-@Entity(tableName = "server")
-data class ServerEntity(
-    @PrimaryKey(autoGenerate = true)
-    @ColumnInfo(name = "_id")
-    val id: Long = 0,
-    @ColumnInfo(name = "name")
-    val name: String,
-    @ColumnInfo(name = "host")
-    val host: String,
-    @ColumnInfo(name = "port")
-    val port: Int?,
-    @ColumnInfo(name = "username")
-    val username: String,
-    @ColumnInfo(name = "password")
-    val password: String?,
-)
-
 @Entity(tableName = "favourites")
 data class FavouriteEntity(
     @PrimaryKey(autoGenerate = true)

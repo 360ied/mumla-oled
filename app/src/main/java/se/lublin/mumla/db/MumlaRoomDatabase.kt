@@ -31,10 +31,10 @@ import se.lublin.humla.model.Server
  * Room database replacing the hand-SQL `MumlaSQLiteDatabase` behind the
  * [MumlaDatabase] interface (migration slice 2).
  *
- * Opens the existing `mumble.db` at version 9 and migrates to 10 via
- * [MIGRATION_9_10] — destructive fallback is forbidden, the fleet has real
- * data. `Server` stays the hand-written Java model in this slice (it becomes
- * `@Entity @Parcelize` in slice 5); this class maps entities to/from it.
+ * Opens the existing `mumble.db` at version 9 and migrates to 11 via
+ * [MIGRATION_9_10] and [MIGRATION_10_11] — destructive fallback is forbidden,
+ * the fleet has real data. `Server` is the single `@Entity @Parcelize` model
+ * (DB row, parcel, and UI model in one); no entity mapping remains.
  *
  * Threading (interim): the interface is synchronous and callers include the
  * main thread, so every method bridges via `runBlocking(Dispatchers.IO)` —
@@ -45,7 +45,7 @@ import se.lublin.humla.model.Server
  */
 @Database(
     entities = [
-        ServerEntity::class,
+        Server::class,
         FavouriteEntity::class,
         TokenEntity::class,
         CommentEntity::class,
@@ -53,7 +53,7 @@ import se.lublin.humla.model.Server
         LocalIgnoreEntity::class,
         CertificateEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
@@ -79,18 +79,26 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun getServers(): List<Server> = io {
-        serverDao().getAll().map { it.toModel() }
+        serverDao().getAll()
     }
 
     override fun addServer(server: Server) {
         // The passed id (usually the -1 unsaved sentinel) is ignored, mirroring
-        // the old insert without _id: SQLite assigns a fresh rowid.
-        val id = io { serverDao().insert(server.toEntity().copy(id = 0)) }
-        server.id = id
+        // the old insert without _id: SQLite assigns a fresh rowid. Server is a
+        // plain class with no copy(), so the id is zeroed transiently for the
+        // autogen insert and restored if it fails.
+        val previous = server.id
+        server.id = 0
+        try {
+            server.id = io { serverDao().insert(server) }
+        } catch (e: Exception) {
+            server.id = previous
+            throw e
+        }
     }
 
     override fun updateServer(server: Server) {
-        io { serverDao().update(server.toEntity()) }
+        io { serverDao().update(server) }
     }
 
     override fun removeServer(server: Server) {
@@ -202,7 +210,7 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
                     context.applicationContext,
                     MumlaRoomDatabase::class.java,
                     DATABASE_NAME,
-                ).addMigrations(MIGRATION_8_10, MIGRATION_9_10).build().also { instance = it }
+                ).addMigrations(MIGRATION_8_10, MIGRATION_9_10, MIGRATION_10_11).build().also { instance = it }
             }
 
         /**
@@ -216,6 +224,29 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
         @JvmStatic
         val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) = migrateFrom(db, hasCertPassword = true)
+        }
+
+        /**
+         * v10 → v11: `server` follows the nullability of the single Server
+         * model — `name`/`host`/`username` go nullable (parcel round-trips
+         * carry nulls), `port` goes NOT NULL with COALESCE (writers always
+         * bound a primitive). Data-preserving INSERT...SELECT; no fleet row
+         * can hold a null port (every writer bound one), so the COALESCE
+         * only guards hand-edited databases.
+         */
+        @JvmStatic
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                recreate(
+                    db, "server",
+                    "(`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`name` TEXT, `host` TEXT, `port` INTEGER NOT NULL, " +
+                        "`username` TEXT, `password` TEXT)",
+                    "`_id`, `name`, `host`, `port`, `username`, `password`",
+                    selectColumns = "`_id`, `name`, `host`, COALESCE(`port`, 0), " +
+                        "`username`, `password`",
+                )
+            }
         }
 
         /**
@@ -295,12 +326,6 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
             db.execSQL("DROP TABLE `" + table + "`")
             db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
         }
-
-        private fun ServerEntity.toModel(): Server =
-            Server(id, name, host, port ?: 0, username, password)
-
-        private fun Server.toEntity(): ServerEntity =
-            ServerEntity(id = id, name = name, host = host, port = port, username = username, password = password)
 
         private fun <T> io(block: () -> T): T = runBlocking(Dispatchers.IO) { block() }
     }

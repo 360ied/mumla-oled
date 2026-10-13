@@ -33,7 +33,8 @@ import androidx.fragment.app.Fragment
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import se.lublin.humla.model.Server
 import se.lublin.mumla.R
-import se.lublin.mumla.db.DatabaseProvider
+import se.lublin.mumla.db.MumlaDatabase
+import se.lublin.mumla.db.MumlaRoomDatabase
 
 /**
  * Displays a list of servers, and allows the user to connect and edit them.
@@ -44,7 +45,7 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
     FavouriteServerAdapter.FavouriteServerAdapterMenuListener {
 
     private var mConnectHandler: ServerConnectHandler? = null
-    private var mDatabaseProvider: DatabaseProvider? = null
+    private var mDatabase: MumlaDatabase? = null
     private var mServerGrid: GridView? = null
     private var mServerAdapter: ServerAdapter<Server>? = null
 
@@ -58,10 +59,10 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
 
         try {
             mConnectHandler = context as ServerConnectHandler
-            mDatabaseProvider = context as DatabaseProvider
         } catch (e: ClassCastException) {
             throw ClassCastException(context.toString() + " must implement ServerConnectHandler!")
         }
+        mDatabase = MumlaRoomDatabase.getInstance(context)
     }
 
     override fun onCreateView(
@@ -131,9 +132,9 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
             .setMessage(R.string.confirm_delete_server)
             .setPositiveButton(R.string.delete) { _, _ ->
                 // NPE-exact: the original dereferenced both fields unconditionally.
-                val provider = mDatabaseProvider ?: throw NullPointerException("mDatabaseProvider")
+                val database = mDatabase ?: throw NullPointerException("mDatabase")
                 val adapter = mServerAdapter ?: throw NullPointerException("mServerAdapter")
-                provider.getDatabase().removeServer(server)
+                database.removeServer(server)
                 adapter.remove(server)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -150,9 +151,9 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
     }
 
     fun getServers(): List<Server> {
-        // NPE-exact: the original dereferenced mDatabaseProvider unconditionally.
-        val provider = mDatabaseProvider ?: throw NullPointerException("mDatabaseProvider")
-        return provider.getDatabase().getServers()
+        // NPE-exact: the original dereferenced mDatabase unconditionally.
+        val database = mDatabase ?: throw NullPointerException("mDatabase")
+        return database.getServers()
     }
 
     override fun onItemClick(arg0: AdapterView<*>?, arg1: View?, arg2: Int, arg3: Long) {

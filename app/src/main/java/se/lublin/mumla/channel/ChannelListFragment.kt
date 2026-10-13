@@ -41,7 +41,8 @@ import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
-import se.lublin.mumla.db.DatabaseProvider
+import se.lublin.mumla.db.MumlaDatabase
+import se.lublin.mumla.db.MumlaRoomDatabase
 import se.lublin.mumla.util.HumlaServiceFragment
 
 class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUserClickListener,
@@ -152,7 +153,7 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
     private var mChannelView: RecyclerView? = null
     private var mChannelListAdapter: ChannelListAdapter? = null
     private var mTargetProvider: ChatTargetProvider? = null
-    private var mDatabaseProvider: DatabaseProvider? = null
+    private var mDatabase: MumlaDatabase? = null
     private var mActionMode: ActionMode? = null
     private var mSettings: Settings? = null
 
@@ -168,11 +169,7 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
         } catch (e: ClassCastException) {
             throw ClassCastException(parentFragment.toString() + " must implement ChatTargetProvider")
         }
-        try {
-            mDatabaseProvider = activity as DatabaseProvider
-        } catch (e: ClassCastException) {
-            throw ClassCastException(activity.toString() + " must implement DatabaseProvider")
-        }
+        mDatabase = MumlaRoomDatabase.getInstance(context)
         val settings = Settings.getInstance(context)
         mSettings = settings
         settings.registerListener(this)
@@ -305,13 +302,13 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
         // NPE-exact: the original dereferenced every field unconditionally.
         val host = activity ?: throw NullPointerException("activity")
         val service = getService() ?: throw NullPointerException("service")
-        val provider = mDatabaseProvider ?: throw NullPointerException("mDatabaseProvider")
+        val database = mDatabase ?: throw NullPointerException("mDatabase")
         val settings = mSettings ?: throw NullPointerException("mSettings")
         val channelView = mChannelView ?: throw NullPointerException("mChannelView")
         val adapter = ChannelListAdapter(
             host, service,
-            provider.getDatabase(), childFragmentManager,
-            isShowingPinnedChannels(), settings.shouldShowUserCount()
+            database, childFragmentManager,
+            isShowingPinnedChannels(), settings.shouldShowUserCount
         )
         mChannelListAdapter = adapter
         adapter.setOnChannelClickListener(this)
@@ -399,7 +396,7 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
         val settings = mSettings ?: throw NullPointerException("mSettings")
         if (Settings.PREF_SHOW_USER_COUNT == key && mChannelListAdapter != null) {
             val adapter = mChannelListAdapter ?: throw NullPointerException("mChannelListAdapter")
-            adapter.setShowChannelUserCount(settings.shouldShowUserCount())
+            adapter.setShowChannelUserCount(settings.shouldShowUserCount)
         }
     }
 

@@ -50,6 +50,9 @@ dependencies {
     api libs.lifecycle.service
     api libs.lifecycle.runtime.ktx
     implementation libs.coroutines.core
+    // Migration Slice 5: Server is the Room entity (the @Database lives in
+    // :app); the annotations must resolve on this module's classpath too.
+    implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation 'junit:junit:4.13.2'
 }

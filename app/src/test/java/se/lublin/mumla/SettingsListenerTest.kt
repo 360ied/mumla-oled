@@ -57,10 +57,10 @@ class SettingsListenerTest {
 
     @Test
     fun changeFiresKey() {
-        val fired = mutableListOf<String>()
+        val fired = mutableListOf<String?>()
         val listener = Settings.OnSettingChangedListener { fired.add(it) }
         settings.registerListener(listener)
-        settings.setOverlayShown(true)
+        settings.isOverlayShown = true
         settleUntil { fired.contains(Settings.PREF_OVERLAY_SHOWN) }
         assertTrue(
             "overlay change must fire $PREF_OVERLAY_SHOWN",
@@ -71,22 +71,22 @@ class SettingsListenerTest {
 
     @Test
     fun unregisterStopsFire() {
-        val fired = mutableListOf<String>()
+        val fired = mutableListOf<String?>()
         val listener = Settings.OnSettingChangedListener { fired.add(it) }
         settings.registerListener(listener)
         settings.unregisterListener(listener)
-        settings.setTheme("forceDark")
+        settings.theme = "forceDark"
         scheduler.advanceUntilIdle()
         assertTrue("unregistered listener must stay silent", fired.isEmpty())
     }
 
     @Test
     fun duplicateRegistrationFiresOnce() {
-        val fired = mutableListOf<String>()
+        val fired = mutableListOf<String?>()
         val listener = Settings.OnSettingChangedListener { fired.add(it) }
         settings.registerListener(listener)
         settings.registerListener(listener)
-        settings.setTheme("forceDark")
+        settings.theme = "forceDark"
         settleUntil { fired.isNotEmpty() }
         assertEquals("double registration must not double-fire", 1, fired.size)
         settings.unregisterListener(listener)

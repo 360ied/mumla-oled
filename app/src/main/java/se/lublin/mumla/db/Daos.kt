@@ -22,6 +22,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import se.lublin.humla.model.Server
 
 /**
  * DAOs mirroring [MumlaDatabase] one-for-one (migration slice 2); method
@@ -31,18 +32,18 @@ import androidx.room.Update
  * dedupes repeats under the new composite PK (old table allowed duplicates,
  * but `isCommentSeen` only queries who+comment, so results are unchanged).
  * Plain `@Insert` elsewhere is ABORT (throws on conflict); unreachable by
- * construction today (autoincrement PKs, no UNIQUE columns, `copy(id = 0)`).
+ * construction today (autoincrement PKs, no UNIQUE columns, zeroed ids).
  */
 @Dao
 interface ServerDao {
     @Query("SELECT * FROM `server`")
-    fun getAll(): List<ServerEntity>
+    fun getAll(): List<Server>
 
     @Insert
-    fun insert(server: ServerEntity): Long
+    fun insert(server: Server): Long
 
     @Update
-    fun update(server: ServerEntity)
+    fun update(server: Server)
 
     @Query("DELETE FROM `server` WHERE `_id` = :id")
     fun deleteById(id: Long)

@@ -247,7 +247,8 @@ public class MumlaDatabaseTest {
 
         MumlaRoomDatabase migrated = androidx.room.Room.databaseBuilder(
                 context, MumlaRoomDatabase.class, "migrate-test.db")
-                .addMigrations(MumlaRoomDatabase.getMIGRATION_9_10())
+                .addMigrations(MumlaRoomDatabase.getMIGRATION_9_10(),
+                        MumlaRoomDatabase.getMIGRATION_10_11())
                 .allowMainThreadQueries()
                 .build();
         try {
@@ -306,7 +307,8 @@ public class MumlaDatabaseTest {
         MumlaRoomDatabase migrated = androidx.room.Room.databaseBuilder(
                 context, MumlaRoomDatabase.class, "migrate-test-8.db")
                 .addMigrations(MumlaRoomDatabase.getMIGRATION_8_10(),
-                        MumlaRoomDatabase.getMIGRATION_9_10())
+                        MumlaRoomDatabase.getMIGRATION_9_10(),
+                        MumlaRoomDatabase.getMIGRATION_10_11())
                 .allowMainThreadQueries()
                 .build();
         try {
@@ -317,6 +319,56 @@ public class MumlaDatabaseTest {
                     mdb.getCertificateData(mdb.getCertificates().get(0).getId())));
             assertNull("v8 certificates had no password column",
                     mdb.getCertificatePassword(mdb.getCertificates().get(0).getId()));
+        } finally {
+            migrated.close();
+            deleteDbFiles(dbFile);
+        }
+    }
+
+    @Test
+    public void testMigration10To11ServerNullability() {
+        File dbFile = context.getDatabasePath("migrate-test-10.db");
+        deleteDbFiles(dbFile);
+        assertTrue(dbFile.getParentFile().mkdirs() || dbFile.getParentFile().isDirectory());
+        // v10 shapes (see MIGRATION_9_10): all tables present, server with
+        // name/host/username NOT NULL and port nullable.
+        SQLiteDatabase v10 = SQLiteDatabase.openOrCreateDatabase(dbFile, null);
+        v10.execSQL("CREATE TABLE `server` (`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL," +
+                "`name` TEXT NOT NULL,`host` TEXT NOT NULL,`port` INTEGER," +
+                "`username` TEXT NOT NULL,`password` TEXT);");
+        v10.execSQL("CREATE TABLE `favourites` (`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL," +
+                "`channel` TEXT NOT NULL,`server` INTEGER NOT NULL);");
+        v10.execSQL("CREATE TABLE `tokens` (`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL," +
+                "`value` TEXT NOT NULL,`server` INTEGER NOT NULL);");
+        v10.execSQL("CREATE TABLE `comments` (`who` TEXT NOT NULL,`comment` TEXT NOT NULL," +
+                "`seen` TEXT NOT NULL,PRIMARY KEY(`who`,`comment`,`seen`));");
+        v10.execSQL("CREATE TABLE `local_mute` (`server` INTEGER NOT NULL,`user` INTEGER NOT NULL," +
+                "PRIMARY KEY(`server`,`user`));");
+        v10.execSQL("CREATE TABLE `local_ignore` (`server` INTEGER NOT NULL,`user` INTEGER NOT NULL," +
+                "PRIMARY KEY(`server`,`user`));");
+        v10.execSQL("CREATE TABLE `certificates` (`_id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL," +
+                "`data` BLOB NOT NULL,`name` TEXT NOT NULL,`password` TEXT);");
+        v10.execSQL("INSERT INTO `server` (`name`,`host`,`port`,`username`,`password`)" +
+                " VALUES ('n','h',64738,'u','p');");
+        v10.execSQL("INSERT INTO `server` (`name`,`host`,`port`,`username`,`password`)" +
+                " VALUES ('n2','h2',NULL,'u2',NULL);");
+        v10.setVersion(10);
+        v10.close();
+
+        MumlaRoomDatabase migrated = androidx.room.Room.databaseBuilder(
+                context, MumlaRoomDatabase.class, "migrate-test-10.db")
+                .addMigrations(MumlaRoomDatabase.getMIGRATION_10_11())
+                .allowMainThreadQueries()
+                .build();
+        try {
+            MumlaDatabase mdb = migrated;
+            List<Server> servers = mdb.getServers();
+            assertEquals(2, servers.size());
+            assertEquals(64738, servers.get(0).getPort());
+            // NULL ports coalesce to 0; opening at all proves the v11 shape
+            // validates exactly against the entity.
+            assertEquals(0, servers.get(1).getPort());
+            assertEquals("h2", servers.get(1).getHost());
         } finally {
             migrated.close();
             deleteDbFiles(dbFile);

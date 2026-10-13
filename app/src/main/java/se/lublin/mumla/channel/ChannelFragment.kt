@@ -279,13 +279,13 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         val host = activity ?: throw NullPointerException("activity")
         val settings = Settings.getInstance(host)
         if (itemId == R.id.menu_input_voice) {
-            settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_VOICE)
+            settings.inputMethod = Settings.ARRAY_INPUT_METHOD_VOICE
             return true
         } else if (itemId == R.id.menu_input_ptt) {
-            settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_PTT)
+            settings.inputMethod = Settings.ARRAY_INPUT_METHOD_PTT
             return true
         } else if (itemId == R.id.menu_input_continuous) {
-            settings.setInputMethod(Settings.ARRAY_INPUT_METHOD_CONTINUOUS)
+            settings.inputMethod = Settings.ARRAY_INPUT_METHOD_CONTINUOUS
             return true
         }
         return super.onOptionsItemSelected(item)
@@ -388,7 +388,7 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         val host = activity ?: throw NullPointerException("activity")
         val settings = Settings.getInstance(host)
 
-        val heightDp = settings.getPTTButtonHeight()
+        val heightDp = settings.pttButtonHeight
         val heightPx = calculateButtonHeightPx(
             heightDp,
             resources?.displayMetrics
@@ -419,8 +419,8 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         }
         val showPttButton =
             !muted &&
-            settings.isPushToTalkButtonShown() &&
-            settings.getInputMethod() == Settings.ARRAY_INPUT_METHOD_PTT
+            settings.isPushToTalkButtonShown &&
+            settings.inputMethod == Settings.ARRAY_INPUT_METHOD_PTT
         setTalkButtonHidden(!showPttButton)
     }
 

@@ -321,7 +321,7 @@ class CertificateImportActivity : BaseActivity() {
                 val imported = certificate != null && certificate.id >= 0
                 if (imported) {
                     val settings = Settings.getInstance(this@CertificateImportActivity)
-                    settings.setDefaultCertificateId(certificate.id)
+                    settings.defaultCertificateId = certificate.id
                 }
                 runOnUiThread {
                     if (isFinishing || isDestroyed) {

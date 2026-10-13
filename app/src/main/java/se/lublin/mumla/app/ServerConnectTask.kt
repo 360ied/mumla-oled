@@ -15,15 +15,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.app;
+package se.lublin.mumla.app
 
-import android.content.Context;
-import android.content.Intent;
-import android.os.AsyncTask;
-
-import se.lublin.humla.HumlaService;
-import se.lublin.humla.model.Server;
-import se.lublin.mumla.service.MumlaService;
+import android.content.Context
+import android.content.Intent
+import android.os.AsyncTask
+import se.lublin.humla.HumlaService
+import se.lublin.humla.model.Server
+import se.lublin.mumla.service.MumlaService
 
 /**
  * Constructs an intent for connection to a MumlaService and executes it.
@@ -33,37 +32,35 @@ import se.lublin.mumla.service.MumlaService;
  * history, and settings itself and applies them as a ConfigDelta — the old
  * 20-extra bundle is dead. Created by andrew on 20/08/14.
  */
-public class ServerConnectTask extends AsyncTask<Server, Void, Intent> {
-    private final Context mContext;
+class ServerConnectTask(context: Context) : AsyncTask<Server, Void, Intent>() {
+    private val mContext: Context = context.applicationContext
 
-    public ServerConnectTask(Context context) {
+    init {
         // Application context: this task can outlive the activity across
         // rotation, and every use here (intents, startService) is safe on
         // the application context.
-        mContext = context.getApplicationContext();
     }
 
-    @Override
-    protected Intent doInBackground(Server... params) {
-        if (params == null || params.length == 0 || params[0] == null) {
-            return null;
+    override fun doInBackground(vararg params: Server?): Intent? {
+        if (params.isEmpty() || params[0] == null) {
+            return null
         }
-        Server server = params[0];
+        // NPE-exact: the original dereferenced params[0] unconditionally.
+        val server = params[0] ?: throw NullPointerException("params[0]")
 
-        Intent connectIntent = new Intent(mContext, MumlaService.class);
-        connectIntent.putExtra(MumlaService.EXTRA_SERVER_ID, server.getId());
+        val connectIntent = Intent(mContext, MumlaService::class.java)
+        connectIntent.putExtra(MumlaService.EXTRA_SERVER_ID, server.id)
         if (!server.isSaved()) {
-            connectIntent.putExtra(MumlaService.EXTRA_SERVER, server);
+            connectIntent.putExtra(MumlaService.EXTRA_SERVER, server)
         }
-        connectIntent.setAction(HumlaService.ACTION_CONNECT);
-        return connectIntent;
+        connectIntent.action = HumlaService.ACTION_CONNECT
+        return connectIntent
     }
 
-    @Override
-    protected void onPostExecute(Intent intent) {
-        super.onPostExecute(intent);
+    override fun onPostExecute(intent: Intent?) {
+        super.onPostExecute(intent)
         if (intent != null) {
-            mContext.startService(intent);
+            mContext.startService(intent)
         }
     }
 }

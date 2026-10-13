@@ -70,7 +70,7 @@ abstract class ServerAdapter<E : Server>(context: Context, viewResource: Int, se
         val userText = row.findViewById(R.id.server_row_user) as TextView?
         val addressText = row.findViewById(R.id.server_row_address) as TextView?
 
-        nameText.text = server.name
+        nameText.text = server.getName()
 
         if (userText != null) userText.text = server.username
         if (addressText != null) {

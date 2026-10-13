@@ -204,7 +204,7 @@ abstract class AbstractCommentFragment : DialogFragment() {
         commentSettings.allowContentAccess = false
         commentSettings.allowFileAccessFromFileURLs = false
         commentSettings.allowUniversalAccessFromFileURLs = false
-        val loadExternalImages = Settings.getInstance(requireContext()).shouldLoadExternalImages()
+        val loadExternalImages = Settings.getInstance(requireContext()).shouldLoadExternalImages
         commentSettings.blockNetworkImage = !loadExternalImages
         commentSettings.blockNetworkLoads = !loadExternalImages
     }

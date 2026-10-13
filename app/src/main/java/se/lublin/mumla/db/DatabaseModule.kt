@@ -30,8 +30,10 @@ import javax.inject.Singleton
  *
  * Single instance shared with the legacy manual path
  * ([MumlaRoomDatabase.getInstance]) — Room forbids concurrent instances on
- * one file, so both paths resolve to the same object. Provider interfaces
- * (`DatabaseProvider`) die in slice 5 with their call sites.
+ * one file, so both paths resolve to the same object. The `DatabaseProvider`
+ * interface died in slice 5 (fragments take the singleton directly); the
+ * service-binding `HumlaServiceProvider` survives until the Compose rewrite
+ * removes Fragment navigation in slice 7.
  */
 @Module
 @InstallIn(SingletonComponent::class)

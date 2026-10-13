@@ -46,7 +46,7 @@ open class ServerInfoTask : AsyncTask<Server, Void, ServerInfoResponse>() {
             buffer.putLong(target.id) // Identifier
             val requestPacket = DatagramPacket(
                 buffer.array(), 12,
-                InetAddress.getByName(target.srvHost), target.srvPort
+                InetAddress.getByName(target.getSrvHost()), target.getSrvPort()
             )
 
             // Send packet and wait for response

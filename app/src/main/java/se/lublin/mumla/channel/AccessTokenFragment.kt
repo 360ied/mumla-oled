@@ -31,7 +31,8 @@ import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.TextView
 import se.lublin.mumla.R
-import se.lublin.mumla.db.DatabaseProvider
+import se.lublin.mumla.db.MumlaDatabase
+import se.lublin.mumla.db.MumlaRoomDatabase
 import se.lublin.mumla.util.HumlaServiceFragment
 
 class AccessTokenFragment : HumlaServiceFragment() {
@@ -47,19 +48,14 @@ class AccessTokenFragment : HumlaServiceFragment() {
     private var mTokenAdapter: TokenAdapter? = null
     private var mTokenField: EditText? = null
 
-    private var mProvider: DatabaseProvider? = null
+    private var mDatabase: MumlaDatabase? = null
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
 
         mTokens = ArrayList(getAccessTokens())
         mTokenAdapter = TokenAdapter(context, mTokens ?: throw NullPointerException("mTokens"))
-
-        try {
-            mProvider = context as DatabaseProvider
-        } catch (e: ClassCastException) {
-            throw ClassCastException(context.toString() + " must implement DatabaseProvider")
-        }
+        mDatabase = MumlaRoomDatabase.getInstance(context)
     }
 
     override fun onCreateView(
@@ -100,7 +96,7 @@ class AccessTokenFragment : HumlaServiceFragment() {
         val tokens = mTokens ?: throw NullPointerException("mTokens")
         val adapter = mTokenAdapter ?: throw NullPointerException("mTokenAdapter")
         val tokenList = mTokenList ?: throw NullPointerException("mTokenList")
-        val provider = mProvider ?: throw NullPointerException("mProvider")
+        val database = mDatabase ?: throw NullPointerException("mDatabase")
 
         val tokenText = tokenField.text.toString().trim()
 
@@ -116,7 +112,7 @@ class AccessTokenFragment : HumlaServiceFragment() {
         adapter.notifyDataSetChanged()
 
         tokenList.smoothScrollToPosition(tokens.size - 1)
-        provider.getDatabase().addAccessToken(getServerId(), tokenText)
+        database.addAccessToken(getServerId(), tokenText)
         val service = getService()
         if (service != null && service.isConnected()) {
             service.HumlaSession().sendAccessTokens(tokens)
@@ -158,10 +154,10 @@ class AccessTokenFragment : HumlaServiceFragment() {
             deleteButton.setOnClickListener {
                 // NPE-exact: the original dereferenced every field unconditionally.
                 val tokens = mTokens ?: throw NullPointerException("mTokens")
-                val provider = mProvider ?: throw NullPointerException("mProvider")
+                val database = mDatabase ?: throw NullPointerException("mDatabase")
                 tokens.removeAt(position)
                 notifyDataSetChanged()
-                provider.getDatabase().removeAccessToken(getServerId(), token)
+                database.removeAccessToken(getServerId(), token)
                 val service = getService()
                 if (service != null && service.isConnected()) {
                     service.HumlaSession().sendAccessTokens(tokens)

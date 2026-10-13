@@ -468,7 +468,7 @@ class ChannelListAdapter(
         val server: Server? = service.getTargetServer()
         val target = server ?: throw NullPointerException("server")
 
-        if (user.userId >= 0 && target.isSaved) {
+        if (user.userId >= 0 && target.isSaved()) {
             Thread {
                 if (user.isLocalMuted) {
                     mDatabase.addLocalMutedUser(target.id, user.userId)

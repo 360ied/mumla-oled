@@ -91,7 +91,7 @@ class ServerEditFragment : DialogFragment() {
 
         val oldServer = getServer()
         if (oldServer != null) {
-            (mNameEdit ?: throw NullPointerException("mNameEdit")).setText(oldServer.name)
+            (mNameEdit ?: throw NullPointerException("mNameEdit")).setText(oldServer.getName())
             (mHostEdit ?: throw NullPointerException("mHostEdit")).setText(oldServer.host)
             if (oldServer.port != 0) {
                 (mPortEdit ?: throw NullPointerException("mPortEdit")).setText(oldServer.port.toString())

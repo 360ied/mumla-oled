@@ -105,11 +105,11 @@ class CertificateSelectActivity : BaseActivity(), DialogInterface.OnClickListene
         private val mSettings: Settings = settings
 
         override fun onActivate() {
-            mSettings.setDefaultCertificateId(mCertificate.id)
+            mSettings.defaultCertificateId = mCertificate.id
         }
 
         override fun isDefault(): Boolean {
-            return mSettings.getDefaultCertificate() == mCertificate.id
+            return mSettings.defaultCertificate == mCertificate.id
         }
 
         override fun toString(): String {
