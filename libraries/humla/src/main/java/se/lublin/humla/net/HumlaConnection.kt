@@ -47,11 +47,14 @@ import java.security.cert.X509Certificate
 import java.util.Collections
 import java.util.HashSet
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 class HumlaConnection(listener: HumlaConnectionListener?) :
     HumlaTCP.TCPConnectionListener, HumlaUDP.UDPConnectionListener {
@@ -140,8 +143,11 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     private var mTrustStorePassword: String? = null
     private var mTrustStoreFormat: String? = null
 
-    // Threading
-    private var mPingExecutorService: ScheduledExecutorService? = null
+    // Threading: keepalive ping loop runs in a SupervisorJob + IO scope
+    // (slice 4). Cancelled in disconnect(); send-after-disconnect drops via
+    // the mConnected guard in sendTCP/UDPMessage, same as before.
+    private var pingScope: CoroutineScope? = null
+    private var pingJob: Job? = null
     private var mMainHandler: Handler = Handler(Looper.getMainLooper())
 
     // Networking and protocols
@@ -149,9 +155,6 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
 
     @Volatile
     private var mUDP: HumlaUDP? = null
-
-    @Volatile
-    private var mPingTask: ScheduledFuture<*>? = null
 
     @Volatile
     private var mUsingUDP = true
@@ -390,20 +393,25 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     }
 
     // Widened to public: Kotlin has no package visibility; called across the library.
+    // Slice 4: self-chaining ScheduledExecutorService becomes
+    // while (isActive) { sendKeepalivePing(); delay(interval) } on IO.
     @Synchronized
     fun scheduleNextPing(delaySeconds: Int) {
-        val executor = mPingExecutorService
-        if (!mConnected || executor == null || executor.isShutdown) {
+        val scope = pingScope ?: return
+        if (!mConnected) {
             return
         }
-        val task = mPingTask
-        if (task != null && !task.isDone) {
-            task.cancel(false)
-        }
-        try {
-            mPingTask = executor.schedule(mPingRunnable, delaySeconds.toLong(), TimeUnit.SECONDS)
-        } catch (e: RejectedExecutionException) {
-            Log.w(TAG, "Failed to schedule next ping: " + e.message)
+        pingJob?.cancel()
+        pingJob = scope.launch {
+            delay(delaySeconds * 1000L)
+            while (isActive) {
+                try {
+                    sendKeepalivePing()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error during keepalive ping execution: " + e.message)
+                }
+                delay(getNextPingIntervalSeconds() * 1000L)
+            }
         }
     }
 
@@ -440,16 +448,6 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         sendTCPMessage(pb.build(), HumlaTCPMessageType.Ping)
     }
 
-    private var mPingRunnable: Runnable = Runnable {
-        try {
-            sendKeepalivePing()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error during keepalive ping execution: " + e.message)
-        } finally {
-            scheduleNextPing(getNextPingIntervalSeconds())
-        }
-    }
-
     /**
      * Creates a new HumlaConnection object to facilitate server connections.
      */
@@ -464,7 +462,8 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         mUsingUDP = !shouldForceTCP()
         mStartTimestamp = System.nanoTime()
 
-        mPingExecutorService = Executors.newSingleThreadScheduledExecutor()
+        pingScope?.cancel()
+        pingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         val socketFactory = createSocketFactory()
 
@@ -653,18 +652,17 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         mPort = 0
 
         // Stop running network resources
-        val pingTask = mPingTask
-        if (pingTask != null) pingTask.cancel(true)
+        pingJob?.cancel()
+        pingJob = null
+        pingScope?.cancel()
+        pingScope = null
         val tcp = mTCP
         if (tcp != null) tcp.disconnect()
         val udp = mUDP
         if (udp != null) udp.disconnect()
-        val pingExecutor = mPingExecutorService
-        if (pingExecutor != null) pingExecutor.shutdownNow()
 
         mTCP = null
         mUDP = null
-        mPingTask = null
         mCryptState.destroy()
     }
 
