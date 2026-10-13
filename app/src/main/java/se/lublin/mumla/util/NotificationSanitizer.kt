@@ -15,26 +15,22 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.util;
+package se.lublin.mumla.util
 
-import org.jsoup.Jsoup;
-
-import java.util.regex.Pattern;
+import org.jsoup.Jsoup
+import java.util.regex.Pattern
 
 /**
  * Strips hostile server-controlled strings (actor names, message bodies)
  * down to single-line plain text for notifications and TTS.
  * Pure JVM (no Android APIs) so it is unit-testable.
  */
-public final class NotificationSanitizer {
+object NotificationSanitizer {
     /** Maximum actor name length after sanitizing. */
-    public static final int MAX_ACTOR_LENGTH = 64;
+    const val MAX_ACTOR_LENGTH = 64
 
-    private static final Pattern CONTROL_FORMAT_CHARS = Pattern.compile("[\\p{Cntrl}\\p{Cf}]");
-    private static final Pattern WHITESPACE_RUN = Pattern.compile("\\s+");
-
-    private NotificationSanitizer() {
-    }
+    private val CONTROL_FORMAT_CHARS: Pattern = Pattern.compile("[\\p{Cntrl}\\p{Cf}]")
+    private val WHITESPACE_RUN: Pattern = Pattern.compile("\\s+")
 
     /**
      * Sanitizes a server-provided actor name: HTML-stripped, single-line,
@@ -42,13 +38,14 @@ public final class NotificationSanitizer {
      * {@link #MAX_ACTOR_LENGTH} code points.
      * Never returns null.
      */
-    public static String sanitizeActor(String actor) {
-        String clean = stripToSingleLine(actor);
-        if (clean.codePointCount(0, clean.length()) > MAX_ACTOR_LENGTH) {
-            int end = clean.offsetByCodePoints(0, MAX_ACTOR_LENGTH);
-            clean = clean.substring(0, end).trim();
+    @JvmStatic
+    fun sanitizeActor(actor: String?): String {
+        var clean = stripToSingleLine(actor)
+        if (clean.codePointCount(0, clean.length) > MAX_ACTOR_LENGTH) {
+            val end = clean.offsetByCodePoints(0, MAX_ACTOR_LENGTH)
+            clean = clean.substring(0, end).trim()
         }
-        return clean;
+        return clean
     }
 
     /**
@@ -57,17 +54,18 @@ public final class NotificationSanitizer {
      * callers gate spoken length separately (e.g. TTS threshold).
      * Never returns null.
      */
-    public static String sanitizeBody(String body) {
-        return stripToSingleLine(body);
+    @JvmStatic
+    fun sanitizeBody(body: String?): String {
+        return stripToSingleLine(body)
     }
 
-    private static String stripToSingleLine(String raw) {
+    private fun stripToSingleLine(raw: String?): String {
         if (raw == null) {
-            return "";
+            return ""
         }
-        String text = Jsoup.parseBodyFragment(raw).text();
-        text = text.replace('\r', ' ').replace('\n', ' ');
-        text = CONTROL_FORMAT_CHARS.matcher(text).replaceAll("");
-        return WHITESPACE_RUN.matcher(text).replaceAll(" ").trim();
+        var text = Jsoup.parseBodyFragment(raw).text()
+        text = text.replace('\r', ' ').replace('\n', ' ')
+        text = CONTROL_FORMAT_CHARS.matcher(text).replaceAll("")
+        return WHITESPACE_RUN.matcher(text).replaceAll(" ").trim()
     }
 }

@@ -15,11 +15,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.util;
+package se.lublin.mumla.util
 
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.Locale;
+import java.net.URI
+import java.net.URISyntaxException
+import java.util.Locale
 
 /**
  * Allowlist policy for links rendered from server-controlled chat HTML.
@@ -32,35 +32,30 @@ import java.util.Locale;
  * <p>Pure JVM helper: no {@code android.*} imports so it stays unit
  * testable. Callers replace {@code URLSpan}s using {@link #handleClick}.
  */
-public final class ChatLinkPolicy {
-    private ChatLinkPolicy() {
-    }
-
+object ChatLinkPolicy {
     /**
      * Returns true only for {@code http}/{@code https} URLs.
      * Fail-closed: null, empty, whitespace-only, and malformed URIs
      * return false.
      */
-    public static boolean isAllowedUrl(String url) {
+    @JvmStatic
+    fun isAllowedUrl(url: String?): Boolean {
         if (url == null) {
-            return false;
+            return false
         }
-        String trimmed = url.trim();
+        val trimmed = url.trim()
         if (trimmed.isEmpty()) {
-            return false;
+            return false
         }
-        final URI uri;
+        val uri: URI
         try {
-            uri = new URI(trimmed);
-        } catch (URISyntaxException e) {
-            return false;
+            uri = URI(trimmed)
+        } catch (e: URISyntaxException) {
+            return false
         }
-        String scheme = uri.getScheme();
-        if (scheme == null) {
-            return false;
-        }
-        scheme = scheme.toLowerCase(Locale.ROOT);
-        return "http".equals(scheme) || "https".equals(scheme);
+        var scheme = uri.scheme ?: return false
+        scheme = scheme.lowercase(Locale.ROOT)
+        return "http" == scheme || "https" == scheme
     }
 
     /**
@@ -72,10 +67,11 @@ public final class ChatLinkPolicy {
      *             href when allowed, never the display text.
      * @return trimmed href when allowed, null when the link must stay inert.
      */
-    public static String handleClick(String href) {
-        if (!isAllowedUrl(href)) {
-            return null;
+    @JvmStatic
+    fun handleClick(href: String?): String? {
+        if (href == null || !isAllowedUrl(href)) {
+            return null
         }
-        return href.trim();
+        return href.trim()
     }
 }

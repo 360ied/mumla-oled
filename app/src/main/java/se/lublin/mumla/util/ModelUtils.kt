@@ -15,35 +15,32 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.util;
+package se.lublin.mumla.util
 
-import java.util.LinkedList;
-import java.util.List;
-
-import se.lublin.humla.model.IChannel;
+import java.util.LinkedList
+import se.lublin.humla.model.IChannel
 
 /**
  * Tools for dealing with the recursive user-channel hierarchy.
  * Created by andrew on 18/10/14.
  */
-public class ModelUtils {
+object ModelUtils {
     /**
      * Flattens the channel hierarchy, returning an array of channels in hierarchical order.
      * @param channel The root channel to flatten from.
      * @return A list of channels.
      */
-    public static List<IChannel> getChannelList(IChannel channel) {
-        LinkedList<IChannel> channels = new LinkedList<IChannel>();
-        getChannelList(channel, channels);
-        return channels;
+    @JvmStatic
+    fun getChannelList(channel: IChannel): List<IChannel> {
+        val channels = LinkedList<IChannel>()
+        getChannelList(channel, channels)
+        return channels
     }
 
-    private static void getChannelList(IChannel channel, List<IChannel> channels) {
-        channels.add(channel);
-        for (IChannel subc : channel.getSubchannels()) {
-            if (subc != null) {
-                getChannelList(subc, channels);
-            }
+    private fun getChannelList(channel: IChannel, channels: MutableList<IChannel>) {
+        channels.add(channel)
+        for (subc in channel.subchannels) {
+            getChannelList(subc, channels)
         }
     }
 }

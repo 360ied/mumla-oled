@@ -15,15 +15,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.util;
+package se.lublin.mumla.util
 
-import se.lublin.mumla.service.IMumlaService;
+import se.lublin.mumla.service.IMumlaService
 
 /**
  * Created by andrew on 03/08/13.
  */
-public interface HumlaServiceProvider {
-    IMumlaService getService();
-    void addServiceFragment(HumlaServiceFragment fragment);
-    void removeServiceFragment(HumlaServiceFragment fragment);
+interface HumlaServiceProvider {
+    fun getService(): IMumlaService?
+    fun addServiceFragment(fragment: HumlaServiceFragment)
+    fun removeServiceFragment(fragment: HumlaServiceFragment)
 }
