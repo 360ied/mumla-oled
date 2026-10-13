@@ -365,7 +365,8 @@ open class MumlaService : HumlaService(),
             val msg = message ?: throw NullPointerException("message")
             // Split on / strip all HTML tags.
             val parsedMessage = Jsoup.parseBodyFragment(
-                // NPE-exact: Jsoup validates non-null; the original NPE'd here.
+                // Null bodies are type-legal per IMessage; fail fast with NPE
+                // rather than Jsoup's IllegalArgumentException.
                 msg.message ?: throw NullPointerException("message")
             )
             val strippedMessage = parsedMessage.text()

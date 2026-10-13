@@ -609,6 +609,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         releaseWifiLock()
     }
 
+    // Non-null Intent: matches Service.onBind's platform signature exactly; a
+    // nullable parameter does not override (the pre-image Java was non-null).
     open override fun onBind(intent: Intent): IBinder {
         return HumlaBinder(this)
     }
@@ -969,13 +971,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             wakeLock.acquire((delayMs + 15000).toLong())
         }
         reconnectJob?.cancel()
-        reconnectJob = lifecycleScope.launch {
+        val launchedReconnect = lifecycleScope.launch {
             delay(delayMs.toLong())
             if (mReconnecting) {
                 mReconnectAttempts++
                 connect()
             }
         }
+        launchedReconnect.invokeOnCompletion {
+            if (reconnectJob === launchedReconnect) reconnectJob = null
+        }
+        reconnectJob = launchedReconnect
     }
 
     /**
@@ -1146,10 +1152,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      */
     private fun onRouteDevicesChanged() {
         routeDebounceJob?.cancel()
-        routeDebounceJob = lifecycleScope.launch {
+        val launchedDebounce = lifecycleScope.launch {
             delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
             applyAudioRoute("device route changed", false)
         }
+        launchedDebounce.invokeOnCompletion {
+            if (routeDebounceJob === launchedDebounce) routeDebounceJob = null
+        }
+        routeDebounceJob = launchedDebounce
     }
 
     /**

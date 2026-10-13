@@ -19,9 +19,11 @@ package se.lublin.humla.net
 
 import android.os.Handler
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
@@ -39,7 +41,12 @@ import javax.crypto.ShortBufferException
 
 /**
  * Class to maintain and receive packets from the UDP connection to a Mumble server.
- * Public interface is not thread safe.
+ *
+ * Threading: [sendMessage] is safe to call from any thread (lock-free
+ * `trySend`; concurrent-call send ordering is best-effort). Rescale
+ * ([setTargetFramesPerPacket]/[setSendQueueCapacity]) swaps the channel
+ * object; the sender consumer re-resolves the live object per generation
+ * (see `runUdp`), so no explicit lock is needed anywhere.
  *
  * Slice 4: the BlockingQueue + mSendLock head-drop becomes a
  * Channel(capacity, onBufferOverflow = DROP_OLDEST) with identical ~200ms
@@ -138,7 +145,13 @@ class HumlaUDP {
     @Volatile
     private var sendChannel: Channel<DatagramPacket>? = null
 
-    /** Test-visible queued count (Channel exposes no size; incremented on send, decremented on consume). */
+    /**
+     * Test-visible queued count (Channel exposes no size; incremented on send,
+     * decremented on consume). Approximate under a live consumer (the increment
+     * is not atomic with the take, so rescale/consume races can skew it by a
+     * packet); JVM tests run with no live consumer, so the suite stays
+     * deterministic. Production never reads it.
+     */
     private val queuedCount = AtomicInteger(0)
 
     /** IO scope hosting the sender consumer and the blocking receiver. */
@@ -208,6 +221,11 @@ class HumlaUDP {
     /**
      * Recreates the head-drop channel at a new capacity, retaining the newest
      * queued packets (same flush-newest policy as the old poll-while-over-capacity).
+     * The replacement is published before the old channel closes so the sender
+     * consumer (which re-resolves the live object per generation in `runUdp`)
+     * migrates to it instead of stranding sends in an orphan; closing the old
+     * channel unblocks a sender parked in its receive. Drain takes and sender
+     * takes are each atomic, so every packet is taken exactly once.
      */
     private fun recreateChannel(newCapacity: Int) {
         val old = sendChannel
@@ -223,14 +241,16 @@ class HumlaUDP {
         } else {
             retained
         }
-        sendChannel = Channel(newCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        val replacement = Channel<DatagramPacket>(newCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         var count = 0
         for (packet in newest) {
-            if (sendChannel?.trySend(packet)?.isSuccess == true) {
+            if (replacement.trySend(packet).isSuccess) {
                 count++
             }
         }
+        sendChannel = replacement
         queuedCount.set(count)
+        old?.close()
     }
 
     private suspend fun runUdp() {
@@ -245,20 +265,35 @@ class HumlaUDP {
             Log.d(TAG, "Created socket")
 
             // Sender consumer: drains the head-drop channel (slice 4: IO loop
-            // replaces the OutgoingConsumer thread).
-            val channel = sendChannel ?: throw NullPointerException("send channel")
+            // replaces the OutgoingConsumer thread). The live channel object is
+            // re-resolved per generation: rescale swaps the object and closes
+            // the old one, which ends the inner loop (or raises
+            // CancellationException in a parked receive while this job is still
+            // active); either way the loop picks up the replacement instead of
+            // suspending forever on a drained orphan while sends pile into the
+            // new object.
             val sender = udpScope?.launch {
-                for (packet in channel) {
+                sendChannel ?: throw NullPointerException("send channel")
+                while (isActive) {
+                    val channel = sendChannel ?: break
                     try {
-                        udpSocket.send(packet)
-                    } catch (e: IOException) {
-                        if (udpSocket.isClosed) {
-                            break
+                        for (packet in channel) {
+                            try {
+                                udpSocket.send(packet)
+                            } catch (e: IOException) {
+                                if (udpSocket.isClosed) {
+                                    break
+                                }
+                                Log.w(TAG, "Failed to send outgoing datagram", e)
+                            } finally {
+                                queuedCount.decrementAndGet()
+                            }
                         }
-                        Log.w(TAG, "Failed to send outgoing datagram", e)
-                    } finally {
-                        queuedCount.decrementAndGet()
+                    } catch (e: CancellationException) {
+                        if (!isActive) throw e
+                        // Channel swapped under a parked receive; re-resolve below.
                     }
+                    if (sendChannel === channel) break
                 }
                 Log.d(TAG, "Datagram outbox consumer shutdown")
             }

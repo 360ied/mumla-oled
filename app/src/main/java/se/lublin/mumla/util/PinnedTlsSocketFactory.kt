@@ -36,15 +36,16 @@ import javax.net.ssl.SSLSocketFactory
  * verifier; only the *name* it checks is overridden. It never blindly
  * returns true; every verdict is the platform verifier's.
  */
-class PinnedTlsSocketFactory(sniHostname: String) : SSLSocketFactory() {
+class PinnedTlsSocketFactory(sniHostname: String?) : SSLSocketFactory() {
     private val mDelegate: SSLSocketFactory =
         SSLSocketFactory.getDefault() as SSLSocketFactory
-    private val mSniHostname: String = Objects.requireNonNull(sniHostname, "sniHostname")
+    // NPE-exact: the original dereferenced sniHostname unconditionally.
+    private val mSniHostname: String = sniHostname ?: throw NullPointerException("sniHostname")
 
     companion object {
         /** Verifier that checks the session against the original hostname, not the pinned IP. */
         @JvmStatic
-        fun verifierFor(originalHost: String): HostnameVerifier {
+        fun verifierFor(originalHost: String?): HostnameVerifier {
             Objects.requireNonNull(originalHost, "originalHost")
             val platform = HttpsURLConnection.getDefaultHostnameVerifier()
             return HostnameVerifier { _, session -> platform.verify(originalHost, session) }

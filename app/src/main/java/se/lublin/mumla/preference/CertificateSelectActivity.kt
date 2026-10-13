@@ -81,7 +81,9 @@ class CertificateSelectActivity : BaseActivity(), DialogInterface.OnClickListene
         ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = super.getView(position, convertView, parent)
-                val textView = view.findViewById(android.R.id.text1) as TextView
+                // NPE-exact: the original dereferenced the lookup unconditionally.
+                val textView = view.findViewById(android.R.id.text1) as TextView?
+                    ?: throw NullPointerException("text1")
                 textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 return view
             }

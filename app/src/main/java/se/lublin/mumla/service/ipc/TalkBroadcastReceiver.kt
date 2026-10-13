@@ -42,7 +42,8 @@ class TalkBroadcastReceiver(service: IHumlaService) : BroadcastReceiver() {
         if (!mService.isConnected()) {
             return
         }
-        val session: IHumlaSession
+        // Nullable: HumlaSession() is a Java platform return that can be null.
+        val session: IHumlaSession?
         try {
             session = mService.HumlaSession()
         } catch (e: HumlaDisconnectedException) {

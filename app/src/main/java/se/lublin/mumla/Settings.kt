@@ -47,6 +47,7 @@ class Settings {
     private val repository: SettingsRepository
     private val listenerAdapters = HashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
 
+    // Widened to public: Kotlin has no package visibility (pre-image was package-private).
     constructor(store: DataStore<Preferences>) {
         repository = SettingsRepository(store)
     }
@@ -177,6 +178,8 @@ class Settings {
         }
 
     /* @return the height of PTT button in dp */
+    // JvmName keeps the Java-identical getPTTButtonHeight() signature.
+    @get:JvmName("getPTTButtonHeight")
     val pttButtonHeight: Int
         get() {
             val height = snapshot().pttButtonHeight
@@ -283,6 +286,9 @@ class Settings {
             }
         }
 
+    // JvmName keeps the Java-identical shouldX() signature (a `should`-prefixed
+    // val would otherwise generate getShouldX()). Same pattern on the three below.
+    @get:JvmName("shouldLoadExternalImages")
     val shouldLoadExternalImages: Boolean
         get() = snapshot().loadImages
 
@@ -322,6 +328,7 @@ class Settings {
     val isAdaptiveLevelerEnabled: Boolean
         get() = snapshot().adaptiveLeveler
 
+    @get:JvmName("shouldStayAwake")
     val shouldStayAwake: Boolean
         get() = snapshot().stayAwake
 
@@ -345,9 +352,11 @@ class Settings {
     /**
      * @return true if the user count should be shown next to channels.
      */
+    @get:JvmName("shouldShowUserCount")
     val shouldShowUserCount: Boolean
         get() = snapshot().showUserCount
 
+    @get:JvmName("shouldStartUpInPinnedMode")
     val shouldStartUpInPinnedMode: Boolean
         get() = snapshot().startUpInPinnedMode
 

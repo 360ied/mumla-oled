@@ -22,9 +22,10 @@ import android.os.Looper
 import android.util.Log
 import android.util.Patterns
 import com.google.protobuf.MessageLite
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -78,12 +79,16 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     // Slice 4: HumlaNetworkThread 3-executors-per-connection (incl. the dead
     // receive executor, never ported) becomes one ConnectionScope
-    // (SupervisorJob + IO). Blocking TCP read loop runs in one child;
-    // writes serialize via a Mutex (single-writer FIFO is all the TCP path
-    // needs). Created in connect(), cancelled in disconnect(); in-flight
-    // sends are best-effort on cancel, send-after-disconnect drops.
+    // (SupervisorJob + IO). The blocking TCP read loop runs in one child;
+    // writes go through a per-connection serial dispatcher (single-writer FIFO
+    // is all the TCP path needs — a Mutex alone cannot order launches across
+    // the IO pool, so submissions serialize too) plus the write Mutex as
+    // belt-and-braces. Created in connect(); torn down in disconnect() and in
+    // runLoop()'s finally (mirroring the old stopThreads, so failed connections
+    // neither leak the scope nor accept sends); in-flight sends are best-effort
+    // on cancel, send-after-disconnect drops.
     private var tcpScope: CoroutineScope? = null
-    private var readJob: Job? = null
+    private var sendDispatcher: CoroutineDispatcher = Dispatchers.IO
     private val writeMutex = Mutex()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -93,7 +98,14 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     private fun executeOnSendThread(r: Runnable) {
         val scope = tcpScope ?: return
-        scope.launch {
+        // Drop sends against torn-down streams (pre-handshake window or a failed
+        // connection): the old executor lost these sends when its worker died on
+        // the null output; drop with a log instead of crashing the scope child.
+        if (!mRunning || mDataOutput == null) {
+            Log.d(TAG, "Dropping send on torn-down connection")
+            return
+        }
+        scope.launch(sendDispatcher) {
             writeMutex.withLock { r.run() }
         }
     }
@@ -110,7 +122,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         tcpScope?.cancel()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         tcpScope = scope
-        readJob = scope.launch { runLoop() }
+        sendDispatcher = Dispatchers.IO.limitedParallelism(1)
+        scope.launch { runLoop() }
     }
 
     fun isRunning(): Boolean {
@@ -138,15 +151,11 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                         // Slice 4: ad-hoc SRV single-thread executor becomes a
                         // shared IO call with an 800ms timeout.
                         var res: org.minidns.hla.SrvResolverResult? = null
-                        try {
-                            res = withTimeoutOrNull(800) {
-                                ResolverApi.INSTANCE.resolveSrv(lookup)
-                            }
-                            if (res == null) {
-                                Log.d(TAG, "SRV lookup timed out for $lookup")
-                            }
-                        } catch (e: Exception) {
-                            throw e
+                        res = withTimeoutOrNull(800) {
+                            ResolverApi.INSTANCE.resolveSrv(lookup)
+                        }
+                        if (res == null) {
+                            Log.d(TAG, "SRV lookup timed out for $lookup")
                         }
                         if (res != null && res.wasSuccessful()) {
                             val answers = res.getAnswersOrEmptySet()
@@ -164,6 +173,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                                 }
                             }
                         }
+                    } catch (e: CancellationException) {
+                        // Scope torn down mid-lookup (disconnect): never swallow
+                        // our own cancellation as a resolution failure.
+                        throw e
                     } catch (e: Exception) {
                         Log.w(TAG, "SRV resolution failed for $mHost: $e")
                     }
@@ -263,7 +276,15 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                 e.printStackTrace()
             }
             mRunning = false
+            // Tear down the ConnectionScope on every exit (mirrors the old
+            // stopThreads): a failed connection must not leak the scope, and
+            // send-after-failure must drop via the nulled scope instead of
+            // launching against torn-down streams.
+            tcpScope?.cancel()
+            tcpScope = null
 
+            // Single delivery point for onTCPConnectionDisconnect (pre-image
+            // semantics): disconnect() stays silent and lets this finally post.
             val disconnectListener = mListener
             if (disconnectListener != null) {
                 executeOnMainThread(Runnable {
@@ -275,7 +296,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     /**
      * Attempts to send a protobuf message over TCP. Thread-safe, serialized
-     * via the write Mutex (slice 4: single-writer FIFO replaces the send executor).
+     * via the per-connection serial dispatcher plus the write Mutex (slice 4:
+     * single-writer FIFO replaces the send executor).
      * @param message The message to send.
      * @param messageType The type of the message to send.
      */
@@ -298,7 +320,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     /**
      * Attempts to send a protobuf message over TCP. Thread-safe, serialized
-     * via the write Mutex (slice 4: single-writer FIFO replaces the send executor).
+     * via the per-connection serial dispatcher plus the write Mutex (slice 4:
+     * single-writer FIFO replaces the send executor).
      * @param message The data to send.
      * @param length The length of the byte array.
      * @param messageType The type of the message to send.
@@ -322,10 +345,11 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
     /**
      * Disconnects gracefully. Closes the socket synchronously to unblock the
-     * read loop (suppressing post-disconnect errors via mRunning), cancels
-     * the ConnectionScope (in-flight sends are best-effort), and drops
-     * send-after-disconnect via the nulled scope. Suppresses all future
-     * errors on this connection.
+     * read loop (suppressing post-disconnect errors via mRunning) and cancels
+     * the ConnectionScope (in-flight sends are best-effort); send-after-
+     * disconnect drops via the nulled scope. Stays silent: the read loop's
+     * finally block is the single delivery point for
+     * onTCPConnectionDisconnect. Suppresses all future errors on this connection.
      */
     fun disconnect() {
         if (!mRunning) return
@@ -340,13 +364,6 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         }
         tcpScope?.cancel()
         tcpScope = null
-
-        val disconnectListener = mListener
-        if (disconnectListener != null) {
-            executeOnMainThread(Runnable {
-                disconnectListener.onTCPConnectionDisconnect()
-            })
-        }
     }
 
     private fun error(desc: String, e: Exception?) {

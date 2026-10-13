@@ -40,12 +40,12 @@ open class MumlaCertificateGenerateTask(context: Context) : AsyncTask<Void, Void
     override fun onPreExecute() {
         super.onPreExecute()
 
-        loadingDialog = MaterialAlertDialogBuilder(mContext)
+        val dialog = MaterialAlertDialogBuilder(mContext)
             .setTitle(R.string.generateCertProgress)
             .setView(R.layout.dialog_progress)
             .setCancelable(false)
             .create()
-        val dialog = loadingDialog ?: throw NullPointerException("loadingDialog")
+        loadingDialog = dialog
         dialog.show()
     }
 

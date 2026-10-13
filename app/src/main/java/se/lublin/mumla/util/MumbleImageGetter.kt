@@ -336,49 +336,6 @@ class MumbleImageGetter : Html.ImageGetter {
         return FetchResult(null as Bitmap?) // unreachable: resolveAndCheck never returns empty
     }
 
-    private fun fetchPinned(url: URL, addr: InetAddress): FetchResult {
-        val conn = SsrfHostPolicy.buildPinnedUrl(url, addr).openConnection()
-        if (conn !is HttpURLConnection) {
-            return FetchResult(null as Bitmap?)
-        }
-        try {
-            conn.instanceFollowRedirects = false
-            conn.connectTimeout = NETWORK_TIMEOUT_MS
-            conn.readTimeout = NETWORK_TIMEOUT_MS
-            conn.setRequestProperty("Host", SsrfHostPolicy.hostHeaderValue(url))
-            if (conn is HttpsURLConnection) {
-                val sniHost = SsrfHostPolicy.normalizeHost(url.host)
-                conn.sslSocketFactory = PinnedTlsSocketFactory(
-                    sniHost ?: throw NullPointerException("host")
-                )
-                conn.hostnameVerifier = PinnedTlsSocketFactory.verifierFor(
-                    sniHost ?: throw NullPointerException("host")
-                )
-            }
-            val status = conn.responseCode
-            if (SsrfHostPolicy.isRedirect(status)) {
-                return FetchResult(status, conn.getHeaderField("Location"))
-            }
-
-            val contentLength = conn.contentLength
-            if (contentLength > MAX_LENGTH) {
-                return FetchResult(null as Bitmap?)
-            }
-
-            conn.inputStream.use { input ->
-                val data = readStreamWithLimit(input, MAX_LENGTH)
-                if (data == null || data.isEmpty()) {
-                    return FetchResult(null as Bitmap?)
-                }
-                return FetchResult(
-                    decodeBoundedImage(data, CHAT_MAX_DIMENSION, CHAT_MAX_PIXELS.toLong())
-                )
-            }
-        } finally {
-            conn.disconnect()
-        }
-    }
-
     companion object {
         private const val TAG = "MumbleImageGetter"
 
@@ -605,6 +562,7 @@ class MumbleImageGetter : Html.ImageGetter {
             }
         }
 
+        // Widened to public: Kotlin has no package visibility (pre-image was package-visible).
         @JvmStatic
         fun isSchemeAllowed(url: URL?): Boolean {
             if (url == null) {
@@ -621,6 +579,51 @@ class MumbleImageGetter : Html.ImageGetter {
          * addresses, or null when the host is refused (fail closed). Every redirect
          * hop re-resolves and re-pins through fetchOneUrl.
          */
+        // Companion (was static in the pre-image): fetches a single URL from one
+        // checked address without following redirects.
+        private fun fetchPinned(url: URL, addr: InetAddress): FetchResult {
+            val conn = SsrfHostPolicy.buildPinnedUrl(url, addr).openConnection()
+            if (conn !is HttpURLConnection) {
+                return FetchResult(null as Bitmap?)
+            }
+            try {
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = NETWORK_TIMEOUT_MS
+                conn.readTimeout = NETWORK_TIMEOUT_MS
+                conn.setRequestProperty("Host", SsrfHostPolicy.hostHeaderValue(url))
+                if (conn is HttpsURLConnection) {
+                    val sniHost = SsrfHostPolicy.normalizeHost(url.host)
+                    conn.sslSocketFactory = PinnedTlsSocketFactory(
+                        sniHost ?: throw NullPointerException("host")
+                    )
+                    conn.hostnameVerifier = PinnedTlsSocketFactory.verifierFor(
+                        sniHost ?: throw NullPointerException("host")
+                    )
+                }
+                val status = conn.responseCode
+                if (SsrfHostPolicy.isRedirect(status)) {
+                    return FetchResult(status, conn.getHeaderField("Location"))
+                }
+
+                val contentLength = conn.contentLength
+                if (contentLength > MAX_LENGTH) {
+                    return FetchResult(null as Bitmap?)
+                }
+
+                conn.inputStream.use { input ->
+                    val data = readStreamWithLimit(input, MAX_LENGTH)
+                    if (data == null || data.isEmpty()) {
+                        return FetchResult(null as Bitmap?)
+                    }
+                    return FetchResult(
+                        decodeBoundedImage(data, CHAT_MAX_DIMENSION, CHAT_MAX_PIXELS.toLong())
+                    )
+                }
+            } finally {
+                conn.disconnect()
+            }
+        }
+
         private fun resolveAndCheck(url: URL): Array<InetAddress>? {
             val host = url.host
             if (host == null || host.isEmpty()) {

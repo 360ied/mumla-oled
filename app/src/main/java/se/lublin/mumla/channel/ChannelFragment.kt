@@ -131,7 +131,8 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_channel, container, false)
-        mViewPager = view.findViewById(R.id.channel_view_pager) as ViewPager
+        // Nullable: sw600dp/sw720dp layouts have no pager (tablet branch below).
+        mViewPager = view.findViewById(R.id.channel_view_pager) as ViewPager?
         mTabStrip = view.findViewById(R.id.channel_tab_strip) as PagerTabStrip?
         val tabStrip = mTabStrip
         if (tabStrip != null) {
@@ -207,7 +208,7 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
                 session.unregisterWhisperTarget(target)
             }
         }
-        mTargetPanelText = view.findViewById(R.id.target_panel_warning) as TextView
+        mTargetPanelText = view.findViewById(R.id.target_panel_warning) as TextView?
         configureInput()
         return view
     }

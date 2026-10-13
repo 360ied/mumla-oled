@@ -14,7 +14,9 @@ class SettingsActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
 
-        val toolbar = findViewById(R.id.toolbar) as Toolbar
+        // NPE-exact: the original dereferenced the lookup unconditionally.
+        val toolbar = findViewById(R.id.toolbar) as Toolbar?
+            ?: throw NullPointerException("toolbar")
         setSupportActionBar(toolbar)
         val actionBar = supportActionBar
         if (actionBar != null) {

@@ -464,6 +464,9 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
 
         pingScope?.cancel()
         pingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // The new scope orphans the old loop (already cancelled above); drop
+        // the reference so disarm checks never point at the dead job.
+        pingJob = null
 
         val socketFactory = createSocketFactory()
 

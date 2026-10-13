@@ -59,14 +59,16 @@ class ServerInfoFragment : HumlaServiceFragment() {
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_server_info, container, false)
-        mProtocolView = view.findViewById(R.id.server_info_protocol) as TextView
-        mOSVersionView = view.findViewById(R.id.server_info_os_version) as TextView
-        mTCPLatencyView = view.findViewById(R.id.server_info_tcp_latency) as TextView
-        mUDPLatencyView = view.findViewById(R.id.server_info_udp_latency) as TextView
-        mHostView = view.findViewById(R.id.server_info_host) as TextView
-        mMaxBandwidthView = view.findViewById(R.id.server_info_max_bandwidth) as TextView
-        mCurrentBandwidthView = view.findViewById(R.id.server_info_current_bandwidth) as TextView
-        mCodecView = view.findViewById(R.id.server_info_codec) as TextView
+        // Nullable casts: the fields are TextView? and use sites NPE-guard;
+        // a non-null `as` would throw TypeCastException instead of NPE here.
+        mProtocolView = view.findViewById(R.id.server_info_protocol) as TextView?
+        mOSVersionView = view.findViewById(R.id.server_info_os_version) as TextView?
+        mTCPLatencyView = view.findViewById(R.id.server_info_tcp_latency) as TextView?
+        mUDPLatencyView = view.findViewById(R.id.server_info_udp_latency) as TextView?
+        mHostView = view.findViewById(R.id.server_info_host) as TextView?
+        mMaxBandwidthView = view.findViewById(R.id.server_info_max_bandwidth) as TextView?
+        mCurrentBandwidthView = view.findViewById(R.id.server_info_current_bandwidth) as TextView?
+        mCodecView = view.findViewById(R.id.server_info_codec) as TextView?
         return view
     }
 

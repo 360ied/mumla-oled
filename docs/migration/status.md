@@ -279,3 +279,30 @@ Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md)
   basic functionality (boot/connect/voice) confirmed by the user.
 - Owed: deeper torture still open (reconnect storm, SCO flap, A2DP stagger,
   route flip mid-call); R8/release still deferred to pre-landing.
+
+## Review (slices 4+5)
+
+- Pedantic review fan-out (6 slices, `reviewer` agents) over slices 4+5
+  completed; synthesis concurred on two P0 blockers (UDP rescale stranding
+  outbound voice in an orphaned channel, tablet crash on a non-null
+  `channel_view_pager` cast) plus four P1s (double TCP disconnect delivery,
+  error-path scope leak with send-after-failure crash, Mutex-not-FIFO write
+  ordering, five `Settings` JVM-signature breaks) and a P2 tail (cast-idiom
+  sweep, stale job refs, widening comments, hygiene).
+- Fix commit applies all concurred items: sender re-resolves the live channel
+  per generation with publish-then-close rescale, `as ViewPager?`, finally as
+  the single disconnect delivery point with scope teardown, per-connection
+  serial write dispatcher, `@JvmName` on the five `Settings` accessors.
+  Contested (no action): `MumlaDatabase` default-overload Java visibility —
+  the green slice-5 `check.sh` (still-Java test calling it) proves linkage;
+  `onBind(Intent?)` narrowing — it does not override `Service.onBind`, so the
+  non-null platform signature stays (the pre-image Java was non-null anyway).
+  Compile-driven: `PinnedTlsSocketFactory` uses the Elvis-NPE form since
+  `requireNonNull` on a nullable arg infers nullable.
+  Accepted as intentional: test-only `queuedCount` approximation (documented),
+  `ModelHandler` convention-based confinement, null-tightenings on dead paths.
+  Guide §1 amended (nullable-cast rule); `check.sh` re-gated green.
+- Incidental records: `Settings.addNewsShownVersions` no longer mutates the
+  caller list (strictly safer, kept); `Server` host/port writes must route
+  through setters (documented on the class) or resolved-host invalidation is
+  bypassed.

@@ -39,11 +39,13 @@ import se.lublin.humla.Constants
 /**
  * Single server model: Room row, parcel, and UI model in one (no separate layers).
  *
- * Room and Parcel both bind the raw fields (all `@JvmField`, so no accessor
- * masks them); the user-visible name fallback lives in [getName] only, and
- * the resolved-host invalidation lives in [setHost]/[setPort] only. Parcel
- * bytes match the hand-written original exactly (six fields in order;
- * resolved state excluded).
+ * Room and Parcel bind the raw `name`/`host`/`port` fields (`@JvmField`, so no
+ * accessor masks them); `id`/`username`/`password` are plain properties. The
+ * user-visible name fallback lives in [getName] only, and the resolved-host
+ * invalidation lives in [setHost]/[setPort] only — route every field write
+ * through the setters, never a direct `.host`/`.port` assignment, or the
+ * invalidation is bypassed. Parcel bytes match the hand-written original
+ * exactly (six fields in order; resolved state excluded).
  */
 @Entity(tableName = "server")
 @Parcelize

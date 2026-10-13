@@ -59,6 +59,12 @@ Convert syntax first, restructure second. One file per commit.
   throws `IllegalArgumentException` and is reserved for new internal hardening
   on provably unreachable paths). Public API boundaries keep NPE-exact
   behavior (`Objects.requireNonNull`); private helpers may use `requireNotNull`.
+- **Casts:** view lookups use nullable casts with the NPE-exact idiom
+  (`as X? ?: throw NullPointerException("<name>")`). A non-null `as X`
+  throws `TypeCastException`, not NPE — and crashes unconditionally on
+  layout-variant-absent views (e.g. phone-only views on tablets) where Java's
+  cast-then-null-check survived. Fields holding variant-absent views stay
+  nullable (`as X?`); the use site keeps the null branch.
 - **Openness:** plain Kotlin members are `final` by default but `override`
   members stay open — do NOT add redundant `open` to overrides. Add `open`
   to plain classes/members only where a subclass exists (Java subclasses

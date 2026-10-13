@@ -45,8 +45,10 @@ dependencies {
     kapt libs.hilt.compiler
     // Migration Slice 4 coroutines service core: LifecycleService base +
     // lifecycleScope is the service scope; ConnectionScope + UDP Channel need
-    // coroutines-core. api for lifecycle (public base class), implementation
-    // for coroutines (internal use).
+    // coroutines-core. api for lifecycle (public base class); coroutines stays
+    // implementation by intent (internal use), though lifecycle-runtime-ktx
+    // re-exposes coroutines transitively — the split documents intent, not a
+    // sealed classpath.
     api libs.lifecycle.service
     api libs.lifecycle.runtime.ktx
     implementation libs.coroutines.core

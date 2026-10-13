@@ -566,10 +566,15 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             // NPE-exact: inflate never returns null here; the original dereferenced v.
             val row = v ?: throw NullPointerException("view")
 
-            val chatBox = row.findViewById(R.id.list_chat_item_box) as LinearLayout
-            val targetText = row.findViewById(R.id.list_chat_item_target) as TextView
-            val messageText = row.findViewById(R.id.list_chat_item_text) as TextView
-            val timeText = row.findViewById(R.id.list_chat_item_time) as TextView
+            // NPE-exact: the original dereferenced each lookup unconditionally.
+            val chatBox = row.findViewById(R.id.list_chat_item_box) as LinearLayout?
+                ?: throw NullPointerException("list_chat_item_box")
+            val targetText = row.findViewById(R.id.list_chat_item_target) as TextView?
+                ?: throw NullPointerException("list_chat_item_target")
+            val messageText = row.findViewById(R.id.list_chat_item_text) as TextView?
+                ?: throw NullPointerException("list_chat_item_text")
+            val timeText = row.findViewById(R.id.list_chat_item_time) as TextView?
+                ?: throw NullPointerException("list_chat_item_time")
 
             // NPE-exact: the original dereferenced getItem(position) unconditionally.
             val message = getItem(position) ?: throw NullPointerException("item")

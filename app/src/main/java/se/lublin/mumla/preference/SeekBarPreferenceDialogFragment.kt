@@ -18,7 +18,9 @@ class SeekBarPreferenceDialogFragment : androidx.preference.PreferenceDialogFrag
     override fun onBindDialogView(view: View) {
         super.onBindDialogView(view)
 
-        val seekBar = view.findViewById(R.id.seek_bar) as SeekBar
+        // NPE-exact: the original dereferenced the lookup unconditionally.
+        val seekBar = view.findViewById(R.id.seek_bar) as SeekBar?
+            ?: throw NullPointerException("seek_bar")
         // NPE-exact: the original dereferenced the lookup unconditionally.
         val valueView = view.findViewById(R.id.seek_bar_value_view) as TextView?
             ?: throw NullPointerException("seek_bar_value_view")
