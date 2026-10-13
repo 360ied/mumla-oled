@@ -325,7 +325,19 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   keystore under `.gradle-home/release-signing` (never committed); the
   fail-closed guard still refuses release builds without them.
 
+## Post-landing follow-ups (on `master`)
+
+- `ddfc2bbb` — fixed a `NetworkOnMainThreadException` on manual Disconnect
+  (slice 4 had moved the TLS socket close onto the caller); socket teardown
+  now runs on IO with the read-loop finally as the single delivery point.
+- `13946a2b` — adopted AGP 9 new DSL + built-in Kotlin (KGP 2.4.21 via the
+  root buildscript classpath, kapt under `legacy-kapt`).
+- `fc0e96a7` — recorded the R8 verification above.
+- `v0.26.0` — released as an unstable pre-release (Android 13 requirement
+  headline).
+
 ## Next
 
-No open landing items: R8 verified above; remaining debt rides its own TODOs
-(Paparazzi, hilt-navigation-compose, KSP). Slices 6-7 deferred.
+Nothing open: migration landed, follow-ups merged, v0.26.0 released.
+Remaining debt rides its own TODOs (Paparazzi, hilt-navigation-compose,
+KSP). Slices 6-7 deferred.

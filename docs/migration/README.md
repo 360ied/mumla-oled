@@ -1,10 +1,10 @@
 # Mumla OLED Modernization Migration
 
-Status: in progress. Slices 0-5 landed on branch `migration/full-modern`
-(see [status](status.md) for the progress log); slices 6-7 (Compose rewrite)
-explicitly DEFERRED 2026-10-13 — landing scope is slices 0-5. No `master`
-impact — the root repository stays on `master` and the migration branch
-merges only on explicit request.
+Status: landed. Slices 0-5 plus post-landing follow-ups (disconnect fix,
+AGP 9 DSL migration, R8 verification) are on `master` and released as
+v0.26.0 (see [status](status.md) for the progress log); slices 6-7
+(Compose rewrite) remain DEFERRED to post-landing follow-up. The migration
+branch and all worktrees were removed after landing.
 
 ## Goal
 
