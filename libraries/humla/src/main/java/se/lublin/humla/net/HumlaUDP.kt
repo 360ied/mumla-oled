@@ -19,13 +19,20 @@ package se.lublin.humla.net
 
 import android.os.Handler
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
 import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.util.concurrent.BlockingQueue
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.BadPaddingException
 import javax.crypto.IllegalBlockSizeException
 import javax.crypto.ShortBufferException
@@ -33,8 +40,13 @@ import javax.crypto.ShortBufferException
 /**
  * Class to maintain and receive packets from the UDP connection to a Mumble server.
  * Public interface is not thread safe.
+ *
+ * Slice 4: the BlockingQueue + mSendLock head-drop becomes a
+ * Channel(capacity, onBufferOverflow = DROP_OLDEST) with identical ~200ms
+ * bound semantics and no explicit lock. The OutgoingConsumer thread becomes
+ * an IO consumer loop; the blocking receive loop runs in the same IO scope.
  */
-class HumlaUDP : Runnable {
+class HumlaUDP {
     companion object {
         private val TAG = HumlaUDP::class.java.name
 
@@ -119,17 +131,19 @@ class HumlaUDP : Runnable {
     @Volatile
     private var mConnected: Boolean = false
 
-    /** Main datagram thread hosting this runnable. */
-    private val mDatagramThread: Thread
-
     /** Handler to invoke listener callback invocations on. */
     private val mCallbackHandler: Handler
 
-    /** Bounded queue of outgoing packets to be sent. */
-    private val mSendQueue: BlockingQueue<DatagramPacket>
+    /** Bounded head-drop channel of outgoing packets (slice 4: no explicit lock). */
+    @Volatile
+    private var sendChannel: Channel<DatagramPacket>? = null
 
-    /** Lock guarding compound offer/poll queue eviction and dynamic capacity adjustments. */
-    private val mSendLock = Any()
+    /** Test-visible queued count (Channel exposes no size; incremented on send, decremented on consume). */
+    private val queuedCount = AtomicInteger(0)
+
+    /** IO scope hosting the sender consumer and the blocking receiver. */
+    private var udpScope: CoroutineScope? = null
+    private var udpJob: Job? = null
 
     /** Audio frames per packet (1=10ms, 2=20ms, 4=40ms, 6=60ms). */
     @Volatile
@@ -143,7 +157,7 @@ class HumlaUDP : Runnable {
      * Sets up a new UDP connection context with the default 20ms frames per packet.
      * @param cryptState Cryptographic state provider.
      * @param listener Callback target. Connection state callbacks will be posted on the callback handler given;
-     *                 data callbacks are delivered directly on the UDP receive thread.
+     *                 data callbacks are delivered directly on the UDP receive coroutine.
      * @param callbackHandler Handler to post listener invocations on.
      */
     constructor(cryptState: CryptState, listener: UDPConnectionListener, callbackHandler: Handler) :
@@ -167,61 +181,110 @@ class HumlaUDP : Runnable {
         mCryptState = cryptState
         mListener = listener
         mCallbackHandler = callbackHandler
-        mDatagramThread = Thread(this)
-        mSendQueue = LinkedBlockingQueue()
         setTargetFramesPerPacket(targetFramesPerPacket)
     }
 
     fun connect(host: String, port: Int) {
         mHost = host
         mPort = port
-        mDatagramThread.start()
+        udpScope?.cancel()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        udpScope = scope
+        ensureChannel()
+        udpJob = scope.launch { runUdp() }
     }
 
     fun isRunning(): Boolean {
         return mConnected
     }
 
-    override fun run() {
-        var outgoingConsumerThread: Thread? = null
+    private fun ensureChannel() {
+        if (sendChannel == null) {
+            val capacity = mSendQueueCapacity.coerceAtLeast(1)
+            sendChannel = Channel(capacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        }
+    }
+
+    /**
+     * Recreates the head-drop channel at a new capacity, retaining the newest
+     * queued packets (same flush-newest policy as the old poll-while-over-capacity).
+     */
+    private fun recreateChannel(newCapacity: Int) {
+        val old = sendChannel
+        val retained = ArrayList<DatagramPacket>()
+        if (old != null) {
+            while (true) {
+                val packet = old.tryReceive().getOrNull() ?: break
+                retained.add(packet)
+            }
+        }
+        val newest = if (retained.size > newCapacity) {
+            retained.subList(retained.size - newCapacity, retained.size)
+        } else {
+            retained
+        }
+        sendChannel = Channel(newCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        var count = 0
+        for (packet in newest) {
+            if (sendChannel?.trySend(packet)?.isSuccess == true) {
+                count++
+            }
+        }
+        queuedCount.set(count)
+    }
+
+    private suspend fun runUdp() {
         mConnected = true
         try {
             val host = mHost ?: throw IOException("No host set")
             mResolvedHost = InetAddress.getByName(host)
             mUDPSocket = DatagramSocket()
-            // Local copies: the field is nulled only on the disconnect path,
-            // which cannot run concurrently with this setup sequence.
             val udpSocket = mUDPSocket ?: throw NullPointerException("UDP socket")
             val resolvedHost = mResolvedHost ?: throw NullPointerException("resolved host")
             udpSocket.connect(resolvedHost, mPort)
             Log.d(TAG, "Created socket")
 
-            // Start outgoing consumer once the UDP socket is open, as a child thread.
-            val outgoingConsumer = OutgoingConsumer(udpSocket, mSendQueue)
-            outgoingConsumerThread = Thread(outgoingConsumer)
-            outgoingConsumerThread.start()
-
-            val packet = DatagramPacket(ByteArray(BUFFER_SIZE), BUFFER_SIZE)
-            while (mConnected) {
-                udpSocket.receive(packet)
-                val data = packet.data
-                val length = packet.length
-
-                if (!mCryptState.isValid()) {
-                    Log.d(TAG, "CryptState invalid, discarding packet")
-                    continue
+            // Sender consumer: drains the head-drop channel (slice 4: IO loop
+            // replaces the OutgoingConsumer thread).
+            val channel = sendChannel ?: throw NullPointerException("send channel")
+            val sender = udpScope?.launch {
+                for (packet in channel) {
+                    try {
+                        udpSocket.send(packet)
+                    } catch (e: IOException) {
+                        if (udpSocket.isClosed) {
+                            break
+                        }
+                        Log.w(TAG, "Failed to send outgoing datagram", e)
+                    } finally {
+                        queuedCount.decrementAndGet()
+                    }
                 }
-                if (length < 5) {
-                    Log.d(TAG, "Packet too short, discarding")
-                    continue
-                }
+                Log.d(TAG, "Datagram outbox consumer shutdown")
+            }
+            Log.d(TAG, "Datagram outbox consumer active")
 
-                try {
-                    val buffer = mCryptState.decrypt(data, length)
+            try {
+                val packet = DatagramPacket(ByteArray(BUFFER_SIZE), BUFFER_SIZE)
+                while (mConnected) {
+                    udpSocket.receive(packet)
+                    val data = packet.data
+                    val length = packet.length
 
-                    if (mListener != null) {
+                    if (!mCryptState.isValid()) {
+                        Log.d(TAG, "CryptState invalid, discarding packet")
+                        continue
+                    }
+                    if (length < 5) {
+                        Log.d(TAG, "Packet too short, discarding")
+                        continue
+                    }
+
+                    try {
+                        val buffer = mCryptState.decrypt(data, length)
+
                         if (buffer != null) {
-                            // Direct callback on UDP receiver thread per UDPConnectionListener contract
+                            // Direct callback on UDP receiver coroutine per UDPConnectionListener contract
                             mListener.onUDPDataReceived(buffer)
                         } else if (mCryptState.getLastGoodElapsed() > 5000000 &&
                             mCryptState.getLastRequestElapsed() > 5000000
@@ -234,14 +297,16 @@ class HumlaUDP : Runnable {
                         } else {
                             Log.d(TAG, "Packet failed to decrypt, discarding")
                         }
+                    } catch (e: BadPaddingException) {
+                        Log.d(TAG, "Discarding packet", e)
+                    } catch (e: IllegalBlockSizeException) {
+                        Log.d(TAG, "Discarding packet", e)
+                    } catch (e: ShortBufferException) {
+                        Log.d(TAG, "Discarding packet", e)
                     }
-                } catch (e: BadPaddingException) {
-                    Log.d(TAG, "Discarding packet", e)
-                } catch (e: IllegalBlockSizeException) {
-                    Log.d(TAG, "Discarding packet", e)
-                } catch (e: ShortBufferException) {
-                    Log.d(TAG, "Discarding packet", e)
                 }
+            } finally {
+                sender?.cancel()
             }
         } catch (e: IOException) {
             // If mConnected is false, then this is a user-triggered disconnection. Report no error.
@@ -257,16 +322,14 @@ class HumlaUDP : Runnable {
             mConnected = false
             mResolvedHost = null
 
-            // We want to interrupt the outgoing queue consumer thread to avoid sends after socket
-            // cleanup. Blocking shouldn't be necessary.
-            if (outgoingConsumerThread != null) {
-                outgoingConsumerThread.interrupt()
+            // Drain the head-drop channel so a reconnect starts empty.
+            val channel = sendChannel
+            if (channel != null) {
+                while (channel.tryReceive().getOrNull() != null) {
+                    // Drain only; count reset below.
+                }
             }
-
-            // Clear the outgoing queue, in case the caller decides to reconnect with the same socket.
-            synchronized(mSendLock) {
-                mSendQueue.clear()
-            }
+            queuedCount.set(0)
 
             val socket = mUDPSocket
             if (socket != null) {
@@ -290,12 +353,14 @@ class HumlaUDP : Runnable {
             packet.address = resolvedHost
             packet.port = mPort
 
-            // Synchronized block guarantees atomic head-drop eviction and strict capacity bounding
-            synchronized(mSendLock) {
-                while (mSendQueue.size >= mSendQueueCapacity) {
-                    mSendQueue.poll()
+            // Head-drop via DROP_OLDEST: trySend always succeeds while open,
+            // evicting the oldest queued packet when full. No explicit lock.
+            val channel = sendChannel ?: return
+            val result = channel.trySend(packet)
+            if (result.isSuccess) {
+                queuedCount.updateAndGet { current ->
+                    if (current < mSendQueueCapacity) current + 1 else current
                 }
-                mSendQueue.offer(packet)
             }
         } catch (e: BadPaddingException) {
             Log.w(TAG, "Failed to encrypt outgoing UDP packet", e)
@@ -313,15 +378,19 @@ class HumlaUDP : Runnable {
      * @param framesPerPacket Audio frames per packet (1=10ms, 2=20ms, 4=40ms, 6=60ms).
      */
     fun setTargetFramesPerPacket(framesPerPacket: Int) {
-        synchronized(mSendLock) {
-            mTargetFramesPerPacket = sanitizeFramesPerPacket(framesPerPacket)
-            mSendQueueCapacity = calculateQueueCapacity(mTargetFramesPerPacket)
-            while (mSendQueue.size > mSendQueueCapacity) {
-                mSendQueue.poll()
-            }
+        mTargetFramesPerPacket = sanitizeFramesPerPacket(framesPerPacket)
+        val newCapacity = calculateQueueCapacity(mTargetFramesPerPacket)
+        if (sendChannel == null) {
+            mSendQueueCapacity = newCapacity
+            ensureChannel()
+        } else if (newCapacity != mSendQueueCapacity) {
+            mSendQueueCapacity = newCapacity
+            recreateChannel(newCapacity)
+        } else {
+            mSendQueueCapacity = newCapacity
         }
-        // Volatile reads outside the lock: rare event (connect, settings change,
-        // bandwidth degradation), so debug logging here cannot spam logcat.
+        // Rare event (connect, settings change, bandwidth degradation), so
+        // debug logging here cannot spam logcat.
         Log.d(TAG, "Rescaled send queue: " + (getTargetFramesPerPacket() * FRAME_DURATION_MS) +
             "ms packets, capacity=" + getSendQueueCapacity())
     }
@@ -342,20 +411,41 @@ class HumlaUDP : Runnable {
         if (capacity <= 0) {
             throw IllegalArgumentException("sendQueueCapacity must be > 0")
         }
-        synchronized(mSendLock) {
+        if (sendChannel == null) {
             mSendQueueCapacity = capacity
-            while (mSendQueue.size > mSendQueueCapacity) {
-                mSendQueue.poll()
-            }
+            ensureChannel()
+            return
+        }
+        if (capacity != mSendQueueCapacity) {
+            mSendQueueCapacity = capacity
+            recreateChannel(capacity)
         }
     }
 
     /**
-     * Visible for testing: returns the outgoing packet queue.
+     * Test-visible queued count (Channel exposes no size).
      */
     // Widened to public: Kotlin has no package visibility; JVM tests pin this.
-    fun getSendQueue(): BlockingQueue<DatagramPacket> {
-        return mSendQueue
+    fun getQueuedCount(): Int {
+        return queuedCount.get()
+    }
+
+    /**
+     * Test-visible poll of the oldest queued packet (null when empty).
+     */
+    // Widened to public: Kotlin has no package visibility; JVM tests pin this.
+    fun pollQueuedPacket(): DatagramPacket? {
+        val packet = sendChannel?.tryReceive()?.getOrNull() ?: return null
+        queuedCount.decrementAndGet()
+        return packet
+    }
+
+    /**
+     * Test-visible emptiness check.
+     */
+    // Widened to public: Kotlin has no package visibility; JVM tests pin this.
+    fun isQueueEmpty(): Boolean {
+        return queuedCount.get() <= 0
     }
 
     /**
@@ -366,6 +456,9 @@ class HumlaUDP : Runnable {
         mConnected = connected
         mResolvedHost = host
         mPort = port
+        if (connected) {
+            ensureChannel()
+        }
     }
 
     /**
@@ -373,50 +466,29 @@ class HumlaUDP : Runnable {
      */
     fun disconnect() {
         mConnected = false
-        synchronized(mSendLock) {
-            mSendQueue.clear()
+        udpJob?.cancel()
+        udpJob = null
+        udpScope?.cancel()
+        udpScope = null
+        // Drain so a reconnect starts empty; count reset mirrors the old clear().
+        val channel = sendChannel
+        if (channel != null) {
+            while (channel.tryReceive().getOrNull() != null) {
+                // Drain only.
+            }
         }
-        // Closing a socket will trigger an IOException on the consumer thread.
+        queuedCount.set(0)
+        // Closing a socket will trigger an IOException on the receiver coroutine.
         mUDPSocket?.close()
     }
 
     /**
      * Note that all connection state related calls are made on the main thread.
-     * onUDPDataReceived is always called on the UDP receive thread.
+     * onUDPDataReceived is always called on the UDP receive coroutine.
      */
     interface UDPConnectionListener {
         fun onUDPDataReceived(data: ByteArray)
         fun onUDPConnectionError(e: Exception)
         fun resyncCryptState()
-    }
-
-    /**
-     * Runnable that reads from a shared blocking queue, dispatching datagrams when available.
-     */
-    private class OutgoingConsumer(
-        private val mSocket: DatagramSocket,
-        private val mQueue: BlockingQueue<DatagramPacket>
-    ) : Runnable {
-
-        override fun run() {
-            Log.d(TAG, "Datagram outbox consumer active")
-            var interrupted = false
-            while (!interrupted) {
-                try {
-                    val packet = mQueue.take()
-                    mSocket.send(packet)
-                } catch (e: IOException) {
-                    if (mSocket.isClosed) {
-                        break
-                    }
-                    Log.w(TAG, "Failed to send outgoing datagram", e)
-                } catch (e: InterruptedException) {
-                    // Our datagram thread interrupted us. We should stop reading.
-                    Thread.currentThread().interrupt()
-                    interrupted = true
-                }
-            }
-            Log.d(TAG, "Datagram outbox consumer shutdown")
-        }
     }
 }
