@@ -70,7 +70,6 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 - Compose rewrite slices 6-7 explicitly DEFERRED 2026-10-13 to
   post-landing follow-up — landing scope is slices 0-5.
-- Full new-DSL / built-in-Kotlin migration (opt-outs are deprecated warnings).
 - Release + R8 verification deferred to pre-landing (explicitly accepted).
 - Paparazzi re-evaluation DEFERRED with slice 6 (above).
 - `hilt-navigation-compose` re-verification DEFERRED with slice 7.
@@ -313,4 +312,4 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Landing prep on slices 0-5 (R8/release verification, new-DSL migration), per [slices](slices.md). Slices 6-7 deferred.
+Landing prep on slices 0-5 (R8/release verification), per [slices](slices.md). Slices 6-7 deferred.
