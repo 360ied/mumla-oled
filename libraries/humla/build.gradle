@@ -18,12 +18,12 @@
 import java.util.Locale
 
 // Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
-// KSP fork: no stable KSP for Kotlin 2.4 at scaffold, so kapt + TODO.
+// AGP 9 built-in Kotlin provides the kotlin-android plugin (no alias) and the
+// `kotlin { compilerOptions }` extension; kapt runs under legacy-kapt.
 // TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.legacy.kapt)
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.hilt)
 }
@@ -196,7 +196,9 @@ android {
         // instead of reporting UP-TO-DATE.
         inputs.property("ndkVersion", android.ndkVersion)
         outputs.dir file('src/main/libs')
-        def ndkExe = "$project.android.ndkDirectory/ndk-build"
+        // AGP 9 new DSL removed android.ndkDirectory: resolve the NDK via
+        // androidComponents.sdkComponents (matches android.ndkVersion above).
+        def ndkExe = "${androidComponents.sdkComponents.ndkDirectory.get().asFile}/ndk-build"
         // No Gradle internal API (DefaultNativePlatform breaks on upgrade;
         // OperatingSystem.current() does not exist on this Gradle line):
         // plain os.name sniffing is stable across versions.
