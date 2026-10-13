@@ -579,8 +579,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
         // Bare teardown, no notify: observers detach in onDestroy and posted
         // UI work (SoundPool recreate, proximity lock) would revive audio on
-        // a dead service.
-        mScoManager?.stop()
+        // a dead service. destroy() stops the link and cancels the manager
+        // scope (slice 4: timeout child cancelled, no timer survives destroy).
+        mScoManager?.destroy()
         // Same builder group as the funnel/teardown paths: clear under the
         // monitor so a racing recompute cannot resurrect SCO after destroy.
         // Media/applied resets ride along: all three are one route snapshot.

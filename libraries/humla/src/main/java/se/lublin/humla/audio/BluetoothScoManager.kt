@@ -22,9 +22,14 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Owns the Bluetooth SCO (HFP) audio route for a voice session.
@@ -48,8 +53,11 @@ import android.util.Log
  * release always runs outside the monitor. All listener
  * callbacks run outside the monitor: {@code onScoConnected} and
  * {@code onScoDisconnected} originate on main-thread platform callbacks;
- * {@code onScoFailed} is always posted to the main handler and dropped when
- * its session generation is stale, so {@code stop()} truly never callbacks.
+ * {@code onScoFailed} is always launched in the manager scope (Main.immediate)
+ * and dropped when its session generation is stale, so {@code stop()} truly
+ * never callbacks. Slice 4: coroutine cancellation is the epoch for the
+ * timeout path (stop cancels the timeout child); the generation still guards
+ * platform device-listener callbacks, which cannot be cancelled.
  *
  * <p>AudioManager mode is deliberately NOT owned here. The service route
  * policy ({@code HumlaService}) is the single owner of
@@ -119,7 +127,11 @@ class BluetoothScoManager {
     private val context: Context
     private val audioManager: AudioManager
     private val listener: Listener
-    private val handler = Handler(Looper.getMainLooper())
+
+    // Slice 4: Handler timeout becomes a cancellable child (withTimeout-style
+    // delay); stop() cancels it, so cancellation is the epoch for the timer.
+    private val scoScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var timeoutJob: Job? = null
 
     // Injected budgets (ODD-23): production uses the static defaults above;
     // a future device harness can narrow the timeout without touching the machine.
@@ -137,8 +149,6 @@ class BluetoothScoManager {
     private var routeHeldEpoch: Int = -1
 
     private var deviceListener: AudioManager.OnCommunicationDeviceChangedListener? = null
-
-    private val timeoutRunnable = Runnable { onConnectTimeout() }
 
     constructor(context: Context?, listener: Listener?) : this(
         context,
@@ -208,12 +218,13 @@ class BluetoothScoManager {
      */
     fun stop() {
         synchronized(this) {
-            // One atomic unit with the flip: callback removal, observer
+            // One atomic unit with the flip: timeout cancel, observer
             // teardown, and the generation bump cannot interleave with a
             // concurrent bring-up's register/arm, matching fail() and
             // dropActiveLink(). Unregister calls are idempotent and fast;
             // route release stays outside the monitor.
-            handler.removeCallbacks(timeoutRunnable)
+            timeoutJob?.cancel()
+            timeoutJob = null
             teardownObservers()
             state = STATE_IDLE
             ++generation
@@ -221,6 +232,12 @@ class BluetoothScoManager {
         // Guarded release: a stale hold must never clear another app's
         // routing selection.
         releaseRouteIfHeld()
+    }
+
+    /** Cancels the manager scope; called once from the service teardown. */
+    fun destroy() {
+        stop()
+        scoScope.cancel()
     }
 
     /** True when no bring-up is in progress and no link is up. */
@@ -314,7 +331,7 @@ class BluetoothScoManager {
             // change event that will never come. The timeout stays armed as
             // fallback; setActive (or stop) removes it.
             armTimeout()
-            handler.post {
+            scoScope.launch {
                 if (isStartingEpoch(epoch)) {
                     setActive()
                 } else {
@@ -425,7 +442,8 @@ class BluetoothScoManager {
                 return
             }
             state = STATE_ACTIVE
-            handler.removeCallbacks(timeoutRunnable)
+            timeoutJob?.cancel()
+            timeoutJob = null
         }
         Log.i(TAG, "Bluetooth SCO connected")
         // Main-thread origin (broadcast, device listener, or timeout), so a
@@ -439,7 +457,8 @@ class BluetoothScoManager {
                 return
             }
             state = STATE_IDLE
-            handler.removeCallbacks(timeoutRunnable)
+            timeoutJob?.cancel()
+            timeoutJob = null
             teardownObservers()
         }
         releaseRouteIfHeld()
@@ -455,16 +474,18 @@ class BluetoothScoManager {
                 return
             }
             state = STATE_IDLE
-            handler.removeCallbacks(timeoutRunnable)
+            timeoutJob?.cancel()
+            timeoutJob = null
             teardownObservers()
             generationCopy = generation
         }
         releaseRouteIfHeld()
         Log.w(TAG, "Bluetooth SCO failed: " + reason)
-        // Always posted: failures can surface on the start() caller's thread.
-        // The generation check drops delivery when stop() or a newer start()
-        // has since moved on, honoring stop()'s never-callbacks contract.
-        handler.post {
+        // Always launched in the manager scope: failures can surface on the
+        // start() caller's thread. The generation check drops delivery when
+        // stop() or a newer start() has since moved on, honoring stop()'s
+        // never-callbacks contract.
+        scoScope.launch {
             val current: Boolean = synchronized(this@BluetoothScoManager) {
                 generationCopy == generation
             }
@@ -526,8 +547,11 @@ class BluetoothScoManager {
     }
 
     private fun armTimeout() {
-        handler.removeCallbacks(timeoutRunnable)
-        handler.postDelayed(timeoutRunnable, connectTimeoutMs)
+        timeoutJob?.cancel()
+        timeoutJob = scoScope.launch {
+            delay(connectTimeoutMs)
+            onConnectTimeout()
+        }
     }
 
     private fun hasConnectPermission(): Boolean {
