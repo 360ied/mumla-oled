@@ -97,7 +97,9 @@ class MumbleImageGetter : Html.ImageGetter {
             override fun sizeOf(key: String?, bitmap: Bitmap?): Int {
                 // NPE-exact: the original dereferenced bitmap unconditionally.
                 val b = bitmap ?: throw NullPointerException("bitmap")
-                return b.byteCount / 1024
+                // Floor at 1 KB: sub-KB bitmaps must still consume quota or
+                // unbounded tiny emotes evade accounting.
+                return Math.max(1, b.byteCount / 1024)
             }
         }
 

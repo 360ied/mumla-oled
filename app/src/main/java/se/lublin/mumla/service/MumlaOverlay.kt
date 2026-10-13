@@ -47,7 +47,7 @@ class MumlaOverlay(service: MumlaService) {
         override fun onUserTalkStateUpdated(user: IUser?) {
             val channelAdapter = mChannelAdapter
             if (channelAdapter != null && user?.channel != null &&
-                user.channel == mService.getSessionChannel()
+                user.channel == sessionChannelOrNull()
             ) {
                 channelAdapter.updateUserState(user, mOverlayList)
             }
@@ -56,7 +56,7 @@ class MumlaOverlay(service: MumlaService) {
         override fun onUserStateUpdated(user: IUser?) {
             val channelAdapter = mChannelAdapter
             if (channelAdapter != null && user?.channel != null &&
-                user.channel == mService.getSessionChannel()
+                user.channel == sessionChannelOrNull()
             ) {
                 channelAdapter.updateUserState(user, mOverlayList)
             }
@@ -65,7 +65,7 @@ class MumlaOverlay(service: MumlaService) {
         override fun onUserConnected(user: IUser?) {
             val channelAdapter = mChannelAdapter
             if (channelAdapter != null && user?.channel != null &&
-                user.channel == mService.getSessionChannel()
+                user.channel == sessionChannelOrNull()
             ) {
                 channelAdapter.notifyDataSetChanged()
             }
@@ -93,9 +93,9 @@ class MumlaOverlay(service: MumlaService) {
             val channelAdapter = mChannelAdapter
             if (channelAdapter != null && user != null) {
                 if (user.session == selfSession) {
-                    channelAdapter.setChannel(mService.getSessionChannel())
+                    channelAdapter.setChannel(sessionChannelOrNull())
                 } else {
-                    val sessionChannel = mService.getSessionChannel()
+                    val sessionChannel = sessionChannelOrNull()
                     if (sessionChannel != null && (
                             (newChannel != null && newChannel.id == sessionChannel.id) ||
                                 (oldChannel != null && oldChannel.id == sessionChannel.id)
@@ -110,7 +110,7 @@ class MumlaOverlay(service: MumlaService) {
         override fun onConnected() {
             val channelAdapter = mChannelAdapter
             if (channelAdapter != null) {
-                channelAdapter.setChannel(mService.getSessionChannel())
+                channelAdapter.setChannel(sessionChannelOrNull())
             }
         }
 
@@ -125,6 +125,17 @@ class MumlaOverlay(service: MumlaService) {
 
     private val mService: MumlaService = service
     private val mSettings: Settings = Settings.getInstance(service)
+
+    // Fail-soft snapshot: getSessionChannel() throws IllegalStateException when
+    // unsynchronized or teardown-racing (cf. MumlaService's own try/catch
+    // around the same call). Observers must never throw out of fan-out.
+    private fun sessionChannelOrNull(): IChannel? {
+        return try {
+            mService.getSessionChannel()
+        } catch (e: IllegalStateException) {
+            null
+        }
+    }
     private val mWindowManager: WindowManager
     private val mOverlayView: View
     private val mOverlayList: RecyclerView
@@ -143,6 +154,7 @@ class MumlaOverlay(service: MumlaService) {
             ?: throw NullPointerException("WindowManager")
         mOverlayView = View.inflate(service, R.layout.overlay, null)
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list)
+            ?: throw NullPointerException("overlay_list")
         mOverlayList.layoutManager = LinearLayoutManager(service)
         mOverlayList.itemAnimator = null
 
@@ -213,7 +225,14 @@ class MumlaOverlay(service: MumlaService) {
                             mOverlayParams.x = Math.max(0, Math.min(newX, maxX))
                             mOverlayParams.y = Math.max(0, Math.min(newY, maxY))
                             if (mShown) {
-                                mWindowManager.updateViewLayout(mOverlayView, mOverlayParams)
+                                // Guarded: disconnect mid-drag calls hide() and
+                                // removeView, and the next MOVE would throw
+                                // IllegalArgumentException (View not attached).
+                                try {
+                                    mWindowManager.updateViewLayout(mOverlayView, mOverlayParams)
+                                } catch (e: IllegalArgumentException) {
+                                    Log.d(TAG, "overlay detached mid-drag; dropping move", e)
+                                }
                             }
                             return true
                         }
@@ -354,7 +373,7 @@ class MumlaOverlay(service: MumlaService) {
             return
         }
         applyLayoutParameters()
-        val adapter = ChannelAdapter(mService, mService.getSessionChannel())
+        val adapter = ChannelAdapter(mService, sessionChannelOrNull())
         mChannelAdapter = adapter
         mOverlayList.adapter = adapter
         mService.registerObserver(mObserver)

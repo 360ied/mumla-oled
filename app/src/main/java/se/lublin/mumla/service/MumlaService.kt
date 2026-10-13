@@ -645,8 +645,12 @@ open class MumlaService : HumlaService(),
             overlay.hide()
         }
 
-        val settings = mSettings ?: throw NullPointerException("mSettings")
-        settings.unregisterListener(this)
+        // Null-tolerant: a partial onCreate (early failure) leaves these null,
+        // and a second throw here would mask the root cause.
+        val settings = mSettings
+        if (settings != null) {
+            settings.unregisterListener(this)
+        }
         unregisterTalkReceiver()
 
         unregisterObserver(mObserver)
@@ -660,8 +664,10 @@ open class MumlaService : HumlaService(),
             mServerChatLogs.clear()
             mActiveServerKey = ""
         }
-        val messageNotification = mMessageNotification ?: throw NullPointerException("mMessageNotification")
-        messageNotification.dismiss()
+        val messageNotification = mMessageNotification
+        if (messageNotification != null) {
+            messageNotification.dismiss()
+        }
         releaseSoundPool()
         mSelfTalking = false
         super.onDestroy()
@@ -1000,8 +1006,7 @@ open class MumlaService : HumlaService(),
     }
 
     /**
-     * Whether the BLUETOOTH_CONNECT runtime grant (API 31+) is in place.
-     * Below 31 the manifest flags are install-time, so always true.
+     * Whether the BLUETOOTH_CONNECT runtime grant is in place.
      */
     private fun hasBluetoothConnectGrant(): Boolean {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==

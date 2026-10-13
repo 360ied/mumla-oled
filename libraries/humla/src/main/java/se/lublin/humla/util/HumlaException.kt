@@ -68,7 +68,13 @@ class HumlaException : Exception, Parcelable {
     }
 
     private constructor(parcel: Parcel) : super(
-        parcel.readString(),
+        // readString is also guarded: it is evaluated as a super() argument
+        // before the block below, and a truncated parcel throws here too.
+        try {
+            parcel.readString()
+        } catch (e: Exception) {
+            null
+        },
         try {
             parcel.readSerializable() as? Throwable?
         } catch (e: Exception) {

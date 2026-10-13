@@ -483,6 +483,9 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
             tcp.connect(host, port)
             // UDP thread is formally started after TCP connection.
         } catch (e: ConnectException) {
+            // Defensive: HumlaTCP.connect only throws when already running, so
+            // a fresh instance never lands here; kept so a future synchronous
+            // failure still wraps as HumlaException for HumlaService.connect.
             throw HumlaException(e, HumlaException.HumlaDisconnectReason.CONNECTION_ERROR)
         }
     }
@@ -767,9 +770,9 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
      */
     fun sendUDPMessage(data: ByteArray, length: Int, force: Boolean) {
         if (!mConnected) return
-        if (length > data.size) {
+        if (length < 0 || length > data.size) {
             throw IllegalArgumentException(
-                "Requested length $length is longer than " +
+                "Requested length $length out of bounds for " +
                     "available data length " + data.size + "!"
             )
         }
@@ -845,8 +848,9 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
                 udp.connect(host, port)
             } else {
                 // Dead path (host is set from the live TCP socket above): log
-                // instead of NPE-crashing the established callback, and UDP
-                // stays down while TCP carries voice via shouldForceTCP.
+                // instead of NPE-crashing the established callback. Nothing
+                // here sets mForceTCP, so with mUsingUDP=true and mUDP=null
+                // the voice packet is dropped until reconnect.
                 Log.w(TAG, "onTCPConnectionEstablished with null host; UDP skipped")
             }
         }
@@ -945,9 +949,14 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     /**
      * Workaround for 1.2.2 servers that report the old types for CELT alpha and beta.
      * @param data The UDP data to be patched, if we're on a 1.2.2 server.
+     * Bounds-guarded: types 5-7 have no HumlaUDPMessageType entry and empty
+     * buffers have no data[0] (pre-image threw AIOOBE on both).
      */
     private fun applyLegacyCodecWorkaround(data: ByteArray) {
-        var dataType = HumlaUDPMessageType.values()[data[0].toInt() shr 5 and 0x7]
+        if (data.isEmpty()) return
+        val ordinal = data[0].toInt() shr 5 and 0x7
+        if (ordinal < 0 || ordinal >= HumlaUDPMessageType.values().size) return
+        var dataType = HumlaUDPMessageType.values()[ordinal]
         if (dataType == HumlaUDPMessageType.UDPVoiceCELTBeta)
             dataType = HumlaUDPMessageType.UDPVoiceCELTAlpha
         else if (dataType == HumlaUDPMessageType.UDPVoiceCELTAlpha)

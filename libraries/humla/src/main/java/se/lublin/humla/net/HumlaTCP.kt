@@ -224,7 +224,6 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
             }
 
             val dataInput = mDataInput ?: throw NullPointerException("TCP input")
-            val dataOutput = mDataOutput ?: throw NullPointerException("TCP output")
             while (mConnected) {
                 val messageType = dataInput.readShort()
                 val messageLength = dataInput.readInt()

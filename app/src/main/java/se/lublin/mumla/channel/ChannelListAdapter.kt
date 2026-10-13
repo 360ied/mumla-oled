@@ -322,7 +322,9 @@ class ChannelListAdapter(
         }
         val itemId = (user.session.toLong() and 0xFFFFFFFFL) or USER_ID_MASK
         val uvh = view.findViewHolderForItemId(itemId) as UserViewHolder?
-        if (uvh != null && uvh.mUserTalkHighlight != null) {
+        // mUserTalkHighlight is non-null by construction; only the holder lookup
+        // can miss.
+        if (uvh != null) {
             val newState = getTalkStateDrawable(user)
             val current = uvh.mUserTalkHighlight.drawable
             if (newState != null && current != null) {

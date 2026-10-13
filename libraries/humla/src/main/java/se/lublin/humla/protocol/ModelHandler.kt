@@ -351,10 +351,13 @@ class ModelHandler(
         }
 
         if (msg.hasDeaf() || msg.hasMute() || msg.hasSuppress() || msg.hasPrioritySpeaker()) {
-            if (msg.hasDeaf())
-                usr.isDeafened = msg.deaf
+            // Mute-then-deaf matches upstream Messages.cpp (:657 setMute before
+            // :659 setDeaf): with coercing setters the order is observable for
+            // both-fields-present packets.
             if (msg.hasMute())
                 usr.isMuted = msg.mute
+            if (msg.hasDeaf())
+                usr.isDeafened = msg.deaf
             if (msg.hasSuppress())
                 usr.isSuppressed = msg.suppress
             if (msg.hasPrioritySpeaker())

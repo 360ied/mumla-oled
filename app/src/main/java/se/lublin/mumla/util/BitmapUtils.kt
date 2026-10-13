@@ -5,6 +5,9 @@ import android.graphics.Bitmap
 object BitmapUtils {
     @JvmStatic
     fun resizeKeepingAspect(image: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
+        require(maxWidth > 0 && maxHeight > 0) {
+            "maxWidth/maxHeight must be positive: $maxWidth x $maxHeight"
+        }
         val width = image.width
         val height = image.height
 
@@ -22,6 +25,9 @@ object BitmapUtils {
         } else {
             finalHeight = (maxWidth.toFloat() / ratioBitmap).toInt()
         }
+        // Degenerate ratios floor to 0, which createScaledBitmap rejects.
+        finalWidth = Math.max(1, finalWidth)
+        finalHeight = Math.max(1, finalHeight)
 
         return Bitmap.createScaledBitmap(image, finalWidth, finalHeight, true)
     }

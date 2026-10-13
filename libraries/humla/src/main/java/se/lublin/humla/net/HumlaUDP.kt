@@ -231,7 +231,9 @@ class HumlaUDP {
      * consumer (which re-resolves the live object per generation in `runUdp`)
      * migrates to it instead of stranding sends in an orphan; closing the old
      * channel unblocks a sender parked in its receive. Drain takes and sender
-     * takes are each atomic, so every packet is taken exactly once.
+     * takes are each atomic: at-most-once under concurrent rescale (a send
+     * landing in the old channel after the drain but before close is dropped
+     * with it — benign for voice, and rescale is a rare event).
      */
     private fun recreateChannel(newCapacity: Int) {
         val old = sendChannel
