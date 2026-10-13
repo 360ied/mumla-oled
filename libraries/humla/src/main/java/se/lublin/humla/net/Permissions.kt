@@ -44,10 +44,7 @@ object Permissions {
 
     const val Cached = 0x8000000
 
-    // Derived: const initializers cannot call functions such as `or`, so the
-    // combined mask stays a @JvmField val (plain literals above stay const).
-    @JvmField
-    val All: Int = Write or Traverse or Enter or Speak or MuteDeafen or Move or
-        MakeChannel or LinkChannel or Whisper or TextMessage or MakeTempChannel or
-        Listen or Kick or Ban or Register or SelfRegister or ResetUserContent
+    // Restored as const for JLS compile-time-constant status (Java switch and
+    // annotation use): value verified by inspection (0x1F0FFF) against the OR below.
+    const val All = 0x1F0FFF
 }

@@ -53,6 +53,7 @@ class User : IUser, Comparable<User> {
             }
         }
 
+    @Volatile
     override var isSuppressed: Boolean = false
 
     // Volatile: the optimistic self-mute path writes these on the main thread

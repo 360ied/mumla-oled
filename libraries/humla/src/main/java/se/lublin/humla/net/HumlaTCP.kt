@@ -147,34 +147,38 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
             val port = mPort
             mSocketFactory.setExpectedHost(host)
             mTCPSocket = mSocketFactory.createSocket(requireNotNull(host), port, CONNECT_TIMEOUT)
+            val tcpSocket = mTCPSocket ?: throw NullPointerException("TCP socket")
 
-            mTCPSocket!!.keepAlive = true
-            mTCPSocket!!.tcpNoDelay = true
-            mTCPSocket!!.soTimeout = CONNECT_TIMEOUT
-            mTCPSocket!!.startHandshake()
+            tcpSocket.keepAlive = true
+            tcpSocket.tcpNoDelay = true
+            tcpSocket.soTimeout = CONNECT_TIMEOUT
+            tcpSocket.startHandshake()
             Log.v(TAG, "Handshake completed; verifying server identity")
 
             if (!verifyServerIdentity()) {
                 return
             }
 
-            mDataInput = DataInputStream(mTCPSocket!!.inputStream)
-            mDataOutput = DataOutputStream(mTCPSocket!!.outputStream)
+            mDataInput = DataInputStream(tcpSocket.inputStream)
+            mDataOutput = DataOutputStream(tcpSocket.outputStream)
 
-            mTCPSocket!!.soTimeout = READ_TIMEOUT_MS
+            tcpSocket.soTimeout = READ_TIMEOUT_MS
 
             Log.v(TAG, "Now listening")
             mConnected = true
 
-            if (mListener != null) {
+            val establishedListener = mListener
+            if (establishedListener != null) {
                 executeOnMainThread(Runnable {
-                    mListener!!.onTCPConnectionEstablished()
+                    establishedListener.onTCPConnectionEstablished()
                 })
             }
 
+            val dataInput = mDataInput ?: throw NullPointerException("TCP input")
+            val dataOutput = mDataOutput ?: throw NullPointerException("TCP output")
             while (mConnected) {
-                val messageType = mDataInput!!.readShort()
-                val messageLength = mDataInput!!.readInt()
+                val messageType = dataInput.readShort()
+                val messageLength = dataInput.readInt()
                 // Validate before allocating: a malicious server controls both
                 // fields. Violations abort the connection — the stream position
                 // is mid-frame, so skipping would desync the parser.
@@ -186,12 +190,13 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
                     return
                 }
                 val data = ByteArray(messageLength)
-                mDataInput!!.readFully(data)
+                dataInput.readFully(data)
 
                 val tcpMessageType = HumlaTCPMessageType.values()[messageType.toInt()]
-                if (mListener != null) {
+                val messageListener = mListener
+                if (messageListener != null) {
                     executeOnMainThread(Runnable {
-                        mListener!!.onTCPMessageReceived(tcpMessageType, messageLength, data)
+                        messageListener.onTCPMessageReceived(tcpMessageType, messageLength, data)
                     })
                 }
             }
@@ -204,8 +209,9 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
                 val recorded = mSocketFactory.getLastHandshakeFailure()
                 val failure = classifyHandshakeFailure(recorded)
                 val verifiedHost = mHost
+                val handshakeListener = mListener ?: throw NullPointerException("TCP listener")
                 executeOnMainThread(Runnable {
-                    mListener!!.onTLSHandshakeFailed(mSocketFactory.getServerChain(), failure, verifiedHost)
+                    handshakeListener.onTLSHandshakeFailed(mSocketFactory.getServerChain(), failure, verifiedHost)
                 })
             } else {
                 error("Could not verify host certificate", e)
@@ -215,17 +221,23 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         } finally {
             mConnected = false
             try {
-                if (mDataInput != null) mDataInput!!.close()
-                if (mDataOutput != null) mDataOutput!!.close()
-                if (mTCPSocket != null) mTCPSocket!!.close()
+                val dataInput = mDataInput
+                if (dataInput != null) dataInput.close()
+                val dataOutput = mDataOutput
+                if (dataOutput != null) dataOutput.close()
+                val tcpSocket = mTCPSocket
+                if (tcpSocket != null) tcpSocket.close()
             } catch (e: IOException) {
                 e.printStackTrace()
             }
             mRunning = false
 
-            executeOnMainThread(Runnable {
-                mListener!!.onTCPConnectionDisconnect()
-            })
+            val disconnectListener = mListener
+            if (disconnectListener != null) {
+                executeOnMainThread(Runnable {
+                    disconnectListener.onTCPConnectionDisconnect()
+                })
+            }
             stopThreads()
         }
     }
@@ -239,11 +251,12 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         executeOnSendThread(Runnable {
             if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
                 Log.v(TAG, "OUT: $messageType")
+            val dataOutput = mDataOutput ?: throw NullPointerException("TCP output")
             try {
-                mDataOutput!!.writeShort(messageType.ordinal)
-                mDataOutput!!.writeInt(message.serializedSize)
-                message.writeTo(mDataOutput)
-                mDataOutput!!.flush()
+                dataOutput.writeShort(messageType.ordinal)
+                dataOutput.writeInt(message.serializedSize)
+                message.writeTo(dataOutput)
+                dataOutput.flush()
             } catch (e: IOException) {
                 e.printStackTrace()
                 // TODO handle
@@ -262,11 +275,12 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         executeOnSendThread(Runnable {
             if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
                 Log.v(TAG, "OUT: $messageType")
+            val dataOutput = mDataOutput ?: throw NullPointerException("TCP output")
             try {
-                mDataOutput!!.writeShort(messageType.ordinal)
-                mDataOutput!!.writeInt(length)
-                mDataOutput!!.write(copy, 0, length)
-                mDataOutput!!.flush()
+                dataOutput.writeShort(messageType.ordinal)
+                dataOutput.writeInt(length)
+                dataOutput.write(copy, 0, length)
+                dataOutput.flush()
             } catch (e: IOException) {
                 e.printStackTrace()
             }
@@ -286,16 +300,18 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         mRunning = false
         executeOnSendThread(Runnable {
             try {
-                if (mTCPSocket != null)
-                    mTCPSocket!!.close()
+                val tcpSocket = mTCPSocket
+                if (tcpSocket != null)
+                    tcpSocket.close()
             } catch (e: IOException) {
                 e.printStackTrace()
             }
         })
 
-        if (mListener != null) {
+        val disconnectListener = mListener
+        if (disconnectListener != null) {
             executeOnMainThread(Runnable {
-                mListener!!.onTCPConnectionDisconnect()
+                disconnectListener.onTCPConnectionDisconnect()
             })
         }
     }
@@ -307,9 +323,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
             desc, e,
             HumlaException.HumlaDisconnectReason.CONNECTION_ERROR
         )
-        if (mListener != null)
+        val failureListener = mListener
+        if (failureListener != null)
             executeOnMainThread(Runnable {
-                mListener!!.onTCPConnectionFailed(ce)
+                failureListener.onTCPConnectionFailed(ce)
             })
     }
 
@@ -345,10 +362,11 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         mSocketFactory.setLastHandshakeFailure(HandshakeFailure.HOSTNAME_MISMATCH)
         Log.w(TAG, "TLS hostname mismatch for $host; refusing connection")
         closeSocket()
-        if (mListener != null) {
+        val verifyListener = mListener
+        if (verifyListener != null) {
             val verifiedHost = mHost
             executeOnMainThread(Runnable {
-                mListener!!.onTLSHandshakeFailed(
+                verifyListener.onTLSHandshakeFailed(
                     mSocketFactory.getServerChain(),
                     HandshakeFailure.HOSTNAME_MISMATCH, verifiedHost
                 )
@@ -364,8 +382,13 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
             return chain[0]
         }
         try {
-            if (mTCPSocket != null && mTCPSocket!!.session != null) {
-                val peers = mTCPSocket!!.session.peerCertificates
+            val socket = mTCPSocket
+            // Null-tolerant session: pre-handshake has no session; the
+            // original dereferenced unconditionally (NPE). Best-effort leaf
+            // lookup returns null instead so verification takes the error path.
+            val session = socket?.session
+            if (socket != null && session != null) {
+                val peers = session.peerCertificates
                 if (peers != null) {
                     for (peer in peers) {
                         if (peer is X509Certificate) {
@@ -382,8 +405,9 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
 
     private fun closeSocket() {
         try {
-            if (mTCPSocket != null) {
-                mTCPSocket!!.close()
+            val tcpSocket = mTCPSocket
+            if (tcpSocket != null) {
+                tcpSocket.close()
             }
         } catch (ignored: IOException) {
         }

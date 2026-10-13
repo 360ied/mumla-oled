@@ -110,7 +110,10 @@ class PacketBuffer {
     }
 
     fun readBool(): Boolean {
-        return readLong() > 0
+        // Bug-for-bug parity with the Java original ((int) readLong() > 0):
+        // the low-32-bit truncation is observable for values whose sign
+        // differs between the full long and its low word.
+        return readLong().toInt() > 0
     }
 
     fun readDouble(): Double {
@@ -118,10 +121,13 @@ class PacketBuffer {
             throw BufferUnderflowException()
         }
 
-        val i = next().toLong() or (next().toLong() shl 8) or (next().toLong() shl 16) or
-            (next().toLong() shl 24) or (next().toLong() shl 32) or (next().toLong() shl 40) or
-            (next().toLong() shl 48) or (next().toLong() shl 56)
-        return i.toDouble()
+        // Bug-for-bug parity with the Java original: the assembly below runs
+        // in Int arithmetic, so shifts >= 32 are masked (JLS 15.19) exactly
+        // as in the original; the garbled int widens to long, then double.
+        val i = next() or (next() shl 8) or (next() shl 16) or
+            (next() shl 24) or (next() shl 32) or (next() shl 40) or
+            (next() shl 48) or (next() shl 56)
+        return i.toLong().toDouble()
     }
 
     fun readFloat(): Float {

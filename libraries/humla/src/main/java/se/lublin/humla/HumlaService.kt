@@ -852,12 +852,12 @@ open class HumlaService : Service(), IHumlaService, IHumlaSession,
         mCallbacks.onLogError(message)
     }
 
-    @Throws(NotConnectedException::class)
+    // No @Throws: these are private helpers whose requireNotNull hardening
+    // throws IllegalArgumentException, not the historical checked type.
     private fun requireConnection(): HumlaConnection {
         return requireNotNull(mConnection) { "No active connection" }
     }
 
-    @Throws(NotSynchronizedException::class)
     private fun requireModelHandler(): ModelHandler {
         return requireNotNull(mModelHandler) { "No active model handler" }
     }
@@ -2277,7 +2277,10 @@ open class HumlaService : Service(), IHumlaService, IHumlaSession,
         CONNECTION_LOST
     }
 
-    class HumlaBinder(private val mService: IHumlaService) : Binder() {
+    // Internal visibility restores the original's instantiate-only-in-onBind
+    // posture (a private constructor is not expressible for outer access in
+    // Kotlin); the class stays final with no in-repo subclasses.
+    class HumlaBinder internal constructor(private val mService: IHumlaService) : Binder() {
         fun getService(): IHumlaService {
             return mService
         }

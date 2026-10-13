@@ -29,7 +29,8 @@ import java.util.concurrent.Executors
  * Created by andrew on 25/03/14.
  * @deprecated This shouldn't be needed. Redundant inheritance with limited shared code.
  */
-@Deprecated("Redundant inheritance with limited shared code; deleted in slice 4")
+// No @Deprecated annotation: the original carries only the javadoc tag, and
+// an annotation would spray warnings into the subclasses slice 4 deletes.
 abstract class HumlaNetworkThread : Runnable {
     companion object {
         private val TAG = HumlaNetworkThread::class.java.name
@@ -45,10 +46,11 @@ abstract class HumlaNetworkThread : Runnable {
         if (mInitialized) {
             throw IllegalArgumentException("Threads already initialized.")
         }
-        mExecutor = Executors.newSingleThreadExecutor()
+        val executor = Executors.newSingleThreadExecutor()
+        mExecutor = executor
         mSendExecutor = Executors.newSingleThreadExecutor()
         mReceiveExecutor = Executors.newSingleThreadExecutor()
-        mExecutor!!.execute(this)
+        executor.execute(this)
         mInitialized = true
     }
 
@@ -58,9 +60,12 @@ abstract class HumlaNetworkThread : Runnable {
             Log.e(TAG, "Error in stopThreads: Threads already shutdown")
             return
         }
-        mSendExecutor!!.shutdown()
-        mReceiveExecutor!!.shutdownNow()
-        mExecutor!!.shutdownNow()
+        val sendExecutor = mSendExecutor ?: throw NullPointerException("send executor")
+        val receiveExecutor = mReceiveExecutor ?: throw NullPointerException("receive executor")
+        val executor = mExecutor ?: throw NullPointerException("executor")
+        sendExecutor.shutdown()
+        receiveExecutor.shutdownNow()
+        executor.shutdownNow()
         mSendExecutor = null
         mReceiveExecutor = null
         mExecutor = null

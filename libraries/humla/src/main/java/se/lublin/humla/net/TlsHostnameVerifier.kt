@@ -67,6 +67,12 @@ object TlsHostnameVerifier {
             return true
         }
         val stripped = if (host.endsWith(".")) host.substring(0, host.length - 1) else host
+        // Exact parity with Java split("\\.", -1): a residual trailing dot means
+        // a trailing empty part, which fails the digit check there; Kotlin's
+        // split('.') drops trailing empties, so reject up front instead.
+        if (stripped.endsWith(".")) {
+            return false
+        }
         val parts = stripped.split('.')
         if (parts.size != 4) {
             return false

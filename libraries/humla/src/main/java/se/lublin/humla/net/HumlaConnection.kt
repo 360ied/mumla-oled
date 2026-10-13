@@ -469,9 +469,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         val socketFactory = createSocketFactory()
 
         try {
-            mTCP = HumlaTCP(socketFactory)
-            mTCP!!.setTCPConnectionListener(this)
-            mTCP!!.connect(host, port)
+            val tcp = HumlaTCP(socketFactory)
+            mTCP = tcp
+            tcp.setTCPConnectionListener(this)
+            tcp.connect(host, port)
             // UDP thread is formally started after TCP connection.
         } catch (e: ConnectException) {
             throw HumlaException(e, HumlaException.HumlaDisconnectReason.CONNECTION_ERROR)
@@ -652,10 +653,14 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         mPort = 0
 
         // Stop running network resources
-        if (mPingTask != null) mPingTask!!.cancel(true)
-        if (mTCP != null) mTCP!!.disconnect()
-        if (mUDP != null) mUDP!!.disconnect()
-        if (mPingExecutorService != null) mPingExecutorService!!.shutdownNow()
+        val pingTask = mPingTask
+        if (pingTask != null) pingTask.cancel(true)
+        val tcp = mTCP
+        if (tcp != null) tcp.disconnect()
+        val udp = mUDP
+        if (udp != null) udp.disconnect()
+        val pingExecutor = mPingExecutorService
+        if (pingExecutor != null) pingExecutor.shutdownNow()
 
         mTCP = null
         mUDP = null
@@ -736,8 +741,9 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
      * @param messageType The corresponding protobuf message type.
      */
     fun sendTCPMessage(message: MessageLite, messageType: HumlaTCPMessageType) {
-        if (!mConnected || mTCP == null) return
-        mTCP!!.sendMessage(message, messageType)
+        val tcp = mTCP
+        if (!mConnected || tcp == null) return
+        tcp.sendMessage(message, messageType)
     }
 
     /**
@@ -755,10 +761,12 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
             )
         }
         if (mServerVersion == 0x10202) applyLegacyCodecWorkaround(data)
-        if (!force && (shouldForceTCP() || !mUsingUDP) && mTCP != null) {
-            mTCP!!.sendMessage(data, length, HumlaTCPMessageType.UDPTunnel)
-        } else if (!shouldForceTCP() && mUDP != null) {
-            mUDP!!.sendMessage(data, length)
+        val tcp = mTCP
+        val udp = mUDP
+        if (!force && (shouldForceTCP() || !mUsingUDP) && tcp != null) {
+            tcp.sendMessage(data, length, HumlaTCPMessageType.UDPTunnel)
+        } else if (!shouldForceTCP() && udp != null) {
+            udp.sendMessage(data, length)
         }
     }
 
@@ -784,8 +792,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     }
 
     override fun onTCPMessageReceived(type: HumlaTCPMessageType?, length: Int, data: ByteArray?) {
-        val msgType = requireNotNull(type)
-        val msgData = requireNotNull(data)
+        // Explicit NPE (not requireNotNull/IAE): interface entry points are
+        // platform-typed and the original dereferenced unconditionally.
+        val msgType = type ?: throw NullPointerException("type")
+        val msgData = data ?: throw NullPointerException("data")
         if (!UNLOGGED_MESSAGES.contains(msgType))
             Log.v(TAG, "IN: $msgType")
 
@@ -806,9 +816,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
 
     override fun onTCPConnectionEstablished() {
         mConnected = true
-        if (mTCP != null) {
-            mHost = mTCP!!.getHost()
-            mPort = mTCP!!.getPort()
+        val tcp = mTCP
+        if (tcp != null) {
+            mHost = tcp.getHost()
+            mPort = tcp.getPort()
         }
 
         // Attempt to start UDP thread once connected.
@@ -816,12 +827,13 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
             val host = mHost
             val port = mPort
             if (host != null) {
-                mUDP = HumlaUDP(mCryptState, this, mMainHandler, mTargetFramesPerPacket)
-                mUDP!!.connect(host, port)
+                val udp = HumlaUDP(mCryptState, this, mMainHandler, mTargetFramesPerPacket)
+                mUDP = udp
+                udp.connect(host, port)
             }
         }
 
-        if (mListener != null) mListener!!.onConnectionEstablished()
+        mListener?.onConnectionEstablished()
     }
 
     override fun onTLSHandshakeFailed(
@@ -830,18 +842,23 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         verifiedHost: String?
     ) {
         disconnect()
-        if (mListener != null) {
-            mListener!!.onConnectionHandshakeFailed(chain, requireNotNull(failure), verifiedHost)
-            mListener!!.onConnectionDisconnected(null)
+        // Explicit NPE (not requireNotNull/IAE): the original dereferenced
+        // the platform-typed failure unconditionally.
+        val handshakeFailure = failure ?: throw NullPointerException("failure")
+        val listener = mListener
+        if (listener != null) {
+            listener.onConnectionHandshakeFailed(chain, handshakeFailure, verifiedHost)
+            listener.onConnectionDisconnected(null)
         }
     }
 
     override fun onTCPConnectionFailed(e: HumlaException?) {
-        handleFatalException(requireNotNull(e))
+        handleFatalException(e ?: throw NullPointerException("e"))
     }
 
     override fun onTCPConnectionDisconnect() {
-        if (mListener != null && !mExceptionHandled) mListener!!.onConnectionDisconnected(mError)
+        val listener = mListener
+        if (listener != null && !mExceptionHandled) listener.onConnectionDisconnected(mError)
         disconnect()
     }
 
@@ -885,16 +902,17 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
 
     override fun onUDPConnectionError(e: Exception) {
         e.printStackTrace()
-        if (mListener != null) mListener!!.onConnectionWarning("UDP connection thread failed. Falling back to TCP.")
+        mListener?.onConnectionWarning("UDP connection thread failed. Falling back to TCP.")
         enableForceTCP()
         // TODO recover UDP thread automagically
     }
 
     override fun resyncCryptState() {
-        if (mTCP != null) {
+        val tcp = mTCP
+        if (tcp != null) {
             // Send an empty cryptstate message to resync.
             val csb = Mumble.CryptSetup.newBuilder()
-            mTCP!!.sendMessage(csb.build(), HumlaTCPMessageType.CryptSetup)
+            tcp.sendMessage(csb.build(), HumlaTCPMessageType.CryptSetup)
         }
     }
 

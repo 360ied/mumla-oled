@@ -31,7 +31,6 @@ import java.security.UnrecoverableKeyException
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.ArrayList
-import java.util.Objects
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLHandshakeException
@@ -275,7 +274,7 @@ open class HumlaSSLSocketFactory {
 
     /** Records the handshake failure reason (e.g. post-handshake hostname mismatch). */
     fun setLastHandshakeFailure(failure: HandshakeFailure) {
-        mTrustWrapper.setLastHandshakeFailure(Objects.requireNonNull(failure))
+        mTrustWrapper.setLastHandshakeFailure(failure)
     }
 
     /**
@@ -319,28 +318,34 @@ open class HumlaSSLSocketFactory {
         }
 
         @Throws(CertificateException::class)
-        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
+        override fun checkClientTrusted(chain: Array<X509Certificate?>?, authType: String?) {
             try {
                 mDefaultTrustManager.checkClientTrusted(chain, authType)
             } catch (e: CertificateException) {
-                if (mTrustManager != null) mTrustManager!!.checkClientTrusted(chain, authType)
+                val trustManager = mTrustManager
+                if (trustManager != null) trustManager.checkClientTrusted(chain, authType)
                 else throw e
             }
         }
 
         @Throws(CertificateException::class)
-        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-            mServerChain = chain
+        override fun checkServerTrusted(chain: Array<X509Certificate?>?, authType: String?) {
+            mServerChain = chain as Array<X509Certificate>?
             try {
                 mDefaultTrustManager.checkServerTrusted(chain, authType)
                 setLastHandshakeFailure(HandshakeFailure.NONE)
                 return
             } catch (defaultFailure: CertificateException) {
-                if (mTrustManager == null || chain.isEmpty()) {
+                if (mTrustManager == null || chain == null || chain.isEmpty()) {
                     setLastHandshakeFailure(HandshakeFailure.UNTRUSTED_ISSUER)
                     throw defaultFailure
                 }
-                val pinned = expectedPin(chain[0])
+                val leaf = chain[0]
+                if (leaf == null) {
+                    setLastHandshakeFailure(HandshakeFailure.UNTRUSTED_ISSUER)
+                    throw defaultFailure
+                }
+                val pinned = expectedPin(leaf)
                 if (pinned == null) {
                     setLastHandshakeFailure(HandshakeFailure.UNTRUSTED_ISSUER)
                     throw defaultFailure
@@ -387,7 +392,7 @@ open class HumlaSSLSocketFactory {
             return pinned != null && HandshakeFailure.sameSpki(pinned, leaf)
         }
 
-        override fun getAcceptedIssuers(): Array<X509Certificate> {
+        override fun getAcceptedIssuers(): Array<X509Certificate?>? {
             return mDefaultTrustManager.acceptedIssuers
         }
 

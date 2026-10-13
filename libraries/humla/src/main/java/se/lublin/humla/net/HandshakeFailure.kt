@@ -51,7 +51,10 @@ enum class HandshakeFailure {
         fun spkiSha256(leaf: X509Certificate?): ByteArray {
             try {
                 val digest = MessageDigest.getInstance("SHA-256")
-                return digest.digest(requireNotNull(leaf).publicKey.encoded)
+                // Explicit NPE (not requireNotNull/IAE): the original
+                // dereferenced the null leaf, and Java callers may catch NPE.
+                val l = leaf ?: throw NullPointerException("leaf")
+                return digest.digest(l.publicKey.encoded)
             } catch (e: NoSuchAlgorithmException) {
                 throw CertificateEncodingException("SHA-256 unavailable", e)
             }

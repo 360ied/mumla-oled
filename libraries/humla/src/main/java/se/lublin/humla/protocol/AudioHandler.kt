@@ -22,6 +22,7 @@ import android.content.Context
 import android.media.AudioManager
 import android.util.Log
 import com.google.protobuf.ByteString
+import java.util.Objects
 import se.lublin.humla.Constants
 import se.lublin.humla.R
 import se.lublin.humla.audio.AudioInput
@@ -59,7 +60,7 @@ class AudioHandler : HumlaNetworkListener,
         const val SAMPLE_RATE = 48000
         const val FRAME_SIZE = SAMPLE_RATE / 100 // 480 samples @ 10ms
 
-        private val TAG = AudioHandler::class.java.name
+        private const val TAG = "AudioHandler"
 
         private fun sanitizeFramesPerPacket(fpp: Int): Int {
             return Constants.sanitizeFramesPerPacket(fpp)
@@ -848,12 +849,12 @@ class AudioHandler : HumlaNetworkListener,
         private var mTalkingListener: AudioOutput.AudioOutputListener? = null
 
         fun setContext(context: Context): Builder {
-            mContext = requireNotNull(context, { "context" })
+            mContext = Objects.requireNonNull(context, "context")
             return this
         }
 
         fun setLogger(logger: HumlaLogger): Builder {
-            mLogger = requireNotNull(logger, { "logger" })
+            mLogger = Objects.requireNonNull(logger, "logger")
             return this
         }
 
@@ -926,7 +927,7 @@ class AudioHandler : HumlaNetworkListener,
         }
 
         fun setEncodeListener(encodeListener: AudioEncodeListener): Builder {
-            mEncodeListener = requireNotNull(encodeListener, { "encodeListener" })
+            mEncodeListener = Objects.requireNonNull(encodeListener, "encodeListener")
             return this
         }
 
@@ -941,7 +942,7 @@ class AudioHandler : HumlaNetworkListener,
         }
 
         fun setInputMode(inputMode: IInputMode): Builder {
-            mInputMode = requireNotNull(inputMode, { "inputMode" })
+            mInputMode = Objects.requireNonNull(inputMode, "inputMode")
             return this
         }
 
@@ -957,7 +958,11 @@ class AudioHandler : HumlaNetworkListener,
                 mInputSampleRate, mTargetBitrate, mTargetFramesPerPacket, requireNotNull(mInputMode), targetId,
                 mAmplitudeBoost, mHalfDuplexEnabled,
                 /* preprocessorEnabled */ true, mAdaptiveLevelerEnabled,
-                requireNotNull(mEncodeListener), requireNotNull(mTalkingListener)
+                requireNotNull(mEncodeListener),
+                // Intentional fail-fast (no original counterpart): the original
+                // passed a null talking listener through to a later NPE; every
+                // in-tree caller sets it, so this only trips misuse.
+                requireNotNull(mTalkingListener)
             )
             handler.setFramesPerPacketListener(mFramesPerPacketListener)
             handler.setScoEnabled(mScoEnabled)

@@ -111,7 +111,9 @@ class Channel : IChannel, Comparable<Channel> {
         while (!stack.isEmpty()) {
             val ch = stack.pop()
             for (linked in ArrayList(ch.linkList)) {
-                if (seen.add(linked)) {
+                // Null guard mirrors the original (addLink rejects null, so
+                // unreachable in practice).
+                if (linked != null && seen.add(linked)) {
                     stack.push(linked)
                 }
             }

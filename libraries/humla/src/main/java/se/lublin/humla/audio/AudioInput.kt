@@ -36,7 +36,7 @@ import se.lublin.humla.exception.AudioInitializationException
  */
 class AudioInput : Runnable {
     companion object {
-        private val TAG: String = AudioInput::class.java.name
+        private const val TAG = "AudioInput"
 
         const val SAMPLE_RATE = 48000
         const val FRAME_SIZE = SAMPLE_RATE / 100 // 480 samples @ 10ms
@@ -79,7 +79,10 @@ class AudioInput : Runnable {
             } catch (ignored: Throwable) {
             }
             try {
-                audioRecord!!.release()
+                val record = audioRecord
+                if (record != null) {
+                    record.release()
+                }
             } catch (ignored: Throwable) {
             }
             audioRecord = null
@@ -135,8 +138,8 @@ class AudioInput : Runnable {
 
     @Synchronized
     private fun enableAudioEffects() {
-        if (audioRecord == null) return
-        val sessionId = audioRecord!!.audioSessionId
+        val record = audioRecord ?: return
+        val sessionId = record.audioSessionId
 
         // AEC first: it needs the coupled capture/render loop, which only
         // exists on a voice route (VOICE_COMMUNICATION source +
@@ -147,8 +150,9 @@ class AudioInput : Runnable {
         if (AcousticEchoCanceler.isAvailable()) {
             try {
                 aec = AcousticEchoCanceler.create(sessionId)
-                if (aec != null) {
-                    val res = aec!!.setEnabled(true)
+                val echo = aec
+                if (echo != null) {
+                    val res = echo.setEnabled(true)
                     if (res == AudioEffect.SUCCESS) {
                         Log.i(TAG, "Hardware AEC enabled (source=" + audioSource + " session=" + sessionId + ")")
                     } else {
@@ -167,8 +171,9 @@ class AudioInput : Runnable {
         if (NoiseSuppressor.isAvailable()) {
             try {
                 ns = NoiseSuppressor.create(sessionId)
-                if (ns != null) {
-                    val res = ns!!.setEnabled(true)
+                val suppressor = ns
+                if (suppressor != null) {
+                    val res = suppressor.setEnabled(true)
                     if (res == AudioEffect.SUCCESS) {
                         Log.i(TAG, "Hardware Noise Suppressor enabled (source=" + audioSource + " session=" + sessionId + ")")
                     } else {
@@ -185,8 +190,9 @@ class AudioInput : Runnable {
         if (AutomaticGainControl.isAvailable()) {
             try {
                 agc = AutomaticGainControl.create(sessionId)
-                if (agc != null) {
-                    val res = agc!!.setEnabled(true)
+                val gain = agc
+                if (gain != null) {
+                    val res = gain.setEnabled(true)
                     if (res == AudioEffect.SUCCESS) {
                         Log.i(TAG, "Hardware Automatic Gain Control enabled (source=" + audioSource + " session=" + sessionId + ")")
                     } else {
@@ -317,23 +323,26 @@ class AudioInput : Runnable {
     private fun releaseEffects() {
         // Throwable per effect: one failing release (even fatal) must not
         // abandon the remaining native handles.
-        if (aec != null) {
+        val echo = aec
+        if (echo != null) {
             try {
-                aec!!.release()
+                echo.release()
             } catch (ignored: Throwable) {
             }
             aec = null
         }
-        if (ns != null) {
+        val suppressor = ns
+        if (suppressor != null) {
             try {
-                ns!!.release()
+                suppressor.release()
             } catch (ignored: Throwable) {
             }
             ns = null
         }
-        if (agc != null) {
+        val gain = agc
+        if (gain != null) {
             try {
-                agc!!.release()
+                gain.release()
             } catch (ignored: Throwable) {
             }
             agc = null
@@ -360,7 +369,8 @@ class AudioInput : Runnable {
         if (!recording) {
             return
         }
-        if (audioRecord == null || audioRecord!!.state != AudioRecord.STATE_INITIALIZED) {
+        val record = audioRecord
+        if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
             try {
                 releaseEffects()
                 val staleRecord = audioRecord
@@ -444,7 +454,8 @@ class AudioInput : Runnable {
                     return
                 }
                 enableAudioEffects()
-                audioRecord!!.startRecording()
+                val freshRecord = audioRecord ?: throw NullPointerException("AudioRecord")
+                freshRecord.startRecording()
             } catch (ex: Exception) {
                 Log.e(TAG, "AudioRecord recreation failed: " + ex.message)
                 recording = false
@@ -508,7 +519,8 @@ class AudioInput : Runnable {
                             }
                             audioRecord = setupAudioRecord(audioSource)
                             enableAudioEffects()
-                            audioRecord!!.startRecording()
+                            val revivedRecord = audioRecord ?: throw NullPointerException("AudioRecord")
+                            revivedRecord.startRecording()
                             consecutiveReadErrors = 0
                         } catch (ex: Exception) {
                             Log.e(TAG, "AudioRecord recreation after dead object failed: " + ex.message)

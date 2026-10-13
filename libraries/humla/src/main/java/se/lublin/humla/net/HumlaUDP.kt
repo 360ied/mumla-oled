@@ -189,18 +189,21 @@ class HumlaUDP : Runnable {
             val host = mHost ?: throw IOException("No host set")
             mResolvedHost = InetAddress.getByName(host)
             mUDPSocket = DatagramSocket()
-
-            mUDPSocket!!.connect(mResolvedHost, mPort)
+            // Local copies: the field is nulled only on the disconnect path,
+            // which cannot run concurrently with this setup sequence.
+            val udpSocket = mUDPSocket ?: throw NullPointerException("UDP socket")
+            val resolvedHost = mResolvedHost ?: throw NullPointerException("resolved host")
+            udpSocket.connect(resolvedHost, mPort)
             Log.d(TAG, "Created socket")
 
             // Start outgoing consumer once the UDP socket is open, as a child thread.
-            val outgoingConsumer = OutgoingConsumer(mUDPSocket!!, mSendQueue)
+            val outgoingConsumer = OutgoingConsumer(udpSocket, mSendQueue)
             outgoingConsumerThread = Thread(outgoingConsumer)
             outgoingConsumerThread.start()
 
             val packet = DatagramPacket(ByteArray(BUFFER_SIZE), BUFFER_SIZE)
             while (mConnected) {
-                mUDPSocket!!.receive(packet)
+                udpSocket.receive(packet)
                 val data = packet.data
                 val length = packet.length
 
@@ -265,8 +268,9 @@ class HumlaUDP : Runnable {
                 mSendQueue.clear()
             }
 
-            if (mUDPSocket != null) {
-                mUDPSocket!!.close()
+            val socket = mUDPSocket
+            if (socket != null) {
+                socket.close()
             }
         }
     }
@@ -373,9 +377,7 @@ class HumlaUDP : Runnable {
             mSendQueue.clear()
         }
         // Closing a socket will trigger an IOException on the consumer thread.
-        if (mUDPSocket != null) {
-            mUDPSocket!!.close()
-        }
+        mUDPSocket?.close()
     }
 
     /**

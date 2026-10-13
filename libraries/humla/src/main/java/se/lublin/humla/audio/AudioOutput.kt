@@ -131,8 +131,9 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         } catch (e: UnsupportedOperationException) {
             throw AudioInitializationException(e)
         }
-        if (audioTrack!!.state != AudioTrack.STATE_INITIALIZED) {
-            audioTrack!!.release()
+        val track = audioTrack ?: throw NullPointerException("AudioTrack")
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            track.release()
             audioTrack = null
             throw AudioInitializationException("AudioTrack init failed")
         }
@@ -140,17 +141,18 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         try {
             engine = NativeAudioOutputEngine(this)
         } catch (e: UnsatisfiedLinkError) {
-            audioTrack!!.release()
+            track.release()
             audioTrack = null
             throw AudioInitializationException(e)
         } catch (e: RuntimeException) {
-            audioTrack!!.release()
+            track.release()
             audioTrack = null
             throw AudioInitializationException(e)
         }
         running = true
         thread = Thread(this)
-        thread!!.start()
+        val renderThread = thread ?: throw NullPointerException("render thread")
+        renderThread.start()
     }
 
     fun stopPlaying() {
@@ -191,20 +193,23 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             // Release native resources only once the render thread is dead;
             // a stop requested from the render thread itself defers cleanup
             // to the next call after run() has exited.
-            if (this.thread != null && this.thread!!.isAlive) {
+            val renderThread = this.thread
+            if (renderThread != null && renderThread.isAlive) {
                 return
             }
             this.thread = null
-            if (audioTrack != null) {
+            val track = audioTrack
+            if (track != null) {
                 try {
-                    audioTrack!!.stop()
+                    track.stop()
                 } catch (ignored: IllegalStateException) {
                 }
-                audioTrack!!.release()
+                track.release()
                 audioTrack = null
             }
-            if (engine != null) {
-                engine!!.destroy()
+            val outputEngine = engine
+            if (outputEngine != null) {
+                outputEngine.destroy()
                 engine = null
             }
         }
@@ -233,8 +238,9 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
                 return
             }
         }
+        val track = audioTrack ?: throw NullPointerException("AudioTrack")
         try {
-            audioTrack!!.play()
+            track.play()
         } catch (ignored: IllegalStateException) {
         }
 
@@ -250,7 +256,7 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         // backend asks for exactly the frames it is about to play. The
         // bound still covers the track's minimum buffer so the sink never
         // starves while the loop idles between wakeups.
-        val trackFrames = audioTrack!!.bufferSizeInFrames
+        val trackFrames = track.bufferSizeInFrames
         val pacer = Pacer(RENDER_SAMPLES, trackFrames)
         val mix = ShortArray(RENDER_SAMPLES)
         renderLoop@ while (true) {
@@ -259,9 +265,9 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
                     break
                 }
             }
-            if (audioTrack!!.playState != AudioTrack.PLAYSTATE_PLAYING) {
+            if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
                 try {
-                    audioTrack!!.play()
+                    track.play()
                 } catch (ignored: IllegalStateException) {
                 }
             }
@@ -271,7 +277,7 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             // or if playback stalls (e.g. on underrun or route change),
             // writtenTotal is rebased to prevent deadlock.
             while (true) {
-                val head = audioTrack!!.playbackHeadPosition
+                val head = track.playbackHeadPosition
                 val action = pacer.check(head)
                 if (action == Pacer.Action.PROCEED) {
                     break
@@ -284,9 +290,9 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
                             ", played=" + (pacer.playedWrap + (head.toLong() and 0xFFFFFFFFL)) +
                             "); rebasing render lead"
                     )
-                    if (audioTrack!!.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                    if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
                         try {
-                            audioTrack!!.play()
+                            track.play()
                         } catch (ignored: IllegalStateException) {
                         }
                     }
@@ -320,7 +326,7 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
                 }
                 var offset = 0
                 while (offset < rendered) {
-                    val written = audioTrack!!.write(mix, offset, rendered - offset)
+                    val written = track.write(mix, offset, rendered - offset)
                     if (written < 0) {
                         Log.e(TAG, "AudioTrack.write failed: " + written)
                         try {
@@ -390,18 +396,20 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         }
 
         try {
-            audioTrack!!.stop()
+            track.stop()
         } catch (ignored: IllegalStateException) {
         }
     }
 
     fun queueVoiceData(data: ByteArray?, messageType: HumlaUDPMessageType) {
-        val engineCopy: NativeAudioOutputEngine?
-        synchronized(this) {
-            if (!running || engine == null) {
+        // Non-null by construction past the guard: the synchronized block
+        // evaluates to the engine, so later uses need no assertion.
+        val engineCopy: NativeAudioOutputEngine = synchronized(this) {
+            val current = engine
+            if (!running || current == null) {
                 return
             }
-            engineCopy = engine
+            current
         }
         if (messageType != HumlaUDPMessageType.UDPVoiceOpus) {
             return
@@ -427,7 +435,7 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
                 val size = (header and ((1 shl 13) - 1).toLong()).toInt()
                 val isTerminator = header and (1 shl 13).toLong() != 0L
                 if (size == 0 && isTerminator) {
-                    engineCopy!!.queuePacket(
+                    engineCopy.queuePacket(
                         session, ByteArray(0), 0, seq + queued,
                         msgFlags, true
                     )
@@ -438,7 +446,7 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
                     break
                 }
                 val opus = pds.dataBlock(size)
-                engineCopy!!.queuePacket(
+                engineCopy.queuePacket(
                     session, opus, opus.size, seq + queued,
                     msgFlags, isTerminator
                 )
@@ -457,12 +465,14 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
     }
 
     fun queueProtobufVoiceData(audioMsg: MumbleUDP.Audio) {
-        val engineCopy: NativeAudioOutputEngine?
-        synchronized(this) {
-            if (!running || engine == null) {
+        // Non-null by construction past the guard: the synchronized block
+        // evaluates to the engine, so later uses need no assertion.
+        val engineCopy: NativeAudioOutputEngine = synchronized(this) {
+            val current = engine
+            if (!running || current == null) {
                 return
             }
-            engineCopy = engine
+            current
         }
         val session = audioMsg.senderSession
         val user = listener.getUser(session)
@@ -477,12 +487,12 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             // A terminator may carry no Opus payload; still forward the marker
             // so the voice drains instead of lingering to the miss-expiry.
             if (isTerminator) {
-                engineCopy!!.queuePacket(session, ByteArray(0), 0, seq, flags, true)
+                engineCopy.queuePacket(session, ByteArray(0), 0, seq, flags, true)
                 signalData()
             }
             return
         }
-        engineCopy!!.queuePacket(session, opus, opus.size, seq, flags, isTerminator)
+        engineCopy.queuePacket(session, opus, opus.size, seq, flags, isTerminator)
         signalData()
     }
 

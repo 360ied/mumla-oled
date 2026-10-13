@@ -104,6 +104,7 @@ class Message : IMessage {
      * The type of message this object represents.
      * @deprecated
      */
+    @Deprecated("Deprecated")
     enum class Type {
         INFO,
         WARNING,
