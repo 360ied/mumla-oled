@@ -248,7 +248,8 @@ Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md)
   the generated protobuf pair (never touched). Tests stay Java/Kotlin
   mixed with three widenings (`playPttSound` override, `SettingsListener`
   SAM + nullability, migration chains + new v10→v11 test).
-- Owed: on-device install + boot/connect/voice pass on the new tree;
+- Owed: on-device install + boot/connect/voice pass on the new tree
+  (awaiting user hardware pass; slice 6 on hold until it lands);
   R8/release still deferred to pre-landing.
 
 ## Slice 4 — Coroutines service core (DONE 2026-10-13, `check.sh` green)
