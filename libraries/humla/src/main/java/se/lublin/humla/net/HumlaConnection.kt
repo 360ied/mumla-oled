@@ -53,7 +53,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-class HumlaConnection(listener: HumlaConnectionListener) :
+class HumlaConnection(listener: HumlaConnectionListener?) :
     HumlaTCP.TCPConnectionListener, HumlaUDP.UDPConnectionListener {
     companion object {
         private val TAG = HumlaConnection::class.java.name
@@ -1019,6 +1019,6 @@ class HumlaConnection(listener: HumlaConnectionListener) :
          * Called if the user should be notified of a connection-related warning.
          * @param warning A user-readable warning.
          */
-        fun onConnectionWarning(warning: String)
+        fun onConnectionWarning(warning: String?)
     }
 }
