@@ -248,9 +248,11 @@ Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md)
   the generated protobuf pair (never touched). Tests stay Java/Kotlin
   mixed with three widenings (`playPttSound` override, `SettingsListener`
   SAM + nullability, migration chains + new v10→v11 test).
-- Owed: on-device install + boot/connect/voice pass on the new tree
-  (awaiting user hardware pass; slice 6 on hold until it lands);
-  R8/release still deferred to pre-landing.
+- Owed: deeper torture still open (SCO flap, A2DP stagger, overlay
+  drag/rotate, notification paths); R8/release still deferred to pre-landing.
+- On-device result (2026-10-13): fresh fossDebug with the review fixes
+  (hash-verified on hardware) — basic functionality confirmed by the user.
+  Slice 6 hold lifted.
 
 ## Slice 4 — Coroutines service core (DONE 2026-10-13, `check.sh` green)
 
