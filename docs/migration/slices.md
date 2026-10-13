@@ -290,8 +290,8 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
    `MumlaService` itself last)
 5. `channel/*` (15: `AccessTokenFragment`, `AvatarCache`, `ChannelAdapter`, `ChannelChatFragment`, `ChannelFragment`, `ChannelListAdapter`, `ChannelListFragment`, `ChannelMenu`, `ChatTargetActionModeCallback`, `ChatTargetProvider`, `OnChannelClickListener`, `OnUserClickListener`, `PermissionsPopupMenu`, `ServerInfoFragment`, `UserMenu`)
    + `channel/comment/*` (3: `AbstractCommentFragment`, `ChannelDescriptionFragment`, `UserCommentFragment`)
-6. `preference/*` (17: `AboutSettingsFragment`, `AppearanceSettingsFragment`, `AudioSettingsFragment`, `AuthenticationSettingsFragment`, `CertificateExportActivity`, `CertificateGenerateActivity`, `CertificateImportActivity`, `CertificateSelectActivity`, `GeneralSettingsFragment`, `KeySelectDialogPreference`, `KeySelectPreferenceDialogFragment`, `MumlaCertificateGenerateTask`, `MumlaPreferenceFragment`, `SeekBarDialogPreference`, `SeekBarPreferenceDialogFragment`, `ServerCertificateClearActivity`, `SettingsActivity`; still `PreferenceFragment`-based — Compose comes
-   in slice 7)
+6. `preference/*` (17: `AboutSettingsFragment`, `AppearanceSettingsFragment`, `AudioSettingsFragment`, `AuthenticationSettingsFragment`, `CertificateExportActivity`, `CertificateGenerateActivity`, `CertificateImportActivity`, `CertificateSelectActivity`, `GeneralSettingsFragment`, `KeySelectDialogPreference`, `KeySelectPreferenceDialogFragment`, `MumlaCertificateGenerateTask`, `MumlaPreferenceFragment`, `SeekBarDialogPreference`, `SeekBarPreferenceDialogFragment`, `ServerCertificateClearActivity`, `SettingsActivity`; still `PreferenceFragment`-based — Compose deferred
+   with slice 7)
 7. `app/*` (7: `BaseActivity`, `DialogUtils`, `DrawerAdapter`, `IStartupAction`, `MumlaApplication`, `ServerConnectTask` — `MumlaActivity` itself last)
    + root `Settings.java` (replaced by `SettingsRepository`; call sites migrate) + `drawable/CircleDrawable.java`
 
@@ -299,7 +299,7 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
 only (frozen per plan). Procedure per file: IDE auto-converter, then reviewer pass per porting-guide §1 (no `!!`, platform types explicit, nullability reviewed). Verification: all app JVM tests (incl.
 Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 
-## Slice 6 — Compose foundation (theme + leaf + goldens)
+## Slice 6 — Compose foundation (DEFERRED 2026-10-13, not landing)
 
 - Port `themes.xml` (`Theme.Mumla`/`Theme.Mumla.Oled`, colors, type,
   dimens) into a Compose **Material3** `MaterialTheme` via tokens —
@@ -318,7 +318,7 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 - Verification: all 9 goldens pass; old-vs-new screenshots compared
   by eye on the Pixel 4a; `./scripts/check.sh`. Paparazzi runs with fixed device/theme/locale config; golden churn is triaged in the slice commit.
 
-## Slice 7 — Compose screens (leaf-to-root, dialogs last)
+## Slice 7 — Compose screens (DEFERRED 2026-10-13, not landing)
 
 Per-screen table (source → route + ViewModel → golden subjects → gate):
 
@@ -362,5 +362,5 @@ plus one modern device, `./scripts/check.sh`, and a landing checklist
 | 3 Kotlin humla | green | humla JVM suite | — |
 | 4 coroutines | green | route/reconnect/ping tests | torture: reconnect/SCO/A2DP |
 | 5 Kotlin app | green | app JVM + Robolectric | — |
-| 6 foundation | green | 9 goldens (3 states × 3 schemes) | eye-compare on 4a, OLED-first |
-| 7 screens | green | per-screen goldens, density test | full torture matrix, landing checklist |
+| 6 foundation | — (deferred) | — | — |
+| 7 screens | — (deferred) | — | — |

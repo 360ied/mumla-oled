@@ -1,9 +1,10 @@
 # Mumla OLED Modernization Migration
 
 Status: in progress. Slices 0-5 landed on branch `migration/full-modern`
-(see [status](status.md) for the progress log); no `master` impact — the root
-repository stays on `master` and the migration branch merges only on explicit
-request.
+(see [status](status.md) for the progress log); slices 6-7 (Compose rewrite)
+explicitly DEFERRED 2026-10-13 — landing scope is slices 0-5. No `master`
+impact — the root repository stays on `master` and the migration branch
+merges only on explicit request.
 
 ## Goal
 
@@ -15,9 +16,10 @@ machinery. See [plan](plan.md) for execution.
 
 ## Decisions so far
 
-- **Scope is 1+2+3:** Kotlin + coroutines/Flow service core, Room +
-  DataStore + Hilt data layer, Compose UI rewrite. Details in
-  [plan](plan.md).
+- **Scope is 1+2 (Compose DEFERRED 2026-10-13):** Kotlin +
+  coroutines/Flow service core, Room + DataStore + Hilt data layer. The
+  Compose UI rewrite (old item 3) is explicitly deferred to post-landing
+  follow-up work, not part of landing. Details in [plan](plan.md).
 - **Native audio is fenced off.** The C++ DSP engines under
   [`audio_engine`](../../libraries/humla/src/main/jni/audio_engine/)
   and their JNI boundary are recent, natively tested code. No rewrite-it-in-Rust (RIIR), no behavior touch. The native suite stays a
@@ -26,10 +28,11 @@ machinery. See [plan](plan.md) for execution.
 - **Crypto JNI fenced with audio.** [`crypto`](../../libraries/humla/src/main/jni/crypto/)
   (OCB2 `CryptState`, JNI bridge) gets the same treatment: C++ frozen,
   Java facades convert syntactically only.
-- **Compose rewrite is internals-only.** The user-facing UI of Mumla OLED
-  must look and feel exactly the same: same `res/` visuals, same
-  navigation structure, same dialogs and copy. Internals get gutted,
-  pixels stay frozen. Parity gates are defined in [plan](plan.md).
+- **Compose rewrite DEFERRED 2026-10-13 (was internals-only).** If revived
+  post-landing, the user-facing UI of Mumla OLED must look and feel exactly
+  the same: same `res/` visuals, same navigation structure, same dialogs
+  and copy. Internals get gutted, pixels stay frozen. Parity gates are
+  defined in [plan](plan.md).
 - **Solo-dev big-bang.** One long-lived migration branch in a dedicated
   worktree. `master` drift is controlled by choice, and a feature freeze
   for the migration period is accepted: the app is considered
@@ -54,11 +57,11 @@ machinery. See [plan](plan.md) for execution.
 - **Binder surface frozen.** `IMumlaService`/`IHumlaService`/`IHumlaSession`
   stay compatible for the whole migration; refactoring happens strictly
   behind them. Improvements to the surface are post-migration work.
-- **Compose Material3 (`androidx.compose.material3`).** The view theme
+- **Compose Material3 — DEFERRED with slices 6-7.** The view theme
   (`Theme.Mumla`, via `Base.Theme.Mumla`, extends `Theme.Material3.DayNight.NoActionBar`), so M3 is the
   parity-correct choice; M2 would fight the screenshot gate.
-- **Screenshots: Paparazzi primary, on-device checklist for dialogs.**
-  Paparazzi (JVM, no emulator) runs per-component regression inside the
+- **Screenshots — DEFERRED with slices 6-7.** Paparazzi primary was planned:
+  Paparazzi (JVM, no emulator) per-component regression inside the
   worktree loop; emulator/device shots cover only what Paparazzi cannot (overlay system windows, drawer gestures, rotation). On the primary path (Gradle 9.x + Paparazzi 2.x) dialogs are Paparazzi-gated; only if the 1.3.x fallback somehow works are dialogs on-device-only. Existing JVM tests
   (`ChannelFragmentDensityTest` et al.) backstop numerically.
 - **Forward-only history, no autonomous landing.** Per repository policy,
@@ -67,7 +70,9 @@ machinery. See [plan](plan.md) for execution.
 
 ## Open questions
 
-- **Slice granularity** inside the big-bang branch: the 8-slice spine in [plan](plan.md)/[slices](slices.md) is fixed; granularity *within* a slice is decided as it proceeds.
+- **Slice granularity** inside the big-bang branch: slices 0-5 are the
+  landing spine; slices 6-7 are explicitly deferred (see [status](status.md)).
+  Granularity *within* a slice is decided as it proceeds.
 
 ## Files
 

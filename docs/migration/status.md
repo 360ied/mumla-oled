@@ -68,11 +68,12 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Outstanding debt (do not forget)
 
+- Compose rewrite slices 6-7 explicitly DEFERRED 2026-10-13 to
+  post-landing follow-up — landing scope is slices 0-5.
 - Full new-DSL / built-in-Kotlin migration (opt-outs are deprecated warnings).
 - Release + R8 verification deferred to pre-landing (explicitly accepted).
-- Paparazzi re-evaluation at slice 6 (above).
-- Re-verify androidx-hilt 1.4.0 against Hilt 2.60 when adding
-  `hilt-navigation-compose` in slice 7.
+- Paparazzi re-evaluation DEFERRED with slice 6 (above).
+- `hilt-navigation-compose` re-verification DEFERRED with slice 7.
 - kapt → KSP when a stable KSP for Kotlin 2.4 lands.
 
 ## Review
@@ -256,7 +257,7 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   `MIGRATION_10_11` (nullable name/host/username, NOT NULL port +
   COALESCE) and `ServerEntity` deleted; `MumlaActivity` converted but not
   restructured; `DatabaseProvider` deleted with fragments taking the
-  singleton directly (`HumlaServiceProvider` survives until slice 7).
+  singleton directly (`HumlaServiceProvider` survives — slice 7 deferred).
 - Converter lessons (new in slice 5): Kotlin-defined `fun getX` stays method
   calls but Java getters become properties — the flip side bit twice
   mid-slice (mass `isX()`/`getX()` repair); boolean properties need `is`-
@@ -313,4 +314,5 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md).
+Landing prep on slices 0-5 (R8/release verification, Pixel 4a floor pass,
+new-DSL migration), per [slices](slices.md). Slices 6-7 deferred.

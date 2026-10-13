@@ -177,7 +177,7 @@ Never use `GlobalScope`.
   `FakeSharedPreferences`-style tests port to DataStore/Room in-memory
   fakes.
 
-## 4. UI → Compose (internals only, pixels frozen)
+## 4. UI → Compose (DEFERRED 2026-10-13 with slices 6-7 — internals only, pixels frozen, if revived)
 
 Visual/structural parity is a hard guardrail (see
 [plan](plan.md#ui-parity-hard-guardrail)). Mapping:
