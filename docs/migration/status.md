@@ -35,8 +35,10 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   orphaned imports. Gate-grep returns only the U site; assemble +
   `lintFossDebug` + `check.sh` green.
 - `8abec58b` — on-device result: fossDebug installed on hardware, basic
-  functionality (boot/connect/voice) confirmed by the user. Deeper torture
-  (SCO flap, A2DP stagger, overlay drag/rotate, notification paths) still open.
+  functionality (boot/connect/voice) confirmed by the user.
+- UPDATE 2026-10-13: full torture (SCO flap, A2DP stagger, overlay
+  drag/rotate, notification paths) passes on a modern device; Pixel 4a floor
+  pass still owed.
 
 ## Fork outcomes (all bisected 2026-10-12)
 
@@ -100,8 +102,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   v9→v10 migration test, DataStore doubles, fake deleted).
 - All 17 `ConfigDelta` keys round-trip audited; comment seen-tracking now
   compares text (was blob-vs-text, never matched). Lint + assemble green.
-- Owed: on-device connect/voice/reconnect-toast pass; R8/release still
-  deferred to pre-landing.
+- Owed: Pixel 4a floor pass still owed; R8/release still deferred to
+  pre-landing. UPDATE 2026-10-13: on-device connect/voice/reconnect-toast
+  passes on a modern device.
 
 ## Slice 3 — Kotlin conversion, `:libraries:humla` (DONE 2026-10-13, `check.sh` green)
 
@@ -213,8 +216,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - Verification: full `./scripts/check.sh` green at the slice boundary
   (JVM + native suites, `b7326ab2`); fossDebug installed on hardware with
   basic functionality (boot/connect/voice) confirmed by the user.
-- Owed: deeper torture still open (reconnect storm, SCO flap, A2DP stagger,
-  route flip mid-call); R8/release still deferred to pre-landing.
+- Owed: Pixel 4a floor torture still owed (reconnect storm, SCO flap, A2DP
+  stagger, route flip mid-call verified on a modern device 2026-10-13);
+  R8/release still deferred to pre-landing.
 
 ## Slice 5 — Kotlin conversion, `:app` (DONE 2026-10-13, `check.sh` green)
 
@@ -272,8 +276,10 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   the generated protobuf pair (never touched). Tests stay Java/Kotlin
   mixed with three widenings (`playPttSound` override, `SettingsListener`
   SAM + nullability, migration chains + new v10→v11 test).
-- Owed: deeper torture still open (SCO flap, A2DP stagger, overlay
-  drag/rotate, notification paths); R8/release still deferred to pre-landing.
+- Owed: Pixel 4a floor torture still owed; R8/release still deferred to
+  pre-landing. UPDATE 2026-10-13: full app torture (SCO flap, A2DP stagger,
+  overlay drag/rotate, notification paths) passes on a modern device —
+  functionality works.
 - On-device result (2026-10-13): fresh fossDebug with the review fixes
   (hash-verified on hardware) — basic functionality confirmed by the user.
   Slice 6 hold lifted.
