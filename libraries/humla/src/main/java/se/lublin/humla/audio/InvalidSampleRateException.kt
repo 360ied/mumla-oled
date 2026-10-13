@@ -19,6 +19,9 @@ package se.lublin.humla.audio
 
 /**
  * Created by andrew on 23/04/14.
+ *
+ * Retained for API compatibility: no in-tree thrower/catcher remains, but
+ * external callers may catch it; deleting would break the surface.
  */
 class InvalidSampleRateException : Exception {
     constructor(e: Exception?) : super(e)

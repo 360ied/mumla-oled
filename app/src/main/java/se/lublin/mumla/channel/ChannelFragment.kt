@@ -316,8 +316,9 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         // NPE-exact: the original dereferenced mSettings unconditionally.
         val settings = mSettings ?: throw NullPointerException("mSettings")
         settings.unregisterListener(this)
-        // Release the detached hierarchy: the service observer outlives the
-        // view (until onDestroy), and its callbacks null-guard these fields.
+        // Release the detached hierarchy: super.onDestroyView() (first call
+        // above) already detached the service observer and cleared mBound,
+        // so no callback can touch these fields after they are nulled here.
         mViewPager = null
         mTabStrip = null
         mTalkButton = null

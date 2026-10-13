@@ -551,6 +551,11 @@ class BluetoothScoManager {
     }
 
     private fun armTimeout() {
+        // Assigns outside the monitor while stop()/setActive()/fail()
+        // cancel-and-null under it: an interleaved stop() can orphan an 8 s
+        // no-op timer, but its onConnectTimeout still finds state != STARTING
+        // and returns, so the window is harmless (kept unsynchronized to
+        // avoid blocking bring-up on teardown).
         timeoutJob?.cancel()
         timeoutJob = scoScope.launch {
             delay(connectTimeoutMs)

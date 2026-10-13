@@ -42,6 +42,15 @@ abstract class ServerAdapter<E : Server>(context: Context, viewResource: Int, se
     private val mPingExecutor: ExecutorService = Executors.newFixedThreadPool(MAX_ACTIVE_PINGS)
     private val mViewResource: Int = viewResource
 
+    /**
+     * Releases the per-adapter ping pool. Call when the adapter is replaced
+     * (updateServers builds a new one every onResume) or torn down; queued
+     * pings are best-effort and die with the pool.
+     */
+    fun shutdown() {
+        mPingExecutor.shutdownNow()
+    }
+
     override fun getItemId(position: Int): Long {
         // NPE-exact: the original dereferenced getItem(position) unconditionally.
         val item = getItem(position) ?: throw NullPointerException("item")

@@ -49,6 +49,8 @@ class ActivityInputMode(detectionThreshold: Float) : IInputMode {
     /**
      * Unused in the active pipeline. Voice activity detection and speech-gating
      * are executed natively in C++ via {@link se.lublin.humla.audio.NativeAudioInputEngine}.
+     * Always returns false: no in-tree caller uses it (verified by grep).
+     * Any future caller must route through the native VAD instead.
      */
     override fun shouldTransmit(pcm: ShortArray, length: Int): Boolean {
         return false

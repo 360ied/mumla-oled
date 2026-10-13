@@ -42,7 +42,9 @@ enum class TalkState : Parcelable {
         @JvmField
         val CREATOR: Parcelable.Creator<TalkState> = object : Parcelable.Creator<TalkState> {
             override fun createFromParcel(source: Parcel): TalkState {
-                return entries[source.readInt()]
+                // Clamp corrupted parcels to PASSIVE (mirrors HumlaException's
+                // guarded entries[readInt()] fallback instead of throwing).
+                return entries.getOrNull(source.readInt()) ?: PASSIVE
             }
 
             override fun newArray(size: Int): Array<TalkState?> {

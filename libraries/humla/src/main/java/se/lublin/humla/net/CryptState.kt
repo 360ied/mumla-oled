@@ -244,9 +244,14 @@ class CryptState {
 
     /**
      * Decrypts data using the OCB-AES128 standard.
+     * Synchronized with [destroy]/[setKeys]: the UDP receiver decrypts
+     * while disconnect() destroys on main; sharing the monitor pins the
+     * native handle lifetime (destroy blocks until the in-flight call
+     * finishes, and a later call sees handle 0 instead of freed memory).
      * @param source The encoded audio data.
      * @param length The length of the source array.
      */
+    @Synchronized
     @Throws(BadPaddingException::class, IllegalBlockSizeException::class, ShortBufferException::class)
     fun decrypt(source: ByteArray?, length: Int): ByteArray? {
         if (source == null || length < CRYPT_HEADER_BYTES || !mInit || length > source.size) return null
@@ -262,6 +267,8 @@ class CryptState {
         return null
     }
 
+    // Same lifetime pinning as decrypt (see above).
+    @Synchronized
     fun decryptInPlace(data: ByteArray?, offset: Int, length: Int): Int {
         if (!mInit || data == null || length < CRYPT_HEADER_BYTES || offset < 0 ||
             offset.toLong() + length > data.size
@@ -279,6 +286,8 @@ class CryptState {
         return -1
     }
 
+    // Same lifetime pinning as decrypt (see above).
+    @Synchronized
     @Throws(BadPaddingException::class, IllegalBlockSizeException::class, ShortBufferException::class)
     fun encrypt(source: ByteArray?, length: Int): ByteArray? {
         if (source == null || length < 0 || !mInit || length > source.size) return null
@@ -290,6 +299,8 @@ class CryptState {
         return null
     }
 
+    // Reads the native handle: same monitor so stats never race destroy.
+    @Synchronized
     private fun syncStatsFromNative() {
         val nativeHandle = mNativeHandle
         if (nativeHandle != 0L && mInit) {

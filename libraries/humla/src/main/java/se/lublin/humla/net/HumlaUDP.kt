@@ -155,8 +155,10 @@ class HumlaUDP {
      * Test-visible queued count (Channel exposes no size; incremented on send,
      * decremented on consume). Approximate under a live consumer (the increment
      * is not atomic with the take, so rescale/consume races can skew it by a
-     * packet); JVM tests run with no live consumer, so the suite stays
-     * deterministic. Production never reads it.
+     * packet) and under concurrent rescale (a send landing in the old channel
+     * after the drain but before close increments, then recreateChannel's
+     * set(count) overwrites it). JVM tests run with no live consumer, so the
+     * suite stays deterministic. Production never reads it.
      */
     private val queuedCount = AtomicInteger(0)
 

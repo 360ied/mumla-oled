@@ -152,6 +152,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     private var mMainHandler: Handler = Handler(Looper.getMainLooper())
 
     // Networking and protocols
+    // Volatile: read from audio threads in sendTCP/UDPMessage, written on
+    // main in connect/disconnect (a stale read only drops one send via the
+    // nulled-scope/mRunning guard in executeOnSendThread).
+    @Volatile
     private var mTCP: HumlaTCP? = null
 
     @Volatile

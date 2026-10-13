@@ -65,7 +65,11 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
 
     @Volatile
     private var engine: NativeAudioOutputEngine? = null
+    // Volatile: written under monitor in start/stop, read on the render
+    // thread outside it; a stale fetch must never NPE the render loop.
+    @Volatile
     private var audioTrack: AudioTrack? = null
+    @Volatile
     private var thread: Thread? = null
 
     @Volatile
@@ -234,14 +238,17 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
     override fun run() {
         Log.v(TAG, "Started thread.")
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-        synchronized(this) {
+        // Fetch the track under the same guard that validates the thread:
+        // stopPlaying() nulls audioTrack between a detached check and fetch
+        // otherwise, NPEing the render thread (dead audio, not a crash).
+        val track = synchronized(this) {
             // Never revive a stopped pipeline: startPlaying already set
             // running before starting the thread.
             if (Thread.currentThread() != thread || !running) {
                 return
             }
-        }
-        val track = audioTrack ?: throw NullPointerException("AudioTrack")
+            audioTrack
+        } ?: throw NullPointerException("AudioTrack")
         try {
             track.play()
         } catch (ignored: IllegalStateException) {
@@ -432,8 +439,15 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             val seq = pds.readLong().toInt()
             // Bundled datagrams chain header+payload pairs; each frame
             // consumes sequence seq+i in UDP/protobuf 10 ms frame units.
+            // A legacy positional trailer (exactly 3 floats = 12 bytes
+            // after at least one frame, per upstream MumbleProtocol) is not
+            // another Opus frame: stop before parsing it as a header, or
+            // the trailing floats decode as a garbage header + payload.
             var queued = 0
             while (pds.left() > 0) {
+                if (queued > 0 && pds.left() == 3 * 4) {
+                    break
+                }
                 val header = pds.readLong()
                 val size = (header and ((1 shl 13) - 1).toLong()).toInt()
                 val isTerminator = header and (1 shl 13).toLong() != 0L

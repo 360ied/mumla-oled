@@ -53,6 +53,7 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts.GetContent
+import androidx.appcompat.app.AlertDialog
 import androidx.core.text.HtmlCompat
 import androidx.exifinterface.media.ExifInterface
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -124,6 +125,10 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
     private var mChatTextEdit: EditText? = null
     private var mSendButton: ImageButton? = null
     private var mTargetProvider: ChatTargetProvider? = null
+    // Tracked for pause-dismissal and rapid-tap dismiss-before-assign, like
+    // the MumlaActivity dialogs: rotation/background with the preview up must
+    // not leak the window.
+    private var mImageConfirmDialog: AlertDialog? = null
     private val imagePicker =
         registerForActivityResult(GetContent(), this::onImagePicked)
 
@@ -150,6 +155,7 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
 
     override fun onPause() {
         super.onPause()
+        dismissImageConfirmDialog()
         // NPE-exact: the original dereferenced mTargetProvider unconditionally.
         val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
         provider.unregisterChatTargetListener(this)
@@ -208,6 +214,7 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
 
     override fun onDestroyView() {
         super.onDestroyView()
+        dismissImageConfirmDialog()
         val adapter = mChatAdapter
         if (adapter != null) {
             adapter.shutdown()
@@ -330,13 +337,23 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
         preview.scaleType = ImageView.ScaleType.FIT_CENTER
         preview.maxHeight = requireContext().resources.displayMetrics.heightPixels / 3
 
-        MaterialAlertDialogBuilder(requireContext())
+        // Dismiss-before-assign: a rapid second pick replaces the preview.
+        dismissImageConfirmDialog()
+        mImageConfirmDialog = MaterialAlertDialogBuilder(requireContext())
             .setMessage(R.string.image_confirm_send)
             .setPositiveButton(android.R.string.ok) { _, _ -> onImageConfirmed(resized) }
             .setNegativeButton(android.R.string.cancel, null)
             .setView(preview)
             .create()
-            .show()
+            .also { it.show() }
+    }
+
+    private fun dismissImageConfirmDialog() {
+        val dialog = mImageConfirmDialog
+        mImageConfirmDialog = null
+        if (dialog?.isShowing == true) {
+            dialog.dismiss()
+        }
     }
 
     private fun onImageConfirmed(initialBitmap: Bitmap) {

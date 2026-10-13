@@ -47,6 +47,36 @@ class DataStorePreferenceDataStore(private val store: DataStore<Preferences>) : 
 
     constructor(context: Context) : this(AppDataStore.get(context))
 
+    // Key cache: Preferences.Key equality is name-based, so a fresh key
+    // object per get/put is correct but wasteful under rapid-tap
+    // SeekBar/KeySelect writes; cache per (type, name) like
+    // SettingsRepository.Keys.
+    private val keyCache = java.util.concurrent.ConcurrentHashMap<String, Preferences.Key<*>>()
+
+    @Suppress("UNCHECKED_CAST")
+    private fun booleanKey(name: String): Preferences.Key<Boolean> =
+        keyCache.getOrPut("b/$name") { booleanPreferencesKey(name) } as Preferences.Key<Boolean>
+
+    @Suppress("UNCHECKED_CAST")
+    private fun intKey(name: String): Preferences.Key<Int> =
+        keyCache.getOrPut("i/$name") { intPreferencesKey(name) } as Preferences.Key<Int>
+
+    @Suppress("UNCHECKED_CAST")
+    private fun longKey(name: String): Preferences.Key<Long> =
+        keyCache.getOrPut("l/$name") { longPreferencesKey(name) } as Preferences.Key<Long>
+
+    @Suppress("UNCHECKED_CAST")
+    private fun floatKey(name: String): Preferences.Key<Float> =
+        keyCache.getOrPut("f/$name") { floatPreferencesKey(name) } as Preferences.Key<Float>
+
+    @Suppress("UNCHECKED_CAST")
+    private fun stringKey(name: String): Preferences.Key<String> =
+        keyCache.getOrPut("s/$name") { stringPreferencesKey(name) } as Preferences.Key<String>
+
+    @Suppress("UNCHECKED_CAST")
+    private fun stringSetKey(name: String): Preferences.Key<Set<String>> =
+        keyCache.getOrPut("ss/$name") { stringSetPreferencesKey(name) } as Preferences.Key<Set<String>>
+
     private fun <T> read(block: suspend (Preferences) -> T): T =
         runBlocking(Dispatchers.IO) { block(store.data.first()) }
 
@@ -60,44 +90,44 @@ class DataStorePreferenceDataStore(private val store: DataStore<Preferences>) : 
     }
 
     override fun getBoolean(key: String?, defValue: Boolean): Boolean =
-        read { it[booleanPreferencesKey(keyOf(key))] ?: defValue }
+        read { it[booleanKey(keyOf(key))] ?: defValue }
 
     override fun putBoolean(key: String?, value: Boolean) =
-        write { it[booleanPreferencesKey(keyOf(key))] = value }
+        write { it[booleanKey(keyOf(key))] = value }
 
     override fun getInt(key: String?, defValue: Int): Int =
-        read { it[intPreferencesKey(keyOf(key))] ?: defValue }
+        read { it[intKey(keyOf(key))] ?: defValue }
 
     override fun putInt(key: String?, value: Int) =
-        write { it[intPreferencesKey(keyOf(key))] = value }
+        write { it[intKey(keyOf(key))] = value }
 
     override fun getLong(key: String?, defValue: Long): Long =
-        read { it[longPreferencesKey(keyOf(key))] ?: defValue }
+        read { it[longKey(keyOf(key))] ?: defValue }
 
     override fun putLong(key: String?, value: Long) =
-        write { it[longPreferencesKey(keyOf(key))] = value }
+        write { it[longKey(keyOf(key))] = value }
 
     override fun getFloat(key: String?, defValue: Float): Float =
-        read { it[floatPreferencesKey(keyOf(key))] ?: defValue }
+        read { it[floatKey(keyOf(key))] ?: defValue }
 
     override fun putFloat(key: String?, value: Float) =
-        write { it[floatPreferencesKey(keyOf(key))] = value }
+        write { it[floatKey(keyOf(key))] = value }
 
     override fun getString(key: String?, defValue: String?): String? =
-        read { it[stringPreferencesKey(keyOf(key))] ?: defValue }
+        read { it[stringKey(keyOf(key))] ?: defValue }
 
     override fun putString(key: String?, value: String?) =
         write {
-            if (value == null) it.remove(stringPreferencesKey(keyOf(key)))
-            else it[stringPreferencesKey(keyOf(key))] = value
+            if (value == null) it.remove(stringKey(keyOf(key)))
+            else it[stringKey(keyOf(key))] = value
         }
 
     override fun getStringSet(key: String?, defValues: Set<String>?): Set<String>? =
-        read { it[stringSetPreferencesKey(keyOf(key))] ?: defValues }
+        read { it[stringSetKey(keyOf(key))] ?: defValues }
 
     override fun putStringSet(key: String?, values: Set<String>?) =
         write {
-            if (values == null) it.remove(stringSetPreferencesKey(keyOf(key)))
-            else it[stringSetPreferencesKey(keyOf(key))] = values
+            if (values == null) it.remove(stringSetKey(keyOf(key)))
+            else it[stringSetKey(keyOf(key))] = values
         }
 }

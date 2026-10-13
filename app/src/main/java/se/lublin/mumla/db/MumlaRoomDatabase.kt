@@ -83,20 +83,22 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun addServer(server: Server) {
-        // The passed id (usually the -1 unsaved sentinel) is ignored, mirroring
-        // the old insert without _id: SQLite assigns a fresh rowid. Server is a
-        // plain class with no copy(), so the id is zeroed transiently for the
-        // autogen insert and restored if it fails. Residual risk (accepted): a
-        // concurrent reader during the insert observes id == 0, which isSaved()
-        // reports as saved. Same-thread-typical; not worth a lock.
-        val previous = server.id
-        server.id = 0
-        try {
-            server.id = io { serverDao().insert(server) }
-        } catch (e: Exception) {
-            server.id = previous
-            throw e
-        }
+        // Insert via a detached copy so concurrent readers of the passed
+        // instance never observe the transient id == 0 window: the caller's
+        // object keeps its previous id (-1 unsaved sentinel) until the
+        // single final write below. Callers must still not share a Server
+        // across threads during addServer (the final id write itself races),
+        // and every host/port write must route through the setters or
+        // resolved-host invalidation is bypassed.
+        val detached = Server(
+            id = 0,
+            name = server.name,
+            host = server.host,
+            port = server.port,
+            username = server.username,
+            password = server.password,
+        )
+        server.id = io { serverDao().insert(detached) }
     }
 
     override fun updateServer(server: Server) {
@@ -104,13 +106,18 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun removeServer(server: Server) {
+        // Atomic five-table cleanup: a crash mid-way must not leave orphans
+        // (no FKs backstop these tables), so the deletes run in one Room
+        // transaction on the IO bridge (Room forbids main-thread queries).
         io {
-            serverDao().deleteById(server.id)
-            // Server-specific cleanup, mirroring the SQLite implementation.
-            pinnedDao().deleteByServer(server.id)
-            tokenDao().deleteByServer(server.id)
-            localMuteDao().deleteByServer(server.id)
-            localIgnoreDao().deleteByServer(server.id)
+            runInTransaction {
+                serverDao().deleteById(server.id)
+                // Server-specific cleanup, mirroring the SQLite implementation.
+                pinnedDao().deleteByServer(server.id)
+                tokenDao().deleteByServer(server.id)
+                localMuteDao().deleteByServer(server.id)
+                localIgnoreDao().deleteByServer(server.id)
+            }
         }
     }
 

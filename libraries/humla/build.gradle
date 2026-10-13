@@ -15,7 +15,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform
+import java.util.Locale
 
 // Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
 // KSP fork: no stable KSP for Kotlin 2.4 at scaffold, so kapt + TODO.
@@ -57,13 +57,6 @@ dependencies {
     implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation 'junit:junit:4.13.2'
-}
-
-allprojects {
-    tasks.withType(JavaCompile) {
-        // TODO include deprecations at some point, but currently they are *many*
-        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
-    }
 }
 
 android {
@@ -204,7 +197,10 @@ android {
         inputs.property("ndkVersion", android.ndkVersion)
         outputs.dir file('src/main/libs')
         def ndkExe = "$project.android.ndkDirectory/ndk-build"
-        if (DefaultNativePlatform.getCurrentOperatingSystem().isWindows()) {
+        // No Gradle internal API (DefaultNativePlatform breaks on upgrade;
+        // OperatingSystem.current() does not exist on this Gradle line):
+        // plain os.name sniffing is stable across versions.
+        if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")) {
           ndkExe += '.cmd'
         }
         def jobs = Runtime.runtime.availableProcessors()

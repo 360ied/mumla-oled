@@ -73,6 +73,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     private var mTCPSocket: SSLSocket? = null
     private var mDataInput: DataInputStream? = null
     private var mDataOutput: DataOutputStream? = null
+    // Volatile: read in executeOnSendThread from arbitrary sender threads,
+    // written in runLoop/disconnect (stale only drops or extra-launches one
+    // send, both guarded downstream).
+    @Volatile
     private var mRunning: Boolean = false
     private var mConnected: Boolean = false
     private var mListener: TCPConnectionListener? = null
@@ -80,10 +84,11 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     // Slice 4: HumlaNetworkThread 3-executors-per-connection (incl. the dead
     // receive executor, never ported) becomes one ConnectionScope
     // (SupervisorJob + IO). The blocking TCP read loop runs in one child;
-    // writes go through a per-connection serial dispatcher (single-writer FIFO
-    // is all the TCP path needs — a Mutex alone cannot order launches across
-    // the IO pool, so submissions serialize too) plus the write Mutex as
-    // belt-and-braces. Created in connect(); torn down in disconnect() and in
+    // writes go through a per-connection serial dispatcher (single-producer
+    // order is exact; concurrent cross-thread submissions serialize
+    // best-effort, as with the old executor's execute ordering — a Mutex
+    // alone cannot order launches across the IO pool, so submissions
+    // serialize too) plus the write Mutex as belt-and-braces. Created in connect(); torn down in disconnect() and in
     // runLoop()'s finally (mirroring the old stopThreads, so failed connections
     // neither leak the scope nor accept sends); in-flight sends are best-effort
     // on cancel, send-after-disconnect drops.
@@ -304,7 +309,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     /**
      * Attempts to send a protobuf message over TCP. Thread-safe, serialized
      * via the per-connection serial dispatcher plus the write Mutex (slice 4:
-     * single-writer FIFO replaces the send executor).
+     * single-writer FIFO replaces the send executor; single-producer order is
+     * exact, cross-thread submission best-effort).
      * @param message The message to send.
      * @param messageType The type of the message to send.
      */
@@ -328,7 +334,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     /**
      * Attempts to send a protobuf message over TCP. Thread-safe, serialized
      * via the per-connection serial dispatcher plus the write Mutex (slice 4:
-     * single-writer FIFO replaces the send executor).
+     * single-writer FIFO replaces the send executor; single-producer order is
+     * exact, cross-thread submission best-effort).
      * @param message The data to send.
      * @param length The length of the byte array.
      * @param messageType The type of the message to send.

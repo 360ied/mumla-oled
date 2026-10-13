@@ -31,6 +31,7 @@ import android.view.WindowManager
 import android.view.WindowMetrics
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlin.math.hypot
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IUser
 import se.lublin.humla.util.HumlaException
@@ -166,10 +167,10 @@ class MumlaOverlay(service: MumlaService) {
             val viewWidth = mOverlayView.width
             val viewHeight = mOverlayView.height
             if (viewWidth > 0 && viewHeight > 0) {
-                val maxX = Math.max(0, dm.widthPixels - viewWidth)
-                val maxY = Math.max(0, dm.heightPixels - viewHeight)
-                val clampedX = Math.max(0, Math.min(mOverlayParams.x, maxX))
-                val clampedY = Math.max(0, Math.min(mOverlayParams.y, maxY))
+                val maxX = maxOf(0, dm.widthPixels - viewWidth)
+                val maxY = maxOf(0, dm.heightPixels - viewHeight)
+                val clampedX = maxOf(0, minOf(mOverlayParams.x, maxX))
+                val clampedY = maxOf(0, minOf(mOverlayParams.y, maxY))
                 if (clampedX != mOverlayParams.x || clampedY != mOverlayParams.y) {
                     mOverlayParams.x = clampedX
                     mOverlayParams.y = clampedY
@@ -210,7 +211,7 @@ class MumlaOverlay(service: MumlaService) {
                     MotionEvent.ACTION_MOVE -> {
                         val deltaX = event.rawX - mInitialTouchX
                         val deltaY = event.rawY - mInitialTouchY
-                        if (!mIsDragging && Math.hypot(deltaX.toDouble(), deltaY.toDouble()) > touchSlop) {
+                        if (!mIsDragging && hypot(deltaX.toDouble(), deltaY.toDouble()) > touchSlop) {
                             mIsDragging = true
                         }
 
@@ -221,11 +222,11 @@ class MumlaOverlay(service: MumlaService) {
                             val dm = mService.resources.displayMetrics
                             val viewWidth = if (mOverlayView.width > 0) mOverlayView.width else (ESTIMATED_WIDTH_DP * dm.density).toInt()
                             val viewHeight = if (mOverlayView.height > 0) mOverlayView.height else (ESTIMATED_HEIGHT_DP * dm.density).toInt()
-                            val maxX = Math.max(0, dm.widthPixels - viewWidth)
-                            val maxY = Math.max(0, dm.heightPixels - viewHeight)
+                            val maxX = maxOf(0, dm.widthPixels - viewWidth)
+                            val maxY = maxOf(0, dm.heightPixels - viewHeight)
 
-                            mOverlayParams.x = Math.max(0, Math.min(newX, maxX))
-                            mOverlayParams.y = Math.max(0, Math.min(newY, maxY))
+                            mOverlayParams.x = maxOf(0, minOf(newX, maxX))
+                            mOverlayParams.y = maxOf(0, minOf(newY, maxY))
                             if (mShown) {
                                 // Guarded: disconnect mid-drag calls hide() and
                                 // removeView, and the next MOVE would throw
@@ -269,11 +270,14 @@ class MumlaOverlay(service: MumlaService) {
 
     private fun applyLayoutParameters() {
         val dm = mService.resources.displayMetrics
-        if (mSettings.isOverlayPinned) {
+        // Single-snapshot triple: pin, gravity and placement must agree
+        // under a concurrent settings write.
+        val layout = mSettings.overlayLayout()
+        if (layout.pinned) {
             mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            mOverlayParams.gravity = mSettings.overlayGravity
-            val placement = mSettings.overlayPlacement
+            mOverlayParams.gravity = layout.gravity
+            val placement = layout.placement
             // Single WindowMetrics query per layout pass; the snapshot is shared by
             // all margin resolvers below instead of re-querying per edge.
             val insets = systemBarInsets
@@ -305,11 +309,11 @@ class MumlaOverlay(service: MumlaService) {
         val isLeft = Settings.OVERLAY_PLACEMENT_TOP_LEFT == placement ||
             Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT == placement
         val sideInset = if (isLeft) insets.left else insets.right
-        return resolveSideMarginPx(Math.max(0, sideInset), dm.density)
+        return resolveSideMarginPx(maxOf(0, sideInset), dm.density)
     }
 
     private fun getTopMargin(dm: DisplayMetrics, insets: Insets): Int {
-        val insetTop = Math.max(0, insets.top)
+        val insetTop = maxOf(0, insets.top)
         if (insetTop > 0) {
             return resolveEdgeMarginPx(insetTop, 0, DEFAULT_TOP_MARGIN_DP, dm.density)
         }
@@ -322,7 +326,7 @@ class MumlaOverlay(service: MumlaService) {
     }
 
     private fun getBottomMargin(dm: DisplayMetrics, insets: Insets): Int {
-        val insetBottom = Math.max(0, insets.bottom)
+        val insetBottom = maxOf(0, insets.bottom)
         if (insetBottom > 0) {
             return resolveEdgeMarginPx(insetBottom, 0, DEFAULT_BOTTOM_MARGIN_DP, dm.density)
         }
@@ -342,11 +346,11 @@ class MumlaOverlay(service: MumlaService) {
         val savedX = mSettings.getOverlayPosX(defaultX)
         val savedY = mSettings.getOverlayPosY(defaultY)
 
-        val maxX = Math.max(0, dm.widthPixels - (ESTIMATED_WIDTH_DP * dm.density).toInt())
-        val maxY = Math.max(0, dm.heightPixels - (ESTIMATED_HEIGHT_DP * dm.density).toInt())
+        val maxX = maxOf(0, dm.widthPixels - (ESTIMATED_WIDTH_DP * dm.density).toInt())
+        val maxY = maxOf(0, dm.heightPixels - (ESTIMATED_HEIGHT_DP * dm.density).toInt())
 
-        mOverlayParams.x = Math.max(0, Math.min(savedX, maxX))
-        mOverlayParams.y = Math.max(0, Math.min(savedY, maxY))
+        mOverlayParams.x = maxOf(0, minOf(savedX, maxX))
+        mOverlayParams.y = maxOf(0, minOf(savedY, maxY))
     }
 
     private fun savePosition() {

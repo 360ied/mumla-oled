@@ -13,7 +13,7 @@ class AppearanceSettingsFragment : MumlaPreferenceFragment() {
         if (languagePreference != null) {
             val codes = resources.getStringArray(R.array.languageValues)
             val listNames = mutableListOf<CharSequence>(getString(R.string.language_system))
-            val listCodes = mutableListOf<CharSequence>("system")
+            val listCodes = mutableListOf<CharSequence>(Settings.DEFAULT_LANGUAGE)
             for (code in codes) {
                 val locale = java.util.Locale.forLanguageTag(code)
                 listNames.add(locale.getDisplayName(locale))

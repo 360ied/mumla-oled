@@ -47,7 +47,7 @@ class GeneralSettingsFragment : MumlaPreferenceFragment() {
         }
         mute.onPreferenceChangeListener = androidx.preference.Preference.OnPreferenceChangeListener { _, newValue ->
             muteTts.isEnabled =
-                Settings.NOTIFICATION_STYLE_MEDIA == style.value && java.lang.Boolean.TRUE == newValue
+                Settings.NOTIFICATION_STYLE_MEDIA == style.value && newValue == true
             true
         }
     }

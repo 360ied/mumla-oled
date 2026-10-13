@@ -29,7 +29,13 @@ class Channel : IChannel, Comparable<Channel> {
     override var parent: Channel? = null
     override var name: String? = null
     override var description: String? = null
+    // Copy-on-access like User's ByteString getters: holders of the getter
+    // ref must not be able to mutate channel state through the array.
     override var descriptionHash: ByteArray? = null
+        get() = field?.clone()
+        set(value) {
+            field = value?.clone()
+        }
     private val subchannelList = ArrayList<Channel>()
     private val userList = ArrayList<User>()
     private val linkList = ArrayList<Channel>()

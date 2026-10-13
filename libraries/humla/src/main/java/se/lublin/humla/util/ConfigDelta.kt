@@ -132,6 +132,13 @@ data class ConfigDelta(
         var ttsEngine: Optional<String>? = null
 
         fun build(): ConfigDelta = ConfigDelta(
+            // server is aliased, not copied: Server is a mutable shared
+            // model (@JvmField name/host/port) with no copy(). Do not
+            // mutate the Builder's server (or the Server's fields) after
+            // build — HumlaService.apply stores the reference. CertRef and
+            // the token/mute lists need copyOf/toList for the same reason;
+            // TrustStoreRef's fields are immutable Strings, so aliasing it
+            // is safe.
             server = server,
             // Defensive copies: the builder stays mutable after build, and the
             // one-shot command must freeze at construction (apply() copies

@@ -75,6 +75,10 @@ class WhisperTargetList {
             throw IndexOutOfBoundsException()
         }
 
+        // Null the slot as well as the bit: takenIds masks reads, but the
+        // array would otherwise retain the WhisperTargetChannel (and its
+        // IChannel) until overwritten.
+        activeTargets[slot - TARGET_MIN] = null
         takenIds = (takenIds and (1 shl slot.toInt()).inv())
     }
 
@@ -89,6 +93,7 @@ class WhisperTargetList {
     }
 
     fun clear() {
+        activeTargets.fill(null)
         takenIds = 0
     }
 }

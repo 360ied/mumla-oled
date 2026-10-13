@@ -54,6 +54,9 @@ class OverlayLayout : FrameLayout {
         }
         val handled = super.dispatchTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            // Intentional drag-detection claim: the overlay must see the
+            // whole gesture, so DOWN is consumed even when no child handled
+            // it (otherwise the gesture stream would never start).
             return true
         }
         return handled

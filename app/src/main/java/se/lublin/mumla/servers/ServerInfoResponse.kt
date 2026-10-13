@@ -80,6 +80,13 @@ class ServerInfoResponse {
 
     fun getVersionString(): String {
         val versionBytes = ByteBuffer.allocate(4).putInt(version).array()
-        return String.format("%d.%d.%d", versionBytes[1], versionBytes[2], versionBytes[3])
+        // Bytes are unsigned version components: mask off sign extension
+        // or components >= 128 print negative (e.g. 200 as -56).
+        return String.format(
+            "%d.%d.%d",
+            versionBytes[1].toInt() and 0xFF,
+            versionBytes[2].toInt() and 0xFF,
+            versionBytes[3].toInt() and 0xFF,
+        )
     }
 }

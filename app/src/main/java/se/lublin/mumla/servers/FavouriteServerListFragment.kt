@@ -92,6 +92,14 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
         updateServers()
     }
 
+    override fun onDestroyView() {
+        // Last adapter's pool dies with the view; updateServers handles the
+        // replace path, this handles teardown.
+        mServerAdapter?.shutdown()
+        mServerAdapter = null
+        super.onDestroyView()
+    }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         val itemId = item.itemId
         if (itemId == R.id.menu_add_server_item) {
@@ -143,6 +151,10 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
 
     fun updateServers() {
         val servers = getServers()
+        // The old adapter's ping pool dies with it: updateServers builds a
+        // new 50-thread pool every onResume, so the previous one must be
+        // released or threads leak per resume.
+        mServerAdapter?.shutdown()
         // NPE-exact: the original passed getActivity() straight through.
         val adapter = FavouriteServerAdapter(activity ?: throw NullPointerException("activity"), servers, this)
         mServerAdapter = adapter

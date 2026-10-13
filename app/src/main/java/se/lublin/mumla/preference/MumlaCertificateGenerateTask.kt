@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import android.app.Activity
 import android.content.Context
 import android.os.AsyncTask
 import android.util.Log
@@ -69,13 +70,27 @@ open class MumlaCertificateGenerateTask(context: Context) : AsyncTask<Void, Void
 
     override fun onPostExecute(result: DatabaseCertificate?) {
         super.onPostExecute(result)
-        if (result == null) {
+        // Rotation mid-generate drives this on the dead activity: skip UI.
+        val activity = mContext as? Activity
+        val dead = activity != null && (activity.isFinishing || activity.isDestroyed)
+        if (!dead && result == null) {
             Toast.makeText(mContext, R.string.generateCertFailure, Toast.LENGTH_SHORT).show()
         }
+        dismissDialog()
+    }
 
+    override fun onCancelled(result: DatabaseCertificate?) {
+        super.onCancelled(result)
+        dismissDialog()
+    }
+
+    private fun dismissDialog() {
         val dialog = loadingDialog
-        if (dialog != null) {
-            dialog.dismiss()
+        loadingDialog = null
+        try {
+            dialog?.dismiss()
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "progress dialog already detached", e)
         }
     }
 

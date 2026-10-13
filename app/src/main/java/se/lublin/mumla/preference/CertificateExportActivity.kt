@@ -43,6 +43,9 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
     private var mDatabase: MumlaDatabase? = null
     private var mCertificates: List<DatabaseCertificate>? = null
     private var mCertificatePending: DatabaseCertificate? = null
+    // Tracked so rotation does not leak the selection dialog; the cancel
+    // listener's finish() is idempotent, so dismiss-in-destroy is safe.
+    private var mSelectionDialog: androidx.appcompat.app.AlertDialog? = null
 
     private val documentCreator =
         registerForActivityResult(CreateDocument(), this::onDocumentCreated)
@@ -76,6 +79,8 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
             .setTitle(R.string.pref_export_certificate_title)
             .setItems(labels, this)
             .setOnCancelListener { finish() }
+            .create()
+            .also { mSelectionDialog = it }
             .show()
     }
 
@@ -88,6 +93,11 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
     }
 
     override fun onDestroy() {
+        val dialog = mSelectionDialog
+        mSelectionDialog = null
+        if (dialog?.isShowing == true) {
+            dialog.dismiss()
+        }
         super.onDestroy()
         // NPE-exact: the original dereferenced mDatabase unconditionally.
         val database = mDatabase ?: throw NullPointerException("mDatabase")

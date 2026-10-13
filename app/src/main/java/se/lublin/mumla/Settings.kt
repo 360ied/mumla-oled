@@ -48,10 +48,19 @@ class Settings {
     private val listenerAdapters = HashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
 
     // Widened to public: Kotlin has no package visibility (pre-image was package-private).
+    // Prefer Settings.getInstance involved parties share the single DataStore
+    // instance per process (see AppDataStore); constructing directly with a
+    // second store for the same file forks the key space. createForTesting
+    // remains the test seam.
     constructor(store: DataStore<Preferences>) {
         repository = SettingsRepository(store)
     }
 
+    // One-shot DataStore read. Compound derived accessors below call this
+    // twice (e.g. isOverlayPinned then overlayGravity) and can therefore
+    // observe two different snapshots under a concurrent write; paired reads
+    // that must agree should snapshot once into a local and derive both
+    // values from it (see isOverlayPinned/overlayGravity).
     private fun snapshot(): PrefSnapshot {
         return repository.snapshotBlocking()
     }
@@ -221,11 +230,13 @@ class Settings {
             return style
         }
 
+    // Nullability is part of the contract (null-test pins IAE, not NPE):
+    // reject null up front so no unreachable Elvis lingers in the writer.
     fun setNotificationStyle(style: String?) {
-        if (NOTIFICATION_STYLE_BIGTEXT == style || NOTIFICATION_STYLE_MEDIA == style) {
+        val valid = style ?: throw IllegalArgumentException("Invalid notification style: $style")
+        if (NOTIFICATION_STYLE_BIGTEXT == valid || NOTIFICATION_STYLE_MEDIA == valid) {
             repository.updateBlocking { prefs ->
-                // NPE-exact: the null branch above rejects null first.
-                prefs.notificationStyle = style ?: throw NullPointerException("style")
+                prefs.notificationStyle = valid
             }
         } else {
             throw IllegalArgumentException("Invalid notification style: $style")
@@ -377,28 +388,20 @@ class Settings {
         }
 
     val isOverlayPinned: Boolean
-        get() {
-            val placement = overlayPlacement
-            return OVERLAY_PLACEMENT_TOP_LEFT == placement ||
-                OVERLAY_PLACEMENT_TOP_RIGHT == placement ||
-                OVERLAY_PLACEMENT_BOTTOM_LEFT == placement ||
-                OVERLAY_PLACEMENT_BOTTOM_RIGHT == placement
-        }
+        get() = isPinnedPlacement(overlayPlacement)
 
     val overlayGravity: Int
-        get() {
-            val placement = overlayPlacement
-            if (OVERLAY_PLACEMENT_TOP_LEFT == placement) {
-                return Gravity.TOP or Gravity.LEFT
-            } else if (OVERLAY_PLACEMENT_TOP_RIGHT == placement) {
-                return Gravity.TOP or Gravity.RIGHT
-            } else if (OVERLAY_PLACEMENT_BOTTOM_LEFT == placement) {
-                return Gravity.BOTTOM or Gravity.LEFT
-            } else if (OVERLAY_PLACEMENT_BOTTOM_RIGHT == placement) {
-                return Gravity.BOTTOM or Gravity.RIGHT
-            }
-            return Gravity.TOP or Gravity.LEFT
-        }
+        get() = gravityForPlacement(overlayPlacement)
+
+    /** Atomic overlay-layout triple from a single snapshot (see [snapshot]):
+     * layout callers must not mix [isOverlayPinned], [overlayGravity] and
+     * [overlayPlacement] from separate snapshots under a concurrent write. */
+    internal data class OverlayLayout(val pinned: Boolean, val gravity: Int, val placement: String)
+
+    internal fun overlayLayout(): OverlayLayout {
+        val placement = snapshot().overlayPlacement
+        return OverlayLayout(isPinnedPlacement(placement), gravityForPlacement(placement), placement)
+    }
 
     fun getOverlayPosX(defaultX: Int): Int {
         return snapshot().overlayPosX ?: defaultX
@@ -456,6 +459,27 @@ class Settings {
     fun interface OnSettingChangedListener {
         fun onSettingChanged(key: String?)
     }
+
+    // Pure placement helpers shared by the single-snapshot getters above:
+    // no DataStore read, so paired callers stay consistent by construction.
+    private fun isPinnedPlacement(placement: String): Boolean =
+        OVERLAY_PLACEMENT_TOP_LEFT == placement ||
+            OVERLAY_PLACEMENT_TOP_RIGHT == placement ||
+            OVERLAY_PLACEMENT_BOTTOM_LEFT == placement ||
+            OVERLAY_PLACEMENT_BOTTOM_RIGHT == placement
+
+    private fun gravityForPlacement(placement: String): Int =
+        if (OVERLAY_PLACEMENT_TOP_LEFT == placement) {
+            Gravity.TOP or Gravity.LEFT
+        } else if (OVERLAY_PLACEMENT_TOP_RIGHT == placement) {
+            Gravity.TOP or Gravity.RIGHT
+        } else if (OVERLAY_PLACEMENT_BOTTOM_LEFT == placement) {
+            Gravity.BOTTOM or Gravity.LEFT
+        } else if (OVERLAY_PLACEMENT_BOTTOM_RIGHT == placement) {
+            Gravity.BOTTOM or Gravity.RIGHT
+        } else {
+            Gravity.TOP or Gravity.LEFT
+        }
 
     companion object {
         const val PREF_INPUT_METHOD = "audioInputMethod"

@@ -44,6 +44,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import javax.net.ssl.HttpsURLConnection
+import kotlin.math.roundToInt
 import se.lublin.mumla.Settings
 
 /**
@@ -92,14 +93,14 @@ class MumbleImageGetter : Html.ImageGetter {
 
         // Allocate up to 1/8th of available runtime memory for the LRU bitmap cache (in KB)
         val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-        val cacheSizeKb = Math.max(maxMemoryKb / 8, 1024) // at least 1MB
+        val cacheSizeKb = maxOf(maxMemoryKb / 8, 1024) // at least 1MB
         mBitmapCache = object : LruCache<String, Bitmap>(cacheSizeKb) {
             override fun sizeOf(key: String?, bitmap: Bitmap?): Int {
                 // NPE-exact: the original dereferenced bitmap unconditionally.
                 val b = bitmap ?: throw NullPointerException("bitmap")
                 // Floor at 1 KB: sub-KB bitmaps must still consume quota or
                 // unbounded tiny emotes evade accounting.
-                return Math.max(1, b.byteCount / 1024)
+                return maxOf(1, b.byteCount / 1024)
             }
         }
 
@@ -109,7 +110,7 @@ class MumbleImageGetter : Html.ImageGetter {
         mExecutor = Executors.newFixedThreadPool(2, object : ThreadFactory {
             private var mCount = 1
 
-            override fun newThread(r: Runnable?): Thread {
+            override fun newThread(r: Runnable): Thread {
                 val t = Thread(r, "MumbleImageLoader-" + mCount++)
                 t.isDaemon = true
                 return t
@@ -228,18 +229,31 @@ class MumbleImageGetter : Html.ImageGetter {
             return // Already in flight
         }
 
-        mExecutor.execute {
-            try {
-                val bitmap = fetchURLImage(source)
-                if (bitmap != null) {
-                    mBitmapCache.put(source, bitmap)
-                    notifyImageLoaded()
-                } else {
-                    mFailedDownloads.add(source)
+        // shutdown() (fragment teardown) vs a lingering TextView drawable
+        // request race: execute() after shutdownNow() throws
+        // RejectedExecutionException on the UI thread. Guard first, catch
+        // anyway (shutdown can land between the check and the submit).
+        if (mExecutor.isShutdown) {
+            mPendingDownloads.remove(source)
+            return
+        }
+        try {
+            mExecutor.execute {
+                try {
+                    val bitmap = fetchURLImage(source)
+                    if (bitmap != null) {
+                        mBitmapCache.put(source, bitmap)
+                        notifyImageLoaded()
+                    } else {
+                        mFailedDownloads.add(source)
+                    }
+                } finally {
+                    mPendingDownloads.remove(source)
                 }
-            } finally {
-                mPendingDownloads.remove(source)
             }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            mPendingDownloads.remove(source)
+            Log.w(TAG, "executor shut down, dropping image fetch", e)
         }
     }
 
@@ -405,9 +419,9 @@ class MumbleImageGetter : Html.ImageGetter {
             }
 
             val safeDensity = if (!density.isNaN() && density.isFinite() && density > 0f) density else 1.0f
-            val safePadding = Math.max(0, horizontalPaddingPx)
-            val maxWidth = Math.max(displayWidth - safePadding, 1)
-            val maxHeight = Math.max((displayHeight * 0.65f).toInt(), 1)
+            val safePadding = maxOf(0, horizontalPaddingPx)
+            val maxWidth = maxOf(displayWidth - safePadding, 1)
+            val maxHeight = maxOf((displayHeight * 0.65f).toInt(), 1)
 
             val targetWidth: Int
             var targetHeight: Int
@@ -417,18 +431,18 @@ class MumbleImageGetter : Html.ImageGetter {
 
             if (widthDp <= ICON_MAX_SIZE_DP && heightDp <= ICON_MAX_SIZE_DP) {
                 // Small icon / emoji: scale according to display density
-                targetWidth = Math.min(maxWidth, Math.max(1, Math.round(intrinsicWidth * safeDensity)))
-                targetHeight = Math.max(1, Math.round(intrinsicHeight.toFloat() * targetWidth / intrinsicWidth.toFloat()))
+                targetWidth = minOf(maxWidth, maxOf(1, (intrinsicWidth * safeDensity).roundToInt()))
+                targetHeight = maxOf(1, (intrinsicHeight.toFloat() * targetWidth / intrinsicWidth.toFloat()).roundToInt())
             } else {
                 // Photo / chat image: expand to fill chat width
                 targetWidth = maxWidth
-                targetHeight = Math.max(1, Math.round(intrinsicHeight.toFloat() * maxWidth / intrinsicWidth.toFloat()))
+                targetHeight = maxOf(1, (intrinsicHeight.toFloat() * maxWidth / intrinsicWidth.toFloat()).roundToInt())
             }
 
             var finalWidth = targetWidth
             if (targetHeight > maxHeight) {
                 targetHeight = maxHeight
-                finalWidth = Math.max(1, Math.round(intrinsicWidth.toFloat() * maxHeight / intrinsicHeight.toFloat()))
+                finalWidth = maxOf(1, (intrinsicWidth.toFloat() * maxHeight / intrinsicHeight.toFloat()).roundToInt())
             }
 
             return ImageBounds(finalWidth, targetHeight)
@@ -467,10 +481,10 @@ class MumbleImageGetter : Html.ImageGetter {
             return sb.toString()
         }
 
-        // java.util.Base64 requires API 26; on older devices the reference would
-        // raise NoClassDefFoundError, which the catch (Throwable) blocks handle
-        // deliberately. Local unit tests also exercise this path on the desktop
-        // JVM, where android.util.Base64 is stubbed out — so no SDK_INT gate.
+        // No SDK_INT gate needed: minSdk 33 always has java.util.Base64
+        // (the API-26 note below is history). The catch (Throwable) blocks
+        // still deliberately cover the JVM unit-test path, where
+        // android.util.Base64 is stubbed out on the desktop JVM.
         @SuppressLint("NewApi")
         @JvmStatic
         fun decodeBase64Bytes(base64: String?): ByteArray? {

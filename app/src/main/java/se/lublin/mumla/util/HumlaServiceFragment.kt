@@ -71,11 +71,6 @@ abstract class HumlaServiceFragment : Fragment() {
         }
     }
 
-    @Deprecated("Use onViewCreated; kept for callers that still invoke the old entry.")
-    override fun onActivityCreated(savedInstanceState: Bundle?) {
-        super.onActivityCreated(savedInstanceState)
-    }
-
     // Mirror teardown at view destroy: registration now happens in
     // onViewCreated, so a view-only recreation (onDestroyView without
     // onDestroy, e.g. ViewPager/backstack detach) must release the observer

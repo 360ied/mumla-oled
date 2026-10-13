@@ -104,7 +104,7 @@ class AudioInput : Runnable {
         // Ensure buffer size is at least 4x frame size and aligned to a
         // whole number of 10 ms frames (frameBytes = 960 for 16-bit mono).
         val frameBytes = FRAME_SIZE * 2
-        val minWanted = Math.max(minBufferSize, frameBytes * 4)
+        val minWanted = maxOf(minBufferSize, frameBytes * 4)
         val bufferSize = (minWanted + frameBytes - 1) / frameBytes * frameBytes
 
         val record: AudioRecord

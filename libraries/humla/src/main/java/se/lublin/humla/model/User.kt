@@ -95,9 +95,11 @@ class User : IUser, Comparable<User> {
 
     private val listeningChannelSet = CopyOnWriteArraySet<Int>()
 
-    // Local state
+    // Local state (both written on the TCP thread in ModelHandler and read
+    // on UI; volatile for symmetry/visibility).
     @Volatile
     override var isLocalMuted: Boolean = false
+    @Volatile
     override var isLocalIgnored: Boolean = false
 
     constructor() {

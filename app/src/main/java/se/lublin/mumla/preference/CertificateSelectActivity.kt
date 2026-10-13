@@ -38,6 +38,9 @@ import se.lublin.mumla.db.MumlaRoomDatabase
 class CertificateSelectActivity : BaseActivity(), DialogInterface.OnClickListener,
     DialogInterface.OnDismissListener {
     private var mCertificates: MutableList<ICertificateItem>? = null
+    // Tracked so rotation does not leave the old instance's dialog behind;
+    // dismissed in onDestroy (onDismiss->finish is idempotent).
+    private var mSelectionDialog: androidx.appcompat.app.AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,7 +93,18 @@ class CertificateSelectActivity : BaseActivity(), DialogInterface.OnClickListene
         }
         builder.setSingleChoiceItems(adapter, defaultCertificatePosition, this)
         builder.setNegativeButton(android.R.string.cancel, null)
-        builder.show().setOnDismissListener(this)
+        val dialog = builder.show()
+        dialog.setOnDismissListener(this)
+        mSelectionDialog = dialog
+    }
+
+    override fun onDestroy() {
+        val dialog = mSelectionDialog
+        mSelectionDialog = null
+        if (dialog?.isShowing == true) {
+            dialog.dismiss()
+        }
+        super.onDestroy()
     }
 
     override fun onDismiss(dialog: DialogInterface?) {

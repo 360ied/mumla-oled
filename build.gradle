@@ -37,3 +37,12 @@ plugins {
     // runtime on AGP 9 (and resource merging on AGP 8); re-evaluate at slice 6.
     // alias(libs.plugins.paparazzi) apply false
 }
+
+// Shared javac lint for all modules (hoisted: an `allprojects` block inside a
+// child build file applies only to itself, so this lives at the root).
+allprojects {
+    tasks.withType(JavaCompile) {
+        // TODO include deprecations at some point, but currently they are *many*
+        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
+    }
+}

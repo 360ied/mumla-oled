@@ -43,8 +43,8 @@ object BitmapUtils {
             finalHeight = (maxWidth.toFloat() / ratioBitmap).toInt()
         }
         // Degenerate ratios floor to 0, which createScaledBitmap rejects.
-        finalWidth = Math.max(1, finalWidth)
-        finalHeight = Math.max(1, finalHeight)
+        finalWidth = maxOf(1, finalWidth)
+        finalHeight = maxOf(1, finalHeight)
 
         return Bitmap.createScaledBitmap(image, finalWidth, finalHeight, true)
     }

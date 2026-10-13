@@ -276,17 +276,24 @@ class SettingsRepository @Inject constructor(
     private val listeners = mutableSetOf<java.util.function.Consumer<String>>()
     private var collectScope: CoroutineScope? = null
 
-    @Synchronized
     fun registerListener(listener: java.util.function.Consumer<String>) {
-        listeners.add(listener)
-        if (collectScope == null) {
-            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-            collectScope = scope
-            // Baseline captured synchronously: a write landing between
-            // registration and collector start must still diff (the
-            // collector's own first emission would otherwise swallow it).
+        val scopeToStart: CoroutineScope? = synchronized(this) {
+            listeners.add(listener)
+            if (collectScope == null) {
+                CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).also { collectScope = it }
+            } else {
+                null
+            }
+        }
+        // Baseline captured outside the lock: snapshotBlocking() does a
+        // runBlocking(Dispatchers.IO) disk/migration read that must never
+        // run while holding the monitor (all callers register on Main).
+        // A write landing between registration and collector start is still
+        // diffed: the collector's own first emission is compared against
+        // this baseline instead of being swallowed.
+        if (scopeToStart != null) {
             var previous: PrefSnapshot? = snapshotBlocking()
-            scope.launch {
+            scopeToStart.launch {
                 snapshot.collect { current ->
                     val prev = previous
                     previous = current

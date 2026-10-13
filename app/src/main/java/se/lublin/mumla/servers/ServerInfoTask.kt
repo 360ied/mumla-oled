@@ -33,12 +33,9 @@ import se.lublin.humla.model.Server
  */
 // Open: ServerAdapter mounts an anonymous subclass overriding onPostExecute.
 open class ServerInfoTask : AsyncTask<Server, Void, ServerInfoResponse>() {
-    private var server: Server? = null
-
     override fun doInBackground(vararg params: Server?): ServerInfoResponse {
         // NPE-exact: the original indexed params[0] and dereferenced it.
         val target = params[0] ?: throw NullPointerException("params[0]")
-        server = target
         try {
             // Create ping message
             val buffer = ByteBuffer.allocate(12)

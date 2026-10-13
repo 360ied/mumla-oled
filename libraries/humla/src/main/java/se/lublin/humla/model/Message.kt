@@ -60,9 +60,12 @@ class Message : IMessage {
     ) : this(message) {
         this.actor = actor
         this.actorName = actorName
-        channelList = channels
-        treeList = trees
-        userList = users
+        // Defensive copies: the unmodifiable views below wrap these lists,
+        // so aliasing the caller's mutable list would let post-construction
+        // mutation show through the "unmodifiable" surface.
+        channelList = ArrayList(channels)
+        treeList = ArrayList(trees)
+        userList = ArrayList(users)
     }
 
     override val targetChannels: List<Channel>

@@ -232,9 +232,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // Slice 4: Handler postDelayed chains become cancellable Jobs in the
     // service scope. Disarm = job?.cancel(), replacing removeCallbacks
     // one-for-one. mHandler stays only for AudioManager device-callback
-    // registration, which requires a Handler.
+    // registration, which requires a Handler. Volatile: cancelReconnect()/
+    // disconnect() are binder-reachable off-main, matching every
+    // neighboring cross-thread flag in this file.
+    @Volatile
     private var routeDebounceJob: Job? = null
+    @Volatile
     private var routeSettleJob: Job? = null
+    @Volatile
     private var reconnectJob: Job? = null
 
     @Volatile
@@ -923,6 +928,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (mNetworkCallback == null) {
                     mNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
+                            // Guard before launching: network flapping fires
+                            // this callback often, and each launch is a Main
+                            // coroutine even when no reconnect is pending.
+                            if (!mReconnecting) {
+                                return
+                            }
                             lifecycleScope.launch {
                                 // CONNECTING guard mirrors onStartCommand's
                                 // duplicate-connect guard: two rapid onAvailable
