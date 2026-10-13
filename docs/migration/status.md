@@ -215,5 +215,8 @@ Slice 4 — coroutines service core, per [slices](slices.md).
   Network/AudioDevice callbacks hop directly into `lifecycleScope` (single
   consumer fire-and-forget — callbackFlow adds no backpressure value here).
 - Owed to close slice 4: full `./scripts/check.sh` (JVM + native) green at
-  the boundary + on-device torture (reconnect storm, SCO flap, A2DP
-  stagger, route flip mid-call).
+  the boundary (done, `b7326ab2`) + on-device torture (reconnect storm,
+  SCO flap, A2DP stagger, route flip mid-call).
+- On-device result: fossDebug installed, basic functionality
+  (boot/connect/voice) confirmed by the user. Deeper torture (reconnect
+  storm, SCO flap, A2DP stagger, route flip mid-call) still open.
