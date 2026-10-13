@@ -190,7 +190,66 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 5 — Kotlin conversion, `:app`, per [slices](slices.md).
+Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md).
+
+## Slice 5 — Kotlin conversion, `:app` (DONE 2026-10-13, `check.sh` green)
+
+- `e7ed140f` — batch 1 (`util/*`, 11 files): statics become objects with
+  `JvmStatic`/`const` for Java callers; `HumlaServiceFragment` stays abstract
+  with open bind hooks; `MumbleImageGetter` keeps its `Handler`/executor
+  literally; package-visible SSRF seams widened; `ImageBounds` fields
+  `@JvmField`; `OnImageLoadedListener` later amended to `fun interface`.
+- `7cda43a0` — batch 2 (`db` leftovers): `DatabaseCertificate` data class
+  (name-preserving `toString`); `MumlaDatabase` Kotlin interface mirroring
+  the Room signatures; `DatabaseProvider` converts literally (removal
+  deferred to the slice-5 cleanup below).
+- `d3f4274b` — batch 3 (`servers/*`, 6 files): JavaBean getters become
+  properties so still-Java callers compile unchanged; `ServerInfoResponse`
+  keeps its exact `IllegalArgumentException` contract;
+  `ServerInfoTask` keeps its `AsyncTask` literally until slice 7.
+- `77ae0fa8` — batch 4 (`service/*` + `ipc`, 9 files): `IMumlaService`
+  surface frozen; `MumlaService` converted but not restructured (`open` for
+  the Robolectric subclass; `@JvmField` for its field-touching tests;
+  `playPttSound` opened for the recording double, test override widened to
+  public); `MumlaConnectionNotification` ctor tolerates null service for its
+  service-free hooks.
+- `18c066cd` — batch 5 (`channel/*` + `comment/*`, 18 files): permission
+  bit ops become `and`/`or`; `ChatTargetActionModeCallback` opened for its
+  anonymous subclass; `ChannelListAdapter` masks stay `const` literals;
+  `IChatMessage` bodies go nullable (poison preserved, NPE-exact).
+- `5716890e` — batch 6 (`preference/*`, 17 files): `AsyncTask`s stay
+  literal; `TypedArray` uses try-finally; `Secure` settings via aliased
+  import; password `char[]` zeroing preserved on every path.
+- `e4a26c9b` — batch 7 (`app/*`, `Settings`, `CircleDrawable`, `Server`,
+  foss `StartupAction`): `Settings` accessors become properties with
+  Java-identical signatures (validated setters kept explicit, `OnSettingChangedListener`
+  becomes `fun interface`); `Server` becomes the single `@Entity @Parcelize`
+  model (Room binds raw `@JvmField`s, parcel bytes identical) with
+  `MIGRATION_10_11` (nullable name/host/username, NOT NULL port +
+  COALESCE) and `ServerEntity` deleted; `MumlaActivity` converted but not
+  restructured; `DatabaseProvider` deleted with fragments taking the
+  singleton directly (`HumlaServiceProvider` survives until slice 7).
+- Converter lessons (new in slice 5): Kotlin-defined `fun getX` stays method
+  calls but Java getters become properties — the flip side bit twice
+  mid-slice (mass `isX()`/`getX()` repair); boolean properties need `is`-
+  names for Java `isX()` getters; `const` forbids `shl`; `val` cannot be
+  assigned in both try and catch (use try-as-expression); Kotlin interfaces
+  need `fun interface` for SAM lambdas; `vararg` params are never null;
+  multi-catch does not exist (GeneralSecurityException covers the three
+  trust-store checked types).
+- Accepted as intentional: `TextMessage`/`InfoMessage` null-carrying
+  preserved exactly; `MumlaConnectionNotification` null-service tolerance;
+  `ChatTarget` nullables; one field assignment replacing an unresolvable
+  generated setter (plain-setter semantics, identical); `updateActiveServerLog`
+  aliasing kept via `MutableList` map values.
+- Verification: full `testFossDebugUnitTest` + humla suite green per batch;
+  full `check.sh` green at the slice boundary (JVM + native suites). Slice 5
+  complete: no `.java` remains in `:app` main or `:libraries:humla` except
+  the generated protobuf pair (never touched). Tests stay Java/Kotlin
+  mixed with three widenings (`playPttSound` override, `SettingsListener`
+  SAM + nullability, migration chains + new v10→v11 test).
+- Owed: on-device install + boot/connect/voice pass on the new tree;
+  R8/release still deferred to pre-landing.
 
 ## Slice 4 — Coroutines service core (DONE 2026-10-13, `check.sh` green)
 
