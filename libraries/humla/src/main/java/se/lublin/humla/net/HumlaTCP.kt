@@ -17,9 +17,20 @@
 
 package se.lublin.humla.net
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.util.Patterns
 import com.google.protobuf.MessageLite
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.minidns.hla.ResolverApi
 import org.minidns.record.SRV
 import org.minidns.util.SrvUtil
@@ -32,10 +43,6 @@ import java.net.ConnectException
 import java.net.SocketException
 import java.security.cert.X509Certificate
 import java.util.Arrays
-import java.util.concurrent.Callable
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSocket
@@ -44,7 +51,7 @@ import javax.net.ssl.SSLSocket
  * Class to maintain and interface with the TCP connection to a Mumble server.
  * Parses Mumble protobuf packets according to the Mumble protocol specification.
  */
-class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetworkThread() {
+class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     companion object {
         private val TAG = HumlaTCP::class.java.name
         const val CONNECT_TIMEOUT = 10000
@@ -69,6 +76,28 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
     private var mConnected: Boolean = false
     private var mListener: TCPConnectionListener? = null
 
+    // Slice 4: HumlaNetworkThread 3-executors-per-connection (incl. the dead
+    // receive executor, never ported) becomes one ConnectionScope
+    // (SupervisorJob + IO). Blocking TCP read loop runs in one child;
+    // writes serialize via a Mutex (single-writer FIFO is all the TCP path
+    // needs). Created in connect(), cancelled in disconnect(); in-flight
+    // sends are best-effort on cancel, send-after-disconnect drops.
+    private var tcpScope: CoroutineScope? = null
+    private var readJob: Job? = null
+    private val writeMutex = Mutex()
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun executeOnMainThread(r: Runnable) {
+        mainHandler.post(r)
+    }
+
+    private fun executeOnSendThread(r: Runnable) {
+        val scope = tcpScope ?: return
+        scope.launch {
+            writeMutex.withLock { r.run() }
+        }
+    }
+
     fun setTCPConnectionListener(listener: TCPConnectionListener?) {
         mListener = listener
     }
@@ -78,7 +107,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         if (mRunning) throw ConnectException("TCP connection already established!")
         mHost = host
         mPort = port
-        startThreads()
+        tcpScope?.cancel()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        tcpScope = scope
+        readJob = scope.launch { runLoop() }
     }
 
     fun isRunning(): Boolean {
@@ -93,7 +125,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
         return mPort
     }
 
-    override fun run() {
+    private suspend fun runLoop() {
         mRunning = true
         try {
             if (mPort == 0) {
@@ -103,18 +135,18 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
                 ) {
                     try {
                         val lookup = "_mumble._tcp.$host"
-                        val executor = Executors.newSingleThreadExecutor()
-                        val future = executor.submit(Callable {
-                            ResolverApi.INSTANCE.resolveSrv(lookup)
-                        })
+                        // Slice 4: ad-hoc SRV single-thread executor becomes a
+                        // shared IO call with an 800ms timeout.
                         var res: org.minidns.hla.SrvResolverResult? = null
                         try {
-                            res = future.get(800, TimeUnit.MILLISECONDS)
-                        } catch (te: TimeoutException) {
-                            future.cancel(true)
-                            Log.d(TAG, "SRV lookup timed out for $lookup")
-                        } finally {
-                            executor.shutdownNow()
+                            res = withTimeoutOrNull(800) {
+                                ResolverApi.INSTANCE.resolveSrv(lookup)
+                            }
+                            if (res == null) {
+                                Log.d(TAG, "SRV lookup timed out for $lookup")
+                            }
+                        } catch (e: Exception) {
+                            throw e
                         }
                         if (res != null && res.wasSuccessful()) {
                             val answers = res.getAnswersOrEmptySet()
@@ -238,12 +270,12 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
                     disconnectListener.onTCPConnectionDisconnect()
                 })
             }
-            stopThreads()
         }
     }
 
     /**
-     * Attempts to send a protobuf message over TCP. Thread-safe, executes on a single threaded executor.
+     * Attempts to send a protobuf message over TCP. Thread-safe, serialized
+     * via the write Mutex (slice 4: single-writer FIFO replaces the send executor).
      * @param message The message to send.
      * @param messageType The type of the message to send.
      */
@@ -265,7 +297,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
     }
 
     /**
-     * Attempts to send a protobuf message over TCP. Thread-safe, executes on a single threaded executor.
+     * Attempts to send a protobuf message over TCP. Thread-safe, serialized
+     * via the write Mutex (slice 4: single-writer FIFO replaces the send executor).
      * @param message The data to send.
      * @param length The length of the byte array.
      * @param messageType The type of the message to send.
@@ -288,25 +321,25 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) : HumlaNetwork
     }
 
     /**
-     * Attempts to disconnect gracefully on the Tx thread.
-     * Disconnects interrupt the socket listening on the Tx thread, suppressing any exceptions
-     * caused by this request. Any remaining protobuf messages will be dispatched first.
-     *
-     * Suppresses all future errors on this connection.
+     * Disconnects gracefully. Closes the socket synchronously to unblock the
+     * read loop (suppressing post-disconnect errors via mRunning), cancels
+     * the ConnectionScope (in-flight sends are best-effort), and drops
+     * send-after-disconnect via the nulled scope. Suppresses all future
+     * errors on this connection.
      */
     fun disconnect() {
         if (!mRunning) return
 
         mRunning = false
-        executeOnSendThread(Runnable {
-            try {
-                val tcpSocket = mTCPSocket
-                if (tcpSocket != null)
-                    tcpSocket.close()
-            } catch (e: IOException) {
-                e.printStackTrace()
-            }
-        })
+        try {
+            val tcpSocket = mTCPSocket
+            if (tcpSocket != null)
+                tcpSocket.close()
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+        tcpScope?.cancel()
+        tcpScope = null
 
         val disconnectListener = mListener
         if (disconnectListener != null) {
