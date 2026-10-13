@@ -51,13 +51,21 @@ data class CertRef(
         result = 31 * result + (password?.hashCode() ?: 0)
         return result
     }
+
+    // Redacted: the derived data-class toString would print the keystore
+    // password (and byte-array identity) into any log line.
+    override fun toString(): String = "CertRef(data=<${data.size} bytes>, password=<redacted>)"
 }
 
 data class TrustStoreRef(
     val path: String?,
     val password: String?,
     val format: String?,
-)
+) {
+    // Redacted: passwords must never reach logs via an accidental print.
+    override fun toString(): String =
+        "TrustStoreRef(path=$path, password=<redacted>, format=$format)"
+}
 
 data class ConfigDelta(
     val server: Server? = null,
@@ -100,6 +108,22 @@ data class ConfigDelta(
         amplitudeBoost != null || transmitMode != null || inputQuality != null ||
             audioStream != null || framesPerPacket != null || halfDuplex != null ||
             adaptiveLeveler != null
+
+    // Redacted: accessTokens are bearer secrets and certificate/trustStore
+    // carry passwords (their own toStrings above are redacted too) — an
+    // accidental log of this one-shot command must not leak them.
+    override fun toString(): String =
+        "ConfigDelta(server=$server, certificate=$certificate, forceTcp=$forceTcp, " +
+            "trustStore=$trustStore, transmitMode=$transmitMode, " +
+            "detectionThreshold=$detectionThreshold, amplitudeBoost=$amplitudeBoost, " +
+            "inputQuality=$inputQuality, framesPerPacket=$framesPerPacket, " +
+            "halfDuplex=$halfDuplex, bluetoothSco=$bluetoothSco, " +
+            "adaptiveLeveler=$adaptiveLeveler, " +
+            "accessTokens=<${accessTokens?.size ?: 0} tokens>, " +
+            "localMuteHistory=$localMuteHistory, localIgnoreHistory=$localIgnoreHistory, " +
+            "clientName=$clientName, audioStream=$audioStream, theme=$theme, " +
+            "overlayShown=$overlayShown, overlayPlacement=$overlayPlacement, " +
+            "ttsEngine=$ttsEngine)"
 
     /**
      * Java-friendly incremental builder (data-class `copy()` has no Java

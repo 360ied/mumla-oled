@@ -362,7 +362,19 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             Log.w(TAG, "onImageConfirmed: service or session is null")
             return
         }
-        val serverSettings = service.HumlaSession().getServerSettings()
+        // Session acquisition throws when the service tore down between the
+        // null check above and now (disconnect-then-confirm): fail soft like
+        // every other slice call site instead of escaping to the Looper.
+        val session = try {
+            service.HumlaSession()
+        } catch (e: HumlaDisconnectedException) {
+            Log.w(TAG, "onImageConfirmed: service or session is null", e)
+            return
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "onImageConfirmed: service or session is null", e)
+            return
+        }
+        val serverSettings = session.getServerSettings()
         if (serverSettings == null) {
             Log.w(TAG, "onImageConfirmed: service or session is null")
             return
@@ -405,7 +417,7 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
                 val currentHeight = bitmap.height
                 if (currentWidth > 320 && currentHeight > 320) {
                     val nextWidth = Math.max(320, currentWidth * 2 / 3)
-                    val nextHeight = Math.max(320, currentHeight * 2 / 3)
+                    val nextHeight = maxOf(320, currentHeight * 2 / 3)
                     currentBitmap = BitmapUtils.resizeKeepingAspect(bitmap, nextWidth, nextHeight)
                 } else {
                     break
@@ -427,6 +439,11 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             sendMessage(message)
         } catch (e: HumlaDisconnectedException) {
             Log.d(TAG, "exception from sendMessage: $e")
+        } catch (e: IllegalStateException) {
+            // Tap-send racing teardown: isConnected() was true at check but
+            // the session died before HumlaSession() (same contract as the
+            // adapter's 606-613 catches).
+            Log.d(TAG, "exception from sendMessage: $e")
         }
     }
 
@@ -446,6 +463,8 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             sendMessage(message)
             chatTextEdit.setText("")
         } catch (e: HumlaDisconnectedException) {
+            Log.d(TAG, "exception from sendMessage: $e")
+        } catch (e: IllegalStateException) {
             Log.d(TAG, "exception from sendMessage: $e")
         }
     }

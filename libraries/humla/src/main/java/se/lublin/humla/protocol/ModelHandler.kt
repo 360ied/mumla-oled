@@ -480,6 +480,12 @@ class ModelHandler(
                     val ch = mChannels[adj.listeningChannel]
                     if (ch != null) {
                         ch.listeningVolume = adj.volumeAdjustment
+                        // Fan out like the add/remove paths above: without this
+                        // the UI stays stale on volume-only packets. Gated to
+                        // the self-listening path as the neighbors are.
+                        if (usr.session == mSession) {
+                            mObserver.onChannelStateUpdated(ch)
+                        }
                     }
                 }
             }

@@ -203,6 +203,10 @@ class SettingsRepository @Inject constructor(
     // Java interop: java.util.function.Consumer (void methods) rather than Kotlin
     // function types or fun interfaces (Unit return) so Java lambdas and method
     // references compile without Unit adapters.
+    // SCREAMING_SNAKE by convention exception: these mirror the legacy
+    // PREF_* key-table style (and SettingsRepository.Keys predates the
+    // Kotlin lowerCamel norm); renaming would churn every call site for no
+    // behavior gain. New keys should still prefer lowerCamel.
     private object Keys {
         val AUDIO_INPUT_METHOD = stringPreferencesKey("audioInputMethod")
         val VAD_THRESHOLD = intPreferencesKey("vadThreshold")

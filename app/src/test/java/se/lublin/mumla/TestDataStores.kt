@@ -42,17 +42,20 @@ import kotlinx.coroutines.runBlocking
  * All entry points block on `Dispatchers.IO`, so plain-JVM JUnit tests can
  * use them directly with no test dispatcher.
  *
- * Lifetime: one temp dir + SupervisorJob scope per test, reclaimed by
- * `deleteOnExit` at JVM exit (never cancelled mid-suite). Fine for a unit
- * suite; do not reuse this pattern for long-lived processes.
+ * Lifetime: one temp dir + SupervisorJob scope per test. Temp dirs are
+ * removed by a JVM shutdown hook (deleteOnExit cannot remove non-empty
+ * dirs, and the DataStore writes its file inside); scopes are never
+ * cancelled mid-suite. Fine for a unit suite; do not reuse this pattern for
+ * long-lived processes.
  */
 object TestDataStores {
     @JvmStatic
     fun create(): DataStore<Preferences> {
         val dir = Files.createTempDirectory("datastore-test").toFile()
-        dir.deleteOnExit()
+        // Recursive delete at JVM exit: deleteOnExit() alone never removes a
+        // non-empty directory, so suites would accumulate /tmp/datastore-test*.
+        Runtime.getRuntime().addShutdownHook(Thread({ dir.deleteRecursively() }, "datastore-test-cleanup"))
         val file = File(dir, "settings.preferences_pb")
-        file.deleteOnExit()
         return PreferenceDataStoreFactory.create(
             scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
             produceFile = { file },

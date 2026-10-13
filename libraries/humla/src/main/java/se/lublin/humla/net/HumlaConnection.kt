@@ -146,8 +146,13 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
 
     // Threading: keepalive ping loop runs in a SupervisorJob + IO scope
     // (slice 4). Cancelled in disconnect(); send-after-disconnect drops via
-    // the mConnected guard in sendTCP/UDPMessage, same as before.
+    // the mConnected guard in sendTCP/UDPMessage, same as before. Volatile:
+    // connect() mutates off the disconnect()/scheduleNextPing() monitor, so
+    // a binder-thread disconnect racing a Main-thread connect needs the
+    // visibility edge (worst case otherwise: one dropped ping reschedule).
+    @Volatile
     private var pingScope: CoroutineScope? = null
+    @Volatile
     private var pingJob: Job? = null
     private var mMainHandler: Handler = Handler(Looper.getMainLooper())
 
@@ -174,7 +179,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
     private var mExceptionHandled = false
 
     // Widened to public: Kotlin has no package visibility; JVM tests pin this.
+    // Volatile: written in connect() on Main, read in getElapsed() from the
+    // IO ping loop (a stale read pins the bootstrap interval or flips early).
     @JvmField
+    @Volatile
     var mStartTimestamp: Long = 0 // Time that the connection was initiated in nanoseconds
 
     // Widened to public: Kotlin has no package visibility; JVM tests pin this.

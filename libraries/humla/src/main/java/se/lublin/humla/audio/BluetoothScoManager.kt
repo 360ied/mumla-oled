@@ -133,6 +133,11 @@ class BluetoothScoManager {
     // Main.immediate is hardcoded (not injected like the budgets below):
     // correct on device; JVM tests need a Main-dispatcher rule to cover this.
     private val scoScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // Volatile: armTimeout() assigns outside the monitor while stop()/
+    // setActive()/fail() cancel-and-null under it, so a cross-thread stop()
+    // must see the latest job (a missed cancel only orphans a harmless no-op
+    // timer — onConnectTimeout re-checks state — but visibility is free).
+    @Volatile
     private var timeoutJob: Job? = null
 
     // Injected budgets (ODD-23): production uses the static defaults above;

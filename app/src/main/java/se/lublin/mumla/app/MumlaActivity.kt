@@ -673,6 +673,12 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             } else {
                 StartupAction().execute(this)
             }
+        } else if (pendingFirstRunStartup) {
+            // Recreation while first-run generation was in flight on the dead
+            // instance: its onPostExecute hands StartupAction here instead of
+            // its dead window token (consume before execute: exactly-once).
+            pendingFirstRunStartup = false
+            StartupAction().execute(this)
         }
     }
 
@@ -685,6 +691,13 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
     override fun onResume() {
         super.onResume()
+        // Late completion after recreation: the dead instance's task finished
+        // after this instance resumed, so consume here (next resume at the
+        // latest — e.g. on return from background).
+        if (pendingFirstRunStartup) {
+            pendingFirstRunStartup = false
+            StartupAction().execute(this)
+        }
         val connectIntent = Intent(this, MumlaService::class.java)
         try {
             mBound = bindService(connectIntent, mConnection, 0)
@@ -917,9 +930,13 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                         mFirstRunGenerateInFlight = false
                         if (result != null) settings.defaultCertificateId = result.id
                         // The news dialog shows from this activity's window token; skip
-                        // it if the activity died while generation was in flight.
+                        // it if the activity died while generation was in flight —
+                        // and hand StartupAction to the recreated instance via
+                        // the pending flag instead of dropping it silently.
                         if (!isFinishing && !isDestroyed) {
                             StartupAction().execute(this@MumlaActivity)
+                        } else {
+                            pendingFirstRunStartup = true
                         }
                     }
                 }
@@ -932,6 +949,10 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             // A null button listener keeps the default auto-dismiss behavior.
             .setNegativeButton(android.R.string.cancel, null)
             .setOnDismissListener {
+                // Stale reference must not survive: onPause's
+                // dismissFirstRunDialog() would otherwise re-dismiss a dead
+                // dialog (safe no-op, but misleading).
+                mFirstRunDialog = null
                 // The generate path owns StartupAction via onPostExecute.
                 if (mFirstRunGenerateInFlight) return@setOnDismissListener
                 settings.isFirstRun = false
@@ -1491,6 +1512,16 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         private const val STATE_RECONNECT_TARGET = "reconnect_target"
         private const val STATE_POST_NOTIF_ASKED = "post_notif_asked"
         private const val STATE_BT_ASKED = "bt_asked"
+
+        // Process-wide pending StartupAction from a dead first-run instance:
+        // rotation mid-generate destroys the activity before its task
+        // completes, and the dead onPostExecute must skip its window token.
+        // It sets this flag instead (main-thread confined on both sides),
+        // and the recreated instance consumes it in onCreate/onResume —
+        // exactly-once by construction (set only on the skip path, cleared
+        // before execute). Without this, the news dialog is silently skipped
+        // for that launch.
+        private var pendingFirstRunStartup = false
 
         /**
          * Widened to public: Kotlin has no package visibility (was package-visible

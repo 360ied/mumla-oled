@@ -201,6 +201,13 @@ class NativeAudioInputEngine {
         )
     }
 
+    // Synchronized with destroy()/setters on the same monitor: processFrame
+    // runs on the capture thread while teardown runs on main, and the input
+    // JNI resolves the handle with a raw reinterpret_cast (no registry
+    // guard like CryptState), so only the monitor pins the lifetime here.
+    // In-tree AudioHandler.shutdown() joins the capture thread first, so
+    // this is defense-in-depth; per-frame uncontended cost is negligible.
+    @Synchronized
     fun processFrame(pcm: ShortArray?, offset: Int, length: Int) {
         val handle = nativeHandle
         if (handle != 0L && pcm != null && offset >= 0 && length > 0 &&

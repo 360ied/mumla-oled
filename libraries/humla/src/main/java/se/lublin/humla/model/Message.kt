@@ -19,7 +19,6 @@ package se.lublin.humla.model
 
 import java.util.ArrayList
 import java.util.Collections
-import java.util.Date
 
 /**
  * A class encapsulating a text message from a Mumble server.
@@ -44,7 +43,7 @@ class Message : IMessage {
     constructor(message: String?) {
         this.message = message
         actor = -1
-        receivedTime = Date().time
+        receivedTime = System.currentTimeMillis()
         channelList = ArrayList()
         treeList = ArrayList()
         userList = ArrayList()

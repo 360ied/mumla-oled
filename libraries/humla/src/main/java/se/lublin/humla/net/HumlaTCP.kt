@@ -72,6 +72,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     private var mPort: Int = 0
     private var mTCPSocket: SSLSocket? = null
     private var mDataInput: DataInputStream? = null
+    // Volatile: read in executeOnSendThread from arbitrary sender threads,
+    // written in runLoop (IO thread); a stale read only drops one send via
+    // the nulled-scope guard downstream.
+    @Volatile
     private var mDataOutput: DataOutputStream? = null
     // Volatile: read in executeOnSendThread from arbitrary sender threads,
     // written in runLoop/disconnect (stale only drops or extra-launches one
@@ -93,7 +97,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     // neither leak the scope nor accept sends); in-flight sends are best-effort
     // on cancel, send-after-disconnect drops.
     private var tcpScope: CoroutineScope? = null
-    private var sendDispatcher: CoroutineDispatcher = Dispatchers.IO
+    // Single final dispatcher: rebuilt per connect() before, but
+    // limitedParallelism(1) is a stateless factory — one instance serializes
+    // every connection's writes the same way (plus the write Mutex).
+    private val sendDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val writeMutex = Mutex()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -127,7 +134,6 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         tcpScope?.cancel()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         tcpScope = scope
-        sendDispatcher = Dispatchers.IO.limitedParallelism(1)
         scope.launch { runLoop() }
     }
 
@@ -366,9 +372,13 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
      * onTCPConnectionDisconnect. Suppresses all future errors on this connection.
      */
     fun disconnect() {
-        if (!mRunning) return
-
-        mRunning = false
+        // Unconditional teardown first: runLoop is dispatched asynchronously,
+        // so a quick cancel can land before it sets mRunning — early-returning
+        // on !mRunning would leak the scope and let runLoop open a socket
+        // after teardown. Cancelling a scope whose loop never ran, and closing
+        // an absent socket, are safe no-ops.
+        tcpScope?.cancel()
+        tcpScope = null
         try {
             val tcpSocket = mTCPSocket
             if (tcpSocket != null)
@@ -376,8 +386,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         } catch (e: IOException) {
             e.printStackTrace()
         }
-        tcpScope?.cancel()
-        tcpScope = null
+        if (!mRunning) return
+
+        mRunning = false
+        // Socket already closed above (idempotent); scope already cancelled.
     }
 
     private fun error(desc: String, e: Exception?) {

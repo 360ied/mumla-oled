@@ -149,7 +149,11 @@ class CryptState {
 
     /**
      * @return The time since the last good decrypt in microseconds.
+     * Synchronized with destroy(): the native call below pins the handle
+     * (the JNI registry additionally degrades stale handles to -1, so the
+     * Java-timestamp fallback would survive anyway — belt and braces).
      */
+    @Synchronized
     fun getLastGoodElapsed(): Long {
         if (mNativeHandle != 0L) {
             val us = nativeGetLastGoodElapsedUs(mNativeHandle)

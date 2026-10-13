@@ -135,6 +135,13 @@ class ServerInfoFragment : HumlaServiceFragment() {
 
     override fun onServiceBound(service: IHumlaService) {
         // wow this is ugly
+        // Defensive cancel: HumlaServiceFragment guarantees single-bind, but
+        // a provider bug double-binding would otherwise leak the first
+        // scheduler while overwriting the field (rebind idempotence).
+        val prior = mPollFuture
+        if (prior != null) {
+            prior.cancel(true)
+        }
         mPollFuture = mExecutorService.scheduleAtFixedRate({
             mHandler.post {
                 try {

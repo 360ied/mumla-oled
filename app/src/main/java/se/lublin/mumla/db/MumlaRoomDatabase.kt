@@ -329,6 +329,20 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
             columns: String,
             selectColumns: String = columns,
         ) {
+            // Preserve the autoincrement sequence across DROP+RENAME: without
+            // this an emptied-but-previously-used table restarts at 1, which
+            // could re-animate orphan favourites/tokens/mute/ignore rows
+            // referencing recycled server ids after a delete-all-then-migrate.
+            // Tables without AUTOINCREMENT have no sequence row (null → skip).
+            var sequence: Long? = null
+            val seqCursor = db.query("SELECT seq FROM sqlite_sequence WHERE name = ?", arrayOf(table))
+            try {
+                if (seqCursor.moveToFirst()) {
+                    sequence = seqCursor.getLong(0)
+                }
+            } finally {
+                seqCursor.close()
+            }
             db.execSQL("CREATE TABLE IF NOT EXISTS `" + table + "_new` " + definition)
             db.execSQL(
                 "INSERT INTO `" + table + "_new` (" + columns + ") " +
@@ -336,6 +350,12 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
             )
             db.execSQL("DROP TABLE `" + table + "`")
             db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
+            if (sequence != null) {
+                db.execSQL(
+                    "UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
+                    arrayOf<Any?>(sequence, table),
+                )
+            }
         }
 
         private fun <T> io(block: () -> T): T = runBlocking(Dispatchers.IO) { block() }

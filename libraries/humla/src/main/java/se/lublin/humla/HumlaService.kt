@@ -234,7 +234,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // one-for-one. mHandler stays only for AudioManager device-callback
     // registration, which requires a Handler. Volatile: cancelReconnect()/
     // disconnect() are binder-reachable off-main, matching every
-    // neighboring cross-thread flag in this file.
+    // neighboring cross-thread flag in this file. The connection generation
+    // below is bumped on main (connect is main-confined) and read from the
+    // IO threads posting connection callbacks.
+    @Volatile
+    private var connectionGeneration = 0
     @Volatile
     private var routeDebounceJob: Job? = null
     @Volatile
@@ -650,7 +654,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // NetworkCallback reconnect) must not orphan the old socket.
             mConnection?.disconnect()
             mConnection = null
-            val connection = HumlaConnection(this)
+            // Generation-scoped listener: the old connection's TCP read-loop
+            // finally still posts onTCPConnectionDisconnect to the shared
+            // listener afterwards; without an identity check the dead
+            // connection's async post would wipe the live attempt's handlers
+            // (model/audio null, route reset, phantom observer disconnect).
+            // Interface delegation forwards every other callback untouched.
+            val generation = ++connectionGeneration
+            val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
+                override fun onConnectionDisconnected(e: HumlaException?) {
+                    if (generation != connectionGeneration) {
+                        Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
+                        return
+                    }
+                    this@HumlaService.onConnectionDisconnected(e)
+                }
+
+                override fun onConnectionSynchronized() {
+                    if (generation != connectionGeneration) {
+                        Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
+                        return
+                    }
+                    this@HumlaService.onConnectionSynchronized()
+                }
+            }
+            val connection = HumlaConnection(connectionListener)
             mConnection = connection
             connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
             connection.setForceTCP(mForceTcp)
@@ -997,7 +1025,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         reconnectJob?.cancel()
         val launchedReconnect = lifecycleScope.launch {
             delay(delayMs.toLong())
-            if (mReconnecting) {
+            // Mirror the onAvailable CONNECTING guard: the timer can resume
+            // after onAvailable already connected (cancel is best-effort),
+            // and an unguarded connect() would double-increment attempts and
+            // tear down a just-started handshake.
+            if (mReconnecting && mConnectionState != ConnectionState.CONNECTING) {
                 mReconnectAttempts++
                 connect()
             }

@@ -44,6 +44,15 @@ class SettingsActivity : BaseActivity() {
         supportFragmentManager.setFragmentResultListener("launchFragment", this) { _, result ->
             val fragmentClassName = result.getString("fragmentClassName")
             if (fragmentClassName != null) {
+                // Allowlist: the name originates from the XML app:fragment
+                // attribute via a same-process FragmentResult (not externally
+                // exploitable), but only the five known settings fragments
+                // may ever be instantiated here — never an arbitrary
+                // no-arg Fragment from a mis-authored XML value.
+                if (!ALLOWED_FRAGMENTS.contains(fragmentClassName)) {
+                    Log.w(TAG, "Refusing to instantiate non-settings fragment $fragmentClassName")
+                    return@setFragmentResultListener
+                }
                 try {
                     val fragmentClass = Class.forName(fragmentClassName)
                     val fragment = fragmentClass.getDeclaredConstructor().newInstance() as Fragment
@@ -69,5 +78,14 @@ class SettingsActivity : BaseActivity() {
 
     companion object {
         private val TAG: String = SettingsActivity::class.java.simpleName
+
+        // The five fragments declared in preference_headers.xml (app:fragment).
+        private val ALLOWED_FRAGMENTS: Set<String> = setOf(
+            "se.lublin.mumla.preference.GeneralSettingsFragment",
+            "se.lublin.mumla.preference.AuthenticationSettingsFragment",
+            "se.lublin.mumla.preference.AudioSettingsFragment",
+            "se.lublin.mumla.preference.AppearanceSettingsFragment",
+            "se.lublin.mumla.preference.AboutSettingsFragment",
+        )
     }
 }

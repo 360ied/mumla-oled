@@ -55,27 +55,27 @@ class DataStorePreferenceDataStore(private val store: DataStore<Preferences>) : 
 
     @Suppress("UNCHECKED_CAST")
     private fun booleanKey(name: String): Preferences.Key<Boolean> =
-        keyCache.getOrPut("b/$name") { booleanPreferencesKey(name) } as Preferences.Key<Boolean>
+        keyCache.computeIfAbsent("b/$name") { booleanPreferencesKey(name) } as Preferences.Key<Boolean>
 
     @Suppress("UNCHECKED_CAST")
     private fun intKey(name: String): Preferences.Key<Int> =
-        keyCache.getOrPut("i/$name") { intPreferencesKey(name) } as Preferences.Key<Int>
+        keyCache.computeIfAbsent("i/$name") { intPreferencesKey(name) } as Preferences.Key<Int>
 
     @Suppress("UNCHECKED_CAST")
     private fun longKey(name: String): Preferences.Key<Long> =
-        keyCache.getOrPut("l/$name") { longPreferencesKey(name) } as Preferences.Key<Long>
+        keyCache.computeIfAbsent("l/$name") { longPreferencesKey(name) } as Preferences.Key<Long>
 
     @Suppress("UNCHECKED_CAST")
     private fun floatKey(name: String): Preferences.Key<Float> =
-        keyCache.getOrPut("f/$name") { floatPreferencesKey(name) } as Preferences.Key<Float>
+        keyCache.computeIfAbsent("f/$name") { floatPreferencesKey(name) } as Preferences.Key<Float>
 
     @Suppress("UNCHECKED_CAST")
     private fun stringKey(name: String): Preferences.Key<String> =
-        keyCache.getOrPut("s/$name") { stringPreferencesKey(name) } as Preferences.Key<String>
+        keyCache.computeIfAbsent("s/$name") { stringPreferencesKey(name) } as Preferences.Key<String>
 
     @Suppress("UNCHECKED_CAST")
     private fun stringSetKey(name: String): Preferences.Key<Set<String>> =
-        keyCache.getOrPut("ss/$name") { stringSetPreferencesKey(name) } as Preferences.Key<Set<String>>
+        keyCache.computeIfAbsent("ss/$name") { stringSetPreferencesKey(name) } as Preferences.Key<Set<String>>
 
     private fun <T> read(block: suspend (Preferences) -> T): T =
         runBlocking(Dispatchers.IO) { block(store.data.first()) }

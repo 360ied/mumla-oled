@@ -41,7 +41,15 @@ object TlsHostnameVerifier {
         if (host == null) {
             return null
         }
-        return stripTrailingDot(host).lowercase(Locale.US)
+        // Strip brackets alongside the trailing dot: "[::1]" must compare
+        // (and parse via addressBytes) as bare "::1".
+        val unbracketed =
+            if (host.startsWith("[") && host.endsWith("]") && host.length > 2) {
+                host.substring(1, host.length - 1)
+            } else {
+                host
+            }
+        return stripTrailingDot(unbracketed).lowercase(Locale.US)
     }
 
     /** Whether the host is a Tor onion address (pin-or-nothing identity). */
@@ -63,10 +71,18 @@ object TlsHostnameVerifier {
         if (host == null || host.isEmpty()) {
             return false
         }
-        if (host.contains(":")) {
+        // Strip brackets: InetAddress.getByName rejects "[::1]" while bare
+        // "::1" parses, so bracketed IPv6 literals would fail closed below.
+        val unbracketed =
+            if (host.startsWith("[") && host.endsWith("]") && host.length > 2) {
+                host.substring(1, host.length - 1)
+            } else {
+                host
+            }
+        if (unbracketed.contains(":")) {
             return true
         }
-        val stripped = if (host.endsWith(".")) host.substring(0, host.length - 1) else host
+        val stripped = if (unbracketed.endsWith(".")) unbracketed.substring(0, unbracketed.length - 1) else unbracketed
         // Exact parity with Java split("\\.", -1): a residual trailing dot means
         // a trailing empty part, which fails the digit check there; Kotlin's
         // split('.') drops trailing empties, so reject up front instead.

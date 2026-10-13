@@ -245,7 +245,7 @@ class MumlaConnectionNotification {
         val srv = hostInfo ?: srvTitle
         mBigText = service.getString(
             R.string.notification_reconnect_expanded, err,
-            Math.max(attempt, 1), Math.max(delaySec, 1), srv
+            maxOf(attempt, 1), maxOf(delaySec, 1), srv
         )
         mActionsShown = false
         mReconnectingShown = true

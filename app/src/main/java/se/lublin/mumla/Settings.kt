@@ -45,7 +45,11 @@ import se.lublin.humla.Constants
  */
 class Settings {
     private val repository: SettingsRepository
-    private val listenerAdapters = HashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
+    // Concurrent map with atomic check-then-act (putIfAbsent): dropping the
+    // hand-rolled HashMap + synchronized without losing the
+    // duplicate-registration guard below.
+    private val listenerAdapters =
+        java.util.concurrent.ConcurrentHashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
 
     // Widened to public: Kotlin has no package visibility (pre-image was package-private).
     // Prefer Settings.getInstance involved parties share the single DataStore
@@ -68,22 +72,16 @@ class Settings {
     fun registerListener(listener: OnSettingChangedListener) {
         val adapter: java.util.function.Consumer<String> =
             java.util.function.Consumer { key -> listener.onSettingChanged(key) }
-        synchronized(listenerAdapters) {
-            // Re-registering the same listener refreshes nothing: without this
-            // guard the old adapter would stay live in the repository and fire twice.
-            if (listenerAdapters.containsKey(listener)) {
-                return
-            }
-            listenerAdapters[listener] = adapter
+        // Re-registering the same listener refreshes nothing: without this
+        // guard the old adapter would stay live in the repository and fire twice.
+        if (listenerAdapters.putIfAbsent(listener, adapter) != null) {
+            return
         }
         repository.registerListener(adapter)
     }
 
     fun unregisterListener(listener: OnSettingChangedListener) {
-        val adapter: java.util.function.Consumer<String>?
-        synchronized(listenerAdapters) {
-            adapter = listenerAdapters.remove(listener)
-        }
+        val adapter = listenerAdapters.remove(listener)
         if (adapter != null) {
             repository.unregisterListener(adapter)
         }
@@ -105,7 +103,7 @@ class Settings {
             ) {
                 repository.updateBlocking { prefs -> prefs.audioInputMethod = inputMethod }
             } else {
-                throw RuntimeException("Invalid input method $inputMethod")
+                throw IllegalArgumentException("Invalid input method $inputMethod")
             }
         }
 
@@ -123,7 +121,7 @@ class Settings {
             } else if (ARRAY_INPUT_METHOD_CONTINUOUS == inputMethod) {
                 return Constants.TRANSMIT_CONTINUOUS
             }
-            throw RuntimeException("Could not convert input method '$inputMethod' to a Humla input method id!")
+            throw IllegalArgumentException("Could not convert input method '$inputMethod' to a Humla input method id!")
         }
 
     val inputSampleRate: Int
@@ -195,7 +193,7 @@ class Settings {
             if (height <= 0) {
                 return DEFAULT_PTT_BUTTON_HEIGHT
             }
-            return Math.min(MAX_PTT_BUTTON_HEIGHT, Math.max(MIN_PTT_BUTTON_HEIGHT, height))
+            return height.coerceIn(MIN_PTT_BUTTON_HEIGHT, MAX_PTT_BUTTON_HEIGHT)
         }
 
     /**
@@ -484,11 +482,8 @@ class Settings {
     companion object {
         const val PREF_INPUT_METHOD = "audioInputMethod"
         @JvmStatic
-        val ARRAY_INPUT_METHODS: Set<String> = HashSet<String>().apply {
-            add(ARRAY_INPUT_METHOD_VOICE)
-            add(ARRAY_INPUT_METHOD_PTT)
-            add(ARRAY_INPUT_METHOD_CONTINUOUS)
-        }
+        val ARRAY_INPUT_METHODS: Set<String> =
+            setOf(ARRAY_INPUT_METHOD_VOICE, ARRAY_INPUT_METHOD_PTT, ARRAY_INPUT_METHOD_CONTINUOUS)
         /** Voice activity transmits depending on the amplitude of user input. */
         const val ARRAY_INPUT_METHOD_VOICE = "voiceActivity"
         /** Push to talk transmits on command. */

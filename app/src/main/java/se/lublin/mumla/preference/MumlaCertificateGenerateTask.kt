@@ -41,6 +41,13 @@ open class MumlaCertificateGenerateTask(context: Context) : AsyncTask<Void, Void
     override fun onPreExecute() {
         super.onPreExecute()
 
+        // Never show off a finishing instance: the task can be started from an
+        // activity that is already tearing down (first-run rotation).
+        val activity = mContext as? Activity
+        if (activity != null && (activity.isFinishing || activity.isDestroyed)) {
+            cancel(false)
+            return
+        }
         val dialog = MaterialAlertDialogBuilder(mContext)
             .setTitle(R.string.generateCertProgress)
             .setView(R.layout.dialog_progress)

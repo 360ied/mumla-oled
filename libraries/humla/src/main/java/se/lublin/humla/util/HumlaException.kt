@@ -72,19 +72,19 @@ class HumlaException : Exception, Parcelable {
         // before the block below, and a truncated parcel throws here too.
         try {
             parcel.readString()
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
             null
         },
         try {
             parcel.readSerializable() as? Throwable?
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
             // Corrupted parcel header: no cause.
             null
         }
     ) {
         reason = try {
             HumlaDisconnectReason.entries[parcel.readInt()]
-        } catch (e: Exception) {
+        } catch (ignored: Exception) {
             HumlaDisconnectReason.OTHER_ERROR
         }
         // Presence flags below also guard truncated parcels: every read sits
@@ -94,7 +94,7 @@ class HumlaException : Exception, Parcelable {
         var reject: Mumble.Reject? = null
         if (try {
                 parcel.readInt() == 1
-            } catch (e: Exception) {
+            } catch (ignored: Exception) {
                 false
             }
         ) {
@@ -103,7 +103,7 @@ class HumlaException : Exception, Parcelable {
                 if (bytes != null) {
                     reject = Mumble.Reject.parseFrom(bytes)
                 }
-            } catch (e: Exception) {
+            } catch (ignored: Exception) {
                 // Ignore corrupted parcel
             }
         }
@@ -112,7 +112,7 @@ class HumlaException : Exception, Parcelable {
         var userRemove: Mumble.UserRemove? = null
         if (try {
                 parcel.readInt() == 1
-            } catch (e: Exception) {
+            } catch (ignored: Exception) {
                 false
             }
         ) {
@@ -121,7 +121,7 @@ class HumlaException : Exception, Parcelable {
                 if (bytes != null) {
                     userRemove = Mumble.UserRemove.parseFrom(bytes)
                 }
-            } catch (e: Exception) {
+            } catch (ignored: Exception) {
                 // Ignore corrupted parcel
             }
         }

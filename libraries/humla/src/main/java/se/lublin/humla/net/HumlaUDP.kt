@@ -131,6 +131,10 @@ class HumlaUDP {
 
     private val mCryptState: CryptState
 
+    // Volatile: written in runUdp (IO thread), closed in disconnect() on
+    // another thread (a stale null only delays the receiver unblock; the
+    // finally still closes).
+    @Volatile
     private var mUDPSocket: DatagramSocket? = null
     private val mListener: UDPConnectionListener
     private var mHost: String? = null
@@ -264,6 +268,12 @@ class HumlaUDP {
     }
 
     private suspend fun runUdp() {
+        // Epoch note: this body runs only while udpScope is active —
+        // disconnect() cancels the scope, and a coroutine launched on an
+        // already-cancelled scope never starts, so mConnected = true below
+        // cannot resurrect a disconnect that landed first. A disconnect that
+        // lands while blocked in receive() unblocks via socket.close() and
+        // exits through the IOException path with mConnected already false.
         mConnected = true
         try {
             val host = mHost ?: throw IOException("No host set")
@@ -283,7 +293,12 @@ class HumlaUDP {
             // suspending forever on a drained orphan while sends pile into the
             // new object.
             val sender = udpScope?.launch {
-                sendChannel ?: throw NullPointerException("send channel")
+                // Fail-soft, not fail-fast: an uncaught throw in this
+                // SupervisorJob child routes to the uncaught-exception handler.
+                // Unreachable today (ensureChannel precedes every launch and
+                // disconnect never nulls the channel), but return is strictly
+                // safer than throw on this line.
+                sendChannel ?: return@launch
                 while (isActive) {
                     val channel = sendChannel ?: break
                     try {

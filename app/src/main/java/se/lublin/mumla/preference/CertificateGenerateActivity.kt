@@ -28,6 +28,10 @@ import se.lublin.mumla.db.DatabaseCertificate
  * Created by andrew on 12/01/16.
  */
 class CertificateGenerateActivity : BaseActivity() {
+    // Retained so onDestroy can cancel a rotation-in-flight task: without
+    // this the AsyncTask completes on the dead instance and shows its dialog
+    // on a dead window token (BadTokenException).
+    private var generateTask: MumlaCertificateGenerateTask? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,6 +39,7 @@ class CertificateGenerateActivity : BaseActivity() {
         val task = object : MumlaCertificateGenerateTask(this@CertificateGenerateActivity) {
             override fun onPostExecute(result: DatabaseCertificate?) {
                 super.onPostExecute(result)
+                generateTask = null
                 if (result == null) {
                     finish()
                     return
@@ -42,10 +47,27 @@ class CertificateGenerateActivity : BaseActivity() {
 
                 val settings = Settings.getInstance(this@CertificateGenerateActivity)
                 settings.defaultCertificateId = result.id
+                // Rotation during generate() leaves this instance dead: never
+                // show on a dead window token (base onPostExecute already
+                // guards its own Toast the same way).
+                if (isFinishing || isDestroyed) {
+                    finish()
+                    return
+                }
                 showCompletionDialog(result)
             }
         }
+        generateTask = task
         task.execute()
+    }
+
+    override fun onDestroy() {
+        // Cancel first: a completing task would otherwise drive onPostExecute
+        // (and its dialog) on this dying instance.
+        val task = generateTask
+        generateTask = null
+        task?.cancel(true)
+        super.onDestroy()
     }
 
     private fun showCompletionDialog(result: DatabaseCertificate) {
