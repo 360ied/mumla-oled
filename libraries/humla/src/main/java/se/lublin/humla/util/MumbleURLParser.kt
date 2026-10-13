@@ -29,8 +29,12 @@ import se.lublin.humla.model.Server
  */
 object MumbleURLParser {
 
+    // Host is either a bare hostname/IPv4 or a bracketed IPv6 literal.
+    // Port is validated to 1..65535 below; path/query (trailing slash,
+    // channel links) is accepted and ignored. Full-match: surrounding junk
+    // must not parse.
     private val URL_PATTERN: Pattern =
-        Pattern.compile("mumble://(([^:]+)?(:(.+?))?@)?(.+?)(:([0-9]+?))?/")
+        Pattern.compile("mumble://(([^:@/]+)?(:(.*?))?@)?(\\[[^\\]]+\\]|[^:/]+)(:([0-9]+))?(/.*)?")
 
     /**
      * Parses the passed Mumble URL into a Server object.
@@ -45,10 +49,17 @@ object MumbleURLParser {
             throw MalformedURLException("URL is null")
         }
         val matcher = URL_PATTERN.matcher(url)
-        if (matcher.find()) {
-            val username = matcher.group(2)
-            val password = matcher.group(4)
-            val host = matcher.group(5)
+        if (matcher.matches()) {
+            val username = matcher.group(2)?.ifEmpty { null }
+            val password = matcher.group(4)?.ifEmpty { null }
+            val rawHost = matcher.group(5) ?: throw MalformedURLException()
+            // Strip brackets from IPv6 literals ([::1] -> ::1).
+            val host = if (rawHost.startsWith("[") && rawHost.endsWith("]")) {
+                rawHost.substring(1, rawHost.length - 1)
+            } else {
+                rawHost
+            }
+            if (host.isEmpty()) throw MalformedURLException("Empty host")
             val portString = matcher.group(7)
             var port = Constants.DEFAULT_PORT
             if (portString != null) {
@@ -57,7 +68,7 @@ object MumbleURLParser {
                 } catch (e: NumberFormatException) {
                     throw MalformedURLException("Invalid port: " + portString)
                 }
-                if (port > 65535) {
+                if (port < 1 || port > 65535) {
                     throw MalformedURLException("Port out of range: " + portString)
                 }
             }

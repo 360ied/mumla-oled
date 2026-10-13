@@ -139,7 +139,8 @@ class MumlaOverlay(service: MumlaService) {
     private var mInitialParamY: Int = 0
 
     init {
-        mWindowManager = mService.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        mWindowManager = mService.getSystemService(Context.WINDOW_SERVICE) as WindowManager?
+            ?: throw NullPointerException("WindowManager")
         mOverlayView = View.inflate(service, R.layout.overlay, null)
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list)
         mOverlayList.layoutManager = LinearLayoutManager(service)

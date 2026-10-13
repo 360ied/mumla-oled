@@ -86,7 +86,9 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
         // The passed id (usually the -1 unsaved sentinel) is ignored, mirroring
         // the old insert without _id: SQLite assigns a fresh rowid. Server is a
         // plain class with no copy(), so the id is zeroed transiently for the
-        // autogen insert and restored if it fails.
+        // autogen insert and restored if it fails. Residual risk (accepted): a
+        // concurrent reader during the insert observes id == 0, which isSaved()
+        // reports as saved. Same-thread-typical; not worth a lock.
         val previous = server.id
         server.id = 0
         try {
@@ -131,7 +133,9 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun getPinnedChannels(serverId: Long): List<Int> =
-        io { pinnedDao().getChannels(serverId).map { it.toIntOrNull() ?: 0 } }
+        // Corrupt non-numeric rows are dropped, not coerced to channel 0
+        // (0 is a valid channel; mapping garbage there would pin it).
+        io { pinnedDao().getChannels(serverId).mapNotNull { it.toIntOrNull() } }
 
     override fun addPinnedChannel(serverId: Long, channelId: Int) {
         io { pinnedDao().insert(FavouriteEntity(channel = channelId.toString(), serverId = serverId)) }

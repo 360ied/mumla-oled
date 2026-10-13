@@ -6,12 +6,12 @@ quo before any software-AEC work is considered.
 
 ## Why echo happens here
 
-Capture ([`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java))
+Capture ([`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt))
 feeds 10 ms frames into the native
 [`AudioInputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.cpp)
 (copy, HPF, RNNoise, VAD transmit evaluation, leveler applied after
 the VAD decision, Opus encode), while render
-([`AudioOutput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java))
+([`AudioOutput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt))
 pulls mixed PCM out of
 [`AudioOutputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp).
 The two sides never share a signal: RNNoise, the hardware
@@ -68,8 +68,8 @@ plus `STREAM_VOICE_CALL` (`ServerConnectTask`) — and mode untouched
 (normally `NORMAL`; only `BluetoothScoManager` ever calls `setMode`).
 There is also a live-toggle
 asymmetry worth fixing in passing: toggling handset mode mid-call sends
-`EXTRAS_AUDIO_STREAM` (recreating the pipeline) but never
-`EXTRAS_AUDIO_SOURCE`, leaving capture stuck at its connect-time value.
+`ConfigDelta.audioStream` (recreating the pipeline) but never
+an audio-source key, leaving capture stuck at its connect-time value.
 
 ## Touch points for the spike
 
@@ -81,7 +81,7 @@ asymmetry worth fixing in passing: toggling handset mode mid-call sends
    fix the stale-source asymmetry above.
 4. Route management — generalize past SCO-only: A2DP/wired
    connect/disconnect drives the existing
-   `configureExtras`/`createAudioHandler` pipeline recreate, plus
+   `apply(ConfigDelta)`/pipeline-recreate path, plus
    mode set/clear and volume/`SoundPool` route updates.
 5. SCO opt-in interplay — `AudioHandler.initialize` already
    force-selects `VOICE_CALL` when SCO is up; keep that consistent
@@ -125,7 +125,7 @@ for the communication-device view, funneled into one converge point in
 the `applyScoRoute` style so BT, wired, and SCO transitions serialize
 through a single route decision. Debounce rapid flaps (single short
 quiesce, not per-event recreates). Ordering per transition: set
-mode first, then `createAudioHandler` pipeline recreate, then
+mode first, then pipeline recreate, then
 volume-stream/`SoundPool` refresh — so effects attach (at `AudioInput`
 construction on the capture session) only after the HAL sees the
 target mode.
@@ -136,7 +136,7 @@ HAL coupling requires mode-before-capture: `MODE_IN_COMMUNICATION`
 must be set before `AudioRecord` creation, and `AudioInput`
 constructs its effects (NS/AGC, plus AEC on the VoIP route) at
 construction time. So every route change is atomic at the triple
-level: set mode, then `createAudioHandler` (which fully tears down
+level: set mode, then pipeline recreate (which fully tears down
 and rebuilds both engines), then cue/volume refresh. Failure and
 fallback restore the previous route's triple atomically — a failed
 SCO bring-up or a BT disconnect mid-recreate must never strand

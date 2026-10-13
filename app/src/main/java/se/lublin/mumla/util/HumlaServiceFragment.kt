@@ -19,6 +19,7 @@ package se.lublin.mumla.util
 
 import android.content.Context
 import android.os.Bundle
+import android.view.View
 import androidx.fragment.app.Fragment
 import se.lublin.humla.IHumlaService
 import se.lublin.humla.util.IHumlaObserver
@@ -59,8 +60,8 @@ abstract class HumlaServiceFragment : Fragment() {
         super.onDetach()
     }
 
-    override fun onActivityCreated(savedInstanceState: Bundle?) {
-        super.onActivityCreated(savedInstanceState)
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
         // NPE-exact: the original dereferenced mServiceProvider unconditionally.
         val provider = mServiceProvider ?: throw NullPointerException("mServiceProvider")
         provider.addServiceFragment(this)
@@ -68,6 +69,11 @@ abstract class HumlaServiceFragment : Fragment() {
         if (service != null && !mBound) {
             onServiceAttached(service)
         }
+    }
+
+    @Deprecated("Use onViewCreated; kept for callers that still invoke the old entry.")
+    override fun onActivityCreated(savedInstanceState: Bundle?) {
+        super.onActivityCreated(savedInstanceState)
     }
 
     override fun onDestroy() {

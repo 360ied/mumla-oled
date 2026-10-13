@@ -286,6 +286,7 @@ public class MumlaDatabaseTest {
             "CREATE TABLE certificates (`_id` INTEGER PRIMARY KEY AUTOINCREMENT," +
             "`data` BLOB NOT NULL,`name` TEXT NOT NULL);";
 
+    @Test
     public void testMigration8To10PreservesData() {
         File dbFile = context.getDatabasePath("migrate-test-8.db");
         deleteDbFiles(dbFile);

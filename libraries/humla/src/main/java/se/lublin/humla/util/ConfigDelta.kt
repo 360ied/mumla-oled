@@ -104,6 +104,9 @@ data class ConfigDelta(
     /**
      * Java-friendly incremental builder (data-class `copy()` has no Java
      * defaults). Sets one field per preference branch, then [build].
+     * Keep [hasCore] in sync when adding fields: every core field below
+     * must also appear in [hasCore] (and in [hasOtherAudioKeys] when it
+     * affects the audio pipeline).
      */
     class Builder {
         var server: Server? = null

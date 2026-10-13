@@ -74,7 +74,7 @@ class MumlaMessageNotification(context: Context) {
             channelListIntent, PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val channelId = "message_channel"
+        val channelId = MESSAGE_CHANNEL_ID
         val channelName = mContext.getString(R.string.messageReceived)
         val chan = NotificationChannel(
             channelId, channelName,
@@ -95,9 +95,7 @@ class MumlaMessageNotification(context: Context) {
             .setVibrate(VIBRATION_PATTERN)
             .setStyle(style)
 
-        if (mUnreadMessages.size > 0) {
-            builder.setNumber(mUnreadMessages.size)
-        }
+        builder.setNumber(mUnreadMessages.size)
 
         val manager = NotificationManagerCompat.from(mContext)
         val notification = builder.build()
@@ -121,6 +119,7 @@ class MumlaMessageNotification(context: Context) {
 
     companion object {
         private const val NOTIFICATION_ID = 2
+        private const val MESSAGE_CHANNEL_ID = "message_channel"
         private val VIBRATION_PATTERN = longArrayOf(0, 100)
     }
 }

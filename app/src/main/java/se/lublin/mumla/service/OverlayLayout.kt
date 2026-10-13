@@ -45,13 +45,14 @@ class OverlayLayout : FrameLayout {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        // NPE-exact before any use: the original dereferenced ev unconditionally,
+        // and the framework must never receive null.
+        val event = ev ?: throw NullPointerException("ev")
         val listener = mDispatchTouchEventListener
-        if (listener != null && listener.onDispatchTouchEvent(ev ?: throw NullPointerException("ev"))) {
+        if (listener != null && listener.onDispatchTouchEvent(event)) {
             return true
         }
-        val handled = super.dispatchTouchEvent(ev)
-        // NPE-exact: the original dereferenced ev unconditionally.
-        val event = ev ?: throw NullPointerException("ev")
+        val handled = super.dispatchTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             return true
         }

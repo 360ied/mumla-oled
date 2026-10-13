@@ -90,6 +90,54 @@ public class URLParserTest extends TestCase {
         }
     }
 
+    public void testURLWithoutTrailingSlash() {
+        String url = "mumble://server.com";
+        try {
+            Server server = MumbleURLParser.parseURL(url);
+            assertEquals(server.getHost(), "server.com");
+            assertEquals(server.getPort(), Constants.DEFAULT_PORT);
+        } catch (MalformedURLException e) {
+            fail("Failed to parse URL without trailing slash.");
+        }
+    }
+
+    public void testURLWithPortNoSlash() {
+        String url = "mumble://server.com:5000";
+        try {
+            Server server = MumbleURLParser.parseURL(url);
+            assertEquals(server.getHost(), "server.com");
+            assertEquals(server.getPort(), 5000);
+        } catch (MalformedURLException e) {
+            fail("Failed to parse URL.");
+        }
+    }
+
+    public void testIPv6Literal() {
+        try {
+            Server server = MumbleURLParser.parseURL("mumble://[::1]:64738/");
+            assertEquals(server.getHost(), "::1");
+            assertEquals(server.getPort(), 64738);
+        } catch (MalformedURLException e) {
+            fail("Failed to parse IPv6 URL.");
+        }
+    }
+
+    public void testZeroPortIsMalformed() {
+        try {
+            MumbleURLParser.parseURL("mumble://server.com:0/");
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
+
+    public void testSurroundingJunkIsMalformed() {
+        try {
+            MumbleURLParser.parseURL("xx mumble://server.com/ xx");
+            fail("Expected MalformedURLException.");
+        } catch (MalformedURLException expected) {
+        }
+    }
+
     public void testInvalidScheme() {
         String url = "grumble://server.com/";
         try {

@@ -537,6 +537,8 @@ class Settings {
 
         const val PREF_THEME = "theme"
         const val DEFAULT_THEME = "forceBlack"
+        /** Theme value selecting follow-system night mode (distinct from language). */
+        const val DEFAULT_THEME_SYSTEM = "system"
         const val PREF_LANGUAGE = "language"
         const val DEFAULT_LANGUAGE = "system"
 
@@ -552,6 +554,9 @@ class Settings {
         const val PREF_CERT_ID = "certificateId"
 
         const val PREF_DEFAULT_USERNAME = "defaultUsername"
+        // Pre-existing quirk, inherited: the XML default is locale-dependent
+        // (e.g. fr -> "Utilisateur_Mumla") while this const fallback is not.
+        // Fleet prefs already migrated keep their stored value either way.
         const val DEFAULT_DEFAULT_USERNAME = "Mumla_User" // funny var name
 
         const val PREF_FORCE_TCP = "forceTcp"

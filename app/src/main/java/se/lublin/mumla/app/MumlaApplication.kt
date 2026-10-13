@@ -63,7 +63,7 @@ class MumlaApplication : Application(), Settings.OnSettingChangedListener {
                     AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
                 "forceDark", Settings.DEFAULT_THEME ->
                     AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
-                Settings.DEFAULT_LANGUAGE ->
+                Settings.DEFAULT_THEME_SYSTEM ->
                     AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
                 else -> {
                     AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)

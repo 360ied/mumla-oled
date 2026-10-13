@@ -863,6 +863,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         disconnect()
     }
 
+    // Non-null by contract (guide §1): in-slice callers pass non-null (TCP-tunnel
+    // msgData after its NPE check, UDP decrypt output). A null from a Java
+    // caller fails fast with NPE instead of the pre-image silent return —
+    // intentional null-tightening on a dead path.
     override fun onUDPDataReceived(data: ByteArray) {
         if (data.isEmpty()) return
 

@@ -25,7 +25,6 @@ import java.util.HashSet
 class Channel : IChannel, Comparable<Channel> {
     override var id: Int = 0
     override var position: Int = 0
-    private var level: Int = 0
     override var isTemporary: Boolean = false
     override var parent: Channel? = null
     override var name: String? = null
@@ -50,8 +49,9 @@ class Channel : IChannel, Comparable<Channel> {
 
     /**
      * @see User.channel
+     * Widened to public: Kotlin has no package visibility.
      */
-    internal fun addUser(user: User) {
+    fun addUser(user: User) {
         for (i in userList.indices) {
             val u = userList[i]
             if (user.compareTo(u) <= 0) {
@@ -64,8 +64,9 @@ class Channel : IChannel, Comparable<Channel> {
 
     /**
      * @see User.channel
+     * Widened to public: Kotlin has no package visibility.
      */
-    internal fun removeUser(user: User) {
+    fun removeUser(user: User) {
         userList.remove(user)
     }
 

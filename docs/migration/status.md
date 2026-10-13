@@ -188,10 +188,6 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   hardening, null-filtering over null-carrying, fail-fast talking listener.
   Guide §1 amended (openness, NPE-exact boundaries, seam widening).
 
-## Next
-
-Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md).
-
 ## Slice 5 — Kotlin conversion, `:app` (DONE 2026-10-13, `check.sh` green)
 
 - `e7ed140f` — batch 1 (`util/*`, 11 files): statics become objects with
@@ -308,3 +304,7 @@ Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md)
   caller list (strictly safer, kept); `Server` host/port writes must route
   through setters (documented on the class) or resolved-host invalidation is
   bypassed.
+
+## Next
+
+Slice 6 — Compose foundation (theme + leaf + goldens), per [slices](slices.md).

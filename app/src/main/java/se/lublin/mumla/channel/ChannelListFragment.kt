@@ -239,7 +239,7 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
             val host = activity ?: throw NullPointerException("activity")
 
             // Color the action bar icons to the primary text color of the theme, TODO move this elsewhere
-            val foregroundColor = host.theme.obtainStyledAttributes(intArrayOf(android.R.attr.textColorPrimaryInverse)).getColor(0, -1)
+            val foregroundColor = host.theme.obtainStyledAttributes(intArrayOf(android.R.attr.textColorPrimaryInverse)).use { it.getColor(0, -1) }
 
             val self = session.getSessionUser()
             if (self != null) {

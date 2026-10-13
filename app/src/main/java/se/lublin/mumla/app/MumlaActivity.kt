@@ -632,7 +632,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // NPE-exact: the original dereferenced the toggle, layout, and action bar unconditionally.
         val drawerToggle = mDrawerToggle ?: throw NullPointerException("mDrawerToggle")
         val drawerLayout = mDrawerLayout ?: throw NullPointerException("mDrawerLayout")
-        drawerLayout.setDrawerListener(drawerToggle)
+        drawerLayout.addDrawerListener(drawerToggle)
         val actionBar = supportActionBar ?: throw NullPointerException("actionBar")
         actionBar.setDisplayHomeAsUpEnabled(true)
         actionBar.setHomeButtonEnabled(true)

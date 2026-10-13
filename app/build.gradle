@@ -92,7 +92,7 @@ android {
 
         buildConfigField "String", "VERSIONTAG", "\"" + gitDescribe.split("-")[0] + "\""
 
-        testInstrumentationRunner "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         resourceConfigurations += ["en", "fr", "zh-rCN"]
 

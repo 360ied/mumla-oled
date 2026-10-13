@@ -334,7 +334,10 @@ class SettingsRepository @Inject constructor(
             mediaKeyMute = this[Keys.MEDIA_KEY_MUTE] ?: Settings.DEFAULT_MEDIA_KEY_MUTE,
             mediaKeyMuteTts = this[Keys.MEDIA_KEY_MUTE_TTS] ?: Settings.DEFAULT_MEDIA_KEY_MUTE_TTS,
             useTts = this[Keys.USE_TTS] ?: Settings.DEFAULT_USE_TTS,
-            ttsEngine = this[Keys.TTS_ENGINE],
+            // Normalize "" to null: the getter treats both as system-default,
+            // so the snapshot must too or ""↔absent convergence fires a
+            // spurious diff (behavior-neutral initTts rebind).
+            ttsEngine = this[Keys.TTS_ENGINE]?.ifEmpty { null },
             shortTtsMessages = this[Keys.SHORT_TTS_MESSAGES] ?: Settings.DEFAULT_SHORT_TTS_MESSAGES,
             theme = this[Keys.THEME] ?: Settings.DEFAULT_THEME,
             language = this[Keys.LANGUAGE] ?: Settings.DEFAULT_LANGUAGE,

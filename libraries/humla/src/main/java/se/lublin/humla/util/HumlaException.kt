@@ -19,7 +19,6 @@ package se.lublin.humla.util
 
 import android.os.Parcel
 import android.os.Parcelable
-import com.google.protobuf.InvalidProtocolBufferException
 import se.lublin.humla.protobuf.Mumble
 
 /**
@@ -69,14 +68,21 @@ class HumlaException : Exception, Parcelable {
 
     private constructor(parcel: Parcel) : super(
         parcel.readString(),
-        parcel.readSerializable() as Throwable?
+        (parcel.readSerializable() as? Throwable?)
     ) {
-        reason = HumlaDisconnectReason.entries[parcel.readInt()]
+        reason = try {
+            HumlaDisconnectReason.entries[parcel.readInt()]
+        } catch (e: RuntimeException) {
+            HumlaDisconnectReason.OTHER_ERROR
+        }
         var reject: Mumble.Reject? = null
         if (parcel.readInt() == 1) {
             try {
-                reject = Mumble.Reject.parseFrom(parcel.createByteArray())
-            } catch (e: InvalidProtocolBufferException) {
+                val bytes = parcel.createByteArray()
+                if (bytes != null) {
+                    reject = Mumble.Reject.parseFrom(bytes)
+                }
+            } catch (e: RuntimeException) {
                 // Ignore corrupted parcel
             }
         }
@@ -85,8 +91,11 @@ class HumlaException : Exception, Parcelable {
         var userRemove: Mumble.UserRemove? = null
         if (parcel.readInt() == 1) {
             try {
-                userRemove = Mumble.UserRemove.parseFrom(parcel.createByteArray())
-            } catch (e: InvalidProtocolBufferException) {
+                val bytes = parcel.createByteArray()
+                if (bytes != null) {
+                    userRemove = Mumble.UserRemove.parseFrom(bytes)
+                }
+            } catch (e: RuntimeException) {
                 // Ignore corrupted parcel
             }
         }

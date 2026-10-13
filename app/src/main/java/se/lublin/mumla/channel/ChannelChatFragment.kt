@@ -226,7 +226,7 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
         if (clearItem != null && clearItem.icon != null) {
             val foregroundColor = host.theme.obtainStyledAttributes(
                 intArrayOf(android.R.attr.textColorPrimaryInverse)
-            ).getColor(0, -1)
+            ).use { it.getColor(0, -1) }
             val icon = clearItem.icon ?: throw NullPointerException("icon")
             icon.mutate().setColorFilter(foregroundColor, PorterDuff.Mode.MULTIPLY)
         }

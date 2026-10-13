@@ -101,8 +101,8 @@ class BluetoothScoManager {
          * (ODD-23): another bring-up attempt remains while fewer than
          * {@code maxAttempts} attempts have run. Refusal and no-device fail
          * unconditionally in their callers — no budget branch exists to drift.
-         * Package-visible for the JVM truth-table test; not part of the
-         * production API.
+         * Public for the JVM truth-table test (widened: Kotlin has no package
+         * visibility); not part of the production API.
          */
         @JvmStatic
         fun shouldRetryBringUp(attempts: Int, maxAttempts: Int): Boolean {
@@ -157,7 +157,9 @@ class BluetoothScoManager {
         MAX_ATTEMPTS
     )
 
-    internal constructor(
+    // Widened to public: Kotlin has no package visibility (was package-private
+    // for the JVM truth-table test).
+    constructor(
         context: Context?,
         listener: Listener?,
         connectTimeoutMs: Long,

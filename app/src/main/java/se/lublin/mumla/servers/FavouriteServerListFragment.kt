@@ -99,7 +99,7 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
             return true
         } else if (itemId == R.id.menu_quick_connect) {
             ServerEditFragment.createServerEditDialog(null, ServerEditFragment.Action.CONNECT_ACTION, true)
-                .show(fragmentManager ?: throw NullPointerException("fragmentManager"), "serverInfo")
+                .show(parentFragmentManager, "serverInfo")
             return true
         }
         return super.onOptionsItemSelected(item)
@@ -107,12 +107,12 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
 
     fun addServer() {
         ServerEditFragment.createServerEditDialog(null, ServerEditFragment.Action.ADD_ACTION, false)
-            .show(fragmentManager ?: throw NullPointerException("fragmentManager"), "serverInfo")
+            .show(parentFragmentManager, "serverInfo")
     }
 
     override fun editServer(server: Server) {
         ServerEditFragment.createServerEditDialog(server, ServerEditFragment.Action.EDIT_ACTION, false)
-            .show(fragmentManager ?: throw NullPointerException("fragmentManager"), "serverInfo")
+            .show(parentFragmentManager, "serverInfo")
     }
 
     override fun shareServer(server: Server) {

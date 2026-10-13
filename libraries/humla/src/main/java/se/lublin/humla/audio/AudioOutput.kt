@@ -544,6 +544,8 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
      * Manages render-lead pacing against the AudioTrack playback head.
      * Prevents render loops from out-pacing real-time consumption while
      * eliminating deadlocks caused by underruns, route resets, or idle periods.
+     * Widened to public: Kotlin has no package visibility (was package-private
+     * for the JVM pacer test).
      */
     class Pacer(renderSamples: Int, trackFrames: Int) {
         companion object {

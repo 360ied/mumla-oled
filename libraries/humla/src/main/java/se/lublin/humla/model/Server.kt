@@ -69,10 +69,12 @@ class Server(
 ) : Parcelable {
     @Ignore
     @IgnoredOnParcel
+    @Volatile
     var resolvedHost: String? = null
 
     @Ignore
     @IgnoredOnParcel
+    @Volatile
     var resolvedPort: Int = 0
 
     /**

@@ -50,49 +50,54 @@ class DataStorePreferenceDataStore(private val store: DataStore<Preferences>) : 
     private fun <T> read(block: suspend (Preferences) -> T): T =
         runBlocking(Dispatchers.IO) { block(store.data.first()) }
 
+    // NPE-exact with a message: platform callers never pass null keys, and a
+    // bare `key!!` would throw message-less. Mirrors the file's idiom elsewhere.
+    private fun keyOf(key: String?): String =
+        key ?: throw NullPointerException("Preference key is null")
+
     private fun write(block: suspend (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         runBlocking(Dispatchers.IO) { store.edit(block) }
     }
 
     override fun getBoolean(key: String?, defValue: Boolean): Boolean =
-        read { it[booleanPreferencesKey(key!!)] ?: defValue }
+        read { it[booleanPreferencesKey(keyOf(key))] ?: defValue }
 
     override fun putBoolean(key: String?, value: Boolean) =
-        write { it[booleanPreferencesKey(key!!)] = value }
+        write { it[booleanPreferencesKey(keyOf(key))] = value }
 
     override fun getInt(key: String?, defValue: Int): Int =
-        read { it[intPreferencesKey(key!!)] ?: defValue }
+        read { it[intPreferencesKey(keyOf(key))] ?: defValue }
 
     override fun putInt(key: String?, value: Int) =
-        write { it[intPreferencesKey(key!!)] = value }
+        write { it[intPreferencesKey(keyOf(key))] = value }
 
     override fun getLong(key: String?, defValue: Long): Long =
-        read { it[longPreferencesKey(key!!)] ?: defValue }
+        read { it[longPreferencesKey(keyOf(key))] ?: defValue }
 
     override fun putLong(key: String?, value: Long) =
-        write { it[longPreferencesKey(key!!)] = value }
+        write { it[longPreferencesKey(keyOf(key))] = value }
 
     override fun getFloat(key: String?, defValue: Float): Float =
-        read { it[floatPreferencesKey(key!!)] ?: defValue }
+        read { it[floatPreferencesKey(keyOf(key))] ?: defValue }
 
     override fun putFloat(key: String?, value: Float) =
-        write { it[floatPreferencesKey(key!!)] = value }
+        write { it[floatPreferencesKey(keyOf(key))] = value }
 
     override fun getString(key: String?, defValue: String?): String? =
-        read { it[stringPreferencesKey(key!!)] ?: defValue }
+        read { it[stringPreferencesKey(keyOf(key))] ?: defValue }
 
     override fun putString(key: String?, value: String?) =
         write {
-            if (value == null) it.remove(stringPreferencesKey(key!!))
-            else it[stringPreferencesKey(key!!)] = value
+            if (value == null) it.remove(stringPreferencesKey(keyOf(key)))
+            else it[stringPreferencesKey(keyOf(key))] = value
         }
 
     override fun getStringSet(key: String?, defValues: Set<String>?): Set<String>? =
-        read { it[stringSetPreferencesKey(key!!)] ?: defValues }
+        read { it[stringSetPreferencesKey(keyOf(key))] ?: defValues }
 
     override fun putStringSet(key: String?, values: Set<String>?) =
         write {
-            if (values == null) it.remove(stringSetPreferencesKey(key!!))
-            else it[stringSetPreferencesKey(key!!)] = values
+            if (values == null) it.remove(stringSetPreferencesKey(keyOf(key)))
+            else it[stringSetPreferencesKey(keyOf(key))] = values
         }
 }

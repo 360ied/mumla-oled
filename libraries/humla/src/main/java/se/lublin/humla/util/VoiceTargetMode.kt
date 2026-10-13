@@ -28,7 +28,9 @@ enum class VoiceTargetMode {
     companion object {
         @JvmStatic
         fun fromId(targetId: Byte): VoiceTargetMode {
-            val id = targetId.toInt()
+            // Unsigned mask: matches the and 0xFF masking at the encode site
+            // (HumlaService.setVoiceTargetId), so -1 and 255 agree.
+            val id = targetId.toInt() and 0xFF
             if (id == 0) {
                 return NORMAL
             } else if (id in 1..30) {
@@ -36,7 +38,7 @@ enum class VoiceTargetMode {
             } else if (id == 31) {
                 return SERVER_LOOPBACK
             } else {
-                throw IllegalArgumentException()
+                throw IllegalArgumentException("Unknown voice target mode id: $id")
             }
         }
     }

@@ -138,7 +138,7 @@ class AccessTokenFragment : HumlaServiceFragment() {
             if (convertView == null) {
                 // NPE-exact: the original dereferenced getActivity() unconditionally.
                 val host = activity ?: throw NullPointerException("activity")
-                view = host.layoutInflater.inflate(R.layout.token_row, null, false)
+                view = host.layoutInflater.inflate(R.layout.token_row, parent, false)
             }
             // NPE-exact: inflate never returns null here; the original dereferenced view.
             val row = view ?: throw NullPointerException("view")

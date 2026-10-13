@@ -72,7 +72,7 @@ object DialogUtils {
         val inflater = LayoutInflater.from(context)
         val dialogView = inflater.inflate(R.layout.dialog_news, null)
         val newsTextView = dialogView.findViewById(R.id.news_text_view) as TextView
-        newsTextView.text = HtmlCompat.fromHtml(sb.toString(), 0)
+        newsTextView.text = HtmlCompat.fromHtml(sb.toString(), HtmlCompat.FROM_HTML_MODE_LEGACY)
 
         MaterialAlertDialogBuilder(context)
             .setTitle(R.string.app_news)

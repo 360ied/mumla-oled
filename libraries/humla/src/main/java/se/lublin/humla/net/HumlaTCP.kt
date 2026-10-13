@@ -191,7 +191,11 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
             val host = mHost
             val port = mPort
             mSocketFactory.setExpectedHost(host)
-            mTCPSocket = mSocketFactory.createSocket(requireNotNull(host), port, CONNECT_TIMEOUT)
+            mTCPSocket = mSocketFactory.createSocket(
+                host ?: throw NullPointerException("host"),
+                port,
+                CONNECT_TIMEOUT
+            )
             val tcpSocket = mTCPSocket ?: throw NullPointerException("TCP socket")
 
             tcpSocket.keepAlive = true
@@ -388,8 +392,8 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
      * rely on pins alone. Returns false after dispatching the failure path;
      * the caller must return without reading any frames. Note the
      * {@code finally} block in {@code run()} still delivers
-     * {@code onTCPConnectionDisconnect} afterwards (pre-existing double
-     * delivery, also true of the {@code SSLHandshakeException} path).
+     * {@code onTCPConnectionDisconnect} afterwards (a distinct callback from
+     * {@code onTLSHandshakeFailed}: single Disconnect delivery, by design).
      */
     private fun verifyServerIdentity(): Boolean {
         val leaf = presentedLeaf()

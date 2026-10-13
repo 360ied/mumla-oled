@@ -26,7 +26,6 @@ import android.media.AudioManager
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkInfo
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Handler
@@ -214,8 +213,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
     // SCO absence). Present sinks select the media triple; SCO and the bare
-    // phone stay voice (computeVoiceRoute). Listener is API 23+; below that
-    // voice always. Named for what it stores (the gated decision, not raw
+    // phone stay voice (computeVoiceRoute). Listener is always registered
+    // (minSdk 33); no version gate remains. Named for what it stores (the gated decision, not raw
     // presence): recomputed from the live query on every route application.
     @Volatile
     private var mMediaRouteSelected: Boolean = false
@@ -254,7 +253,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     private fun armRouteSettle() {
         routeSettleJob?.cancel()
         mSettlePending = true
-        routeSettleJob = lifecycleScope.launch {
+        val launchedSettle = lifecycleScope.launch {
             delay(ROUTE_SETTLE_RECHECK_MS)
             // Dispatch consumes the queued protection: clear the flag so a
             // later fresh edge can arm anew (funnel top also clears fired).
@@ -262,6 +261,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             mSettleFired = true
             applyAudioRoute("media settle recheck", false)
         }
+        launchedSettle.invokeOnCompletion {
+            if (routeSettleJob === launchedSettle) routeSettleJob = null
+        }
+        routeSettleJob = launchedSettle
     }
 
     private fun cancelRouteSettle() {
@@ -476,7 +479,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // teardown. Uses the application context so the lock outlives config
         // changes; reference-counted false to mirror mWakeLock semantics.
         // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): LOW_LATENCY needs
-        // API 30+ while this library targets API 21+, and HIGH_PERF is the
+        // API 30+ (below the minSdk 33 floor, so always available), and HIGH_PERF is the
         // documented VoIP-compatible mode available on all supported devices.
         try {
             val wifiManager = applicationContext
@@ -637,6 +640,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             acquireWifiLock()
 
+            // Tear down any prior connection before overwriting: a second
+            // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
+            // NetworkCallback reconnect) must not orphan the old socket.
+            mConnection?.disconnect()
+            mConnection = null
             val connection = HumlaConnection(this)
             mConnection = connection
             connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
@@ -916,7 +924,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                     mNetworkCallback = object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
                             lifecycleScope.launch {
-                                if (mReconnecting) {
+                                // CONNECTING guard mirrors onStartCommand's
+                                // duplicate-connect guard: two rapid onAvailable
+                                // events must not spawn parallel connections.
+                                if (mReconnecting &&
+                                    mConnectionState != ConnectionState.CONNECTING
+                                ) {
                                     Log.v(TAG, "Network available, triggering immediate reconnect.")
                                     reconnectJob?.cancel()
                                     reconnectJob = null
@@ -1164,7 +1177,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     /**
      * Synchronous media-sink presence: BT A2DP / BLE / wired-USB headset
-     * outputs currently attached. API 23+ only; below that always false
+     * outputs currently attached (minSdk 33: audio-device APIs always present).
      * (voice). BLE/LE Audio and hearing aids ride the media path like A2DP
      * per the echo-cancellation plan (accepted gap: no AEC there); only the
      * SCO path ever selects voice over Bluetooth.
@@ -1552,8 +1565,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     /**
      * Loads all defined settings from the given delta into the HumlaService.
      * Null fields are unchanged. Some settings may only take effect after a
-     * reconnect. Nothing inside throws; the pipeline recreate funnels through
-     * applyAudioRoute, which handles AudioException internally.
+     * reconnect. Throws IllegalArgumentException on unknown transmit mode;
+     * the pipeline recreate funnels through applyAudioRoute, which handles
+     * AudioException internally.
      * @param delta A one-shot configuration command.
      * @return true if a reconnect is required for changes to take effect.
      * @see se.lublin.humla.HumlaService
@@ -1567,7 +1581,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
         val certificate = delta.certificate
         if (certificate != null) {
-            mCertificate = certificate.data
+            mCertificate = certificate.data.copyOf()
             reconnectNeeded = true
             // A null password keeps the previous one, mirroring the old
             // bundle where an absent password key left it untouched.
@@ -1602,7 +1616,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 Constants.TRANSMIT_VOICE_ACTIVITY ->
                     inputMode = mActivityInputMode
                 else ->
-                    throw IllegalArgumentException()
+                    throw IllegalArgumentException("Unknown transmit mode: $mTransmitMode")
             }
             mAudioBuilder.setInputMode(inputMode)
         }
@@ -1620,7 +1634,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             reconnectNeeded = true
         }
         if (delta.accessTokens != null) {
-            mAccessTokens = delta.accessTokens
+            mAccessTokens = delta.accessTokens?.toList()
             val connection = mConnection
             if (connection != null && connection.isConnected()) {
                 connection.sendAccessTokens(requireNotNull(mAccessTokens))
@@ -1693,11 +1707,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             updateBluetoothScoRoute()
         }
         if (delta.localMuteHistory != null) {
-            mLocalMuteHistory = delta.localMuteHistory
+            mLocalMuteHistory = delta.localMuteHistory?.toList()
             reconnectNeeded = true
         }
         if (delta.localIgnoreHistory != null) {
-            mLocalIgnoreHistory = delta.localIgnoreHistory
+            mLocalIgnoreHistory = delta.localIgnoreHistory?.toList()
             reconnectNeeded = true
         }
         val adaptiveLeveler = delta.adaptiveLeveler
@@ -1780,11 +1794,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun cancelReconnect() {
         mReconnectAttempts = 0
         setReconnecting(false)
-        val wakeLock = mWakeLock
-        if (wakeLock != null && wakeLock.isHeld) {
-            wakeLock.release()
+        // Only release the Doze shield when no live call holds it: cancelling
+        // a (possibly non-existent) future retry while CONNECTED must not drop
+        // the indefinite hold acquired in onConnectionSynchronized.
+        if (mConnectionState != ConnectionState.CONNECTED) {
+            val wakeLock = mWakeLock
+            if (wakeLock != null && wakeLock.isHeld) {
+                wakeLock.release()
+            }
+            releaseWifiLock()
         }
-        releaseWifiLock()
     }
 
     open override fun getTargetServer(): Server? {
@@ -2214,8 +2233,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun setVoiceTargetId(targetId: Byte) {
-        // Mask, not Byte.toUnsignedInt: avoids the dependency (historical
-        // minSdk-21 era without core-library desugaring).
+        // Mask, not Byte.toUnsignedInt: avoids the core-library-desugaring dependency.
         if ((targetId.toInt() and 0xFF) > 0x1F) {
             throw IllegalArgumentException(
                 "Target ID must be at most 5 bits: " + (targetId.toInt() and 0xFF)
@@ -2277,6 +2295,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val ch = requireModelHandler().getChannels()[channelId]
             return ch != null && ch.isListening
         } catch (e: NotSynchronizedException) {
+            return false
+        } catch (e: IllegalArgumentException) {
+            // Disconnected (null model handler): fail closed to false.
             return false
         }
     }

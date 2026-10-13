@@ -16,9 +16,9 @@ Three migrations, one branch:
    stringly-typed `configureExtras` bundle, and the `AsyncTask`s go away.
    The 48-method `IHumlaSession` facade stays frozen throughout (a role-interface split is post-migration follow-up work).
 2. **Data layer → Room + DataStore + Hilt.** Hand SQL in
-   [`MumlaSQLiteDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java),
+   [`MumlaRoomDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt),
    the 46-accessor
-   [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.java)
+   [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.kt)
    blob, and the pref→bundle→effect double dispatch become Room
    entities, a typed `ConfigDelta`, and an injected graph.
 3. **UI → Compose, internals only.** Fragments, `RecyclerView` adapters,
