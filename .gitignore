@@ -2,6 +2,7 @@
 build/
 .idea/
 .gradle/
+.kotlin/
 *.iml
 signing.gradle
 
