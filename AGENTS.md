@@ -47,9 +47,10 @@
 - **FOSS Flavor**: The project is configured exclusively for the `foss` product flavor. Build with the Nix dev shell:
   - Debug APK: `nix develop --command ./gradlew assembleFossDebug`
   - Release APK: `nix develop --command ./gradlew assembleFossRelease` (output: `app/build/outputs/apk/foss/release/mumla-foss-release.apk`; requires the local uncommitted `app/signing.gradle` defining `signingConfigs.release`, otherwise the build fails)
-- **ADB Launch**: Application ID is `se.lublin.mumla.oled15` (Java namespace is `se.lublin.mumla`). Launch with:
+- **ADB (inside dev shell only)**: Application ID is `se.lublin.mumla.oled15` (Java namespace is `se.lublin.mumla`). `adb` is provided by the Nix dev shell — outside it `adb` is not on `PATH` and the `~/Android/Sdk` binary cannot run directly on NixOS. Install and launch with:
   ```bash
-  adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
+  nix develop --command ./gradlew :app:installFossDebug
+  nix develop --command adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
   ```
 
 ## Nix Environment
