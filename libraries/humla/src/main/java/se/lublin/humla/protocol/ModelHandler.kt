@@ -36,6 +36,15 @@ import java.util.concurrent.ConcurrentHashMap
  * Handles network messages related to the user-channel tree model.
  * This includes channels, users, messages, and permissions.
  * Created by andrew on 18/07/13.
+ *
+ * Slice 4 threading contract: all message* writers are confined to the
+ * single-threaded model dispatcher, which is the main thread
+ * (Dispatchers.Main.immediate equivalent — HumlaTCP fans TCP frames out via
+ * its main-Looper handler, exactly today's main-confinement). The
+ * ConcurrentHashMaps stay: the UDP-thread getUser path reads lock-free and
+ * depends on them. @Synchronized on writers is retained as defense-in-depth
+ * beside confinement (same monitor as the optimistic-mute path in
+ * HumlaService). HumlaCallbacks fan-out stays as-is (no SharedFlow).
  */
 class ModelHandler(
     private val mContext: Context,
