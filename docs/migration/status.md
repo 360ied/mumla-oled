@@ -190,9 +190,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 ## Next
 
-Slice 4 — coroutines service core, per [slices](slices.md).
+Slice 5 — Kotlin conversion, `:app`, per [slices](slices.md).
 
-## Slice 4 — Coroutines service core (IN PROGRESS)
+## Slice 4 — Coroutines service core (DONE 2026-10-13, `check.sh` green)
 
 - `940e3e38` — LifecycleService base (no behavior change) + static
   `getReconnectDelayForAttempts` + `ReconnectBackoffTest`/`PingIntervalTest` pins.
@@ -214,9 +214,8 @@ Slice 4 — coroutines service core, per [slices](slices.md).
   `@Synchronized` retained, callbacks fan-out unchanged (no SharedFlow).
   Network/AudioDevice callbacks hop directly into `lifecycleScope` (single
   consumer fire-and-forget — callbackFlow adds no backpressure value here).
-- Owed to close slice 4: full `./scripts/check.sh` (JVM + native) green at
-  the boundary (done, `b7326ab2`) + on-device torture (reconnect storm,
-  SCO flap, A2DP stagger, route flip mid-call).
-- On-device result: fossDebug installed, basic functionality
-  (boot/connect/voice) confirmed by the user. Deeper torture (reconnect
-  storm, SCO flap, A2DP stagger, route flip mid-call) still open.
+- Verification: full `./scripts/check.sh` green at the slice boundary
+  (JVM + native suites, `b7326ab2`); fossDebug installed on hardware with
+  basic functionality (boot/connect/voice) confirmed by the user.
+- Owed: deeper torture still open (reconnect storm, SCO flap, A2DP stagger,
+  route flip mid-call); R8/release still deferred to pre-landing.

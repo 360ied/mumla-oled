@@ -1,6 +1,6 @@
 # Mumla OLED Modernization Migration
 
-Status: in progress. Slice 0 landed on branch `migration/full-modern`
+Status: in progress. Slices 0-4 landed on branch `migration/full-modern`
 (see [status](status.md) for the progress log); no `master` impact — the root
 repository stays on `master` and the migration branch merges only on explicit
 request.
