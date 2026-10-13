@@ -43,6 +43,14 @@ dependencies {
     // No code uses it yet.
     implementation libs.hilt.android
     kapt libs.hilt.compiler
+    // Migration Slice 4 coroutines service core: LifecycleService base +
+    // lifecycleScope is the service scope; ConnectionScope + UDP Channel need
+    // coroutines-core. api for lifecycle (public base class), implementation
+    // for coroutines (internal use).
+    api libs.lifecycle.service
+    api libs.lifecycle.runtime.ktx
+    implementation libs.coroutines.core
+    testImplementation libs.coroutines.test
     testImplementation 'junit:junit:4.13.2'
 }
 

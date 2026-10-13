@@ -18,7 +18,6 @@
 
 package se.lublin.humla
 
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceCallback
@@ -35,6 +34,8 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import android.widget.Toast
+import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AudioOutput
@@ -77,7 +78,7 @@ import java.io.IOException
 import java.security.cert.X509Certificate
 import java.util.ArrayList
 
-open class HumlaService : Service(), IHumlaService, IHumlaSession,
+open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     HumlaConnection.HumlaConnectionListener, HumlaLogger {
 
     companion object {
@@ -131,6 +132,23 @@ open class HumlaService : Service(), IHumlaService, IHumlaSession,
         @JvmStatic
         fun computeVoiceRoute(scoActive: Boolean, mediaDevicesPresent: Boolean): Boolean {
             return scoActive || !mediaDevicesPresent
+        }
+
+        /**
+         * Pure reconnect-backoff truth table behind [getReconnectDelay].
+         * Static so the JVM test pins the switch without constructing a
+         * Service (mirrors computeVoiceRoute above). Slice 4 replaces the
+         * Handler postDelayed with delay() but keeps these exact delays.
+         */
+        @JvmStatic
+        fun getReconnectDelayForAttempts(attempts: Int): Int {
+            return when (attempts) {
+                0 -> RECONNECT_DELAY_INITIAL
+                1 -> 3000
+                2 -> 6000
+                3 -> 12000
+                else -> RECONNECT_DELAY_MAX
+            }
         }
     }
 
@@ -568,7 +586,7 @@ open class HumlaService : Service(), IHumlaService, IHumlaSession,
         releaseWifiLock()
     }
 
-    open override fun onBind(intent: Intent?): IBinder {
+    open override fun onBind(intent: Intent): IBinder {
         return HumlaBinder(this)
     }
 
@@ -863,13 +881,7 @@ open class HumlaService : Service(), IHumlaService, IHumlaSession,
     }
 
     open override fun getReconnectDelay(): Int {
-        return when (mReconnectAttempts) {
-            0 -> RECONNECT_DELAY_INITIAL
-            1 -> 3000
-            2 -> 6000
-            3 -> 12000
-            else -> RECONNECT_DELAY_MAX
-        }
+        return getReconnectDelayForAttempts(mReconnectAttempts)
     }
 
     private fun registerNetworkCallback() {
