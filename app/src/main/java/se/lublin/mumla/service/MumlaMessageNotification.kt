@@ -49,6 +49,16 @@ class MumlaMessageNotification(context: Context) {
      * @param message The message to notify the user about.
      */
     fun show(message: IMessage) {
+        // No backlog while notifications are denied (TIRAMISU+): appending
+        // here would pile stale entries that flood if the grant is flipped
+        // later. The grant gate below stays as the single notify point.
+        if (ContextCompat.checkSelfPermission(
+                mContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         mUnreadMessages.add(message)
 
         val style = NotificationCompat.InboxStyle()
@@ -126,6 +136,7 @@ class MumlaMessageNotification(context: Context) {
     companion object {
         private const val NOTIFICATION_ID = 2
         private const val MESSAGE_CHANNEL_ID = "message_channel"
+        @Volatile
         private var sChannelCreated: Boolean = false
         private val VIBRATION_PATTERN = longArrayOf(0, 100)
     }

@@ -2191,8 +2191,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun linkChannels(channelA: IChannel?, channelB: IChannel?) {
-        val a = requireNotNull(channelA)
-        val b = requireNotNull(channelB)
+        val a = channelA ?: throw NullPointerException("channelA")
+        val b = channelB ?: throw NullPointerException("channelB")
         val csb = Mumble.ChannelState.newBuilder()
         csb.channelId = a.id
         csb.addLinksAdd(b.id)
@@ -2200,8 +2200,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun unlinkChannels(channelA: IChannel?, channelB: IChannel?) {
-        val a = requireNotNull(channelA)
-        val b = requireNotNull(channelB)
+        val a = channelA ?: throw NullPointerException("channelA")
+        val b = channelB ?: throw NullPointerException("channelB")
         val csb = Mumble.ChannelState.newBuilder()
         csb.channelId = a.id
         csb.addLinksRemove(b.id)
@@ -2209,7 +2209,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun unlinkAllChannels(channel: IChannel?) {
-        val ch = requireNotNull(channel)
+        val ch = channel ?: throw NullPointerException("channel")
         val csb = Mumble.ChannelState.newBuilder()
         csb.channelId = ch.id
         for (linked in ch.links) {
@@ -2219,12 +2219,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun registerWhisperTarget(target: WhisperTarget?): Byte {
-        val id = mWhisperTargetList.append(requireNotNull(target))
+        val id = mWhisperTargetList.append(target ?: throw NullPointerException("target"))
         if (id.toInt() < 0) {
             return (-1).toByte()
         }
 
-        val voiceTarget = requireNotNull(target).createTarget()
+        val voiceTarget = (target ?: throw NullPointerException("target")).createTarget()
         val vtb = Mumble.VoiceTarget.newBuilder()
         vtb.id = id.toInt()
         vtb.addTargets(voiceTarget)

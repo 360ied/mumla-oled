@@ -175,7 +175,9 @@ class MumlaOverlay(service: MumlaService) {
                     mOverlayParams.y = clampedY
                     try {
                         mWindowManager.updateViewLayout(mOverlayView, mOverlayParams)
-                    } catch (e: IllegalArgumentException) {
+                    } catch (e: RuntimeException) {
+                        // Broad on purpose (cf. HotCorner): token loss or a
+                        // detached view must not crash the layout pass.
                         Log.d(TAG, "exception updating overlay layout on layout change: $e")
                     }
                 }
@@ -227,10 +229,11 @@ class MumlaOverlay(service: MumlaService) {
                             if (mShown) {
                                 // Guarded: disconnect mid-drag calls hide() and
                                 // removeView, and the next MOVE would throw
-                                // IllegalArgumentException (View not attached).
+                                // (View not attached). Broad catch on purpose
+                                // (cf. HotCorner): token loss must not crash.
                                 try {
                                     mWindowManager.updateViewLayout(mOverlayView, mOverlayParams)
-                                } catch (e: IllegalArgumentException) {
+                                } catch (e: RuntimeException) {
                                     Log.d(TAG, "overlay detached mid-drag; dropping move", e)
                                 }
                             }

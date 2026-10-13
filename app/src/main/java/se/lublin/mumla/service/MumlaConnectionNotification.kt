@@ -507,6 +507,7 @@ class MumlaConnectionNotification {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "connected_channel_v9"
         private const val LEGACY_CHANNEL_ID = "connected_channel"
+        @Volatile
         private var sChannelCreated: Boolean = false
 
         private const val REQUEST_CODE_ACTIVITY = 0

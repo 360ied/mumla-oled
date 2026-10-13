@@ -377,8 +377,9 @@ open class MumlaService : HumlaService(),
                 for (anchor: Element in parsedMessage.getElementsByTag("A")) {
                     // Get just the domain portion of links
                     val href = anchor.attr("href")
-                    // Only shorten anchors without custom text
-                    if (href != null && href == anchor.text()) {
+                    // Element.attr() returns "" (never null) for a missing
+                    // attribute; compare content only.
+                    if (href.isNotEmpty() && href == anchor.text()) {
                         val urlHostname = HtmlUtils.getHostnameFromLink(href)
                         if (urlHostname != null) {
                             anchor.text(getString(R.string.chat_message_tts_short_link, urlHostname))
