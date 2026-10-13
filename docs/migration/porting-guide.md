@@ -53,7 +53,19 @@ Convert syntax first, restructure second. One file per commit.
 - **Nullability:** platform types are the top source of conversion bugs.
   Every Java value crossing into Kotlin gets an explicit type — nullable
   unless the converter can prove otherwise. No `!!` in converted code;
-  use `requireNotNull` with a message or early return.
+  snapshot fields to locals, then use an explicit null check with early
+  return, or throw `NullPointerException` with a message where the original
+  dereferenced unconditionally (preserves the exact throw type; `requireNotNull`
+  throws `IllegalArgumentException` and is reserved for new internal hardening
+  on provably unreachable paths). Public API boundaries keep NPE-exact
+  behavior (`Objects.requireNonNull`); private helpers may use `requireNotNull`.
+- **Openness:** plain Kotlin members are `final` by default but `override`
+  members stay open — do NOT add redundant `open` to overrides. Add `open`
+  to plain classes/members only where a subclass exists (Java subclasses
+  re-override them: services, observers, tests). Otherwise converted classes
+  stay `final` (documents intentional sealing; absence of subclasses verified
+  by grep). Kotlin has no package visibility: widen test seams to public
+  with a comment, never `internal` (name-mangled, not package-private).
 - **Getters/setters → properties**, `static` → `companion object` or
   top-level functions, constants stay `const val`.
 - **Models:** `User`/`Channel`/`Server`/`Message` become Kotlin classes

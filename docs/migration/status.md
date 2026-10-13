@@ -169,6 +169,25 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   native suites). Slice 3 complete: no `.java` remains under `:libraries:humla`
   except `Server` (slice 5) and the generated protobuf pair (never touched).
 
+## Review (slice 3)
+
+- Pedantic review fan-out (7 slices, `reviewer` agents) over the whole of
+  slice 3 completed; synthesis concurred on three contained P1s (dropped
+  `volatile` on `User.isSuppressed`, `PacketBuffer` int/long widening and
+  truncation slips, `spkiSha256`/Builder NPE→IAE swaps) plus notes (TAG
+  restoration, trust-manager null guards, `Permissions.All` constness,
+  `isIpLiteral` exactness, small hygiene).
+- `02e23c26` fixes all concurred items and eliminates every `!!` in humla
+  main (92 sites → locals with explicit null handling, NPE-exact) with
+  `check.sh` re-gated green.
+- Contested with evidence (no action): `HumlaObserver` openness (Kotlin
+  `override` is open by default — `javap` + green build disprove the BLOCK),
+  `const`-in-companion Java visibility (`javap` shows outer statics),
+  inner-`isPinnedLeaf` widening (wrapper class is already private).
+  Accepted as intentional: widened test seams, internal `requireNotNull`
+  hardening, null-filtering over null-carrying, fail-fast talking listener.
+  Guide §1 amended (openness, NPE-exact boundaries, seam widening).
+
 ## Next
 
 Slice 4 — coroutines service core, per [slices](slices.md).
