@@ -32,8 +32,7 @@ already merged.
     visual polish, audible sound/mic improvements, and connection stability.
   - **Developer/Internal**: Test harnesses, unit test migrations, CI/build
     tweaks, lint fixes, dev scripts, and pure internal code refactorings.
-- Developer and internal changes must **not** be included in release highlights
-  or the user-facing commits list.
+- Developer and internal changes must **not** be included in release highlights.
 
 ## 3. Tag and push
 
@@ -103,10 +102,6 @@ gitignored).
   - Under each heading, use bullet points formatted as:
     `* **Feature/Benefit Summary**: 1–2 plain-language sentences explaining what changed and why it helps the user.`
   - Order by importance (primary feature/fix first, secondary items after).
-- **`## Commits`**:
-  - Bullet list of `` - `commit subject` `` for user-facing changes only.
-  - Omit developer tooling, test-only, build, and CI commits (e.g. `check:`,
-    `build:`, `nix:`, internal test refactors).
 - **Universal APK Trailer** (must be the exact concluding paragraph):
 
   ```markdown
