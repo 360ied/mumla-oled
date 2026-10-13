@@ -90,7 +90,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         }
 
         @Override
-        void playPttSound(boolean on) {
+        public void playPttSound(boolean on) {
             if (on) {
                 mPttOnCueCalls++;
             } else {
