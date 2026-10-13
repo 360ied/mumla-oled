@@ -15,13 +15,13 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.channel;
+package se.lublin.mumla.channel
 
-import se.lublin.humla.model.IChannel;
+import se.lublin.humla.model.IUser
 
 /**
  * Created by andrew on 20/10/14.
  */
-public interface OnChannelClickListener {
-    public void onChannelClick(IChannel channel);
+interface OnUserClickListener {
+    fun onUserClick(user: IUser)
 }

@@ -56,7 +56,7 @@ class MumbleImageGetter : Html.ImageGetter {
     /**
      * Callback interface invoked on the main UI thread when a background image finishes loading.
      */
-    interface OnImageLoadedListener {
+    fun interface OnImageLoadedListener {
         fun onImageLoaded()
     }
 
