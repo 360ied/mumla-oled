@@ -159,7 +159,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
         }
 
         assertEquals("Send queue must be bounded to default capacity (10)",
-                HumlaUDP.DEFAULT_SEND_QUEUE_CAPACITY, humlaUDP.getSendQueue().size());
+                HumlaUDP.DEFAULT_SEND_QUEUE_CAPACITY, humlaUDP.getQueuedCount());
         assertEquals("MAX_SEND_QUEUE_CAPACITY alias must match default capacity",
                 HumlaUDP.DEFAULT_SEND_QUEUE_CAPACITY, HumlaUDP.MAX_SEND_QUEUE_CAPACITY);
     }
@@ -180,12 +180,12 @@ public class HumlaUDPSendQueueTest extends TestCase {
         }
 
         assertEquals("Send queue size must equal capacity",
-                humlaUDP.getSendQueueCapacity(), humlaUDP.getSendQueue().size());
+                humlaUDP.getSendQueueCapacity(), humlaUDP.getQueuedCount());
 
         // With capacity 10 and 15 packets sent, packets 1-5 must have been dropped.
         // Packets 6 through 15 must be present in exact order.
         for (int expectedSeq = 6; expectedSeq <= 15; expectedSeq++) {
-            DatagramPacket packet = humlaUDP.getSendQueue().poll();
+            DatagramPacket packet = humlaUDP.pollQueuedPacket();
             assertNotNull("Packet must not be null", packet);
 
             byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
@@ -194,7 +194,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
             assertEquals("Expected payload second byte", (byte) (expectedSeq * 2), decrypted[1]);
         }
 
-        assertTrue("Queue must be empty after polling all 10 packets", humlaUDP.getSendQueue().isEmpty());
+        assertTrue("Queue must be empty after polling all 10 packets", humlaUDP.isQueueEmpty());
     }
 
     /**
@@ -225,12 +225,12 @@ public class HumlaUDPSendQueueTest extends TestCase {
             }
 
             assertEquals("Queue must be capped at expected capacity for fpp=" + fpp,
-                    expectedCap, humlaUDP.getSendQueue().size());
+                    expectedCap, humlaUDP.getQueuedCount());
 
             // Verify freshest packets are retained in order (first expectedCap packets dropped)
             int firstRetainedSeq = totalPackets - expectedCap + 1;
             for (int expectedSeq = firstRetainedSeq; expectedSeq <= totalPackets; expectedSeq++) {
-                DatagramPacket packet = humlaUDP.getSendQueue().poll();
+                DatagramPacket packet = humlaUDP.pollQueuedPacket();
                 assertNotNull(packet);
                 byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
                 assertNotNull(decrypted);
@@ -255,17 +255,17 @@ public class HumlaUDPSendQueueTest extends TestCase {
             byte[] payload = new byte[]{(byte) i};
             humlaUDP.sendMessage(payload, payload.length);
         }
-        assertEquals(20, humlaUDP.getSendQueue().size());
+        assertEquals(20, humlaUDP.getQueuedCount());
 
         // Dynamically change to 60ms packets (fpp=6, capacity 4) while connected
         humlaUDP.setTargetFramesPerPacket(6);
 
         assertEquals(4, humlaUDP.getSendQueueCapacity());
-        assertEquals("Queue should immediately shrink to 4 packets", 4, humlaUDP.getSendQueue().size());
+        assertEquals("Queue should immediately shrink to 4 packets", 4, humlaUDP.getQueuedCount());
 
         // The remaining 4 packets must be the 4 newest (17, 18, 19, 20)
         for (int expectedSeq = 17; expectedSeq <= 20; expectedSeq++) {
-            DatagramPacket packet = humlaUDP.getSendQueue().poll();
+            DatagramPacket packet = humlaUDP.pollQueuedPacket();
             assertNotNull(packet);
             byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
             assertNotNull(decrypted);
@@ -290,11 +290,11 @@ public class HumlaUDPSendQueueTest extends TestCase {
             humlaUDP.sendMessage(payload, payload.length);
         }
 
-        assertEquals("Queue size must equal explicit capacity", customCapacity, humlaUDP.getSendQueue().size());
+        assertEquals("Queue size must equal explicit capacity", customCapacity, humlaUDP.getQueuedCount());
 
         // Packets 1-3 dropped; 4-6 remain
         for (int expectedSeq = 4; expectedSeq <= 6; expectedSeq++) {
-            DatagramPacket packet = humlaUDP.getSendQueue().poll();
+            DatagramPacket packet = humlaUDP.pollQueuedPacket();
             assertNotNull(packet);
             byte[] decrypted = mServerCrypt.decrypt(packet.getData(), packet.getLength());
             assertNotNull(decrypted);
@@ -329,19 +329,19 @@ public class HumlaUDPSendQueueTest extends TestCase {
         humlaUDP.setConnectedForTesting(false, loopback, 12345);
         byte[] payload = new byte[]{0x01, 0x02};
         humlaUDP.sendMessage(payload, payload.length);
-        assertTrue("Queue must be empty when disconnected", humlaUDP.getSendQueue().isEmpty());
+        assertTrue("Queue must be empty when disconnected", humlaUDP.isQueueEmpty());
 
         // 2. Connected but invalid crypt state
         CryptState invalidCrypt = new CryptState(); // uninitialized
         HumlaUDP invalidCryptUDP = new HumlaUDP(invalidCrypt, mDummyListener, mDummyHandler);
         invalidCryptUDP.setConnectedForTesting(true, loopback, 12345);
         invalidCryptUDP.sendMessage(payload, payload.length);
-        assertTrue("Queue must be empty when CryptState is invalid", invalidCryptUDP.getSendQueue().isEmpty());
+        assertTrue("Queue must be empty when CryptState is invalid", invalidCryptUDP.isQueueEmpty());
 
         // 3. Connected with valid crypt, but null resolved host
         humlaUDP.setConnectedForTesting(true, null, 12345);
         humlaUDP.sendMessage(payload, payload.length);
-        assertTrue("Queue must be empty when resolved host is null", humlaUDP.getSendQueue().isEmpty());
+        assertTrue("Queue must be empty when resolved host is null", humlaUDP.isQueueEmpty());
     }
 
     /**
@@ -356,11 +356,11 @@ public class HumlaUDPSendQueueTest extends TestCase {
             byte[] payload = new byte[]{(byte) i};
             humlaUDP.sendMessage(payload, payload.length);
         }
-        assertEquals(5, humlaUDP.getSendQueue().size());
+        assertEquals(5, humlaUDP.getQueuedCount());
 
         humlaUDP.disconnect();
         assertFalse(humlaUDP.isRunning());
-        assertTrue("Send queue must be empty after disconnect", humlaUDP.getSendQueue().isEmpty());
+        assertTrue("Send queue must be empty after disconnect", humlaUDP.isQueueEmpty());
     }
 
     /**
@@ -390,7 +390,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
                             byte[] payload = new byte[]{(byte) threadId, (byte) i};
                             humlaUDP.sendMessage(payload, payload.length);
 
-                            int currentSize = humlaUDP.getSendQueue().size();
+                            int currentSize = humlaUDP.getQueuedCount();
                             int prevMax;
                             do {
                                 prevMax = maxObservedQueueSize.get();
@@ -413,7 +413,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
         assertTrue("Observed queue size (" + maxObservedQueueSize.get() + ") must never exceed capacity",
                 maxObservedQueueSize.get() <= humlaUDP.getSendQueueCapacity());
         assertEquals("Final queue size must be capacity",
-                humlaUDP.getSendQueueCapacity(), humlaUDP.getSendQueue().size());
+                humlaUDP.getSendQueueCapacity(), humlaUDP.getQueuedCount());
     }
 
     /**

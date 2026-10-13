@@ -44,6 +44,18 @@ public class ServerInfoResponseTest extends TestCase {
         assertEquals(5, response.getLatency());
     }
 
+    public void testVersionString_MasksUnsignedBytes() {
+        // Components >= 128 must not print negative (byte sign extension).
+        ByteBuffer buffer = ByteBuffer.allocate(24);
+        buffer.putInt(0x00C80001);
+        buffer.putLong(12345L);
+        buffer.putInt(10);
+        buffer.putInt(100);
+        buffer.putInt(72000);
+        ServerInfoResponse response = new ServerInfoResponse(null, buffer.array(), 5);
+        assertEquals("200.0.1", response.getVersionString());
+    }
+
     public void testShortBuffer_Throws() {
         try {
             new ServerInfoResponse(null, new byte[10], 5);

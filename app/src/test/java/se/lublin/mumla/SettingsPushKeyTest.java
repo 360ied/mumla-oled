@@ -19,6 +19,9 @@ package se.lublin.mumla;
 
 import android.view.KeyEvent;
 
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
+
 import junit.framework.TestCase;
 
 /**
@@ -34,14 +37,14 @@ public class SettingsPushKeyTest extends TestCase {
     }
 
     public void testGetPushToTalkKey_Unconfigured() {
-        Settings settings = Settings.createForTesting(new FakeSharedPreferences());
+        Settings settings = Settings.createForTesting(TestDataStores.create());
         assertEquals("Unconfigured preference must resolve to -1", -1, settings.getPushToTalkKey());
     }
 
     public void testGetPushToTalkKey_BoundKeyRoundTrip() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, KeyEvent.KEYCODE_VOLUME_UP).commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_VOLUME_UP);
         assertEquals(KeyEvent.KEYCODE_VOLUME_UP, settings.getPushToTalkKey());
     }
 
@@ -50,34 +53,34 @@ public class SettingsPushKeyTest extends TestCase {
         // path. The stored value is preserved (no migration), but
         // Settings.isPttKeyBound treats it as unbound, and the dialog
         // normalizes it to -1 on load so storage converges on next edit.
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, 0).commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), 0);
         assertEquals("Legacy stored 0 must read back as stored", 0, settings.getPushToTalkKey());
     }
 
     public void testResetSentinelRoundTrip() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, Settings.DEFAULT_PUSH_KEY).commit();
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
+        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), Settings.DEFAULT_PUSH_KEY);
         assertEquals("Reset path must persist the -1 sentinel",
                 Settings.DEFAULT_PUSH_KEY, settings.getPushToTalkKey());
     }
 
     /** Regression check for the ODD-07 activity guard semantics, via production code. */
     public void testPttGuardSemantics_AgainstLegacyZeroAndUnknown() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = Settings.createForTesting(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
 
         for (int keyCode : new int[] {0 /* KEYCODE_UNKNOWN */, Settings.DEFAULT_PUSH_KEY}) {
-            prefs.edit().putInt(Settings.PREF_PUSH_KEY, keyCode).commit();
+            TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), keyCode);
             int pttKey = settings.getPushToTalkKey();
             assertFalse("KEYCODE_UNKNOWN/sentinel must never match PTT",
                     Settings.isPttKeyBound(pttKey, keyCode));
         }
 
         // A real key must still match, and only its exact code.
-        prefs.edit().putInt(Settings.PREF_PUSH_KEY, KeyEvent.KEYCODE_VOLUME_UP).commit();
+        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_VOLUME_UP);
         int pttKey = settings.getPushToTalkKey();
         assertTrue(Settings.isPttKeyBound(pttKey, KeyEvent.KEYCODE_VOLUME_UP));
         assertFalse(Settings.isPttKeyBound(pttKey, KeyEvent.KEYCODE_VOLUME_DOWN));

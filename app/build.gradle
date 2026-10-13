@@ -15,16 +15,19 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-buildscript {
-    repositories {
-        mavenCentral()
-        google()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.2'
-    }
+// Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
+// KSP fork: no stable KSP for Kotlin 2.4 at scaffold, so kapt + TODO.
+// TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.hilt)
+    // Paparazzi deferred (see catalog): 2.0.0-alpha05.1 breaks the unit-test
+    // runtime on AGP 9 (and resource merging on AGP 8); re-evaluate at slice 6.
+    // alias(libs.plugins.paparazzi)
 }
-apply plugin: 'com.android.application'
 
 repositories {
     mavenCentral()
@@ -33,13 +36,6 @@ repositories {
 
 def signingFile = file 'signing.gradle'
 if (signingFile.exists()) apply from: signingFile
-
-allprojects {
-    tasks.withType(JavaCompile) {
-        // TODO include deprecations at some point, but currently they are *many*
-        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
-    }
-}
 
 android {
     namespace = 'se.lublin.mumla'
@@ -50,6 +46,13 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
 
+    kotlin {
+        compilerOptions {
+            // Match the Java toolchain: without this Kotlin defaults to 1.8 bytecode.
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
+    }
+
     base {
         archivesName = "mumla"
     }
@@ -57,6 +60,8 @@ android {
     // gradle8: Need to enable this when defaultConfig below contains some custom BuildConfig
     buildFeatures {
         buildConfig = true
+        // AGP 9 defaults resValues off; this project uses resValue below.
+        resValues = true
     }
 
     def gitDescribeRaw = providers.exec {
@@ -68,7 +73,7 @@ android {
     def gitDescribe = gitDescribeRaw.replaceFirst(/^v(?=\d)/, "")
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 33
         targetSdk 36
 
         applicationId "se.lublin.mumla"
@@ -80,7 +85,7 @@ android {
 
         buildConfigField "String", "VERSIONTAG", "\"" + gitDescribe.split("-")[0] + "\""
 
-        testInstrumentationRunner "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         resourceConfigurations += ["en", "fr", "zh-rCN"]
 
@@ -165,8 +170,24 @@ dependencies {
     implementation 'androidx.preference:preference:1.2.1'
     implementation 'androidx.media:media:1.7.0'
     implementation 'org.jsoup:jsoup:1.23.2'
+    // Migration Slice 0 scaffold: Hilt plugin requires the runtime on the classpath.
+    // No code uses it yet (first consumer is Slice 2's DatabaseModule/SettingsModule).
+    implementation libs.hilt.android
+    kapt libs.hilt.compiler
+    // Migration Slice 2 data layer: Room + DataStore + coroutines. Room compiler
+    // and androidx-hilt compiler run under kapt (no stable KSP for Kotlin 2.4).
+    implementation libs.coroutines.core
+    implementation libs.room.runtime
+    implementation libs.room.ktx
+    implementation libs.datastore.preferences
+    kapt libs.room.compiler
+    kapt libs.androidx.hilt.compiler
 
     testImplementation 'junit:junit:4.13.2'
     // Robolectric pilot for the comment-dialog fragment tests; pinned: verify @Config(sdk) support before bumping.
     testImplementation 'org.robolectric:robolectric:4.15.1'
+    // Migration Slice 2: MigrationTestHelper for the v9 -> v10 DB migration test.
+    testImplementation libs.room.testing
+    // Listener-bridge unit test (TestDispatcher + setMain).
+    testImplementation libs.coroutines.test
 }

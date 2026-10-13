@@ -11,25 +11,67 @@ for agent-reviewed slices. The binder surface
 1. Create the worktree from the repo root (root stays on `master`):
    `./scripts/worktree.py add migration/full-modern`
 2. Add `gradle/libs.versions.toml` with these pins (verified 2026-10-12,
-   re-verify at scaffold; floors are binding, patches float):
-   - `kotlin = "2.4.21"` (AGP 8.13.2 is inside its supported range),
-     `ksp` = KSP2 `2.4.21-1.0.x` if published on Central at scaffold, else kapt (still ships with Kotlin 2.4) + TODO to migrate when a stable KSP 2.4 line lands — upstream has no stable KSP for Kotlin 2.4 yet, so this fork is ordered, not open,
+   re-verify at scaffold; floors are binding, patches float). Scaffold outcomes
+   (bisected 2026-10-12, recorded here per the spike order below; toolchain
+   adoption at the end of slice 0 supersedes the AGP 8.13-era corrections):
+   - `agp = "9.0.1"`, Gradle wrapper `9.1.0` (AGP 9.0 minimums; adopted — see
+     toolchain note below; was 8.13.2/8.13), `kotlin = "2.4.21"` (stands; a
+     `MergeResources` failure initially suspected KGP but bisected cleanly to
+     the Paparazzi plugin, not to Kotlin),
+     kapt (no stable KSP for Kotlin 2.4 on Central at scaffold — latest
+     `symbol-processing-api` is 2.3.12) + TODO to migrate when a stable KSP 2.4
+     line lands — so this fork is ordered, not open,
      `coroutines = "1.11.0"`
    - `compose-bom = "2026.09.00"` (pins `compose-material3 1.4.0`),
      no hand-pinned Compose artifacts
-   - `navigation-compose = "2.10.2"`, `activity-compose = "1.13.0"`, `hilt-navigation-compose = "1.4.0"`, `lifecycle-runtime-compose` (in `lifecycle 2.11.0`)
-   - `hilt = "2.60.1"` (`com.google.dagger`), `androidx-hilt = "1.4.0"`
+   - `navigation-compose = "2.10.2"`, `activity-compose = "1.13.0"`, `hilt-navigation-compose = "1.4.0"`
+   - `hilt = "2.60.1"` (`com.google.dagger`; restored — the AGP 9 adoption
+     below satisfies its AGP >= 9 requirement; the 2.58 cap applied only to the
+     AGP 8.13 era), `androidx-hilt = "1.4.0"`
+     (re-verify against Hilt 2.60 when adding `hilt-navigation-compose` in slice 7)
    - `room = "2.8.5"` (`androidx.room`; not the `room3` 3.0.x line)
-   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`), `datastore-preferences = "1.2.1"`
+   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`, `runtime-compose`), `datastore-preferences = "1.2.1"`
    - `paparazzi = "2.0.0-alpha05.1"` — alpha accepted deliberately: the
      2.x line renders dialogs/popups as real windows, which the dialog
-     parity gate needs. **Gradle fork (resolved, not open):** upstream evidence (Gradle-9 compat tests targeting 9.1.0; 9.0 incompatible with Paparazzi master — per upstream notes, re-verify at scaffold) says 2.x needs Gradle 9.x, and this repo's wrapper is 8.13 — so the primary path is upgrading the wrapper to Gradle 9.x as its own slice-0 commit, then applying the plugin. The 1.3.x fallback is likely dead (its layoutlib caps at compileSdk 35; the project is on 36). Spike order: try 2.0.0-alpha05.1 on 8.13 first (cheap disproof); on failure, upgrade wrapper, re-try; record the outcome here before slice 1.
+     parity gate needs. **Paparazzi fork (RESOLVED 2026-10-12: disqualified on
+     AGP 8 AND AGP 9, deferred to slice 6):** on AGP 8.13.2, applying the plugin
+     ANYWHERE in the build breaks resource merging build-wide
+     (`MergedResourceWriterRequest` NoSuchMethodError; bisected with every other
+     new plugin off, Kotlin 2.4.21 cleared). On AGP 9.0.1 it configures and
+     merges cleanly but breaks the unit-test runtime instead (ships `android-all`
+     real framework classes that shadow the mockable `android.jar`: the same 7
+     stub-dependent tests fail, including the must-keep-unmodified
+     `ChannelFragmentDensityTest`; all green with the plugin off). The 1.3.x
+     fallback is dead (its layoutlib caps at compileSdk 35; the project is on
+     36). Slice 0 lands WITHOUT the Paparazzi plugin (pin kept in the catalog
+     as the slice-6 re-evaluation starting point); screenshot rendering is
+     proven in slice 6, which re-evaluates (stable 2.0.0 may have moved by then).
+   - **Toolchain adoption (end of slice 0, from the `spike/agp9` worktree):**
+     AGP `9.0.1` + Gradle `9.1.0` + Hilt `2.60.1`, with AGP 9 opt-outs
+     (`android.newDsl=false`, `android.builtInKotlin=false` in
+     `gradle.properties`) isolating the bump from DSL/behavior migration,
+     `resValues = true` for the AGP 9 default flip (the app uses `resValue`),
+     and `flake.nix` Build-Tools 35.0.0 → 36.0.0 (AGP 9 minimum). Proven by
+     `check.sh` green + `assembleFossDebug` APK in the spike. Outstanding debt:
+     full new-DSL/built-in-Kotlin migration; release/R8 verification deferred
+     to pre-landing (explicitly accepted).
 3. Apply plugins: `org.jetbrains.kotlin.android` (both modules),
-   `com.google.devtools.ksp`, `com.google.dagger.hilt.android`,
-   `org.jetbrains.kotlin.plugin.parcelize`, `app.cash.paparazzi` (app module). minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).
+   `org.jetbrains.kotlin.kapt` + TODO (KSP fork above), `com.google.dagger.hilt.android`
+   (2.60.1) with `hilt-android`/`hilt-compiler` scaffold deps (no code uses them yet),
+   `org.jetbrains.kotlin.plugin.parcelize`, Paparazzi deferred (fork above).
+   minSdk stays 21 (scaffold stays behavior-neutral; slice 1 performs the bump + deletion together).
 4. Baseline: `./scripts/check.sh` green before any slice-1 edit.
 
-## Slice 1 — minSdk 33 + legacy deletion (trial slice)
+## Slice 1 — minSdk 33 + legacy deletion (DONE 2026-10-12, `check.sh` green)
+
+- minSdk 21 → 33 (`:app`, `:libraries:humla`); deleted every gate below 33
+  except `UPSIDE_DOWN_CAKE`, the SCO legacy duality, the `ChannelChatFragment`
+  storage branch, deprecated `getParcelable` overloads, and always-true
+  branches. Gate-grep, assemble, `lintFossDebug`, and `check.sh` green.
+- Manual gate still owed: boot + connect + voice on the Pixel 4a floor and one
+  modern device (SCO/A2DP/overlay/notification) — needs hardware, not done here.
+  UPDATE 2026-10-12: basic functionality verified on-device post-install; deeper
+  torture (SCO flap, A2DP stagger, overlay drag/rotate) still open.
 
 Config: `minSdkVersion 21 → 33` in `app/build.gradle` and
 `libraries/humla/build.gradle`. Then the full site inventory below —
@@ -96,7 +138,7 @@ code), `MumlaImageGetter.java:393` (comment noting no gate),
   SCO connect/disconnect, A2DP attach, overlay show/hide, notification
   post/dismiss.
 
-## Slice 2 — Data layer (Java; Kotlin conversion comes in slices 3/5)
+## Slice 2 — Data layer (DONE 2026-10-12, `check.sh` green)
 
 Room + DataStore + Hilt so the tree stays
 green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin conversions of existing files here.
@@ -176,9 +218,8 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
   `@AndroidEntryPoint` lands on converted activities/fragments/services as their slices convert (services with the `LifecycleService` switch in slice 4).
   Provider interfaces (`HumlaServiceProvider`, `DatabaseProvider`) die
   later in slice 5 with the Kotlin conversion of their call sites.
-`SettingsRepository` is `@Singleton class SettingsRepository @Inject constructor(private val store: DataStore<Preferences>)` with `val snapshot: Flow<PrefSnapshot>` (`PrefSnapshot` data class, one field per key — 46 accessors over 41 keys, derived accessors share their getter's key) + `suspend fun update(transform: MutablePrefs.() -> Unit)` with explicit writeback per key (scaled ints, string-parsed ints, inverted `hidePtt`, null `ttsEngine`, caller-default overlay pos, `newsShownVersions` set ops); no key may silently reset. DAOs/entities live in `se.lublin.mumla.db` (same package as today). `MIGRATION_9_10` lives in `MumlaRoomDatabase.kt`: empty `migrate()` for the six identical tables + comments-table recreate with TEXT affinity (data-preserving INSERT…SELECT, see entity row).
-- **Files touched:** `db/*` (4) + 17 new app files (`ServerEntity`,
-  `FavouriteEntity`, `TokenEntity`, `CommentEntity`, `LocalMuteEntity`,
+`SettingsRepository` is `@Singleton class SettingsRepository @Inject constructor(private val store: DataStore<Preferences>)` with `val snapshot: Flow<PrefSnapshot>` (`PrefSnapshot` data class, one field per key — 46 accessors over 41 keys, derived accessors share their getter's key) + `suspend fun update(transform: MutablePrefs.() -> Unit)` with explicit writeback per key (scaled ints, string-parsed ints, inverted `hidePtt`, null `ttsEngine`, caller-default overlay pos, `newsShownVersions` set ops); no key may silently reset. DAOs/entities live in `se.lublin.mumla.db` (same package as today). `MIGRATION_9_10` lives in `MumlaRoomDatabase.kt`: all seven tables recreated with data-preserving INSERT…SELECT so the result validates exactly against the entity schema (three tables change shape; the other four gain explicit `NOT NULL` on `_id`, which Room's validator requires), plus `MIGRATION_8_10` (v8 stragglers) and `MIGRATION_10_11` (slice-5 `Server` nullability). `recreate()` preserves `sqlite_sequence` so autoincrement ids never restart into orphan references.
+- **Files touched:** `db/*` (4) + 17 new app files (`Server` as `@Entity` directly — the `ServerEntity` split was consolidated in slice 5 with `MIGRATION_10_11`; `FavouriteEntity`, `TokenEntity`, `CommentEntity`, `LocalMuteEntity`,
   `LocalIgnoreEntity`, `CertificateEntity`, `MumlaRoomDatabase`,
   `ServerDao`, `PinnedDao`, `TokenDao`, `CommentDao`, `LocalMuteDao`,
   `LocalIgnoreDao`, `CertificateDao`, `DatabaseModule`,
@@ -199,19 +240,19 @@ green; only new files are Kotlin (plugin lands in slice 0) — no Java→Kotlin 
 62 files total, 60 to convert (minus generated protobuf (`Mumble.java`, `MumbleUDP.java` —
 never touched)). Batches in dependency order, ~one package per commit:
 
-1. `exception/*` (4: `AudioException`, `AudioInitializationException`, `NotConnectedException`, `NotSynchronizedException`) + `Constants.java`
-2. `util/*` (10: `HumlaCallbacks`, `HumlaDisconnectedException`, `HumlaException`, `HumlaLogger`, `HumlaNetworkListener`, `HumlaObserver`, `IHumlaObserver`, `MessageFormatter`, `MumbleURLParser`, `VoiceTargetMode`)
-3. `model/*` (13 files + `Server` deferred: `Channel`, `IChannel`, `IMessage`, `IServerSettings`, `IUser`, `Message`, `ServerSettings`, `TalkState`, `User`, `WhisperTarget`, `WhisperTargetChannel`, `WhisperTargetList`, `WhisperTargetUsers`; `Server` converts in slice 5)
-4. `audio/inputmode/*` (4: `ActivityInputMode`, `ContinuousInputMode`, `IInputMode`, `ToggleInputMode`)
+1. `exception/*` (4: `AudioException`, `AudioInitializationException`, `NotConnectedException`, `NotSynchronizedException`) + `Constants.java` (DONE `99bb3499`)
+2. `util/*` (10: `HumlaCallbacks`, `HumlaDisconnectedException`, `HumlaException`, `HumlaLogger`, `HumlaNetworkListener`, `HumlaObserver`, `IHumlaObserver`, `MessageFormatter`, `MumbleURLParser`, `VoiceTargetMode`) (DONE `3b9d7144`)
+3. `model/*` (13 files + `Server` deferred: `Channel`, `IChannel`, `IMessage`, `IServerSettings`, `IUser`, `Message`, `ServerSettings`, `TalkState`, `User`, `WhisperTarget`, `WhisperTargetChannel`, `WhisperTargetList`, `WhisperTargetUsers`; `Server` converts in slice 5) (DONE `6ddd55d3`)
+4. `audio/inputmode/*` (4: `ActivityInputMode`, `ContinuousInputMode`, `IInputMode`, `ToggleInputMode`) (DONE `da0d3003`)
 5. `audio/*` (6: `AudioInput`, `AudioOutput`, `BluetoothScoManager` convert normally;
    `NativeAudioInputEngine`, `NativeAudioOutputEngine` convert
    **syntactically only**: `@Synchronized` preserved, native signatures
    byte-identical, no new allocations in encode/decode paths;
-   `InvalidSampleRateException` converts as a plain exception — note it lives in `audio/`, not `exception/`)
-6. `net/*` (14: `CryptState` (syntactically only, like the Native* engines — crypto JNI bridge frozen), `FrameValidator`, `PacketBuffer` first; `HumlaTCP`/`HumlaUDP` next; `HumlaConnection` last; remainder — `HandshakeFailure`, `HumlaCertificateGenerator`, `HumlaSSLSocketFactory`, `HumlaTCPMessageType`, `HumlaUDPMessageType`, `Permissions`, `TlsHostnameVerifier` — with their users; `HumlaNetworkThread`: convert surface only, deleted in slice 4)
-7. `protocol/*` (4: `AudioHandler`, `HumlaTCPMessageListener`, `HumlaUDPMessageListener`, `ModelHandler`)
-8. `IHumlaService`, `IHumlaSession` (surface frozen, syntax only)
-9. `HumlaService.java` last (the god, converted but not yet restructured)
+   `InvalidSampleRateException` converts as a plain exception — note it lives in `audio/`, not `exception/`) (DONE `e5c0339d`)
+6. `net/*` (14: `CryptState` (syntactically only, like the Native* engines — crypto JNI bridge frozen), `FrameValidator`, `PacketBuffer` first; `HumlaTCP`/`HumlaUDP` next; `HumlaConnection` last; remainder — `HandshakeFailure`, `HumlaCertificateGenerator`, `HumlaSSLSocketFactory`, `HumlaTCPMessageType`, `HumlaUDPMessageType`, `Permissions`, `TlsHostnameVerifier` — with their users; `HumlaNetworkThread`: convert surface only, deleted in slice 4) (DONE `3e9fe745`)
+7. `protocol/*` (4: `AudioHandler`, `HumlaTCPMessageListener`, `HumlaUDPMessageListener`, `ModelHandler`) (DONE `ca55913c`)
+8. `IHumlaService`, `IHumlaSession` (surface frozen, syntax only) (DONE `dcbfc4cd`)
+9. `HumlaService.java` last (the god, converted but not yet restructured) (DONE `9b7472d9`)
 
 Verification: existing humla JVM tests (`AudioRoutePolicyTest`,
 `HumlaServiceVoiceTargetTest`, `ModelHandlerSelfMuteTest`, …) green;
@@ -249,8 +290,8 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
    `MumlaService` itself last)
 5. `channel/*` (15: `AccessTokenFragment`, `AvatarCache`, `ChannelAdapter`, `ChannelChatFragment`, `ChannelFragment`, `ChannelListAdapter`, `ChannelListFragment`, `ChannelMenu`, `ChatTargetActionModeCallback`, `ChatTargetProvider`, `OnChannelClickListener`, `OnUserClickListener`, `PermissionsPopupMenu`, `ServerInfoFragment`, `UserMenu`)
    + `channel/comment/*` (3: `AbstractCommentFragment`, `ChannelDescriptionFragment`, `UserCommentFragment`)
-6. `preference/*` (17: `AboutSettingsFragment`, `AppearanceSettingsFragment`, `AudioSettingsFragment`, `AuthenticationSettingsFragment`, `CertificateExportActivity`, `CertificateGenerateActivity`, `CertificateImportActivity`, `CertificateSelectActivity`, `GeneralSettingsFragment`, `KeySelectDialogPreference`, `KeySelectPreferenceDialogFragment`, `MumlaCertificateGenerateTask`, `MumlaPreferenceFragment`, `SeekBarDialogPreference`, `SeekBarPreferenceDialogFragment`, `ServerCertificateClearActivity`, `SettingsActivity`; still `PreferenceFragment`-based — Compose comes
-   in slice 7)
+6. `preference/*` (17: `AboutSettingsFragment`, `AppearanceSettingsFragment`, `AudioSettingsFragment`, `AuthenticationSettingsFragment`, `CertificateExportActivity`, `CertificateGenerateActivity`, `CertificateImportActivity`, `CertificateSelectActivity`, `GeneralSettingsFragment`, `KeySelectDialogPreference`, `KeySelectPreferenceDialogFragment`, `MumlaCertificateGenerateTask`, `MumlaPreferenceFragment`, `SeekBarDialogPreference`, `SeekBarPreferenceDialogFragment`, `ServerCertificateClearActivity`, `SettingsActivity`; still `PreferenceFragment`-based — Compose deferred
+   with slice 7)
 7. `app/*` (7: `BaseActivity`, `DialogUtils`, `DrawerAdapter`, `IStartupAction`, `MumlaApplication`, `ServerConnectTask` — `MumlaActivity` itself last)
    + root `Settings.java` (replaced by `SettingsRepository`; call sites migrate) + `drawable/CircleDrawable.java`
 
@@ -258,7 +299,7 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
 only (frozen per plan). Procedure per file: IDE auto-converter, then reviewer pass per porting-guide §1 (no `!!`, platform types explicit, nullability reviewed). Verification: all app JVM tests (incl.
 Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 
-## Slice 6 — Compose foundation (theme + leaf + goldens)
+## Slice 6 — Compose foundation (DEFERRED 2026-10-13, not landing)
 
 - Port `themes.xml` (`Theme.Mumla`/`Theme.Mumla.Oled`, colors, type,
   dimens) into a Compose **Material3** `MaterialTheme` via tokens —
@@ -277,7 +318,7 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 - Verification: all 9 goldens pass; old-vs-new screenshots compared
   by eye on the Pixel 4a; `./scripts/check.sh`. Paparazzi runs with fixed device/theme/locale config; golden churn is triaged in the slice commit.
 
-## Slice 7 — Compose screens (leaf-to-root, dialogs last)
+## Slice 7 — Compose screens (DEFERRED 2026-10-13, not landing)
 
 Per-screen table (source → route + ViewModel → golden subjects → gate):
 
@@ -321,5 +362,5 @@ plus one modern device, `./scripts/check.sh`, and a landing checklist
 | 3 Kotlin humla | green | humla JVM suite | — |
 | 4 coroutines | green | route/reconnect/ping tests | torture: reconnect/SCO/A2DP |
 | 5 Kotlin app | green | app JVM + Robolectric | — |
-| 6 foundation | green | 9 goldens (3 states × 3 schemes) | eye-compare on 4a, OLED-first |
-| 7 screens | green | per-screen goldens, density test | full torture matrix, landing checklist |
+| 6 foundation | — (deferred) | — | — |
+| 7 screens | — (deferred) | — | — |

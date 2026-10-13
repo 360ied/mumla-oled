@@ -22,3 +22,27 @@
 
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+// Migration Slice 0: version catalog (gradle/libs.versions.toml) is the single
+// source of truth for modern-stack pins. Plugins are declared here with
+// `apply false`; modules apply them without versions.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.parcelize) apply false
+    alias(libs.plugins.kotlin.kapt) apply false
+    alias(libs.plugins.hilt) apply false
+    // Paparazzi deferred (see catalog): 2.0.0-alpha05.1 breaks the unit-test
+    // runtime on AGP 9 (and resource merging on AGP 8); re-evaluate at slice 6.
+    // alias(libs.plugins.paparazzi) apply false
+}
+
+// Shared javac lint for all modules (hoisted: an `allprojects` block inside a
+// child build file applies only to itself, so this lives at the root).
+allprojects {
+    tasks.withType(JavaCompile) {
+        // TODO include deprecations at some point, but currently they are *many*
+        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
+    }
+}

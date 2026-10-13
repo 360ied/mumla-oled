@@ -15,18 +15,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform
+import java.util.Locale
 
-buildscript {
-    repositories {
-        mavenCentral()
-        google()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.2'
-    }
+// Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
+// KSP fork: no stable KSP for Kotlin 2.4 at scaffold, so kapt + TODO.
+// TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.hilt)
 }
-apply plugin: 'com.android.library'
 
 repositories {
     mavenCentral()
@@ -39,14 +39,24 @@ dependencies {
     implementation 'org.jetbrains:annotations:26.1.0'
     implementation 'org.minidns:minidns-hla:1.0.5'
     implementation 'org.minidns:minidns-android21:1.0.5'
+    // Migration Slice 0 scaffold: Hilt plugin requires the runtime on the classpath.
+    // No code uses it yet.
+    implementation libs.hilt.android
+    kapt libs.hilt.compiler
+    // Migration Slice 4 coroutines service core: LifecycleService base +
+    // lifecycleScope is the service scope; ConnectionScope + UDP Channel need
+    // coroutines-core. api for lifecycle (public base class); coroutines stays
+    // implementation by intent (internal use), though lifecycle-runtime-ktx
+    // re-exposes coroutines transitively — the split documents intent, not a
+    // sealed classpath.
+    api libs.lifecycle.service
+    api libs.lifecycle.runtime.ktx
+    implementation libs.coroutines.core
+    // Migration Slice 5: Server is the Room entity (the @Database lives in
+    // :app); the annotations must resolve on this module's classpath too.
+    implementation libs.room.runtime
+    testImplementation libs.coroutines.test
     testImplementation 'junit:junit:4.13.2'
-}
-
-allprojects {
-    tasks.withType(JavaCompile) {
-        // TODO include deprecations at some point, but currently they are *many*
-        options.compilerArgs << "-Xlint:all" << "-Xlint:-deprecation" << "-Xlint:-dep-ann" << "-Xlint:-this-escape"
-    }
 }
 
 android {
@@ -54,11 +64,17 @@ android {
 
     compileSdk = 36
     ndkVersion = '27.2.12479018' // Must match ndkVersion in flake.nix
-    //buildToolsVersion '29.0.3'
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+    }
+
+    kotlin {
+        compilerOptions {
+            // Match the Java toolchain: without this Kotlin defaults to 1.8 bytecode.
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
     }
 
     sourceSets.main.jniLibs.srcDir 'src/main/libs/'
@@ -71,8 +87,8 @@ android {
 
     defaultConfig {
         testApplicationId "se.lublin.humla.test"
-        testInstrumentationRunner "android.test.InstrumentationTestRunner"
-        minSdkVersion 21
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        minSdkVersion 33
         targetSdk 36
 
         ndk {
@@ -181,7 +197,10 @@ android {
         inputs.property("ndkVersion", android.ndkVersion)
         outputs.dir file('src/main/libs')
         def ndkExe = "$project.android.ndkDirectory/ndk-build"
-        if (DefaultNativePlatform.getCurrentOperatingSystem().isWindows()) {
+        // No Gradle internal API (DefaultNativePlatform breaks on upgrade;
+        // OperatingSystem.current() does not exist on this Gradle line):
+        // plain os.name sniffing is stable across versions.
+        if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")) {
           ndkExe += '.cmd'
         }
         def jobs = Runtime.runtime.availableProcessors()

@@ -29,9 +29,9 @@
         app:iconSpaceReserved="false" />
 
     <ListPreference
-        app:key="language"
-        app:defaultValue="system"
-        app:title="@string/language"
+        android:key="language"
+        android:defaultValue="system"
+        android:title="@string/language"
         app:useSimpleSummaryProvider="true"
         app:iconSpaceReserved="false" />
 

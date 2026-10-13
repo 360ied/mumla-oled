@@ -17,21 +17,21 @@
 
 package se.lublin.mumla;
 
-import junit.framework.TestCase;
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
 
-import java.util.HashMap;
-import java.util.Map;
+import junit.framework.TestCase;
 
 public class SettingsNotificationStyleTest extends TestCase {
 
-    private Map<String, Object> mPrefsMap;
+    private DataStore<Preferences> mStore;
     private Settings mSettings;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        mPrefsMap = new HashMap<>();
-        mSettings = new Settings(new FakeSharedPreferences(mPrefsMap));
+        mStore = TestDataStores.create();
+        mSettings = Settings.createForTesting(mStore);
     }
 
     public void testMediaKeyMuteDefaultOn() {
@@ -45,13 +45,13 @@ public class SettingsNotificationStyleTest extends TestCase {
     }
 
     public void testMediaKeyMuteExplicitOffHonored() {
-        mPrefsMap.put(Settings.PREF_MEDIA_KEY_MUTE, false);
+        TestDataStores.put(mStore, TestDataStores.booleanKey(Settings.PREF_MEDIA_KEY_MUTE), false);
         assertFalse("Stored false must disable the media-key mute toggle",
                 mSettings.isMediaKeyMuteEnabled());
     }
 
     public void testMediaKeyMuteTtsExplicitOffHonored() {
-        mPrefsMap.put(Settings.PREF_MEDIA_KEY_MUTE_TTS, false);
+        TestDataStores.put(mStore, TestDataStores.booleanKey(Settings.PREF_MEDIA_KEY_MUTE_TTS), false);
         assertFalse("Stored false must disable the media-key mute announcement",
                 mSettings.isMediaKeyMuteTtsEnabled());
     }
@@ -84,7 +84,7 @@ public class SettingsNotificationStyleTest extends TestCase {
     }
 
     public void testInvalidNotificationStyleFallback() {
-        mPrefsMap.put(Settings.PREF_NOTIFICATION_STYLE, "invalid_or_corrupt_value");
+        TestDataStores.put(mStore, TestDataStores.stringKey(Settings.PREF_NOTIFICATION_STYLE), "invalid_or_corrupt_value");
         assertEquals("Invalid notification style preference must fall back to default bigtext",
                 Settings.DEFAULT_NOTIFICATION_STYLE,
                 mSettings.getNotificationStyle());
@@ -111,7 +111,7 @@ public class SettingsNotificationStyleTest extends TestCase {
     }
 
     public void testEmptyNotificationStyleFallback() {
-        mPrefsMap.put(Settings.PREF_NOTIFICATION_STYLE, "");
+        TestDataStores.put(mStore, TestDataStores.stringKey(Settings.PREF_NOTIFICATION_STYLE), "");
         assertEquals("Empty notification style preference must fall back to default bigtext",
                 Settings.DEFAULT_NOTIFICATION_STYLE,
                 mSettings.getNotificationStyle());
@@ -120,7 +120,7 @@ public class SettingsNotificationStyleTest extends TestCase {
     }
 
     public void testNullNotificationStyleFallback() {
-        mPrefsMap.put(Settings.PREF_NOTIFICATION_STYLE, null);
+        TestDataStores.remove(mStore, TestDataStores.stringKey(Settings.PREF_NOTIFICATION_STYLE));
         assertEquals("Null notification style preference must fall back to default bigtext",
                 Settings.DEFAULT_NOTIFICATION_STYLE,
                 mSettings.getNotificationStyle());

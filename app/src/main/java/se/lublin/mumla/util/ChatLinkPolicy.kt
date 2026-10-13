@@ -1,0 +1,77 @@
+/*
+ * Copyright (C) 2026 Brian Zhu
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package se.lublin.mumla.util
+
+import java.net.URI
+import java.net.URISyntaxException
+import java.util.Locale
+
+/**
+ * Allowlist policy for links rendered from server-controlled chat HTML.
+ *
+ * <p>Incoming chat bodies may carry arbitrary {@code href} values; only
+ * {@code http} and {@code https} links may be dispatched to an external
+ * viewer. Every other scheme ({@code javascript:}, {@code intent:},
+ * {@code file:}, {@code tel:}, {@code data:}, ...) is inert.
+ *
+ * <p>Pure JVM helper: no {@code android.*} imports so it stays unit
+ * testable. Callers replace {@code URLSpan}s using {@link #handleClick}.
+ */
+object ChatLinkPolicy {
+    /**
+     * Returns true only for {@code http}/{@code https} URLs.
+     * Fail-closed: null, empty, whitespace-only, and malformed URIs
+     * return false.
+     */
+    @JvmStatic
+    fun isAllowedUrl(url: String?): Boolean {
+        if (url == null) {
+            return false
+        }
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) {
+            return false
+        }
+        val uri: URI
+        try {
+            uri = URI(trimmed)
+        } catch (e: URISyntaxException) {
+            return false
+        }
+        var scheme = uri.scheme ?: return false
+        scheme = scheme.lowercase(Locale.ROOT)
+        return "http" == scheme || "https" == scheme
+    }
+
+    /**
+     * Resolves the URL to open for a clicked link.
+     *
+     * @param href the span {@code href}; the visible display text is
+     *             deliberately not taken, so a phishing lookalike (display
+     *             text differing from the href) still opens the actual
+     *             href when allowed, never the display text.
+     * @return trimmed href when allowed, null when the link must stay inert.
+     */
+    @JvmStatic
+    fun handleClick(href: String?): String? {
+        if (href == null || !isAllowedUrl(href)) {
+            return null
+        }
+        return href.trim()
+    }
+}

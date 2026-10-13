@@ -1,4 +1,4 @@
-# Migration Plan: Full Modern Stack (Kotlin + Data + Compose)
+# Migration Plan: Full Modern Stack (Kotlin + Data + Compose — Compose DEFERRED 2026-10-13)
 
 This is the working plan for the big-bang modernization of Mumla OLED.
 It records scope, fences, slice order, guardrails, and verification so
@@ -6,7 +6,7 @@ that the migration worktree (once scaffolded) cannot quietly cheat.
 
 ## Scope
 
-Three migrations, one branch:
+Two migrations land (third explicitly deferred 2026-10-13):
 
 1. **Service core → Kotlin + coroutines/Flow.** `HumlaService` becomes a
    thin lifecycle owner; connection state, reconnect, and audio route
@@ -16,14 +16,14 @@ Three migrations, one branch:
    stringly-typed `configureExtras` bundle, and the `AsyncTask`s go away.
    The 48-method `IHumlaSession` facade stays frozen throughout (a role-interface split is post-migration follow-up work).
 2. **Data layer → Room + DataStore + Hilt.** Hand SQL in
-   [`MumlaSQLiteDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaSQLiteDatabase.java),
+   [`MumlaRoomDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt),
    the 46-accessor
-   [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.java)
+   [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.kt)
    blob, and the pref→bundle→effect double dispatch become Room
    entities, a typed `ConfigDelta`, and an injected graph.
-3. **UI → Compose, internals only.** Fragments, `RecyclerView` adapters,
-   and the seven dialog fields of `MumlaActivity` become Compose screens
-   with `ViewModel` state holders and Navigation. See "UI parity" below.
+3. **UI → Compose, internals only — DEFERRED 2026-10-13 to post-landing
+   follow-up, not part of landing.** Fragments, `RecyclerView` adapters,
+   and the seven dialog fields of `MumlaActivity` stay as-is.
 
 ## Fences (do not touch)
 
@@ -38,7 +38,7 @@ Three migrations, one branch:
   stay compatible for the whole migration; refactoring happens strictly
   behind them.
 
-## UI parity (hard guardrail)
+## UI parity (DEFERRED with slices 6-7 — hard guardrail only if revived)
 
 The user-facing UI must look and feel the exact same after the Compose
 rewrite:
@@ -64,8 +64,8 @@ Concrete per-slice plan (file lists, pins, verification) lives in
 3. Kotlin conversion of `libraries/humla` (syntax first).
 4. Coroutines service core (the real debt kill).
 5. Kotlin conversion of `:app`.
-6. Compose theme tokens + one leaf screen behind a screenshot test.
-7. Compose screens leaf-to-root, dialogs last.
+6. Compose theme tokens + one leaf screen behind a screenshot test — DEFERRED.
+7. Compose screens leaf-to-root, dialogs last — DEFERRED.
 
 ## Execution
 
@@ -122,7 +122,7 @@ adopt them from slice 1:
 ## Verification per slice
 
 - `./scripts/check.sh` (JVM + native suites) green.
-- Screenshot before/after per screen and dialog for UI slices; any pixel
-  diff fails the slice.
+- Screenshot before/after per screen and dialog for UI slices — DEFERRED with
+  slices 6-7; landing gates on torture paths only.
 - Manual torture paths preserved: rotate mid-dialog, switch server
   mid-connect, deny permission mid-flow — same outcomes, new internals.

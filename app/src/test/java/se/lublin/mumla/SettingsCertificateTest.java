@@ -17,33 +17,36 @@
 
 package se.lublin.mumla;
 
+import androidx.datastore.core.DataStore;
+import androidx.datastore.preferences.core.Preferences;
+
 import junit.framework.TestCase;
 
 public class SettingsCertificateTest extends TestCase {
 
     public void testCertificateDefaultState() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = new Settings(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
 
         assertEquals(-1L, settings.getDefaultCertificate());
         assertFalse("By default, certificate should not be used", settings.isUsingCertificate());
     }
 
     public void testSetDefaultCertificateId() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = new Settings(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
 
         long testCertId = 42L;
         settings.setDefaultCertificateId(testCertId);
 
         assertEquals(testCertId, settings.getDefaultCertificate());
         assertTrue("Certificate should be active after setDefaultCertificateId", settings.isUsingCertificate());
-        assertEquals(testCertId, prefs.getLong(Settings.PREF_CERT_ID, -1L));
+        assertEquals(testCertId, (long) TestDataStores.get(store, TestDataStores.longKey(Settings.PREF_CERT_ID), -1L));
     }
 
     public void testDisableCertificate() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = new Settings(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
 
         settings.setDefaultCertificateId(123L);
         assertTrue(settings.isUsingCertificate());
@@ -51,12 +54,12 @@ public class SettingsCertificateTest extends TestCase {
         settings.disableCertificate();
         assertEquals(-1L, settings.getDefaultCertificate());
         assertFalse(settings.isUsingCertificate());
-        assertEquals(-1L, prefs.getLong(Settings.PREF_CERT_ID, 0L));
+        assertEquals(-1L, (long) TestDataStores.get(store, TestDataStores.longKey(Settings.PREF_CERT_ID), 0L));
     }
 
     public void testSwitchCertificateId() {
-        FakeSharedPreferences prefs = new FakeSharedPreferences();
-        Settings settings = new Settings(prefs);
+        DataStore<Preferences> store = TestDataStores.create();
+        Settings settings = Settings.createForTesting(store);
 
         settings.setDefaultCertificateId(1L);
         assertEquals(1L, settings.getDefaultCertificate());

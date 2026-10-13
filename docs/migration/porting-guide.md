@@ -53,7 +53,25 @@ Convert syntax first, restructure second. One file per commit.
 - **Nullability:** platform types are the top source of conversion bugs.
   Every Java value crossing into Kotlin gets an explicit type — nullable
   unless the converter can prove otherwise. No `!!` in converted code;
-  use `requireNotNull` with a message or early return.
+  snapshot fields to locals, then use an explicit null check with early
+  return, or throw `NullPointerException` with a message where the original
+  dereferenced unconditionally (preserves the exact throw type; `requireNotNull`
+  throws `IllegalArgumentException` and is reserved for new internal hardening
+  on provably unreachable paths). Public API boundaries keep NPE-exact
+  behavior (`Objects.requireNonNull`); private helpers may use `requireNotNull`.
+- **Casts:** view lookups use nullable casts with the NPE-exact idiom
+  (`as X? ?: throw NullPointerException("<name>")`). A non-null `as X`
+  throws `TypeCastException`, not NPE — and crashes unconditionally on
+  layout-variant-absent views (e.g. phone-only views on tablets) where Java's
+  cast-then-null-check survived. Fields holding variant-absent views stay
+  nullable (`as X?`); the use site keeps the null branch.
+- **Openness:** plain Kotlin members are `final` by default but `override`
+  members stay open — do NOT add redundant `open` to overrides. Add `open`
+  to plain classes/members only where a subclass exists (Java subclasses
+  re-override them: services, observers, tests). Otherwise converted classes
+  stay `final` (documents intentional sealing; absence of subclasses verified
+  by grep). Kotlin has no package visibility: widen test seams to public
+  with a comment, never `internal` (name-mangled, not package-private).
 - **Getters/setters → properties**, `static` → `companion object` or
   top-level functions, constants stay `const val`.
 - **Models:** `User`/`Channel`/`Server`/`Message` become Kotlin classes
@@ -120,7 +138,7 @@ Never use `GlobalScope`.
 
   ```kotlin
   data class CertRef(val data: ByteArray, val password: String?)
-  data class TrustStoreRef(val path: String, val password: String?, val format: String?)
+  data class TrustStoreRef(val path: String?, val password: String?, val format: String?)
   data class ConfigDelta(
       val server: Server? = null,
       val certificate: CertRef? = null,
@@ -135,20 +153,31 @@ Never use `GlobalScope`.
       val bluetoothSco: Boolean? = null,
       val adaptiveLeveler: Boolean? = null,
       val accessTokens: List<String>? = null, // live-sent, no reload
+      val localMuteHistory: List<Int>? = null, // connect-time only
+      val localIgnoreHistory: List<Int>? = null, // connect-time only
+      val clientName: String? = null, // connect-time only
+      val audioStream: Int? = null, // handset-derived, funnel-only
       val theme: String? = null,             // applier: applyTheme
       val overlayShown: Boolean? = null,     // applier: updateOverlayVisibility
       val overlayPlacement: String? = null,  // applier: updateOverlayPosition
       // ttsEngine needs tri-state (unchanged vs system-default vs engine pkg):
-      val ttsEngine: java.util.Optional<String>? = null,
+      val ttsEngine: java.util.Optional<String>? = null, // applier: initTts
   )
   ```
+
+  Notes (slice-2 amendments, reviewed with the code): `path` is nullable
+  because an uninitialized trust store is null (system store); Java callers
+  build deltas via the nested `Builder` (data-class `copy()` has no Java
+  defaults); `hasCore()` gates the service call, `hasOtherAudioKeys()`
+  preserves the old reload-suppression set (threshold excluded — applied
+  directly, no reload needed).
 - **Provider interfaces → Hilt:** `HumlaServiceProvider`,
   `DatabaseProvider` and manual singletons become `@Module`s;
   `@Singleton`/`@ServiceScoped` match today's lifetimes. Existing
   `FakeSharedPreferences`-style tests port to DataStore/Room in-memory
   fakes.
 
-## 4. UI → Compose (internals only, pixels frozen)
+## 4. UI → Compose (DEFERRED 2026-10-13 with slices 6-7 — internals only, pixels frozen, if revived)
 
 Visual/structural parity is a hard guardrail (see
 [plan](plan.md#ui-parity-hard-guardrail)). Mapping:

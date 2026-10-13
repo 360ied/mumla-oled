@@ -1,0 +1,86 @@
+/*
+ * Copyright (C) 2014 Andrew Comminos
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package se.lublin.mumla.service.ipc
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import se.lublin.humla.Constants
+import se.lublin.humla.IHumlaService
+import se.lublin.humla.IHumlaSession
+import se.lublin.humla.util.HumlaDisconnectedException
+
+/**
+ * Created by andrew on 08/08/14.
+ */
+class TalkBroadcastReceiver(service: IHumlaService) : BroadcastReceiver() {
+    private val mService: IHumlaService = service
+
+    override fun onReceive(context: Context?, intent: Intent?) {
+        if (intent == null || BROADCAST_TALK != intent.action) {
+            // Ignore rather than throw: a mis-wired filter must not crash the
+            // service, but it stays visible at warning level.
+            Log.w(TAG, "Ignoring unexpected broadcast: " + if (intent == null) "null intent" else intent.action)
+            return
+        }
+        if (!mService.isConnected()) {
+            return
+        }
+        // Nullable: HumlaSession() is a Java platform return that can be null.
+        val session: IHumlaSession?
+        try {
+            session = mService.HumlaSession()
+        } catch (e: HumlaDisconnectedException) {
+            // Disconnected between the isConnected check above and this call.
+            Log.i(TAG, "Ignoring TALK broadcast while disconnected")
+            return
+        }
+        if (session == null) {
+            Log.w(TAG, "Ignoring TALK broadcast with no session")
+            return
+        }
+        if (session.getTransmitMode() != Constants.TRANSMIT_PUSH_TO_TALK) {
+            // Driving talk state is meaningless under voice activity or continuous
+            // transmission; only push-to-talk honors the broadcast.
+            Log.i(TAG, "Ignoring TALK broadcast outside push-to-talk transmit mode")
+            return
+        }
+        var status: String? = intent.getStringExtra(EXTRA_TALK_STATUS)
+        if (status == null) status = TALK_STATUS_TOGGLE
+        if (TALK_STATUS_ON == status) {
+            session.setTalkingState(true)
+        } else if (TALK_STATUS_OFF == status) {
+            session.setTalkingState(false)
+        } else if (TALK_STATUS_TOGGLE == status) {
+            session.setTalkingState(!session.isTalking())
+        } else {
+            Log.w(TAG, "Ignoring unknown TALK status: $status")
+        }
+    }
+
+    companion object {
+        private val TAG: String = TalkBroadcastReceiver::class.java.simpleName
+
+        const val BROADCAST_TALK = "se.lublin.mumla.action.TALK"
+        const val EXTRA_TALK_STATUS = "status"
+        const val TALK_STATUS_ON = "on"
+        const val TALK_STATUS_OFF = "off"
+        const val TALK_STATUS_TOGGLE = "toggle"
+    }
+}
