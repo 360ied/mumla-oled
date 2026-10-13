@@ -139,10 +139,14 @@ class ChannelListAdapter(
             var nameTypeface = Typeface.NORMAL
             val service = mService
             if (service != null && service.isConnected()) {
-                val session = service.HumlaSession()
+                // Session fetch inside the guard: scrolling during disconnect
+                // throws on acquisition too, not just on getSessionChannel().
                 var ourChan: IChannel? = null
                 try {
+                    val session = service.HumlaSession()
                     ourChan = session.getSessionChannel()
+                } catch (e: HumlaDisconnectedException) {
+                    Log.d(TAG, "exception in onBindViewHolder: $e")
                 } catch (e: IllegalStateException) {
                     Log.d(TAG, "exception in onBindViewHolder: $e")
                 }

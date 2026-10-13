@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.RemoteException
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -39,7 +40,6 @@ import se.lublin.mumla.util.HumlaServiceFragment
  * Created by andrew on 28/08/13.
  */
 class ServerInfoFragment : HumlaServiceFragment() {
-
     private val mExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val mHandler = Handler(Looper.getMainLooper())
     private var mPollFuture: ScheduledFuture<*>? = null
@@ -92,7 +92,15 @@ class ServerInfoFragment : HumlaServiceFragment() {
         val maxBandwidthView = mMaxBandwidthView ?: throw NullPointerException("mMaxBandwidthView")
         val currentBandwidthView = mCurrentBandwidthView ?: throw NullPointerException("mCurrentBandwidthView")
 
-        val session = service.HumlaSession()
+        val session = try {
+            service.HumlaSession()
+        } catch (e: se.lublin.humla.util.HumlaDisconnectedException) {
+            Log.w(TAG, "updateData with torn-down session", e)
+            return
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "updateData with torn-down session", e)
+            return
+        }
 
         var release = session.getServerRelease()
         if (release == null || release.isEmpty()) {
@@ -189,6 +197,7 @@ class ServerInfoFragment : HumlaServiceFragment() {
     }
 
     companion object {
+        private val TAG: String = ServerInfoFragment::class.java.simpleName
         private const val POLL_RATE = 1000
     }
 }

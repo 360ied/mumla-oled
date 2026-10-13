@@ -105,7 +105,17 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
         override fun onUserJoinedChannel(user: IUser?, newChannel: IChannel?, oldChannel: IChannel?) {
             val service = getService()
             if (service != null && service.isConnected()) {
-                val session = service.HumlaSession()
+                // Same TOCTOU as updateChatTargetText: channel-switch while
+                // tearing down must not escape to the Looper.
+                val session = try {
+                    service.HumlaSession()
+                } catch (e: HumlaDisconnectedException) {
+                    Log.d(TAG, "onUserJoinedChannel with torn-down session: $e")
+                    return
+                } catch (e: IllegalStateException) {
+                    Log.d(TAG, "onUserJoinedChannel with torn-down session: $e")
+                    return
+                }
                 if (user != null && session.getSessionUser() != null &&
                     user == session.getSessionUser()
                 ) {
@@ -416,7 +426,7 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
                 val currentWidth = bitmap.width
                 val currentHeight = bitmap.height
                 if (currentWidth > 320 && currentHeight > 320) {
-                    val nextWidth = Math.max(320, currentWidth * 2 / 3)
+                    val nextWidth = maxOf(320, currentWidth * 2 / 3)
                     val nextHeight = maxOf(320, currentHeight * 2 / 3)
                     currentBitmap = BitmapUtils.resizeKeepingAspect(bitmap, nextWidth, nextHeight)
                 } else {
@@ -536,7 +546,17 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             return
         }
 
-        val session = service.HumlaSession()
+        // TOCTOU: disconnect between the check and the fetch throws — fail
+        // soft like configureInput/configureTargetPanel.
+        val session = try {
+            service.HumlaSession()
+        } catch (e: HumlaDisconnectedException) {
+            Log.d(TAG, "updateChatTargetText with torn-down session: $e")
+            return
+        } catch (e: IllegalStateException) {
+            Log.d(TAG, "updateChatTargetText with torn-down session: $e")
+            return
+        }
         val hint = if (target == null && session.getSessionChannel() != null) {
             val sessionChannel = session.getSessionChannel() ?: throw NullPointerException("sessionChannel")
             getString(R.string.messageToChannel, sessionChannel.name)

@@ -53,7 +53,7 @@ class AvatarCache {
             override fun sizeOf(key: Int, value: Entry): Int {
                 val bitmap = value.bitmap
                 if (bitmap != null) {
-                    return Math.max(1, bitmap.byteCount / 1024)
+                    return maxOf(1, bitmap.byteCount / 1024)
                 }
                 return 1
             }

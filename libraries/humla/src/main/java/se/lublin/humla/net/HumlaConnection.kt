@@ -498,6 +498,10 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
             // Defensive: HumlaTCP.connect only throws when already running, so
             // a fresh instance never lands here; kept so a future synchronous
             // failure still wraps as HumlaException for HumlaService.connect.
+            // Reclaim the idle ping scope: HumlaService.connect catches
+            // HumlaException without disconnecting, so nothing else would.
+            pingScope?.cancel()
+            pingScope = null
             throw HumlaException(e, HumlaException.HumlaDisconnectReason.CONNECTION_ERROR)
         }
     }

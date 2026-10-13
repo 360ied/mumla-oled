@@ -124,8 +124,12 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
     }
 
     override fun shareServer(server: Server) {
-        // Build Mumble server URL
-        val serverUrl = "mumble://" + server.host +
+        // Build Mumble server URL. Bracket IPv6 literals: a bare
+        // 2001:db8::1 would make mumble://2001:db8::1:64738/ ambiguous.
+        // Password is deliberately omitted (user-visible text, no leak).
+        val host = server.host ?: ""
+        val bracketed = if (host.contains(':')) "[$host]" else host
+        val serverUrl = "mumble://" + bracketed +
             (if (server.port == 0) "" else ":" + server.port) + "/"
 
         val intent = Intent()

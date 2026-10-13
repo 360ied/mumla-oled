@@ -328,7 +328,14 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         executeOnSendThread(Runnable {
             if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
                 Log.v(TAG, "OUT: $messageType")
-            val dataOutput = mDataOutput ?: throw NullPointerException("TCP output")
+            // Drop with a log, don't throw: this runs in a SupervisorJob
+            // child where an uncaught throw routes to the uncaught handler.
+            // Unreachable today (executeOnSendThread pre-checks the stream).
+            val dataOutput = mDataOutput
+            if (dataOutput == null) {
+                Log.d(TAG, "Dropping send on torn-down connection")
+                return@Runnable
+            }
             try {
                 dataOutput.writeShort(messageType.ordinal)
                 dataOutput.writeInt(message.serializedSize)
@@ -355,7 +362,12 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         executeOnSendThread(Runnable {
             if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
                 Log.v(TAG, "OUT: $messageType")
-            val dataOutput = mDataOutput ?: throw NullPointerException("TCP output")
+            // Same fail-soft rationale as the MessageLite overload above.
+            val dataOutput = mDataOutput
+            if (dataOutput == null) {
+                Log.d(TAG, "Dropping send on torn-down connection")
+                return@Runnable
+            }
             try {
                 dataOutput.writeShort(messageType.ordinal)
                 dataOutput.writeInt(length)

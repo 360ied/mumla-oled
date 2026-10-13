@@ -187,9 +187,17 @@ object TlsHostnameVerifier {
         }
     }
 
+    // Unbrackets here too so safety never depends on callers passing
+    // normalized values (isIpLiteral/canonicalizeHost already unbracket).
     private fun addressBytes(ip: String): ByteArray? {
+        val unbracketed =
+            if (ip.startsWith("[") && ip.endsWith("]") && ip.length > 2) {
+                ip.substring(1, ip.length - 1)
+            } else {
+                ip
+            }
         try {
-            return java.net.InetAddress.getByName(stripTrailingDot(ip)).address
+            return java.net.InetAddress.getByName(stripTrailingDot(unbracketed)).address
         } catch (e: Exception) {
             return null
         }

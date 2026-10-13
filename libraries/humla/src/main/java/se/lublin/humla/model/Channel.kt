@@ -118,9 +118,9 @@ class Channel : IChannel, Comparable<Channel> {
         while (!stack.isEmpty()) {
             val ch = stack.pop()
             for (linked in ArrayList(ch.linkList)) {
-                // Null guard mirrors the original (addLink rejects null, so
-                // unreachable in practice).
-                if (linked != null && seen.add(linked)) {
+                // linkList's element type is non-null (addLink rejects null),
+                // so no null check: the pre-image Java guard is unreachable.
+                if (seen.add(linked)) {
                     stack.push(linked)
                 }
             }

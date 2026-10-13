@@ -662,19 +662,45 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // Interface delegation forwards every other callback untouched.
             val generation = ++connectionGeneration
             val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
-                override fun onConnectionDisconnected(e: HumlaException?) {
+                // All five callbacks filter on generation: a stale connection's
+                // async posts (established/warning/handshake/disconnect/sync)
+                // must never drive the live attempt's state machine. The
+                // CONNECTING guards make stale established/handshake
+                // unreachable today, but the filter is airtight regardless.
+                private fun isStale(): Boolean {
                     if (generation != connectionGeneration) {
                         Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
-                        return
+                        return true
                     }
+                    return false
+                }
+
+                override fun onConnectionEstablished() {
+                    if (isStale()) return
+                    this@HumlaService.onConnectionEstablished()
+                }
+
+                override fun onConnectionWarning(warning: String?) {
+                    if (isStale()) return
+                    this@HumlaService.onConnectionWarning(warning)
+                }
+
+                override fun onConnectionHandshakeFailed(
+                    chain: Array<X509Certificate>?,
+                    failure: HandshakeFailure,
+                    verifiedHost: String?
+                ) {
+                    if (isStale()) return
+                    this@HumlaService.onConnectionHandshakeFailed(chain, failure, verifiedHost)
+                }
+
+                override fun onConnectionDisconnected(e: HumlaException?) {
+                    if (isStale()) return
                     this@HumlaService.onConnectionDisconnected(e)
                 }
 
                 override fun onConnectionSynchronized() {
-                    if (generation != connectionGeneration) {
-                        Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
-                        return
-                    }
+                    if (isStale()) return
                     this@HumlaService.onConnectionSynchronized()
                 }
             }
@@ -706,6 +732,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun disconnect() {
         mReconnectAttempts = 0
         setReconnecting(false)
+        // Synchronous state: the async read-loop finally still delivers the
+        // formal onConnectionDisconnected, but observers must see
+        // DISCONNECTED from the explicit call, not a lingering CONNECTING.
+        // Harmless under the generation + CONNECTING guards (a quick
+        // reconnect bumps generation; the stale post is filtered).
+        mConnectionState = ConnectionState.DISCONNECTED
         val wakeLock = mWakeLock
         if (wakeLock != null && wakeLock.isHeld) {
             wakeLock.release()

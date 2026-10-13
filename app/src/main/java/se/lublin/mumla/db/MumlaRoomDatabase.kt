@@ -351,9 +351,12 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
             db.execSQL("DROP TABLE `" + table + "`")
             db.execSQL("ALTER TABLE `" + table + "_new` RENAME TO `" + table + "`")
             if (sequence != null) {
+                // INSERT OR REPLACE: after DROP+RENAME an emptied table has
+                // no sequence row left, so a bare UPDATE would touch 0 rows
+                // and silently drop the saved value (restarting ids at 1).
                 db.execSQL(
-                    "UPDATE sqlite_sequence SET seq = ? WHERE name = ?",
-                    arrayOf<Any?>(sequence, table),
+                    "INSERT OR REPLACE INTO sqlite_sequence(name, seq) VALUES(?, ?)",
+                    arrayOf<Any?>(table, sequence),
                 )
             }
         }

@@ -40,9 +40,9 @@ class SeekBarPreferenceDialogFragment : androidx.preference.PreferenceDialogFrag
         // NPE-exact: the original required a non-null data store unconditionally.
         val store = preference.preferenceDataStore ?: throw NullPointerException("dataStore")
         val rawValue = store.getInt(preference.key, preference.mDefaultValue * mMultiplier)
-        mCurrentValue = Math.min(
+        mCurrentValue = minOf(
             preference.mMax * mMultiplier,
-            Math.max(preference.mMin * mMultiplier, rawValue)
+            maxOf(preference.mMin * mMultiplier, rawValue)
         )
         updateValueView()
 

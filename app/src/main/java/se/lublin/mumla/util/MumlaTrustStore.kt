@@ -84,7 +84,11 @@ object MumlaTrustStore {
 
     @JvmStatic
     fun clearTrustStore(context: Context) {
-        context.deleteFile(STORE_FILE)
+        // Return value is informational only today (no caller branches on
+        // it), but log it so a failed delete is visible instead of silent.
+        if (!context.deleteFile(STORE_FILE)) {
+            android.util.Log.w("MumlaTrustStore", "clearTrustStore: no store file to delete")
+        }
     }
 
     /**

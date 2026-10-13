@@ -40,14 +40,10 @@ class Message : IMessage {
         private set
     override val receivedTime: Long
 
-    constructor(message: String?) {
-        this.message = message
-        actor = -1
-        receivedTime = System.currentTimeMillis()
-        channelList = ArrayList()
-        treeList = ArrayList()
-        userList = ArrayList()
-    }
+    // Single primary-equivalent ctor: the 1-arg form delegates with empty
+    // lists instead of allocating three throwaway ArrayLists that the 6-arg
+    // form immediately discards.
+    constructor(message: String?) : this(-1, null, emptyList(), emptyList(), emptyList(), message)
 
     constructor(
         actor: Int,
@@ -56,9 +52,11 @@ class Message : IMessage {
         trees: List<Channel>,
         users: List<User>,
         message: String?
-    ) : this(message) {
+    ) {
+        this.message = message
         this.actor = actor
         this.actorName = actorName
+        receivedTime = System.currentTimeMillis()
         // Defensive copies: the unmodifiable views below wrap these lists,
         // so aliasing the caller's mutable list would let post-construction
         // mutation show through the "unmodifiable" surface.

@@ -36,6 +36,7 @@ import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentPagerAdapter
 import androidx.viewpager.widget.PagerTabStrip
 import androidx.viewpager.widget.ViewPager
+import kotlin.math.roundToInt
 import se.lublin.humla.HumlaService
 import se.lublin.humla.IHumlaService
 import se.lublin.humla.IHumlaSession
@@ -521,10 +522,10 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
             }
             val px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, heightDp.toFloat(), metrics)
             if (px > 0) {
-                return Math.max(1, Math.round(px))
+                return maxOf(1, px.roundToInt())
             }
             val density = if (metrics.density > 0) metrics.density else 1.0f
-            return Math.max(1, Math.round(heightDp * density))
+            return maxOf(1, (heightDp * density).roundToInt())
         }
 
         /**

@@ -34,6 +34,7 @@ import se.lublin.humla.IHumlaSession
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.Server
 import se.lublin.humla.model.WhisperTargetChannel
+import se.lublin.humla.util.HumlaDisconnectedException
 import se.lublin.humla.util.VoiceTargetMode
 import se.lublin.mumla.R
 import se.lublin.mumla.channel.comment.AbstractCommentFragment
@@ -56,6 +57,20 @@ class ChannelMenu(
     private val mDatabase: MumlaDatabase = database
     private val mFragmentManager: FragmentManager = fragmentManager
 
+    // Null instead of throw: menu taps race teardown (isConnected() checked
+    // by callers, service can die before acquisition). Callers return false.
+    private fun sessionOrNull(): IHumlaSession? {
+        return try {
+            mService.HumlaSession()
+        } catch (e: HumlaDisconnectedException) {
+            Log.d(TAG, "menu with torn-down session: $e")
+            null
+        } catch (e: IllegalStateException) {
+            Log.d(TAG, "menu with torn-down session: $e")
+            null
+        }
+    }
+
     override fun onMenuPrepare(menu: Menu, permissions: Int) {
         menu.findItem(R.id.context_channel_view_description)
             .setVisible(
@@ -70,7 +85,7 @@ class ChannelMenu(
         if (mService.isConnected()) {
             var ourChan: IChannel? = null
             try {
-                ourChan = mService.HumlaSession().getSessionChannel()
+                ourChan = sessionOrNull()?.getSessionChannel()
             } catch (e: IllegalStateException) {
                 Log.d(TAG, "exception in onMenuPrepare: $e")
             }
@@ -93,7 +108,7 @@ class ChannelMenu(
 
         val itemId = item.itemId
         if (itemId == R.id.context_channel_join) {
-            mService.HumlaSession().joinChannel(mChannel.id)
+            (sessionOrNull() ?: return false).joinChannel(mChannel.id)
         } else if (itemId == R.id.context_channel_view_description) {
             val commentArgs = Bundle()
             commentArgs.putInt(ChannelDescriptionFragment.ARG_CHANNEL, mChannel.id)
@@ -115,17 +130,26 @@ class ChannelMenu(
                 mDatabase.removePinnedChannel(serverId, mChannel.id)
             }
         } else if (itemId == R.id.context_channel_link) {
-            val channel = mService.HumlaSession().getSessionChannel()
+            val session = sessionOrNull() ?: return false
+            val channel = try {
+                session.getSessionChannel()
+            } catch (e: HumlaDisconnectedException) {
+                Log.d(TAG, "exception in onMenuItemClick: $e")
+                return false
+            } catch (e: IllegalStateException) {
+                Log.d(TAG, "exception in onMenuItemClick: $e")
+                return false
+            }
             if (!item.isChecked) {
-                mService.HumlaSession().linkChannels(channel, mChannel)
+                session.linkChannels(channel, mChannel)
             } else {
-                mService.HumlaSession().unlinkChannels(channel, mChannel)
+                session.unlinkChannels(channel, mChannel)
             }
         } else if (itemId == R.id.context_channel_listen) {
             val isListening = mChannel.isListening
-            mService.HumlaSession().setListeningChannel(mChannel.id, !isListening)
+            (sessionOrNull() ?: return false).setListeningChannel(mChannel.id, !isListening)
         } else if (itemId == R.id.context_channel_unlink_all) {
-            mService.HumlaSession().unlinkAllChannels(mChannel)
+            (sessionOrNull() ?: return false).unlinkAllChannels(mChannel)
         } else if (itemId == R.id.context_channel_shout) {
             val layout = LinearLayout(mContext)
             layout.orientation = LinearLayout.VERTICAL
@@ -142,7 +166,9 @@ class ChannelMenu(
                     if (!mService.isConnected()) {
                         return@setPositiveButton
                     }
-                    val session: IHumlaSession = mService.HumlaSession()
+                    // Same TOCTOU as the item paths: the dialog outlives the
+                    // check, so acquisition can still throw on confirm tap.
+                    val session: IHumlaSession = sessionOrNull() ?: return@setPositiveButton
                     // Unregister any existing voice target.
                     if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
                         session.unregisterWhisperTarget(session.getVoiceTargetId())

@@ -194,7 +194,7 @@ class Server(
             var res: SrvResolverResult? = null
             try {
                 res = future.get(800, TimeUnit.MILLISECONDS)
-            } catch (te: TimeoutException) {
+            } catch (ignored: TimeoutException) {
                 future.cancel(true)
                 Log.d(TAG, "SRV lookup timed out for $lookup")
             } finally {

@@ -246,7 +246,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 }
             )
 
-            for (fragment in mServiceFragments) {
+            for (fragment in ArrayList(mServiceFragments)) {
                 fragment.setServiceBound(true)
             }
 
@@ -502,7 +502,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 if (i > 0) {
                     out.append(':')
                 }
-                out.append(hex, i, Math.min(i + 2, hex.length))
+                out.append(hex, i, minOf(i + 2, hex.length))
                 i += 2
             }
             return out.toString()
@@ -740,7 +740,10 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         val service = mService
         if (service != null) {
             service.onTalkKeyCancel()
-            for (fragment in mServiceFragments) {
+            // Snapshot: setServiceBound(false) runs fragment callbacks that
+            // can synchronously transact (onDestroyView removes), which would
+            // ConcurrentModificationException the live list mid-fanout.
+            for (fragment in ArrayList(mServiceFragments)) {
                 fragment.setServiceBound(false)
             }
             service.unregisterObserver(mObserver)

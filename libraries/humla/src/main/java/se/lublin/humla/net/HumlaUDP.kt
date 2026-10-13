@@ -50,9 +50,9 @@ import javax.crypto.ShortBufferException
  *
  * Best-effort caveat (accepted): [sendMessage] vs [disconnect] has a benign
  * TOCTOU window (check-then-send vs drain-and-reset). A packet landing in
- * that window dies with the discarded object (`disconnect` nulls the channel
- * reference; the next connect builds a fresh one), guarded in practice by
- * the `mConnected` check. Never relied upon for correctness.
+ * that window dies with the drained channel (disconnect drains instead of
+ * nulling; the next connect reuses the drained object), guarded in practice
+ * by the `mConnected` check. Never relied upon for correctness.
  *
  * Slice 4: the BlockingQueue + mSendLock head-drop becomes a
  * Channel(capacity, onBufferOverflow = DROP_OLDEST) with identical ~200ms

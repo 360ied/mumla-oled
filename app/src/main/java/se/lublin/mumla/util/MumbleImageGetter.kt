@@ -124,10 +124,15 @@ class MumbleImageGetter : Html.ImageGetter {
 
     /**
      * Shuts down the background executor and clears callbacks to prevent memory/thread leaks.
+     * Also clears the failed-download set: it is keyed by URL within this
+     * adapter's lifetime, and a server-controlled stream of unique URLs
+     * would otherwise grow it without bound.
      */
     fun shutdown() {
         mListener = null
         mMainHandler.removeCallbacksAndMessages(null)
+        mPendingDownloads.clear()
+        mFailedDownloads.clear()
         mExecutor.shutdownNow()
     }
 

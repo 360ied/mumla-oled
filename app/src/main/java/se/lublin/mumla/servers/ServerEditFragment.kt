@@ -119,8 +119,10 @@ class ServerEditFragment : DialogFragment() {
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
 
                     override fun afterTextChanged(s: Editable?) {
+                        // Nullable contract: the framework never passes null
+                        // today, but the signature allows it — safe-call.
                         urlPasswordWarning.visibility =
-                            if (s.toString() == urlPassword) View.VISIBLE else View.GONE
+                            if (s?.toString() == urlPassword) View.VISIBLE else View.GONE
                     }
                 })
         } else {

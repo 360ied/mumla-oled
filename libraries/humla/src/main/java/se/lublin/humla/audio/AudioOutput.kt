@@ -198,8 +198,11 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         }
         synchronized(this) {
             // Release native resources only once the render thread is dead;
-            // a stop requested from the render thread itself defers cleanup
-            // to the next call after run() has exited.
+            // a stop requested from the render thread itself must not be
+            // issued here (no join-from-self, no release under a live loop):
+            // it defers cleanup to the next external call after run() exits.
+            // In-tree AudioHandler.shutdown always stops from the service
+            // thread, so this path is a future-caller API trap only.
             val renderThread = this.thread
             if (renderThread != null && renderThread.isAlive) {
                 return
