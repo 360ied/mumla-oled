@@ -178,11 +178,14 @@ android {
                 includeEmptyDirs = false
             }
 
-            // Dump 8-bit quantized binary model asset
+            // Dump 8-bit quantized binary model asset. Gradle 9 removed both
+            // Task.exec and Project.exec; ProviderFactory.exec queried here, at
+            // execution time, is the supported replacement (non-zero exit
+            // throws, same fail-closed semantics).
             modelBin.parentFile.mkdirs()
-            exec {
+            project.providers.exec {
                 commandLine 'python3', dumpScript.absolutePath, dataC.absolutePath, modelBin.absolutePath
-            }
+            }.result.get().assertNormalExitValue()
             stampFile.text = expectedDigest + '\n'
         }
     }
