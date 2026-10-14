@@ -53,7 +53,7 @@ explicit flags (`-n` is short for `--dry-run`, `-f` for `--force`):
 Rules:
 
 - Default removes only **clean worktrees whose branch is fully merged** into local `master` (`git merge-base --is-ancestor <branch> master`). Safe w.r.t. tracked commits and changes; ignored build artifacts inside the worktree directory are discarded with it.
-- A removed worktree's **local branch is deleted as well when fully merged** (safe `git branch -d`, which refuses otherwise). `master`/`main`, detached checkouts, and unmerged branches are never deleted; pass `--keep-branch` to preserve every branch.
+- A removed worktree's **local branch is deleted as well when fully merged** (safe `git branch -d`, which refuses otherwise). `master`/`main` (plus internal `HEAD`), detached checkouts, and unmerged branches are never deleted; pass `--keep-branch` to preserve every branch.
 - Dirty means staged, unstaged, or untracked (`??`) changes; ignored files do not count.
 - Detached-HEAD worktrees have no branch to test, so they count as unmerged: clean detached needs `--include-unmerged`, dirty detached needs both flags.
 - A dirty AND unmerged worktree requires **both** `--include-unmerged` and `--force`.

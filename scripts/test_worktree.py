@@ -532,7 +532,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
 
     def test_cleanup_unknown_target_fails(self):
         proc = self._run_cleanup("nonexistent-branch")
-        self.assertEqual(proc.returncode, 1, msg=proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stderr)
         self.assertIn("Could not find worktree", proc.stderr)
 
     def test_cleanup_no_secondary_worktrees(self):
@@ -592,7 +592,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
             self.assertEqual(proc_explicit.returncode, 1, msg=proc_explicit.stdout)
             self.assertTrue(os.path.isdir(wt))
         finally:
-            subprocess.run(["git", "-C", self.repo_str, "worktree", "unlock", wt], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", self.repo_str, "worktree", "unlock", wt], check=False, stdout=subprocess.DEVNULL)
         proc2 = self._run_cleanup()
         self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
         self.assertFalse(os.path.isdir(wt))
@@ -628,6 +628,26 @@ class TestWorktreeCleanup(TempRepoTestBase):
         self.assertFalse(os.path.isdir(wt))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_str, ".worktrees")))
         self.assertFalse(self._branch_exists("feature/sweep"))
+
+    def test_command_aliases_ls_and_rm(self):
+        proc_ls = subprocess.run(
+            [SCRIPT_PATH, "ls"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc_ls.returncode, 0, msg=proc_ls.stderr)
+        self.assertIn("Active Git Worktrees", proc_ls.stdout)
+        self._commit_on_branch("feature/alias-rm", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/alias-rm", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/alias-rm")
+        proc_rm = subprocess.run(
+            [SCRIPT_PATH, "rm", "feature/alias-rm"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc_rm.returncode, 0, msg=proc_rm.stderr)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertFalse(self._branch_exists("feature/alias-rm"))
 
 
     def test_cleanup_keep_branch_preserves_merged_branch(self):
