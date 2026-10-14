@@ -49,9 +49,7 @@ plugins {
     alias(libs.plugins.kotlin.parcelize) apply false
     alias(libs.plugins.legacy.kapt) apply false
     alias(libs.plugins.hilt) apply false
-    // Paparazzi deferred (see catalog): 2.0.0-alpha05.1 breaks the unit-test
-    // runtime on AGP 9 (and resource merging on AGP 8); re-evaluate at slice 6.
-    // alias(libs.plugins.paparazzi) apply false
+    alias(libs.plugins.paparazzi) apply false
 }
 
 // Shared javac lint for all modules (hoisted: an `allprojects` block inside a

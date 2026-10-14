@@ -24,9 +24,15 @@ plugins {
     alias(libs.plugins.legacy.kapt)
     alias(libs.plugins.kotlin.parcelize)
     alias(libs.plugins.hilt)
-    // Paparazzi deferred (see catalog): 2.0.0-alpha05.1 breaks the unit-test
-    // runtime on AGP 9 (and resource merging on AGP 8); re-evaluate at slice 6.
-    // alias(libs.plugins.paparazzi)
+}
+
+// Paparazzi opt-in (-PwithPaparazzi): applying the plugin unconditionally
+// pollutes the unit-test classpath (layoutlib android.* shadows the mockable
+// android.jar, breaking stub-dependent tests like ChannelFragmentDensityTest).
+// Default off so check.sh stays green; slice-6 goldens run with the flag plus
+// a --tests filter for Paparazzi tests only.
+if (project.hasProperty("withPaparazzi")) {
+    apply plugin: "app.cash.paparazzi"
 }
 
 repositories {
