@@ -24,6 +24,7 @@ import functools
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -51,8 +52,8 @@ def print_usage(stream: TextIO) -> None:
     _emit(f"""Usage:
   {prog} add <branch-name> [base-ref] [-p <custom-path>]
   {prog} list (alias: ls)
-  {prog} remove <branch-name-or-path> [--force] (aliases: rm; -f for --force)
-  {prog} cleanup [--dry-run] [--include-unmerged] [--force] [<branch-or-path>...]
+  {prog} remove <branch-name-or-path> [--force] [--keep-branch] (aliases: rm; -f for --force)
+  {prog} cleanup [--dry-run] [--include-unmerged] [--force] [--keep-branch] [<branch-or-path>...]
             (alias: clean; -n for --dry-run, -f for --force)
 
 Commands:
@@ -61,13 +62,19 @@ Commands:
             If base-ref is omitted, it defaults to 'master'.
   list      List all active worktrees and their checked-out branches.
   remove    Safely remove a worktree. Refuses if there are uncommitted changes
-            unless --force is specified. Never deletes the git branch.
+            unless --force is specified. The worktree's local branch is deleted
+            as well when fully merged into 'master' (safe `git branch -d`);
+            pass --keep-branch to preserve it.
   cleanup   Remove secondary worktrees in bulk. Non-interactive and flag-driven:
             by default removes only clean worktrees whose branch is fully merged
             into 'master'. Add --include-unmerged to also remove clean worktrees
             with unmerged commits, and --force to also remove worktrees with
             uncommitted changes. Removing a dirty AND unmerged worktree requires
-            both flags. Never deletes git branches. Use --dry-run to preview.
+            both flags. A removed worktree's local branch is deleted as well when
+            it is fully merged into 'master' (safe `git branch -d`; protected
+            branches, detached checkouts, and unmerged branches are never
+            deleted). Add --keep-branch to preserve branches. Use --dry-run to
+            preview.
 
 Examples:
   {prog} add feature/vad-tuning
@@ -366,12 +373,16 @@ def cmd_list(repo_root: Optional[Path] = None) -> int:
 def cmd_remove(args: List[str], repo_root: Path) -> int:
     target = ""
     force = False
+    keep_branch = False
 
     idx = 0
     while idx < len(args):
         arg = args[idx]
         if arg in ("-f", "--force"):
             force = True
+            idx += 1
+        elif arg == "--keep-branch":
+            keep_branch = True
             idx += 1
         elif arg in ("-h", "--help"):
             print_usage(sys.stdout)
@@ -389,7 +400,7 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
 
     if not target:
         sys.stderr.write("Error: Worktree branch or path is required.\n")
-        sys.stderr.write("Usage: ./scripts/worktree.py remove <branch-name-or-path> [--force]\n")
+        sys.stderr.write("Usage: ./scripts/worktree.py remove <branch-name-or-path> [--force] [--keep-branch]\n")
         return 1
 
     wt_path = find_worktree_path(repo_root, target)
@@ -400,6 +411,20 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
     if wt_path == repo_root:
         sys.stderr.write("Error: Cannot remove the primary root worktree!\n")
         return 1
+
+    # Refuse to delete the shell's own footing: removing the worktree you are
+    # currently inside would unlink the cwd (mirrors the cleanup guard).
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        cwd = None
+    if cwd is not None:
+        try:
+            cwd.relative_to(wt_path)
+            sys.stderr.write(f"Error: Cannot remove the worktree you are currently inside ('{wt_path}').\n")
+            return 1
+        except ValueError:
+            pass
 
     # Check for uncommitted changes (fail closed: an uninspectable
     # worktree is treated as dirty and refused without --force).
@@ -431,9 +456,17 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
     _emit("Worktree removed successfully.")
     if branch_name and branch_name != "HEAD":
         _emit("")
-        _emit(f"Note: Local branch '{branch_name}' has been preserved.")
-        _emit("To delete it when fully merged, run:")
-        _emit(f"  git branch -d {branch_name}")
+        if keep_branch:
+            _emit(f"Note: Local branch '{branch_name}' has been preserved (--keep-branch).")
+        else:
+            deleted, reason = delete_merged_branch(repo_root, branch_name)
+            if deleted:
+                _emit(f"Local branch '{branch_name}' deleted (fully merged into master).")
+            else:
+                _emit(f"Note: Local branch '{branch_name}' has been preserved ({reason}).")
+                if branch_name not in PROTECTED_BRANCHES:
+                    _emit("To delete it when fully merged, run:")
+                    _emit(f"  git branch -d -- {shlex.quote(branch_name)}")
     return 0
 
 
@@ -504,6 +537,58 @@ def is_branch_merged(branch: Optional[str], repo_root: Path) -> bool:
         check=False,
     )
     return proc.returncode == 0
+
+
+# Branches that worktree removal must never delete, even when merged.
+PROTECTED_BRANCHES = ("master", "main", "HEAD")
+
+
+def delete_merged_branch(repo_root: Path, branch: str) -> Tuple[bool, str]:
+    """Delete local <branch> when it is fully merged into 'master'.
+
+    Returns (deleted, reason). Deletion uses safe `git branch -d`, which
+    refuses unmerged or in-use branches, so a failed delete is reported as
+    preserved rather than forced.
+    """
+    if branch in PROTECTED_BRANCHES:
+        return (False, "protected branch")
+    if not is_branch_merged(branch, repo_root):
+        return (False, "not fully merged into master")
+    proc = subprocess.run(
+        ["git", "branch", "-d", "--", branch],
+        cwd=repo_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return (True, "deleted")
+    return (False, "in use or not fully merged")
+
+
+def removal_branch_note(repo_root: Path, branch: Optional[str], keep_branch: bool) -> str:
+    """Delete the branch when merged; describe branch fate (suffix or "")."""
+    if not branch:
+        return ""
+    if keep_branch:
+        return f"; branch '{branch}' preserved (--keep-branch)"
+    deleted, reason = delete_merged_branch(repo_root, branch)
+    if deleted:
+        return f"; branch '{branch}' deleted (fully merged)"
+    return f"; branch '{branch}' preserved ({reason})"
+
+
+def preview_branch_note(repo_root: Path, branch: Optional[str], keep_branch: bool) -> str:
+    """Predict branch fate for --dry-run (suffix or "", deletes nothing)."""
+    if not branch:
+        return ""
+    if keep_branch:
+        return f"; branch '{branch}' would be preserved (--keep-branch)"
+    if branch in PROTECTED_BRANCHES:
+        return f"; branch '{branch}' would be preserved (protected branch)"
+    if not is_branch_merged(branch, repo_root):
+        return f"; branch '{branch}' would be preserved (not fully merged into master)"
+    return f"; branch '{branch}' would be deleted"
 
 
 def is_worktree_dirty(wt_path: Path) -> Optional[Tuple[bool, str]]:
@@ -609,6 +694,7 @@ def cmd_cleanup(args: List[str], repo_root: Path) -> int:
     dry_run = False
     include_unmerged = False
     force = False
+    keep_branch = False
     targets: List[str] = []
 
     idx = 0
@@ -619,6 +705,9 @@ def cmd_cleanup(args: List[str], repo_root: Path) -> int:
             idx += 1
         elif arg == "--include-unmerged":
             include_unmerged = True
+            idx += 1
+        elif arg == "--keep-branch":
+            keep_branch = True
             idx += 1
         elif arg in ("-f", "--force"):
             force = True
@@ -757,13 +846,13 @@ def cmd_cleanup(args: List[str], repo_root: Path) -> int:
             continue
 
         if dry_run:
-            _emit(f"{label}: would remove ({state})")
+            _emit(f"{label}: would remove ({state}){preview_branch_note(repo_root, branch, keep_branch)}")
             continue
 
         _emit(f"Removing worktree at '{wt_path}'... ({state})")
         rc = remove_worktree_dir(repo_root, wt_path)
         if rc == 0:
-            _emit(f"{label}: removed ({state}); branch preserved")
+            _emit(f"{label}: removed ({state}){removal_branch_note(repo_root, branch, keep_branch)}")
             removed.append(label)
         else:
             sys.stderr.write(f"Error: Failed to remove worktree at '{wt_path}'.\n")
@@ -783,9 +872,8 @@ def cmd_cleanup(args: List[str], repo_root: Path) -> int:
         _emit()
         if preserved and not explicit:
             _emit(f"Preserved {len(preserved)} worktree(s): [{', '.join(preserved)}]")
-        if removed:
-            _emit("Note: Local branches were preserved. Delete merged ones with:")
-            _emit("  git branch -d <branch-name>")
+        if keep_branch and removed:
+            _emit("Note: local branches were preserved (--keep-branch).")
 
     if failed:
         return 1

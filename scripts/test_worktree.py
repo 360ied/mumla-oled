@@ -172,13 +172,14 @@ class TestWorktreeLifecycle(TempRepoTestBase):
         self.assertFalse(os.path.isdir(expected_wt))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_dir, ".worktrees")))
 
-        # 5. Verify branch was NOT deleted
+        # 5. Verify the merged branch was deleted with the worktree
+        self.assertIn("deleted (fully merged", proc_rm_clean.stdout, msg=proc_rm_clean.stdout)
         branch_check = subprocess.run(
             ["git", "-C", self.repo_dir, "show-ref", "--verify", "refs/heads/feature/deep/nested-test"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self.assertEqual(branch_check.returncode, 0, "Branch should be preserved")
+        self.assertNotEqual(branch_check.returncode, 0, "Merged branch should be deleted")
 
     def test_worktree_with_submodule_removal(self):
         # Create a mock submodule repository
@@ -407,7 +408,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
         subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", branch], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with open(os.path.join(self.repo_dir, filename), "w", encoding="utf-8") as f:
             f.write(content)
-        subprocess.run(["git", "-C", self.repo_dir, "add", "."], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "add", filename], check=True)
         subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", message], check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["git", "-C", self.repo_dir, "checkout", "master"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -440,9 +441,9 @@ class TestWorktreeCleanup(TempRepoTestBase):
         proc = self._run_cleanup()
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("feature/merged: removed (merged,clean)", proc.stdout, msg=proc.stdout)
-        self.assertIn("branch preserved", proc.stdout, msg=proc.stdout)
+        self.assertIn("branch 'feature/merged' deleted (fully merged)", proc.stdout, msg=proc.stdout)
         self.assertFalse(os.path.isdir(wt))
-        self.assertTrue(self._branch_exists("feature/merged"))
+        self.assertFalse(self._branch_exists("feature/merged"))
 
     def test_cleanup_preserves_unmerged_by_default(self):
         self._commit_on_branch("feature/unmerged", "feat.txt", "unmerged\n", "feat")
@@ -456,6 +457,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
         proc2 = self._run_cleanup("--include-unmerged")
         self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
         self.assertIn("feature/unmerged: removed (unmerged,clean)", proc2.stdout, msg=proc2.stdout)
+        self.assertIn("branch 'feature/unmerged' preserved (not fully merged", proc2.stdout, msg=proc2.stdout)
         self.assertFalse(os.path.isdir(wt))
         self.assertTrue(self._branch_exists("feature/unmerged"))
 
@@ -484,7 +486,8 @@ class TestWorktreeCleanup(TempRepoTestBase):
         proc2 = self._run_cleanup("--force")
         self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
         self.assertFalse(os.path.isdir(wt))
-        self.assertTrue(self._branch_exists("feature/dirty-merged"))
+        self.assertIn("branch 'feature/dirty-merged' deleted (fully merged)", proc2.stdout, msg=proc2.stdout)
+        self.assertFalse(self._branch_exists("feature/dirty-merged"))
 
     def test_cleanup_dirty_unmerged_needs_both_flags(self):
         self._commit_on_branch("feature/dirty-unmerged", "feat.txt", "unmerged\n", "feat")
@@ -513,6 +516,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
         proc = self._run_cleanup("--dry-run")
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("feature/dry: would remove (merged,clean)", proc.stdout, msg=proc.stdout)
+        self.assertIn("branch 'feature/dry' would be deleted", proc.stdout, msg=proc.stdout)
         self.assertTrue(os.path.isdir(wt))
         self.assertTrue(self._branch_exists("feature/dry"))
 
@@ -528,7 +532,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
 
     def test_cleanup_unknown_target_fails(self):
         proc = self._run_cleanup("nonexistent-branch")
-        self.assertEqual(proc.returncode, 1, msg=proc.stdout)
+        self.assertEqual(proc.returncode, 1, msg=proc.stderr)
         self.assertIn("Could not find worktree", proc.stderr)
 
     def test_cleanup_no_secondary_worktrees(self):
@@ -549,7 +553,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
         proc2 = self._run_cleanup("-f", subcommand="clean")
         self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
         self.assertFalse(os.path.isdir(wt))
-        self.assertTrue(self._branch_exists("feature/shorthand"))
+        self.assertFalse(self._branch_exists("feature/shorthand"))
 
     def test_cleanup_path_target(self):
         self._commit_on_branch("feature/by-path", "feat.txt", "merged\n", "feat")
@@ -558,7 +562,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
         proc = self._run_cleanup(wt)
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertFalse(os.path.isdir(wt))
-        self.assertTrue(self._branch_exists("feature/by-path"))
+        self.assertFalse(self._branch_exists("feature/by-path"))
 
     def test_cleanup_detached_needs_include_unmerged(self):
         wt = os.path.join(self.repo_str, ".worktrees", "detached-one")
@@ -588,11 +592,11 @@ class TestWorktreeCleanup(TempRepoTestBase):
             self.assertEqual(proc_explicit.returncode, 1, msg=proc_explicit.stdout)
             self.assertTrue(os.path.isdir(wt))
         finally:
-            subprocess.run(["git", "-C", self.repo_str, "worktree", "unlock", wt], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", self.repo_str, "worktree", "unlock", wt], check=False, stdout=subprocess.DEVNULL)
         proc2 = self._run_cleanup()
         self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
         self.assertFalse(os.path.isdir(wt))
-        self.assertTrue(self._branch_exists("feature/locked"))
+        self.assertFalse(self._branch_exists("feature/locked"))
 
     def test_cleanup_inside_worktree_preserved(self):
         self._commit_on_branch("feature/inside", "feat.txt", "merged\n", "feat")
@@ -623,7 +627,154 @@ class TestWorktreeCleanup(TempRepoTestBase):
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertFalse(os.path.isdir(wt))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_str, ".worktrees")))
-        self.assertTrue(self._branch_exists("feature/sweep"))
+        self.assertFalse(self._branch_exists("feature/sweep"))
+
+    def test_command_aliases_ls_and_rm(self):
+        proc_ls = subprocess.run(
+            [SCRIPT_PATH, "ls"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc_ls.returncode, 0, msg=proc_ls.stderr)
+        self.assertIn("Active Git Worktrees", proc_ls.stdout)
+        self._commit_on_branch("feature/alias-rm", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/alias-rm", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/alias-rm")
+        proc_rm = subprocess.run(
+            [SCRIPT_PATH, "rm", "feature/alias-rm"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc_rm.returncode, 0, msg=proc_rm.stderr)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertFalse(self._branch_exists("feature/alias-rm"))
+
+
+    def test_cleanup_keep_branch_preserves_merged_branch(self):
+        self._commit_on_branch("feature/keep", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/keep", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/keep")
+        proc = self._run_cleanup("--keep-branch")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("branch 'feature/keep' preserved (--keep-branch)", proc.stdout, msg=proc.stdout)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertTrue(self._branch_exists("feature/keep"))
+
+    def test_cleanup_never_deletes_master_branch(self):
+        # A branch can only live in one worktree: park the main checkout on a
+        # holder so a secondary worktree can hold `master`.
+        wt = os.path.join(self.repo_str, ".worktrees", "on-master")
+        try:
+            subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", "temp-holder"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["git", "-C", self.repo_str, "worktree", "add", wt, "master"],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            proc = self._run_cleanup()
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            self.assertIn("branch 'master' preserved (protected branch)", proc.stdout, msg=proc.stdout)
+            self.assertFalse(os.path.isdir(wt))
+            self.assertTrue(self._branch_exists("master"))
+        finally:
+            # Best-effort restore: teardown must never mask the test's own assertions.
+            subprocess.run(["git", "-C", self.repo_str, "worktree", "remove", "--force", wt], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", self.repo_dir, "checkout", "master"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["git", "-C", self.repo_dir, "branch", "-D", "temp-holder"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def test_remove_deletes_merged_branch_but_keeps_unmerged(self):
+        self._commit_on_branch("feature/rm-merged", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/rm-merged", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        self._add_worktree("feature/rm-merged")
+        proc1 = subprocess.run(
+            [SCRIPT_PATH, "remove", "feature/rm-merged"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc1.returncode, 0, msg=proc1.stderr)
+        self.assertIn("deleted (fully merged", proc1.stdout, msg=proc1.stdout)
+        self.assertFalse(self._branch_exists("feature/rm-merged"))
+
+        self._commit_on_branch("feature/rm-unmerged", "feat.txt", "unmerged\n", "feat")
+        wt2 = self._add_worktree("feature/rm-unmerged")
+        proc2 = subprocess.run(
+            [SCRIPT_PATH, "remove", "feature/rm-unmerged"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
+        self.assertIn("has been preserved (not fully merged", proc2.stdout, msg=proc2.stdout)
+        self.assertFalse(os.path.isdir(wt2))
+        self.assertTrue(self._branch_exists("feature/rm-unmerged"))
+
+    def test_remove_keep_branch(self):
+        self._commit_on_branch("feature/rm-keep", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/rm-keep", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/rm-keep")
+        proc = subprocess.run(
+            [SCRIPT_PATH, "remove", "--keep-branch", "feature/rm-keep"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("has been preserved (--keep-branch)", proc.stdout, msg=proc.stdout)
+        self.assertFalse(os.path.isdir(wt))
+        self.assertTrue(self._branch_exists("feature/rm-keep"))
+
+
+    def test_remove_from_inside_worktree_refused(self):
+        self._commit_on_branch("feature/rm-inside", "feat.txt", "merged\n", "feat")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/rm-inside", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        wt = self._add_worktree("feature/rm-inside")
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(wt)
+            proc = subprocess.run(
+                [SCRIPT_PATH, "remove", "feature/rm-inside"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            self.assertEqual(proc.returncode, 1, msg=proc.stderr)
+            self.assertIn("currently inside", proc.stderr, msg=proc.stderr)
+        finally:
+            os.chdir(old_cwd)
+        self.assertTrue(os.path.isdir(wt))
+        self.assertTrue(self._branch_exists("feature/rm-inside"))
+
+
+class TestDeleteMergedBranch(TempRepoTestBase):
+
+    def _branch_with_commit(self, branch):
+        subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", branch], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(os.path.join(self.repo_dir, "feat.txt"), "w", encoding="utf-8") as f:
+            f.write("x\n")
+        subprocess.run(["git", "-C", self.repo_dir, "add", "feat.txt"], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "feat"], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", self.repo_dir, "checkout", "master"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _branch_exists(self, branch):
+        return subprocess.run(
+            ["git", "-C", self.repo_dir, "show-ref", "--verify", f"refs/heads/{branch}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+
+    def test_protected_branches_never_deleted(self):
+        for branch in ("master", "main", "HEAD"):
+            deleted, _reason = worktree.delete_merged_branch(self.repo_dir, branch)
+            self.assertFalse(deleted)
+        self.assertTrue(self._branch_exists("master"))
+
+    def test_unmerged_branch_preserved(self):
+        self._branch_with_commit("feature/live")
+        deleted, reason = worktree.delete_merged_branch(self.repo_dir, "feature/live")
+        self.assertFalse(deleted)
+        self.assertIn("not fully merged", reason)
+        self.assertTrue(self._branch_exists("feature/live"))
+
+    def test_merged_branch_deleted(self):
+        self._branch_with_commit("feature/done")
+        subprocess.run(["git", "-C", self.repo_dir, "merge", "--no-ff", "feature/done", "-m", "merge"], check=True, stdout=subprocess.DEVNULL)
+        deleted, _reason = worktree.delete_merged_branch(self.repo_dir, "feature/done")
+        self.assertTrue(deleted)
+        self.assertFalse(self._branch_exists("feature/done"))
 
 
 if __name__ == "__main__":
