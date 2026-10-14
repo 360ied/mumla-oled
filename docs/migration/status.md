@@ -71,7 +71,8 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - Compose rewrite slices 6-7 explicitly DEFERRED 2026-10-13 to
   post-landing follow-up — landing scope is slices 0-5.
 - R8 verified 2026-10-13 on `build/r8-release` (below) — no longer owed.
-- Paparazzi re-evaluation DEFERRED with slice 6 (above).
+- Paparazzi re-evaluation DEFERRED with slice 6 (above) — spike proven
+  2026-10-14 on `spike/paparazzi` (unlanded, see below).
 - `hilt-navigation-compose` re-verification DEFERRED with slice 7.
 - kapt → KSP when a stable KSP for Kotlin 2.4 lands.
 
@@ -336,8 +337,29 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - `v0.26.0` — released as an unstable pre-release (Android 13 requirement
   headline).
 
+## Paparazzi spike (PROVEN 2026-10-14, unlanded on `spike/paparazzi`)
+
+- Mechanism: root keeps the catalog alias `apply false` (resolvable, no
+  classpath); `:app` applies `app.cash.paparazzi` only with
+  `-PwithPaparazzi`. Default builds are unchanged and `./scripts/check.sh`
+  stays green.
+- Proven: a temporary `PaparazziSmokeTest` (TextView snapshot) recorded and
+  verified green on AGP 9.0.1 / Gradle 9.1.0 / compileSdk 36 (layoutlib
+  16.2.3) — resource merging and rendering are fine; the only blocker was
+  unit-test classpath pollution. Smoke sources removed after proof, so the
+  branch carries build wiring only.
+- Constraint: a full suite with the flag on still runs stub-dependent tests
+  against layoutlib and fails — golden runs must filter to Paparazzi tests
+  (`:app:recordPaparazziFossDebug` / `:app:verifyPaparazziFossDebug` with
+  `-PwithPaparazzi --tests "se.lublin.mumla.paparazzi.*"`).
+- Upstream: isolation PR cashapp/paparazzi#2324 closed unmerged; the
+  `alpha05.2` milestone sits open past its 2026-10-13 due date — no fix to
+  consume. The opt-in is the durable posture; re-prove the two commands on
+  each bump.
+- Landing is a separate, explicitly requested action — never autonomous.
+
 ## Next
 
 Nothing open: migration landed, follow-ups merged, v0.26.0 released.
-Remaining debt rides its own TODOs (Paparazzi, hilt-navigation-compose,
-KSP). Slices 6-7 deferred.
+Remaining debt rides its own TODOs (Paparazzi opt-in on `spike/paparazzi`,
+hilt-navigation-compose, KSP). Slices 6-7 deferred.

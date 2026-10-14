@@ -64,7 +64,9 @@ machinery. See [plan](plan.md) for execution.
 - **Screenshots — DEFERRED with slices 6-7.** Paparazzi primary was planned:
   Paparazzi (JVM, no emulator) per-component regression inside the
   worktree loop; emulator/device shots cover only what Paparazzi cannot (overlay system windows, drawer gestures, rotation). On the primary path (Gradle 9.x + Paparazzi 2.x) dialogs are Paparazzi-gated; only if the 1.3.x fallback somehow works are dialogs on-device-only. Existing JVM tests
-  (`ChannelFragmentDensityTest` et al.) backstop numerically.
+  (`ChannelFragmentDensityTest` et al.) backstop numerically. Spike proven
+  2026-10-14 on `spike/paparazzi` (unlanded): `-PwithPaparazzi` opt-in with
+  Paparazzi-only `--tests` filter; see [status](status.md).
 - **Forward-only history, no autonomous landing.** Per repository policy,
   the migration branch is merged into `master` only on explicit request,
   never autonomously.

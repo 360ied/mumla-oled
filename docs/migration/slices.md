@@ -38,14 +38,18 @@ for agent-reviewed slices. The binder surface
      ANYWHERE in the build breaks resource merging build-wide
      (`MergedResourceWriterRequest` NoSuchMethodError; bisected with every other
      new plugin off, Kotlin 2.4.21 cleared). On AGP 9.0.1 it configures and
-     merges cleanly but breaks the unit-test runtime instead (ships `android-all`
-     real framework classes that shadow the mockable `android.jar`: the same 7
-     stub-dependent tests fail, including the must-keep-unmodified
+     merges cleanly but breaks the unit-test runtime instead (layoutlib ships
+     real `android.*` framework classes that shadow the mockable `android.jar`:
+     the same 7 stub-dependent tests fail, including the must-keep-unmodified
      `ChannelFragmentDensityTest`; all green with the plugin off). The 1.3.x
      fallback is dead (its layoutlib caps at compileSdk 35; the project is on
      36). Slice 0 lands WITHOUT the Paparazzi plugin (pin kept in the catalog
-     as the slice-6 re-evaluation starting point); screenshot rendering is
-     proven in slice 6, which re-evaluates (stable 2.0.0 may have moved by then).
+     as the slice-6 re-evaluation starting point). UPDATE 2026-10-14 (spike
+     `spike/paparazzi`, unlanded): record + verify proven green on AGP 9.0.1 /
+     compileSdk 36 behind a `-PwithPaparazzi` opt-in (plugin off by default,
+     golden runs filtered to Paparazzi tests only). The shadowing classes come
+     from layoutlib itself, so exclusion is impossible and the opt-in is the
+     durable posture. Details in [status](status.md).
    - **Toolchain adoption (end of slice 0, from the `spike/agp9` worktree):**
      AGP `9.0.1` + Gradle `9.1.0` + Hilt `2.60.1`, with AGP 9 opt-outs
      (`android.newDsl=false`, `android.builtInKotlin=false` in
