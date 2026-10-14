@@ -16,6 +16,7 @@
   ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="auto">
 
     <uses-feature
@@ -36,6 +37,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <!-- SCO routing only: runtime grant on API 31+, ignored below. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- API 33+: runtime grant on TIRAMISU+, ignored below (notifications
+         are enabled by default there). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <queries>
@@ -53,7 +56,8 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.Mumla"
-        android:localeConfig="@xml/local_config">
+        android:localeConfig="@xml/local_config"
+        tools:targetApi="33">
 
         <activity
             android:name=".preference.SettingsActivity"

@@ -18,6 +18,7 @@
 package se.lublin.mumla.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.DialogInterface
 import android.content.Intent
@@ -25,6 +26,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.text.InputType
@@ -46,6 +48,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.Toolbar
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.os.BundleCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
@@ -549,9 +552,9 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             mPermPostNotificationsAsked =
                 savedInstanceState.getBoolean(STATE_POST_NOTIF_ASKED, false)
             mServerPendingPerm =
-                savedInstanceState.getParcelable(STATE_SERVER_PENDING, Server::class.java)
+                BundleCompat.getParcelable(savedInstanceState, STATE_SERVER_PENDING, Server::class.java)
             mPendingReconnectServer =
-                savedInstanceState.getParcelable(STATE_RECONNECT_TARGET, Server::class.java)
+                BundleCompat.getParcelable(savedInstanceState, STATE_RECONNECT_TARGET, Server::class.java)
         }
         setContentView(R.layout.activity_main)
 
@@ -1066,6 +1069,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         connectToServerWithPerm()
     }
 
+    // InlinedApi: BLUETOOTH_CONNECT (31) and POST_NOTIFICATIONS (33) are
+    // referenced below but guarded by SDK_INT; the inlined values are safe
+    // on older platforms (unknown permission strings simply check/request
+    // as denied/ignored, and the guards prevent ever reaching them).
+    @SuppressLint("InlinedApi")
     fun connectToServerWithPerm() {
         if (ContextCompat.checkSelfPermission(
                 this@MumlaActivity,
@@ -1082,7 +1090,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
         // NPE-exact: the original dereferenced mSettings unconditionally.
         val settings = mSettings ?: throw NullPointerException("mSettings")
-        if (settings.isBluetoothHeadset &&
+        // BLUETOOTH_CONNECT is an API 31+ runtime permission; below S the
+        // legacy BLUETOOTH/BLUETOOTH_ADMIN manifest grants (maxSdk 30) cover
+        // SCO routing and no runtime ask exists.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            settings.isBluetoothHeadset &&
             ContextCompat.checkSelfPermission(
                 this@MumlaActivity,
                 Manifest.permission.BLUETOOTH_CONNECT
@@ -1109,7 +1121,9 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             ).show()
         }
 
-        if (!mPermPostNotificationsAsked) {
+        // POST_NOTIFICATIONS is API 33+; below TIRAMISU notifications are
+        // enabled by default with no runtime grant to ask for.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !mPermPostNotificationsAsked) {
             // Mark asked before requesting: a cancelled dialog must not loop.
             mPermPostNotificationsAsked = true
             if (ContextCompat.checkSelfPermission(

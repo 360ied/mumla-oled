@@ -27,6 +27,7 @@ import android.view.View
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.core.os.BundleCompat
 import androidx.fragment.app.DialogFragment
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import se.lublin.humla.model.Server
@@ -215,7 +216,8 @@ class ServerEditFragment : DialogFragment() {
     private fun getServer(): Server? {
         // NPE-exact: the original dereferenced getArguments() unconditionally.
         val args = arguments ?: throw NullPointerException("arguments")
-        return args.getParcelable(ARGUMENT_SERVER, Server::class.java)
+        // BundleCompat backports the API 33 typed getParcelable to minSdk 30.
+        return BundleCompat.getParcelable(args, ARGUMENT_SERVER, Server::class.java)
     }
 
     private fun getAction(): Action {
