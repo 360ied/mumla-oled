@@ -3,7 +3,8 @@ name: mumla-worktree-cleanup
 description: >-
   Safely clean up and teardown Git worktrees for the Mumla OLED repository
   via scripts/worktree.py cleanup: preview with --dry-run, remove only
-  clean worktrees merged into master by default, opt in to unmerged or dirty
+  clean worktrees merged into master by default (deleting their merged
+  local branches too), opt in to unmerged or dirty
   removal with explicit flags. CRITICAL: ONLY use when the user EXPLICITLY
   asks to clean up or remove worktrees. NEVER invoke this skill autonomously
   or as part of task completion.
@@ -30,7 +31,7 @@ worktree (`master`) must **never** be removed.
 
 This inventories all secondary worktrees (typically `.worktrees/<branch-name>`)
 and classifies each as merged/unmerged and clean/dirty without deleting anything.
-If no secondary worktrees exist it reports that only the root worktree exists.
+The preview also predicts branch deletion. If no secondary worktrees exist it reports that only the root worktree exists.
 Include the preview output in your report to the user.
 
 ## 2. Remove (flag-driven, non-interactive)
@@ -43,6 +44,7 @@ explicit flags (`-n` is short for `--dry-run`, `-f` for `--force`):
 ./scripts/worktree.py cleanup --include-unmerged               # also remove clean worktrees with unmerged commits
 ./scripts/worktree.py cleanup --force                          # also remove dirty-but-merged worktrees
 ./scripts/worktree.py cleanup --include-unmerged --force       # remove dirty AND unmerged (requires both flags)
+./scripts/worktree.py cleanup --keep-branch                     # remove worktrees but preserve all branches
 ./scripts/worktree.py cleanup --dry-run <branch-or-path>...    # preview specific worktrees
 ./scripts/worktree.py cleanup <branch-or-path>...              # target specific worktrees
 ```
@@ -50,12 +52,13 @@ explicit flags (`-n` is short for `--dry-run`, `-f` for `--force`):
 Rules:
 
 - Default removes only **clean worktrees whose branch is fully merged** into local `master` (`git merge-base --is-ancestor <branch> master`). Safe w.r.t. tracked commits and changes; ignored build artifacts inside the worktree directory are discarded with it.
+- A removed worktree's **local branch is deleted as well when fully merged** (safe `git branch -d`, which refuses otherwise). `master`/`main`, detached checkouts, and unmerged branches are never deleted; pass `--keep-branch` to preserve every branch.
 - Dirty means staged, unstaged, or untracked (`??`) changes; ignored files do not count.
 - Detached-HEAD worktrees have no branch to test, so they count as unmerged: clean detached needs `--include-unmerged`, dirty detached needs both flags.
 - A dirty AND unmerged worktree requires **both** `--include-unmerged` and `--force`.
 - An explicitly named worktree that is skipped under the given flags exits non-zero (except in `--dry-run`, which only previews and exits zero); bulk mode preserves skipped worktrees and exits zero unless a removal itself fails.
 - Locked worktrees are always preserved (unlock first). The worktree you are currently inside is never removed.
-- Local branches are always preserved; delete merged ones afterwards with `git branch -d <branch-name>`.
+- `remove` applies the same branch rule: the worktree's branch is deleted when fully merged unless `--keep-branch` is given.
 - The command prunes worktree metadata and sweeps leftover empty directories under `.worktrees/` automatically.
 
 ## 3. Verify and report
@@ -63,6 +66,7 @@ Rules:
 ```bash
 ./scripts/worktree.py list
 git status
+git branch
 ```
 
-Report which worktrees were removed, which were intentionally preserved (and why), and note that local branches remain in history.
+Report which worktrees were removed, which branches were deleted vs preserved (and why); a branch is gone only when it was fully merged.
