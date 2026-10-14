@@ -20,7 +20,8 @@ repository via the non-interactive `cleanup` subcommand.
 
 Worktrees allow isolated development on dedicated branches without touching
 the primary repository tree (which stays permanently checked out on `master`).
-Worktree removal never deletes underlying Git branches. The primary root
+Worktree removal also deletes the worktree's local branch when it is fully merged
+into `master` (unless `--keep-branch` or protected). The primary root
 worktree (`master`) must **never** be removed.
 
 ## 1. Preview (always run first)
@@ -58,7 +59,7 @@ Rules:
 - A dirty AND unmerged worktree requires **both** `--include-unmerged` and `--force`.
 - An explicitly named worktree that is skipped under the given flags exits non-zero (except in `--dry-run`, which only previews and exits zero); bulk mode preserves skipped worktrees and exits zero unless a removal itself fails.
 - Locked worktrees are always preserved (unlock first). The worktree you are currently inside is never removed.
-- `remove` applies the same branch rule: the worktree's branch is deleted when fully merged unless `--keep-branch` is given.
+- `remove` applies the same branch rule: the worktree's branch is deleted when fully merged unless `--keep-branch` is given (aliases: `rm`; `-f` for `--force`).
 - The command prunes worktree metadata and sweeps leftover empty directories under `.worktrees/` automatically.
 
 ## 3. Verify and report

@@ -61,7 +61,9 @@ Commands:
             If base-ref is omitted, it defaults to 'master'.
   list      List all active worktrees and their checked-out branches.
   remove    Safely remove a worktree. Refuses if there are uncommitted changes
-            unless --force is specified. Never deletes the git branch.
+            unless --force is specified. The worktree's local branch is deleted
+            as well when fully merged into 'master' (safe `git branch -d`);
+            pass --keep-branch to preserve it.
   cleanup   Remove secondary worktrees in bulk. Non-interactive and flag-driven:
             by default removes only clean worktrees whose branch is fully merged
             into 'master'. Add --include-unmerged to also remove clean worktrees
@@ -397,7 +399,7 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
 
     if not target:
         sys.stderr.write("Error: Worktree branch or path is required.\n")
-        sys.stderr.write("Usage: ./scripts/worktree.py remove <branch-name-or-path> [--force]\n")
+        sys.stderr.write("Usage: ./scripts/worktree.py remove <branch-name-or-path> [--force] [--keep-branch]\n")
         return 1
 
     wt_path = find_worktree_path(repo_root, target)
@@ -408,6 +410,20 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
     if wt_path == repo_root:
         sys.stderr.write("Error: Cannot remove the primary root worktree!\n")
         return 1
+
+    # Refuse to delete the shell's own footing: removing the worktree you are
+    # currently inside would unlink the cwd (mirrors the cleanup guard).
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        cwd = None
+    if cwd is not None:
+        try:
+            cwd.relative_to(wt_path)
+            sys.stderr.write(f"Error: Cannot remove the worktree you are currently inside ('{wt_path}').\n")
+            return 1
+        except ValueError:
+            pass
 
     # Check for uncommitted changes (fail closed: an uninspectable
     # worktree is treated as dirty and refused without --force).
@@ -447,8 +463,9 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
                 _emit(f"Local branch '{branch_name}' deleted (fully merged into master).")
             else:
                 _emit(f"Note: Local branch '{branch_name}' has been preserved ({reason}).")
-                _emit("To delete it when fully merged, run:")
-                _emit(f"  git branch -d {branch_name}")
+                if branch_name not in PROTECTED_BRANCHES:
+                    _emit("To delete it when fully merged, run:")
+                    _emit(f"  git branch -d {branch_name}")
     return 0
 
 
@@ -566,8 +583,10 @@ def preview_branch_note(repo_root: Path, branch: Optional[str], keep_branch: boo
         return ""
     if keep_branch:
         return f"; branch '{branch}' would be preserved (--keep-branch)"
-    if branch in PROTECTED_BRANCHES or not is_branch_merged(branch, repo_root):
-        return f"; branch '{branch}' would be preserved"
+    if branch in PROTECTED_BRANCHES:
+        return f"; branch '{branch}' would be preserved (protected branch)"
+    if not is_branch_merged(branch, repo_root):
+        return f"; branch '{branch}' would be preserved (not fully merged into master)"
     return f"; branch '{branch}' would be deleted"
 
 
