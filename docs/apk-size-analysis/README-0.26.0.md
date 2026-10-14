@@ -1,4 +1,7 @@
-# Mumla OLED Release APK Size Analysis & Binary Footprint Report (0.26.0)
+# Mumla OLED Release APK Size Analysis & Binary Footprint Report (0.26.0 — Outdated)
+
+> [!WARNING]
+> **Outdated Analysis**: This report reflects the binary footprint of **Mumla OLED 0.26.0** and is superseded by the [0.26.1 report](./README-0.26.1.md). Headline change since: `useLegacyPackaging` for DEX and native libs restored deflated packaging (−2.28 MB on disk), and the floor dropped to minSdk 30 — see the successor report for the full delta analysis.
 
 This report provides a comprehensive, quantitative analysis of the binary footprint, package composition, Dalvik bytecode structure, native shared libraries, asset payloads, and resource overhead in the production release APK of **Mumla OLED 0.26.0** ([`mumla-foss-release.apk`](../../app/build/outputs/apk/foss/release/mumla-foss-release.apk)). It is the successor to the [0.21.23 analysis](./README-0.21.23.md) and follows the same methodology so the reports can be compared section by section.
 
