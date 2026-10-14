@@ -60,6 +60,7 @@ Rules:
 - An explicitly named worktree that is skipped under the given flags exits non-zero (except in `--dry-run`, which only previews and exits zero); bulk mode preserves skipped worktrees and exits zero unless a removal itself fails.
 - Locked worktrees are always preserved (unlock first). The worktree you are currently inside is never removed.
 - `remove` applies the same branch rule: the worktree's branch is deleted when fully merged unless `--keep-branch` is given (aliases: `rm`; `-f` for `--force`).
+- Aliases from the usage text hold throughout: `clean` for `cleanup`, `ls` for `list`.
 - The command prunes worktree metadata and sweeps leftover empty directories under `.worktrees/` automatically.
 
 ## 3. Verify and report

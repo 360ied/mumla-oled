@@ -644,8 +644,8 @@ class TestWorktreeCleanup(TempRepoTestBase):
         # A branch can only live in one worktree: park the main checkout on a
         # holder so a secondary worktree can hold `master`.
         wt = os.path.join(self.repo_str, ".worktrees", "on-master")
-        subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", "temp-holder"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
+            subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", "temp-holder"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(
                 ["git", "-C", self.repo_str, "worktree", "add", wt, "master"],
                 check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -712,7 +712,7 @@ class TestWorktreeCleanup(TempRepoTestBase):
                 [SCRIPT_PATH, "remove", "feature/rm-inside"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
-            self.assertEqual(proc.returncode, 1, msg=proc.stdout)
+            self.assertEqual(proc.returncode, 1, msg=proc.stderr)
             self.assertIn("currently inside", proc.stderr, msg=proc.stderr)
         finally:
             os.chdir(old_cwd)
@@ -726,7 +726,7 @@ class TestDeleteMergedBranch(TempRepoTestBase):
         subprocess.run(["git", "-C", self.repo_dir, "checkout", "-b", branch], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with open(os.path.join(self.repo_dir, "feat.txt"), "w", encoding="utf-8") as f:
             f.write("x\n")
-        subprocess.run(["git", "-C", self.repo_dir, "add", "."], check=True)
+        subprocess.run(["git", "-C", self.repo_dir, "add", "feat.txt"], check=True)
         subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "feat"], check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["git", "-C", self.repo_dir, "checkout", "master"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

@@ -24,6 +24,7 @@ import functools
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -465,7 +466,7 @@ def cmd_remove(args: List[str], repo_root: Path) -> int:
                 _emit(f"Note: Local branch '{branch_name}' has been preserved ({reason}).")
                 if branch_name not in PROTECTED_BRANCHES:
                     _emit("To delete it when fully merged, run:")
-                    _emit(f"  git branch -d {branch_name}")
+                    _emit(f"  git branch -d -- {shlex.quote(branch_name)}")
     return 0
 
 
@@ -566,7 +567,7 @@ def delete_merged_branch(repo_root: Path, branch: str) -> Tuple[bool, str]:
 
 
 def removal_branch_note(repo_root: Path, branch: Optional[str], keep_branch: bool) -> str:
-    """Describe branch fate after its worktree was removed (suffix or "")."""
+    """Delete the branch when merged; describe branch fate (suffix or "")."""
     if not branch:
         return ""
     if keep_branch:
