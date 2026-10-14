@@ -71,7 +71,6 @@
               pkgs.markdownlint-cli
               pkgs.cmark
               pkgs.cmark-gfm
-              pkgs.prettier
               androidSdk
             ];
 
