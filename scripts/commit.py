@@ -23,6 +23,11 @@ required template, and points to AGENTS.md. Fix the message and retry.
 Exit codes: 0 = committed/passed, 1 = fixable error (correct the problem and
 retry), 2 = usage/environment error (do not retry, report).
 
+Message input takes exactly one of two shapes (mixing them is rejected):
+  - Whole-message mode: -m "<subject>\n\n<body>" (repeatable; chunks join
+    with a blank line). A lone positional argument counts as -m.
+  - Split mode: -s "<subject>" -b "<body>".
+
 Usage (stage first with `git add` — the wrapper commits only staged changes):
   python3 scripts/commit.py -m "docs: update readme\n\nDetailed explanation..."
   python3 scripts/commit.py -s "docs: update readme" -b "Detailed explanation..."
@@ -464,6 +469,31 @@ def main() -> int:
         else:
             forwarded_git_args.append(arg)
             i += 1
+
+    # Message-input modes are mutually exclusive: -m/--message (and a lone
+    # positional argument, which counts as -m) already carries the full
+    # message, so combining it with -s/--subject or -b/--body would silently
+    # drop one side. Likewise -b without -s has no subject to attach to.
+    # Fail fast with instructions instead of committing a body-less message.
+    if messages and (subject is not None or body is not None):
+        print(
+            "Error: [mixed-message-flags] -m/--message cannot be combined "
+            "with -s/--subject or -b/--body. -m already carries the full "
+            "message (subject + body); use either -m \"...\" [-m \"...\"...] "
+            "for whole-message mode or -s \"<subject>\" -b \"<body>\" for "
+            "split mode, not both.",
+            file=sys.stderr,
+        )
+        return 2
+    if body is not None and subject is None:
+        print(
+            "Error: [body-without-subject] -b/--body requires "
+            "-s/--subject: there is no subject to attach the body to. "
+            "Use -s \"<subject>\" -b \"<body>\", or pass the full message "
+            "via -m \"<subject>\\n\\n<body>\".",
+            file=sys.stderr,
+        )
+        return 2
 
     # Build raw message
     if subject is not None:

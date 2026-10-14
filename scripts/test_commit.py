@@ -403,6 +403,27 @@ class TestCLIIntegration(unittest.TestCase):
         self.assertIn("[body-missing]", proc.stderr)
         self.assertIn("AGENTS.md", proc.stderr)
 
+    def test_cli_message_and_body_flags_rejected(self):
+        # -m already carries the full message: combining it with -b must
+        # fail fast (exit 2) instead of silently dropping the body.
+        proc = self.run_cli(["--check", "-m", "docs: subject", "-b", COMPLIANT_BODY])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("[mixed-message-flags]", proc.stderr)
+        self.assertIn("-s", proc.stderr)
+
+    def test_cli_message_and_subject_flags_rejected(self):
+        proc = self.run_cli(["--check", "-m", "docs: subject", "-s", "docs: subject"])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("[mixed-message-flags]", proc.stderr)
+
+    def test_cli_body_without_subject_rejected(self):
+        # -b alone has no subject to attach to: reject with instructions
+        # instead of falling through to "No commit message provided".
+        proc = self.run_cli(["--check", "-b", COMPLIANT_BODY])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("[body-without-subject]", proc.stderr)
+        self.assertIn("-s", proc.stderr)
+
     def test_cli_no_body_check_bypasses(self):
         proc = self.run_cli(["--check", "--no-body-check", "-m", "docs: valid subject"])
         self.assertEqual(proc.returncode, 0)
