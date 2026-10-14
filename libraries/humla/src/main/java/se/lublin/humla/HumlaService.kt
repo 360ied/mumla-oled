@@ -28,6 +28,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Binder
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.PowerManager
@@ -214,7 +215,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
     // SCO absence). Present sinks select the media triple; SCO and the bare
     // phone stay voice (computeVoiceRoute). Listener is always registered
-    // (minSdk 33); no version gate remains. Named for what it stores (the gated decision, not raw
+    // (minSdk 30; audio-device APIs are API 23); no version gate remains. Named for what it stores (the gated decision, not raw
     // presence): recomputed from the live query on every route application.
     @Volatile
     private var mMediaRouteSelected: Boolean = false
@@ -489,7 +490,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // teardown. Uses the application context so the lock outlives config
         // changes; reference-counted false to mirror mWakeLock semantics.
         // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): LOW_LATENCY needs
-        // API 30+ (below the minSdk 33 floor, so always available), and HIGH_PERF is the
+        // API 30+ (at the minSdk 30 floor, so always available), and HIGH_PERF is the
         // documented VoIP-compatible mode available on all supported devices.
         try {
             val wifiManager = applicationContext
@@ -1253,7 +1254,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     /**
      * Synchronous media-sink presence: BT A2DP / BLE / wired-USB headset
-     * outputs currently attached (minSdk 33: audio-device APIs always present).
+     * outputs currently attached (minSdk 30: audio-device APIs are API 23,
+     * always present).
      * (voice). BLE/LE Audio and hearing aids ride the media path like A2DP
      * per the echo-cancellation plan (accepted gap: no AEC there); only the
      * SCO path ever selects voice over Bluetooth.
@@ -1455,20 +1457,35 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         try {
             // Mirror our manager's own release: the communication-device
             // path on S+ (where legacy stop is unreliable against a
-            // device-path selection), legacy stop below.
-            audioManager.clearCommunicationDevice()
+            // device-path selection), legacy stop below on 30.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            } else {
+                try {
+                    audioManager.isBluetoothScoOn = false
+                } catch (ignored: Exception) {
+                    Log.w(TAG, "Unrequested SCO routing clear threw", ignored)
+                }
+                audioManager.stopBluetoothSco()
+            }
             Log.i(TAG, "Cleared unrequested system SCO after media flip")
         } catch (e: Exception) {
             Log.w(TAG, "Unrequested SCO clear failed", e)
         }
     }
 
-    /** Whether platform SCO audio is currently up, independent of our manager. */
+    /**
+     * Whether platform SCO audio is currently up, independent of our manager.
+     * S+ reads the communication device; 30 falls back to the legacy SCO flag.
+     */
     private fun isSystemScoOn(): Boolean {
         val audioManager = mAudioManager ?: return false
         try {
-            val info = audioManager.communicationDevice
-            return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val info = audioManager.communicationDevice
+                return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            }
+            return audioManager.isBluetoothScoOn
         } catch (e: Exception) {
             return false
         }
@@ -1521,7 +1538,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * polls the manager's own availability query before giving up — the
      * same query bring-up itself uses pre-audio. LE Audio rides the media
      * path by design and needs no trigger. Device callbacks exist on all
-     * supported devices (minSdk 33): sync and toggle paths still cover those
+     * supported devices (minSdk 30): sync and toggle paths still cover those
      * devices, late power-on does not.
      *
      * <p>Each triggering edge may re-toast on persistent failure

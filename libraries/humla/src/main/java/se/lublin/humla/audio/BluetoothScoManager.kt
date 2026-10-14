@@ -18,10 +18,15 @@
 package se.lublin.humla.audio
 
 import android.Manifest
+import android.annotation.TargetApi
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,14 +44,18 @@ import kotlinx.coroutines.launch
  * silent without a state callback. This manager hides that behind a small state
  * machine with a connect timeout, one retry, and automatic fallback reporting.
  *
- * <p>SCO link bring-up runs on the single platform backend:
- * {@code setCommunicationDevice()} with a {@code TYPE_BLUETOOTH_SCO} device
- * from {@code getAvailableCommunicationDevices()}, observed via
- * {@code OnCommunicationDeviceChangedListener}.
+ * <p>SCO link bring-up runs on one of two platform backends by API level:
+ * API 31+ uses {@code setCommunicationDevice()} with a
+ * {@code TYPE_BLUETOOTH_SCO} device from
+ * {@code getAvailableCommunicationDevices()}, observed via
+ * {@code OnCommunicationDeviceChangedListener}. API 30 uses the legacy
+ * {@code startBluetoothSco()}/{@code stopBluetoothSco()} pair, observed via
+ * the {@code ACTION_SCO_AUDIO_STATE_UPDATED} broadcast. Both backends share
+ * the same state machine, timeout, retry budget, and epoch guards below.
  *
  * <p>Locking: {@code state}, {@code attempts}, {@code generation}, {@code routeHeld},
- * {@code routeHeldEpoch}, and {@code deviceListener} are guarded by the
- * manager monitor. Bring-up runs outside the monitor and re-validates by
+ * {@code routeHeldEpoch}, {@code deviceListener}, and {@code scoReceiver} are
+ * guarded by the manager monitor. Bring-up runs outside the monitor and re-validates by
  * session epoch after each IPC step, so a concurrent {@code stop()} aborts
  * the sequence instead of interleaving with it. Observer register/teardown
  * take the monitor themselves; their IPC is idempotent and fast. Route
@@ -156,6 +165,12 @@ class BluetoothScoManager {
     private var routeHeldEpoch: Int = -1
 
     private var deviceListener: AudioManager.OnCommunicationDeviceChangedListener? = null
+
+    // Legacy backend (API 30): broadcast receiver for
+    // ACTION_SCO_AUDIO_STATE_UPDATED. Guarded by the manager monitor like
+    // deviceListener above; only one backend is ever active (dispatch on
+    // SDK_INT), but teardown clears both for safety.
+    private var scoReceiver: BroadcastReceiver? = null
 
     constructor(context: Context?, listener: Listener?) : this(
         context,
@@ -269,7 +284,14 @@ class BluetoothScoManager {
             attempts++
             epoch = generation
         }
-        val failure = bringUpModern(epoch)
+        // Dual backend: communication-device path on S+, legacy
+        // startBluetoothSco path on 30. The inline SDK_INT guard is also
+        // what satisfies lint's NewApi check for the modern call below.
+        val failure = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            bringUpModern(epoch)
+        } else {
+            bringUpLegacy(epoch)
+        }
         if (failure != null) {
             fail(failure)
         }
@@ -283,6 +305,8 @@ class BluetoothScoManager {
 
     // Returns a REASON_* on failure, null on success or concurrent-stop abort
     // (stop() owns teardown there, so there is nothing to report).
+    // Modern backend (S+): callers guarantee SDK_INT >= S via attemptBringUp.
+    @TargetApi(Build.VERSION_CODES.S)
     private fun bringUpModern(epoch: Int): String? {
         val sco: AudioDeviceInfo?
         try {
@@ -357,13 +381,25 @@ class BluetoothScoManager {
     // machine. Fail-closed false: doubt falls through to event-driven setup.
     private fun isScoActiveNow(): Boolean {
         try {
-            val current = audioManager.communicationDevice
-            return current != null && current.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                return isScoActiveNowModern()
+            }
+            return audioManager.isBluetoothScoOn
         } catch (e: Exception) {
             return false
         }
     }
 
+    // Modern active check (S+): callers guarantee the version via isScoActiveNow.
+    @TargetApi(Build.VERSION_CODES.S)
+    private fun isScoActiveNowModern(): Boolean {
+        val current = audioManager.communicationDevice
+        return current != null && current.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+    }
+
+    // Modern device query (S+): callers guarantee the version via
+    // bringUpModern/isScoDeviceAvailableModern (both @TargetApi(S)).
+    @TargetApi(Build.VERSION_CODES.S)
     private fun findScoDevice(): AudioDeviceInfo? {
         // Explicitly nullable: the framework annotates this @NonNull, but a
         // null return from an OEM HAL must stay fail-closed, not warn away.
@@ -387,13 +423,24 @@ class BluetoothScoManager {
      * Fail-closed false on any error: doubt falls through to event-driven
      * setup, never to a blind bring-up attempt. Public for the service
      * route policy (same library, adjacent package).
+     * S+ queries the communication-device list; 30 falls back to the
+     * legacy off-call availability flag.
      */
     fun isScoDeviceAvailable(): Boolean {
         try {
-            return findScoDevice() != null
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                return isScoDeviceAvailableModern()
+            }
+            return audioManager.isBluetoothScoAvailableOffCall
         } catch (e: Exception) {
             return false
         }
+    }
+
+    // Modern availability query (S+): callers guarantee the version above.
+    @TargetApi(Build.VERSION_CODES.S)
+    private fun isScoDeviceAvailableModern(): Boolean {
+        return findScoDevice() != null
     }
 
     private fun onModernDeviceChanged(device: AudioDeviceInfo?, epoch: Int) {
@@ -418,6 +465,92 @@ class BluetoothScoManager {
         // A system move to a non-SCO device mid-bring-up is left to burn the
         // attempt timeout: selections flap transiently during routing, and
         // failing fast here would turn every blip into a fallback.
+    }
+
+    // Legacy bring-up (API 30): startBluetoothSco is async like the modern
+    // path - the link reports via ACTION_SCO_AUDIO_STATE_UPDATED, watched
+    // with the same timeout/retry budget. Returns REASON_* or null like
+    // bringUpModern. Callers guarantee SDK_INT < S via attemptBringUp.
+    private fun bringUpLegacy(epoch: Int): String? {
+        try {
+            if (!audioManager.isBluetoothScoAvailableOffCall) {
+                return REASON_NO_DEVICE
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Legacy SCO availability denied", e)
+            return REASON_PERMISSION
+        } catch (e: Exception) {
+            Log.w(TAG, "Legacy SCO availability threw", e)
+            return REASON_ERROR
+        }
+        if (!isStartingEpoch(epoch)) {
+            return null
+        }
+        try {
+            if (!registerDeviceListener()) {
+                return REASON_ERROR
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "SCO receiver denied", e)
+            return REASON_PERMISSION
+        }
+        if (!isStartingEpoch(epoch)) {
+            teardownObservers()
+            return null
+        }
+        try {
+            audioManager.startBluetoothSco()
+            audioManager.isBluetoothScoOn = true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "startBluetoothSco denied", e)
+            return REASON_PERMISSION
+        } catch (e: Exception) {
+            Log.w(TAG, "startBluetoothSco threw", e)
+            return REASON_ERROR
+        }
+        markRouteHeld()
+        if (!isStartingEpoch(epoch)) {
+            releaseRouteIfHeldForEpoch(epoch)
+            return null
+        }
+        if (isScoActiveNow()) {
+            armTimeout()
+            scoScope.launch {
+                if (isStartingEpoch(epoch)) {
+                    setActive()
+                } else {
+                    Log.i(TAG, "Dropping stale SCO fast-path activation")
+                }
+            }
+            return null
+        }
+        armTimeout()
+        return null
+    }
+
+    // Legacy broadcast mapping: CONNECTED while starting completes the
+    // bring-up; a drop while active falls back. Mid-bring-up disconnects
+    // and error states burn the attempt timeout like transient modern
+    // selection flaps (see onModernDeviceChanged).
+    private fun onLegacyScoStateChanged(scoState: Int, epoch: Int) {
+        val stateCopy: Int
+        val currentEpoch: Int
+        synchronized(this) {
+            stateCopy = state
+            currentEpoch = generation
+        }
+        if (epoch != currentEpoch) {
+            return
+        }
+        if (stateCopy == STATE_STARTING &&
+            scoState == AudioManager.SCO_AUDIO_STATE_CONNECTED
+        ) {
+            setActive()
+        } else if (stateCopy == STATE_ACTIVE &&
+            scoState == AudioManager.SCO_AUDIO_STATE_DISCONNECTED
+        ) {
+            dropActiveLink()
+        }
     }
 
     private fun onConnectTimeout() {
@@ -549,10 +682,25 @@ class BluetoothScoManager {
 
     private fun releaseRoute() {
         try {
-            audioManager.clearCommunicationDevice()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                releaseRouteModern()
+            } else {
+                try {
+                    audioManager.isBluetoothScoOn = false
+                } catch (ignored: Exception) {
+                    Log.w(TAG, "Legacy SCO routing clear threw", ignored)
+                }
+                audioManager.stopBluetoothSco()
+            }
         } catch (e: Exception) {
             Log.w(TAG, "SCO route release threw", e)
         }
+    }
+
+    // Modern route release (S+): callers guarantee the version above.
+    @TargetApi(Build.VERSION_CODES.S)
+    private fun releaseRouteModern() {
+        audioManager.clearCommunicationDevice()
     }
 
     private fun armTimeout() {
@@ -568,7 +716,14 @@ class BluetoothScoManager {
         }
     }
 
+    // BLUETOOTH_CONNECT is an API 31+ runtime permission; below S the legacy
+    // BLUETOOTH/BLUETOOTH_ADMIN manifest grants apply and no runtime check
+    // exists (the permission string is unknown there and would always check
+    // DENIED, falsely failing every bring-up with REASON_PERMISSION).
     private fun hasConnectPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true
+        }
         return context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED
     }
@@ -576,11 +731,22 @@ class BluetoothScoManager {
     // Self-locking: safe from bring-up (outside the monitor) and teardown paths.
     // Returns false when registration threw, in which case bring-up must fail
     // fast: without an observer nothing can ever report the link connected.
+    // Dispatches on SDK_INT: modern communication-device listener on S+,
+    // legacy SCO broadcast receiver on 30.
     @Synchronized
     private fun registerDeviceListener(): Boolean {
-        if (deviceListener != null) {
+        if (deviceListener != null || scoReceiver != null) {
             return true
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return registerModernListener()
+        }
+        return registerLegacyReceiver()
+    }
+
+    // Modern observer (S+): callers guarantee the version above.
+    @TargetApi(Build.VERSION_CODES.S)
+    private fun registerModernListener(): Boolean {
         val epoch = generation
         val listenerObj = AudioManager.OnCommunicationDeviceChangedListener { device ->
             onModernDeviceChanged(device, epoch)
@@ -603,16 +769,66 @@ class BluetoothScoManager {
         return true
     }
 
+    // Legacy observer (API 30): SCO audio-state broadcast. The inline
+    // SDK_INT dispatch in registerDeviceListener is what keeps this off S+,
+    // and context-registered system broadcasts need no exported flag below
+    // 33 (the 2-arg overload is used deliberately to avoid an androidx
+    // dependency in this module).
+    private fun registerLegacyReceiver(): Boolean {
+        val epoch = generation
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val scoState = intent?.getIntExtra(
+                    AudioManager.EXTRA_SCO_AUDIO_STATE,
+                    AudioManager.SCO_AUDIO_STATE_ERROR
+                ) ?: return
+                onLegacyScoStateChanged(scoState, epoch)
+            }
+        }
+        scoReceiver = receiver
+        try {
+            context.registerReceiver(
+                receiver,
+                IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO receiver registration threw", e)
+            scoReceiver = null
+            return false
+        }
+        return true
+    }
+
     @Synchronized
     private fun teardownObservers() {
         val current = deviceListener
         if (current != null) {
-            try {
-                audioManager.removeOnCommunicationDeviceChangedListener(current)
-            } catch (e: Exception) {
-                Log.w(TAG, "Device listener removal threw", e)
+            // Guarded: the listener class and remove call exist only on S+.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try {
+                    removeModernListener(current)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Device listener removal threw", e)
+                }
             }
             deviceListener = null
         }
+        val receiver = scoReceiver
+        if (receiver != null) {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (e: Exception) {
+                Log.w(TAG, "SCO receiver removal threw", e)
+            }
+            scoReceiver = null
+        }
+    }
+
+    // Modern removal (S+): callers guarantee the version above.
+    @TargetApi(Build.VERSION_CODES.S)
+    private fun removeModernListener(
+        listener: AudioManager.OnCommunicationDeviceChangedListener
+    ) {
+        audioManager.removeOnCommunicationDeviceChangedListener(listener)
     }
 }

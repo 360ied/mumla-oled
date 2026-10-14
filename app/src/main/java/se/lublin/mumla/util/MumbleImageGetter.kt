@@ -498,8 +498,8 @@ class MumbleImageGetter : Html.ImageGetter {
             return sb.toString()
         }
 
-        // No SDK_INT gate needed: minSdk 33 always has java.util.Base64
-        // (the API-26 note below is history). The catch (Throwable) blocks
+        // No SDK_INT gate needed: minSdk 30 always has java.util.Base64
+        // (API 26+; the note below is history). The catch (Throwable) blocks
         // still deliberately cover the JVM unit-test path, where
         // android.util.Base64 is stubbed out on the desktop JVM.
         @SuppressLint("NewApi")

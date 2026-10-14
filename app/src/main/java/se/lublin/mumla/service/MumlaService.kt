@@ -18,6 +18,7 @@
 package se.lublin.mumla.service
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
@@ -28,12 +29,14 @@ import android.media.AudioManager
 import android.media.SoundPool
 import android.net.Uri
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.util.ArrayList
@@ -953,7 +956,8 @@ open class MumlaService : HumlaService(),
             // path below serves unsaved (ad-hoc) servers only.
             database.getServers().firstOrNull { it.id == serverId }
         } else {
-            request.getParcelableExtra(EXTRA_SERVER, Server::class.java)
+            // IntentCompat backports the API 33 typed getParcelableExtra to minSdk 30.
+            IntentCompat.getParcelableExtra(request, EXTRA_SERVER, Server::class.java)
         }
         if (connected == null) {
             return null
@@ -1000,8 +1004,15 @@ open class MumlaService : HumlaService(),
 
     /**
      * Whether the BLUETOOTH_CONNECT runtime grant is in place.
+     * API 31+: runtime grant required for SCO routing. Below S the legacy
+     * BLUETOOTH/BLUETOOTH_ADMIN manifest grants (maxSdk 30) apply and no
+     * runtime check exists (the permission string is unknown there).
      */
+    @SuppressLint("InlinedApi")
     private fun hasBluetoothConnectGrant(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true
+        }
         return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED
     }
