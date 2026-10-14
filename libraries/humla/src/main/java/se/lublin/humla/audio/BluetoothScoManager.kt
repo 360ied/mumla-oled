@@ -164,7 +164,12 @@ class BluetoothScoManager {
     // is never cleared by an older session's teardown.
     private var routeHeldEpoch: Int = -1
 
-    private var deviceListener: AudioManager.OnCommunicationDeviceChangedListener? = null
+    // S+-only listener type is deliberately erased to Any: naming
+    // AudioManager.OnCommunicationDeviceChangedListener in a field
+    // descriptor risks class verification failure on API 30, where the
+    // nested class does not exist. Only the S+ methods below ever cast it
+    // back, and they run solely behind an SDK_INT >= S dispatch.
+    private var deviceListener: Any? = null
 
     // Legacy backend (API 30): broadcast receiver for
     // ACTION_SCO_AUDIO_STATE_UPDATED. Guarded by the manager monitor like
@@ -513,25 +518,19 @@ class BluetoothScoManager {
             releaseRouteIfHeldForEpoch(epoch)
             return null
         }
-        if (isScoActiveNow()) {
-            armTimeout()
-            scoScope.launch {
-                if (isStartingEpoch(epoch)) {
-                    setActive()
-                } else {
-                    Log.i(TAG, "Dropping stale SCO fast-path activation")
-                }
-            }
-            return null
-        }
+        // No fast-path here (unlike the modern backend): isBluetoothScoOn
+        // is the request flag just set above, so reading it back would
+        // always report "active" and complete before the link exists -
+        // cancelling the timeout and disabling the retry/failure net.
+        // Always await the CONNECTED broadcast.
         armTimeout()
         return null
     }
 
     // Legacy broadcast mapping: CONNECTED while starting completes the
-    // bring-up; a drop while active falls back. Mid-bring-up disconnects
-    // and error states burn the attempt timeout like transient modern
-    // selection flaps (see onModernDeviceChanged).
+    // bring-up; a drop or error while active falls back. Mid-bring-up
+    // disconnects and error states burn the attempt timeout like transient
+    // modern selection flaps (see onModernDeviceChanged).
     private fun onLegacyScoStateChanged(scoState: Int, epoch: Int) {
         val stateCopy: Int
         val currentEpoch: Int
@@ -547,7 +546,8 @@ class BluetoothScoManager {
         ) {
             setActive()
         } else if (stateCopy == STATE_ACTIVE &&
-            scoState == AudioManager.SCO_AUDIO_STATE_DISCONNECTED
+            (scoState == AudioManager.SCO_AUDIO_STATE_DISCONNECTED ||
+                scoState == AudioManager.SCO_AUDIO_STATE_ERROR)
         ) {
             dropActiveLink()
         }
@@ -685,12 +685,19 @@ class BluetoothScoManager {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 releaseRouteModern()
             } else {
+                // Stop-then-clear: stopping first tears down the link, and
+                // clearing the routing flag second matches the documented
+                // start (ScoOn-then-start) in reverse.
+                try {
+                    audioManager.stopBluetoothSco()
+                } catch (ignored: Exception) {
+                    Log.w(TAG, "Legacy SCO stop threw", ignored)
+                }
                 try {
                     audioManager.isBluetoothScoOn = false
                 } catch (ignored: Exception) {
                     Log.w(TAG, "Legacy SCO routing clear threw", ignored)
                 }
-                audioManager.stopBluetoothSco()
             }
         } catch (e: Exception) {
             Log.w(TAG, "SCO route release threw", e)
@@ -824,11 +831,14 @@ class BluetoothScoManager {
         }
     }
 
-    // Modern removal (S+): callers guarantee the version above.
+    // Modern removal (S+): callers guarantee the version above. Takes Any
+    // so no field or method signature names the S+-only listener type
+    // (class-verification safety on API 30); the cast only ever executes
+    // on S+.
     @TargetApi(Build.VERSION_CODES.S)
-    private fun removeModernListener(
-        listener: AudioManager.OnCommunicationDeviceChangedListener
-    ) {
-        audioManager.removeOnCommunicationDeviceChangedListener(listener)
+    private fun removeModernListener(listener: Any) {
+        audioManager.removeOnCommunicationDeviceChangedListener(
+            listener as AudioManager.OnCommunicationDeviceChangedListener
+        )
     }
 }

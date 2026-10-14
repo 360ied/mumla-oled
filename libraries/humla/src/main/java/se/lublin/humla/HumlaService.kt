@@ -1461,12 +1461,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 audioManager.clearCommunicationDevice()
             } else {
+                // Stop-then-clear, mirroring the manager's own release:
+                // stopping first tears down the link, clearing the routing
+                // flag second matches the documented start order in reverse.
+                try {
+                    audioManager.stopBluetoothSco()
+                } catch (ignored: Exception) {
+                    Log.w(TAG, "Unrequested SCO stop threw", ignored)
+                }
                 try {
                     audioManager.isBluetoothScoOn = false
                 } catch (ignored: Exception) {
                     Log.w(TAG, "Unrequested SCO routing clear threw", ignored)
                 }
-                audioManager.stopBluetoothSco()
             }
             Log.i(TAG, "Cleared unrequested system SCO after media flip")
         } catch (e: Exception) {
