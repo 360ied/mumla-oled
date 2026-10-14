@@ -37,10 +37,11 @@ machinery. See [plan](plan.md) for execution.
   worktree. `master` drift is controlled by choice, and a feature freeze
   for the migration period is accepted: the app is considered
   feature-complete with echo cancellation already shipped.
-- **minSdk 33, permanent.** The oldest fleet device is a Pixel 4a
-  (Android 13 max), and the userbase is three people — so the floor
-  costs nothing for this fleet and deletes every version gate except `UPSIDE_DOWN_CAKE`.
-  Revisit only if the fleet changes.
+- **minSdk 30 (lowered from 33 in v0.26.1).** The migration deleted every
+  version gate below 33 except `UPSIDE_DOWN_CAKE`, but the v0.26.1 release
+  walked the floor back to API 30 to restore Android 11–12 users —
+  reintroducing a legacy SCO backend, `BundleCompat`/`IntentCompat`
+  backports, and S+/Tiramisu permission guards behind version dispatch.
 - **Services become `LifecycleService`.** No attachment to the current
   `Service` base; `lifecycleScope` is the service coroutine scope.
 - **Dependencies: pinned in [slices](slices.md) Slice 0** (verified 2026-10-12; re-verify at scaffold). Single modern-stack `libs.versions.toml`, single Compose BOM, kapt + TODO (no stable KSP for Kotlin 2.4 at scaffold — see slices.md forks for the KSP/Hilt/Paparazzi outcomes).

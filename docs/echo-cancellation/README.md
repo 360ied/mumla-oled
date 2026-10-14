@@ -109,8 +109,9 @@ wake lock for ear-held use. Under the VoIP policy both earpiece and
 speakerphone share one triple (source/mode/usage) and differ only by
 an explicit route call: legacy `AudioManager.setSpeakerphoneOn(bool)`
 below API 31, `setCommunicationDevice()` with the matching
-`AudioDeviceInfo` on API 31+ (minSdk 33 — only the modern branch
-stays, mirroring `BluetoothScoManager`). The handset toggle keeps
+`AudioDeviceInfo` on API 31+ (minSdk 30 as of v0.26.1 — the modern branch
+is primary, with a legacy SCO backend on API 30–32 mirroring
+`BluetoothScoManager`). The handset toggle keeps
 meaning "earpiece" vs "speakerphone" for UX and keeps driving the
 proximity lock; AEC covers both. What changes is mechanism
 (stream swap becomes route call), not meaning.

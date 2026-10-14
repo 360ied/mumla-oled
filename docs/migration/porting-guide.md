@@ -15,7 +15,16 @@ signatures and threading semantics frozen. Same treatment for [`crypto`](../../l
 The migration targets minSdk 33: the oldest fleet device is a Pixel 4a,
 which runs Android 13 (API 33) at most. This is a single-dev app with a
 three-person userbase, so the floor is set by hardware on hand — revisit
-only if the fleet changes. Delete, don't convert:
+only if the fleet changes.
+
+> [!NOTE]
+> **Post-landing change (v0.26.1):** the floor was lowered to minSdk 30 to
+> restore Android 11–12 users. The deletion list below describes the
+> migration as executed; API 30–32 compatibility (legacy SCO backend,
+> `BundleCompat`/`IntentCompat`, permission guards) was reintroduced after
+> landing behind version dispatch.
+
+Delete, don't convert:
 
 - All `M` (23) gates: pre-M `AudioRecord`/`AudioTrack` constructors in
   [`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)
