@@ -45,7 +45,7 @@ for agent-reviewed slices. The binder surface
      fallback is dead (its layoutlib caps at compileSdk 35; the project is on
      36). Slice 0 lands WITHOUT the Paparazzi plugin (pin kept in the catalog
      as the slice-6 re-evaluation starting point). UPDATE 2026-10-14 (spike
-     `spike/paparazzi`, unlanded): record + verify proven green on AGP 9.0.1 /
+     `spike/paparazzi`, landed): record + verify proven green on AGP 9.0.1 /
      compileSdk 36 behind a `-PwithPaparazzi` opt-in (plugin off by default,
      golden runs filtered to Paparazzi tests only). The shadowing classes come
      from layoutlib itself, so exclusion is impossible and the opt-in is the
