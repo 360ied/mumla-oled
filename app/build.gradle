@@ -129,6 +129,18 @@ android {
         quiet = false
     }
     packaging {
+        // Stored-vs-deflated: AGP defaults to uncompressed page-aligned
+        // entries when minSdk >= 23 (.so) / >= 28 (dex). minSdk 30 still
+        // triggers that, costing ~2.3 MB download size (see
+        // docs/apk-size-analysis/README-0.26.0.md §7 #2). Opt back into
+        // legacy deflated packaging to minimize the universal FOSS APK;
+        // install-time extraction (extractNativeLibs=true) is the trade-off.
+        dex {
+            useLegacyPackaging = true
+        }
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += [
                 'google/protobuf/**',
