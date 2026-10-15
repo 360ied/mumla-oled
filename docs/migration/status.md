@@ -471,8 +471,11 @@ overflow stays a native view so the popups keep real anchors; menu
 - Wiring keeps the observer, image EXIF/resize/confirm/compress flow,
   send/target/hint logic, and menus verbatim; deletes the inner adapter
   and the fragment layout (`list_chat_item.xml` stays for native rows).
-  The dead upstream image button replicates as disabled, filed
-  separately.
+  Correction: the image button ships ENABLED — the XML says disabled
+  with no enabling path in any version, but a v0.26.1 image-confirm
+  screenshot proves the flow runs (root cause unknown). Enabling also
+  matches rendering (M3 dims disabled glyphs; the old ImageButton is
+  full-bright either way).
 - Gate catches: unthemed Paparazzi rules paint native cards dark;
   parentless inflated rows collapse right-gravity; wall-clock goldens
   flake. Before-shots: 3 row goldens.

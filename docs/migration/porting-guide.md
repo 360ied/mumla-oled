@@ -225,6 +225,12 @@ Visual/structural parity is a hard guardrail (see
   - Legacy underline fields are text plus a 1dp divider (~40dp rows),
     not M3 boxes: M3 `TextField` minimums to 56dp and clips when
     squeezed. Use `BasicTextField` plus a divider for form rhythm.
+  - Behavior-ground-truth beats static reading: a control the code
+    appears to disable but the device proves live ships enabled (chat
+    image button: `enabled=false` + no enabler vs a v0.26.1 screenshot
+    of the running flow). Related rendering trap: M3 dims disabled
+    content while legacy views render full-bright, so a wrongly-disabled
+    port also looks wrong.
   - M3 `Card` applies a primary tonal overlay at any elevation;
     `CardView` never tinted. Card parity is a `Surface` with the scheme
     container color, `tonalElevation = 0.dp`, and a real `shadowElevation`.
