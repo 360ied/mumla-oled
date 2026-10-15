@@ -571,9 +571,21 @@ What survives (all in `master` docs, none in code):
 - The toolchain fork record ([slices](slices.md): compose-bom and
   lifecycle downgrades, deferred navigation stack) so a revival does
   not re-bisect them.
-- The open lesson: gate-only conversion without device torture does not
-  converge — a revived attempt needs the hardware loop (installs +
-  torture matrix) from the first screen, not the last.
+- Structural lesson (2026-10-15): the rewrite was organized like the
+  Java-to-Kotlin conversion when it is a structurally different problem.
+  Slices 0-5 are semantics-preserving transpilation — same architecture,
+  local batches, compiler plus unit tests as a complete oracle — so the
+  Bun tactics (mechanical guide, big-bang inside the branch, `check.sh`
+  as merge oracle) fit. Slices 6-7 are re-architecture — state ownership,
+  lifecycle, navigation, and theming all move at once — so leaf-first,
+  gate-only, stacked-branch conversion deferred the hardest integration
+  (NavHost, drawer, DialogHost, back stack, restoration, transitions) to
+  a tail that never converged on device. A revival needs its own plan:
+  shell-first skeleton plus one full journey usable on hardware from day
+  one, device torture as the gate from the first screen (Paparazzi as
+  backstop, not authority), toolchain and Hilt entry-point decisions up
+  front, and non-goals (overlay, notifications, WebView comments)
+  declared on day one. WIP of one screen, not ten stacked.
 
 Remaining old debt rides its own TODOs (Paparazzi opt-in, landed,
 hilt-navigation-compose, KSP). No landing was ever requested or performed.

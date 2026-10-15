@@ -90,8 +90,11 @@ Concrete per-slice plan (file lists, pins, verification) lives in
 ## Agentic execution tactics (learned from Bun's Zig→Rust rewrite)
 
 Bun's 11-day, ~535K-line agentic rewrite (see References) is the
-closest public precedent for this migration. Its tactics apply directly;
-adopt them from slice 1:
+closest public precedent for slices 0-5 (Kotlin/coroutines/data).
+Its tactics apply directly there; adopt them from slice 1. They do
+NOT transfer to slices 6-7 (Compose re-architecture) — see the
+structural lesson in [status](status.md). A Compose revival needs its
+own shell-first, vertical, device-gated plan, not this section:
 
 - **Porting guide first.** Before converting, write down the mechanical
   mapping (Java→Kotlin idioms, `Handler`→coroutine, prefs→DataStore,
