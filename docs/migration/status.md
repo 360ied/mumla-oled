@@ -519,6 +519,9 @@ overflow stays a native view so the popups keep real anchors; menu
   table. Deletes the adapter, five layouts, notification references.
   Period navigation stack resolves (2.7.7/1.9.3/1.2.0) for the tail.
 - Before-shots: 6 drawer + 3 cert-body goldens. Gate-only; green.
+- News dialog rides `DialogHost` too (shared HTML body builder, native
+  fallback for non-activity callers); 3 news goldens vs 3 content
+  before-shots.
 - Explicit tail cut: NavHost + `ModalNavigationDrawer` + `TopAppBar` +
   `SnackbarHost` + full torture need hardware (back stack, state
   restoration, transitions unverifiable gate-only). `FragmentManager`
@@ -526,6 +529,23 @@ overflow stays a native view so the popups keep real anchors; menu
 - Comments stay native with rationale (WebView content + security
   hardening + async fetch have no Compose equivalent; chrome conversion
   buys risk, not value) — same class as overlay/notification stays.
+
+## Slice 7 — ChannelChat (WIRED 2026-10-15, `feature/slice-7-channel-chat`)
+
+- Goldens stack: shared native row binder (HTML/image/links verbatim
+  in `AndroidView` rows) + list/input ViewModel + 4 state unit tests +
+  3 themed goldens. Wiring keeps observer, image flow, send, hints, and
+  menus; deletes the adapter and fragment layout. Dead image button
+  kept, filed separately. Gate catches: unthemed native rows, lost
+  `match_parent`, wall-clock goldens (frozen). Before-shots: 3.
+- Gate-only; green.
+
+## Slice 7 — AccessToken (WIRED 2026-10-15, `feature/slice-7-access-token`)
+
+- Goldens stack: ViewModel with DB + live-send ordering and sender seam
+  + list/input screen + DB-backed unit tests + 6 goldens. Wiring sets
+  the torn-down-safe sender; deletes the dead listener, adapter, and
+  both layouts. Before-shots: 6. Gate-only; green.
 
 ## Next
 

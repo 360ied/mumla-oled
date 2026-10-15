@@ -398,5 +398,5 @@ drawer becomes `ModalNavigationDrawer` (drawer taps navigate with `popUpTo(nav-s
 | 3 Kotlin humla | green | humla JVM suite | — |
 | 4 coroutines | green | route/reconnect/ping tests | torture: reconnect/SCO/A2DP |
 | 5 Kotlin app | green | app JVM + Robolectric | — |
-| 6 foundation | — (deferred) | — | — |
-| 7 screens | — (deferred) | — | — |
+| 6 foundation | green | theme + ServerInfo unit tests | 9 goldens, device pass (goldens-only) |
+| 7 screens | green | per-screen unit suites | before/after diff per screen, goldens pinned |
