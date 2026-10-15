@@ -461,6 +461,23 @@ overflow stays a native view so the popups keep real anchors; menu
   6 tree goldens.
 - Gate-only; `check.sh` + Paparazzi verify green.
 
+## Slice 7 — ChannelChat (WIRED 2026-10-15, `feature/slice-7-channel-chat`)
+
+- Goldens stack: shared native row binder (HtmlCompat + image getter +
+  link sanitizer verbatim inside `AndroidView` rows — zero Compose risk
+  for message rendering) + `ChannelChatViewModel` (messages, input, hint,
+  image epoch replacing `notifyDataSetChanged`) + input chrome + 4 state
+  unit tests + 3 themed goldens with frozen clocks.
+- Wiring keeps the observer, image EXIF/resize/confirm/compress flow,
+  send/target/hint logic, and menus verbatim; deletes the inner adapter
+  and the fragment layout (`list_chat_item.xml` stays for native rows).
+  The dead upstream image button replicates as disabled, filed
+  separately.
+- Gate catches: unthemed Paparazzi rules paint native cards dark;
+  parentless inflated rows collapse right-gravity; wall-clock goldens
+  flake. Before-shots: 3 row goldens.
+- Gate-only; `check.sh` + Paparazzi verify green.
+
 ## Next
 
 Land nothing without explicit request (standing policy). Working

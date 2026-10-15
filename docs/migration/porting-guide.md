@@ -233,6 +233,16 @@ Visual/structural parity is a hard guardrail (see
   - Goldens of new UI alone are not parity evidence. Every screen gets
     old-View before-shots (same data, same pinned device, matching theme)
     diffed against the Compose after-goldens before its wiring lands.
+  - Native rows inside Compose need the same themed treatment as pure
+    Compose: one Paparazzi class per scheme with the matching activity
+    theme, or `?attr`/`?cardStyle` rows paint dark on every scheme.
+    Inflated rows lose their `match_parent` without a `ListView` parent
+    (self-message gravity collapses left) — pin `fillMaxWidth` explicitly.
+  - Golden data must be clock-free: wall timestamps flake record-vs-verify
+    by milliseconds. Freeze date text in golden lambdas; production keeps
+    the live formatter.
+  - `LazyColumn` keys need stability the old lists never had: key by
+    index when items carry no id (colliding `receivedTime` keys crash).
 
 ## 5. What reviewers check (conformance list)
 
