@@ -505,6 +505,28 @@ overflow stays a native view so the popups keep real anchors; menu
   (WebView content + security hardening + async fetch have no Compose
   equivalent; converting chrome around a WebView buys risk, not value).
 
+## Slice 7 — Shell drawer + DialogHost (WIRED 2026-10-15, `feature/slice-7-shell`)
+
+- Goldens stack: `DrawerDestinations` ids moved off the adapter +
+  `DrawerContent` (theme-resolved inverse colors, alpha rule, logo) +
+  `DialogState` modeling all eleven dialog shapes with preformatted
+  bodies + `DialogHost` rendering res copy with per-dialog dismiss
+  semantics. 6 drawer + 33 dialog goldens × 3 schemes.
+- Wiring keeps every behavior body (service, trust-store, reconnect,
+  permission, first-run task dance) behind an `onDialogAction` funnel
+  with switch-target and TLS capture fields; pause-dismissal and
+  dismiss-before-assign become state assignment. Route titles become a
+  table. Deletes the adapter, five layouts, notification references.
+  Period navigation stack resolves (2.7.7/1.9.3/1.2.0) for the tail.
+- Before-shots: 6 drawer + 3 cert-body goldens. Gate-only; green.
+- Explicit tail cut: NavHost + `ModalNavigationDrawer` + `TopAppBar` +
+  `SnackbarHost` + full torture need hardware (back stack, state
+  restoration, transitions unverifiable gate-only). `FragmentManager`
+  navigation and the `DrawerLayout` container stay, table-driven.
+- Comments stay native with rationale (WebView content + security
+  hardening + async fetch have no Compose equivalent; chrome conversion
+  buys risk, not value) — same class as overlay/notification stays.
+
 ## Next
 
 Land nothing without explicit request (standing policy). Working
