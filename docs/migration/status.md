@@ -487,6 +487,24 @@ overflow stays a native view so the popups keep real anchors; menu
   the dead listener interface, inner adapter, and both layouts.
 - Gate-only; `check.sh` + Paparazzi verify green. Before-shots: 6.
 
+## Slice 7 — Settings (WIRED 2026-10-15, `feature/slice-7-settings`)
+
+- Single commit: row primitives mirroring the preference vocabulary
+  (CheckBox, never Switch — caught by the row before-shots) + six
+  DataStore-backed screens (headers, general, audio, appearance, auth,
+  about) + Compose slider/key/text dialogs with identical value math +
+  helper unit tests + 27 goldens (screens and dialog contents × 3).
+  Fragments collect the snapshot Flow and write through IO; cert
+  activities stay native.
+- Deletes eleven preference classes (base, DataStore bridge, custom
+  slider/key prefs and dialogs) plus six XMLs; SeekBar format cases
+  migrate to the helper tests; dead bridge test goes with its class.
+- Before-shots: 12 genuine rows via inflated hierarchies driven through
+  `PreferenceGroupAdapter`. Gate-only; `check.sh` + verify green.
+- Deferred to the DialogHost shell with rationale: comment dialogs
+  (WebView content + security hardening + async fetch have no Compose
+  equivalent; converting chrome around a WebView buys risk, not value).
+
 ## Next
 
 Land nothing without explicit request (standing policy). Working
