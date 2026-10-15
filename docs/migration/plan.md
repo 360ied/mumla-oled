@@ -129,6 +129,9 @@ own shell-first, vertical, device-gated plan, not this section:
 - oven-sh/bun `docs/rust-rewrite-plan.md` — strangler-fig plan and
   memory-safety motivation.
   <https://github.com/oven-sh/bun/blob/master/docs/rust-rewrite-plan.md>
+- [Prior art](prior-art.md) — why the Bun tactics above stop at slice 5:
+  Google/Sunflower/Reply/Merpay/strangler-fig consensus for Views→Compose
+  (incremental interop, navigation last, no 1:1 mapping).
 
 ## Verification per slice
 

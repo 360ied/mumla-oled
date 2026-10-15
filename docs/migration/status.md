@@ -586,6 +586,7 @@ What survives (all in `master` docs, none in code):
   backstop, not authority), toolchain and Hilt entry-point decisions up
   front, and non-goals (overlay, notifications, WebView comments)
   declared on day one. WIP of one screen, not ten stacked.
+  Details in [prior-art](prior-art.md).
 
 Remaining old debt rides its own TODOs (Paparazzi opt-in, landed,
 hilt-navigation-compose, KSP). No landing was ever requested or performed.

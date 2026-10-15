@@ -94,3 +94,4 @@ goldens, identical data, pinned device) — goldens of the new UI alone
 - [porting-guide](porting-guide.md) — the mechanical Java→Kotlin/coroutines/Room/Compose mapping converters follow literally.
 - [slices](slices.md) — the concrete per-slice work plan (inventories, pins, verification).
 - [status](status.md) — progress log: what landed, fork outcomes, spike record, outstanding debt.
+- [prior-art](prior-art.md) — Views-to-Compose prior art (Google, Sunflower, Reply, Merpay, strangler fig) and why slices 6-7 failed against it.
