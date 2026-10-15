@@ -478,6 +478,15 @@ overflow stays a native view so the popups keep real anchors; menu
   flake. Before-shots: 3 row goldens.
 - Gate-only; `check.sh` + Paparazzi verify green.
 
+## Slice 7 — AccessToken (WIRED 2026-10-15, `feature/slice-7-access-token`)
+
+- Goldens stack: `AccessTokenViewModel` (calling-thread DB access and
+  add/remove-then-live-send ordering with a sender seam) + token list
+  and input strip + 3 DB-backed unit tests + 6 goldens (list/empty × 3).
+- Wiring sets the torn-down-safe live sender at view creation; deletes
+  the dead listener interface, inner adapter, and both layouts.
+- Gate-only; `check.sh` + Paparazzi verify green. Before-shots: 6.
+
 ## Next
 
 Land nothing without explicit request (standing policy). Working
