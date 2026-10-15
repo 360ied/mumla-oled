@@ -205,6 +205,26 @@ Visual/structural parity is a hard guardrail (see
   composables matched against screenshots, not redesigned.
 - All `res/` strings, colors, dimens stay the single source of truth
   (`stringResource`/`colorResource`/`dimensionResource`).
+- **Parity mapping rules (from the 2026-10-15 before/after diffs —
+  reviewers enforce these literally):**
+  - `stringResource` rejects null format args (`Any`, non-null) where
+    `getString` printed them as `"null"`. Nullable slots render via
+    explicit `.toString()` to preserve the old output exactly.
+  - Bare `TextView` is 14sp with zero letter spacing; Compose `Text()`
+    inherits 16sp body plus M3 ambient letter spacing. Pin both
+    explicitly (`14.sp`, `letterSpacing = 0.sp`) unless the layout sets
+    its own size.
+  - State-list selector drawables are unloadable by `painterResource`
+    on EVERY platform (throws, not just Paparazzi): mount the state
+    asset directly and let the ripple carry press feedback.
+  - M3 `Card` applies a primary tonal overlay at any elevation;
+    `CardView` never tinted. Card parity is a `Surface` with the scheme
+    container color, `tonalElevation = 0.dp`, and a real `shadowElevation`.
+  - M3 light `surfaceContainer` is lavender-tinted; old light cards/menus
+    are untinted white. Override the token, not each call site.
+  - Goldens of new UI alone are not parity evidence. Every screen gets
+    old-View before-shots (same data, same pinned device, matching theme)
+    diffed against the Compose after-goldens before its wiring lands.
 
 ## 5. What reviewers check (conformance list)
 

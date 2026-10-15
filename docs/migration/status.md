@@ -359,8 +359,78 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - Landed on master on explicit request; branch and worktree retained
   pending cleanup.
 
+## Slice 6 — Compose foundation (IN PROGRESS 2026-10-15, `feature/slice-6-compose-foundation`)
+
+- `6f4d776c` — Compose toolchain: `compose = true` + Kotlin compose
+  compiler plugin, BOM-governed `ui/foundation/material3/runtime` in the
+  catalog. Forks (recorded in [slices](slices.md)): compose-bom
+  2026.09.00 → 2025.04.01 (1.12.1 needs SDK 37 + AGP 9.1), lifecycle
+  2.11.0 → 2.8.7 (atomic-group alignment dragged `runtime-compose` up to
+  the AGP-9.1-only variant); `activity-compose` + lifecycle-compose
+  helpers deferred to the slice-7 toolchain bump.
+- `5fd1665d` — `theme/` tokens (exact `colors.xml` hex, light/dark/OLED)
+  + `MumlaScheme` mapping mirroring `MumlaApplication.applyTheme`,
+  `ServerInfoViewModel` (`StateFlow<Loading/Content/Error>`) +
+  `ServerInfoScreen` (fragment sections via `stringResource`), goldens-only.
+  Unit tests for the scheme mapping and state funnel in the default suite.
+- `2c6ff3b9` — 9 ServerInfo goldens (loading/content/error × 3 schemes)
+  with opt-in-safe wiring: Paparazzi test lib as `testCompileOnly` plus
+  flag-only `testRuntimeOnly` (a plain `testImplementation` re-pollutes
+  the unit-test runtime and breaks stub-dependent tests), golden package
+  excluded from default runs. Review caught a missing `Surface`
+  background (light-scheme text unreadable).
+- `check.sh` green throughout; fossDebug installed on hardware, no UI
+  change as designed (Fragment still live).
+
+## Slice 7 — ServerInfo route (DONE on-device 2026-10-15, `feature/slice-7-server-info-route`)
+
+- `c629aabb` — Fragment hosts a `ComposeView` collecting `uiState`; the
+  1 Hz poll moved into the ViewModel (binder reads on IO, null keeps last
+  on transient teardown, res `drawer_not_connected` Error when
+disconnected); `updateData` became state-returning `fetchState`; layout
+  XML deleted. Class stays as the drawer destination until the NavHost
+  shell. Default ViewModel factory until entry points land.
+- `402a4896` — body text to explicit 14sp after on-device review
+  (bare-`TextView` default vs 16sp Compose body).
+- Installed + verified on hardware (live 1 s updates, identical copy/layout).
+
+## Slice 7 — Favourites route (IN PROGRESS 2026-10-15, `feature/slice-7-favourites`)
+
+- `ac40c827` — `ServerPinger` (blocking UDP extracted verbatim from
+  `ServerInfoTask`, task delegates), `FavouritesViewModel` (Room load +
+  per-server IO pings with stale-generation guard, dummy → Failed),
+  `FavouritesScreen` (adaptive grid + cards + `DropdownMenu`), 6 goldens
+  (list with all ping states + empty × 3 schemes), in-memory-Room unit
+  tests with a fake pinger. Caught: Compose cannot load state-list
+  selector drawables anywhere — normal PNG mounts directly.
+- `8d3d3def` — Fragment wired (ComposeView, refresh onResume, options
+  menu + dialogs verbatim); deleted `FavouriteServerAdapter`, the shared
+  `ServerAdapter` pool, `ServerInfoTask`, both layouts, the popup menu.
+- `bfd4d79a`, `0ad159aa` — on-device review fixes: 14sp row text,
+  intrinsic icon sizes, zeroed M3 letter spacing.
+- `ef9932ad` — before/after-diff parity fixes (below) + PIXEL_5 pin.
+- Installed on hardware; on-device review in progress.
+
+## Before/after parity gate (ADOPTED 2026-10-15)
+
+Eye-only comparison plus new-UI-only goldens failed to converge (repeated
+looks-off rounds with no measurement). New method: `parity/before-shots`
+(off `master`) snapshots the deleted View hierarchies bound exactly as the
+old code did — `7e8d9179`, 15 before-shots (ServerInfo screen +
+Favourites live/failed/pending rows + empty × light/dark/OLED, pinned
+PIXEL_5, matching app themes) — diffed against the feature-branch
+Compose after-goldens (same data, same device) before wiring lands.
+First diff paid off immediately on Favourites: M3 lavender-tinted 12dp
+cards over untinted 2dp `CardView` washes (→ white `surfaceContainer` +
+explicit tint-free `Surface`), plus the text-size/icon-size/spacing batch.
+Rule recorded in the [porting guide](porting-guide.md): new-UI goldens
+alone are not parity evidence.
+
 ## Next
 
-Nothing open: migration landed, follow-ups merged, v0.26.0 released.
-Remaining debt rides its own TODOs (Paparazzi opt-in, landed,
-hilt-navigation-compose, KSP). Slices 6-7 deferred.
+Land nothing without explicit request (standing policy). Open:
+Favourites on-device sign-off; next leaf screen through the same
+before/after loop; slice-7 NavHost shell + DialogHost (needs the AGP
+9.1/SDK 37 toolchain bump for navigation-compose); then the deferred
+landings. Remaining old debt rides its own TODOs (Paparazzi opt-in,
+landed, hilt-navigation-compose, KSP).

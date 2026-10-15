@@ -23,14 +23,25 @@ for agent-reviewed slices. The binder surface
      line lands — so this fork is ordered, not open,
      `coroutines = "1.11.0"`
    - `compose-bom = "2026.09.00"` (pins `compose-material3 1.4.0`),
-     no hand-pinned Compose artifacts
+     no hand-pinned Compose artifacts. FORK 2026-10-15 (at first
+     consumption on `feature/slice-6-compose-foundation`): 2026.09.00
+     resolves compose 1.12.1, which requires compileSdk 37 + AGP 9.1.0
+     (project is 36 + 9.0.1) — downgraded to `2025.04.01`; re-bump with
+     the toolchain, not before
    - `navigation-compose = "2.10.2"`, `activity-compose = "1.13.0"`, `hilt-navigation-compose = "1.4.0"`
    - `hilt = "2.60.1"` (`com.google.dagger`; restored — the AGP 9 adoption
      below satisfies its AGP >= 9 requirement; the 2.58 cap applied only to the
      AGP 8.13 era), `androidx-hilt = "1.4.0"`
      (re-verify against Hilt 2.60 when adding `hilt-navigation-compose` in slice 7)
    - `room = "2.8.5"` (`androidx.room`; not the `room3` 3.0.x line)
-   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`, `runtime-compose`), `datastore-preferences = "1.2.1"`
+   - `lifecycle = "2.11.0"` (`lifecycle-service` for the `LifecycleService` switch, `viewmodel-ktx`, `viewmodel-compose`, `runtime-ktx`, `runtime-compose`), `datastore-preferences = "1.2.1"`.
+     FORK 2026-10-15: the 2.11.0 `-compose` variants require AGP 9.1.0
+     and the androidx.lifecycle atomic group aligns compose's transitive
+     `runtime-compose` up to the pin, breaking AAR metadata on 9.0.1 —
+     downgraded to `2.8.7`. `activity-compose` 1.13.0 (same transitive
+     pull), `viewmodel-compose`, and `runtime-compose` are deferred to
+     the slice-7 toolchain bump; screens take UiState directly and the
+     default ViewModel factory is used until the shell adds entry points
    - `paparazzi = "2.0.0-alpha05.1"` — alpha accepted deliberately: the
      2.x line renders dialogs/popups as real windows, which the dialog
      parity gate needs. **Paparazzi fork (RESOLVED 2026-10-12: disqualified on
@@ -305,7 +316,7 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
 only (frozen per plan). Procedure per file: IDE auto-converter, then reviewer pass per porting-guide §1 (no `!!`, platform types explicit, nullability reviewed). Verification: all app JVM tests (incl.
 Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 
-## Slice 6 — Compose foundation (DEFERRED 2026-10-13, not landing)
+## Slice 6 — Compose foundation (IN PROGRESS, 2026-10-13-deferral lifted 2026-10-15)
 
 - Port `themes.xml` (`Theme.Mumla`/`Theme.Mumla.Oled`, colors, type,
   dimens) into a Compose **Material3** `MaterialTheme` via tokens —
@@ -321,10 +332,30 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
   (its poll executor becomes a `StateFlow` + `collectAsState`); first goldens recorded (route `"server_info"`; `@HiltViewModel class ServerInfoViewModel @Inject constructor(...) : ViewModel() { val uiState: StateFlow<ServerInfoUiState> }`, sealed `Loading/Content/Error`):
   9 subjects (loading / content / error × light / dark / OLED). New files:
   `theme/Theme.kt`, `theme/Tokens.kt`, `ServerInfoViewModel.kt`, `ServerInfoScreen.kt` + route entry.
-- Verification: all 9 goldens pass; old-vs-new screenshots compared
-  by eye on a modern device; `./scripts/check.sh`. Paparazzi runs with fixed device/theme/locale config; golden churn is triaged in the slice commit.
+- Verification: all 9 goldens pass; `./scripts/check.sh`. Device is pinned
+  to PIXEL_5 explicitly so goldens are px-comparable with the before-shots.
+  Golden churn is triaged in the slice commit.
+- Parity gate (ADOPTED 2026-10-15, replaces eye-only comparison): every
+  screen is diffed old-vs-new in Paparazzi before wiring lands — the
+  `parity/before-shots` worktree (off `master`) snapshots the deleted
+  View hierarchies bound exactly as the old code did, with identical sample
+  data and the matching app theme (light/dark/OLED) on pinned PIXEL_5;
+  the feature branch carries the Compose after-goldens on the same device.
+  Goldens of the new UI alone are NOT a parity gate (proven: they blessed
+  lavender-tinted 12dp M3 cards over untinted 2dp CardViews). The diff
+  already paid for itself on Favourites (card tint/shape, text sizes,
+  icon sizes, letter spacing — see [status](status.md)).
 
-## Slice 7 — Compose screens (DEFERRED 2026-10-13, not landing)
+## Slice 7 — Compose screens (IN PROGRESS 2026-10-13-deferral lifted 2026-10-15)
+
+Per-screen procedure (established on ServerInfo → Favourites): one stacked
+feature branch per screen off the previous tip; commit 1 = ViewModel +
+Screen + goldens (goldens-only, old view live), commit 2 = wire the Fragment
+view to Compose + delete the dead view machinery (Fragment class stays as
+the drawer destination until the shell). Every screen runs the
+before/after Paparazzi diff before its wiring lands. Ping/executor pools
+move to IO coroutines with the screen (ServerPinger pattern); Hilt entry
+points wait for the shell (manual factories until then).
 
 Per-screen table (source → route + ViewModel → golden subjects → gate):
 

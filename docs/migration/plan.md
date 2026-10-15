@@ -1,4 +1,4 @@
-# Migration Plan: Full Modern Stack (Kotlin + Data + Compose — Compose DEFERRED 2026-10-13)
+# Migration Plan: Full Modern Stack (Kotlin + Data + Compose — Compose IN PROGRESS since 2026-10-15)
 
 This is the working plan for the big-bang modernization of Mumla OLED.
 It records scope, fences, slice order, guardrails, and verification so
@@ -21,9 +21,10 @@ Two migrations land (third explicitly deferred 2026-10-13):
    [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.kt)
    blob, and the pref→bundle→effect double dispatch become Room
    entities, a typed `ConfigDelta`, and an injected graph.
-3. **UI → Compose, internals only — DEFERRED 2026-10-13 to post-landing
-   follow-up, not part of landing.** Fragments, `RecyclerView` adapters,
-   and the seven dialog fields of `MumlaActivity` stay as-is.
+3. **UI → Compose, internals only — IN PROGRESS since 2026-10-15 (was
+   DEFERRED 2026-10-13, not part of landing).** Screens convert one per
+   stacked branch (goldens then wiring); the Fragment class stays as the
+drawer destination until the shell. Full Fragment deletion is the shell.
 
 ## Fences (do not touch)
 
@@ -38,7 +39,13 @@ Two migrations land (third explicitly deferred 2026-10-13):
   stay compatible for the whole migration; refactoring happens strictly
   behind them.
 
-## UI parity (DEFERRED with slices 6-7 — hard guardrail only if revived)
+## UI parity (ACTIVE with slices 6-7 — hard guardrail)
+
+Parity method (2026-10-15, supersedes eye-only comparison): every screen
+is diffed old-vs-new in Paparazzi — `parity/before-shots` snapshots the
+deleted View hierarchies (same data, pinned device, matching theme)
+against the feature-branch Compose goldens — before its wiring lands.
+New-UI goldens alone are not evidence (they bless whatever is rendered).
 
 The user-facing UI must look and feel the exact same after the Compose
 rewrite:
@@ -64,8 +71,10 @@ Concrete per-slice plan (file lists, pins, verification) lives in
 3. Kotlin conversion of `libraries/humla` (syntax first).
 4. Coroutines service core (the real debt kill).
 5. Kotlin conversion of `:app`.
-6. Compose theme tokens + one leaf screen behind a screenshot test — DEFERRED.
-7. Compose screens leaf-to-root, dialogs last — DEFERRED.
+6. Compose theme tokens + one leaf screen behind a screenshot test — DONE
+   on `feature/slice-6-compose-foundation` (ServerInfo behind 9 goldens).
+7. Compose screens leaf-to-root, dialogs last — IN PROGRESS (ServerInfo
+   + Favourites wired; see [status](status.md)).
 
 ## Execution
 
@@ -122,7 +131,7 @@ adopt them from slice 1:
 ## Verification per slice
 
 - `./scripts/check.sh` (JVM + native suites) green.
-- Screenshot before/after per screen and dialog for UI slices — DEFERRED with
-  slices 6-7; landing gates on torture paths only.
+- Before/after Paparazzi diff per screen and dialog for UI slices (the
+  gate — see UI parity); landing additionally gates on torture paths.
 - Manual torture paths preserved: rotate mid-dialog, switch server
   mid-connect, deny permission mid-flow — same outcomes, new internals.
