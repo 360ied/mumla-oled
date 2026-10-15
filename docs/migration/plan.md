@@ -1,4 +1,4 @@
-# Migration Plan: Full Modern Stack (Kotlin + Data + Compose — Compose IN PROGRESS since 2026-10-15)
+# Migration Plan: Full Modern Stack (Kotlin + Data + Compose — Compose DEFERRED indefinitely since 2026-10-15)
 
 This is the working plan for the big-bang modernization of Mumla OLED.
 It records scope, fences, slice order, guardrails, and verification so
@@ -21,7 +21,7 @@ Two migrations land (third explicitly deferred 2026-10-13):
    [`Settings`](../../app/src/main/java/se/lublin/mumla/Settings.kt)
    blob, and the pref→bundle→effect double dispatch become Room
    entities, a typed `ConfigDelta`, and an injected graph.
-3. **UI → Compose, internals only — IN PROGRESS since 2026-10-15 (was
+3. **UI → Compose, internals only — DEFERRED indefinitely since 2026-10-15 (attempt killed; was
    DEFERRED 2026-10-13, not part of landing).** Screens convert one per
    stacked branch (goldens then wiring); the Fragment class stays as the
 drawer destination until the shell. Full Fragment deletion is the shell.
@@ -71,10 +71,9 @@ Concrete per-slice plan (file lists, pins, verification) lives in
 3. Kotlin conversion of `libraries/humla` (syntax first).
 4. Coroutines service core (the real debt kill).
 5. Kotlin conversion of `:app`.
-6. Compose theme tokens + one leaf screen behind a screenshot test — DONE
-   on `feature/slice-6-compose-foundation` (ServerInfo behind 9 goldens).
-7. Compose screens leaf-to-root, dialogs last — IN PROGRESS (ServerInfo
-   + Favourites wired; see [status](status.md)).
+6. Compose theme tokens + one leaf screen behind a screenshot test —
+   attempted 2026-10-15, killed with the rewrite (see [status](status.md)).
+7. Compose screens leaf-to-root, dialogs last — DEFERRED with the kill.
 
 ## Execution
 

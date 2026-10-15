@@ -550,12 +550,30 @@ overflow stays a native view so the popups keep real anchors; menu
   the torn-down-safe sender; deletes the dead listener, adapter, and
   both layouts. Before-shots: 6. Gate-only; green.
 
-## Next
+## Attempt killed 2026-10-15 — app stays on XML UI
 
-Land nothing without explicit request (standing policy). Working
-agreement 2026-10-15: gate-only, no per-screen device installs —
-before/after diff + `check.sh` is the authority. Open: next leaf screen
-(ChannelChat) through the same loop; slice-7 NavHost shell + DialogHost
-(needs the AGP 9.1/SDK 37 toolchain bump for navigation-compose); then
-the deferred landings. Remaining old debt rides its own TODOs (Paparazzi
-opt-in, landed, hilt-navigation-compose, KSP).
+After wiring every screen gate-only, on-device review showed the build
+was not converging to usable condition, and the owner killed the
+rewrite: slices 6-7 are deferred indefinitely, all feature branches
+(`slice-6-compose-foundation` → `slice-7-shell`) and the
+`parity/before-shots` worktree were removed unmerged. Nothing from
+slices 6-7 ever landed; `master` is untouched.
+
+What survives (all in `master` docs, none in code):
+
+- The before/after Paparazzi parity gate as a method (old-View goldens
+  vs new-Compose goldens, same data, pinned device) — the only thing
+  that caught real drift, and the honest arbiter if this is ever revived.
+- The [porting guide](porting-guide.md) parity mapping rules (null
+  `stringResource` args, 14sp/zero-spacing, selector/layer-list
+  drawables, tonal elevation, light container tint, themed native-row
+  rules, frozen golden clocks, index keys, behavior-beats-reading).
+- The toolchain fork record ([slices](slices.md): compose-bom and
+  lifecycle downgrades, deferred navigation stack) so a revival does
+  not re-bisect them.
+- The open lesson: gate-only conversion without device torture does not
+  converge — a revived attempt needs the hardware loop (installs +
+  torture matrix) from the first screen, not the last.
+
+Remaining old debt rides its own TODOs (Paparazzi opt-in, landed,
+hilt-navigation-compose, KSP). No landing was ever requested or performed.

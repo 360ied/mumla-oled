@@ -316,7 +316,7 @@ from slice 2; `Server` converts here to `@Entity @Parcelize` — deferred from s
 only (frozen per plan). Procedure per file: IDE auto-converter, then reviewer pass per porting-guide §1 (no `!!`, platform types explicit, nullability reviewed). Verification: all app JVM tests (incl.
 Robolectric comment-dialog tests) green; `./scripts/check.sh`.
 
-## Slice 6 — Compose foundation (IN PROGRESS, 2026-10-13-deferral lifted 2026-10-15)
+## Slice 6 — Compose foundation (DEFERRED — 2026-10-15 attempt killed, see [status](status.md))
 
 - Port `themes.xml` (`Theme.Mumla`/`Theme.Mumla.Oled`, colors, type,
   dimens) into a Compose **Material3** `MaterialTheme` via tokens —
@@ -346,7 +346,7 @@ Robolectric comment-dialog tests) green; `./scripts/check.sh`.
   already paid for itself on Favourites (card tint/shape, text sizes,
   icon sizes, letter spacing — see [status](status.md)).
 
-## Slice 7 — Compose screens (IN PROGRESS 2026-10-13-deferral lifted 2026-10-15)
+## Slice 7 — Compose screens (DEFERRED — 2026-10-15 attempt killed, see [status](status.md))
 
 Per-screen procedure (established on ServerInfo → Favourites): one stacked
 feature branch per screen off the previous tip; commit 1 = ViewModel +

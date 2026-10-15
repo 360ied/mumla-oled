@@ -2,11 +2,11 @@
 
 Status: slices 0-5 plus post-landing follow-ups (disconnect fix, AGP 9 DSL
 migration, R8 verification) are on `master` and released as v0.26.0 (see
-[status](status.md) for the progress log). Slices 6-7 (Compose rewrite),
-deferred at landing, were re-activated 2026-10-15 and are IN PROGRESS on
-feature branches behind a new before/after Paparazzi parity gate — nothing
-from slices 6-7 has landed. The migration branch and all worktrees were
-removed after landing.
+[status](status.md) for the progress log). Slices 6-7 (Compose rewrite)
+were attempted 2026-10-15 and KILLED the same day: the app stays on XML
+UI for the foreseeable future (see [status](status.md) for the attempt
+record and rationale). Nothing from slices 6-7 ever landed; all feature
+branches and worktrees were removed.
 
 ## Goal
 
@@ -30,8 +30,9 @@ machinery. See [plan](plan.md) for execution.
 - **Crypto JNI fenced with audio.** [`crypto`](../../libraries/humla/src/main/jni/crypto/)
   (OCB2 `CryptState`, JNI bridge) gets the same treatment: C++ frozen,
   Java facades convert syntactically only.
-- **Compose rewrite IN PROGRESS 2026-10-15 (was DEFERRED 2026-10-13).**
-  The user-facing UI of Mumla OLED must look and feel exactly the same:
+- **Compose rewrite KILLED 2026-10-15 (was DEFERRED 2026-10-13, briefly
+  revived).** XML UI stays indefinitely. If ever revived, the user-facing
+  UI of Mumla OLED must look and feel exactly the same:
   same `res/` visuals, same navigation structure, same dialogs and copy.
   Internals get gutted, pixels stay frozen. Parity is gated by the
   before/after Paparazzi method below (old-View goldens vs new-Compose
@@ -42,13 +43,11 @@ goldens, identical data, pinned device) — goldens of the new UI alone
   worktree. `master` drift is controlled by choice, and a feature freeze
   for the migration period is accepted: the app is considered
   feature-complete with echo cancellation already shipped.
-- **Slices 6-7 run as a stacked-branch chain (2026-10-15).** Unlike the
-  landed big-bang branch, each Compose screen rides its own feature
-  branch stacked on the previous tip (`slice-6-compose-foundation` →
-  `slice-7-server-info-route` → `slice-7-favourites` → …), one screen per
-  branch, goldens then wiring. The old-UI before-shots live on
-  `parity/before-shots` (off `master`, since the layouts are deleted on
-  the feature chain). No landing without explicit request, as always.
+- **Stacked-branch note (from the killed 2026-10-15 attempt).** That
+  attempt ran one screen per stacked branch (goldens then wiring,
+  before-shots off `master`); all branches were deleted unconverged
+  when the rewrite was killed. No landing without explicit request,
+  as always.
 - **minSdk 30 (lowered from 33 in v0.26.1).** The migration deleted every
   version gate below 33 except `UPSIDE_DOWN_CAKE`, but the v0.26.1 release
   walked the floor back to API 30 to restore Android 11–12 users —
