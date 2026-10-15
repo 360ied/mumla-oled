@@ -426,11 +426,47 @@ explicit tint-free `Surface`), plus the text-size/icon-size/spacing batch.
 Rule recorded in the [porting guide](porting-guide.md): new-UI goldens
 alone are not parity evidence.
 
+## Slice 7 — ServerEdit dialog (WIRED 2026-10-15, `feature/slice-7-server-edit`)
+
+- Goldens stack: `ServerEditViewModel` (exact validate/build funnel:
+  host/port rules, zero-port sentinel, username-default fallback, trim,
+  id inheritance, url-warning visibility) + `ServerEditDialogContent`
+  (legacy underline rhythm, res copy and errors) + 12 validation unit
+  tests + 9 goldens (add/filled/quick × 3 schemes).
+- Wiring keeps the no-dismiss positive button against `vm.confirm()`,
+  factory/listener/deep-link entry points verbatim; layout XML deleted.
+  Manual ViewModel factory (per-instance dialog args) until the shell.
+- Gate catches: M3 `TextField` cannot hit the 44dp legacy rhythm
+  (→ `BasicTextField` + divider); transparent-content dark-window scare
+  (→ scheme-background `Surface`). Before-shots: 9 dialog goldens.
+- Gate-only (no device per new working agreement); `check.sh` +
+  Paparazzi verify green.
+
+## Slice 7 — ChannelTree (WIRED 2026-10-15, `feature/slice-7-channel-tree`)
+
+- Goldens stack: `ChannelTreeViewModel` (expansion map with empty-hide
+  defaults, bold/italic rules, count flag, badge precedence, index
+  lookups; session reads behind a fakeable source) + `ChannelTreeScreen`
+  (`LazyColumn`, 25dp indents, real model trees incl. a decoded avatar)
+  + 6 goldens (full/collapsed × 3) + 9 ViewModel unit tests.
+- Wiring keeps the observer fan-out with identical guards, mute-history
+  writeback, scroll jumps, and native `ChannelMenu`/`UserMenu` (row
+overflow stays a native view so the popups keep real anchors; menu
+  conversion rides its own slice). Deletes the adapter, both listener
+  interfaces, three layouts. Shell, overlay adapter, density test
+  untouched.
+- Gate catches: layer-list talk badges need `Canvas` redraws;
+  `Bitmap.createBitmap` is unavailable in Paparazzi tests (avatar goldens
+  go through the production `AvatarCache` decode instead). Before-shots:
+  6 tree goldens.
+- Gate-only; `check.sh` + Paparazzi verify green.
+
 ## Next
 
-Land nothing without explicit request (standing policy). Open:
-Favourites on-device sign-off; next leaf screen through the same
-before/after loop; slice-7 NavHost shell + DialogHost (needs the AGP
-9.1/SDK 37 toolchain bump for navigation-compose); then the deferred
-landings. Remaining old debt rides its own TODOs (Paparazzi opt-in,
-landed, hilt-navigation-compose, KSP).
+Land nothing without explicit request (standing policy). Working
+agreement 2026-10-15: gate-only, no per-screen device installs —
+before/after diff + `check.sh` is the authority. Open: next leaf screen
+(ChannelChat) through the same loop; slice-7 NavHost shell + DialogHost
+(needs the AGP 9.1/SDK 37 toolchain bump for navigation-compose); then
+the deferred landings. Remaining old debt rides its own TODOs (Paparazzi
+opt-in, landed, hilt-navigation-compose, KSP).

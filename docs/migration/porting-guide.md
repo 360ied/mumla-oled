@@ -205,8 +205,8 @@ Visual/structural parity is a hard guardrail (see
   composables matched against screenshots, not redesigned.
 - All `res/` strings, colors, dimens stay the single source of truth
   (`stringResource`/`colorResource`/`dimensionResource`).
-- **Parity mapping rules (from the 2026-10-15 before/after diffs —
-  reviewers enforce these literally):**
+- **Parity mapping rules (from the before/after diffs — reviewers
+  enforce these literally):**
   - `stringResource` rejects null format args (`Any`, non-null) where
     `getString` printed them as `"null"`. Nullable slots render via
     explicit `.toString()` to preserve the old output exactly.
@@ -214,9 +214,17 @@ Visual/structural parity is a hard guardrail (see
     inherits 16sp body plus M3 ambient letter spacing. Pin both
     explicitly (`14.sp`, `letterSpacing = 0.sp`) unless the layout sets
     its own size.
-  - State-list selector drawables are unloadable by `painterResource`
-    on EVERY platform (throws, not just Paparazzi): mount the state
-    asset directly and let the ripple carry press feedback.
+  - State-list selector AND layer-list drawables are unloadable by
+    `painterResource` on EVERY platform (throws, not just Paparazzi).
+    Selectors: mount the state asset directly and let the ripple carry
+    press feedback. Layer-lists (talk badges): redraw on `Canvas` from
+    the same color tokens and glyph PNGs, transcribed drawable-by-drawable.
+  - Every snapshot root paints the scheme background (`Surface`).
+    Transparent content over Paparazzi's dark window once masqueraded as
+    a broken light theme; the `Surface` also matches the real window.
+  - Legacy underline fields are text plus a 1dp divider (~40dp rows),
+    not M3 boxes: M3 `TextField` minimums to 56dp and clips when
+    squeezed. Use `BasicTextField` plus a divider for form rhythm.
   - M3 `Card` applies a primary tonal overlay at any elevation;
     `CardView` never tinted. Card parity is a `Surface` with the scheme
     container color, `tonalElevation = 0.dp`, and a real `shadowElevation`.
