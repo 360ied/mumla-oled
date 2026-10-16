@@ -12,224 +12,117 @@
 ```
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
-[![Platform: Android](https://img.shields.io/badge/Platform-Android%205.0%2B%20(API%2021%2B)-green.svg)](https://developer.android.com)
+[![Platform: Android 11+](https://img.shields.io/badge/Platform-Android%2011%2B%20(API%2030%2B)-green.svg)](https://developer.android.com)
 [![Target SDK: 36](https://img.shields.io/badge/Target%20SDK-36%20(Android%2016)-orange.svg)](https://developer.android.com)
-[![Flavor: 100% FOSS](https://img.shields.io/badge/Flavor-100%25%20FOSS-brightgreen.svg)](#building-from-source)
 
-**Mumla OLED** is a native, low-latency, privacy-conscious [Mumble](https://www.mumble.info) voice chat client for Android. Tailored for OLED/AMOLED displays and gaming/multitasking workloads, it combines a battery-saving true black interface with an overhauled C++ native audio DSP pipeline, real-time neural noise suppression (RNNoise), Mumble 1.5 protocol features, and a redesigned non-intrusive floating voice HUD.
+**Mumla OLED** is Mumble for modern Android.
 
-> [!NOTE]
-> *"Mumla OLED"* is the working project name for this modernization fork. A comprehensive rebranding and permanent identity are planned for a future milestone.
+I forked [Mumla](https://gitlab.com/quite/mumla) to make the background `#000000` black. Then I started pulling on loose threads. Ten years of Android tech debt, a Java audio loop from the KitKat era, broken echo cancellation, and mic settings that required a degree in broadcast engineering just to stop breathing into the channel—one thing led to another, and now basically the entire engine has been rebuilt. The name stuck.
 
----
+The thesis is simple: **Mumble should just work.**
 
-## Lineage & History
+You shouldn't have to stare at a VU meter and drag threshold sliders around for fifteen minutes before you can talk to your friends. In Mumla OLED, you connect to a server and talk. Inbound voice comes out of your speakers without echoing back into the channel. You don't configure your mic—the defaults are already right. RNNoise eats your background noise, an adaptive leveler evens out your volume, and a pre-speech ring buffer makes sure your first syllable never gets clipped.
 
-Mumla OLED is the latest evolution in a lineage of open-source Android Mumble clients:
-
-```mermaid
-flowchart LR
-    A["Plumble<br/><i>Andrew Comminos</i><br/>(2013–2015)<br/>Backend: Jumble"] --> B["Mumla<br/><i>Daniel Lublin</i><br/>(2020–2026)<br/>Backend: Humla"]
-    B --> C["Mumla OLED<br/><i>360ied & Contributors</i><br/>(2026–present)<br/>Modernized Monorepo"]
-```
-
-1. **[Plumble](https://github.com/acomminos/Plumble)** (by Andrew Comminos): The original open-source Android Mumble client and its standalone protocol engine, **Jumble**.
-2. **[Mumla](https://gitlab.com/quite/mumla)** (by Daniel Lublin): Forked from Plumble (renaming Jumble to **Humla**) to keep the client alive, migrating to newer Android SDKs and modern Gradle plugin versions.
-3. **Mumla OLED**: A modernization fork created to tackle a decade of accumulated technical debt. It brings the client up to parity with modern Mumble 1.5 protocol features, replaces legacy Java audio processing with high-performance native C++ DSP, optimizes the interface for modern OLED screens, hardens user privacy, and strips unmaintained legacy bloat.
+Grab the latest signed APK from [**GitHub Releases**](https://github.com/360ied/mumla-oled/releases).
 
 ---
 
-## Core Capabilities: What Does the App Do?
+## What Changed (Almost Everything)
 
-Mumla OLED connects your Android device directly to self-hosted or public Mumble voice servers:
+### Audio that doesn't fight you
 
-- **Low-Latency Voice Communication**: Communicate in real-time with high-performance Opus audio encoding and decoding (obsolete legacy CELT and Speex codecs have been purged for security and binary efficiency).
-- **Flexible Transmission Modes**:
-  - **Voice Activity Detection (VAD)**: Dual-threshold hysteresis VAD with adaptive voice leveling and pre-speech ring buffering.
-  - **Push-to-Talk (PTT)**: Ultra-responsive on-screen button, volume key triggers, or a persistent hot corner overlay.
-  - **Continuous Transmission**: For dedicated microphones and streaming environments.
-- **Full Channel Tree Navigation**: Browse channel hierarchies, drag/move users (with appropriate ACL permissions), access linked channels, and inspect user information and ping statistics.
-- **Rich Text Chat & Inline Media**: Receive and send channel and direct messages with embedded images, hyperlinks, and density-scaled emojis.
-- **Strong Cryptographic Authentication**: Generate, export, and import PKCS#12 / X.509 client certificates to authenticate securely without passwords.
-- **Persistent Foreground Service**: Maintain voice connectivity while running games, navigating GPS, or with the screen turned off, with interactive lockscreen controls.
+Android audio routing is a minefield, and legacy Mumble clients dump that problem onto the user. Mumla OLED rips out the old Java audio loop and Speex preprocessor in favor of a 48 kHz native C++ DSP pipeline (`:libraries:humla/src/main/jni/audio_engine`) with opinionated, automatic defaults:
 
----
+- **Speakerphone doesn't echo. Headphones don't sound like a 1998 landline.** When you're on the phone speaker or earpiece, Mumla OLED locks into Android's coupled VoIP path (`VOICE_COMMUNICATION` + hardware `AcousticEchoCanceler`) so speaker leakage gets killed at the HAL. Plug in wired headphones or connect Bluetooth A2DP buds, and it drops back to an uncoupled stereo media path (`MIC` + `USAGE_MEDIA`) instead of forcing your headphones into narrowband Bluetooth SCO potato mode unless you actually ask for the BT mic.
+- **RNNoise is always on the job.** An embedded recurrent neural network (running off memory-mapped quantized weights straight from APK assets) strips fan noise, keyboard clatter, and room hiss in real time.
+- **Volume leveling that doesn't trip the mic gate.** The native adaptive leveler normalizes quiet and loud speech, but applies its gain *after* the VAD transmit decision. Quiet talkers get boosted; silent rooms don't get amplified into false transmissions.
+- **Zero clipped words.** A 2nd-order biquad high-pass filter cuts out desk thumps and rumble, feeding a dual-threshold hysteresis VAD (250 ms hold) backed by an 80 ms pre-speech lookahead buffer. By the time the VAD trips, the syllable you started 80 ms ago is already in the ring buffer waiting to be encoded.
+- **Opus only, up to 192 kbps.** With a soft limiter on the output mixer. CELT and Speex are dead and gone.
 
-## How It Differs from Upstream Mumla ("The Modernization")
+### Built for OLED screens and actual phone use
 
-Mumla OLED is not merely a reskin; it represents an extensive overhaul across protocol parity, native audio engineering, UI/UX responsiveness, privacy, and dependency modernizations.
+- **True `#000000` black by default.** Looks sharp on modern OLED panels, saves battery, and doesn't blind you at 2 AM.
+- **A floating HUD that stays out of the way.** Rebuilt as a compact speaker-pill overlay that snaps to any screen corner, passes touches straight through to whatever game or app is underneath, and toggles from the notification shade.
+- **Push-to-Talk when you want it, Voice Activity when you don't.** VAD is the default because it finally works. If you prefer PTT, you get the on-screen bar, hardware volume keys, or a floating hot-corner target that knows to hide itself when the keyboard pops up.
+- **Chat that survives a subway tunnel.** Reconnecting to a server no longer wipes your chat scrollback. Inline images load asynchronously with display-width scaling, LRU caching, and SSRF guards.
+- **Mumble 1.5 channel listening.** Eavesdrop on multiple channels at the same time without leaving your own, with per-channel volume sliders and ear indicators.
 
-### 1. Protocol Parity & Mumble 1.5 Features
+### Purging the 2014 time capsule
 
-- **Channel Listening**: Upstream Mumla only supported being in a single channel. Mumla OLED introduces full support for Mumble 1.5 channel listening—listen to multiple channels simultaneously without leaving your active channel, with independent listening volume and visual ear indicator icons.
-- **UDP Netcode & Serialization Fixes**: Fixed negative varint serialization bugs in Protobuf UDP packets (`HumlaUDP`), eliminated mode switch chat log spam, and suppressed false-alarm UDP ping warnings.
-- **Privacy-First Protocol Handshake**: Client operating system and platform version strings are intentionally omitted during the initial server version handshake, preventing device fingerprinting and server-side tracking.
-- **De-Bloated Network Stack**: Removed defunct legacy Tor / Orbot SOCKS plumbing (which was prone to socket descriptor leaks and connection hangs) and removed the unmaintained public server browser in favor of fast, reliable direct connections.
+Half of modernizing an old Android codebase is deleting things that have no business existing in 2026:
 
-### 2. Ground-Up Native Audio Pipeline & DSP Overhaul
-
-Upstream Mumla relied on legacy Java-side audio preprocessing and Speex DSP routines that caused garbage collector pauses, audio dropouts, and JNI lock contention. Mumla OLED replaced this with a dedicated C++ native DSP engine inside `:libraries:humla`:
-
-- **RNNoise Deep Learning Noise Suppression**: Embedded recurrent neural network (RNN) trained for real-time speech enhancement. Uses memory-mapped quantized model weights loaded directly from Android assets at runtime for near-zero CPU and battery overhead.
-- **Adaptive Voice Leveler (AGC)**: Native automatic gain leveler (`AdaptiveLeveler.cpp`) providing smooth volume normalization. Voice leveler gain is decoupled from VAD energy calculation, preventing loud background sounds or sudden gain increases from triggering accidental transmissions.
-- **2nd-Order Biquad High-Pass Filter**: Cleanly rolls off low-frequency desk vibrations, mic handling rustle, and room HVAC rumble before speech reaches the encoder.
-- **Hysteresis VAD with Pre-Speech Ring Buffer**: Dual-threshold VAD with a 250 ms hangover hold prevents stuttering and word clipping. An 80 ms native lookahead ring buffer captures pre-trigger speech syllables so the beginnings of sentences are never cut off. Audio transmit settings are un-gated for independent threshold calibration.
-- **Audiophile Transmission Bitrate**: Raised the audio quality slider cap from legacy limits up to **192 kbps** Opus, displayed dynamically in kbps.
-- **Hardware AEC Removal**: Completely purged Android hardware Acoustic Echo Cancellation (AEC) plumbing. Hardware AEC implementations on modern Android OEMs frequently caused distorted or silent microphone inputs; removing it resolved severe compatibility bugs.
-- **Native Test Suite**: Comprehensive C++ audio DSP test suite (`run_audio_tests.cpp`) verifying leveler dynamics, filter responses, and VAD thresholds.
-
-### 3. Modernized User Interface & OLED Optimization
-
-- **True OLED Black Theme**: Native UI reimagined with absolute `#000000` backgrounds, maximizing battery savings on OLED/AMOLED displays and reducing eye strain in dark environments.
-- **Minimalist Floating Voice HUD (Overlay)**:
-  - Rebuilt from scratch using compact, text-hugging "pills" displaying active speakers.
-  - **Corner Pinning**: Snaps the HUD cleanly to any screen corner with non-intrusive layout and touch pass-through to background apps and games.
-  - **Instant Responsiveness**: Removed slow legacy window animations for instant frame updates during intense gaming.
-  - **Persistent State & Quick Toggle**: Overlay state survives app restarts, with a dedicated instant toggle action directly in the persistent notification.
-- **Re-Engineered PTT Hot Corner**: Latency-optimized push-to-talk corner with soft-keyboard awareness (automatically hides when typing) and vivid visual state feedback.
-- **Resilient Chat & Inline Media**:
-  - Chat history persists seamlessly through server reconnects and network transitions instead of clearing.
-  - Overhauled `MumbleImageGetter` with asynchronous background decoding, LRU in-memory caching, SSRF security guards against malicious intranet endpoints, responsive display-width scaling (preventing horizontal image overflows), robust percent-encoded base64 handling, and high-resolution image uploads up to 1600x1600.
-  - Replaced the legacy clear chat cross icon with a theme-consistent trash can action.
-
-### 4. Resiliency, Security & Platform Modernization
-
-- **Wakeful Auto-Reconnect Engine**: Exponential backoff reconnect manager with active network callbacks (`ConnectivityManager.NetworkCallback`), socket connect timeouts, and leak-free wake lock management that survives airplane mode and Wi-Fi/cellular handovers.
-- **Lockscreen & Media Notifications**: Modern Android foreground notification with synchronized mute, deafen, and overlay action buttons that stay in lockstep with the audio service.
-- **Configurable TTS Engine**: Choose your preferred Text-To-Speech engine in settings; automatically suppresses annoying TTS speech floods on manual disconnects.
-- **Standard Platform Cryptography**: Eliminated heavy BouncyCastle / SpongyCastle dependencies in favor of standard platform cryptography (Conscrypt / Java SE) and a lightweight in-tree X.509 v3 DER encoder, saving over 1 MB of compressed DEX bloat and 3,000 classes.
-- **Protobuf JavaLite & APK Shrinking**: Migrated from full Java Protobuf to `protobuf-javalite`, stripped post-quantum cryptographic tables, dropped obsolete 32-bit x86 native binaries, and enabled aggressive R8 minification and resource shrinking for a compact, lightweight APK.
-- **Target Android 16 (API 36)**: Fully compliant with modern Android requirements: Android 13+ runtime notification permissions (`POST_NOTIFICATIONS`), explicit `RECEIVER_NOT_EXPORTED` broadcast flags, and modern Storage Access Framework file handling.
+- **Goodbye BouncyCastle.** Pulling in 3,000 DEX classes and over a megabyte of bytecode just to generate a self-signed X.509 client cert was insane. Replaced with standard platform Conscrypt / Java SE and a tiny in-tree ASN.1 DER encoder.
+- **No OS fingerprinting.** The client no longer tattles your Android version and device build string to every Mumble server on handshake.
+- **Cut the deadweight.** Deleted the broken Tor/Orbot SOCKS proxy plumbing, deleted the dead public server browser, and replaced the old Java OCB2 implementation with native C++ OCB2-AES128 over JNI.
+- **Modern Android under the hood.** Floor raised to **Android 11 (API 30)**, targeting **Android 16 (API 36)**. The old `AsyncTask`, raw SQLite, `SharedPreferences` blob, and `Handler`/`synchronized` soup in the service layer have been replaced with a `LifecycleService` running Kotlin coroutines and `Flow`, Room (`MumlaDatabase`), Preferences DataStore, Hilt, and an exponential-backoff `NetworkCallback` reconnect engine that survives Wi-Fi-to-cellular handoffs without leaking wake locks.
 
 ---
 
-## Architectural Layout
-
-The repository is organized as an integrated monorepo:
+## Repository Layout & Deep Dives
 
 ```text
 mumla-oled/
-├── app/                              # Android client UI (:app)
-│   ├── src/main/java/se/lublin/mumla/ # Activities, fragments, overlay HUD, preferences
-│   └── src/main/res/                 # Layouts, themes (OLED Black), drawables
-├── libraries/humla/                  # Core protocol & audio library (:libraries:humla)
-│   ├── src/main/java/se/lublin/humla/ # Mumble protocol, Netty/TCP/UDP, service state
-│   ├── src/main/jni/                 # Native C/C++ audio subsystem
-│   │   ├── audio_engine/             # RNNoise wrapper, Adaptive Leveler, Biquad filter, VAD, JitterBuffer
-│   │   ├── opus/                     # Submodule: Xiph.Org Opus codec
-│   │   └── rnnoise/                  # Submodule: Mozilla RNNoise neural network
-│   └── src/test/cpp/                 # Native C++ DSP unit test harness
-├── scripts/                          # Automated development & verification tooling
-│   ├── worktree.py                   # Isolated Git worktree manager
-│   ├── check.sh                      # Pre-commit & pre-completion verification suite
-│   ├── commit.py                     # Git 50/72 commit message formatter & validator
-│   └── test_native_audio.sh          # Standalone native C++ DSP test runner
-└── flake.nix                         # Hermetic, reproducible Nix development environment
+├── app/                              # :app — UI, activities/fragments, overlay HUD, Room, DataStore, Hilt
+├── libraries/humla/                  # :libraries:humla — Mumble protocol, service, and JNI engine
+│   ├── src/main/java/se/lublin/humla/ # Protocol state machine, TLS control channel, UDP transport
+│   ├── src/main/jni/
+│   │   ├── audio_engine/             # C++ DSP: RNNoise, AdaptiveLeveler, BiquadFilter, HysteresisVad, JitterBuffer
+│   │   ├── crypto/                   # C++ OCB2-AES128 UDP crypto & JNI bridge
+│   │   ├── opus/                     # Submodule: libopus
+│   │   └── rnnoise/                  # Submodule: librnnoise
+│   └── src/test/cpp/                 # Host C++ unit tests for audio DSP and crypto
+├── docs/                             # Engineering write-ups, architecture notes, and postmortems
+├── scripts/                          # worktree.py, commit.py, check.sh, test_native_audio.sh
+└── flake.nix                         # Hermetic Nix dev shell (JDK 21, Android SDK/NDK)
 ```
+
+If you want the gory details on why specific things are built the way they are, read [`docs/`](docs/):
+
+- [**Echo Cancellation (`docs/echo-cancellation/`)**](docs/echo-cancellation/README.md) — Why single-ended mic DSP can never cancel speaker leakage, and how the route-dependent platform `AcousticEchoCanceler` and Bluetooth SCO/A2DP policies work.
+- [**Optimistic Self-Mute (`docs/optimistic-self-mute/`)**](docs/optimistic-self-mute/README.md) — Eliminating round-trip server lag when tapping mute/deafen without desyncing state.
+- [**Modernization Migration (`docs/migration/`)**](docs/migration/README.md) — The full log of migrating the service and data layers to Kotlin, Coroutines, Room, DataStore, and AGP 9 (plus why we killed the Compose UI rewrite and kept XML Views).
+- [**APK Size Analysis (`docs/apk-size-analysis/`)**](docs/apk-size-analysis/README.md) — Byte-by-byte breakdowns of DEX, native `.so` packaging, and R8 shrinking across releases.
 
 ---
 
 ## Building from Source
 
-### Prerequisites
+100% FOSS. Zero Google Play Services. Toolchain versions are pinned in [`flake.nix`](flake.nix) and [`gradle/libs.versions.toml`](gradle/libs.versions.toml).
 
-Mumla OLED is built exclusively as a **100% FOSS** client without proprietary Google Play dependencies.
-
-- **JDK**: Java 21 (OpenJDK recommended)
-- **Android SDK**: Compile SDK 36, Min SDK 21
-- **Android NDK**: Version `27.2.12479018`
-- **Supported ABIs**: `arm64-v8a`, `armeabi-v7a`, `x86_64` (obsolete 32-bit `x86` is no longer built or packaged)
-- **Submodules**: Git submodules must be checked out for native libraries (`opus`, `rnnoise`).
-
-### Option A: Hermetic Build with Nix (Recommended)
-
-If you use [Nix](https://nixos.org/) with flakes enabled, the repository includes a complete dev shell with the exact JDK, Android SDK/NDK, Python, and build dependencies:
+### With Nix (Recommended)
 
 ```bash
-# Enter the dev shell
-nix develop
+git clone --recursive https://github.com/360ied/mumla-oled.git
+cd mumla-oled
 
-# Build Debug APK
-./gradlew assembleFossDebug
+# Build the debug APK
+nix develop --command ./gradlew assembleFossDebug
 
-# Build Release APK
-./gradlew assembleFossRelease
-```
-
-Or run directly without entering the interactive shell:
-
-```bash
-nix develop --command ./gradlew assembleFossRelease
-```
-
-Release builds (`assemble`, `bundle`, `package` or `install` for a release variant, including a plain `./gradlew build`) fail unless a local, uncommitted `app/signing.gradle` defines `signingConfigs.release`. Debug builds are unaffected.
-
-Release APK output will be located at:
-`app/build/outputs/apk/foss/release/mumla-foss-release.apk`
-
-### Option B: Conventional Build with Gradle
-
-1. Clone the repository and initialize native submodules:
-
-   ```bash
-   git clone --recursive https://github.com/360ied/mumla-oled.git
-   cd mumla-oled
-   ```
-
-   *(If already cloned, run `git submodule update --init --recursive`)*
-
-2. Set your environment variables:
-
-   ```bash
-   export JAVA_HOME=/path/to/jdk-21
-   export ANDROID_SDK_ROOT=/path/to/android-sdk
-   ```
-
-3. Build the FOSS debug or release variant:
-
-   ```bash
-   ./gradlew assembleFossDebug
-   ```
-
-### Running Tests & Verification
-
-Before testing or verifying changes, ensure all unit tests and native checks pass:
-
-```bash
-# Fast pre-commit test suite (Python tests, native C++ audio tests, Gradle unit tests)
+# Run the gate (Python tooling tests, host-compiled C++ DSP/crypto tests, JVM unit tests)
 ./scripts/check.sh
-
-# Full test suite
-./scripts/check.sh --full
 ```
 
----
+### Without Nix
 
-## Installing & Running
+Initialize submodules (`git submodule update --init --recursive`), point `JAVA_HOME` (JDK 21) and `ANDROID_SDK_ROOT` at your local toolchain, and run `./gradlew assembleFossDebug`.
 
-You can install and launch the debug build directly on an attached device or emulator via ADB:
+*(Note: release tasks like `assembleFossRelease` fail closed unless you have a local uncommitted `app/signing.gradle` defining `signingConfigs.release`. Debug builds work out of the box.)*
+
+### Install via ADB
 
 ```bash
-# Install Debug APK
-adb install -r app/build/outputs/apk/foss/debug/mumla-foss-debug.apk
-
-# Launch Application
-adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
+nix develop --command ./gradlew :app:installFossDebug
+nix develop --command adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity
 ```
 
 ---
 
-## Acknowledgments & Credits
+## Lineage & License
 
-Mumla OLED stands on the shoulders of the open-source community:
+- **[Plumble](https://github.com/acomminos/Plumble) / [Jumble](https://github.com/acomminos/Jumble)** — Andrew Comminos (2013–2015)
+- **[Mumla](https://gitlab.com/quite/mumla) / [Humla](https://gitlab.com/quite/humla)** — Daniel Lublin (2020–2026)
+- **Mumla OLED** — 360ied & contributors (2026–present)
 
-- **[Andrew Comminos](https://github.com/acomminos)**: Original creator of **Plumble** and **Jumble**.
-- **[Daniel Lublin](https://lublin.se)**: Creator and maintainer of **Mumla** and **Humla**.
-- **The [Mumble](https://www.mumble.info) Team**: For developing and maintaining the Mumble protocol and desktop client, including the push-to-talk audio chirps (`ptt_on.ogg`, `ptt_off.ogg`) distributed under the 3-Clause BSD License (Copyright (C) 2005-2023 The Mumble Developers).
-- **[Jean-Marc Valin](https://jmvalin.ca/) & the Xiph.Org / Mozilla Teams**: For the Opus codec, Speex DSP, and the RNNoise deep learning noise suppression project.
+Push-to-talk audio cues (`ptt_on.ogg`, `ptt_off.ogg`) are from the [Mumble](https://www.mumble.info) project (3-Clause BSD). Audio codecs and DSP use [Opus](https://opus-codec.org/), Speex DSP, and [RNNoise](https://jmvalin.ca/demo/rnnoise/) by Jean-Marc Valin / Xiph.Org / Mozilla.
 
----
-
-## License
-
-Mumla OLED is free and open-source software licensed under the **GNU General Public License v3.0 or later** ([GPL-3.0-or-later](LICENSE)).
+Licensed under the **GNU General Public License v3.0 or later** ([GPL-3.0-or-later](LICENSE)).
