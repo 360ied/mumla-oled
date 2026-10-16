@@ -9,11 +9,13 @@ that the migration worktree (once scaffolded) cannot quietly cheat.
 Two migrations land (third explicitly deferred 2026-10-13):
 
 1. **Service core → Kotlin + coroutines/Flow.** `HumlaService` becomes a
-   thin lifecycle owner; connection state, reconnect, and audio route
-   policy become tested state machines (`ConnectionManager`,
-   `ReconnectController`, `AudioRoutePolicy`). The `HumlaNetworkThread`
-   executor trio (including its dead receive executor), the
-   stringly-typed `configureExtras` bundle, and the `AsyncTask`s go away.
+   `LifecycleService` with coroutine jobs (`reconnectJob`,
+   `routeDebounceJob`, `routeSettleJob`, `ConnectionScope`, UDP `Channel`)
+   and tested route/reconnect/ping policies (`AudioRoutePolicyTest`,
+   `ReconnectBackoffTest`, `PingIntervalTest`). The `HumlaNetworkThread`
+   executor trio (including its dead receive executor) and the
+   stringly-typed `configureExtras` bundle go away (`AsyncTask` replacement
+   in `:app` deferred with slice 7).
    The 48-method `IHumlaSession` facade stays frozen throughout (a role-interface split is post-migration follow-up work).
 2. **Data layer → Room + DataStore + Hilt.** Hand SQL in
    [`MumlaRoomDatabase`](../../app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt),

@@ -2,9 +2,9 @@
 
 Context: the `feature/optimistic-self-mute` branch (merged as `e03797e`)
 made client-initiated self-mute/deafen optimistic with desktop-Mumble
-parity: [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java)
+parity: [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt)
 coerces and sends the packet, then mirrors state into the `User` model,
-pushes the [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.java)
+pushes the [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt)
 mic gate, logs once, and fires `onUserStateUpdated`, with the server echo
 as confirm. Four adjudicated pedantic review rounds (three primed, one
 clean-eyes) surfaced the items below. Each was evaluated against one
@@ -25,7 +25,7 @@ nothing enforces it.
 
 Deferred because the fix is cross-cutting, not local: posting must move
 to the `HumlaCallbacks` fan-out or to both fire sites (optimistic site
-and [`ModelHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.java)
+and [`ModelHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.kt)
 echo path) together, or the two confirms get different threading and
 ordering behavior. That deserves its own branch and its own review, not a
 tacked-on hunk.
@@ -39,8 +39,8 @@ observer threading for any other reason.
 
 ## 2. Simplify the redundant caller-side pre-coercion
 
-`ChannelListFragment` (`deafened &= muted`), `MumlaService.toggleSelfMute`
-(`deafened && muted`), and `onDeafenToggled` (`(deafened, deafened)`) all
+`ChannelListFragment` (`deafened = deafened and muted`), `MumlaService.toggleSelfMute`
+(`user.isSelfDeafened && muted`), and `onDeafenToggled` (`(deafened, deafened)`) all
 hand-coerce pairs that `setSelfMuteDeafState` now coerces centrally.
 
 Deferred as intentional defense-in-depth: a future direct caller of the
@@ -76,7 +76,7 @@ pipeline to exercise boolean logic.
 
 Deferred because the test would mostly assert that the shadows work: the
 coercion pairs, echo dedup, and state application the latch depends on
-are pure Java already pinned by fast JVM tests, and the remaining wiring
+are pure Kotlin already pinned by fast JVM tests, and the remaining wiring
 fails loud, not subtle.
 
 Fix shape (if ever): extract the composite computation (server/self/deaf
@@ -125,8 +125,11 @@ Two behaviors are intentional and convergent, not bugs:
 ## 8. Pre-existing items observed but untouched
 
 No new writers were added for any of these, so the diff leaves their
-posture unchanged: non-self `User` fields' lock-free reads,
-`User.equals`/`compareTo` contract tension, `mPermissions` plain-int
-reads, `ModelHandler` early-return dropping co-packaged updates,
-`sendTCPMessage` silent drop, `HumlaConnection` disconnect-path
-nullability. Fixing any of them is a separate branch.
+posture unchanged: non-flag `User` fields' lock-free reads (`isMuted`,
+`isDeafened`, and `isSuppressed` were marked `@Volatile` in `deba8f57` /
+`02e23c26`; `name`, `comment`, `channel`, etc. remain plain),
+`User.equals`/`compareTo` contract tension, `Channel.permissions` plain-int
+reads, `ModelHandler` early-return dropping co-packaged updates, and
+`sendTCPMessage` silent drop (`HumlaConnection`/`HumlaTCP` disconnect
+teardown was later restructured around `ConnectionScope` in migration
+slice 4). Fixing any of the remaining items is a separate branch.

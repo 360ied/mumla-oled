@@ -1,10 +1,11 @@
 # Mumla OLED Release APK Size Analysis & Binary Footprint Report (0.18.4 — Outdated)
 
 > [!WARNING]
-> **Outdated Analysis**: This report reflects the binary footprint of **Mumla OLED 0.18.4** and is currently outdated. Package compositions, bytecode retention, native library sizes, and asset payloads may differ in subsequent releases.
+> **Outdated Analysis**: This report reflects the binary footprint of **Mumla OLED 0.18.4** and is superseded by the [0.21.23](./README-0.21.23.md), [0.26.0](./README-0.26.0.md), and current [0.26.1](./README-0.26.1.md) reports. Package compositions, bytecode retention, native library sizes, and asset payloads differ in subsequent releases.
 >
 > **Known inaccuracies** (body preserved as a snapshot; corrections noted here, not rewritten):
 > - Opus codec version (§5[^opus-version]): named as "1.5.2" — the actual submodule pin at `0.18.4` is upstream **v1.1**.
+> - `AudioInputEngine.cpp` parenthetical (§5.2): described as "(Oboe/AAudio audio stream processor)" — the pipeline runs over `AudioRecord`/`AudioTrack` JNI, with no Oboe or AAudio.
 > - Classpath-leak total (§6[^leak-total]): stated as "~40 KB compressed (~235 KB uncompressed)" — the itemized entries sum to ~33 KB / ~203 KB.
 
 [^opus-version]: Correction: the opus submodule pin at tag `0.18.4` is `65471dd5` ("Bump soname", Dec 2013), which `git describe --tags` resolves to exactly `v1.1` — not 1.5.2. See the [0.21.23 report](./README-0.21.23.md) for the corrected v1.1 → v1.6.1 history.
@@ -134,7 +135,7 @@ The single largest entry inside the entire APK is [`assets/rnnoise_model.bin`](.
 - **Asset Extraction Strategy**:
   In [`libraries/humla/src/main/jni/Android.mk`](../../libraries/humla/src/main/jni/Android.mk#L79), the build defines `-DUSE_WEIGHTS_FILE`. This wraps the weight table in `rnnoise_data.c` in `#ifndef USE_WEIGHTS_FILE`, completely stripping the static weights from the compiled `.so` binaries.
 - **Runtime Loading**:
-  Instead, [`NativeAudioInputEngine.loadRnnoiseModel()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.java#L47-L62) reads `rnnoise_model.bin` from Android assets once into a cached byte buffer in memory, passing it across JNI during `AudioInputEngine` initialization. This single optimization saved over **7 MB** of compressed APK overhead.
+  Instead, [`NativeAudioInputEngine.loadRnnoiseModel()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.kt) reads `rnnoise_model.bin` from Android assets once into a cached byte buffer in memory, passing it across JNI during `AudioInputEngine` initialization. This single optimization saved over **7 MB** of compressed APK overhead.
 
 ---
 
@@ -206,7 +207,7 @@ In [`app/proguard-rules.pro`](../../app/proguard-rules.pro#L22-L27), the build s
 -dontwarn org.bouncycastle.**
 ```
 
-Because [`BouncyCastleProvider`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.java#L81) registers dozens of cryptographic Service Provider Interfaces (SPIs) dynamically using string keys, R8 cannot statically verify reachability. The wildcard rule forces R8 to retain:
+Because [`BouncyCastleProvider`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt) registers dozens of cryptographic Service Provider Interfaces (SPIs) dynamically using string keys, R8 cannot statically verify reachability. The wildcard rule forces R8 to retain:
 
 - `org.bouncycastle.jcajce.provider.*`: **1,669 classes**
 - `org.bouncycastle.asn1.*`: **328 classes**
@@ -217,7 +218,7 @@ Because [`BouncyCastleProvider`](../../libraries/humla/src/main/java/se/lublin/h
 - `org.bouncycastle.jce.*`: **107 classes**
 - `org.bouncycastle.math.*`: **107 classes**
 
-Mumla OLED only uses BouncyCastle for X.509 client certificate generation in [`HumlaCertificateGenerator`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.java) and PKCS#12 keystore parsing in [`CertificateImportActivity`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.java). The remaining cryptographic engines (PQC, Camellia, GOST, ElGamal, Blowfish, CAST, Twofish, etc.) are dead weight preserved solely by the broad `-keep` directive.
+Mumla OLED only uses BouncyCastle for X.509 client certificate generation in [`HumlaCertificateGenerator`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.kt) and PKCS#12 keystore parsing in [`CertificateImportActivity`](../../app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.kt). The remaining cryptographic engines (PQC, Camellia, GOST, ElGamal, Blowfish, CAST, Twofish, etc.) are dead weight preserved solely by the broad `-keep` directive.
 
 ---
 

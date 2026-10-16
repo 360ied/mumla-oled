@@ -27,9 +27,9 @@ only if the fleet changes.
 Delete, don't convert:
 
 - All `M` (23) gates: pre-M `AudioRecord`/`AudioTrack` constructors in
-  [`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.java)
+  [`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt)
   and
-  [`AudioOutput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.java),
+  [`AudioOutput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt),
   `getBufferSizeInFrames` fallback, `MumlaService`/`HumlaService`
   M-gated branches, `AudioDeviceCallback` M registration gate.
 - All `N` (24–25) gates (`PinnedTlsSocketFactory:62`, `HumlaService:907`; enumerate any remainder with `grep SDK_INT` — the rule is delete every gate below 33 except `UPSIDE_DOWN_CAKE`).
@@ -87,10 +87,10 @@ Convert syntax first, restructure second. One file per commit.
   with `volatile`-equivalent visibility preserved (see §2). `Server` is
   `Parcelable` — use `@Parcelize` (add `kotlin-parcelize` plugin), do not
   hand-write it.
-- **State enums → sealed interfaces/classes:** `ConnectionState`,
-  `HandshakeFailure`, SCO `STATE_*` ints. Exhaustive `when` replaces
-  `switch`; the compiler must prove exhaustiveness (no `else` branch
-  that hides new states).
+- **State enums (`ConnectionState`, `HandshakeFailure`) and SCO `STATE_*` ints:**
+  Enums become Kotlin `enum class`es (SCO states stay `const val` ints).
+  Exhaustive `when` replaces `switch`; for enums/sealed types the compiler
+  must prove exhaustiveness (no `else` branch that hides new states).
 - **`switch` → `when`, `instanceof` chains → smart casts.**
 - **JNI facades** (`NativeAudioInputEngine`,
   `NativeAudioOutputEngine`): convert syntax only. Keep every
@@ -110,16 +110,16 @@ The rule: **network/audio threads parse; a confined scope mutates.**
 |---|---|
 | `mHandler.post / postDelayed / removeCallbacks` (reconnect runnable, route debounce, settle recheck, SCO notify) | Cancellable `Job`s in a service scope: `reconnectJob`, `debounceJob`, `settleJob`. Disarm = `job?.cancel()`, replacing `removeCallbacks` one-for-one |
 | `ScheduledExecutorService` ping loop (`scheduleNextPing` self-chain) | `while (isActive) { sendKeepalivePing(); delay(interval) }` on `Dispatchers.IO`; `disconnect()` cancels the scope |
-| `HumlaNetworkThread` 3-executors-per-connection (incl. the dead receive executor — do not port the bug) | One `ConnectionScope` (`SupervisorJob + Dispatchers.IO`): blocking TCP read loop in one child, writes serialized via a `Mutex` or actor coroutine |
+| `HumlaNetworkThread` 3-executors-per-connection (incl. the dead receive executor — do not port the bug) | One `ConnectionScope` (`SupervisorJob + Dispatchers.IO`): blocking TCP read loop in one child, writes serialized on a per-connection single-threaded dispatcher (`Dispatchers.IO.limitedParallelism(1)` for strict FIFO ordering; closed on teardown) |
 | `HumlaUDP` `BlockingQueue` + `mSendLock` head-drop | `Channel(capacity, onBufferOverflow = DROP_OLDEST)` — identical ~200 ms bound semantics, no explicit lock |
-| `volatile` route/connection flags read anywhere | `StateFlow` (route, connection state) for observed values; plain `volatile var` where only visibility is needed |
-| `synchronized` `ModelHandler.message*` writers + lock-free readers | Confine all `message*` calls to a single-threaded model dispatcher; keep the `ConcurrentHashMap`s (the UDP-thread `getUser` path depends on them) |
-| `HumlaCallbacks` concurrent-set fan-out | Keep the interface during migration; back it with a `SharedFlow` or keep the set — either way, per-observer isolation stays |
-| `BluetoothScoManager` epoch + `Handler` timeout | Coroutine cancellation *is* the epoch: `stop()` cancels the bring-up children; timeout via `withTimeoutOrNull(8000)` |
-| `ConnectivityManager.NetworkCallback`, `AudioDeviceCallback`, `BroadcastReceiver`s | `callbackFlow` adapters, collected in the service scope |
-| Talking-state hops (`mHandler.post` from capture thread, `mMainHandler.post` from native render callback) | `serviceScope.launch { ... }` — still a hop to the confined scope, same ordering |
-| `AsyncTask` (`ServerConnectTask`, `ServerInfoTask`, `MumlaCertificateGenerateTask`) | `suspend` functions + `viewModelScope`/`lifecycleScope`; `ServerConnectTask` keeps application-context semantics (it outlives rotation today) |
-| Ad-hoc SRV single-thread executors | One shared `Dispatchers.IO` call with `withTimeout(800.milliseconds)` |
+| `volatile` route/connection flags read anywhere | `@Volatile var` where visibility across threads is needed |
+| `synchronized` `ModelHandler.message*` writers + lock-free readers | Main-thread confinement via `HumlaTCP.executeOnMainThread` (`@Synchronized` + `ConcurrentHashMap`s retained so the UDP-thread `getUser` path stays lock-free) |
+| `HumlaCallbacks` concurrent-set fan-out | Keep the `ConcurrentHashMap`-backed set and per-observer isolation as-is |
+| `BluetoothScoManager` epoch + `Handler` timeout | Coroutine scope + generation epoch: `stop()` cancels the bring-up timeout child (`timeoutJob` with `delay(connectTimeoutMs)`); `destroy()` cancels the scope |
+| `ConnectivityManager.NetworkCallback`, `AudioDeviceCallback`, `BroadcastReceiver`s | Direct `lifecycleScope.launch` hops (single-consumer fire-and-forget; `callbackFlow` adds no backpressure value here) |
+| Talking-state hops (`mHandler.post` from capture thread, `mMainHandler.post` from native render callback) | `lifecycleScope.launch { ... }` in `HumlaService` (`AudioOutput` keeps its `mainHandler` hop since it is not a `Service`) |
+| `AsyncTask` (`ServerConnectTask`, `ServerInfoTask`, `MumlaCertificateGenerateTask`) | Deferred with slice 7 (stay `AsyncTask` while XML/Fragment UI remains; `ServerConnectTask` slimmed in slice 2 to pass only the server ID) |
+| Ad-hoc SRV single-thread executors | `Dispatchers.IO` call with `withTimeoutOrNull(800)` |
 | Capture `AudioInput` thread + render (`AudioOutput`) thread (`URGENT_AUDIO`, blocking `read`/`write`/`wait`) | **Stay raw threads.** Blocking audio IO is not suspendible; only the control plane (start/stop/join bookkeeping) moves into the scope. Join/interrupt/notify pairing stays exactly as-is |
 
 Services: extend `LifecycleService` (decided — no attachment to the

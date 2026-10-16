@@ -63,13 +63,13 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 
 - Branch `spike/agp9` (worktree `.worktrees/spike/agp9`), commit `ade4446e`:
   AGP 9.0.1 + Gradle 9.1.0 viability probe — `check.sh` green (301 app tests,
-  24 humla suites, native suite) + `assembleFossDebug` APK. Kept as evidence;
-  cleanup only on explicit request (never autonomous).
+  24 humla suites, native suite) + `assembleFossDebug` APK. Branch and
+  worktree cleaned up after landing.
 
 ## Outstanding debt (do not forget)
 
-- Compose rewrite slices 6-7 explicitly DEFERRED 2026-10-13 to
-  post-landing follow-up — landing scope is slices 0-5.
+- Compose rewrite slices 6-7 KILLED 2026-10-15 (was DEFERRED 2026-10-13) —
+  landing scope was slices 0-5; XML UI stays indefinitely (see below).
 - R8 verified 2026-10-13 on `build/r8-release` (below) — no longer owed.
 - Paparazzi re-evaluation DEFERRED with slice 6 (above) — spike proven
   2026-10-14 on `spike/paparazzi` (landed, see below).
@@ -336,6 +336,12 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - `fc0e96a7` — recorded the R8 verification above.
 - `v0.26.0` — released as an unstable pre-release (Android 13 requirement
   headline).
+- `d7841b37`, `a5ad1a11` — lowered `minSdkVersion` 33 → 30 to restore
+  Android 11–12 users; reintroduced the legacy SCO backend,
+  `BundleCompat`/`IntentCompat` backports, and S+/Tiramisu permission guards.
+- `81c3ab90` — opted into `useLegacyPackaging` for DEX and JNI libraries
+  (−2.28 MB on-disk APK size).
+- `v0.26.1` — released with the Android 11+ floor and deflated packaging.
 
 ## Paparazzi spike (PROVEN 2026-10-14, landed on master)
 
@@ -356,10 +362,9 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
   `alpha05.2` milestone sits open past its 2026-10-13 due date — no fix to
   consume. The opt-in is the durable posture; re-prove the two commands on
   each bump.
-- Landed on master on explicit request; branch and worktree retained
-  pending cleanup.
+- Landed on master on explicit request; branch and worktree cleaned up.
 
-## Slice 6 — Compose foundation (IN PROGRESS 2026-10-15, `feature/slice-6-compose-foundation`)
+## Slice 6 — Compose foundation (KILLED 2026-10-15, `feature/slice-6-compose-foundation`)
 
 - `6f4d776c` — Compose toolchain: `compose = true` + Kotlin compose
   compiler plugin, BOM-governed `ui/foundation/material3/runtime` in the
@@ -382,7 +387,7 @@ Room `2.8.5`, datastore-preferences `1.2.1`, Paparazzi `2.0.0-alpha05.1`
 - `check.sh` green throughout; fossDebug installed on hardware, no UI
   change as designed (Fragment still live).
 
-## Slice 7 — ServerInfo route (DONE on-device 2026-10-15, `feature/slice-7-server-info-route`)
+## Slice 7 — ServerInfo route (WIRED, killed 2026-10-15, `feature/slice-7-server-info-route`)
 
 - `c629aabb` — Fragment hosts a `ComposeView` collecting `uiState`; the
   1 Hz poll moved into the ViewModel (binder reads on IO, null keeps last
@@ -394,7 +399,7 @@ disconnected); `updateData` became state-returning `fetchState`; layout
   (bare-`TextView` default vs 16sp Compose body).
 - Installed + verified on hardware (live 1 s updates, identical copy/layout).
 
-## Slice 7 — Favourites route (IN PROGRESS 2026-10-15, `feature/slice-7-favourites`)
+## Slice 7 — Favourites route (WIRED, killed 2026-10-15, `feature/slice-7-favourites`)
 
 - `ac40c827` — `ServerPinger` (blocking UDP extracted verbatim from
   `ServerInfoTask`, task delegates), `FavouritesViewModel` (Room load +
@@ -409,7 +414,7 @@ disconnected); `updateData` became state-returning `fetchState`; layout
 - `bfd4d79a`, `0ad159aa` — on-device review fixes: 14sp row text,
   intrinsic icon sizes, zeroed M3 letter spacing.
 - `ef9932ad` — before/after-diff parity fixes (below) + PIXEL_5 pin.
-- Installed on hardware; on-device review in progress.
+- Installed on hardware; prompted the before/after parity gate below.
 
 ## Before/after parity gate (ADOPTED 2026-10-15)
 
@@ -532,23 +537,6 @@ overflow stays a native view so the popups keep real anchors; menu
 - Comments stay native with rationale (WebView content + security
   hardening + async fetch have no Compose equivalent; chrome conversion
   buys risk, not value) — same class as overlay/notification stays.
-
-## Slice 7 — ChannelChat (WIRED 2026-10-15, `feature/slice-7-channel-chat`)
-
-- Goldens stack: shared native row binder (HTML/image/links verbatim
-  in `AndroidView` rows) + list/input ViewModel + 4 state unit tests +
-  3 themed goldens. Wiring keeps observer, image flow, send, hints, and
-  menus; deletes the adapter and fragment layout. Dead image button
-  kept, filed separately. Gate catches: unthemed native rows, lost
-  `match_parent`, wall-clock goldens (frozen). Before-shots: 3.
-- Gate-only; green.
-
-## Slice 7 — AccessToken (WIRED 2026-10-15, `feature/slice-7-access-token`)
-
-- Goldens stack: ViewModel with DB + live-send ordering and sender seam
-  + list/input screen + DB-backed unit tests + 6 goldens. Wiring sets
-  the torn-down-safe sender; deletes the dead listener, adapter, and
-  both layouts. Before-shots: 6. Gate-only; green.
 
 ## Attempt killed 2026-10-15 — app stays on XML UI
 

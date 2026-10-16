@@ -1,8 +1,8 @@
-# Echo Cancellation Plan (Platform AEC, Route-Dependent)
+# Echo Cancellation (Platform AEC, Route-Dependent)
 
-Status: design exploration, not yet implemented. No AEC exists anywhere
-in the pipeline today; this is the agreed pareto improvement over status
-quo before any software-AEC work is considered.
+Status: shipped on `master` (`feature/platform-aec`, merged as `66da8618`).
+Route-dependent platform `AcousticEchoCanceler` and the service-owned VoIP
+route policy are live; software AEC remains a deliberate non-goal.
 
 ## Why echo happens here
 
@@ -33,14 +33,15 @@ and leave the media path untouched where it cannot. Concretely:
   `MODE_IN_COMMUNICATION` held for the connection, AEC attached with
   availability/enabled logging. This is where echo is worst and where
   OEM AEC tuning is aimed (speakerphone echo is the primary test case).
-- **On-BT A2DP / wired headset:** unchanged media path — connect-time
-  source as today (`MIC`; handset-started sessions keep `DEFAULT`),
-  `USAGE_MEDIA`, mode untouched (normally `NORMAL`), no AEC attempted.
+- **On-BT A2DP / wired headset:** media path — capture source `MIC`,
+  `USAGE_MEDIA` (`STREAM_MUSIC`), mode untouched (released back to the
+  pre-connection mode, normally `NORMAL`), and the HAL declines AEC on the
+  uncoupled media session.
   Echo is physically minimal with buds in ears, and A2DP stereo quality
   is preserved (SCO mono at 8/16 kHz is audibly worse and must not
-  become the default). BLE/LE Audio headsets fall in this bucket too:
-  they ride the media path like A2DP, never touch the SCO manager, and
-  are inside the accepted gap below.
+  become the default). BLE/LE Audio headsets and hearing aids fall in
+  this bucket too: they ride the media path like A2DP, never touch the
+  SCO manager, and are inside the accepted gap below.
 
 The VoIP stack is all-or-nothing per route: source, mode, and usage
 must agree. Keeping `STREAM_MUSIC`/`USAGE_MEDIA` playback while hoping
@@ -57,78 +58,88 @@ speaker/earpiece get strictly better. Software AEC
 output mix into the input engine) is the documented future fix for that
 hole only, and is deliberately not built now.
 
-## What "music" does today (for the record)
+## Pre-AEC baseline (for the record)
 
-The `STREAM_MUSIC` branch is routing, not DSP: default routing
-(typically the loudspeaker, never forced), media volume slider for
-volume keys (`MumlaActivity`) and PTT beeps
+Before `feature/platform-aec`, the `STREAM_MUSIC` branch was routing, not
+DSP: default routing (typically the loudspeaker, never forced), media
+volume slider for volume keys (`MumlaActivity`) and PTT beeps
 (`MumlaService.initSoundPool`), A2DP over Bluetooth, connect-time
-source `MIC` — except handset-started sessions, which use `DEFAULT`
-plus `STREAM_VOICE_CALL` (`ServerConnectTask`) — and mode untouched
-(normally `NORMAL`; only `BluetoothScoManager` ever calls `setMode`).
-There is also a live-toggle
-asymmetry worth fixing in passing: toggling handset mode mid-call sends
-`ConfigDelta.audioStream` (recreating the pipeline) but never
-an audio-source key, leaving capture stuck at its connect-time value.
+source `MIC` — except handset-started sessions, which used `DEFAULT`
+plus `STREAM_VOICE_CALL` — and mode untouched (normally `NORMAL`; only
+`BluetoothScoManager` ever called `setMode`). Toggling handset mode
+mid-call also had a live-toggle asymmetry: it updated the audio stream
+(recreating the pipeline) without updating the capture audio source.
 
-## Touch points for the spike
+## Landed touch points
 
-1. `ServerConnectTask` — derive source/stream from route policy, not
-   the handset boolean alone.
-2. `AudioOutput` — usage mapping follows the policy; handset toggle
-   becomes explicit speakerphone routing instead of a stack swap.
-3. `AudioInput` — attach `AcousticEchoCanceler` on the VoIP route;
-   fix the stale-source asymmetry above.
-4. Route management — generalize past SCO-only: A2DP/wired
-   connect/disconnect drives the existing
-   `apply(ConfigDelta)`/pipeline-recreate path, plus
-   mode set/clear and volume/`SoundPool` route updates.
-5. SCO opt-in interplay — `AudioHandler.initialize` already
-   force-selects `VOICE_CALL` when SCO is up; keep that consistent
-   with the policy.
+1. [`HumlaService.updateRouteBuilderLocked`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt) —
+   derives both `audioSource` (`VOICE_COMMUNICATION` vs `MIC`) and
+   `audioStream` (`STREAM_VOICE_CALL` / `mHandsetAudioStream` vs
+   `STREAM_MUSIC`) from `computeVoiceRoute(sco, media)` on every route and
+   `ConfigDelta` application (`ServerConnectTask` was slimmed in migration
+   slice 2 to pass only the server ID; `AudioSource.DEFAULT` is retired).
+2. [`AudioOutput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt)
+   and [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt) —
+   `AudioHandler.initialize` starts playback on `STREAM_VOICE_CALL`
+   (`USAGE_VOICE_COMMUNICATION`) whenever `mVoiceRoute || mScoActive` and
+   `STREAM_MUSIC` (`USAGE_MEDIA`) otherwise; handset toggle drives explicit
+   speakerphone routing (`setSpeakerphone`) instead of a stream swap.
+3. [`AudioInput`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt) —
+   attaches `AcousticEchoCanceler` first inside `enableAudioEffects()`
+   (before `NoiseSuppressor` and `AutomaticGainControl`) and logs
+   availability, creation, and enabled state alongside `audioSource`.
+4. Route management in [`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt) —
+   `applyAudioRoute` generalizes past SCO-only: A2DP/BLE/wired/USB
+   attach/detach and `ConfigDelta` updates converge through one funnel that
+   holds/releases `MODE_IN_COMMUNICATION`, recreates the pipeline, and
+   notifies `onAudioRouteChanged` (`MumlaService` refreshes `SoundPool` and
+   proximity lock; `MumlaActivity` updates `volumeControlStream`).
+5. SCO opt-in interplay — `computeVoiceRoute(scoActive, mediaDevicesPresent)`
+   force-selects the voice triple whenever confirmed SCO is active, winning
+   over attached media sinks (pinned by `AudioRoutePolicyTest`).
 
 ## Mode ownership
 
 One owner sets and clears `MODE_IN_COMMUNICATION`: the service-level
-route policy (generalizing what `BluetoothScoManager` does for SCO
-today), not the SCO manager and the policy independently. Set points:
-connection established on the off-BT route, and route-enter off-BT
-mid-call. Clear points: route-exit to BT/wired, and disconnect.
-Disconnect cleanup must restore the saved (pre-connection) mode even
-if a route change is in flight. SCO overlap rule: when SCO starts
-while VoIP mode is already held, the SCO manager must treat the
-current `IN_COMMUNICATION` as externally owned — snapshot it without
-claiming ownership and skip the restore on stop/fail/drop, so it never
-clears the policy's mode out from under it.
+route policy in `HumlaService` (`ensureVoiceMode` / `releaseVoiceMode`).
+Field logs during implementation (`2d5c6015`) proved that having
+[`BluetoothScoManager`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt)
+also call `setMode(MODE_IN_COMMUNICATION)` caused the service to classify
+its own hold as externally owned and surrender its claim, stranding the
+mode on later media switches. Mode ownership was therefore removed from
+`BluetoothScoManager` entirely (the service holds the mode for the whole
+voice-route duration, plus a pre-S voice-mode pre-hold in `HumlaService`
+before legacy API 30 `startBluetoothSco()`). If `MODE_IN_COMMUNICATION` or
+`MODE_IN_CALL` is already held externally (e.g. a phone call),
+`ensureVoiceMode` claims nothing and leaves `mVoiceModeHeld` unset so the
+next voice pass retries after the external holder releases.
 
 ## Speakerphone routing (explicit API)
 
-Today "handset mode" is implicit: `STREAM_VOICE_CALL` lands on the
-earpiece by default, `STREAM_MUSIC` on the speaker, plus the proximity
+Previously "handset mode" was implicit: `STREAM_VOICE_CALL` landed on the
+earpiece by default and `STREAM_MUSIC` on the speaker, plus the proximity
 wake lock for ear-held use. Under the VoIP policy both earpiece and
-speakerphone share one triple (source/mode/usage) and differ only by
-an explicit route call: legacy `AudioManager.setSpeakerphoneOn(bool)`
-below API 31, `setCommunicationDevice()` with the matching
-`AudioDeviceInfo` on API 31+ (minSdk 30 as of v0.26.1 — the modern branch
-is primary, with a legacy SCO backend on API 30–32 mirroring
-`BluetoothScoManager`). The handset toggle keeps
-meaning "earpiece" vs "speakerphone" for UX and keeps driving the
-proximity lock; AEC covers both. What changes is mechanism
-(stream swap becomes route call), not meaning.
+speakerphone share one voice triple (source/mode/usage) and differ only by
+an explicit `AudioManager.setSpeakerphoneOn(bool)` call in
+`AudioHandler.setSpeakerphone` (`!mScoActive && mAudioStream != STREAM_VOICE_CALL`
+on the voice route; cleared on media routes for hygiene). (Bluetooth SCO
+routing in `BluetoothScoManager` separately uses `setCommunicationDevice()`
+on API 31+ with a legacy broadcast-receiver SCO backend on API 30 under
+`minSdk 30`.) The handset toggle keeps meaning "earpiece" vs "speakerphone"
+for UX and keeps driving the proximity lock; AEC covers both.
 
 ## Route-change detection
 
-No A2DP/wired listener exists today (only the SCO manager observes
-routes), and volume/`SoundPool` have no A2DP/wired trigger — all new.
-Planned: `AudioDeviceCallback` (API 23+) for wired/A2DP attach/detach
-plus `AudioManager.OnCommunicationDeviceChangedListener` on API 31+
-for the communication-device view, funneled into one converge point in
-the `applyScoRoute` style so BT, wired, and SCO transitions serialize
-through a single route decision. Debounce rapid flaps (single short
-quiesce, not per-event recreates). Ordering per transition: set
-mode first, then pipeline recreate, then
-volume-stream/`SoundPool` refresh — so effects attach (at `AudioInput`
-construction on the capture session) only after the HAL sees the
+`HumlaService` registers an `AudioDeviceCallback` in `onCreate` for
+wired/USB/A2DP/BLE attach and detach, debounced via `routeDebounceJob`
+(`lifecycleScope`, 300 ms) into `applyAudioRoute`. Staggered Bluetooth
+attaches (where HFP appears before A2DP) are covered by a follow-up
+`routeSettleJob` recheck when voice was selected solely by media-sink
+absence, and unrequested system HFP/SCO activations on media routes are
+countered via `counterUnrequestedSystemSco` before pipeline creation.
+Ordering per transition: set/release mode first, then pipeline recreate,
+then `onAudioRouteChanged` (`SoundPool`, proximity sensor, and volume
+stream refresh) — so capture effects attach only after the HAL sees the
 target mode.
 
 ## Transition ordering (session-bound effects)
@@ -151,19 +162,13 @@ with this change. An unused per-frame hook would not prototype any of
 the hard part (cross-engine reference tap, delay alignment, thread
 discipline) and would rot under the verification gate.
 
-Spike note on effects interplay: create AEC first inside
-`enableAudioEffects()`, alongside the existing NS/AGC, and log
-per-route availability plus enabled state for all three effects —
-`VOICE_COMMUNICATION` invites HAL-baked preprocessing that can
-double-process with RNNoise/HW-NS, and OEM `isAvailable()` varies, so
-the spike must include a listen-check for double-suppression
-(thinning, pumping, gated tails) on at least speakerphone and
-earpiece routes.
-
-The one thing left behind is a seam, not a stub: a comment at the top of
-`AudioInputEngine::processFrame` recording the ordering contract that
-any future canceller runs **first, before HPF/RNNoise/VAD**, with the
-mic frame keeping a single wrappable entry point.
+Effects interplay: `enableAudioEffects()` creates AEC first alongside the
+existing NS/AGC and logs per-route availability plus enabled state for all
+three effects (`VOICE_COMMUNICATION` invites HAL-baked preprocessing that
+can interact with RNNoise/HW-NS, and OEM `isAvailable()` varies). Any
+future software canceller in `AudioInputEngine::processFrame` must run
+**first, before HPF/RNNoise/VAD**, with the mic frame keeping a single
+wrappable entry point.
 
 ## Verification
 

@@ -132,7 +132,7 @@ The model blob is 64 bytes larger uncompressed than in 0.18.4 (3,544,320 vs 3,54
 ```
 
 - **Runtime Loading**:
-  [`NativeAudioInputEngine.loadRnnoiseModel()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.java) still reads `rnnoise_model.bin` from Android assets once into a cached byte buffer, passing it across JNI during `AudioInputEngine` initialization. This remains the single most significant size optimization in the project, saving over **7 MB** of compressed APK overhead.
+  [`NativeAudioInputEngine.loadRnnoiseModel()`](../../libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.kt) still reads `rnnoise_model.bin` from Android assets once into a cached byte buffer, passing it across JNI during `AudioInputEngine` initialization. This remains the single most significant size optimization in the project, saving over **7 MB** of compressed APK overhead.
 
 ---
 
@@ -189,7 +189,7 @@ Sub-package detail (largest groups): `androidx.appcompat.widget` (153), `android
 
 In 0.18.4, `org.bouncycastle.*` accounted for 3,066 classes (57.8% of DEX) purely to generate X.509 client certificates and parse PKCS#12 keystores. Commit `a0e22fd0` (*crypto: replace BouncyCastle with standard crypto*) removed the `bcprov`/`bcpkix` dependencies entirely:
 
-- [`HumlaCertificateGenerator`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.java) now contains a lightweight in-tree X.509 v3 DER encoder (RSA-2048, SHA256withRSA, BasicConstraints, KeyUsage, ClientAuth EKU, SubjectKeyIdentifier) built on standard `java.security` APIs.
+- [`HumlaCertificateGenerator`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaCertificateGenerator.kt) now contains a lightweight in-tree X.509 v3 DER encoder (RSA-2048, SHA256withRSA, BasicConstraints, KeyUsage, ClientAuth EKU, SubjectKeyIdentifier) built on standard `java.security` APIs.
 - `HumlaConnection` and `CertificateImportActivity` use platform `KeyStore.getInstance("PKCS12")` instead of `BouncyCastleProvider`-qualified lookups.
 - The broad `-keep class org.bouncycastle.**` ProGuard rules are gone from [`app/proguard-rules.pro`](../../app/proguard-rules.pro); the remaining keeps cover only JNI entry points, Protobuf Lite messages, MiniDNS, Parcelable creators, and Preference XML references.
 
