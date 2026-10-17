@@ -201,9 +201,9 @@ Upstream help/version-check, usage, and application bodies unread.
 | Drawer items | Drawer adapter positions: connected-server header, server, pinned, info, tokens, favourites header, favourites, general header, settings; server/info/tokens/pinned gated on connected | Main-window server/channel/user action lists; UI unread | Drawer inventory verified downstream; upstream menu/toolbar bodies unread |
 | Channel view + PTT button | Channel fragment `configureInput()`: height from setting, hidden when muted/non-PTT/hide-PTT; whisper-target banner via voice-target mode/target; setting-change wiring for input/hide/height/bluetooth | Transmit-mode action; PTT-button widget; talking UI (unread) | Downstream PTT button plus whisper banner verified in segment; upstream counterparts unread |
 | Channel actions | Channel menu grep: join, view-description, pin (database pinned add/remove/check), link/unlink/unlink-all, listen toggle, whisper-target dialog (channel + linked/subchannel checkboxes) | Join/listen/add/remove/ACL/link/unlink/unlink-all/send-message/hide/pin/copy-URL actions | Action-name overlap verified by grep; bodies/behaviors unread on both sides beyond grep |
-| User actions | User menu grep: kick/ban (reason field → kick/ban call), move, priority-speaker check, ignore-messages check, change/view/reset comment | Self-comment/register, kick/ban, mute/deaf, priority, local-ignore, local-ignore-TTS, local-mute, local-nickname, text-message, register, information, friend add/remove/update | Downstream lacks local-mute, local-nickname, friend, TTS-ignore, register, information entries by grep; upstream bodies unread. No user search/filter widget found in the channel list by grep |
+| User actions | User menu: kick/ban (reason field → kick/ban call), move, priority-speaker check, local-mute toggle, ignore-messages toggle, register action, change/view/reset comment | Self-comment/register, kick/ban, mute/deaf, priority, local-ignore, local-ignore-TTS, local-mute, local-nickname, text-message, register, information, friend add/remove/update | Downstream lacks local-nickname, friend, TTS-ignore, and information entries; local-mute, ignore-messages, and register are present and wired (menu items plus database persistence). Upstream bodies unread. No user search/filter widget found in the channel list by grep |
 | Search | No search-view/query-text/filter match in the channel list fragment (grep) | Search dialog files exist (listing) but unread | No downstream channel search found; upstream search body unread |
-| Orientation / multi-window / tablet | `onConfigurationChanged` forwards to the drawer toggle only; manifest has no screen-orientation, config-changes, resizable-activity, or picture-in-picture attributes; dialogs dismissed in `onPause` | n/a (desktop windowing) | Manifest facts verified; no tablet/multi-window-specific layout qualifier inventoried (layout dirs not inventoried) |
+| Orientation / multi-window / tablet | `onConfigurationChanged` forwards to the drawer toggle only; manifest has no screen-orientation, config-changes, resizable-activity, or picture-in-picture attributes; dialogs dismissed in `onPause`; `layout-sw600dp/` and `layout-sw720dp/` resource directories exist but their contents were not inventoried | n/a (desktop windowing) | Manifest facts verified; tablet layout-directory contents not inventoried |
 | Accessibility | Talk-button corner content-description; drawer logo content-description; overlay row explicitly not important for accessibility; TalkBack fallback title comment in the activity | Accessibility files (unread) | Three downstream accessibility attributes verified; upstream body unread; no font-scaling-specific handling verified downstream |
 | Crash reporting | No crash-reporter match in `app/src/main` (grep) | Crash-reporter files exist (listing) but unread | No downstream crash-reporter counterpart found |
 | Developer console / log verbosity | No developer-console/log-verbosity match (grep) | Developer-console files plus action (unread) | No downstream counterpart found |
@@ -256,7 +256,7 @@ Upstream help/version-check, usage, and application bodies unread.
 
 | Action | Extra | Values | Gate | Handler |
 |---|---|---|---|---|
-| `se.lublin.mumla.action.TALK` | `status` | on / off / toggle; null → toggle | allow-talk-broadcast plus connected plus PTT transmit mode; non-PTT/unknown-status/disconnected safely ignored with a log | `session.setTalkingState(...)` |
+| `se.lublin.mumla.action.TALK` | `status` | on / off / toggle; null → toggle | allow-talk-broadcast (enforced at service register/unregister time) plus connected plus PTT transmit mode; non-PTT/unknown-status safely ignored with a log; disconnected returns silently with no log | `session.setTalkingState(...)` |
 
 No other public broadcast/content-provider/API hire (Tasker/Locale, DBus,
 socket-RPC, plugin API) found downstream. Internal service intents
@@ -272,7 +272,7 @@ pending intents, not a public API.
 | Self mute / deafen | Notification actions, channel overflow menu, media-key mute toggle (media style only) | Global-shortcut mute/deaf plus menu actions (unread bodies) |
 | Overlay toggle/Exposé | Notification overlay action; no keyboard shortcut | Overlay shortcuts plus Exposé-style (unread) |
 | LCD/G15 | None | LCD devices, G15 engines (unread) |
-| DBus/scripting | None (TALK broadcast only) | DBus 13-slot interface plus plugin API functions listed plus socket-RPC (unread) |
+| DBus/scripting | None (TALK broadcast only) | DBus 14-slot interface plus plugin API functions listed plus socket-RPC (unread) |
 
 ## 5. Factual gap inventory (no judgments)
 
@@ -297,9 +297,10 @@ upstream bodies for most rows are unread (see §1).
    downstream equivalents; only the TALK broadcast.
 9. Channel/user search dialog — no search widget found in the channel list;
    upstream search dialog unread.
-10. User local-mute / local-nickname / friend add-remove / TTS-ignore /
-    register / information actions — not found in the user menu (grep);
-    upstream slots listed.
+10. User local-nickname / friend add-remove / TTS-ignore /
+    information actions — not found in the user menu (grep);
+    upstream slots listed. (Local-mute, ignore-messages, and register
+    entries are present and wired and are therefore not listed here.)
 11. Confirm-quit / database-wipe settings — no widgets downstream.
 12. Log verbosity / developer console / crash reporter — no keys/UI/code
     matches downstream.
@@ -309,6 +310,8 @@ upstream bodies for most rows are unread (see §1).
 14. Help/manual/whats-this — no downstream help activity/preference found.
 15. LED / custom-sound / per-conversation notification controls — not present
     in the message notification (vibrate-only, default importance).
-16. Font-scaling-specific handling and tablet/multi-window/orientation-lock
+16. Font-scaling-specific handling and orientation-lock
     declarations — none found (manifest, accessibility grep); only the three
     content-description/important-for-accessibility attributes listed in §3.2.
+    Tablet `layout-sw600dp/`/`layout-sw720dp/` directories exist but were not
+    inventoried, so no claim about tablet coverage is made here.

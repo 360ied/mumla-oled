@@ -123,15 +123,15 @@ confirmed by directory listing only; contents unread.
 | Complexity | libopus default (no explicit set in sampled lines) | Fixed 6 | Mumla OLED pins 6 |
 | Signal type | Not sampled | Forced voice | Upstream side unverified beyond sampled lines |
 | Bandwidth | Not sampled | Forced fullband | Upstream side unverified beyond sampled lines |
-| In-band FEC | Decoder FEC path present; encoder flag not sampled | Encoder in-band FEC on; decoder FEC-recovery plus packet-loss concealment with deferred-debt concealment | Both FEC-capable; Mumla OLED encoder flag explicit |
+| In-band FEC | No FEC setup found: decode call passes decode-FEC 0, empty packets take the null-data concealment path; no in-band-FEC or loss-percent setup symbols anywhere in the client tree | Encoder in-band FEC on; decoder FEC-recovery plus packet-loss concealment with deferred-debt concealment | Only Mumla OLED sets up FEC; upstream decode runs without FEC recovery |
 | Packet-loss percent | Not sampled | Fixed 10, no preference | Upstream side unverified beyond sampled lines |
-| DTX | Upstream DTX flag exists in full `Settings.h` (unread in this run) | Forced off | Mumla OLED DTX off |
-| Frames per packet | Default 2; encode buffered frames, zero-pad missing | Same set {1,2,4,6} enforced in three places, default 2, same UI values; accumulator zero-pads underfilled packets and emits a silence terminator when empty | Same set/default |
+| DTX | No DTX symbol found in the client tree (no setup or setting) | Forced off | Mumla OLED DTX off; no upstream DTX counterpart found |
+| Frames per packet | Default 2 | Same set {1,2,4,6} (canonical in `Constants`, delegated in the audio handler and UDP layer, plus separate native enforcement), default 2, same UI values; accumulator zero-pads underfilled packets and emits a silence terminator when empty | Same set/default |
 | Maximum bundle | 120 ms (5760 samples at 48 kHz) | Same 120 ms cap; output queue rejects over-2048-byte packets, decode scratch at 5760 | Same bundle cap; buffer sizes differ by direction |
 | Capture frame | `iSampleRate/100` | 480 samples (10 ms at 48 kHz) | Same at 48 kHz |
 | Render quantum | System buffer size | Fixed 960 samples (20 ms); track floor two quanta over the minimum buffer size | Mumla OLED fixed 20 ms quantum |
 | Jitter margin | Default 1 frame × frame size | 4 frames | Mumla OLED four times the upstream default margin |
-| Gate timeout / miss expiry | 20-frame grant (per Mumla OLED parity comment; upstream lines unread) | Gate timeout 20 frames, dead-miss 10 frames | Same timeout number; miss-expiry upstream counterpart unread |
+| Gate timeout / miss expiry | Miss-conceal below 20 frames, voice declared dead above 10 misses (both readable in the output speech path) | Gate timeout 20 frames, dead-miss 10 frames | Same numbers on both sides |
 | Voices cap | Unread | 32 | Upstream side unverified |
 
 Terminator handling: the end-of-speech marker (header bit 13) is preserved in
@@ -243,6 +243,4 @@ parse time before queueing; self-mute drops at encode time via the muted flag.
   RNNoise model provenance/training data.
 - Settings repository/DataStore defaults parity for every audio key; exact
   audio-bandwidth formula and varint-buffer details.
-- Upstream encoder signal/bandwidth/complexity/loss/DTX lines outside the
-  sampled grep window; upstream output fade/mix/ducking specifics outside
-  sampled lines.
+- Upstream encoder signal/bandwidth/complexity/loss/DTX setup lines: absent by tree-wide grep (not merely outside a sampled window); the upstream constructor sets only CBR. Upstream output fade/mix/ducking specifics outside sampled lines.

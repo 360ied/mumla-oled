@@ -126,7 +126,7 @@ other paths are cited as inventoried.
 | EchoCancelOption | Echo-canceller option widget | Absent | No match; echo handling is in the native audio engine, no such option widget |
 | EnumStringConversions | Enum↔string helpers | Absent | No equivalent file |
 | G15LCDEngine (helper, lglcd, unix) | Logitech G15 LCD integrations | Absent | No match |
-| GKey | Logitech G-key macro support | Absent | No match; PTT keys via the key-select preference |
+| GKey | Logitech G-key macro support | Absent | No G-key-symbol match outside DataStore key-helper names (`longKey`/`stringKey` contain the substring); PTT keys via the key-select preference |
 | Global | Global singleton (all desktop state) | `app/MumlaApplication.kt` + `HumlaService.kt` | Application class; service state in the service class |
 | GlobalShortcut (all platforms, buttons, target, types) | OS-wide hotkey capture + config UI | `service/ipc/TalkBroadcastReceiver.kt` (partial) | Broadcast-receiver talk class; key selection via the key-select preference/dialog; no OS-global hotkey capture |
 | JackAudio | JACK pro-audio backend | Absent | Android backend only |
@@ -134,7 +134,7 @@ other paths are cited as inventoried.
 | LCD (+ UI) | Generic LCD display page | Absent | No match; no LCD support |
 | LegacyPlugin | Legacy (pre-1.4) game-link plugin loader | Absent | No legacy-plugin/manager match; no game-link plugins at all |
 | ListenerVolumeSlider | Per-listener volume slider | Absent | No match |
-| Log (+ UI) | Log window + chat-window filters/search | `channel/ChannelChatFragment.kt` (+ service chat-log tests; partial) | Chat exists as a fragment; service-side log tests reference the service log; no desktop-style filter/search config UI, no log-named class, no search dialog |
+| Log (+ UI) | Log window + chat-window filters/search | `channel/ChannelChatFragment.kt` (+ service chat-log tests; partial) | Chat exists as a fragment; service-side log tests reference the service log; no desktop-style filter/search config UI, no Log-window class (only the `HumlaLogger` utility interface), no search dialog |
 | LookConfig (+ UI) | Skin/QSS theme config page | `app/MumlaApplication.kt` apply-theme + night themes (partial) | Day/night Material themes only — no user-loaded skins |
 | main | Desktop entry point | `app/MumlaActivity.kt` (entry activity) | Single activity; process entry is the Android manifest |
 | MainWindow (+ UI) | Main window (menus, docks, tray) | `app/MumlaActivity.kt` + drawer adapter (partial) | Single-activity plus nav drawer replaces the multi-dock main window; no tray (see tray-icon row) |
@@ -157,7 +157,7 @@ other paths are cited as inventoried.
 | PluginConfig (+ UI) | Per-plugin settings page | Absent | No match |
 | PluginInstaller (+ UI) | Plugin bundle installer UI | Absent | No match |
 | PluginManager, PluginManifest, PluginUpdater (+ UI) | Plugin discovery/manifest/update lifecycle | Absent | No match in app+humla |
-| PositionalAudioViewer (+ UI), PositionalData | 3-D positional-audio debug viewer + data | Absent | No match; whisper-target models exist but no positional engine |
+| PositionalAudioViewer (+ UI), PositionalData | 3-D positional-audio debug viewer + data | Absent | No match outside the generated protobuf field; whisper-target models exist but no positional engine |
 | PTTButtonWidget (+ UI) | Push-to-talk toolbar button widget | `service/MumlaHotCorner.kt` + corner layout + PTT on/off sounds (mechanism differs) | Touch hot-corner replaces the toolbar PTT button |
 | PulseAudio | PulseAudio backend | Absent | Android backend only |
 | QtWidgetUtils | Qt widget helpers | Absent | Android view helpers live in dialog/bitmap utils |
