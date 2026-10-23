@@ -185,6 +185,7 @@ class AudioHandler : HumlaNetworkListener,
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
     // hardcodes preprocessor-on and no production path can reach off.
     private val mPreprocessorEnabled: Boolean
+    @Volatile
     private var mAdaptiveLevelerEnabled: Boolean
 
     @Volatile
@@ -205,8 +206,8 @@ class AudioHandler : HumlaNetworkListener,
     // Serializes mute-gate decide-and-act across the menu-tap, server-echo,
     // and connect paths. Writes stay under `this`; every update recomputes
     // the composite from current fields and the native setter early-returns
-    // on no-change, so the last update converges with at most one redundant
-    // engine call. Full leaf-first order: mMuteLock → this → mInput/mOutput
+    // on no-change, so the last update converges; redundant calls are
+    // no-ops via the native no-change early-return. Full leaf-first order: mMuteLock → this → mInput/mOutput
     // → E. Takes are outermost in updateMuteState and shutdown; never
     // acquire it while holding `this`.
     private val mMuteLock = Any()
@@ -315,10 +316,15 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    /** Destroys capture + native engine made owned before a later init step failed. */
+    /** Destroys capture + native engine made owned before a later init step failed.
+     *
+     * Under mMuteLock like shutdown: pre-publication today, so uncontended —
+     * but any future reuse on a published handler must share the same
+     * exclusion, or it reopens the resurrection race shutdown closes. */
     private fun destroyInputAndEngine() {
         // Best-effort teardown must never mask the original failure, fatal
         // or otherwise: Throwable guards throughout, original rethrown.
+        synchronized(mMuteLock) {
         try {
             mInput.shutdown()
         } catch (ignored: Throwable) {
@@ -326,6 +332,7 @@ class AudioHandler : HumlaNetworkListener,
         try {
             mNativeEngine.destroy()
         } catch (ignored: Throwable) {
+        }
         }
     }
 
@@ -347,8 +354,10 @@ class AudioHandler : HumlaNetworkListener,
             // Flag before fan-out (previously after startPlaying): the mute
             // and bandwidth paths are thread-safe via their own locks and
             // re-application is idempotent, so a server message arriving
-            // during the blocking startPlaying window below applies instead
-            // of dropping on the !mInitialized guard.
+            // during the blocking startPlaying window below would apply
+            // instead of dropping on the !mInitialized guard.
+            // Defense-in-depth: this instance is unpublished until initialize
+            // returns, so no such message can arrive in-tree today.
             mInitialized = true
         }
 
@@ -614,12 +623,16 @@ class AudioHandler : HumlaNetworkListener,
         // it while holding `this`): the capture thread needs `this` for
         // onTalkingStateChanged and destroy needs E, and a mute racing
         // disconnect must be excluded from startRecording after the join —
-        // flag-first alone would still be check-then-act. mInput/mOutput
-        // self-synchronize their joins. Talking state resets alongside the
-        // flag so a hypothetical same-instance re-initialize cannot swallow
-        // the next onset transition; the disconnect notification fires only
-        // on a real true→false edge (a repeat false would only re-trigger
-        // downstream model lookups and UI refreshes).
+        // flag-first alone would still be check-then-act, and moving the
+        // joins outside the leaf would reopen that race (the flag check and
+        // thread creation must stay atomic against flag-and-join under one
+        // mutex). Cost, accepted: a racing mute update serializes behind
+        // teardown joins — fast in steady state (interrupt wakes the
+        // blocking read), unbounded only if the HAL itself is wedged.
+        // mInput/mOutput self-synchronize their joins. Talking state resets
+        // for hygiene on the discarded instance; the disconnect notification
+        // fires only on a real true→false edge (a repeat false would only
+        // re-trigger downstream model lookups and UI refreshes).
         val wasTalking: Boolean
         synchronized(mMuteLock) {
             synchronized(this) {
@@ -630,11 +643,11 @@ class AudioHandler : HumlaNetworkListener,
             mInput.shutdown()
             mOutput.stopPlaying()
             mNativeEngine.destroy()
+            mOutput.setHalfDuplexMuted(false)
         }
         if (wasTalking) {
             mEncodeListener.onTalkingStateChanged(false)
         }
-        mOutput.setHalfDuplexMuted(false)
     }
 
     override fun messageCodecVersion(msg: Mumble.CodecVersion) {
@@ -907,8 +920,7 @@ class AudioHandler : HumlaNetworkListener,
         // route policy drives it (C2); the service sets this explicitly
         // on every route application either way.
         private var mVoiceRouteEnabled = true
-        @Volatile
-    private var mAdaptiveLevelerEnabled = true
+        private var mAdaptiveLevelerEnabled = true
         private var mInputMode: IInputMode? = null
         private var mEncodeListener: AudioEncodeListener? = null
         private var mFramesPerPacketListener: FramesPerPacketListener? = null

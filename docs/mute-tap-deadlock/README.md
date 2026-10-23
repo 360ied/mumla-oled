@@ -171,24 +171,24 @@ Break the cycle on both sides. Either side alone would suffice, but both
 is robust — and dropping `@Synchronized` from the 100 Hz hot path also
 removes per-frame contention for unrelated setters:
 
-1. **Engine: don't span the native call.** Snapshot `nativeHandle` under
+1. **Engine: don't span the native call. [Applied]** Snapshot `nativeHandle` under
    the monitor, release, then call `nativeProcessFrame`. Lifetime is
    already protected by `shutdown` joining capture (`mInput.shutdown()`)
    before `destroy`; document and enforce that ordering (or add an
    in-flight guard — snapshot-then-call also races setter-vs-destroy on
    other threads, so the join-before-destroy invariant needs asserting,
    not just commenting) instead of holding E across JNI + upcall.
-2. **Mute path: decide under A, act outside.** Snapshot the composite
+2. **Mute path: decide under A, act outside. [Applied, plus the `mMuteLock` leaf]** Snapshot the composite
    mute decision under `synchronized`, release, then call
    `mNativeEngine.setMuted` + `startRecording` outside — the
    `setMaxBandwidth` shape.
-3. **Callback: shrink the critical section.** Reduce
+3. **Callback: shrink the critical section. [Applied]** Reduce
    `onTalkingStateChanged` to a check-and-set under the lock (`mTalking`
    is already `@Volatile`; an `AtomicBoolean` also works) and fan out to
    `mEncodeListener` / half-duplex mute **outside**. This also drops the
    secondary edges the callback holds while under A (`mOutput` monitor
    via `setHalfDuplexMuted`, plus whatever the encode listener takes).
-4. **Shutdown: join outside A.** Move `mInput.shutdown()`,
+4. **Shutdown: join outside A. [Diverged, deliberate: holds the new `mMuteLock` leaf across joins — re-lock-only would reopen the resurrection race; see the as-built note and the shutdown comment.]** Move `mInput.shutdown()`,
    `mOutput.stopPlaying()`, and `engine.destroy()` out of
    `synchronized(this)`; re-lock only for flag updates. This also fixes
    the join hazard in §5 item 4, which steps 1–3 alone do not.
