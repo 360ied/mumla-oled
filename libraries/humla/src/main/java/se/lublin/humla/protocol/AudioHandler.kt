@@ -203,9 +203,12 @@ class AudioHandler : HumlaNetworkListener,
     private val mBandwidthLock = Any()
 
     // Serializes mute-gate decide-and-act across the menu-tap, server-echo,
-    // and connect paths so concurrent updates cannot reorder engine calls
-    // past field writes. Leaf-first order: mMuteLock → this → E. Every take
-    // is outermost in updateMuteState; never acquire it while holding this.
+    // and connect paths. Writes stay under `this`; every update recomputes
+    // the composite from current fields and the native setter early-returns
+    // on no-change, so the last update converges with at most one redundant
+    // engine call. Full leaf-first order: mMuteLock → this → mInput/mOutput
+    // → E. Takes are outermost in updateMuteState and shutdown; never
+    // acquire it while holding `this`.
     private val mMuteLock = Any()
     private val mProtobufPacketBuffer = ByteArray(2048)
     private val mLegacyPacketBuffer = ByteArray(1024)
@@ -341,6 +344,12 @@ class AudioHandler : HumlaNetworkListener,
             mServerMuted = self.isMuted
             mServerDeafened = self.isDeafened
             mSuppressed = self.isSuppressed
+            // Flag before fan-out (previously after startPlaying): the mute
+            // and bandwidth paths are thread-safe via their own locks and
+            // re-application is idempotent, so a server message arriving
+            // during the blocking startPlaying window below applies instead
+            // of dropping on the !mInitialized guard.
+            mInitialized = true
         }
 
         setMaxBandwidth(maxBandwidth)
@@ -356,6 +365,10 @@ class AudioHandler : HumlaNetworkListener,
             // the caller never abandons a half-built handler holding the mic.
             // Throwable-wide: an unchecked or fatal throw from startPlaying
             // (e.g. SecurityException) must not skip teardown either.
+            // Unflag: the pipeline never went live (see the early flag above).
+            synchronized(this) {
+                mInitialized = false
+            }
             destroyInputAndEngine()
             throw t
         }
@@ -365,9 +378,6 @@ class AudioHandler : HumlaNetworkListener,
         // must clear it; media routes clear it for hygiene (voice-call
         // routing ignores it there, but no stale flag may leak across).
         setSpeakerphone(mVoiceRoute && !mScoActive && mAudioStream != AudioManager.STREAM_VOICE_CALL)
-        synchronized(this) {
-            mInitialized = true
-        }
         updateMuteState()
     }
 
@@ -405,12 +415,18 @@ class AudioHandler : HumlaNetworkListener,
                 muted = mServerMuted || mSelfMuted || mServerDeafened || mSuppressed
             }
             mNativeEngine.setMuted(muted)
-            // Re-gate recording: shutdown flags mInitialized=false before its
-            // join, so a mute racing disconnect cannot resurrect capture after
-            // teardown (same check-then-act shape as startRecording itself).
+            // Re-gate recording: shutdown flags mInitialized=false under the
+            // same mMuteLock before its join, so a mute racing disconnect
+            // cannot resurrect capture after teardown (same check-then-act
+            // shape as startRecording itself).
             synchronized(this) {
                 if (!mInitialized) return
             }
+            // Deliberately held across startRecording's bounded stale join
+            // (≤200 ms): releasing mMuteLock here would reopen the shutdown
+            // race above. No deadlock — a stale capture needs only
+            // `this`/E briefly, never mMuteLock — at most concurrent mute
+            // updates serialize behind teardown of a dead capture thread.
             startRecording()
         }
     }
@@ -594,20 +610,30 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     fun shutdown() {
-        // Flag first so a mute racing disconnect cannot startRecording after
-        // the join below (see updateMuteState). Join + destroy outside `this`:
-        // the capture thread needs `this` for onTalkingStateChanged and
-        // destroy needs E — holding `this` across either deadlocks disconnect
-        // (documented as the join hazard in docs/mute-tap-deadlock).
-        // (mInput/mOutput self-synchronize their joins.)
-        synchronized(this) {
-            mInitialized = false
+        // Flag + join + destroy under mMuteLock (outermost — never acquire
+        // it while holding `this`): the capture thread needs `this` for
+        // onTalkingStateChanged and destroy needs E, and a mute racing
+        // disconnect must be excluded from startRecording after the join —
+        // flag-first alone would still be check-then-act. mInput/mOutput
+        // self-synchronize their joins. Talking state resets alongside the
+        // flag so a hypothetical same-instance re-initialize cannot swallow
+        // the next onset transition; the disconnect notification fires only
+        // on a real true→false edge (a repeat false would only re-trigger
+        // downstream model lookups and UI refreshes).
+        val wasTalking: Boolean
+        synchronized(mMuteLock) {
+            synchronized(this) {
+                mInitialized = false
+                wasTalking = mTalking
+                mTalking = false
+            }
+            mInput.shutdown()
+            mOutput.stopPlaying()
+            mNativeEngine.destroy()
         }
-        mInput.shutdown()
-        mOutput.stopPlaying()
-        mNativeEngine.destroy()
-
-        mEncodeListener.onTalkingStateChanged(false)
+        if (wasTalking) {
+            mEncodeListener.onTalkingStateChanged(false)
+        }
         mOutput.setHalfDuplexMuted(false)
     }
 
@@ -881,7 +907,8 @@ class AudioHandler : HumlaNetworkListener,
         // route policy drives it (C2); the service sets this explicitly
         // on every route application either way.
         private var mVoiceRouteEnabled = true
-        private var mAdaptiveLevelerEnabled = true
+        @Volatile
+    private var mAdaptiveLevelerEnabled = true
         private var mInputMode: IInputMode? = null
         private var mEncodeListener: AudioEncodeListener? = null
         private var mFramesPerPacketListener: FramesPerPacketListener? = null

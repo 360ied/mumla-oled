@@ -206,9 +206,11 @@ class NativeAudioInputEngine {
     // AudioHandler monitor — spanning it here is the capture side of the
     // mute-tap ABBA. Snapshot the handle under the monitor, invoke outside.
     // Lifetime: only the capture thread calls processFrame (via
-    // onAudioInputReceived), and AudioHandler.shutdown() joins capture
-    // before destroy(), so no destroy can land mid-call. destroy() and the
-    // setters stay @Synchronized, keeping teardown exclusion on the monitor.
+    // onAudioInputReceived). destroy() and the setters stay @Synchronized
+    // and mutually excluded, but processFrame is excluded from destroy only
+    // by the join-before-destroy convention in AudioHandler.shutdown()
+    // (convention, not enforcement — destroy() must only run after capture
+    // is joined; see docs/mute-tap-deadlock).
     fun processFrame(pcm: ShortArray?, offset: Int, length: Int) {
         val handle: Long
         synchronized(this) {
@@ -352,19 +354,18 @@ class NativeAudioInputEngine {
         }
     }
 
+    // Owner protocol: call only after the capture thread is joined
+    // (AudioHandler.shutdown and construction-failure teardown are the only
+    // owners), never concurrent with processFrame — the snapshot handle it
+    // uses is excluded from destroy solely by that join ordering. Internal
+    // to keep the owner set auditable; JNI entry points resolve the handle
+    // independently of this monitor.
     @Synchronized
-    fun destroy() {
+    internal fun destroy() {
         if (nativeHandle != 0L) {
             nativeDestroy(nativeHandle)
             nativeHandle = 0
         }
-    }
-
-    // Finalizer backstop for a never-destroyed engine. kotlin.Any exposes no
-    // Drops the super call: kotlin.Any exposes none and Object's is a no-op.
-    // No @Throws (matches CryptState.finalize): nobody calls this directly.
-    protected fun finalize() {
-        destroy()
     }
 
     interface AudioInputEngineListener {

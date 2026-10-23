@@ -103,17 +103,20 @@ A-free.
 
 ## 5. Blast radius on current master
 
+Line numbers below predate the fix (`master@f9f079ae`); the fix moves
+them — follow the symbol names, which are stable.
+
 Every hold-A-then-take-E site shares the defect, not just the menu tap:
 
 1. **Menu tap (this ANR).** `setSelfMutedOptimistic` → `updateMuteState`
-   → `mNativeEngine.setMuted` (`AudioHandler.kt:402→371→382`), reached
+   → `mNativeEngine.setMuted` (pre-fix `AudioHandler.kt:402→371→382`), reached
    from `HumlaService.applyOptimisticSelfMuteDeaf` (`HumlaService.kt`).
    Main thread → user-visible ANR after 5 s.
 2. **Server echo.** `messageUserState` → `updateMuteState` → `setMuted`
-   (`AudioHandler.kt:616→371`). Runs on the TCP reader thread: same
+   (`AudioHandler.kt`, pre-fix `:616→371`). Runs on the TCP reader thread: same
    deadlock, but it stalls the protocol silently instead of ANR-ing.
 3. **Connect.** `initialize` → `updateMuteState` → `setMuted`
-   (`AudioHandler.kt:325→371`). Narrower window (recording starts inside
+   (`AudioHandler.kt`, pre-fix `:325→371`). Narrower window (recording starts inside
    the same call), same shape via a racing echo. `initialize` holds a
    second edge of the same kind: it also calls `setMaxBandwidth` →
    `mNativeEngine.setBitrate/setFramesPerPacket` while still holding A,
@@ -121,14 +124,14 @@ Every hold-A-then-take-E site shares the defect, not just the menu tap:
    (The mid-call `messageServerSync`/`messageServerConfig` →
    `setMaxBandwidth` paths are safe today — they never hold A.)
 4. **Disconnect.** `shutdown` → `mNativeEngine.destroy`
-   (`AudioHandler.kt:566→576`) **plus a join hazard**: `shutdown` holds A
+   (`AudioHandler.kt`, pre-fix `:566→576`) **plus a join hazard**: `shutdown` holds A
    while `mInput.shutdown()` *joins* the capture thread — and the capture
    thread needs A for `onTalkingStateChanged`. The existing comments guard
    the leaf locks ("never hold `mInput`/`mOutput` across shutdown/join")
    but miss that `this` is also a lock the capture thread needs.
 
 The in-tree precedent for the correct shape is `setMaxBandwidth`
-(`AudioHandler.kt:467-499`): decide and publish under `mBandwidthLock`,
+(`AudioHandler.kt`, pre-fix `:467-499`): decide and publish under `mBandwidthLock`,
 then fan out to `mNativeEngine.setBitrate/setFramesPerPacket` **after
 releasing it**. The mute path never adopted that shape.
 
@@ -151,13 +154,18 @@ refinements. First, only `processFrame` drops the engine monitor —
 `setMuted` and the other setters stay `@Synchronized` so teardown
 exclusion with `destroy()` is preserved; that is safe because after step
 2 no caller holds A when invoking them, leaving the remaining E→A edge
-unopposed. Second, the mute decision is additionally serialized on a new
-`mMuteLock` leaf lock (`mMuteLock` → `this` → E, never acquired while
-holding `this`) so a tap, server echo, and connect racing each other
-cannot reorder engine calls past field writes; `shutdown` flags
-`mInitialized=false` first so a racing mute cannot `startRecording`
-after the join. As §8 predicted, no lock-ordering regression harness
-landed with the fix — that gap is still open.
+unopposed. `destroy()` is `internal` with a documented join-before-destroy
+owner protocol (the never-effective `finalize` backstop is removed).
+Second, the mute decision is additionally serialized on a new `mMuteLock`
+leaf lock (`mMuteLock` → `this` → `mInput`/`mOutput` → E, never acquired
+while holding `this`): every update recomputes the composite from current
+fields and the native setter early-returns on no-change, so concurrent
+tap/echo/connect updates converge with at most one redundant engine call.
+`shutdown` takes the same leaf around flag-clear, join, and destroy, and
+flags `mInitialized=false` first, so a racing mute cannot `startRecording`
+after the join; its disconnect notification fires only on a real
+true→false talking edge. As §8 predicted, no lock-ordering regression
+harness landed with the fix — that gap is still open.
 
 Break the cycle on both sides. Either side alone would suffice, but both
 is robust — and dropping `@Synchronized` from the 100 Hz hot path also
