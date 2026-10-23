@@ -208,8 +208,8 @@ class AudioHandler : HumlaNetworkListener,
     // the composite from current fields and the native setter early-returns
     // on no-change, so the last update converges; redundant calls are
     // no-ops via the native no-change early-return. Full leaf-first order: mMuteLock → this → mInput/mOutput
-    // → E. Takes are outermost in updateMuteState and shutdown; never
-    // acquire it while holding `this`.
+    // → E. Takes are outermost in updateMuteState, shutdown, and
+    // destroyInputAndEngine; never acquire it while holding `this`.
     private val mMuteLock = Any()
     private val mProtobufPacketBuffer = ByteArray(2048)
     private val mLegacyPacketBuffer = ByteArray(1024)
@@ -325,14 +325,14 @@ class AudioHandler : HumlaNetworkListener,
         // Best-effort teardown must never mask the original failure, fatal
         // or otherwise: Throwable guards throughout, original rethrown.
         synchronized(mMuteLock) {
-        try {
-            mInput.shutdown()
-        } catch (ignored: Throwable) {
-        }
-        try {
-            mNativeEngine.destroy()
-        } catch (ignored: Throwable) {
-        }
+            try {
+                mInput.shutdown()
+            } catch (ignored: Throwable) {
+            }
+            try {
+                mNativeEngine.destroy()
+            } catch (ignored: Throwable) {
+            }
         }
     }
 
@@ -643,6 +643,9 @@ class AudioHandler : HumlaNetworkListener,
             mInput.shutdown()
             mOutput.stopPlaying()
             mNativeEngine.destroy()
+            // Belt-and-braces: stopPlaying() already clears this after
+            // joining the render thread; kept explicit so the disconnect
+            // state does not depend on that callee-side effect.
             mOutput.setHalfDuplexMuted(false)
         }
         if (wasTalking) {
