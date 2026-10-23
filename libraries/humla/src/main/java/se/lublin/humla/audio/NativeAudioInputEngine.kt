@@ -201,15 +201,21 @@ class NativeAudioInputEngine {
         )
     }
 
-    // Synchronized with destroy()/setters on the same monitor: processFrame
-    // runs on the capture thread while teardown runs on main, and the input
-    // JNI resolves the handle with a raw reinterpret_cast (no registry
-    // guard like CryptState), so only the monitor pins the lifetime here.
-    // In-tree AudioHandler.shutdown() joins the capture thread first, so
-    // this is defense-in-depth; per-frame uncontended cost is negligible.
-    @Synchronized
+    // Never hold this monitor across the native call: nativeProcessFrame
+    // performs the synchronous talking-state upcall, which needs the
+    // AudioHandler monitor — spanning it here is the capture side of the
+    // mute-tap ABBA. Snapshot the handle under the monitor, invoke outside.
+    // Lifetime: only the capture thread calls processFrame (via
+    // onAudioInputReceived). destroy() and the setters stay @Synchronized
+    // and mutually excluded, but processFrame is excluded from destroy only
+    // by the join-before-destroy convention in AudioHandler.shutdown()
+    // (convention, not enforcement — destroy() must only run after capture
+    // is joined; see docs/mute-tap-deadlock).
     fun processFrame(pcm: ShortArray?, offset: Int, length: Int) {
-        val handle = nativeHandle
+        val handle: Long
+        synchronized(this) {
+            handle = nativeHandle
+        }
         if (handle != 0L && pcm != null && offset >= 0 && length > 0 &&
             offset <= pcm.size && length <= pcm.size - offset
         ) {
@@ -348,19 +354,18 @@ class NativeAudioInputEngine {
         }
     }
 
+    // Owner protocol: call only after the capture thread is joined
+    // (AudioHandler.shutdown and construction-failure teardown are the only
+    // owners), never concurrent with processFrame — the snapshot handle it
+    // uses is excluded from destroy solely by that join ordering. Internal
+    // to keep the owner set auditable; JNI entry points resolve the handle
+    // independently of this monitor.
     @Synchronized
-    fun destroy() {
+    internal fun destroy() {
         if (nativeHandle != 0L) {
             nativeDestroy(nativeHandle)
             nativeHandle = 0
         }
-    }
-
-    // Finalizer backstop for a never-destroyed engine. kotlin.Any exposes no
-    // Drops the super call: kotlin.Any exposes none and Object's is a no-op.
-    // No @Throws (matches CryptState.finalize): nobody calls this directly.
-    protected fun finalize() {
-        destroy()
     }
 
     interface AudioInputEngineListener {

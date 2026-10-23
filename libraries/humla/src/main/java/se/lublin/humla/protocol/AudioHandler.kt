@@ -185,6 +185,7 @@ class AudioHandler : HumlaNetworkListener,
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
     // hardcodes preprocessor-on and no production path can reach off.
     private val mPreprocessorEnabled: Boolean
+    @Volatile
     private var mAdaptiveLevelerEnabled: Boolean
 
     @Volatile
@@ -201,6 +202,15 @@ class AudioHandler : HumlaNetworkListener,
 
     // Guards the live bitrate/fpp pair so readers never see a torn mix.
     private val mBandwidthLock = Any()
+
+    // Serializes mute-gate decide-and-act across the menu-tap, server-echo,
+    // and connect paths. Writes stay under `this`; every update recomputes
+    // the composite from current fields and the native setter early-returns
+    // on no-change, so the last update converges; redundant calls are
+    // no-ops via the native no-change early-return. Full leaf-first order: mMuteLock → this → mInput/mOutput
+    // → E. Takes are outermost in updateMuteState, shutdown, and
+    // destroyInputAndEngine; never acquire it while holding `this`.
+    private val mMuteLock = Any()
     private val mProtobufPacketBuffer = ByteArray(2048)
     private val mLegacyPacketBuffer = ByteArray(1024)
     private val mLegacyDataStream = PacketBuffer(mLegacyPacketBuffer, 1024)
@@ -306,33 +316,52 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    /** Destroys capture + native engine made owned before a later init step failed. */
+    /** Destroys capture + native engine made owned before a later init step failed.
+     *
+     * Under mMuteLock like shutdown: pre-publication today, so uncontended —
+     * but any future reuse on a published handler must share the same
+     * exclusion, or it reopens the resurrection race shutdown closes. */
     private fun destroyInputAndEngine() {
         // Best-effort teardown must never mask the original failure, fatal
         // or otherwise: Throwable guards throughout, original rethrown.
-        try {
-            mInput.shutdown()
-        } catch (ignored: Throwable) {
-        }
-        try {
-            mNativeEngine.destroy()
-        } catch (ignored: Throwable) {
+        synchronized(mMuteLock) {
+            try {
+                mInput.shutdown()
+            } catch (ignored: Throwable) {
+            }
+            try {
+                mNativeEngine.destroy()
+            } catch (ignored: Throwable) {
+            }
         }
     }
 
-    @Synchronized
     @Throws(AudioException::class)
     fun initialize(self: User?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
-        if (mInitialized || self == null) return
-        mSession = self.session
+        // Field setup under A; engine fan-out (bandwidth + mute) outside A:
+        // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
+        // join, while the capture thread needs A for onTalkingStateChanged.
+        if (self == null) return
+        synchronized(this) {
+            if (mInitialized) return
+            mSession = self.session
+
+            setCodec(codec)
+            mSelfMuted = self.isSelfMuted
+            mServerMuted = self.isMuted
+            mServerDeafened = self.isDeafened
+            mSuppressed = self.isSuppressed
+            // Flag before fan-out (previously after startPlaying): the mute
+            // and bandwidth paths are thread-safe via their own locks and
+            // re-application is idempotent, so a server message arriving
+            // during the blocking startPlaying window below would apply
+            // instead of dropping on the !mInitialized guard.
+            // Defense-in-depth: this instance is unpublished until initialize
+            // returns, so no such message can arrive in-tree today.
+            mInitialized = true
+        }
 
         setMaxBandwidth(maxBandwidth)
-        setCodec(codec)
-        mSelfMuted = self.isSelfMuted
-        mServerMuted = self.isMuted
-        mServerDeafened = self.isDeafened
-        mSuppressed = self.isSuppressed
-        val isMuted = mSelfMuted || mServerMuted || mServerDeafened || mSuppressed
 
         try {
             mOutput.startPlaying(
@@ -345,6 +374,10 @@ class AudioHandler : HumlaNetworkListener,
             // the caller never abandons a half-built handler holding the mic.
             // Throwable-wide: an unchecked or fatal throw from startPlaying
             // (e.g. SecurityException) must not skip teardown either.
+            // Unflag: the pipeline never went live (see the early flag above).
+            synchronized(this) {
+                mInitialized = false
+            }
             destroyInputAndEngine()
             throw t
         }
@@ -354,8 +387,7 @@ class AudioHandler : HumlaNetworkListener,
         // must clear it; media routes clear it for hygiene (voice-call
         // routing ignores it there, but no stale flag may leak across).
         setSpeakerphone(mVoiceRoute && !mScoActive && mAudioStream != AudioManager.STREAM_VOICE_CALL)
-        mInitialized = true
-        updateMuteState(isMuted)
+        updateMuteState()
     }
 
     private fun startRecording() {
@@ -367,8 +399,14 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    @Synchronized
-    private fun updateMuteState(muted: Boolean) {
+    /**
+     * Applies the composite mute gate to the capture pipeline. Serialized on
+     * [mMuteLock] (outermost — never acquire it while holding `this`):
+     * decide under `this`, act outside it. Acting outside `this` breaks the
+     * mute-tap ABBA: the capture thread needs `this` for
+     * `onTalkingStateChanged` while every engine call below needs E.
+     */
+    private fun updateMuteState() {
         // Doze shield: the microphone stays open for the whole connection, even
         // while muted. Recording-active is the strongest signal Android/Vivo
         // honor against force-suspend on battery + screen-off; closing the mic
@@ -379,8 +417,25 @@ class AudioHandler : HumlaNetworkListener,
         // or transmitted (a single terminator may still be emitted on the mute
         // transition if mid-utterance) — at the cost of the system mic
         // indicator and ~15-25 mA capture drain.
-        mNativeEngine.setMuted(muted)
-        if (mInitialized) {
+        val muted: Boolean
+        synchronized(mMuteLock) {
+            synchronized(this) {
+                if (!mInitialized) return
+                muted = mServerMuted || mSelfMuted || mServerDeafened || mSuppressed
+            }
+            mNativeEngine.setMuted(muted)
+            // Re-gate recording: shutdown flags mInitialized=false under the
+            // same mMuteLock before its join, so a mute racing disconnect
+            // cannot resurrect capture after teardown (same check-then-act
+            // shape as startRecording itself).
+            synchronized(this) {
+                if (!mInitialized) return
+            }
+            // Deliberately held across startRecording's bounded stale join
+            // (≤200 ms): releasing mMuteLock here would reopen the shutdown
+            // race above. No deadlock — a stale capture needs only
+            // `this`/E briefly, never mMuteLock — at most concurrent mute
+            // updates serialize behind teardown of a dead capture thread.
             startRecording()
         }
     }
@@ -398,12 +453,13 @@ class AudioHandler : HumlaNetworkListener,
      *              coercion (see HumlaService.setSelfMuteDeafState); must be
      *              true whenever the user is deafened.
      */
-    @Synchronized
     fun setSelfMutedOptimistic(muted: Boolean) {
-        mSelfMuted = muted
-        mOptimisticSelfMuteActive = true
-        if (!mInitialized) return
-        updateMuteState(mServerMuted || mSelfMuted || mServerDeafened || mSuppressed)
+        synchronized(this) {
+            mSelfMuted = muted
+            mOptimisticSelfMuteActive = true
+            if (!mInitialized) return
+        }
+        updateMuteState()
     }
 
     fun isInitialized(): Boolean {
@@ -562,22 +618,39 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    @Synchronized
     fun shutdown() {
-        // Never hold mInput across shutdown: it joins the capture thread,
-        // which needs the AudioInput monitor for release/enableEffects.
-        // (Same shape as the mOutput rule below.)
-        mInput.shutdown()
-        // Never hold mOutput across stopPlaying: it joins the render thread,
-        // which needs the AudioOutput monitor each loop to observe shutdown
-        // and exit. Holding it here deadlocks disconnect (main in join,
-        // render blocked on the monitor). stopPlaying self-synchronizes.
-        mOutput.stopPlaying()
-        mNativeEngine.destroy()
-        mInitialized = false
-
-        mEncodeListener.onTalkingStateChanged(false)
-        mOutput.setHalfDuplexMuted(false)
+        // Flag + join + destroy under mMuteLock (outermost — never acquire
+        // it while holding `this`): the capture thread needs `this` for
+        // onTalkingStateChanged and destroy needs E, and a mute racing
+        // disconnect must be excluded from startRecording after the join —
+        // flag-first alone would still be check-then-act, and moving the
+        // joins outside the leaf would reopen that race (the flag check and
+        // thread creation must stay atomic against flag-and-join under one
+        // mutex). Cost, accepted: a racing mute update serializes behind
+        // teardown joins — fast in steady state (interrupt wakes the
+        // blocking read), unbounded only if the HAL itself is wedged.
+        // mInput/mOutput self-synchronize their joins. Talking state resets
+        // for hygiene on the discarded instance; the disconnect notification
+        // fires only on a real true→false edge (a repeat false would only
+        // re-trigger downstream model lookups and UI refreshes).
+        val wasTalking: Boolean
+        synchronized(mMuteLock) {
+            synchronized(this) {
+                mInitialized = false
+                wasTalking = mTalking
+                mTalking = false
+            }
+            mInput.shutdown()
+            mOutput.stopPlaying()
+            mNativeEngine.destroy()
+            // Belt-and-braces: stopPlaying() already clears this after
+            // joining the render thread; kept explicit so the disconnect
+            // state does not depend on that callee-side effect.
+            mOutput.setHalfDuplexMuted(false)
+        }
+        if (wasTalking) {
+            mEncodeListener.onTalkingStateChanged(false)
+        }
     }
 
     override fun messageCodecVersion(msg: Mumble.CodecVersion) {
@@ -612,11 +685,14 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    @Synchronized
     override fun messageUserState(msg: Mumble.UserState) {
-        if (!mInitialized) return
+        // Fields under `this`, gate outside it: updateMuteState takes E plus
+        // a bounded join while the capture thread needs `this` (server-echo
+        // path; see docs/mute-tap-deadlock).
+        synchronized(this) {
+            if (!mInitialized) return
 
-        if (msg.hasSession() && msg.session == mSession) {
+            if (!msg.hasSession() || msg.session != mSession) return
             var changed = false
             if (msg.hasMute() && mServerMuted != msg.mute) {
                 mServerMuted = msg.mute
@@ -644,10 +720,9 @@ class AudioHandler : HumlaNetworkListener,
                 mServerDeafened = msg.deaf
                 changed = true
             }
-            if (changed) {
-                updateMuteState(mServerMuted || mSelfMuted || mServerDeafened || mSuppressed)
-            }
+            if (!changed) return
         }
+        updateMuteState()
     }
 
     override fun messageUserRemove(msg: Mumble.UserRemove) {
@@ -759,12 +834,19 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    @Synchronized
     override fun onTalkingStateChanged(isTalking: Boolean, peakEnergy: Float) {
-        // Synchronized: concurrent native callbacks must not duplicate or
-        // drop transitions via check-then-act on mTalking.
-        if (mTalking != isTalking) {
-            mTalking = isTalking
+        // Check-and-set under the lock (concurrent native callbacks must not
+        // duplicate or drop transitions), fan out outside it: the encode
+        // listener and mOutput each take locks of their own, and the capture
+        // thread must never hold `this` across them.
+        val changed: Boolean
+        synchronized(this) {
+            changed = mTalking != isTalking
+            if (changed) {
+                mTalking = isTalking
+            }
+        }
+        if (changed) {
             mEncodeListener.onTalkingStateChanged(isTalking)
             if (mHalfDuplex) {
                 mOutput.setHalfDuplexMuted(isTalking)
