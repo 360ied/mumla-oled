@@ -106,17 +106,22 @@ A-free.
 Every hold-A-then-take-E site shares the defect, not just the menu tap:
 
 1. **Menu tap (this ANR).** `setSelfMutedOptimistic` → `updateMuteState`
-   → `mNativeEngine.setMuted` (`AudioHandler.kt:401→371→382`), reached
+   → `mNativeEngine.setMuted` (`AudioHandler.kt:402→371→382`), reached
    from `HumlaService.applyOptimisticSelfMuteDeaf` (`HumlaService.kt`).
    Main thread → user-visible ANR after 5 s.
 2. **Server echo.** `messageUserState` → `updateMuteState` → `setMuted`
-   (`AudioHandler.kt:615→371`). Runs on the TCP reader thread: same
+   (`AudioHandler.kt:616→371`). Runs on the TCP reader thread: same
    deadlock, but it stalls the protocol silently instead of ANR-ing.
 3. **Connect.** `initialize` → `updateMuteState` → `setMuted`
-   (`AudioHandler.kt:323→371`). Narrower window (recording starts inside
-   the same call), same shape via a racing echo.
+   (`AudioHandler.kt:325→371`). Narrower window (recording starts inside
+   the same call), same shape via a racing echo. `initialize` holds a
+   second edge of the same kind: it also calls `setMaxBandwidth` →
+   `mNativeEngine.setBitrate/setFramesPerPacket` while still holding A,
+   so the connect path can deadlock through the bandwidth setters too.
+   (The mid-call `messageServerSync`/`messageServerConfig` →
+   `setMaxBandwidth` paths are safe today — they never hold A.)
 4. **Disconnect.** `shutdown` → `mNativeEngine.destroy`
-   (`AudioHandler.kt:565→576`) **plus a join hazard**: `shutdown` holds A
+   (`AudioHandler.kt:566→576`) **plus a join hazard**: `shutdown` holds A
    while `mInput.shutdown()` *joins* the capture thread — and the capture
    thread needs A for `onTalkingStateChanged`. The existing comments guard
    the leaf locks ("never hold `mInput`/`mOutput` across shutdown/join")
@@ -149,7 +154,9 @@ removes per-frame contention for unrelated setters:
    the monitor, release, then call `nativeProcessFrame`. Lifetime is
    already protected by `shutdown` joining capture (`mInput.shutdown()`)
    before `destroy`; document and enforce that ordering (or add an
-   in-flight guard) instead of holding E across JNI + upcall.
+   in-flight guard — snapshot-then-call also races setter-vs-destroy on
+   other threads, so the join-before-destroy invariant needs asserting,
+   not just commenting) instead of holding E across JNI + upcall.
 2. **Mute path: decide under A, act outside.** Snapshot the composite
    mute decision under `synchronized`, release, then call
    `mNativeEngine.setMuted` + `startRecording` outside — the
@@ -157,7 +164,9 @@ removes per-frame contention for unrelated setters:
 3. **Callback: shrink the critical section.** Reduce
    `onTalkingStateChanged` to a check-and-set under the lock (`mTalking`
    is already `@Volatile`; an `AtomicBoolean` also works) and fan out to
-   `mEncodeListener` / half-duplex mute **outside**.
+   `mEncodeListener` / half-duplex mute **outside**. This also drops the
+   secondary edges the callback holds while under A (`mOutput` monitor
+   via `setHalfDuplexMuted`, plus whatever the encode listener takes).
 4. **Shutdown: join outside A.** Move `mInput.shutdown()`,
    `mOutput.stopPlaying()`, and `engine.destroy()` out of
    `synchronized(this)`; re-lock only for flag updates. This also fixes
