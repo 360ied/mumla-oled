@@ -144,7 +144,20 @@ reentry is safe (main already holds both monitors, `@Synchronized` is
 reentrant) — the deadlock always needs the *other* thread's in-flight
 frame, which is why it reproduces intermittently rather than every tap.
 
-## 7. Fix shape (not yet applied)
+## 7. Fix shape (applied)
+
+Applied by the mute-tap fix: steps 1–4 below, with two as-built
+refinements. First, only `processFrame` drops the engine monitor —
+`setMuted` and the other setters stay `@Synchronized` so teardown
+exclusion with `destroy()` is preserved; that is safe because after step
+2 no caller holds A when invoking them, leaving the remaining E→A edge
+unopposed. Second, the mute decision is additionally serialized on a new
+`mMuteLock` leaf lock (`mMuteLock` → `this` → E, never acquired while
+holding `this`) so a tap, server echo, and connect racing each other
+cannot reorder engine calls past field writes; `shutdown` flags
+`mInitialized=false` first so a racing mute cannot `startRecording`
+after the join. As §8 predicted, no lock-ordering regression harness
+landed with the fix — that gap is still open.
 
 Break the cycle on both sides. Either side alone would suffice, but both
 is robust — and dropping `@Synchronized` from the 100 Hz hot path also
