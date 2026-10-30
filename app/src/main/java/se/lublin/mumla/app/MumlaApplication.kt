@@ -7,6 +7,7 @@ import dagger.hilt.android.HiltAndroidApp
 import se.lublin.humla.HumlaService
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
+import se.lublin.mumla.util.CrashReporter
 
 @HiltAndroidApp
 class MumlaApplication : Application(), Settings.OnSettingChangedListener {
@@ -14,6 +15,7 @@ class MumlaApplication : Application(), Settings.OnSettingChangedListener {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReporter.install(this)
         val settings = Settings.getInstance(this)
         mSettings = settings
         applyTheme(settings)
