@@ -19,6 +19,7 @@ package se.lublin.mumla.util
 
 import android.app.ActivityManager
 import android.app.Application
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import android.os.Process
@@ -173,9 +174,9 @@ object CrashReporter {
                         continue
                     }
                     val reason = info.reason
-                    if (reason != ActivityManager.APP_EXIT_REASON_CRASH &&
-                        reason != ActivityManager.APP_EXIT_REASON_CRASH_NATIVE &&
-                        reason != ActivityManager.APP_EXIT_REASON_ANR
+                    if (reason != ApplicationExitInfo.REASON_CRASH &&
+                        reason != ApplicationExitInfo.REASON_CRASH_NATIVE &&
+                        reason != ApplicationExitInfo.REASON_ANR
                     ) {
                         continue
                     }
@@ -198,7 +199,7 @@ object CrashReporter {
     private fun writeExitReport(
         appContext: Context,
         store: CrashReportStore,
-        info: ActivityManager.RecentProcessExitReason,
+        info: ApplicationExitInfo,
     ) {
         val pid = info.pid
         val ts = info.timestamp
@@ -257,7 +258,7 @@ object CrashReporter {
         }
     }
 
-    private fun readTraceCapped(info: ActivityManager.RecentProcessExitReason): Pair<String, Boolean> {
+    private fun readTraceCapped(info: ApplicationExitInfo): Pair<String, Boolean> {
         var stream: java.io.InputStream? = null
         try {
             stream = try {
@@ -452,11 +453,9 @@ object CrashReporter {
 
     private fun reasonName(reason: Int): String {
         return when (reason) {
-            ActivityManager.APP_EXIT_REASON_CRASH -> "REASON_CRASH"
-            ActivityManager.APP_EXIT_REASON_CRASH_NATIVE -> "REASON_CRASH_NATIVE"
-            ActivityManager.APP_EXIT_REASON_ANR -> "REASON_ANR"
-            ActivityManager.APP_EXIT_REASON_LOW_MEMORY -> "REASON_LOW_MEMORY"
-            ActivityManager.APP_EXIT_REASON_EXCESSIVE_RESOURCE_USE -> "REASON_EXCESSIVE_RESOURCE_USE"
+            ApplicationExitInfo.REASON_CRASH -> "REASON_CRASH"
+            ApplicationExitInfo.REASON_CRASH_NATIVE -> "REASON_CRASH_NATIVE"
+            ApplicationExitInfo.REASON_ANR -> "REASON_ANR"
             else -> "REASON_$reason"
         }
     }
