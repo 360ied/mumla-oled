@@ -118,8 +118,9 @@ field-tested — yet undiscoverable by accident.
 ## 4. Architecture
 
 New code lives in `:app` (the library must stay UI- and storage-policy-free) —
-the sole exception is the §4 JNI hook, whose C++ source lives in
-`:libraries:humla`'s `audio_engine`:
+the sole exception is the §4 native-test hook: its C++ source and Kotlin
+API live in `:libraries:humla` under the existing `audio_engine` /
+`se.lublin.humla.audio` convention, callable from `:app`.
 
 - `util/CrashReporter.kt` — installable singleton. `install(context)` runs as
   the first statement of `MumlaApplication.onCreate()` (before
@@ -174,10 +175,15 @@ the sole exception is the §4 JNI hook, whose C++ source lives in
   `rssKb`/`pssKb` (`0` means unknown — `ApplicationExitInfo` zeroes them when
   unavailable).
 - Dedup between the handler-written file and the exit-info entry for the same
-  event uses an exact join key — exit `timestamp` + `pid` + `reason`, falling
-  back to a content hash of the two traces — never timestamp proximity. (A
-  "same minute" window would collapse genuine crash loops and defeat the
-  rotation test in §7.)
+  event joins on `pid` + `reason` + causality: the handler file records its
+  own write-time and `pid`, and matches an exit entry with the same
+  `pid`/`reason` whose `timestamp` falls within 60 s *after* the handler
+  write. (The handler necessarily runs before death, so it can never know
+  the future exit timestamp — exact timestamp equality is unknowable and is
+  not attempted.) Content hash of the two traces is a secondary
+  confirmation, not the primary key. No symmetric time window: a "same
+  minute" window would collapse genuine crash loops and defeat the
+  rotation test in §7.
 - UI:
   - [MumlaActivity](../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
     checks the store on startup off the main thread. When at least one
@@ -199,41 +205,65 @@ the sole exception is the §4 JNI hook, whose C++ source lives in
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
     `EXTRA_TEXT` summary.
   - Crash-test buttons (all builds, hidden): a "Crash test" category
-    (`KEY_CRASH_TEST`, inside `CrashReportsFragment`) on the Crash reports
-    screen, unlocked by tapping the About version row five times. The tap
-    counter lives in the fragment's `onSaveInstanceState` (unlock is
-    session-only: process death relocks, which is the safe default); each
-    tap still fires the row's existing news-reset, so unlocking re-arms the
-    news dialogs once — accepted as harmless. The fifth tap shows a "Crash
-    test unlocked" toast. One button per capture path: Java crash (throws an
-    uncaught `RuntimeException` on the main thread), native crash (calls
-    `se.lublin.mumla.util.NativeCrashTest.crash()`, an `:app` Kotlin object
-    that loads the existing `humlaaudio` library — `loadLibrary` is
-    idempotent — and binds
-    `Java_se_lublin_mumla_util_NativeCrashTest_crash`, implemented with
-    `abort()` in a new `audio_engine/NativeCrashTestJni.cpp` added to
-    `Android.mk` `LOCAL_SRC_FILES`; `abort()` rather than a null deref
-    because `-O3` makes a null write fragile UB, and `JNIEXPORT` already
-    overrides `-fvisibility=hidden`), and ANR (posts a 15 s main-thread
-    sleep — well past the ~5 s ANR threshold — to guarantee the system ANR
-    dialog). The hook is never invoked during normal operation — reachable
-    only via the hidden gesture plus confirmation — so audio and cold paths
-    are unchanged. Every button shows a confirmation dialog first ("This
-    will crash/stall the app and drop any live call. Continue?") that is
-    *dismissed before* the crash or block is issued (dismiss, then
-    throw/call for crashes; dismiss, then `post` the sleep to the main queue
-    for ANR — the ANR dialog would otherwise overlay a frozen confirmation
-    and `onPause` dismissal could never run). Buttons are disabled while
-    connected (`isConnected()`; the summary explains "Disconnect to
-    enable") so no confirmation tap can kill a live voice session. Each
-    button exercises the real production paths end to
-    end — handler
-    write, exit-info drain, exact-key dedup (a button-induced crash must
-    yield exactly one report), prompt, and share — which is precisely what
-    makes the recorder testable without `adb` induction. ANR pass criterion:
-    answer the system dialog with Close (kill), relaunch, exactly one
-    `REASON_ANR` report; answering Wait recovers the process with no
-    exit-info entry, so Wait is not a pass.
+    (`android:key="crash_test"`) on the Crash reports screen, implemented
+    by `se.lublin.mumla.preference.CrashReportsFragment :
+    MumlaPreferenceFragment` (declared in
+    `res/xml/settings_crash_reports.xml` and added to
+    `SettingsActivity.ALLOWED_FRAGMENTS`; Kotlin single inheritance rules out
+    extending `HumlaServiceFragment`, so service state is reached by
+    composition — `SettingsActivity` gains a `ServiceConnection`, since it
+    extends `BaseActivity`, not a `HumlaServiceProvider`). Unlock: tapping
+    the About version row five times. The counter lives in a new
+    `AboutSettingsFragment.onSaveInstanceState` override (no preference
+    fragment persists instance state today) under bundle key
+    `"crash_test_taps"`, and the unlocked flag is held session-only on
+    `SettingsActivity` (field, also passed as a fragment argument when
+    opening the Crash reports screen — process death relocks, the safe
+    default). Each tap still fires the row's existing news-reset, so
+    unlocking re-arms the news dialogs once — accepted as harmless. The
+    fifth tap shows a "Crash test unlocked" toast. One button per capture
+    path: Java crash (throws an uncaught `RuntimeException` on the main
+    thread), native crash (calls
+    `se.lublin.humla.audio.NativeCrashTest.crash()` — the wrapper lives in
+    `:libraries:humla` under the existing audio-engine package convention
+    (no new package roots in the `.so`), declared as `companion object {
+    @JvmStatic external fun crash() }` so the C++ side is the static form
+    `JNIEXPORT void JNICALL
+    Java_se_lublin_humla_audio_NativeCrashTest_crash(JNIEnv*, jclass)`
+    calling `abort()` (`<cstdlib>`) in a new
+    `audio_engine/NativeCrashTestJni.cpp` added to `Android.mk`
+    `LOCAL_SRC_FILES`; `abort()` rather than a null deref because `-O3`
+    makes a null write fragile UB, and `JNIEXPORT` already overrides
+    `-fvisibility=hidden`), and ANR
+    (`Handler(Looper.getMainLooper()).post { Thread.sleep(15_000) }` — well
+    past the ~5 s ANR threshold — to guarantee the system ANR dialog). The
+    hook is never invoked during normal operation — reachable only via the
+    hidden gesture plus confirmation — so audio and cold paths are
+    unchanged; if the library fails to load (`ensureLoaded()` throws, per
+    the existing pattern), the native button is disabled rather than
+    throwing a Java exception that would masquerade as the wrong capture
+    path. Every button shows a confirmation built with
+    `MaterialAlertDialogBuilder(requireContext())` ("This will crash/stall
+    the app and drop any live call. Continue?") that is *dismissed before*
+    the crash or block is issued: `dialog.dismiss()`, then throw/call inside
+    the positive-button callback for crashes, and `dialog.dismiss()` then
+    the main-looper `post` for ANR (synchronous `dismiss()`, not an async
+    `DialogFragment` transaction — the ANR dialog would otherwise overlay a
+    frozen confirmation and `onPause` dismissal could never run). Buttons are
+    disabled while connected and re-checked live: the screen observes
+    connection state through its `ServiceConnection` to refresh
+    enabled-state, *and* the positive-button handler re-checks
+    `isConnected()` immediately before acting, aborting the crash when
+    connected (disabled summary explains "Disconnect to enable") — so
+    neither a call connected after the screen opened nor one connected
+    between "Continue" and the crash can be killed. Each button exercises
+    the real production paths end to end — handler write, exit-info drain,
+    causal-key dedup (a button-induced crash must yield exactly one
+    report), prompt, and share — which is precisely what makes the recorder
+    testable without `adb` induction. ANR pass criterion: answer the system
+    dialog with Close (kill), relaunch, exactly one `REASON_ANR` report;
+    answering Wait recovers the process with no exit-info entry, so Wait is
+    not a pass.
 
 ## 5. Privacy
 
@@ -261,7 +291,8 @@ the sole exception is the §4 JNI hook, whose C++ source lives in
 - Low-memory kills (`REASON_LOW_MEMORY`) and normal exits advance the
   watermark but create no report files — only crash/ANR reasons create files.
 - Duplicate events (handler file + exit-info entry for one crash) are merged
-  by the exact join key in §4, never by time window.
+  by the causal join key in §4 (`pid` + `reason` + handler-write-precedes-exit
+  window), never by symmetric time window.
 - Storage pressure: rotation runs on every write; a corrupt file is skipped,
   never parsed leniently.
 - System history eviction: because the watermark advances on every drain and
@@ -342,3 +373,9 @@ portable relative links.
   `Android.mk` entry, `:app`-side `se.lublin.mumla.util.NativeCrashTest`
   wrapper); confirmation ordered dismiss-then-act; buttons disabled while
   connected; ANR oracle defined (Close, not Wait).
+- Review fixes (third pass): `CrashReportsFragment` FQN plus
+  `ServiceConnection`-by-composition (single-inheritance conflict resolved),
+  tap-counter bundle key with `SettingsActivity`-held session unlock,
+  humla-conventional wrapper package and `@JvmStatic` prototype, causal
+  (not exact-timestamp) dedup join, live connection re-check against TOCTOU,
+  named dialog/`post` implementation, native-button load-failure disable.
