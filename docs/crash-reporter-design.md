@@ -20,8 +20,9 @@ The goal is a small, FOSS-friendly crash recorder:
   through an explicit user share action.
 
 Non-goals for v1: automatic upload to any backend, analytics/telemetry,
-breadcrumb trails, NDK symbolication on-device, and a hidden "test crash"
-button in release builds.
+breadcrumb trails, and NDK symbolication on-device. Test-crash buttons *are*
+in scope but strictly debug-only (see §4) — they never appear in release
+builds.
 
 ## 2. Investigation findings
 
@@ -194,6 +195,19 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
     (preview = payload, no hidden fields). Share uses the new `<provider>`
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
     `EXTRA_TEXT` summary.
+  - Crash-test buttons (debug builds only): a "Crash test" category on the
+    Crash reports screen, programmatically set `isVisible = BuildConfig.DEBUG`
+    so release/F-Droid builds never show it, with one button per capture
+    path — Java crash (throws an uncaught `RuntimeException` on the main
+    thread), native crash (calls a three-line null-deref JNI function added
+    to the existing `audio_engine` sources and exposed via a new
+    `NativeCrashTest` Kotlin object loading the same library; the symbol
+    ships in release but is unreachable there, so no behavior change), and
+    ANR (blocks the main thread ~15 s until the system ANR dialog fires).
+    Each button exercises the real production paths end to end — handler
+    write, exit-info drain, exact-key dedup (a button-induced crash must
+    yield exactly one report), prompt, and share — which is precisely what
+    makes the recorder testable without `adb` induction.
 
 ## 5. Privacy
 
@@ -244,8 +258,9 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
 5. Crash-reports fragment (list/detail/delete-all), startup Snackbar,
    unseen-state, strings (en source; other locales fall back per existing
    `resourceConfigurations`), `ALLOWED_FRAGMENTS` + headers wiring.
-6. Manual verification matrix: Java throw (debug trigger via `adb`), native
-   fault in test worktree only, ANR via blocked main thread, relaunch
+6. Manual verification matrix, driven primarily by the §4 debug buttons
+   (each must yield exactly one report after relaunch): Java throw, native
+   fault, ANR, relaunch
    prompt, share-payload inspection (attachment opens, summary line correct),
    rotation under 9+ induced crashes *within one minute* (dedup must not
    merge them), backup-exclusion check (Auto Backup inspector shows no
@@ -271,8 +286,6 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
 
 ## 9. Open questions for implementation time
 
-- Long-press-version dev trigger for a test crash (debug builds only) versus
-  `adb`-only induction.
 - Whether the Crash reports screen should also surface the last-seen
   non-crash exits (e.g. low-memory kills) as informational rows — currently
   out of scope; watermark-only.
@@ -291,3 +304,6 @@ recording fixed as always-on; `-keepattributes` made unconditional step 0;
 handler delegation specified as `finally` with capped allocation; schema
 gained exit-timestamp/pid/truncation fields; in-tree references converted to
 portable relative links.
+- Debug-only crash-test buttons added (one per capture path: Java, native
+  via a minimal `audio_engine` JNI hook, ANR), resolving the former test
+  trigger open question; release builds are unaffected.
