@@ -164,9 +164,13 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   public-posting warning.
 - Stored schema (one JSON file per incident, UTF-8) vs. shared payload (a
   rendered `.txt` attachment + one-line summary — never the raw JSON):
-  `id` (`<exitTimestamp>-<pid>`, unique under crash loops),
-  `exitTimestamp` (system wall-clock, used for drain/dedup joins),
-  `capturedAtUtc` (when this device wrote the file),
+  `id` (exit-based `<exitTimestamp>-<pid>` for exit-info files; provisional
+  `<capturedAtUtc>-<pid>-pending` for handler files, renamed to the exit-based
+  id when a merge joins them), `exitTimestamp` (system wall-clock exit time;
+  absent on unmerged handler files — the join uses `handlerWriteTime`),
+  `capturedAtUtc` (when this device wrote the file), `handlerWriteTime`
+  (handler-source files only; equals `capturedAtUtc`, records the pre-death
+  write for the causal join),
   `source` (`uncaught-handler` | `exit-info`), `reason` (mapped `REASON_*`
   string), `appVersion` (`BuildConfig.VERSION_NAME` / `VERSION_CODE`; note
   `VERSION_NAME` is `git describe` output and is a commit hash, not semver,
@@ -183,7 +187,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   not attempted.) Content hash of the two traces is a secondary
   confirmation, not the primary key. No symmetric time window: a "same
   minute" window would collapse genuine crash loops and defeat the
-  rotation test in §7.
+  rotation test in §7. Clock skew fails safe toward duplicates: a jumped clock
+  can only miss a merge (two reports), never lose one.
 - UI:
   - [MumlaActivity](../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
     checks the store on startup off the main thread. When at least one
@@ -191,15 +196,19 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     closed unexpectedly", action: View) that opens the Crash reports screen;
     swipe/timeout is the dismissal. "Unseen" is a DataStore-backed
     last-viewed report id, read/written on the normal path only, single-shot
-    per report — coordinated with the activity's existing pause-dismissal
-    discipline so rotation cannot re-prompt or leak.
+    per report: the Snackbar handle is dismissed in `onPause`, and the
+    last-viewed id is written when the Snackbar is first shown — so rotation
+    dismisses without re-prompting, and a swiped/timed-out dismissal never
+    resurfaces.
   - [AboutSettingsFragment](../app/src/main/java/se/lublin/mumla/preference/AboutSettingsFragment.kt)
     gains a "Crash reports" preference opening a **new fragment** (list:
     timestamp + reason; per-report View / Share / Delete; Delete-all). This
     needs [SettingsActivity](../app/src/main/java/se/lublin/mumla/preference/SettingsActivity.kt)
-    `ALLOWED_FRAGMENTS` plus
-    [preference_headers.xml](../app/src/main/res/xml/preference_headers.xml)
-    wiring — a full screen, not a preference tweak.
+    `ALLOWED_FRAGMENTS` plus a new `res/xml/settings_crash_reports.xml` and a
+    launcher `<Preference app:fragment="…CrashReportsFragment">` in
+    `res/xml/settings_about.xml` — a full screen, not a preference tweak
+    (`preference_headers.xml` itself is unchanged: the screen opens from
+    About, not as a sixth root entry).
   - The detail view renders the exact scrubbed `.txt` that Share would send
     (preview = payload, no hidden fields). Share uses the new `<provider>`
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
@@ -211,25 +220,35 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     `res/xml/settings_crash_reports.xml` and added to
     `SettingsActivity.ALLOWED_FRAGMENTS`; Kotlin single inheritance rules out
     extending `HumlaServiceFragment`, so service state is reached by
-    composition — `SettingsActivity` gains a `ServiceConnection`, since it
-    extends `BaseActivity`, not a `HumlaServiceProvider`). Unlock: tapping
+    composition — `SettingsActivity` gains a `ServiceConnection` (bound in `onStart`, unbound
+    in `onStop` with an `mBound` guard; flag `0` like `MumlaActivity`, so the
+    bind only succeeds while the service is already running and the buttons
+    sit disabled while unbound — fail-safe), since it extends `BaseActivity`,
+    not a `HumlaServiceProvider`. The connection feeds an activity-held
+    `IMumlaService?` field (nulled on disconnect); the screen refreshes
+    enabled-state live via an `IHumlaObserver` registered while bound
+    (connection transitions arrive via the observer, not the connection
+    object), *and* re-checks at click time (see below). Unlock: tapping
     the About version row five times. The counter lives in a new
     `AboutSettingsFragment.onSaveInstanceState` override (no preference
     fragment persists instance state today) under bundle key
-    `"crash_test_taps"`, and the unlocked flag is held session-only on
-    `SettingsActivity` (field, also passed as a fragment argument when
-    opening the Crash reports screen — process death relocks, the safe
-    default). Each tap still fires the row's existing news-reset, so
+    `"crash_test_taps"`, and the unlocked flag is held session-only in a `SettingsActivity` field,
+    re-validated against the host both at navigation time and at
+    button-click time (fail-closed: no host flag, no buttons). The fragment
+    argument carries a hint only — arguments survive process-death
+    recreation, so the arg alone must never gate; process death therefore
+    relocks. Each tap still fires the row's existing news-reset, so
     unlocking re-arms the news dialogs once — accepted as harmless. The
     fifth tap shows a "Crash test unlocked" toast. One button per capture
     path: Java crash (throws an uncaught `RuntimeException` on the main
     thread), native crash (calls
-    `se.lublin.humla.audio.NativeCrashTest.crash()` — the wrapper lives in
+    `se.lublin.humla.audio.NativeCrashTest.nativeCrash()` — the wrapper lives in
     `:libraries:humla` under the existing audio-engine package convention
     (no new package roots in the `.so`), declared as `companion object {
-    @JvmStatic external fun crash() }` so the C++ side is the static form
+    @JvmStatic external fun nativeCrash() }` (a thin non-external `crash()`
+    may wrap it at the call site, per the `native*` convention)` so the C++ side is the static form
     `JNIEXPORT void JNICALL
-    Java_se_lublin_humla_audio_NativeCrashTest_crash(JNIEnv*, jclass)`
+    Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash(JNIEnv*, jclass)`
     calling `abort()` (`<cstdlib>`) in a new
     `audio_engine/NativeCrashTestJni.cpp` added to `Android.mk`
     `LOCAL_SRC_FILES`; `abort()` rather than a null deref because `-O3`
@@ -239,19 +258,21 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     past the ~5 s ANR threshold — to guarantee the system ANR dialog). The
     hook is never invoked during normal operation — reachable only via the
     hidden gesture plus confirmation — so audio and cold paths are
-    unchanged; if the library fails to load (`ensureLoaded()` throws, per
-    the existing pattern), the native button is disabled rather than
+    unchanged; if the library fails to load (the wrapper's public
+    `isAvailable()` reports false from its own `loadError` capture — the
+    existing `ensureLoaded()` helpers are private to their owners and split
+    across two patterns, so `:app` cannot probe them), the native button is disabled rather than
     throwing a Java exception that would masquerade as the wrong capture
     path. Every button shows a confirmation built with
     `MaterialAlertDialogBuilder(requireContext())` ("This will crash/stall
     the app and drop any live call. Continue?") that is *dismissed before*
     the crash or block is issued: `dialog.dismiss()`, then throw/call inside
     the positive-button callback for crashes, and `dialog.dismiss()` then
-    the main-looper `post` for ANR (synchronous `dismiss()`, not an async
-    `DialogFragment` transaction — the ANR dialog would otherwise overlay a
-    frozen confirmation and `onPause` dismissal could never run). Buttons are
-    disabled while connected and re-checked live: the screen observes
-    connection state through its `ServiceConnection` to refresh
+    the main-looper `post` for ANR (a plain `AlertDialog` synchronous
+    `dismiss()` — the ANR dialog would otherwise overlay a frozen
+    confirmation and `onPause` dismissal could never run). Buttons are
+    disabled while unbound or connected and re-checked live: the screen observes
+    connection state through its observer registration to refresh
     enabled-state, *and* the positive-button handler re-checks
     `isConnected()` immediately before acting, aborting the crash when
     connected (disabled summary explains "Disconnect to enable") — so
@@ -310,12 +331,14 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 2. `CrashReportStore` + JVM unit tests (rotation newest-8, corrupt-file
    tolerance, atomic-write behavior).
 3. `CrashReporter.install()` wiring in `MumlaApplication` (first statement),
-   exit-info drain with watermark, exact-key dedup.
+   exit-info drain with watermark, causal-key dedup (`pid` + `reason` + 60 s
+   handler-write-precedes-exit window).
 4. No-backup placement + `<provider>` manifest entry.
 5. Crash-reports fragment (list/detail/delete-all), startup Snackbar,
    unseen-state, strings (en source; other locales fall back per existing
    `resourceConfigurations` — including the "Crash test unlocked" toast and
-   the crash/stall confirmation text), `ALLOWED_FRAGMENTS` + headers wiring.
+   the crash/stall confirmation text), `ALLOWED_FRAGMENTS` + new
+   `settings_crash_reports.xml` + About launcher entry.
 6. Manual verification matrix, driven primarily by the §4 test buttons
    (each must yield exactly one report after relaunch): Java throw, native
    fault, ANR, relaunch
@@ -370,7 +393,8 @@ portable relative links.
 - Review fixes (second pass): tap-counter persistence (`onSaveInstanceState`,
   session-only unlock) and the news-re-arm side effect documented; JNI hook
   fully specified (`audio_engine/NativeCrashTestJni.cpp`, `abort()`,
-  `Android.mk` entry, `:app`-side `se.lublin.mumla.util.NativeCrashTest`
+  `Android.mk` entry, `:libraries:humla`-side
+  `se.lublin.humla.audio.NativeCrashTest`
   wrapper); confirmation ordered dismiss-then-act; buttons disabled while
   connected; ANR oracle defined (Close, not Wait).
 - Review fixes (third pass): `CrashReportsFragment` FQN plus
@@ -379,3 +403,11 @@ portable relative links.
   humla-conventional wrapper package and `@JvmStatic` prototype, causal
   (not exact-timestamp) dedup join, live connection re-check against TOCTOU,
   named dialog/`post` implementation, native-button load-failure disable.
+- Review fixes (fourth pass): stale `exact-key` step corrected to causal key;
+  fragment wiring disambiguated (new XML + About launcher entry + sixth
+  allowlist entry, headers unchanged); `ServiceConnection` lifecycle/flags/
+  receiver/observer specified with fail-safe-unbound behavior; wrapper
+  failure surface as public `isAvailable()`; single-gate session unlock with
+  fail-closed host re-validation; handler-file provisional ids with
+  backfill-on-merge and duplicate-safe clock-skew direction; `nativeCrash()`
+  naming per convention.
