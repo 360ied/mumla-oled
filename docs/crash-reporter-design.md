@@ -21,7 +21,7 @@ The goal is a small, FOSS-friendly crash recorder:
 
 Non-goals for v1: automatic upload to any backend, analytics/telemetry,
 breadcrumb trails, and NDK symbolication on-device. Test-crash buttons *are*
-in scope (see §4), hidden behind a multi-tap gesture so they are available
+in scope (see §4), hidden behind a five-tap gesture so they are available
 on every build — including release, where R8-obfuscated traces can only be
 field-tested — yet undiscoverable by accident.
 
@@ -117,7 +117,9 @@ field-tested — yet undiscoverable by accident.
 
 ## 4. Architecture
 
-New code lives in `:app` (the library must stay UI- and storage-policy-free):
+New code lives in `:app` (the library must stay UI- and storage-policy-free) —
+the sole exception is the §4 JNI hook, whose C++ source lives in
+`:libraries:humla`'s `audio_engine`:
 
 - `util/CrashReporter.kt` — installable singleton. `install(context)` runs as
   the first statement of `MumlaApplication.onCreate()` (before
@@ -196,24 +198,42 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
     (preview = payload, no hidden fields). Share uses the new `<provider>`
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
     `EXTRA_TEXT` summary.
-  - Crash-test buttons (all builds, hidden): a "Crash test" category on the
-    Crash reports screen, unlocked by tapping the About version row five
-    times (that row's existing single-tap news-reset behavior is preserved;
-    taps are counted and the fifth shows a "Crash test unlocked" toast),
-    with one button per capture
-    path — Java crash (throws an uncaught `RuntimeException` on the main
-    thread), native crash (calls a three-line null-deref JNI function added
-    to the existing `audio_engine` sources and exposed via a new
-    `NativeCrashTest` Kotlin object loading the same library; the symbol
-    ships in release but is unreachable there, so no behavior change), and
-    ANR (blocks the main thread ~15 s until the system ANR dialog fires).
-    Every button shows a confirmation dialog first ("This will crash/stall
-    the app. Continue?"), since a mid-call accidental tap would drop a live
-    voice session. Each button exercises the real production paths end to
+  - Crash-test buttons (all builds, hidden): a "Crash test" category
+    (`KEY_CRASH_TEST`, inside `CrashReportsFragment`) on the Crash reports
+    screen, unlocked by tapping the About version row five times. The tap
+    counter lives in the fragment's `onSaveInstanceState` (unlock is
+    session-only: process death relocks, which is the safe default); each
+    tap still fires the row's existing news-reset, so unlocking re-arms the
+    news dialogs once — accepted as harmless. The fifth tap shows a "Crash
+    test unlocked" toast. One button per capture path: Java crash (throws an
+    uncaught `RuntimeException` on the main thread), native crash (calls
+    `se.lublin.mumla.util.NativeCrashTest.crash()`, an `:app` Kotlin object
+    that loads the existing `humlaaudio` library — `loadLibrary` is
+    idempotent — and binds
+    `Java_se_lublin_mumla_util_NativeCrashTest_crash`, implemented with
+    `abort()` in a new `audio_engine/NativeCrashTestJni.cpp` added to
+    `Android.mk` `LOCAL_SRC_FILES`; `abort()` rather than a null deref
+    because `-O3` makes a null write fragile UB, and `JNIEXPORT` already
+    overrides `-fvisibility=hidden`), and ANR (posts a 15 s main-thread
+    sleep — well past the ~5 s ANR threshold — to guarantee the system ANR
+    dialog). The hook is never invoked during normal operation — reachable
+    only via the hidden gesture plus confirmation — so audio and cold paths
+    are unchanged. Every button shows a confirmation dialog first ("This
+    will crash/stall the app and drop any live call. Continue?") that is
+    *dismissed before* the crash or block is issued (dismiss, then
+    throw/call for crashes; dismiss, then `post` the sleep to the main queue
+    for ANR — the ANR dialog would otherwise overlay a frozen confirmation
+    and `onPause` dismissal could never run). Buttons are disabled while
+    connected (`isConnected()`; the summary explains "Disconnect to
+    enable") so no confirmation tap can kill a live voice session. Each
+    button exercises the real production paths end to
     end — handler
     write, exit-info drain, exact-key dedup (a button-induced crash must
     yield exactly one report), prompt, and share — which is precisely what
-    makes the recorder testable without `adb` induction.
+    makes the recorder testable without `adb` induction. ANR pass criterion:
+    answer the system dialog with Close (kill), relaunch, exactly one
+    `REASON_ANR` report; answering Wait recovers the process with no
+    exit-info entry, so Wait is not a pass.
 
 ## 5. Privacy
 
@@ -263,7 +283,8 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
 4. No-backup placement + `<provider>` manifest entry.
 5. Crash-reports fragment (list/detail/delete-all), startup Snackbar,
    unseen-state, strings (en source; other locales fall back per existing
-   `resourceConfigurations`), `ALLOWED_FRAGMENTS` + headers wiring.
+   `resourceConfigurations` — including the "Crash test unlocked" toast and
+   the crash/stall confirmation text), `ALLOWED_FRAGMENTS` + headers wiring.
 6. Manual verification matrix, driven primarily by the §4 test buttons
    (each must yield exactly one report after relaunch): Java throw, native
    fault, ANR, relaunch
@@ -315,3 +336,9 @@ portable relative links.
   About-version gesture with per-button confirmation — available on all
   builds so release (R8) traces are field-testable — resolving the former
   test trigger open question.
+- Review fixes (second pass): tap-counter persistence (`onSaveInstanceState`,
+  session-only unlock) and the news-re-arm side effect documented; JNI hook
+  fully specified (`audio_engine/NativeCrashTestJni.cpp`, `abort()`,
+  `Android.mk` entry, `:app`-side `se.lublin.mumla.util.NativeCrashTest`
+  wrapper); confirmation ordered dismiss-then-act; buttons disabled while
+  connected; ANR oracle defined (Close, not Wait).
