@@ -215,4 +215,24 @@
 • Make the Back-button ask to disconnect from server again on Android 16+\n</string>
 
     <string name="server_edit_url_password_warning">This link contained a password. Only connect if you trust the sender.</string>
+
+    <!-- Crash reports -->
+    <string name="crash_reports">Crash reports</string>
+    <string name="crash_reports_summary">View, share, or delete local crash reports</string>
+    <string name="crash_reports_empty">No crash reports recorded.</string>
+    <string name="crash_prompt">Mumla OLED closed unexpectedly</string>
+    <string name="crash_view">View</string>
+    <string name="crash_delete_all">Delete all reports</string>
+    <string name="crash_deleted">Report deleted.</string>
+    <string name="crash_all_deleted">All reports deleted.</string>
+    <string name="crash_public_warning">Device model and OS version will be visible wherever this is posted.</string>
+    <string name="crash_test">Crash test</string>
+    <string name="crash_test_java">Trigger Java crash</string>
+    <string name="crash_test_native">Trigger native crash</string>
+    <string name="crash_test_anr">Trigger ANR</string>
+    <string name="crash_test_summary">Disconnect to enable.</string>
+    <string name="crash_test_unlocked">Crash test unlocked</string>
+    <string name="crash_confirm">This will crash/stall the app and drop any live call. Continue?</string>
+    <string name="crash_test_disabled_call">Disconnect to enable.</string>
+    <string name="crash_test_disabled_native">Native library unavailable.</string>
 </resources>
