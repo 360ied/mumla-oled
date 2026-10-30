@@ -38,7 +38,7 @@ object CrashReportScrubber {
     private val EMAIL: Pattern = Pattern.compile("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+")
     private val USER_AT_HOST: Pattern = Pattern.compile("(?i)\\b[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+\\b")
     private val MUMBLE_URL: Pattern = Pattern.compile("(?i)\\bmumble://\\S+")
-    private val BARE_HOST: Pattern = Pattern.compile("\\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:com|net|org|io|dev|app|se|de|fr|nl|uk|ru|cn|jp|onion|local|internal|lan)(?::\\d{1,5})?\\b", Pattern.CASE_INSENSITIVE)
+    private val BARE_HOST: Pattern = Pattern.compile("\\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:com|net|org|io|dev|app|se|de|fr|nl|uk|ru|cn|jp|onion|local|internal|lan)(?::\\d{1,5})?\\b(?!\\.[A-Za-z0-9])", Pattern.CASE_INSENSITIVE)
     private val FINGERPRINT_COLON: Pattern = Pattern.compile("(?:[0-9A-Fa-f]{2}:){7,}[0-9A-Fa-f]{2}")
     private val FINGERPRINT_HEX: Pattern = Pattern.compile("\\b[0-9A-Fa-f]{32,}\\b")
     private val CREDENTIAL: Pattern = Pattern.compile("(?i)\\b(password|passwd|pwd|token|secret|auth|credential|api[_-]?key)\\s*[:=]\\s*\\S+")

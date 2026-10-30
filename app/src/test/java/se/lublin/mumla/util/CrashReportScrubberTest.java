@@ -22,9 +22,13 @@ import junit.framework.TestCase;
 public class CrashReportScrubberTest extends TestCase {
 
     public void testIpv4Redacted() {
+        // First-line message with an IP collapses to the skeleton (<redacted>).
         String out = CrashReportScrubber.scrub("java.io.IOException: connect to 192.168.1.10 failed\n\tat Foo.bar(Foo.java:1)");
         assertFalse(out.contains("192.168.1.10"));
-        assertTrue(out.contains("[IP-REDACTED]"));
+        assertTrue(out.contains("<redacted>"));
+        // Off-first-line IPs keep the token form.
+        String trace = CrashReportScrubber.scrub("java.io.IOException\n\tconnect to 192.168.1.10 failed\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(trace.contains("[IP-REDACTED]"));
     }
 
     public void testIpv6Redacted() {
