@@ -16,6 +16,9 @@
     public void onTalkStateChanged(int, int);
 }
 
+# Keep line numbers for release crash traces (negligible size cost).
+-keepattributes SourceFile,LineNumberTable
+
 # Preserve Protobuf Lite generated message classes
 -keep class se.lublin.humla.protobuf.Mumble** { *; }
 -keep class com.google.protobuf.GeneratedMessageLite { *; }
