@@ -1,6 +1,7 @@
 # Crash reporter/recorder — design
 
-Status: design (accepted direction: local-only record, user-shared export).
+Status: design (accepted direction: local-only record, user-shared export;
+amended after pedantic review — see §10).
 Scope: Mumla OLED on the `foss` flavor only. No network upload, no third-party
 crash SDK.
 
@@ -28,16 +29,34 @@ button in release builds.
   uncaught-exception handler or consumes
   `ActivityManager.getHistoricalProcessExitReasons()`. Crash-adjacent matches
   are fail-soft log lines only (e.g. `HumlaTCP`, `HumlaUDP`), plus a five-table
-  atomic-cleanup comment in `MumlaRoomDatabase`.
-- Single process: the manifest declares no `android:process`, so one
-  `MumlaApplication` instance covers the UI and `MumlaService`. One install
-  point in `MumlaApplication.onCreate()` (before `HumlaService.init()`) sees
-  every thread's uncaught throw.
+  atomic-cleanup comment in
+  [MumlaRoomDatabase](../app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt).
+- Single process: the
+  [manifest](../app/src/main/AndroidManifest.xml) declares no
+  `android:process`, so one
+  [MumlaApplication](../app/src/main/java/se/lublin/mumla/app/MumlaApplication.kt)
+  instance covers the UI and `MumlaService`. The install point is
+  `MumlaApplication.onCreate()`, but it must be the *first* statement — ahead
+  of the current `Settings.getInstance` / theme / DataStore work — so that no
+  startup throw precedes the handler. Limits: per-thread handlers override the
+  default, anything running before `Application.onCreate` (e.g. a future
+  `ContentProvider`) is never covered, and native faults never pass through
+  the Java handler at all. The handler adds same-process fidelity; the
+  exit-info drain below is the backstop, not the other way around.
 - `minSdk 30` makes `ApplicationExitInfo` universally available (added in API
-  30). Draining `getHistoricalProcessExitReasons()` on startup captures Java
-  crashes, native crashes (`REASON_CRASH_NATIVE`, including the Opus/RNNoise
-  JNI path), ANRs, and low-memory kills — with system-provided UTC timestamps
-  and (for crashes) a `traceInputStream`. No polling service is needed.
+  30; see [app/build.gradle](../app/build.gradle) and
+  [humla/build.gradle](../libraries/humla/build.gradle), both `minSdkVersion
+  30`, three ABIs, single `foss` flavor). Draining
+  `getHistoricalProcessExitReasons()` on startup captures Java crashes,
+  native crashes (`REASON_CRASH_NATIVE`, including the Opus/RNNoise JNI path),
+  ANRs, and low-memory kills, with system-provided epoch-millis timestamps.
+  Trace availability differs by reason: Java crashes and ANRs (all-threads
+  dump) carry a `traceInputStream`; low-memory kills and normal exits carry
+  none — and the stream may be null or throw even for crashes, so every read
+  must handle null, catch `IOException`, close the stream, and stream with a
+  byte cap rather than reading fully into memory. Timestamps are wall-clock
+  (`getTimestamp()`), so clock changes are possible — the drain and dedup
+  logic (§4) must not assume monotonicity.
 - FOSS constraints: the project ships a single `foss` flavor aimed at F-Droid
   distribution. ACRA is GPL-compatible but brings a backend and upkeep;
   Firebase Crashlytics / Sentry bring proprietary dependencies and network
@@ -45,86 +64,148 @@ button in release builds.
   see §8.
 - Release builds run R8 (`minifyEnabled = true`). Stack traces from release
   builds are obfuscated unless line numbers survive; the current
-  `proguard-rules.pro` keeps JNI entry points and parcelables but says nothing
-  about `-keepattributes SourceFile,LineNumberTable`. v1 must confirm what the
-  default `proguard-android-optimize.txt` retains and, if needed, add an
-  explicit keepattributes line so traces carry line numbers.
-- Settings live in a Preferences DataStore behind `Settings` /
-  `SettingsRepository` (41 mirrored keys, `settings_*.xml` widgets). A recorder
-  toggle, if added, follows that existing pattern.
-- No `FileProvider` is declared today. v1 avoids needing one: reports are
-  shared as inline text (`ACTION_SEND` + `EXTRA_TEXT`), which comfortably fits
-  a stack trace plus metadata. File attachment (and its provider entry) is
-  deferred to v2 if reports grow a log tail.
+  [proguard-rules.pro](../app/proguard-rules.pro) keeps JNI entry points and
+  parcelables but contains no `-keepattributes SourceFile,LineNumberTable`
+  line. v1 adds it unconditionally (negligible size cost; see §7 step 0) —
+  per-version `mapping.txt` is local-only and F-Droid builds differ, so
+  shipping obfuscated traces with a "retrace later" note would leave
+  maintainers with unusable field data.
+- Settings live in a Preferences DataStore behind
+  [Settings](../app/src/main/java/se/lublin/mumla/Settings.kt) /
+  [SettingsRepository](../app/src/main/java/se/lublin/mumla/SettingsRepository.kt)
+  (41 mirrored keys, `settings_*.xml` widgets). Recording is always on (§3.6
+  explains why no toggle): the crash path must never touch DataStore
+  (`snapshotBlocking()` uses `runBlocking`, which risks deadlock on a dying
+  thread), so a toggle would need a volatile startup-cached flag — machinery
+  unjustified for a recorder that performs no network I/O.
+- No `FileProvider` is declared today. v1 adds one small `<provider>` entry:
+  reports are shared as a `.txt` file attachment (`ACTION_SEND` +
+  `EXTRA_STREAM` from the provider, plus a one-line `EXTRA_TEXT` summary),
+  because a stack-trace payload does not fit inline text — Binder's ~1 MB
+  shared transaction buffer makes a ~256 KB `EXTRA_TEXT` a
+  `TransactionTooLargeException` risk. (The in-tree `ACTION_SEND` precedent in
+  `FavouriteServerListFragment` sends a one-line URL and is not comparable.)
 
 ## 3. Requirements
 
 1. Capture Java crashes (all threads), native crashes, and ANRs on every
    supported device (API 30–36, three ABIs).
-2. Persist reports in app-private storage only (`filesDir/crash-reports/`);
-   no new permissions, no network calls, no Play Services.
+2. Persist reports in the no-backup app-private directory
+   (`getNoBackupFilesDir()/crash-reports/` — persistent across launches,
+   excluded from Auto Backup; `getCacheDir()` is *not* acceptable because the
+   system may evict it, and plain `filesDir/` *is* backed up while
+   `allowBackup="true"` has no exclusion rules).
 3. Never exfiltrate: the only outbound path is an explicit user tap on Share.
+   Backup exclusion (§3.2) is what makes this hold — it is a v1 requirement,
+   not an open question.
 4. Scrub server-identifying and user-identifying data before persisting
-   (hostnames, IPs, usernames, chat text); the report preview must show exactly
-   what would be shared.
-5. Bounded storage: cap count and per-file size; recording must never itself
-   crash the app or fill the disk (every I/O path is guarded and fail-silent).
+   (hostnames, IPs, usernames, credentials, chat text); the report preview
+   must show exactly what would be shared.
+5. Bounded storage: cap count (newest 8) and per-file size (~256 KB, enforced
+   during a byte-capped streaming copy — never read-fully-then-drop);
+   recording must never itself crash the app or fill the disk (every I/O path
+   is guarded and fail-silent).
 6. Survive process death: the crash-time write path uses only synchronous,
-   allocation-light file I/O (no DataStore, no Hilt, no coroutines).
+   allocation-light file I/O (no DataStore, no Hilt, no coroutines, no
+   `runBlocking`). Handler work is capped (pre-sized buffer, truncated stack,
+   byte-capped stream copy) because on an `OutOfMemoryError` path the
+   handler's own allocation can throw. Delegation to the previous default
+   handler happens in a `finally` block, never as a post-write call.
 7. GPL-3.0-or-later clean: no new proprietary or network-service dependencies.
 
 ## 4. Architecture
 
 New code lives in `:app` (the library must stay UI- and storage-policy-free):
 
-- `util/CrashReporter.kt` — installable singleton. `install(context)` runs
-  first in `MumlaApplication.onCreate()`:
+- `util/CrashReporter.kt` — installable singleton. `install(context)` runs as
+  the first statement of `MumlaApplication.onCreate()` (before
+  `HumlaService.init()` and before `Settings` access):
   1. chains the previous default uncaught-exception handler, writes the
      current throw's stack trace + header synchronously to a new report file,
-     then delegates to the previous handler (preserving the system's crash
-     dialog / process kill behavior);
-  2. drains `getHistoricalProcessExitReasons()` for exit reasons since the
-     last-seen timestamp (persisted alongside the reports), converting
-     `REASON_CRASH`, `REASON_CRASH_NATIVE`, and `REASON_ANR` entries —
-     including their `traceInputStream` — into report files; dedupes against
-     the handler-written file for the same event.
-- `util/CrashReportStore.kt` — pure file store: list / read / delete /
-  delete-all, rotation (keep newest 8, drop larger than ~256 KB at write
-  time), atomic write-then-rename, all I/O wrapped in try/catch returning
-  fallbacks.
+     then delegates to the previous handler in a `finally` block (preserving
+     the system's crash dialog / process kill behavior on every path,
+     including `Error`/`OutOfMemoryError`);
+  2. drains `getHistoricalProcessExitReasons()` for exit reasons newer than
+     the persisted last-seen watermark, converting `REASON_CRASH`,
+     `REASON_CRASH_NATIVE`, and `REASON_ANR` entries into report files via a
+     byte-capped streaming copy of `traceInputStream` (null → trace-less
+     report; `IOException` → abandon that entry; always closed; truncation
+     recorded in the `truncated` field). The watermark advances past *all*
+     observed reasons, including filtered-out low-memory kills and normal
+     exits — otherwise every launch re-scans the bounded system history
+     window, and a crash loop could evict entries before they are consumed.
+     Watermark I/O uses an atomic write-then-rename (tmp file + `renameTo`)
+     on the normal path only; the handler never touches it.
+- `util/CrashReportStore.kt` — pure file store rooted at
+  `getNoBackupFilesDir()/crash-reports/`: list / read / delete / delete-all,
+  rotation (keep newest 8), atomic write-then-rename, all I/O wrapped in
+  try/catch returning fallbacks. A corrupt file is skipped, never parsed
+  leniently.
 - `util/CrashReportScrubber.kt` — pure function `scrub(String): String`
-  (unit-testable on the JVM): redacts IPv4/IPv6 literals, `user@host`-shaped
-  tokens, and `mumble://` URLs; keeps exception class, message skeleton,
-  class/method/file/line frames, and thread name. Anything uncertain is
-  redacted, not kept.
-- Report schema (one JSON file per incident, UTF-8):
-  `id` (timestamp-based), `capturedAtUtc`, `source` (`uncaught-handler` |
-  `exit-info`), `reason`, `appVersion` (`BuildConfig.VERSION_NAME` /
-  `VERSION_CODE`), `osVersion`, `deviceModel`, `abi`, `processName`,
-  `scrubbedTrace`, and `rssKb`/`pssKb` when provided by `ApplicationExitInfo`.
-  No server list, certificate, username, chat, or logcat in v1.
+  (unit-testable on the JVM). Redaction list: IPv4/IPv6 literals, `user@host`
+  tokens, `mumble://` URLs, **bare DNS hostnames** (e.g. `Server.host` values
+  appearing as `Failed to connect to voice.example.com` with no URL wrapper),
+  TLS identity strings (verified host, SAN names, fingerprints — as surfaced
+  by the certificate dialogs in `MumlaActivity`), usernames / passwords /
+  tokens, file system paths, and email-shaped tokens. Exception *message*
+  transform ("message skeleton"): keep the exception class name and the first
+  stack frame; run the redaction list over the message text and, if any
+  redaction fires or the message contains `=`/`:`-delimited key material,
+  replace the message body with `<redacted>` — messages are guilty until
+  proven innocent. Kept verbatim: exception class, class/method/file/line
+  frames, thread name (unless it matches a redaction pattern). Note:
+  `deviceModel` + `osVersion` in the schema are fingerprintable when pasted
+  into a public issue, so the share screen carries a one-line
+  public-posting warning.
+- Stored schema (one JSON file per incident, UTF-8) vs. shared payload (a
+  rendered `.txt` attachment + one-line summary — never the raw JSON):
+  `id` (`<exitTimestamp>-<pid>`, unique under crash loops),
+  `exitTimestamp` (system wall-clock, used for drain/dedup joins),
+  `capturedAtUtc` (when this device wrote the file),
+  `source` (`uncaught-handler` | `exit-info`), `reason` (mapped `REASON_*`
+  string), `appVersion` (`BuildConfig.VERSION_NAME` / `VERSION_CODE`; note
+  `VERSION_NAME` is `git describe` output and is a commit hash, not semver,
+  on untagged dev builds), `osVersion`, `deviceModel`, `abi`,
+  `processName`, `pid`, `truncated` (bool), `scrubbedTrace`, and
+  `rssKb`/`pssKb` (`0` means unknown — `ApplicationExitInfo` zeroes them when
+  unavailable).
+- Dedup between the handler-written file and the exit-info entry for the same
+  event uses an exact join key — exit `timestamp` + `pid` + `reason`, falling
+  back to a content hash of the two traces — never timestamp proximity. (A
+  "same minute" window would collapse genuine crash loops and defeat the
+  rotation test in §7.)
 - UI:
-  - `MumlaActivity` checks the store on startup (off the main thread) and
-    shows a non-blocking Snackbar — "Mumla OLED closed unexpectedly" with
-    View / Share / Dismiss — only when at least one unseen report exists.
-  - `AboutSettingsFragment` gains a "Crash reports" preference opening a
-    simple list (timestamp + reason) with per-report View / Share / Delete
-    and a Delete-all action. The detail view renders the exact scrubbed text
-    that Share would send.
-  - Share uses `ACTION_SEND` text/plain with the report body; no FileProvider
-    in v1.
+  - [MumlaActivity](../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
+    checks the store on startup off the main thread. When at least one
+    *unseen* report exists it shows a single-action Snackbar ("Mumla OLED
+    closed unexpectedly", action: View) that opens the Crash reports screen;
+    swipe/timeout is the dismissal. "Unseen" is a DataStore-backed
+    last-viewed report id, read/written on the normal path only, single-shot
+    per report — coordinated with the activity's existing pause-dismissal
+    discipline so rotation cannot re-prompt or leak.
+  - [AboutSettingsFragment](../app/src/main/java/se/lublin/mumla/preference/AboutSettingsFragment.kt)
+    gains a "Crash reports" preference opening a **new fragment** (list:
+    timestamp + reason; per-report View / Share / Delete; Delete-all). This
+    needs [SettingsActivity](../app/src/main/java/se/lublin/mumla/preference/SettingsActivity.kt)
+    `ALLOWED_FRAGMENTS` plus
+    [preference_headers.xml](../app/src/main/res/xml/preference_headers.xml)
+    wiring — a full screen, not a preference tweak.
+  - The detail view renders the exact scrubbed `.txt` that Share would send
+    (preview = payload, no hidden fields). Share uses the new `<provider>`
+    (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
+    `EXTRA_TEXT` summary.
 
 ## 5. Privacy
 
-- Local-only by construction: the recorder performs zero network I/O, and the
-  report directory is app-private (`MODE_PRIVATE` files, excluded from
-  `allowBackup` consideration — crash traces must not ride device backup; set
-  `android:fullBackupContent` exclusion or store under `cacheDir`-adjacent
-  no-backup path — implementation detail to confirm).
+- Local-only by construction: the recorder performs zero network I/O, and
+  the report directory lives under `getNoBackupFilesDir()`, which Auto Backup
+  never uploads — crash traces cannot ride device backup (§3.2–§3.3).
 - Recording itself needs no consent gate (nothing leaves the device), but the
   About screen documents that in one sentence, and Delete-all is one tap away.
 - Share preview = share payload: the detail screen shows the scrubbed file
-  verbatim, so there is no hidden-field surprise.
+  verbatim, so there is no hidden-field surprise; a one-line warning notes
+  that device model / OS version will be visible wherever the report is
+  posted.
 
 ## 6. Edge cases
 
@@ -132,32 +213,47 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
   launch by the `ApplicationExitInfo` drain, which is the real backstop — the
   handler only adds same-process fidelity.
 - Crash inside the handler or store: every write path catches `Throwable` and
-  gives up silently; the previous default handler is always delegated to.
-- R8-obfuscated frames: readable class names are not guaranteed in release
-  traces; line numbers are the priority (§2). If the keepattributes check
-  fails, v1 ships with obfuscated-but-symbolicatable traces and documents how
-  to retrace with the matching `mapping.txt`.
-- Low-memory kills (`REASON_LOW_MEMORY`) and normal exits are recorded in the
-  drain filter-out list, not as reports — only crash/ANR reasons create files.
+  gives up silently; the previous default handler is always reached via
+  `finally`.
+- R8-obfuscated frames: handled by the unconditional `-keepattributes
+  SourceFile,LineNumberTable` (§7 step 0), so release traces carry line
+  numbers by design rather than by checking defaults.
+- Low-memory kills (`REASON_LOW_MEMORY`) and normal exits advance the
+  watermark but create no report files — only crash/ANR reasons create files.
 - Duplicate events (handler file + exit-info entry for one crash) are merged
-  by timestamp proximity (same minute, same process) rather than shown twice.
+  by the exact join key in §4, never by time window.
 - Storage pressure: rotation runs on every write; a corrupt file is skipped,
   never parsed leniently.
+- System history eviction: because the watermark advances on every drain and
+  the drain runs on every startup, a crash loop can only lose entries if the
+  app is never relaunched between system-side evictions — accepted and
+  documented.
 
 ## 7. Implementation plan (for the follow-up worktree branch)
 
-1. `CrashReportScrubber` + JVM unit tests (redaction cases, frame preservation).
-2. `CrashReportStore` + JVM unit tests (rotation, corrupt-file tolerance).
-3. `CrashReporter.install()` wiring in `MumlaApplication`, exit-info drain
-   with last-seen watermark.
-4. R8 line-number check; add `-keepattributes` if missing.
-5. About-screen list/detail/delete UI + startup Snackbar + strings (en source;
-   other locales fall back per existing `resourceConfigurations`).
+0. Add `-keepattributes SourceFile,LineNumberTable` to
+   [proguard-rules.pro](../app/proguard-rules.pro) — determines whether any
+   release trace is debuggable, so it precedes all other work.
+1. `CrashReportScrubber` + JVM unit tests (redaction cases per §4 list,
+   frame preservation, message-skeleton behavior).
+2. `CrashReportStore` + JVM unit tests (rotation newest-8, corrupt-file
+   tolerance, atomic-write behavior).
+3. `CrashReporter.install()` wiring in `MumlaApplication` (first statement),
+   exit-info drain with watermark, exact-key dedup.
+4. No-backup placement + `<provider>` manifest entry.
+5. Crash-reports fragment (list/detail/delete-all), startup Snackbar,
+   unseen-state, strings (en source; other locales fall back per existing
+   `resourceConfigurations`), `ALLOWED_FRAGMENTS` + headers wiring.
 6. Manual verification matrix: Java throw (debug trigger via `adb`), native
-   fault in test worktree only, ANR via blocked main thread, relaunch prompt,
-   share payload inspection, rotation under 9+ induced crashes.
+   fault in test worktree only, ANR via blocked main thread, relaunch
+   prompt, share-payload inspection (attachment opens, summary line correct),
+   rotation under 9+ induced crashes *within one minute* (dedup must not
+   merge them), backup-exclusion check (Auto Backup inspector shows no
+   report files), `TransactionTooLarge`-free sharing on a low-RAM device.
 7. `./scripts/check.sh` green in the worktree before review; no push/merge
-   without explicit request.
+   without explicit request. Archive the release `mapping.txt` alongside
+   each release build as a matter of hygiene (defense in depth, not a
+   substitute for step 0).
 
 ## 8. Alternatives considered
 
@@ -175,10 +271,23 @@ New code lives in `:app` (the library must stay UI- and storage-policy-free):
 
 ## 9. Open questions for implementation time
 
-- Exact no-backup placement for the report directory (confirm against the
-  current `allowBackup="true"` manifest setting).
-- Whether to add a DataStore-backed "crash recording on/off" toggle in
-  General settings, or ship always-on-local (recommended: always-on, since
-  nothing leaves the device).
 - Long-press-version dev trigger for a test crash (debug builds only) versus
   `adb`-only induction.
+- Whether the Crash reports screen should also surface the last-seen
+  non-crash exits (e.g. low-memory kills) as informational rows — currently
+  out of scope; watermark-only.
+
+## 10. Review amendments
+
+Pedantic review of the original version returned 12 defects and 3 pedantic
+findings; all were accepted and folded in above. Material changes versus the
+first version: storage moved from `filesDir/` to `getNoBackupFilesDir()`
+(backup exfiltration); share transport changed from inline `EXTRA_TEXT` to
+`FileProvider` attachment (Binder limits); scrubber pattern list extended
+with bare hostnames, TLS identities, and credentials plus a defined message
+transform; exact drain/dedup/watermark semantics specified; UI re-specified
+around Snackbar's single action and a new fragment with allowlist wiring;
+recording fixed as always-on; `-keepattributes` made unconditional step 0;
+handler delegation specified as `finally` with capped allocation; schema
+gained exit-timestamp/pid/truncation fields; in-tree references converted to
+portable relative links.
