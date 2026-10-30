@@ -54,6 +54,7 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentTransaction
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import java.io.IOException
 import java.net.MalformedURLException
 import java.security.GeneralSecurityException
@@ -86,9 +87,14 @@ import se.lublin.mumla.servers.FavouriteServerListFragment
 import se.lublin.mumla.servers.ServerEditFragment
 import se.lublin.mumla.service.IMumlaService
 import se.lublin.mumla.service.MumlaService
+import se.lublin.mumla.util.CrashReporter
+import se.lublin.mumla.util.CrashReportSeenStore
 import se.lublin.mumla.util.HumlaServiceFragment
 import se.lublin.mumla.util.HumlaServiceProvider
 import se.lublin.mumla.util.MumlaTrustStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     FavouriteServerListFragment.ServerConnectHandler, HumlaServiceProvider,
@@ -117,6 +123,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     private var mPermissionDialog: AlertDialog? = null
     private var mBackPressDialog: AlertDialog? = null
     private var mCertDialog: AlertDialog? = null
+    private var crashSnackbar: Snackbar? = null
     // Dedicated host for the first-run certificate guide. It carries an
     // OnDismissListener with first-run side effects that must never fire for
     // the TLS dialogs hosted by mCertDialog above (round-2 D2).
@@ -541,6 +548,63 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         }
     }
 
+    private fun checkCrashReports() {
+        val ctx = this
+        Thread {
+            try {
+                val store = CrashReporter.store(ctx)
+                val entries = store.list()
+                if (entries.isEmpty()) {
+                    return@Thread
+                }
+                val newest = entries[0]
+                val lastSeen = try {
+                    kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                        CrashReportSeenStore.getLastSeen(ctx)
+                    }
+                } catch (_: Throwable) {
+                    null
+                }
+                if (lastSeen == newest.id) {
+                    return@Thread
+                }
+                runOnUiThread { showCrashSnackbar(newest.id) }
+            } catch (_: Throwable) {
+            }
+        }.start()
+    }
+
+    private fun showCrashSnackbar(newestId: String) {
+        if (isFinishing || isDestroyed) {
+            return
+        }
+        // Single-shot per report: write the last-viewed id when first shown,
+        // so rotation dismisses without re-prompting and swipe/timeout never resurfaces.
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                CrashReportSeenStore.setLastSeen(this@MumlaActivity, newestId)
+            } catch (_: Throwable) {
+            }
+        }
+        val root = findViewById<View>(android.R.id.content) ?: return
+        val snackbar = Snackbar.make(root, R.string.crash_prompt, Snackbar.LENGTH_LONG)
+            .setAction(R.string.crash_view) { openCrashReports() }
+        crashSnackbar = snackbar
+        snackbar.show()
+    }
+
+    private fun openCrashReports() {
+        try {
+            val intent = Intent(this, SettingsActivity::class.java)
+            intent.putExtra(
+                SettingsActivity.EXTRA_LAUNCH_FRAGMENT,
+                "se.lublin.mumla.preference.CrashReportsFragment",
+            )
+            startActivity(intent)
+        } catch (_: Throwable) {
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val settings = Settings.getInstance(this)
         mSettings = settings
@@ -676,6 +740,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             } else {
                 StartupAction().execute(this)
             }
+            checkCrashReports()
         } else if (pendingFirstRunStartup) {
             // Recreation while first-run generation was in flight on the dead
             // instance: its onPostExecute hands StartupAction here instead of
@@ -739,6 +804,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         }
         dismissCertDialog()
         dismissFirstRunDialog()
+        val snackbar = crashSnackbar
+        if (snackbar != null) {
+            snackbar.dismiss()
+            crashSnackbar = null
+        }
 
         val service = mService
         if (service != null) {

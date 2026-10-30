@@ -1,14 +1,40 @@
 package se.lublin.mumla.preference
 
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
 import android.util.Log
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.Fragment
 import se.lublin.mumla.R
 import se.lublin.mumla.app.BaseActivity
+import se.lublin.mumla.service.IMumlaService
+import se.lublin.mumla.service.MumlaService
 
 class SettingsActivity : BaseActivity() {
+    private var crashService: IMumlaService? = null
+    private var crashBound: Boolean = false
+    private var crashTestUnlocked: Boolean = false
+
+    private val crashConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            crashBound = true
+            try {
+                crashService = (service as MumlaService.MumlaBinder).getService()
+            } catch (_: Throwable) {
+                crashService = null
+            }
+            notifyCrashFragment()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            crashBound = false
+            crashService = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,10 +61,31 @@ class SettingsActivity : BaseActivity() {
         })
 
         if (savedInstanceState == null) {
-            supportFragmentManager
-                .beginTransaction()
-                .replace(R.id.settings_container, RootPreferenceFragment())
-                .commit()
+            val deepLink = intent?.getStringExtra(EXTRA_LAUNCH_FRAGMENT)
+            if (deepLink != null && ALLOWED_FRAGMENTS.contains(deepLink)) {
+                try {
+                    val fragmentClass = Class.forName(deepLink)
+                    val fragment = fragmentClass.getDeclaredConstructor().newInstance() as Fragment
+                    val args = Bundle()
+                    args.putCharSequence("title", getString(R.string.crash_reports))
+                    fragment.arguments = args
+                    supportFragmentManager
+                        .beginTransaction()
+                        .replace(R.id.settings_container, fragment)
+                        .commit()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not instantiate deep-link fragment $deepLink", e)
+                    supportFragmentManager
+                        .beginTransaction()
+                        .replace(R.id.settings_container, RootPreferenceFragment())
+                        .commit()
+                }
+            } else {
+                supportFragmentManager
+                    .beginTransaction()
+                    .replace(R.id.settings_container, RootPreferenceFragment())
+                    .commit()
+            }
         }
 
         supportFragmentManager.setFragmentResultListener("launchFragment", this) { _, result ->
@@ -46,7 +93,7 @@ class SettingsActivity : BaseActivity() {
             if (fragmentClassName != null) {
                 // Allowlist: the name originates from the XML app:fragment
                 // attribute via a same-process FragmentResult (not externally
-                // exploitable), but only the five known settings fragments
+                // exploitable), but only the known settings fragments
                 // may ever be instantiated here — never an arbitrary
                 // no-arg Fragment from a mis-authored XML value.
                 if (!ALLOWED_FRAGMENTS.contains(fragmentClassName)) {
@@ -70,6 +117,68 @@ class SettingsActivity : BaseActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        try {
+            val intent = Intent(this, MumlaService::class.java)
+            // Flag 0 like MumlaActivity: the bind only succeeds while the
+            // service is already running; buttons sit disabled while unbound.
+            crashBound = bindService(intent, crashConnection, 0)
+            if (!crashBound) {
+                crashService = null
+            }
+        } catch (_: Throwable) {
+            crashBound = false
+            crashService = null
+        }
+    }
+
+    override fun onStop() {
+        if (crashBound) {
+            try {
+                unbindService(crashConnection)
+            } catch (_: Throwable) {
+            }
+            crashBound = false
+            crashService = null
+        }
+        super.onStop()
+    }
+
+    fun getCrashService(): IMumlaService? {
+        return crashService
+    }
+
+    fun isCrashBound(): Boolean {
+        return crashBound
+    }
+
+    fun isCrashConnected(): Boolean {
+        return try {
+            crashService?.isConnected() == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    fun isCrashTestUnlocked(): Boolean {
+        return crashTestUnlocked
+    }
+
+    fun unlockCrashTest() {
+        crashTestUnlocked = true
+    }
+
+    private fun notifyCrashFragment() {
+        try {
+            val fragment = supportFragmentManager.findFragmentById(R.id.settings_container)
+            if (fragment is CrashReportsFragment) {
+                fragment.onServiceStateChanged()
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     class RootPreferenceFragment : MumlaPreferenceFragment() {
         override fun onCreateMumlaPreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.preference_headers, rootKey)
@@ -79,13 +188,17 @@ class SettingsActivity : BaseActivity() {
     companion object {
         private val TAG: String = SettingsActivity::class.java.simpleName
 
-        // The five fragments declared in preference_headers.xml (app:fragment).
+        const val EXTRA_LAUNCH_FRAGMENT = "launch_fragment"
+
+        // The fragments declared in preference_headers.xml (app:fragment) plus
+        // the crash-reports screen (launched from About).
         private val ALLOWED_FRAGMENTS: Set<String> = setOf(
             "se.lublin.mumla.preference.GeneralSettingsFragment",
             "se.lublin.mumla.preference.AuthenticationSettingsFragment",
             "se.lublin.mumla.preference.AudioSettingsFragment",
             "se.lublin.mumla.preference.AppearanceSettingsFragment",
             "se.lublin.mumla.preference.AboutSettingsFragment",
+            "se.lublin.mumla.preference.CrashReportsFragment",
         )
     }
 }
