@@ -123,6 +123,7 @@ LOCAL_SRC_FILES := audio_engine/PreSpeechRingBuffer.cpp \
                    audio_engine/OpusVoiceDecoder.cpp \
                    audio_engine/AudioOutputEngine.cpp \
                    audio_engine/NativeAudioOutputEngineJni.cpp \
+                   audio_engine/NativeCrashTestJni.cpp \
                    audio_engine/jitter/jitter.c \
                    crypto/CryptStateOCB2.cpp \
                    crypto/NativeCryptStateJni.cpp
