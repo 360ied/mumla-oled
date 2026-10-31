@@ -598,10 +598,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             val intent = Intent(this, SettingsActivity::class.java)
             intent.putExtra(
                 SettingsActivity.EXTRA_LAUNCH_FRAGMENT,
-                "se.lublin.mumla.preference.CrashReportsFragment",
+                se.lublin.mumla.preference.CrashReportsFragment::class.java.name,
             )
             startActivity(intent)
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not open crash reports", e)
         }
     }
 
@@ -735,12 +736,14 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         if (savedInstanceState == null) {
             // Got no instance bundle: this is run only on real app startup -- not when Android
             // recreates the activity on configuration change, like screen rotation.
+            // Crash prompt is non-first-run only so it never overlays the
+            // first-run certificate guide.
             if (settings.isFirstRun) {
                 showFirstRunGuide()
             } else {
                 StartupAction().execute(this)
+                checkCrashReports()
             }
-            checkCrashReports()
         } else if (pendingFirstRunStartup) {
             // Recreation while first-run generation was in flight on the dead
             // instance: its onPostExecute hands StartupAction here instead of

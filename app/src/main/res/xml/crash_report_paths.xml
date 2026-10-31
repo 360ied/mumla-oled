@@ -17,6 +17,10 @@
   -->
 <paths>
     <!-- getNoBackupFilesDir() is a sibling of getFilesDir(); the ../ hop
-         resolves inside the app-private dir and never leaves it. -->
+         resolves inside the app-private dir and never leaves it. Depends on
+         SimplePathStrategy canonicalization; share failures surface as a
+         toast (see CrashReportsFragment.shareReport). -->
     <files-path name="crash-reports" path="../no_backup/crash-reports/" />
+    <!-- Staged share payloads (*.txt); keeps the store dir JSON-only. -->
+    <cache-path name="crash-shares" path="crash-shares/" />
 </paths>

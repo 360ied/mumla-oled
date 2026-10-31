@@ -17,35 +17,35 @@
   ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   -->
 
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto">
+<!-- app: namespace for key/title/summary/fragment to match preference_headers.xml. -->
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
     <PreferenceCategory
-        android:key="crash_list_category"
-        android:title="@string/crash_reports"
+        app:key="crash_list_category"
+        app:title="@string/crash_reports"
         app:iconSpaceReserved="false">
     </PreferenceCategory>
     <Preference
-        android:key="crash_delete_all"
-        android:title="@string/crash_delete_all"
+        app:key="crash_delete_all"
+        app:title="@string/crash_delete_all"
         app:iconSpaceReserved="false" />
     <PreferenceCategory
-        android:key="crash_test"
-        android:title="@string/crash_test"
+        app:key="crash_test"
+        app:title="@string/crash_test"
         app:iconSpaceReserved="false">
         <Preference
-            android:key="crash_test_java"
-            android:title="@string/crash_test_java"
-            android:summary="@string/crash_test_summary"
+            app:key="crash_test_java"
+            app:title="@string/crash_test_java"
+            app:summary="@string/crash_test_summary"
             app:iconSpaceReserved="false" />
         <Preference
-            android:key="crash_test_native"
-            android:title="@string/crash_test_native"
-            android:summary="@string/crash_test_summary"
+            app:key="crash_test_native"
+            app:title="@string/crash_test_native"
+            app:summary="@string/crash_test_summary"
             app:iconSpaceReserved="false" />
         <Preference
-            android:key="crash_test_anr"
-            android:title="@string/crash_test_anr"
-            android:summary="@string/crash_test_summary"
+            app:key="crash_test_anr"
+            app:title="@string/crash_test_anr"
+            app:summary="@string/crash_test_summary"
             app:iconSpaceReserved="false" />
     </PreferenceCategory>
 </PreferenceScreen>

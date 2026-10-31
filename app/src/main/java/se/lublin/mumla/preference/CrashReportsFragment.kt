@@ -22,6 +22,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.method.ScrollingMovementMethod
+import android.util.Log
 import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
@@ -115,7 +116,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             }
             observer = obs
             svc.registerObserver(obs)
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to register crash service observer", e)
         }
     }
 
@@ -124,7 +126,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             val obs = observer ?: return
             observer = null
             host()?.getCrashService()?.unregisterObserver(obs)
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to unregister crash service observer", e)
         }
     }
 
@@ -149,7 +152,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                     } catch (_: Throwable) {
                         entry.id
                     }
-                    pref.title = "$whenStr • ${entry.reason}"
+                    pref.title = getString(R.string.crash_row, whenStr, entry.reason)
                     pref.summary = entry.id
                     pref.setOnPreferenceClickListener {
                         showDetail(entry)
@@ -163,7 +166,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             if (testCategory != null) {
                 testCategory.isVisible = isUnlocked()
             }
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to refresh crash list", e)
         }
     }
 
@@ -192,7 +196,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             if (testCategory != null) {
                 testCategory.isVisible = isUnlocked()
             }
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to refresh crash test state", e)
         }
     }
 
@@ -232,33 +237,59 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 }
                 .setNeutralButton(R.string.close, null)
                 .show()
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to show crash detail", e)
+            try {
+                Toast.makeText(requireContext(), R.string.crash_reports_empty, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {
+            }
         }
     }
 
     private fun shareReport(entry: CrashReportStore.Entry, summary: String, txt: String) {
+        // Stage under cacheDir (JSON-only store dir) with a unique name so
+        // repeat shares never collide and Delete-all stays JSON-scoped
+        // (deleteAll also removes *.txt as a backstop).
+        val ctx = try {
+            requireContext()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Share without context", e)
+            return
+        }
+        val dir = try {
+            File(ctx.cacheDir, "crash-shares").also { if (!it.isDirectory) it.mkdirs() }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not stage share file", e)
+            return
+        }
+        val safeId = entry.id.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64).ifEmpty { "report" }
+        val txtFile = File(dir, "$safeId-${System.currentTimeMillis()}.txt")
         try {
-            val ctx = requireContext()
-            val dir = CrashReporter.storeDir(ctx)
-            val txtFile = File(dir, entry.id.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".txt")
+            txtFile.writeText(txt, Charsets.UTF_8)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not write share file", e)
+            return
+        }
+        val authority = ctx.packageName + ".crashreports"
+        val uri = try {
+            FileProvider.getUriForFile(ctx, authority, txtFile)
+        } catch (e: Throwable) {
+            Log.w(TAG, "FileProvider share failed; check crash_report_paths.xml", e)
             try {
-                txtFile.writeText(txt, Charsets.UTF_8)
+                Toast.makeText(ctx, R.string.crash_reports_empty, Toast.LENGTH_SHORT).show()
             } catch (_: Throwable) {
-                return
             }
-            val authority = ctx.packageName + ".crashreports"
-            val uri = try {
-                FileProvider.getUriForFile(ctx, authority, txtFile)
-            } catch (_: Throwable) {
-                return
-            }
+            return
+        }
+        try {
             val intent = Intent(Intent.ACTION_SEND)
             intent.type = "text/plain"
             intent.putExtra(Intent.EXTRA_STREAM, uri)
             intent.putExtra(Intent.EXTRA_TEXT, summary)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             startActivity(Intent.createChooser(intent, getString(R.string.share)))
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Share intent failed", e)
         }
     }
 
@@ -319,12 +350,20 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         when (kind) {
             "java" -> throw RuntimeException("Crash-test Java throw")
             "native" -> NativeCrashTest.nativeCrash()
+            // Well past the ~5s ANR threshold to guarantee the system dialog.
             "anr" -> Handler(Looper.getMainLooper()).post {
                 try {
-                    Thread.sleep(15_000)
-                } catch (_: InterruptedException) {
+                    Thread.sleep(ANR_FREEZE_MS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
                 }
             }
         }
+    }
+
+    companion object {
+        private val TAG: String = CrashReportsFragment::class.java.simpleName
+
+        private const val ANR_FREEZE_MS = 15_000L
     }
 }

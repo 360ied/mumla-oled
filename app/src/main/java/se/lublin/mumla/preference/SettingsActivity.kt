@@ -17,7 +17,6 @@ import se.lublin.mumla.service.MumlaService
 class SettingsActivity : BaseActivity() {
     private var crashService: IMumlaService? = null
     private var crashBound: Boolean = false
-    private var crashTestUnlocked: Boolean = false
 
     private val crashConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -60,6 +59,10 @@ class SettingsActivity : BaseActivity() {
             }
         })
 
+        // Deep-link entry (e.g. from the crash Snackbar) replaces without a
+        // back-stack entry, so Back finishes the activity. The in-app About
+        // path below uses addToBackStack so Back returns to About. Same
+        // screen, intentionally different Back behavior.
         if (savedInstanceState == null) {
             val deepLink = intent?.getStringExtra(EXTRA_LAUNCH_FRAGMENT)
             if (deepLink != null && ALLOWED_FRAGMENTS.contains(deepLink)) {
@@ -161,12 +164,16 @@ class SettingsActivity : BaseActivity() {
         }
     }
 
+    // Session-only (process-scoped): survives rotation in the same process,
+    // resets on process death so a recreated process relocks. Deliberately
+    // not saved in onSaveInstanceState (which the system restores after
+    // process death too).
     fun isCrashTestUnlocked(): Boolean {
-        return crashTestUnlocked
+        return crashTestUnlockedGlobal
     }
 
     fun unlockCrashTest() {
-        crashTestUnlocked = true
+        crashTestUnlockedGlobal = true
     }
 
     private fun notifyCrashFragment() {
@@ -187,6 +194,9 @@ class SettingsActivity : BaseActivity() {
 
     companion object {
         private val TAG: String = SettingsActivity::class.java.simpleName
+
+        @Volatile
+        private var crashTestUnlockedGlobal: Boolean = false
 
         const val EXTRA_LAUNCH_FRAGMENT = "launch_fragment"
 
