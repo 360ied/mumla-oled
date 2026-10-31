@@ -125,7 +125,7 @@ object CrashReporter {
                         } catch (_: Throwable) {
                         }
                         try {
-                            System.exit(10)
+                            System.exit(NO_HANDLER_EXIT_CODE)
                         } catch (_: Throwable) {
                         }
                     }
@@ -135,7 +135,10 @@ object CrashReporter {
         }
     }
 
-    /** Writer that drops beyond maxChars so huge stacks never materialize. */
+    /** Writer that drops beyond maxChars so huge stacks never materialize.
+     * Overrides every StringWriter mutator: PrintWriter.print/println
+     * funnels through write(String,off,len), and append() touches the
+     * buffer directly — missing either reopens the OOM path. */
     private class BoundedStringWriter(private val maxChars: Int) : StringWriter(8192) {
         override fun write(cbuf: CharArray, off: Int, len: Int) {
             val remaining = maxChars - buffer.length
@@ -143,15 +146,35 @@ object CrashReporter {
             super.write(cbuf, off, minOf(len, remaining))
         }
         override fun write(str: String) {
+            write(str, 0, str.length)
+        }
+        override fun write(str: String, off: Int, len: Int) {
             val remaining = maxChars - buffer.length
             if (remaining <= 0) return
-            super.write(str.substring(0, minOf(str.length, remaining)))
+            super.write(str, off, minOf(len, remaining))
         }
         override fun write(c: Int) {
             if (buffer.length >= maxChars) return
             super.write(c)
         }
+        override fun append(csq: CharSequence?): StringWriter {
+            if (csq == null) return this
+            write(csq.toString())
+            return this
+        }
+        override fun append(csq: CharSequence?, start: Int, end: Int): StringWriter {
+            if (csq == null) return this
+            write(csq.toString().substring(start, end))
+            return this
+        }
+        override fun append(c: Char): StringWriter {
+            write(c.code)
+            return this
+        }
     }
+
+    // Theoretical no-previous-handler branch only; named for greppability.
+    private const val NO_HANDLER_EXIT_CODE = 10
 
     private fun writeHandlerReport(appContext: Context, thread: Thread, throwable: Throwable) {
         try {
@@ -228,11 +251,18 @@ object CrashReporter {
             } catch (_: Throwable) {
                 return
             } ?: return
-            if (reasons.isEmpty()) {
-                return
-            }
             val dir = storeDir(appContext)
             val store = CrashReportStore(dir)
+            if (reasons.isEmpty()) {
+                // No history (e.g. after reboot or system eviction): still
+                // retry a pending merge so a prior transient failure is not
+                // stuck until the next non-empty drain.
+                try {
+                    mergePending(store)
+                } catch (_: Throwable) {
+                }
+                return
+            }
             var watermark = readWatermark(dir)
             var maxSeen = watermark
             for (info in reasons) {
@@ -240,6 +270,9 @@ object CrashReporter {
                     val ts = info.timestamp
                     // '<' (not '<='): same-millisecond exits are rechecked;
                     // store.exists() dedups already-recorded ids.
+                    // Accepted limitation (design §2/§6): timestamps are wall
+                    // clock, so a backward clock jump can skip a new crash
+                    // (no monotonic clock in ApplicationExitInfo).
                     if (ts < watermark) {
                         continue
                     }
@@ -305,7 +338,7 @@ object CrashReporter {
         } catch (_: Throwable) {
             0L
         }
-        val processName = try {
+        val processName: String = try {
             info.processName ?: safeProcessName()
         } catch (_: Throwable) {
             safeProcessName()
@@ -321,7 +354,7 @@ object CrashReporter {
             Build.VERSION.RELEASE,
             Build.MODEL,
             safeAbi(),
-            processName ?: safeProcessName(),
+            processName,
             pid,
             truncated,
             scrubbed,
@@ -686,10 +719,16 @@ object CrashReporter {
             val handlerWrite = extractLong(rawJson, "handlerWriteTime")
             if (handlerWrite != null) sb.append("handlerWriteTime: ").append(handlerWrite).append("\n")
             // Explicit true/false (not just when true) so the recipient can
-            // tell a capped trace from a complete one.
+            // tell a capped trace from a complete one. Whitespace-tolerant:
+            // future pretty-printing must not silently flip shares to false.
             val headerEnd = rawJson.indexOf("\"scrubbedTrace\"")
             val header = if (headerEnd >= 0) rawJson.substring(0, headerEnd) else rawJson
-            sb.append("truncated: ").append(if (header.contains("\"truncated\":true")) "true" else "false").append("\n")
+            val truncatedFlag = try {
+                Regex("\"truncated\"\\s*:\\s*true").containsMatchIn(header)
+            } catch (_: Throwable) {
+                header.contains("\"truncated\":true")
+            }
+            sb.append("truncated: ").append(if (truncatedFlag) "true" else "false").append("\n")
             val exitTs = extractLong(rawJson, "exitTimestamp")
             if (exitTs != null) {
                 sb.append("exitTimestamp: ").append(exitTs).append("\n")
