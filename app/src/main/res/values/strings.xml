@@ -218,7 +218,7 @@
 
     <!-- Crash reports -->
     <string name="crash_reports">Crash reports</string>
-    <string name="crash_reports_summary">View, share, or delete local crash reports</string>
+    <string name="crash_reports_summary">View, share, or delete locally recorded crash reports. Reports never leave this device unless you share one.</string>
     <string name="crash_reports_empty">No crash reports recorded.</string>
     <string name="crash_row">%1$s • %2$s</string>
     <string name="crash_prompt">Mumla OLED closed unexpectedly</string>
@@ -241,9 +241,7 @@
     <string name="crash_reason_native">Native crash</string>
     <string name="crash_reason_anr">ANR</string>
     <string name="crash_reason_unknown">Unknown</string>
-    <string name="crash_recording_title">Automatic crash recording</string>
     <string name="crash_test_disabled_call">Disconnect to enable</string>
     <string name="crash_test_disabled_native">Native library unavailable</string>
     <string name="crash_preview_omitted">… (%1$d omitted — see shared file for the complete captured report)</string>
-    <string name="crash_recording_notice">Crash reports are recorded on this device and never leave it unless you share one.</string>
 </resources>
