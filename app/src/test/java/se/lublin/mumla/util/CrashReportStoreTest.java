@@ -19,19 +19,16 @@ package se.lublin.mumla.util;
 
 import junit.framework.TestCase;
 import java.io.File;
+import java.io.FileWriter;
+import java.util.HashSet;
+import java.util.Set;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import kotlin.Pair;
 
 public class CrashReportStoreTest extends TestCase {
 
-    private File tmpDir() throws Exception {
-        return CrashTestFiles.tmpDir();
-    }
 
-    private static void deleteRecursive(File f) {
-        CrashTestFiles.deleteRecursive(f);
-    }
 
     private String json(String id) {
         return CrashReportStore.toJson(id, null, 1L, null, "uncaught-handler",
@@ -40,7 +37,7 @@ public class CrashReportStoreTest extends TestCase {
     }
 
     public void testWriteAndList() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("a-1", json("a-1")));
@@ -48,12 +45,12 @@ public class CrashReportStoreTest extends TestCase {
             assertEquals(1, entries.size());
             assertEquals("a-1", entries.get(0).getId());
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
     public void testRotationKeepsNewest8() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             for (int i = 0; i < 10; i++) {
@@ -65,53 +62,55 @@ public class CrashReportStoreTest extends TestCase {
             }
             List<CrashReportStore.Entry> entries = store.list();
             assertEquals(8, entries.size());
-            java.util.Set<String> ids = new java.util.HashSet<String>();
+            Set<String> ids = new HashSet<String>();
             for (CrashReportStore.Entry e : entries) ids.add(e.getId());
             for (int i = 2; i < 10; i++) assertTrue("missing id-" + i, ids.contains("id-" + i));
             assertFalse(ids.contains("id-0"));
             assertFalse(ids.contains("id-1"));
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
-    public void testJsonEscapeRoundTrip() throws Exception {
+    public void testTruncatedFlagSurvivesEscape() throws Exception {
         String tricky = "quote \" backslash \\ newline \n tab \t ctrl \u0001 emoji \uD83D\uDE00";
         String json = CrashReportStore.toJson("rt-1", 5L, 6L, 7L, "s", "r", "v", "o", "m", "a", "p", 9, true, tricky, 1L, 2L);
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("rt-1", json));
-            java.util.List<CrashReportStore.Entry> entries = store.list();
+            List<CrashReportStore.Entry> entries = store.list();
             assertEquals(1, entries.size());
             String raw = store.read(entries.get(0));
             assertNotNull(raw);
             kotlin.Pair<String, String> rendered = se.lublin.mumla.util.CrashReporter.renderSharePayload(raw);
             assertNotNull(rendered);
             assertTrue(rendered.getSecond().contains("truncated: true"));
+            // Escape round-trip: quotes and backslashes survive verbatim.
+            assertTrue(rendered.getSecond().contains("quote \" backslash \\"));
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
     public void testCorruptFileSkipped() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("good-1", json("good-1")));
-            try (java.io.FileWriter w = new java.io.FileWriter(new File(dir, "bad.json"), StandardCharsets.UTF_8)) {
+            try (FileWriter w = new FileWriter(new File(dir, "bad.json"), StandardCharsets.UTF_8)) {
                 w.write("this is not json {{{");
             }
             List<CrashReportStore.Entry> entries = store.list();
             assertEquals(1, entries.size());
             assertEquals("good-1", entries.get(0).getId());
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
     public void testAtomicWriteNoTmpLeft() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("x-1", json("x-1")));
@@ -121,29 +120,33 @@ public class CrashReportStoreTest extends TestCase {
                 assertFalse(f.getName().endsWith(".tmp"));
             }
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
     public void testDeleteAllRemovesTxt() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("r-1", json("r-1")));
-            try (java.io.FileWriter w = new java.io.FileWriter(new File(dir, "r-1.txt"), StandardCharsets.UTF_8)) {
+            try (FileWriter w = new FileWriter(new File(dir, "r-1.txt"), StandardCharsets.UTF_8)) {
                 w.write("share payload");
             }
+            // Watermark is intentionally retained (prevents re-surfacing).
+            java.nio.file.Files.write(new File(dir, "watermark").toPath(), "123".getBytes(StandardCharsets.UTF_8));
             assertTrue(store.deleteAll());
+            assertTrue(new File(dir, "watermark").isFile());
             File[] files = dir.listFiles();
             assertNotNull(files);
-            assertEquals(0, files.length);
+            assertEquals(1, files.length);
+            assertEquals("watermark", files[0].getName());
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
     public void testTruncatedFlagBounded() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             // Trace body contains the literal; header flag stays false.
@@ -154,12 +157,12 @@ public class CrashReportStoreTest extends TestCase {
             assertEquals(1, entries.size());
             assertFalse(entries.get(0).getTruncated());
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
     public void testLargePayloadTruncated() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             // Backstop path: uncapped write of invalid JSON (raw suffix past
@@ -173,7 +176,7 @@ public class CrashReportStoreTest extends TestCase {
             assertNotNull(out);
             assertTrue(out.length() <= CrashReportStore.MAX_FILE_BYTES);
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
@@ -184,7 +187,7 @@ public class CrashReportStoreTest extends TestCase {
     }
 
     public void testToJsonCappedFitsExplodingTrace() throws Exception {
-        File dir = tmpDir();
+        File dir = CrashTestFiles.tmpDir();
         try {
             // Tombstone-like control-heavy trace: JSON escaping expands each
             // control byte to a 6-char unicode escape, far beyond the raw cap.
@@ -208,7 +211,7 @@ public class CrashReportStoreTest extends TestCase {
             assertEquals("REASON_CRASH_NATIVE", entries.get(0).getReason());
             assertTrue(entries.get(0).getTruncated());
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 

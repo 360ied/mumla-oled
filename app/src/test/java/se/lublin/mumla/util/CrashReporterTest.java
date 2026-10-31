@@ -83,6 +83,42 @@ public class CrashReporterTest extends TestCase {
         }
     }
 
+    public void testMergePendingMergesTraceless() throws Exception {
+        File dir = CrashTestFiles.tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            String pendingJson = CrashReportStore.toJson("100-42-21-pending", null, 100L, 100L,
+                    "uncaught-handler", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "", 0L, 0L);
+            assertNotNull(store.write("100-42-21-pending", pendingJson));
+            String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
+                    "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "", 0L, 0L);
+            assertNotNull(store.write("150-42", exitJson));
+            CrashReporter.INSTANCE.mergePending(store);
+            assertFalse(new File(dir, CrashReportStore.sanitizeId("100-42-21-pending", 128) + ".json").isFile());
+        } finally {
+            CrashTestFiles.deleteRecursive(dir);
+        }
+    }
+
+    public void testMergePendingKeepsSkewedExit() throws Exception {
+        File dir = CrashTestFiles.tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            // Exit timestamp before handler write (backward clock jump):
+            // causal window fails toward duplicates, pending is kept.
+            String pendingJson = CrashReportStore.toJson("200-42-31-pending", null, 200L, 200L,
+                    "uncaught-handler", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "t", 0L, 0L);
+            assertNotNull(store.write("200-42-31-pending", pendingJson));
+            String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
+                    "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "t", 0L, 0L);
+            assertNotNull(store.write("150-42", exitJson));
+            CrashReporter.INSTANCE.mergePending(store);
+            assertTrue(new File(dir, CrashReportStore.sanitizeId("200-42-31-pending", 128) + ".json").isFile());
+        } finally {
+            CrashTestFiles.deleteRecursive(dir);
+        }
+    }
+
     public void testMergePendingDropsConfirmedExit() throws Exception {
         File dir = CrashTestFiles.tmpDir();
         try {

@@ -52,6 +52,7 @@ class CrashReportStore(private val dir: File) {
         /** Shared filename sanitizer (store + share staging stay in sync). */
         @JvmStatic
         fun sanitizeId(id: String, maxLen: Int): String {
+            require(maxLen > 0) { "maxLen must be positive" }
             return id.replace(SAFE_ID_REGEX, "_").take(maxLen).ifEmpty { "report" }
         }
 
@@ -380,8 +381,9 @@ class CrashReportStore(private val dir: File) {
             }
             val bytes = json.toByteArray(StandardCharsets.UTF_8)
             val capped = if (bytes.size > MAX_FILE_BYTES) {
-                // Decode prefix with replacement instead of copying raw bytes,
-                // so no invalid trailing multi-byte sequence is stored.
+                // Decode prefix with replacement (split tail becomes U+FFFD,
+                // up to +2 bytes) instead of copying raw bytes, so the
+                // stored file is always valid UTF-8.
                 String(bytes, 0, MAX_FILE_BYTES, StandardCharsets.UTF_8)
                     .toByteArray(StandardCharsets.UTF_8)
             } else {
@@ -409,6 +411,10 @@ class CrashReportStore(private val dir: File) {
         }
     }
 
+    // Note: files failing parseSummary (corrupt or over the size slop)
+    // are invisible to list()/rotate() and persist until deleteAll().
+    // Production output stays parsable, so this covers only the
+    // backstop-split path or foreign files in the private dir.
     fun list(): List<Entry> {
         return try {
             if (!dir.isDirectory) {
