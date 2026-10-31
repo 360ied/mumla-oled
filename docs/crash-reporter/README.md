@@ -32,11 +32,11 @@ can only be field-tested.
   `ActivityManager.getHistoricalProcessExitReasons()`. Crash-adjacent matches
   are fail-soft log lines only (e.g. `HumlaTCP`, `HumlaUDP`), plus a five-table
   atomic-cleanup comment in
-  [MumlaRoomDatabase](../app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt).
+  [MumlaRoomDatabase](../../app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt).
 - Single process: the
-  [manifest](../app/src/main/AndroidManifest.xml) declares no
+  [manifest](../../app/src/main/AndroidManifest.xml) declares no
   `android:process`, so one
-  [MumlaApplication](../app/src/main/java/se/lublin/mumla/app/MumlaApplication.kt)
+  [MumlaApplication](../../app/src/main/java/se/lublin/mumla/app/MumlaApplication.kt)
   instance covers the UI and `MumlaService`. The install point is
   `MumlaApplication.onCreate()`, but it must be the *first* statement — ahead
   of the current `Settings.getInstance` / theme / DataStore work — so that no
@@ -46,8 +46,8 @@ can only be field-tested.
   the Java handler at all. The handler adds same-process fidelity; the
   exit-info drain below is the backstop, not the other way around.
 - `minSdk 30` makes `ApplicationExitInfo` universally available (added in API
-  30; see [app/build.gradle](../app/build.gradle) and
-  [humla/build.gradle](../libraries/humla/build.gradle), both `minSdkVersion
+  30; see [app/build.gradle](../../app/build.gradle) and
+  [humla/build.gradle](../../libraries/humla/build.gradle), both `minSdkVersion
   30`, three ABIs, single `foss` flavor). Draining
   `getHistoricalProcessExitReasons()` on startup captures Java crashes,
   native crashes (`REASON_CRASH_NATIVE`, including the Opus/RNNoise JNI path),
@@ -67,15 +67,15 @@ can only be field-tested.
   see §8.
 - Release builds run R8 (`minifyEnabled = true`). Stack traces from release
   builds are obfuscated unless line numbers survive; the current
-  [proguard-rules.pro](../app/proguard-rules.pro) keeps JNI entry points and
+  [proguard-rules.pro](../../app/proguard-rules.pro) keeps JNI entry points and
   parcelables but contains no `-keepattributes SourceFile,LineNumberTable`
   line. v1 adds it unconditionally (negligible size cost; see §7 step 0) —
   per-version `mapping.txt` is local-only, so
   shipping obfuscated traces with a "retrace later" note would leave
   maintainers with unusable field data.
 - Settings live in a Preferences DataStore behind
-  [Settings](../app/src/main/java/se/lublin/mumla/Settings.kt) /
-  [SettingsRepository](../app/src/main/java/se/lublin/mumla/SettingsRepository.kt)
+  [Settings](../../app/src/main/java/se/lublin/mumla/Settings.kt) /
+  [SettingsRepository](../../app/src/main/java/se/lublin/mumla/SettingsRepository.kt)
   (41 mirrored keys, `settings_*.xml` widgets). Recording is always on (§3.6
   explains why no toggle): the crash path must never touch DataStore
   (`snapshotBlocking()` uses `runBlocking`, which risks deadlock on a dying
@@ -189,7 +189,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   rotation test in §7. Clock skew fails safe toward duplicates: a jumped clock
   can only miss a merge (two reports), never lose one.
 - UI:
-  - [MumlaActivity](../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
+  - [MumlaActivity](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
     checks the store on startup off the main thread. When at least one
     *unseen* report exists it shows a single-action Snackbar ("Mumla OLED
     closed unexpectedly", action: View, indefinite duration) that opens
@@ -202,10 +202,10 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     next launch. A one-shot 5 s re-drain plus recheck covers exit records
     that land after the startup drain, so the prompt appears on the same
     launch instead of the next one.
-  - [AboutSettingsFragment](../app/src/main/java/se/lublin/mumla/preference/AboutSettingsFragment.kt)
+  - [AboutSettingsFragment](../../app/src/main/java/se/lublin/mumla/preference/AboutSettingsFragment.kt)
     gains a "Crash reports" preference opening a **new fragment** (list:
     timestamp + reason; per-report View / Share / Delete; Delete-all). This
-    needs [SettingsActivity](../app/src/main/java/se/lublin/mumla/preference/SettingsActivity.kt)
+    needs [SettingsActivity](../../app/src/main/java/se/lublin/mumla/preference/SettingsActivity.kt)
     `ALLOWED_FRAGMENTS` plus a new `res/xml/settings_crash_reports.xml` and a
     launcher `<Preference app:fragment="…CrashReportsFragment">` in
     `res/xml/settings_about.xml` — a full screen, not a preference tweak
@@ -320,7 +320,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 ## 7. Implementation plan (for the follow-up worktree branch)
 
 0. Add `-keepattributes SourceFile,LineNumberTable` to
-   [proguard-rules.pro](../app/proguard-rules.pro) — determines whether any
+   [proguard-rules.pro](../../app/proguard-rules.pro) — determines whether any
    release trace is debuggable, so it precedes all other work.
 1. `CrashReportScrubber` + JVM unit tests (credential redaction cases,
    deliberate pass-throughs, frame preservation).
