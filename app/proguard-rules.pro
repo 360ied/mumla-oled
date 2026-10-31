@@ -11,10 +11,18 @@
     public void onTalkingStateChanged(boolean, float);
 }
 -keep class se.lublin.humla.audio.NativeAudioOutputEngine { *; }
+# Explicit JNI (Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash) needs the class name.
+# (Top wildcard already covers native methods; kept explicit as documentation.)
+-keepclasseswithmembernames class se.lublin.humla.audio.NativeCrashTest {
+    native <methods>;
+}
 -keep class se.lublin.humla.audio.NativeAudioOutputEngine$* { *; }
 -keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
     public void onTalkStateChanged(int, int);
 }
+
+# Keep line numbers for release crash traces (negligible size cost).
+-keepattributes SourceFile,LineNumberTable
 
 # Preserve Protobuf Lite generated message classes
 -keep class se.lublin.humla.protobuf.Mumble** { *; }

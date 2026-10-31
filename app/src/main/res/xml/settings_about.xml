@@ -40,6 +40,17 @@
             android:data="@string/releases_link"/>
     </Preference>
     <Preference
+        android:key="crash_reports"
+        android:title="@string/crash_reports"
+        android:summary="@string/crash_reports_summary"
+        app:fragment="se.lublin.mumla.preference.CrashReportsFragment"
+        app:iconSpaceReserved="false" />
+    <Preference
+        android:title="@string/crash_recording_title"
+        android:summary="@string/crash_recording_notice"
+        android:selectable="false"
+        app:iconSpaceReserved="false" />
+    <Preference
         android:title="@string/acknowledgements"
         android:summary="@string/acknowledgementsSum"
         app:iconSpaceReserved="false">

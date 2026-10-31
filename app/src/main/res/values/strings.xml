@@ -215,4 +215,35 @@
 • Make the Back-button ask to disconnect from server again on Android 16+\n</string>
 
     <string name="server_edit_url_password_warning">This link contained a password. Only connect if you trust the sender.</string>
+
+    <!-- Crash reports -->
+    <string name="crash_reports">Crash reports</string>
+    <string name="crash_reports_summary">View, share, or delete local crash reports</string>
+    <string name="crash_reports_empty">No crash reports recorded.</string>
+    <string name="crash_row">%1$s • %2$s</string>
+    <string name="crash_prompt">Mumla OLED closed unexpectedly</string>
+    <string name="crash_view">View</string>
+    <string name="crash_delete_all">Delete all reports</string>
+    <string name="crash_delete_all_summary">Removes all stored reports</string>
+    <string name="crash_deleted">Report deleted.</string>
+    <string name="crash_all_deleted">All reports deleted.</string>
+    <string name="crash_public_warning">Device model and OS version will be visible wherever this is posted.</string>
+    <string name="crash_test">Crash test</string>
+    <string name="crash_test_java">Trigger Java crash</string>
+    <string name="crash_test_native">Trigger native crash</string>
+    <string name="crash_test_anr">Trigger ANR</string>
+    <string name="crash_test_summary">Available while disconnected</string>
+    <string name="crash_test_unbound">Service unavailable</string>
+    <string name="crash_confirm">This will crash/stall the app. Continue?</string>
+    <string name="crash_load_failed">Could not load crash report.</string>
+    <string name="crash_share_failed">Could not share crash report.</string>
+    <string name="crash_reason_crash">Crash</string>
+    <string name="crash_reason_native">Native crash</string>
+    <string name="crash_reason_anr">ANR</string>
+    <string name="crash_reason_unknown">Unknown</string>
+    <string name="crash_recording_title">Automatic crash recording</string>
+    <string name="crash_test_disabled_call">Disconnect to enable</string>
+    <string name="crash_test_disabled_native">Native library unavailable</string>
+    <string name="crash_preview_omitted">… (%1$d omitted — see shared file for the complete captured report)</string>
+    <string name="crash_recording_notice">Crash reports are recorded on this device and never leave it unless you share one.</string>
 </resources>

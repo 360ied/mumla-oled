@@ -21,9 +21,9 @@ The goal is a small, FOSS-friendly crash recorder:
 
 Non-goals for v1: automatic upload to any backend, analytics/telemetry,
 breadcrumb trails, and NDK symbolication on-device. Test-crash buttons *are*
-in scope (see §4), hidden behind a five-tap gesture so they are available
-on every build — including release, where R8-obfuscated traces can only be
-field-tested — yet undiscoverable by accident.
+in scope (see §4): a visible category guarded by per-button confirmation,
+available on every build — including release, where R8-obfuscated traces
+can only be field-tested.
 
 ## 2. Investigation findings
 
@@ -81,7 +81,7 @@ field-tested — yet undiscoverable by accident.
   (`snapshotBlocking()` uses `runBlocking`, which risks deadlock on a dying
   thread), so a toggle would need a volatile startup-cached flag — machinery
   unjustified for a recorder that performs no network I/O.
-- No `FileProvider` is declared today. v1 adds one small `<provider>` entry:
+- Before v1 no `FileProvider` was declared. v1 added one small `<provider>` entry:
   reports are shared as a `.txt` file attachment (`ACTION_SEND` +
   `EXTRA_STREAM` from the provider, plus a one-line `EXTRA_TEXT` summary),
   because a stack-trace payload does not fit inline text — Binder's ~1 MB
@@ -101,9 +101,11 @@ field-tested — yet undiscoverable by accident.
 3. Never exfiltrate: the only outbound path is an explicit user tap on Share.
    Backup exclusion (§3.2) is what makes this hold — it is a v1 requirement,
    not an open question.
-4. Scrub server-identifying and user-identifying data before persisting
-   (hostnames, IPs, usernames, credentials, chat text); the report preview
-   must show exactly what would be shared.
+4. Redact credential-bearing material before persisting (password-bearing
+   `mumble://` URLs, password/token and username key material); hostnames,
+   IPs, hashes, and stack content pass through so reports stay debuggable.
+   The report preview shows a bounded head of what would be shared, with an
+   omitted-lines note.
 5. Bounded storage: cap count (newest 8) and per-file size (~256 KB, enforced
    during a byte-capped streaming copy — never read-fully-then-drop);
    recording must never itself crash the app or fill the disk (every I/O path
@@ -148,17 +150,13 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   try/catch returning fallbacks. A corrupt file is skipped, never parsed
   leniently.
 - `util/CrashReportScrubber.kt` — pure function `scrub(String): String`
-  (unit-testable on the JVM). Redaction list: IPv4/IPv6 literals, `user@host`
-  tokens, `mumble://` URLs, **bare DNS hostnames** (e.g. `Server.host` values
-  appearing as `Failed to connect to voice.example.com` with no URL wrapper),
-  TLS identity strings (verified host, SAN names, fingerprints — as surfaced
-  by the certificate dialogs in `MumlaActivity`), usernames / passwords /
-  tokens, file system paths, and email-shaped tokens. Exception *message*
-  transform ("message skeleton"): keep the exception class name and the first
-  stack frame; run the redaction list over the message text and, if any
-  redaction fires or the message contains `=`/`:`-delimited key material,
-  replace the message body with `<redacted>` — messages are guilty until
-  proven innocent. Kept verbatim: exception class, class/method/file/line
+  (unit-testable on the JVM). Redaction list, deliberately narrow:
+  `mumble://` URLs (which can carry `user:password@`), password/token-style
+  (`password|passwd|pwd|token|secret|auth|credential|api_key` with `:`/`=`)
+  and username/login-style key material. Everything else — hostnames, IPs,
+  hashes, paths, stack content — passes through verbatim so reports stay
+  debuggable: native tombstone build IDs must survive for symbolization.
+  Kept verbatim: exception class, class/method/file/line
   frames, thread name (unless it matches a redaction pattern). Note:
   `deviceModel` + `osVersion` in the schema are fingerprintable when pasted
   into a public issue, so the share screen carries a one-line
@@ -166,8 +164,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 - Stored schema (one JSON file per incident, UTF-8) vs. shared payload (a
   rendered `.txt` attachment + one-line summary — never the raw JSON):
   `id` (exit-based `<exitTimestamp>-<pid>` for exit-info files; provisional
-  `<capturedAtUtc>-<pid>-pending` for handler files, renamed to the exit-based
-  id when a merge joins them), `exitTimestamp` (system wall-clock exit time;
+  `<capturedAtUtc>-<pid>-pending` for handler files, dropped when a merge
+  joins them — the surviving exit file keeps the exit-based id), `exitTimestamp` (system wall-clock exit time;
   absent on unmerged handler files — the join uses `handlerWriteTime`),
   `capturedAtUtc` (when this device wrote the file), `handlerWriteTime`
   (handler-source files only; equals `capturedAtUtc`, records the pre-death
@@ -185,7 +183,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   `pid`/`reason` whose `timestamp` falls within 60 s *after* the handler
   write. (The handler necessarily runs before death, so it can never know
   the future exit timestamp — exact timestamp equality is unknowable and is
-  not attempted.) Content hash of the two traces is a secondary
+  not attempted.) A trace-prefix comparison of the two traces is a secondary
   confirmation, not the primary key. No symmetric time window: a "same
   minute" window would collapse genuine crash loops and defeat the
   rotation test in §7. Clock skew fails safe toward duplicates: a jumped clock
@@ -194,13 +192,16 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   - [MumlaActivity](../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
     checks the store on startup off the main thread. When at least one
     *unseen* report exists it shows a single-action Snackbar ("Mumla OLED
-    closed unexpectedly", action: View) that opens the Crash reports screen;
-    swipe/timeout is the dismissal. "Unseen" is a DataStore-backed
+    closed unexpectedly", action: View, indefinite duration) that opens
+    the Crash reports screen; swipe or the action is the dismissal. "Unseen" is a DataStore-backed
     last-viewed report id, read/written on the normal path only, single-shot
-    per report: the Snackbar handle is dismissed in `onPause`, and the
-    last-viewed id is written when the Snackbar is first shown — so rotation
-    dismisses without re-prompting, and a swiped/timed-out dismissal never
-    resurfaces.
+    per report: the Snackbar handle is dismissed in `onDestroy`, and the
+    last-viewed id is written when the Snackbar reports shown — so rotation
+    dismisses without re-prompting, and a swiped/dismissed prompt never
+    resurfaces, while a prompt that never reaches the screen is retried
+    next launch. A one-shot 5 s re-drain plus recheck covers exit records
+    that land after the startup drain, so the prompt appears on the same
+    launch instead of the next one.
   - [AboutSettingsFragment](../app/src/main/java/se/lublin/mumla/preference/AboutSettingsFragment.kt)
     gains a "Crash reports" preference opening a **new fragment** (list:
     timestamp + reason; per-report View / Share / Delete; Delete-all). This
@@ -210,44 +211,37 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     `res/xml/settings_about.xml` — a full screen, not a preference tweak
     (`preference_headers.xml` itself is unchanged: the screen opens from
     About, not as a sixth root entry).
-  - The detail view renders the exact scrubbed `.txt` that Share would send
-    (preview = payload, no hidden fields). Share uses the new `<provider>`
+  - The detail view renders a bounded head of the scrubbed `.txt` that Share
+    sends (first ~100 lines / ~12 KB plus an omitted-lines note) through the
+    dialog message view, whose framework ScrollView keeps the button bar
+    on-screen. Share uses the new `<provider>`
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
     `EXTRA_TEXT` summary.
-  - Crash-test buttons (all builds, hidden): a "Crash test" category
-    (`android:key="crash_test"`) on the Crash reports screen, implemented
+  - Crash-test buttons (all builds, visible): a "Crash test" category
+    (`app:key="crash_test"`) on the Crash reports screen, implemented
     by `se.lublin.mumla.preference.CrashReportsFragment :
     MumlaPreferenceFragment` (declared in
     `res/xml/settings_crash_reports.xml` and added to
     `SettingsActivity.ALLOWED_FRAGMENTS`; Kotlin single inheritance rules out
     extending `HumlaServiceFragment`, so service state is reached by
     composition — `SettingsActivity` gains a `ServiceConnection` (bound in `onStart`, unbound
-    in `onStop` with an `mBound` guard; flag `0` like `MumlaActivity`, so the
+    in `onStop` with a bound-flag guard; flag `0` like `MumlaActivity`, so the
     bind only succeeds while the service is already running and the buttons
     sit disabled while unbound — fail-safe), since it extends `BaseActivity`,
     not a `HumlaServiceProvider`. The connection feeds an activity-held
     `IMumlaService?` field (nulled on disconnect); the screen refreshes
     enabled-state live via an `IHumlaObserver` registered while bound
     (connection transitions arrive via the observer, not the connection
-    object), *and* re-checks at click time (see below). Unlock: tapping
-    the About version row five times. The counter lives in a new
-    `AboutSettingsFragment.onSaveInstanceState` override (no preference
-    fragment persists instance state today) under bundle key
-    `"crash_test_taps"`, and the unlocked flag is held session-only in a `SettingsActivity` field,
-    re-validated against the host both at navigation time and at
-    button-click time (fail-closed: no host flag, no buttons). The fragment
-    argument carries a hint only — arguments survive process-death
-    recreation, so the arg alone must never gate; process death therefore
-    relocks. Each tap still fires the row's existing news-reset, so
-    unlocking re-arms the news dialogs once — accepted as harmless. The
-    fifth tap shows a "Crash test unlocked" toast. One button per capture
+    object), *and* re-checks at click time (see below). No unlock gesture —
+    the category is always visible; safety comes from the disconnected-only
+    enablement and the per-button confirmation below. One button per capture
     path: Java crash (throws an uncaught `RuntimeException` on the main
     thread), native crash (calls
     `se.lublin.humla.audio.NativeCrashTest.nativeCrash()` — the wrapper lives in
     `:libraries:humla` under the existing audio-engine package convention
-    (no new package roots in the `.so`), declared as `companion object {
-    @JvmStatic external fun nativeCrash() }` (a thin non-external `crash()`
-    may wrap it at the call site, per the `native*` convention)` so the C++ side is the static form
+    (no new package roots in the `.so`), declared as `object NativeCrashTest`
+    with `@JvmStatic external fun nativeCrash()` (a thin non-external `crash()`
+    may wrap it at the call site, per the `native*` convention`) so the C++ side is the static form
     `JNIEXPORT void JNICALL
     Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash(JNIEnv*, jclass)`
     calling `abort()` (`<cstdlib>`) in a new
@@ -258,15 +252,14 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     (`Handler(Looper.getMainLooper()).post { Thread.sleep(15_000) }` — well
     past the ~5 s ANR threshold — to guarantee the system ANR dialog). The
     hook is never invoked during normal operation — reachable only via the
-    hidden gesture plus confirmation — so audio and cold paths are
+    Crash test category plus confirmation — so audio and cold paths are
     unchanged; if the library fails to load (the wrapper's public
     `isAvailable()` reports false from its own `loadError` capture — the
     existing `ensureLoaded()` helpers are private to their owners and split
     across two patterns, so `:app` cannot probe them), the native button is disabled rather than
     throwing a Java exception that would masquerade as the wrong capture
     path. Every button shows a confirmation built with
-    `MaterialAlertDialogBuilder(requireContext())` ("This will crash/stall
-    the app and drop any live call. Continue?") that is *dismissed before*
+    `MaterialAlertDialogBuilder(requireContext())` ("This will crash/stall the app. Continue?") that is *dismissed before*
     the crash or block is issued: `dialog.dismiss()`, then throw/call inside
     the positive-button callback for crashes, and `dialog.dismiss()` then
     the main-looper `post` for ANR (a plain `AlertDialog` synchronous
@@ -294,8 +287,10 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   never uploads — crash traces cannot ride device backup (§3.2–§3.3).
 - Recording itself needs no consent gate (nothing leaves the device), but the
   About screen documents that in one sentence, and Delete-all is one tap away.
-- Share preview = share payload: the detail screen shows the scrubbed file
-  verbatim, so there is no hidden-field surprise; a one-line warning notes
+- Share preview is a bounded head of the share payload (first ~100 lines /
+  ~12 KB plus an omitted-lines note pointing at the shared file): the full trace
+  is unreadable and janky in a dialog, while Share still sends the complete
+  captured report; a one-line warning notes
   that device model / OS version will be visible wherever the report is
   posted.
 
@@ -327,8 +322,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 0. Add `-keepattributes SourceFile,LineNumberTable` to
    [proguard-rules.pro](../app/proguard-rules.pro) — determines whether any
    release trace is debuggable, so it precedes all other work.
-1. `CrashReportScrubber` + JVM unit tests (redaction cases per §4 list,
-   frame preservation, message-skeleton behavior).
+1. `CrashReportScrubber` + JVM unit tests (credential redaction cases,
+   deliberate pass-throughs, frame preservation).
 2. `CrashReportStore` + JVM unit tests (rotation newest-8, corrupt-file
    tolerance, atomic-write behavior).
 3. `CrashReporter.install()` wiring in `MumlaApplication` (first statement),
@@ -337,8 +332,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 4. No-backup placement + `<provider>` manifest entry.
 5. Crash-reports fragment (list/detail/delete-all), startup Snackbar,
    unseen-state, strings (en source; other locales fall back per existing
-   `resourceConfigurations` — including the "Crash test unlocked" toast and
-   the crash/stall confirmation text), `ALLOWED_FRAGMENTS` + new
+   `resourceConfigurations` — including the crash/stall confirmation text), `ALLOWED_FRAGMENTS` + new
    `settings_crash_reports.xml` + About launcher entry.
 6. Manual verification matrix, driven primarily by the §4 test buttons
    (each must yield exactly one report after relaunch): Java throw, native
@@ -379,16 +373,16 @@ Pedantic review of the original version returned 12 defects and 3 pedantic
 findings; all were accepted and folded in above. Material changes versus the
 first version: storage moved from `filesDir/` to `getNoBackupFilesDir()`
 (backup exfiltration); share transport changed from inline `EXTRA_TEXT` to
-`FileProvider` attachment (Binder limits); scrubber pattern list extended
-with bare hostnames, TLS identities, and credentials plus a defined message
-transform; exact drain/dedup/watermark semantics specified; UI re-specified
+`FileProvider` attachment (Binder limits); scrubber pattern list narrowed
+to credential patterns only (tombstone hex must survive for symbolization); exact drain/dedup/watermark semantics specified; UI re-specified
 around Snackbar's single action and a new fragment with allowlist wiring;
 recording fixed as always-on; `-keepattributes` made unconditional step 0;
 handler delegation specified as `finally` with capped allocation; schema
 gained exit-timestamp/pid/truncation fields; in-tree references converted to
 portable relative links.
 - Crash-test buttons added (one per capture path: Java, native
-  via a minimal `audio_engine` JNI hook, ANR), hidden behind a five-tap
+  via a minimal `audio_engine` JNI hook, ANR), (superseded — five-tap
+  gesture removed below) hidden behind a five-tap
   About-version gesture with per-button confirmation — available on all
   builds so release (R8) traces are field-testable — resolving the former
   test trigger open question.
@@ -413,3 +407,11 @@ portable relative links.
   fail-closed host re-validation; handler-file provisional ids with
   backfill-on-merge and duplicate-safe clock-skew direction; `nativeCrash()`
   naming per convention.
+- Implementation amendments (post-review): scrubber narrowed to credential
+  patterns only (tombstone hex must survive for symbolization); five-tap
+  gesture removed, test category always visible; detail preview bounded;
+  detail dialog uses the message view (custom views lose their sizing);
+  JSON size enforced pre-serialization (`toJsonCapped`).
+- Prompt amendments: seen-id is marked on Snackbar-shown (never silently
+  consumed), the prompt is indefinite (a timed one hides behind the system
+  crash dialog), and a one-shot delayed re-drain covers late exit records.

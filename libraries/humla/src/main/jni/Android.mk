@@ -97,8 +97,9 @@ include $(BUILD_STATIC_LIBRARY)
 
 # NOTE: single-library layout: the Opus codec and RNNoise sources above link
 # into humlaaudio — there is no separate opus module. Load only "humlaaudio"
-# (see NativeAudioInputEngine.java, NativeAudioOutputEngine.java,
-# CryptState.java); the old two-library load order is gone. There is no
+# (see NativeAudioInputEngine.kt, NativeAudioOutputEngine.kt, CryptState.kt,
+# NativeCrashTest.kt test hook); the old two-library load order is gone.
+# There is no
 # separate JitterBuffer JNI bridge: the Speex jitter buffer
 # (audio_engine/jitter/jitter.c) is used internally by AudioOutputEngine, so
 # no JitterBufferJni source belongs in this list.
@@ -123,6 +124,7 @@ LOCAL_SRC_FILES := audio_engine/PreSpeechRingBuffer.cpp \
                    audio_engine/OpusVoiceDecoder.cpp \
                    audio_engine/AudioOutputEngine.cpp \
                    audio_engine/NativeAudioOutputEngineJni.cpp \
+                   audio_engine/NativeCrashTestJni.cpp \
                    audio_engine/jitter/jitter.c \
                    crypto/CryptStateOCB2.cpp \
                    crypto/NativeCryptStateJni.cpp
