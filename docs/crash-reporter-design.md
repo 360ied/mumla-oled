@@ -286,7 +286,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   the report directory lives under `getNoBackupFilesDir()`, which Auto Backup
   never uploads — crash traces cannot ride device backup (§3.2–§3.3).
 - Recording itself needs no consent gate (nothing leaves the device), but the
-  About screen documents that in one sentence, and Delete-all is one tap away.
+  About entry documents that in its summary, and Delete-all is one tap away.
 - Share preview is a bounded head of the share payload (first ~100 lines /
   ~12 KB plus an omitted-lines note pointing at the shared file): the full trace
   is unreadable and janky in a dialog, while Share still sends the complete
