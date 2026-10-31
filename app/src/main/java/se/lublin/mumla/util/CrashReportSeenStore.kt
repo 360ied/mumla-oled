@@ -19,6 +19,7 @@ package se.lublin.mumla.util
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import kotlinx.coroutines.CancellationException
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
@@ -36,7 +37,8 @@ object CrashReportSeenStore {
     suspend fun getLastSeen(context: Context): String? {
         return try {
             context.crashSeenStore.data.map { it[KEY_LAST_SEEN] }.first()
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -44,7 +46,8 @@ object CrashReportSeenStore {
     suspend fun setLastSeen(context: Context, id: String) {
         try {
             context.crashSeenStore.edit { it[KEY_LAST_SEEN] = id }
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
         }
     }
 }

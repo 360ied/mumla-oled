@@ -47,6 +47,7 @@ object CrashReporter {
 
     @Volatile
     private var installed = false
+    private val installLock = Any()
 
     fun storeDir(context: Context): File {
         return File(context.noBackupFilesDir, DIR_NAME)
@@ -62,10 +63,12 @@ object CrashReporter {
      */
     @JvmStatic
     fun install(context: Context) {
-        if (installed) {
-            return
+        synchronized(installLock) {
+            if (installed) {
+                return
+            }
+            installed = true
         }
-        installed = true
         try {
             installHandler(context.applicationContext)
         } catch (e: Throwable) {
@@ -113,9 +116,16 @@ object CrashReporter {
                 } catch (_: Throwable) {
                 }
             }
+            // Byte-cap (not char-cap): TRACE_CAP_BYTES is bytes everywhere
+            // (readTraceCapped, CrashReportStore.MAX_FILE_BYTES).
             var raw = sw.toString()
-            if (raw.length > TRACE_CAP_BYTES) {
-                raw = raw.substring(0, TRACE_CAP_BYTES)
+            var handlerTruncated = false
+            val rawBytes = raw.toByteArray(Charsets.UTF_8)
+            if (rawBytes.size > TRACE_CAP_BYTES) {
+                // String(byte[], off, len, charset) replaces a split trailing
+                // multi-byte sequence instead of emitting invalid UTF-8.
+                raw = String(rawBytes, 0, TRACE_CAP_BYTES, Charsets.UTF_8)
+                handlerTruncated = true
             }
             val scrubbed = try {
                 CrashReportScrubber.scrub(raw)
@@ -136,7 +146,7 @@ object CrashReporter {
                 safeAbi(),
                 safeProcessName(),
                 pid,
-                raw.length >= TRACE_CAP_BYTES,
+                handlerTruncated,
                 scrubbed,
                 0L,
                 0L,
@@ -276,8 +286,12 @@ object CrashReporter {
                 } catch (_: Throwable) {
                     break
                 }
-                if (n <= 0) {
+                // EOF is -1; 0 is a legal short read, not end-of-stream.
+                if (n < 0) {
                     break
+                }
+                if (n == 0) {
+                    continue
                 }
                 if (total + n > TRACE_CAP_BYTES) {
                     out.write(buf, 0, TRACE_CAP_BYTES - total)
@@ -288,7 +302,7 @@ object CrashReporter {
                 total += n
             }
             val text = try {
-                out.toString("UTF-8")
+                String(out.toByteArray(), Charsets.UTF_8)
             } catch (_: Throwable) {
                 ""
             }
@@ -310,6 +324,23 @@ object CrashReporter {
      * matches an exit entry with the same pid/reason. Clock skew fails safe
      * toward duplicates: a jumped clock can only miss a merge, never lose one.
      */
+    // Secondary confirmation (not primary key): when both sides carry a
+    // non-empty scrubbed trace, the first 512 chars must agree before a
+    // pending provisional is dropped. Trace-less entries still merge on the
+    // causal pid+reason+window key alone.
+    private fun tracesConfirm(pendingRaw: String, exitRaw: String): Boolean {
+        return try {
+            val a = extractTrace(pendingRaw)
+            val b = extractTrace(exitRaw)
+            if (a.isEmpty() || b.isEmpty()) {
+                return true
+            }
+            a.take(512) == b.take(512)
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
     fun mergePending(store: CrashReportStore) {
         try {
             val entries = store.list()
@@ -336,25 +367,25 @@ object CrashReporter {
                             continue
                         }
                         if (exitTs >= handlerTime && exitTs - handlerTime <= DEDUP_WINDOW_MS) {
-                            // Secondary confirmation: content hash of the two traces.
-                            // Kept light: compare first 512 chars when both non-empty.
                             match = e
                             break
                         }
                     }
                     if (match != null) {
-                        // Backfill handler write time into the exit file when absent,
-                        // then drop the pending provisional.
-                        try {
+                        // Exit file keeps the exit-based id (provisional id is
+                        // dropped); its handlerWriteTime stays null by schema.
+                        // Confirm content before dropping the pending file.
+                        val drop = try {
                             val exitRaw = store.readRaw(match.file)
-                            if (exitRaw != null && !exitRaw.contains("\"handlerWriteTime\":")) {
-                                // Already has the field (null); leave as-is.
-                            }
+                            exitRaw == null || tracesConfirm(raw, exitRaw)
                         } catch (_: Throwable) {
+                            true
                         }
-                        try {
-                            p.file.delete()
-                        } catch (_: Throwable) {
+                        if (drop) {
+                            try {
+                                p.file.delete()
+                            } catch (_: Throwable) {
+                            }
                         }
                     }
                 } catch (_: Throwable) {
@@ -366,23 +397,23 @@ object CrashReporter {
 
     private fun extractPidFromId(id: String): Long? {
         // Exit id: "<exitTs>-<pid>"; pending id: "<ts>-<pid>-pending".
+        // Keyed on the -pending suffix explicitly so a future dash in the
+        // timestamp section cannot silently shift the index.
         return try {
-            val parts = id.split("-")
-            if (parts.size >= 2) {
-                parts[parts.size - 1].toLongOrNull()
-                    ?: if (parts.size >= 3) {
-                        parts[parts.size - 2].toLongOrNull()
-                    } else {
-                        null
-                    }
+            if (id.endsWith("-pending")) {
+                id.removeSuffix("-pending").substringAfterLast("-").toLongOrNull()
             } else {
-                null
+                id.substringAfterLast("-").toLongOrNull()
             }
         } catch (_: Throwable) {
             null
         }
     }
 
+    // Hand-rolled extractors (no JSON lib on the crash path). Invariant:
+    // toJson emits scalar fields (id, pid, timestamps) before scrubbedTrace,
+    // so the first occurrence of a field key is the header value even when
+    // the trace body contains a quoted literal like "pid":.
     private fun extractLong(json: String, name: String): Long? {
         return try {
             val key = "\"" + name + "\":"
@@ -480,7 +511,7 @@ object CrashReporter {
         return try {
             Application.getProcessName()
         } catch (_: Throwable) {
-            "se.lublin.mumla"
+            "se.lublin.mumla.oled15"
         }
     }
 
@@ -537,6 +568,14 @@ object CrashReporter {
                         }
                         't' -> {
                             sb.append('\t')
+                            j += 2
+                        }
+                        'b' -> {
+                            sb.append('\b')
+                            j += 2
+                        }
+                        'f' -> {
+                            sb.append('\u000C')
                             j += 2
                         }
                         '"', '\\', '/' -> {
