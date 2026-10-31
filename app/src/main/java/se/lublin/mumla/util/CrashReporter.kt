@@ -34,7 +34,7 @@ import se.lublin.mumla.BuildConfig
  * Installable crash recorder: uncaught-handler fidelity plus
  * ApplicationExitInfo backstop drain with causal-key dedup.
  *
- * Crash-path uses only synchronous, allocation-light file I/O (no DataStore,
+ * Crash-path uses only synchronous, capped file I/O (no DataStore,
  * Hilt, coroutines, or runBlocking). Handler work is capped; delegation to
  * the previous handler happens in a finally block.
  */
@@ -45,15 +45,27 @@ object CrashReporter {
     private const val DEDUP_WINDOW_MS = 60_000L
     private const val TRACE_CAP_BYTES = 256 * 1024
 
+    // Theoretical no-previous-handler branch only; named for greppability.
+    private const val NO_HANDLER_EXIT_CODE = 10
+
+    private val TRUNCATED_TRUE_REGEX = Regex("\"truncated\"\\s*:\\s*true")
+
     @Volatile
     private var handlerInstalled = false
     private val installLock = Any()
 
+    // Serializes concurrent drains (re-entrant install drains, activity
+    // re-drain) so the watermark read-modify-write is atomic. Re-entrant:
+    // mergePending runs under this lock via drainExitInfoLocked.
+    private val drainLock = Any()
+
+    @JvmStatic
     fun storeDir(context: Context): File {
         // Throws on locked storage — callers must catch (all current callers do).
         return File(context.noBackupFilesDir, DIR_NAME)
     }
 
+    @JvmStatic
     fun store(context: Context): CrashReportStore {
         return CrashReportStore(storeDir(context))
     }
@@ -95,14 +107,17 @@ object CrashReporter {
             Thread({
                 try {
                     drainExitInfo(appContext)
-                } catch (_: Throwable) {
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Crash drain failed", e)
                 }
             }, "crash-drain").start()
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Log.w(TAG, "Crash drain thread start failed", e)
             // Fall back to sync so a prompt is never lost for lack of a thread.
             try {
                 drainExitInfo(appContext)
-            } catch (_: Throwable) {
+            } catch (e2: Throwable) {
+                Log.w(TAG, "Crash drain failed", e2)
             }
         }
     }
@@ -130,6 +145,17 @@ object CrashReporter {
                         }
                     }
                 } catch (_: Throwable) {
+                    // A throwing previous handler must not leave a corrupted
+                    // process alive after a fatal throw: fall back to the
+                    // explicit kill path.
+                    try {
+                        Process.killProcess(Process.myPid())
+                    } catch (_: Throwable) {
+                    }
+                    try {
+                        System.exit(NO_HANDLER_EXIT_CODE)
+                    } catch (_: Throwable) {
+                    }
                 }
             }
         }
@@ -137,12 +163,19 @@ object CrashReporter {
 
     /** Writer that drops beyond maxChars so huge stacks never materialize.
      * Overrides every StringWriter mutator: PrintWriter.print/println
-     * funnels through write(String,off,len), and append() touches the
-     * buffer directly — missing either reopens the OOM path. */
+     * funnels through write(String,off,len); append() copies char-by-char
+     * through the capped write() path so a huge CharSequence is never
+     * materialized via toString(). */
     private class BoundedStringWriter(private val maxChars: Int) : StringWriter(8192) {
+        var truncated = false
+            private set
         override fun write(cbuf: CharArray, off: Int, len: Int) {
             val remaining = maxChars - buffer.length
-            if (remaining <= 0) return
+            if (remaining <= 0) {
+                truncated = true
+                return
+            }
+            if (len > remaining) truncated = true
             super.write(cbuf, off, minOf(len, remaining))
         }
         override fun write(str: String) {
@@ -150,21 +183,36 @@ object CrashReporter {
         }
         override fun write(str: String, off: Int, len: Int) {
             val remaining = maxChars - buffer.length
-            if (remaining <= 0) return
+            if (remaining <= 0) {
+                truncated = true
+                return
+            }
+            if (len > remaining) truncated = true
             super.write(str, off, minOf(len, remaining))
         }
         override fun write(c: Int) {
-            if (buffer.length >= maxChars) return
+            if (buffer.length >= maxChars) {
+                truncated = true
+                return
+            }
             super.write(c)
         }
+        // Deviates from Writer.append(null) (which appends "null") only
+        // in that the literal is capped like any other input.
         override fun append(csq: CharSequence?): StringWriter {
-            if (csq == null) return this
-            write(csq.toString())
+            if (csq == null) {
+                write("null")
+                return this
+            }
+            for (i in 0 until csq.length) write(csq[i].code)
             return this
         }
         override fun append(csq: CharSequence?, start: Int, end: Int): StringWriter {
-            if (csq == null) return this
-            write(csq.toString().substring(start, end))
+            if (csq == null) {
+                write("null")
+                return this
+            }
+            for (i in start until end) write(csq[i].code)
             return this
         }
         override fun append(c: Char): StringWriter {
@@ -172,9 +220,6 @@ object CrashReporter {
             return this
         }
     }
-
-    // Theoretical no-previous-handler branch only; named for greppability.
-    private const val NO_HANDLER_EXIT_CODE = 10
 
     private fun writeHandlerReport(appContext: Context, thread: Thread, throwable: Throwable) {
         try {
@@ -200,7 +245,9 @@ object CrashReporter {
             // Byte-cap (not char-cap): TRACE_CAP_BYTES is bytes everywhere
             // (readTraceCapped, CrashReportStore.MAX_FILE_BYTES).
             var raw = sw.toString()
-            var handlerTruncated = false
+            // Char-cap truncation (writer dropped input) OR-ed with the exact
+            // byte-cap below: a capped trace must never report truncated:false.
+            var handlerTruncated = sw.truncated
             val rawBytes = raw.toByteArray(Charsets.UTF_8)
             if (rawBytes.size > TRACE_CAP_BYTES) {
                 // String(byte[], off, len, charset) replaces a split trailing
@@ -243,10 +290,21 @@ object CrashReporter {
         }
     }
 
+    @JvmStatic
     fun drainExitInfo(appContext: Context) {
+        // Serialized: concurrent install drains and the activity re-drain
+        // share one watermark read-modify-write (re-entrant for mergePending).
+        synchronized(drainLock) {
+            drainExitInfoLocked(appContext)
+        }
+    }
+
+    private fun drainExitInfoLocked(appContext: Context) {
         try {
             val am = appContext.getSystemService(ActivityManager::class.java) ?: return
             val reasons = try {
+                // minSdk 30: ApplicationExitInfo is universally available;
+                // the Throwable catch keeps this safe on any runtime.
                 am.getHistoricalProcessExitReasons(appContext.packageName, 0, 0)
             } catch (_: Throwable) {
                 return
@@ -454,6 +512,7 @@ object CrashReporter {
         }
     }
 
+    @JvmStatic
     fun mergePending(store: CrashReportStore) {
         try {
             val entries = store.list()
@@ -594,8 +653,21 @@ object CrashReporter {
                         'f' -> { sb.append('\u000C'); j += 2 }
                         'u' -> {
                             if (j + 5 < haystack.length) {
-                                sb.append(haystack.substring(j + 2, j + 6).toInt(16).toChar())
-                                j += 6
+                                val code = try {
+                                    haystack.substring(j + 2, j + 6).toIntOrNull(16)
+                                } catch (_: Throwable) {
+                                    null
+                                }
+                                if (code != null) {
+                                    sb.append(code.toChar())
+                                    j += 6
+                                } else {
+                                    // Foreign/corrupt escape: keep the
+                                    // backslash literally instead of
+                                    // discarding the whole header field.
+                                    sb.append(c)
+                                    j++
+                                }
                             } else return null
                         }
                         else -> { sb.append(c); j++ }
@@ -619,6 +691,10 @@ object CrashReporter {
         return try {
             val f = File(dir, WATERMARK_NAME)
             if (!f.isFile) {
+                return 0L
+            }
+            // Bounded: the watermark is a short decimal; refuse absurd files.
+            if (f.length() > 64) {
                 return 0L
             }
             f.readText(Charsets.UTF_8).trim().toLongOrNull() ?: 0L
@@ -675,7 +751,11 @@ object CrashReporter {
         return try {
             Application.getProcessName()
         } catch (_: Throwable) {
-            "se.lublin.mumla.oled15"
+            try {
+                BuildConfig.APPLICATION_ID
+            } catch (_: Throwable) {
+                "se.lublin.mumla.oled15"
+            }
         }
     }
 
@@ -724,7 +804,7 @@ object CrashReporter {
             val headerEnd = rawJson.indexOf("\"scrubbedTrace\"")
             val header = if (headerEnd >= 0) rawJson.substring(0, headerEnd) else rawJson
             val truncatedFlag = try {
-                Regex("\"truncated\"\\s*:\\s*true").containsMatchIn(header)
+                TRUNCATED_TRUE_REGEX.containsMatchIn(header)
             } catch (_: Throwable) {
                 header.contains("\"truncated\":true")
             }
@@ -781,8 +861,21 @@ object CrashReporter {
                         }
                         'u' -> {
                             if (j + 5 < rawJson.length) {
-                                sb.append(rawJson.substring(j + 2, j + 6).toInt(16).toChar())
-                                j += 6
+                                val code = try {
+                                    rawJson.substring(j + 2, j + 6).toIntOrNull(16)
+                                } catch (_: Throwable) {
+                                    null
+                                }
+                                if (code != null) {
+                                    sb.append(code.toChar())
+                                    j += 6
+                                } else {
+                                    // Foreign/corrupt escape: keep the
+                                    // backslash literally instead of
+                                    // discarding the whole trace.
+                                    sb.append(c)
+                                    j++
+                                }
                             } else {
                                 break
                             }
