@@ -43,6 +43,31 @@ public class CrashReportScrubberTest extends TestCase {
 
     public void testTokenRedacted() {
         String out = CrashReportScrubber.scrub("auth token=abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("token=[CREDENTIAL-REDACTED]"));
+        assertFalse(out.contains("abc123"));
+    }
+
+    public void testUnderscoreJoinedCredentialRedacted() {
+        String out = CrashReportScrubber.scrub("access_token=abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("[CREDENTIAL-REDACTED]"));
+        assertFalse(out.contains("abc123"));
+        String refresh = CrashReportScrubber.scrub("refresh_token: xyz\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(refresh.contains("[CREDENTIAL-REDACTED]"));
+        assertFalse(refresh.contains("xyz"));
+        String secret = CrashReportScrubber.scrub("client_secret=shhh\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(secret.contains("[CREDENTIAL-REDACTED]"));
+        assertFalse(secret.contains("shhh"));
+    }
+
+    public void testAuthorizationHeaderRedacted() {
+        String out = CrashReportScrubber.scrub("Authorization: Bearer abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("[AUTH-REDACTED]"));
+        assertFalse(out.contains("abc123"));
+    }
+
+    public void testApiKeySpacedRedacted() {
+        String out = CrashReportScrubber.scrub("api key = abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("[CREDENTIAL-REDACTED]"));
         assertFalse(out.contains("abc123"));
     }
 
@@ -54,6 +79,7 @@ public class CrashReportScrubberTest extends TestCase {
 
     public void testCausedByCredentialRedacted() {
         String out = CrashReportScrubber.scrub("java.lang.RuntimeException: boom\nCaused by: java.lang.IllegalStateException: password=hunter2\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("password=[CREDENTIAL-REDACTED]"));
         assertFalse(out.contains("hunter2"));
         assertTrue(out.contains("Caused by:"));
     }

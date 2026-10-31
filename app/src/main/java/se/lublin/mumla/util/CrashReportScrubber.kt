@@ -35,7 +35,14 @@ object CrashReportScrubber {
     // Stops at whitespace/quotes/brackets; trailing prose punctuation
     // (.,;)]) may ride along — cosmetic, still redacted.
     private val MUMBLE_URL: Pattern = Pattern.compile("(?i)\\bmumble://[^\\s\"'<>]+")
-    private val CREDENTIAL: Pattern = Pattern.compile("(?i)\\b(password|passwd|pwd|token|secret|auth|credential|api[_-]?key)\\s*[:=]\\s*\\S+")
+    // Credential keys allow [_\\w-]* prefixes so underscore-joined forms
+    // (access_token, refresh_token, client_secret) still match: '_' is a
+    // word char, so \\b alone never fires inside them. Space allowed in
+    // "api key" via [ _-]?.
+    private val CREDENTIAL: Pattern = Pattern.compile("(?i)\\b[\\w-]*(password|passwd|pwd|token|secret|credential|api[ _-]?key)\\s*[:=]\\s*\\S+")
+    // Bare "auth" cannot match "Authorization:" ("orization" intervenes
+    // before ':'), so the header and bearer forms get their own pattern.
+    private val AUTH_HEADER: Pattern = Pattern.compile("(?i)\\b(authorization\\s*:[^\\n\\r]+|bearer\\s+\\S+)")
     private val USER_KEY: Pattern = Pattern.compile("(?i)\\b(user(name)?|login)\\s*[:=]\\s*\\S+")
 
     /**
@@ -44,7 +51,7 @@ object CrashReportScrubber {
      */
     @JvmStatic
     fun scrub(input: String?): String {
-        if (input == null || input.isEmpty()) {
+        if (input.isNullOrEmpty()) {
             return ""
         }
         try {
@@ -54,6 +61,7 @@ object CrashReportScrubber {
             // Hex blobs and the like intentionally survive: guilty until
             // proven innocent applies to credentials, not debug data.
             out = CREDENTIAL.matcher(out).replaceAll("${'$'}1=[CREDENTIAL-REDACTED]")
+            out = AUTH_HEADER.matcher(out).replaceAll("[AUTH-REDACTED]")
             out = USER_KEY.matcher(out).replaceAll("${'$'}1=[USER-REDACTED]")
             return out
         } catch (_: Throwable) {
