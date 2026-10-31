@@ -207,8 +207,15 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             val raw = store.read(entry) ?: return
             val payload = CrashReporter.renderSharePayload(raw) ?: return
             val (summary, txt) = payload
+            val (preview, omitted) = CrashReportStore.previewForDisplay(txt)
+            val body = StringBuilder()
+            body.append(getString(R.string.crash_public_warning))
+            body.append("\n\n").append(preview)
+            if (omitted > 0) {
+                body.append("\n\n").append(getString(R.string.crash_preview_omitted, omitted))
+            }
             val textView = TextView(requireContext())
-            textView.text = getString(R.string.crash_public_warning) + "\n\n" + txt
+            textView.text = body.toString()
             textView.setTextIsSelectable(true)
             textView.movementMethod = ScrollingMovementMethod()
             val padding = (16 * resources.displayMetrics.density).toInt()

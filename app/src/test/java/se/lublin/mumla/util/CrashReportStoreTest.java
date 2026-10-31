@@ -20,6 +20,7 @@ package se.lublin.mumla.util;
 import junit.framework.TestCase;
 import java.io.File;
 import java.util.List;
+import kotlin.Pair;
 
 public class CrashReportStoreTest extends TestCase {
 
@@ -191,5 +192,34 @@ public class CrashReportStoreTest extends TestCase {
         } finally {
             deleteRecursive(dir);
         }
+    }
+
+    public void testPreviewSmallPassthrough() throws Exception {
+        Pair<String, Integer> r = CrashReportStore.previewForDisplay("a\nb");
+        assertEquals("a\nb", r.getFirst());
+        assertEquals(Integer.valueOf(0), r.getSecond());
+    }
+
+    public void testPreviewCapsLines() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 250; i++) {
+            sb.append("line ").append(i).append("\n");
+        }
+        Pair<String, Integer> r = CrashReportStore.previewForDisplay(sb.toString());
+        assertEquals(Integer.valueOf(151), r.getSecond());
+        assertTrue(r.getFirst().startsWith("line 0\n"));
+        assertTrue(r.getFirst().endsWith("line 99"));
+    }
+
+    public void testPreviewCapsLongLines() throws Exception {
+        // One huge line: the char budget still bounds the preview.
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 50000; i++) {
+            sb.append('x');
+        }
+        Pair<String, Integer> r = CrashReportStore.previewForDisplay(sb.toString());
+        assertTrue(r.getFirst().length() <= 12000);
+        assertTrue(r.getFirst().length() > 0);
+        assertEquals(Integer.valueOf(0), r.getSecond());
     }
 }

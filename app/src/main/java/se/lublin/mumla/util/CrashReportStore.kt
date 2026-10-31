@@ -153,6 +153,50 @@ class CrashReportStore(private val dir: File) {
             return json
         }
 
+        /**
+         * Bounded display preview of a share payload: the first [maxLines]
+         * lines within [maxChars] chars. Returns the preview plus the
+         * omitted line count (0 when nothing was cut).
+         *
+         * The detail dialog renders this instead of the full trace — laying
+         * out 100KB+ tombstones in a TextView janks — while Share still
+         * sends the complete captured report.
+         */
+        @JvmStatic
+        @JvmOverloads
+        fun previewForDisplay(
+            text: String,
+            maxLines: Int = 100,
+            maxChars: Int = 12_000,
+        ): Pair<String, Int> {
+            val lines = text.split('\n')
+            if (lines.size <= maxLines && text.length <= maxChars) {
+                return Pair(text, 0)
+            }
+            val sb = StringBuilder()
+            var used = 0
+            var shown = 0
+            for (line in lines) {
+                if (shown >= maxLines || used + line.length + 1 > maxChars) {
+                    break
+                }
+                if (shown > 0) {
+                    sb.append('\n')
+                    used += 1
+                }
+                sb.append(line)
+                used += line.length
+                shown += 1
+            }
+            // A single leading line longer than maxChars still shows
+            // something rather than an empty preview.
+            if (shown == 0 && lines.isNotEmpty()) {
+                sb.append(lines[0].take(maxChars))
+                shown = 1
+            }
+            return Pair(sb.toString(), lines.size - shown)
+        }
+
         /** Minimal tolerant field extractor; returns null on corrupt input. */
         @JvmStatic
         fun parseSummary(file: File): Entry? {
