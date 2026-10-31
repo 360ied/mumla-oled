@@ -21,9 +21,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.method.ScrollingMovementMethod
 import android.util.Log
-import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -208,38 +206,20 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             val payload = CrashReporter.renderSharePayload(raw) ?: return
             val (summary, txt) = payload
             val (preview, omitted) = CrashReportStore.previewForDisplay(txt)
+            // Message-only content: AlertDialog's built-in ScrollView keeps
+            // the button bar on-screen. A custom setView() does not work —
+            // AlertController re-adds it with WRAP_CONTENT, so huge traces
+            // measure full-height and push Share/Delete/Close off-screen.
             val body = StringBuilder()
-            body.append(getString(R.string.crash_public_warning))
+            body.append(summary)
+            body.append("\n\n").append(getString(R.string.crash_public_warning))
             body.append("\n\n").append(preview)
             if (omitted > 0) {
                 body.append("\n\n").append(getString(R.string.crash_preview_omitted, omitted))
             }
-            val textView = TextView(requireContext())
-            textView.text = body.toString()
-            textView.setTextIsSelectable(true)
-            textView.movementMethod = ScrollingMovementMethod()
-            val padding = (16 * resources.displayMetrics.density).toInt()
-            textView.setPadding(padding, padding, padding, padding)
-            val container = androidx.core.widget.NestedScrollView(requireContext())
-            // Cap the scroll area to a fraction of the screen so huge
-            // native/ANR traces scroll internally instead of pushing the
-            // Share/Delete/Close button bar off-screen.
-            val maxContentHeight = (resources.displayMetrics.heightPixels * 0.55).toInt()
-            container.layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                maxContentHeight,
-            )
-            container.addView(
-                textView,
-                ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ),
-            )
-            MaterialAlertDialogBuilder(requireContext())
+            val dialog = MaterialAlertDialogBuilder(requireContext())
                 .setTitle(entry.reason)
-                .setMessage(summary)
-                .setView(container)
+                .setMessage(body.toString())
                 .setPositiveButton(R.string.share) { dialog, _ ->
                     dialog.dismiss()
                     shareReport(entry, summary, txt)
@@ -252,6 +232,11 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 }
                 .setNeutralButton(R.string.close, null)
                 .show()
+            // The message view is not selectable by default; allow copy.
+            try {
+                dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
+            } catch (_: Throwable) {
+            }
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to show crash detail", e)
             try {
