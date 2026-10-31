@@ -191,13 +191,16 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   - [MumlaActivity](../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)
     checks the store on startup off the main thread. When at least one
     *unseen* report exists it shows a single-action Snackbar ("Mumla OLED
-    closed unexpectedly", action: View) that opens the Crash reports screen;
-    swipe/timeout is the dismissal. "Unseen" is a DataStore-backed
+    closed unexpectedly", action: View, indefinite duration) that opens
+    the Crash reports screen; swipe or the action is the dismissal. "Unseen" is a DataStore-backed
     last-viewed report id, read/written on the normal path only, single-shot
-    per report: the Snackbar handle is dismissed in `onPause`, and the
-    last-viewed id is written when the Snackbar is first shown — so rotation
-    dismisses without re-prompting, and a swiped/timed-out dismissal never
-    resurfaces.
+    per report: the Snackbar handle is dismissed in `onDestroy`, and the
+    last-viewed id is written when the Snackbar reports shown — so rotation
+    dismisses without re-prompting, and a swiped/dismissed prompt never
+    resurfaces, while a prompt that never reaches the screen is retried
+    next launch. A one-shot 5 s re-drain plus recheck covers exit records
+    that land after the startup drain, so the prompt appears on the same
+    launch instead of the next one.
   - [AboutSettingsFragment](../app/src/main/java/se/lublin/mumla/preference/AboutSettingsFragment.kt)
     gains a "Crash reports" preference opening a **new fragment** (list:
     timestamp + reason; per-report View / Share / Delete; Delete-all). This
@@ -406,3 +409,6 @@ portable relative links.
   gesture removed, test category always visible; detail preview bounded;
   detail dialog uses the message view (custom views lose their sizing);
   JSON size enforced pre-serialization (`toJsonCapped`).
+- Prompt amendments: seen-id is marked on Snackbar-shown (never silently
+  consumed), the prompt is indefinite (a timed one hides behind the system
+  crash dialog), and a one-shot delayed re-drain covers late exit records.

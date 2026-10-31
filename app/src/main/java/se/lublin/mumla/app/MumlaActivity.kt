@@ -28,7 +28,9 @@ import android.content.res.Configuration
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
 import android.util.Log
@@ -124,6 +126,8 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     private var mBackPressDialog: AlertDialog? = null
     private var mCertDialog: AlertDialog? = null
     private var crashSnackbar: Snackbar? = null
+    private var crashRecheck: Runnable? = null
+    private val crashHandler = Handler(Looper.getMainLooper())
     // Dedicated host for the first-run certificate guide. It carries an
     // OnDismissListener with first-run side effects that must never fire for
     // the TLS dialogs hosted by mCertDialog above (round-2 D2).
@@ -574,21 +578,49 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         }.start()
     }
 
+    private fun scheduleCrashRecheck() {
+        val recheck = Runnable {
+            Thread {
+                try {
+                    // The exit record for a just-died process can land after
+                    // the startup drain ran: re-drain once (watermark-guarded
+                    // and idempotent) and recheck, so the prompt appears on
+                    // this launch instead of the next one.
+                    CrashReporter.drainExitInfo(applicationContext)
+                } catch (_: Throwable) {
+                }
+                checkCrashReports()
+            }.start()
+        }
+        crashRecheck = recheck
+        crashHandler.postDelayed(recheck, CRASH_RECHECK_DELAY_MS)
+    }
+
     private fun showCrashSnackbar(newestId: String) {
         if (isFinishing || isDestroyed) {
             return
         }
-        // Single-shot per report: write the last-viewed id when first shown,
-        // so rotation dismisses without re-prompting and swipe/timeout never resurfaces.
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                CrashReportSeenStore.setLastSeen(this@MumlaActivity, newestId)
-            } catch (_: Throwable) {
-            }
-        }
         val root = findViewById<View>(android.R.id.content) ?: return
-        val snackbar = Snackbar.make(root, R.string.crash_prompt, Snackbar.LENGTH_LONG)
+        // Indefinite: this is the only gateway to the report, and a timed
+        // prompt is easily missed behind the system crash dialog or startup
+        // churn. Swipe or the View action still dismisses it.
+        val snackbar = Snackbar.make(root, R.string.crash_prompt, Snackbar.LENGTH_INDEFINITE)
             .setAction(R.string.crash_view) { openCrashReports() }
+        // Single-shot per report: mark seen only once the Snackbar reports
+        // shown, so rotation dismisses without re-prompting and
+        // swipe/timeout never resurfaces — while a prompt that never
+        // reaches the screen is retried next launch instead of being
+        // silently consumed.
+        snackbar.addCallback(object : Snackbar.Callback() {
+            override fun onShown(sb: Snackbar?) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        CrashReportSeenStore.setLastSeen(this@MumlaActivity, newestId)
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+        })
         crashSnackbar = snackbar
         snackbar.show()
     }
@@ -743,6 +775,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             } else {
                 StartupAction().execute(this)
                 checkCrashReports()
+                scheduleCrashRecheck()
             }
         } else if (pendingFirstRunStartup) {
             // Recreation while first-run generation was in flight on the dead
@@ -811,6 +844,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         if (snackbar != null) {
             snackbar.dismiss()
             crashSnackbar = null
+        }
+        val recheck = crashRecheck
+        if (recheck != null) {
+            crashHandler.removeCallbacks(recheck)
+            crashRecheck = null
         }
 
         val service = mService
@@ -1601,6 +1639,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         private const val STATE_SERVER_PENDING = "server_pending"
         private const val STATE_RECONNECT_TARGET = "reconnect_target"
         private const val STATE_POST_NOTIF_ASKED = "post_notif_asked"
+        private const val CRASH_RECHECK_DELAY_MS = 5_000L
         private const val STATE_BT_ASKED = "bt_asked"
 
         // Process-wide pending StartupAction from a dead first-run instance:
