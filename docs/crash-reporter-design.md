@@ -80,7 +80,7 @@ can only be field-tested.
   (`snapshotBlocking()` uses `runBlocking`, which risks deadlock on a dying
   thread), so a toggle would need a volatile startup-cached flag — machinery
   unjustified for a recorder that performs no network I/O.
-- No `FileProvider` is declared today. v1 adds one small `<provider>` entry:
+- Before v1 no `FileProvider` was declared. v1 added one small `<provider>` entry:
   reports are shared as a `.txt` file attachment (`ACTION_SEND` +
   `EXTRA_STREAM` from the provider, plus a one-line `EXTRA_TEXT` summary),
   because a stack-trace payload does not fit inline text — Binder's ~1 MB
@@ -217,7 +217,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
     `EXTRA_TEXT` summary.
   - Crash-test buttons (all builds, visible): a "Crash test" category
-    (`android:key="crash_test"`) on the Crash reports screen, implemented
+    (`app:key="crash_test"`) on the Crash reports screen, implemented
     by `se.lublin.mumla.preference.CrashReportsFragment :
     MumlaPreferenceFragment` (declared in
     `res/xml/settings_crash_reports.xml` and added to
@@ -240,7 +240,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     `:libraries:humla` under the existing audio-engine package convention
     (no new package roots in the `.so`), declared as `object NativeCrashTest`
     with `@JvmStatic external fun nativeCrash()` (a thin non-external `crash()`
-    may wrap it at the call site, per the `native*` convention)` so the C++ side is the static form
+    may wrap it at the call site, per the `native*` convention`) so the C++ side is the static form
     `JNIEXPORT void JNICALL
     Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash(JNIEnv*, jclass)`
     calling `abort()` (`<cstdlib>`) in a new
@@ -372,9 +372,8 @@ Pedantic review of the original version returned 12 defects and 3 pedantic
 findings; all were accepted and folded in above. Material changes versus the
 first version: storage moved from `filesDir/` to `getNoBackupFilesDir()`
 (backup exfiltration); share transport changed from inline `EXTRA_TEXT` to
-`FileProvider` attachment (Binder limits); scrubber pattern list extended
-with bare hostnames, TLS identities, and credentials plus a defined message
-transform; exact drain/dedup/watermark semantics specified; UI re-specified
+`FileProvider` attachment (Binder limits); scrubber pattern list narrowed
+to credential patterns only (tombstone hex must survive for symbolization); exact drain/dedup/watermark semantics specified; UI re-specified
 around Snackbar's single action and a new fragment with allowlist wiring;
 recording fixed as always-on; `-keepattributes` made unconditional step 0;
 handler delegation specified as `finally` with capped allocation; schema
