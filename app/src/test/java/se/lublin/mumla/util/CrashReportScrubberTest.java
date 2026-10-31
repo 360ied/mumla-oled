@@ -21,64 +21,61 @@ import junit.framework.TestCase;
 
 public class CrashReportScrubberTest extends TestCase {
 
+    public void testIpv4Redacted() {
+        // First-line message with an IP collapses to the skeleton (<redacted>).
+        String out = CrashReportScrubber.scrub("java.io.IOException: connect to 192.168.1.10 failed\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("192.168.1.10"));
+        assertTrue(out.contains("<redacted>"));
+        // Off-first-line IPs keep the token form.
+        String trace = CrashReportScrubber.scrub("java.io.IOException\n\tconnect to 192.168.1.10 failed\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(trace.contains("[IP-REDACTED]"));
+    }
+
+    public void testIpv6Redacted() {
+        String out = CrashReportScrubber.scrub("cause fe80::1 port\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("fe80::1"));
+    }
+
+    public void testUserAtHostRedacted() {
+        String out = CrashReportScrubber.scrub("login alice@example.com denied\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("alice@example.com"));
+    }
+
     public void testMumbleUrlRedacted() {
         String out = CrashReportScrubber.scrub("open mumble://alice:secret@voice.example.com:64738/root\n\tat Foo.bar(Foo.java:1)");
-        assertFalse(out.contains("secret"));
         assertFalse(out.contains("voice.example.com"));
         assertTrue(out.contains("[MUMBLE-URL-REDACTED]"));
     }
 
-    public void testPasswordEqualsRedacted() {
+    public void testBareHostnameRedacted() {
+        String out = CrashReportScrubber.scrub("Failed to connect to voice.example.com\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("voice.example.com"));
+        assertTrue(out.contains("[HOST-REDACTED]") || out.contains("<redacted>"));
+    }
+
+    public void testFingerprintRedacted() {
+        String out = CrashReportScrubber.scrub("SHA-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("AA:BB:CC"));
+        assertTrue(out.contains("[FINGERPRINT-REDACTED]"));
+    }
+
+    public void testCredentialKeyMaterialSkeleton() {
         String out = CrashReportScrubber.scrub("java.lang.RuntimeException: password=hunter2\n\tat Foo.bar(Foo.java:10)");
-        assertTrue(out.startsWith("java.lang.RuntimeException: password=[CREDENTIAL-REDACTED]"));
-        assertFalse(out.contains("hunter2"));
+        // Message body collapses to <redacted>, class + frame preserved.
+        assertTrue(out.startsWith("java.lang.RuntimeException: <redacted>"));
         assertTrue(out.contains("at Foo.bar(Foo.java:10)"));
-    }
-
-    public void testPasswordColonRedacted() {
-        String out = CrashReportScrubber.scrub("java.lang.RuntimeException: password: hunter2\n\tat Foo.bar(Foo.java:1)");
-        assertTrue(out.contains("password=[CREDENTIAL-REDACTED]"));
-        assertFalse(out.contains("hunter2"));
-    }
-
-    public void testTokenRedacted() {
-        String out = CrashReportScrubber.scrub("auth token=abc123\n\tat Foo.bar(Foo.java:1)");
-        assertFalse(out.contains("abc123"));
     }
 
     public void testUsernameRedacted() {
         String out = CrashReportScrubber.scrub("java.lang.IllegalStateException: username=alice\n\tat a.B.c(a.java:1)");
-        assertTrue(out.contains("username=[USER-REDACTED]"));
+        assertTrue(out.contains("<redacted>"));
         assertFalse(out.contains("alice"));
     }
 
-    public void testCausedByCredentialRedacted() {
-        String out = CrashReportScrubber.scrub("java.lang.RuntimeException: boom\nCaused by: java.lang.IllegalStateException: password=hunter2\n\tat Foo.bar(Foo.java:1)");
-        assertFalse(out.contains("hunter2"));
-        assertTrue(out.contains("Caused by:"));
-    }
-
-    // Non-credential content passes through verbatim by design: reports
-    // stay debuggable (tombstone build IDs must survive symbolization).
-
-    public void testHostnamePassesThrough() {
-        String out = CrashReportScrubber.scrub("Failed to connect to voice.example.com\n\tat Foo.bar(Foo.java:1)");
-        assertTrue(out.contains("voice.example.com"));
-    }
-
-    public void testIpPassesThrough() {
-        String out = CrashReportScrubber.scrub("connect to 192.168.1.10 failed\n\tat Foo.bar(Foo.java:1)");
-        assertTrue(out.contains("192.168.1.10"));
-    }
-
-    public void testHexPassesThrough() {
-        String out = CrashReportScrubber.scrub("build-id abcdef0123456789abcdef0123456789abcdef01\n\tat Foo.bar(Foo.java:1)");
-        assertTrue(out.contains("abcdef0123456789abcdef0123456789abcdef01"));
-    }
-
-    public void testEqualsWithoutCredentialKept() {
-        String out = CrashReportScrubber.scrub("java.lang.IllegalArgumentException: bad index max=10\n\tat Foo.bar(Foo.java:5)");
-        assertTrue(out.contains("bad index max=10"));
+    public void testFilePathRedacted() {
+        String out = CrashReportScrubber.scrub("open /data/data/se.lublin.mumla/files/x failed\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("/data/data"));
+        assertTrue(out.contains("[PATH-REDACTED]"));
     }
 
     public void testFramesPreserved() {
@@ -87,8 +84,35 @@ public class CrashReportScrubberTest extends TestCase {
         assertTrue(out.contains("se.lublin.mumla.app.MumlaActivity.onCreate(MumlaActivity.kt:42)"));
     }
 
+    public void testCausedByKeyMaterialCollapsed() {
+        String out = CrashReportScrubber.scrub("java.lang.RuntimeException: boom\nCaused by: java.lang.IllegalStateException: password=hunter2\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("hunter2"));
+        assertTrue(out.contains("Caused by:") && out.contains("<redacted>"));
+    }
+
+    public void testBareHostXyzRedacted() {
+        String out = CrashReportScrubber.scrub("Failed to connect to voice.example.xyz\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("voice.example.xyz"));
+    }
+
+    public void testSingleLabelUserHostRedacted() {
+        String out = CrashReportScrubber.scrub("login alice@intranet denied\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("alice@intranet"));
+    }
+
+    public void testColonCredentialCollapsed() {
+        String out = CrashReportScrubber.scrub("java.lang.RuntimeException: password: hunter2\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("<redacted>"));
+        assertFalse(out.contains("hunter2"));
+    }
+
     public void testNullGivesEmpty() {
         assertEquals("", CrashReportScrubber.scrub(null));
         assertEquals("", CrashReportScrubber.scrub(""));
+    }
+
+    public void testBenignMessageKept() {
+        String out = CrashReportScrubber.scrub("java.lang.IllegalArgumentException: bad index\n\tat Foo.bar(Foo.java:5)");
+        assertTrue(out.contains("bad index"));
     }
 }

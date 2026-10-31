@@ -92,6 +92,11 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         return activity as? SettingsActivity
     }
 
+    private fun isUnlocked(): Boolean {
+        // Single gate with fail-closed host re-validation: no host flag, no buttons.
+        return host()?.isCrashTestUnlocked() == true
+    }
+
     private fun registerObserver() {
         try {
             val svc = host()?.getCrashService() ?: return
@@ -154,8 +159,11 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                     category.addPreference(pref)
                 }
             }
-            // Crash-test buttons are always visible; safety comes from the
-            // disconnected-only enablement plus the per-button confirmation.
+            // Test category visibility follows the session unlock.
+            val testCategory = findPreference<PreferenceCategory>("crash_test")
+            if (testCategory != null) {
+                testCategory.isVisible = isUnlocked()
+            }
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to refresh crash list", e)
         }
@@ -181,6 +189,10 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                         getString(R.string.crash_test_disabled_native)
                     else -> getString(R.string.crash_test_summary)
                 }
+            }
+            val testCategory = findPreference<PreferenceCategory>("crash_test")
+            if (testCategory != null) {
+                testCategory.isVisible = isUnlocked()
             }
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to refresh crash test state", e)
@@ -299,6 +311,11 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
     private fun confirmAndRun(kind: String) {
         // Re-check at click time (TOCTOU): neither a call connected after the
         // screen opened nor one connected between Continue and the crash may die.
+        // Fail-closed host re-validation: no host flag, no buttons.
+        if (!isUnlocked()) {
+            refreshList()
+            return
+        }
         if (host()?.isCrashConnected() == true) {
             refreshServiceState()
             Toast.makeText(requireContext(), R.string.crash_test_disabled_call, Toast.LENGTH_SHORT).show()
