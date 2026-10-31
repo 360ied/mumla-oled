@@ -21,31 +21,33 @@ package se.lublin.humla.audio
  * Minimal JNI hook exercising the native crash capture path (REASON_CRASH_NATIVE).
  * Test-only: never invoked during normal operation — reachable only via the
  * hidden crash-test gesture plus confirmation.
+ *
+ * Object (no public constructor): all members are static. The @JvmStatic
+ * external keeps the explicit JNI mangling
+ * Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash.
  */
-class NativeCrashTest {
-    companion object {
-        @Volatile
-        private var loadError: Throwable? = null
+object NativeCrashTest {
+    @Volatile
+    private var loadError: Throwable? = null
 
-        init {
-            try {
-                System.loadLibrary("humlaaudio")
-            } catch (e: Throwable) {
-                loadError = e
-            }
+    init {
+        try {
+            System.loadLibrary("humlaaudio")
+        } catch (e: Throwable) {
+            loadError = e
         }
-
-        /**
-         * True when the native library loaded and the crash hook is callable.
-         * The existing ensureLoaded() helpers are private to their owners and
-         * split across two patterns, so :app cannot probe them.
-         */
-        @JvmStatic
-        fun isAvailable(): Boolean {
-            return loadError == null
-        }
-
-        @JvmStatic
-        external fun nativeCrash()
     }
+
+    /**
+     * True when the native library loaded and the crash hook is callable.
+     * The existing ensureLoaded() helpers are private to their owners and
+     * split across two patterns, so :app cannot probe them.
+     */
+    @JvmStatic
+    fun isAvailable(): Boolean {
+        return loadError == null
+    }
+
+    @JvmStatic
+    external fun nativeCrash()
 }
