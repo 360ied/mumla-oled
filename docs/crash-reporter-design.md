@@ -59,8 +59,9 @@ field-tested — yet undiscoverable by accident.
   byte cap rather than reading fully into memory. Timestamps are wall-clock
   (`getTimestamp()`), so clock changes are possible — the drain and dedup
   logic (§4) must not assume monotonicity.
-- FOSS constraints: the project ships a single `foss` flavor aimed at F-Droid
-  distribution. ACRA is GPL-compatible but brings a backend and upkeep;
+- Distribution: GitHub releases, primarily for personal use — no store
+  listing exists or is planned. ACRA is GPL-compatible but brings a backend
+  and upkeep;
   Firebase Crashlytics / Sentry bring proprietary dependencies and network
   exfiltration, which conflict with the project's privacy posture. Rejected —
   see §8.
@@ -69,7 +70,7 @@ field-tested — yet undiscoverable by accident.
   [proguard-rules.pro](../app/proguard-rules.pro) keeps JNI entry points and
   parcelables but contains no `-keepattributes SourceFile,LineNumberTable`
   line. v1 adds it unconditionally (negligible size cost; see §7 step 0) —
-  per-version `mapping.txt` is local-only and F-Droid builds differ, so
+  per-version `mapping.txt` is local-only, so
   shipping obfuscated traces with a "retrace later" note would leave
   maintainers with unusable field data.
 - Settings live in a Preferences DataStore behind
@@ -354,7 +355,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 ## 8. Alternatives considered
 
 - Firebase Crashlytics: proprietary SDK + Play Services + automatic upload;
-  incompatible with the FOSS flavor and the no-exfiltration stance.
+  incompatible with the project's no-proprietary-dependencies and
+  no-exfiltration stance.
 - Sentry (self-hosted): still a network client in the app plus server upkeep;
   disproportionate for a client with no backend today.
 - ACRA with a self-hosted collector: the least-objectionable third party
