@@ -20,7 +20,6 @@ package se.lublin.mumla.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ComponentName
-import android.content.DialogInterface
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
@@ -60,13 +59,11 @@ import com.google.android.material.snackbar.Snackbar
 import java.io.IOException
 import java.net.MalformedURLException
 import java.security.GeneralSecurityException
-import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import se.lublin.humla.HumlaService
 import se.lublin.humla.IHumlaService
-import se.lublin.humla.IHumlaSession
 import se.lublin.humla.model.Server
 import se.lublin.humla.net.HandshakeFailure
 import se.lublin.humla.net.TlsHostnameVerifier
@@ -129,6 +126,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     private var mCrashSnackbar: Snackbar? = null
     private var mCrashRecheck: Runnable? = null
     private val mCrashHandler = Handler(Looper.getMainLooper())
+    @Volatile
     private var mCrashCheckGen = 0
     // Dedicated host for the first-run certificate guide. It carries an
     // OnDismissListener with first-run side effects that must never fire for
@@ -642,6 +640,13 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                     }
                 }
             }
+            override fun onDismissed(transientBottomBar: Snackbar?, event: Int) {
+                // Swipe/timeout leaves a dismissed instance behind; clear so
+                // the onResume re-arm sees no prompt and can reschedule.
+                if (mCrashSnackbar?.view == transientBottomBar?.view) {
+                    mCrashSnackbar = null
+                }
+            }
         })
         mCrashSnackbar = snackbar
         snackbar.show()
@@ -790,8 +795,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         if (savedInstanceState == null) {
             // Got no instance bundle: this is run only on real app startup -- not when Android
             // recreates the activity on configuration change, like screen rotation.
-            // Crash prompt is non-first-run only so it never overlays the
-            // first-run certificate guide.
             // Crash prompt is non-first-run only so it never overlays the
             // first-run certificate guide. A crash that predates first-run
             // completion therefore waits an extra launch (accepted tradeoff).

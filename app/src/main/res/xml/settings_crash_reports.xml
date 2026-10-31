@@ -30,7 +30,6 @@
         android:summary="@string/crash_delete_all_summary"
         app:iconSpaceReserved="false" />
     <PreferenceCategory
-        android:key="crash_test"
         android:title="@string/crash_test"
         app:iconSpaceReserved="false">
         <Preference

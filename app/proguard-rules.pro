@@ -12,6 +12,7 @@
 }
 -keep class se.lublin.humla.audio.NativeAudioOutputEngine { *; }
 # Explicit JNI (Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash) needs the class name.
+# (Top wildcard already covers native methods; kept explicit as documentation.)
 -keepclasseswithmembernames class se.lublin.humla.audio.NativeCrashTest {
     native <methods>;
 }

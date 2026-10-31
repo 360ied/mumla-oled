@@ -233,7 +233,7 @@
     <string name="crash_test_native">Trigger native crash</string>
     <string name="crash_test_anr">Trigger ANR</string>
     <string name="crash_test_summary">Available while disconnected</string>
-    <string name="crash_test_unbound">Starting…</string>
+    <string name="crash_test_unbound">Connecting to service…</string>
     <string name="crash_confirm">This will crash/stall the app. Continue?</string>
     <string name="crash_load_failed">Could not load crash report.</string>
     <string name="crash_share_failed">Could not share crash report.</string>
@@ -241,8 +241,8 @@
     <string name="crash_reason_native">Native crash</string>
     <string name="crash_reason_anr">ANR</string>
     <string name="crash_recording_title">Automatic crash recording</string>
-    <string name="crash_test_disabled_call">Disconnect to enable.</string>
-    <string name="crash_test_disabled_native">Native library unavailable.</string>
+    <string name="crash_test_disabled_call">Disconnect to enable</string>
+    <string name="crash_test_disabled_native">Native library unavailable</string>
     <string name="crash_preview_omitted">… (%1$d omitted — see shared file for the complete captured report)</string>
     <string name="crash_recording_notice">Crash reports are recorded on this device and never leave it unless you share one.</string>
 </resources>

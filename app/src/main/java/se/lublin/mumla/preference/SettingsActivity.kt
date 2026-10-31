@@ -160,6 +160,10 @@ class SettingsActivity : BaseActivity() {
     }
 
     override fun onStop() {
+        // Unbind after super.onStop(): FragmentActivity dispatches fragment
+        // onStop from super, so the fragment's unregisterObserver still sees
+        // a non-null service and never leaks it on the live MumlaService.
+        super.onStop()
         if (crashBound) {
             try {
                 unbindService(crashConnection)
@@ -168,7 +172,6 @@ class SettingsActivity : BaseActivity() {
             crashBound = false
             crashService = null
         }
-        super.onStop()
     }
 
     fun getCrashService(): IMumlaService? {
