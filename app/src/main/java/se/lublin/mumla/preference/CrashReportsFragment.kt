@@ -24,6 +24,7 @@ import android.os.Looper
 import android.util.Log
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
@@ -48,22 +49,44 @@ import se.lublin.mumla.util.CrashReportStore
 class CrashReportsFragment : MumlaPreferenceFragment() {
     private var observer: HumlaObserver? = null
     private val anrHandler by lazy { Handler(Looper.getMainLooper()) }
+    private var detailDialog: AlertDialog? = null
+    private var confirmDialog: AlertDialog? = null
 
     override fun onCreateMumlaPreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.settings_crash_reports, rootKey)
         findPreference<Preference>("crash_delete_all")?.setOnPreferenceClickListener {
-            val store = CrashReporter.store(requireContext())
-            val ok = store.deleteAll()
-            clearStagedShares()
-            refreshList()
-            Toast.makeText(
-                requireContext(),
-                if (ok) R.string.crash_all_deleted else R.string.crash_load_failed,
-                Toast.LENGTH_SHORT,
-            ).show()
+            try {
+                val store = CrashReporter.store(requireContext())
+                val ok = store.deleteAll()
+                clearStagedShares()
+                refreshList()
+                Toast.makeText(
+                    requireContext(),
+                    if (ok) R.string.crash_all_deleted else R.string.crash_load_failed,
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Failed to delete crash reports", e)
+                try {
+                    Toast.makeText(requireContext(), R.string.crash_load_failed, Toast.LENGTH_SHORT).show()
+                } catch (_: Throwable) {
+                }
+            }
             true
         }
         wireTestButtons()
+        // Warm the native loader off the main thread: the first
+        // isAvailable() call dlopens humlaaudio, which is disk I/O.
+        // Later refreshServiceState() calls on the UI thread are then cheap.
+        try {
+            Thread({
+                try {
+                    NativeCrashTest.isAvailable()
+                } catch (_: Throwable) {
+                }
+            }, "crash-native-warm").start()
+        } catch (_: Throwable) {
+        }
         refreshList()
         refreshServiceState()
     }
@@ -76,6 +99,20 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
     override fun onStop() {
         unregisterObserver()
         super.onStop()
+    }
+
+    override fun onPause() {
+        try {
+            detailDialog?.dismiss()
+        } catch (_: Throwable) {
+        }
+        detailDialog = null
+        try {
+            confirmDialog?.dismiss()
+        } catch (_: Throwable) {
+        }
+        confirmDialog = null
+        super.onPause()
     }
 
     override fun onResume() {
@@ -234,13 +271,22 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 }
                 .setNegativeButton(R.string.delete) { dialog, _ ->
                     dialog.dismiss()
-                    store.delete(entry)
+                    val deleted = try {
+                        store.delete(entry)
+                    } catch (_: Throwable) {
+                        false
+                    }
                     deleteStagedSharesFor(entry.id)
                     refreshList()
-                    Toast.makeText(requireContext(), R.string.crash_deleted, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        requireContext(),
+                        if (deleted) R.string.crash_deleted else R.string.crash_load_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
                 .setNeutralButton(R.string.close, null)
                 .show()
+            detailDialog = dialog
             // The message view is not selectable by default; allow copy.
             try {
                 dialog.findViewById<TextView>(android.R.id.message)?.setTextIsSelectable(true)
@@ -269,6 +315,10 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             File(ctx.cacheDir, "crash-shares").also { if (!it.isDirectory) it.mkdirs() }
         } catch (e: Throwable) {
             Log.w(TAG, "Could not stage share file", e)
+            try {
+                Toast.makeText(ctx, R.string.crash_share_failed, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {
+            }
             return
         }
         val safeId = CrashReportStore.sanitizeId(entry.id, 64)
@@ -277,6 +327,10 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             txtFile.writeText(txt, Charsets.UTF_8)
         } catch (e: Throwable) {
             Log.w(TAG, "Could not write share file", e)
+            try {
+                Toast.makeText(ctx, R.string.crash_share_failed, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {
+            }
             return
         }
         pruneStagedShares()
@@ -357,6 +411,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .create()
+        confirmDialog = dialog
         dialog.show()
     }
 
@@ -366,7 +421,18 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         // onPause dismissal could never run.
         when (kind) {
             "java" -> throw RuntimeException("Crash-test Java throw")
-            "native" -> NativeCrashTest.nativeCrash()
+            "native" -> try {
+                NativeCrashTest.nativeCrash()
+            } catch (e: Throwable) {
+                // Missing symbol on a stale .so must not masquerade as the
+                // wrong capture path: report and re-gate the buttons.
+                Log.w(TAG, "Native crash hook failed", e)
+                refreshServiceState()
+                try {
+                    Toast.makeText(requireContext(), R.string.crash_test_disabled_native, Toast.LENGTH_SHORT).show()
+                } catch (_: Throwable) {
+                }
+            }
             // Well past the ~5s ANR threshold to guarantee the system dialog.
             "anr" -> anrHandler.post {
                 try {
@@ -384,7 +450,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             "REASON_CRASH" -> getString(R.string.crash_reason_crash)
             "REASON_CRASH_NATIVE" -> getString(R.string.crash_reason_native)
             "REASON_ANR" -> getString(R.string.crash_reason_anr)
-            else -> getString(R.string.crash_reason_crash)
+            else -> getString(R.string.crash_reason_unknown)
         }
     }
 
@@ -393,7 +459,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             val dir = File(requireContext().cacheDir, "crash-shares")
             if (!dir.isDirectory) return
             val prefix = CrashReportStore.sanitizeId(entryId, 64)
-            dir.listFiles { f -> f.isFile && f.name.startsWith(prefix) }?.forEach {
+            dir.listFiles { f -> f.isFile && f.name.startsWith("$prefix-") }?.forEach {
                 try {
                     it.delete()
                 } catch (_: Throwable) {
@@ -425,7 +491,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             if (!dir.isDirectory) return
             val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
                 ?.sortedByDescending { it.lastModified() } ?: return
-            for (i in 8 until files.size) {
+            for (i in CrashReportStore.MAX_FILES until files.size) {
                 try {
                     files[i].delete()
                 } catch (_: Throwable) {
