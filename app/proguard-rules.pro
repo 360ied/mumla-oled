@@ -12,7 +12,9 @@
 }
 -keep class se.lublin.humla.audio.NativeAudioOutputEngine { *; }
 # Explicit JNI (Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash) needs the class name.
--keep class se.lublin.humla.audio.NativeCrashTest { *; }
+-keepclasseswithmembernames class se.lublin.humla.audio.NativeCrashTest {
+    native <methods>;
+}
 -keep class se.lublin.humla.audio.NativeAudioOutputEngine$* { *; }
 -keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
     public void onTalkStateChanged(int, int);

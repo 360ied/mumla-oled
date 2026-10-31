@@ -47,12 +47,14 @@ import se.lublin.mumla.util.CrashReportStore
  */
 class CrashReportsFragment : MumlaPreferenceFragment() {
     private var observer: HumlaObserver? = null
+    private val anrHandler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun onCreateMumlaPreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.settings_crash_reports, rootKey)
         findPreference<Preference>("crash_delete_all")?.setOnPreferenceClickListener {
             val store = CrashReporter.store(requireContext())
             store.deleteAll()
+            clearStagedShares()
             refreshList()
             Toast.makeText(requireContext(), R.string.crash_all_deleted, Toast.LENGTH_SHORT).show()
             true
@@ -79,11 +81,19 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         // never gate; process death therefore relocks).
         refreshServiceState()
         refreshList()
+        if (observer == null) {
+            registerObserver()
+        }
     }
 
     fun onServiceStateChanged() {
         if (!isAdded) {
             return
+        }
+        // Late bind: onStart registration can run before the host bind
+        // completes, so retry here when the connection arrives.
+        if (observer == null) {
+            registerObserver()
         }
         refreshServiceState()
     }
@@ -145,7 +155,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                     } catch (_: Throwable) {
                         entry.id
                     }
-                    pref.title = getString(R.string.crash_row, whenStr, entry.reason)
+                    pref.title = getString(R.string.crash_row, whenStr, humanizeReason(entry.reason))
                     pref.summary = entry.id
                     pref.setOnPreferenceClickListener {
                         showDetail(entry)
@@ -175,7 +185,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 val pref = findPreference<Preference>(key) ?: continue
                 pref.isEnabled = enabled && (key != "crash_test_native" || available)
                 pref.summary = when {
-                    !bound -> getString(R.string.crash_test_summary)
+                    !bound -> getString(R.string.crash_test_unbound)
                     connected -> getString(R.string.crash_test_disabled_call)
                     key == "crash_test_native" && !available ->
                         getString(R.string.crash_test_disabled_native)
@@ -190,8 +200,14 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
     private fun showDetail(entry: CrashReportStore.Entry) {
         try {
             val store = CrashReporter.store(requireContext())
-            val raw = store.read(entry) ?: return
-            val payload = CrashReporter.renderSharePayload(raw) ?: return
+            val raw = store.read(entry) ?: run {
+                Toast.makeText(requireContext(), R.string.crash_load_failed, Toast.LENGTH_SHORT).show()
+                return
+            }
+            val payload = CrashReporter.renderSharePayload(raw) ?: run {
+                Toast.makeText(requireContext(), R.string.crash_load_failed, Toast.LENGTH_SHORT).show()
+                return
+            }
             val (summary, txt) = payload
             val (preview, omitted) = CrashReportStore.previewForDisplay(txt)
             // Message-only content: AlertDialog's built-in ScrollView keeps
@@ -206,7 +222,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 body.append("\n\n").append(getString(R.string.crash_preview_omitted, omitted))
             }
             val dialog = MaterialAlertDialogBuilder(requireContext())
-                .setTitle(entry.reason)
+                .setTitle(humanizeReason(entry.reason))
                 .setMessage(body.toString())
                 .setPositiveButton(R.string.share) { dialog, _ ->
                     dialog.dismiss()
@@ -228,16 +244,16 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to show crash detail", e)
             try {
-                Toast.makeText(requireContext(), R.string.crash_reports_empty, Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), R.string.crash_load_failed, Toast.LENGTH_SHORT).show()
             } catch (_: Throwable) {
             }
         }
     }
 
     private fun shareReport(entry: CrashReportStore.Entry, summary: String, txt: String) {
-        // Stage under cacheDir (JSON-only store dir) with a unique name so
-        // repeat shares never collide and Delete-all stays JSON-scoped
-        // (deleteAll also removes *.txt as a backstop).
+        // Stage under cacheDir (the store dir stays JSON-only) with a unique
+        // name so repeat shares never collide. Staged copies are pruned on
+        // share and cleared by Delete-all (see clearStagedShares).
         val ctx = try {
             requireContext()
         } catch (e: Throwable) {
@@ -250,7 +266,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             Log.w(TAG, "Could not stage share file", e)
             return
         }
-        val safeId = entry.id.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64).ifEmpty { "report" }
+        val safeId = CrashReportStore.sanitizeId(entry.id, 64)
         val txtFile = File(dir, "$safeId-${System.currentTimeMillis()}.txt")
         try {
             txtFile.writeText(txt, Charsets.UTF_8)
@@ -258,13 +274,14 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             Log.w(TAG, "Could not write share file", e)
             return
         }
+        pruneStagedShares()
         val authority = ctx.packageName + ".crashreports"
         val uri = try {
             FileProvider.getUriForFile(ctx, authority, txtFile)
         } catch (e: Throwable) {
             Log.w(TAG, "FileProvider share failed; check crash_report_paths.xml", e)
             try {
-                Toast.makeText(ctx, R.string.crash_reports_empty, Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, R.string.crash_share_failed, Toast.LENGTH_SHORT).show()
             } catch (_: Throwable) {
             }
             return
@@ -278,6 +295,10 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             startActivity(Intent.createChooser(intent, getString(R.string.share)))
         } catch (e: Throwable) {
             Log.w(TAG, "Share intent failed", e)
+            try {
+                Toast.makeText(ctx, R.string.crash_share_failed, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -334,13 +355,55 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             "java" -> throw RuntimeException("Crash-test Java throw")
             "native" -> NativeCrashTest.nativeCrash()
             // Well past the ~5s ANR threshold to guarantee the system dialog.
-            "anr" -> Handler(Looper.getMainLooper()).post {
+            "anr" -> anrHandler.post {
                 try {
                     Thread.sleep(ANR_FREEZE_MS)
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
                 }
             }
+            else -> Log.w(TAG, "Unknown crash-test kind: $kind")
+        }
+    }
+
+    private fun humanizeReason(reason: String): String {
+        return when (reason) {
+            "REASON_CRASH" -> getString(R.string.crash_reason_crash)
+            "REASON_CRASH_NATIVE" -> getString(R.string.crash_reason_native)
+            "REASON_ANR" -> getString(R.string.crash_reason_anr)
+            else -> reason
+        }
+    }
+
+    private fun clearStagedShares() {
+        try {
+            val dir = File(requireContext().cacheDir, "crash-shares")
+            if (!dir.isDirectory) return
+            dir.listFiles()?.forEach {
+                try {
+                    if (it.isFile) it.delete()
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not clear staged shares", e)
+        }
+    }
+
+    private fun pruneStagedShares() {
+        try {
+            val dir = File(requireContext().cacheDir, "crash-shares")
+            if (!dir.isDirectory) return
+            val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
+                ?.sortedByDescending { it.lastModified() } ?: return
+            for (i in 8 until files.size) {
+                try {
+                    files[i].delete()
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not prune staged shares", e)
         }
     }
 
@@ -348,5 +411,6 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         private val TAG: String = CrashReportsFragment::class.java.simpleName
 
         private const val ANR_FREEZE_MS = 15_000L
+        private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]+")
     }
 }

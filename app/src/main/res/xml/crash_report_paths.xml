@@ -16,11 +16,6 @@
   ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   -->
 <paths>
-    <!-- getNoBackupFilesDir() is a sibling of getFilesDir(); the ../ hop
-         resolves inside the app-private dir and never leaves it. Depends on
-         SimplePathStrategy canonicalization; share failures surface as a
-         toast (see CrashReportsFragment.shareReport). -->
-    <files-path name="crash-reports" path="../no_backup/crash-reports/" />
-    <!-- Staged share payloads (*.txt); keeps the store dir JSON-only. -->
+    <!-- Staged share payloads (*.txt); the store dir itself is never shared. -->
     <cache-path name="crash-shares" path="crash-shares/" />
 </paths>

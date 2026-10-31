@@ -1,3 +1,20 @@
+/*
+ * Copyright (C) 2026 Brian Zhu
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 package se.lublin.mumla.preference
 
 import android.content.ComponentName
@@ -20,11 +37,12 @@ class SettingsActivity : BaseActivity() {
 
     private val crashConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            crashBound = true
             try {
                 crashService = (service as MumlaService.MumlaBinder).getService()
+                crashBound = true
             } catch (_: Throwable) {
                 crashService = null
+                crashBound = false
             }
             notifyCrashFragment()
         }
@@ -32,6 +50,7 @@ class SettingsActivity : BaseActivity() {
         override fun onServiceDisconnected(name: ComponentName?) {
             crashBound = false
             crashService = null
+            notifyCrashFragment()
         }
     }
 
@@ -186,14 +205,15 @@ class SettingsActivity : BaseActivity() {
         const val EXTRA_LAUNCH_FRAGMENT = "launch_fragment"
 
         // The fragments declared in preference_headers.xml (app:fragment) plus
-        // the crash-reports screen (launched from About).
+        // the crash-reports screen (launched from About). Class references
+        // (not raw strings) so renames break at compile time.
         private val ALLOWED_FRAGMENTS: Set<String> = setOf(
-            "se.lublin.mumla.preference.GeneralSettingsFragment",
-            "se.lublin.mumla.preference.AuthenticationSettingsFragment",
-            "se.lublin.mumla.preference.AudioSettingsFragment",
-            "se.lublin.mumla.preference.AppearanceSettingsFragment",
-            "se.lublin.mumla.preference.AboutSettingsFragment",
-            "se.lublin.mumla.preference.CrashReportsFragment",
+            GeneralSettingsFragment::class.java.name,
+            AuthenticationSettingsFragment::class.java.name,
+            AudioSettingsFragment::class.java.name,
+            AppearanceSettingsFragment::class.java.name,
+            AboutSettingsFragment::class.java.name,
+            CrashReportsFragment::class.java.name,
         )
     }
 }
