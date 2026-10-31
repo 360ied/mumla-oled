@@ -19,9 +19,9 @@ package se.lublin.mumla.util
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
-import kotlinx.coroutines.CancellationException
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 

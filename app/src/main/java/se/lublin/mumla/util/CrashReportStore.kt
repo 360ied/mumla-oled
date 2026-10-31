@@ -101,6 +101,9 @@ class CrashReportStore(private val dir: File) {
         ): String {
             fun q(s: String) = "\"" + jsonEscape(s) + "\""
             fun num(n: Long?) = n?.toString() ?: "null"
+            // Invariant: every scalar precedes scrubbedTrace (trace always
+            // last) so hand-rolled header-bounded extractors can never be
+            // shadowed by a trace-body literal.
             return "{" +
                 "\"id\":" + q(id) + "," +
                 "\"exitTimestamp\":" + num(exitTimestamp) + "," +
@@ -115,9 +118,9 @@ class CrashReportStore(private val dir: File) {
                 "\"processName\":" + q(processName) + "," +
                 "\"pid\":" + pid + "," +
                 "\"truncated\":" + (if (truncated) "true" else "false") + "," +
-                "\"scrubbedTrace\":" + q(scrubbedTrace) + "," +
                 "\"rssKb\":" + rssKb + "," +
-                "\"pssKb\":" + pssKb +
+                "\"pssKb\":" + pssKb + "," +
+                "\"scrubbedTrace\":" + q(scrubbedTrace) +
                 "}"
         }
 
@@ -214,7 +217,7 @@ class CrashReportStore(private val dir: File) {
             var used = 0
             var shown = 0
             var start = 0
-            while (shown < maxLines && start <= text.length) {
+            while (shown < maxLines && start < text.length) {
                 val nl = text.indexOf('\n', start)
                 val end = if (nl < 0) text.length else nl
                 val len = end - start
@@ -435,6 +438,7 @@ class CrashReportStore(private val dir: File) {
 
     fun readRaw(file: File): String? {
         return try {
+            if (!isInStore(file)) return null
             // Bounded: reports are capped at write; refuse absurd files.
             if (!file.isFile || file.length() > MAX_FILE_BYTES + SIZE_SLOP_BYTES) {
                 return null
@@ -508,6 +512,16 @@ class CrashReportStore(private val dir: File) {
 
     fun rotate(): Int {
         return try {
+            // Reclaim .tmp orphans from a kill between writeBytes and renameTo.
+            try {
+                dir.listFiles { f -> f.isFile && f.name.endsWith(".tmp") }?.forEach {
+                    try {
+                        it.delete()
+                    } catch (_: Throwable) {
+                    }
+                }
+            } catch (_: Throwable) {
+            }
             val entries = list()
             if (entries.size <= MAX_FILES) {
                 return entries.size

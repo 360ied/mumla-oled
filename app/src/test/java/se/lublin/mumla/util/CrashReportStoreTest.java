@@ -20,28 +20,17 @@ package se.lublin.mumla.util;
 import junit.framework.TestCase;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.List;
 import kotlin.Pair;
 
 public class CrashReportStoreTest extends TestCase {
 
     private File tmpDir() throws Exception {
-        return Files.createTempDirectory("crashstore-test-").toFile();
+        return CrashTestFiles.tmpDir();
     }
 
     private static void deleteRecursive(File f) {
-        if (f.isDirectory()) {
-            File[] kids = f.listFiles();
-            if (kids != null) {
-                for (File k : kids) {
-                    deleteRecursive(k);
-                }
-            }
-        }
-        if (!f.delete()) {
-            f.deleteOnExit();
-        }
+        CrashTestFiles.deleteRecursive(f);
     }
 
     private String json(String id) {
@@ -76,6 +65,30 @@ public class CrashReportStoreTest extends TestCase {
             }
             List<CrashReportStore.Entry> entries = store.list();
             assertEquals(8, entries.size());
+            java.util.Set<String> ids = new java.util.HashSet<String>();
+            for (CrashReportStore.Entry e : entries) ids.add(e.getId());
+            for (int i = 2; i < 10; i++) assertTrue("missing id-" + i, ids.contains("id-" + i));
+            assertFalse(ids.contains("id-0"));
+            assertFalse(ids.contains("id-1"));
+        } finally {
+            deleteRecursive(dir);
+        }
+    }
+
+    public void testJsonEscapeRoundTrip() throws Exception {
+        String tricky = "quote \" backslash \\ newline \n tab \t ctrl \u0001 emoji \uD83D\uDE00";
+        String json = CrashReportStore.toJson("rt-1", 5L, 6L, 7L, "s", "r", "v", "o", "m", "a", "p", 9, true, tricky, 1L, 2L);
+        File dir = tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            assertNotNull(store.write("rt-1", json));
+            java.util.List<CrashReportStore.Entry> entries = store.list();
+            assertEquals(1, entries.size());
+            String raw = store.read(entries.get(0));
+            assertNotNull(raw);
+            kotlin.Pair<String, String> rendered = se.lublin.mumla.util.CrashReporter.renderSharePayload(raw);
+            assertNotNull(rendered);
+            assertTrue(rendered.getSecond().contains("truncated: true"));
         } finally {
             deleteRecursive(dir);
         }
@@ -185,7 +198,7 @@ public class CrashReportStoreTest extends TestCase {
             assertTrue(payload.getBytes(StandardCharsets.UTF_8).length <= CrashReportStore.MAX_FILE_BYTES);
             // Tail fields intact: valid JSON, not a mid-string cut.
             assertTrue(payload.endsWith("}"));
-            assertTrue(payload.contains("\"pssKb\":0}"));
+            assertTrue(payload.contains("\"pssKb\":0"));
             assertTrue(payload.contains("\"reason\":\"REASON_CRASH_NATIVE\""));
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("big-2", payload));
