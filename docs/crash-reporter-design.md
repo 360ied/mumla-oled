@@ -379,7 +379,8 @@ handler delegation specified as `finally` with capped allocation; schema
 gained exit-timestamp/pid/truncation fields; in-tree references converted to
 portable relative links.
 - Crash-test buttons added (one per capture path: Java, native
-  via a minimal `audio_engine` JNI hook, ANR), hidden behind a five-tap
+  via a minimal `audio_engine` JNI hook, ANR), (superseded — five-tap
+  gesture removed below) hidden behind a five-tap
   About-version gesture with per-button confirmation — available on all
   builds so release (R8) traces are field-testable — resolving the former
   test trigger open question.
