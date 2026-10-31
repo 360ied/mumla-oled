@@ -19,7 +19,6 @@ package se.lublin.mumla.util
 
 import java.io.File
 import java.nio.charset.StandardCharsets
-import java.util.Locale
 
 /**
  * Pure file store rooted at a crash-reports directory (production:
@@ -43,7 +42,18 @@ class CrashReportStore(private val dir: File) {
     companion object {
         const val MAX_FILES = 8
         const val MAX_FILE_BYTES = 256 * 1024
-        private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]")
+        // Slack for a concurrently-grown file between length() and readText().
+        // Private app dir; a planted oversized file still fully materializes
+        // (accepted TOCTOU — bounds are a backstop, not a security gate).
+        const val SIZE_SLOP_BYTES = 4096L
+        private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]+")
+        private val HEX = "0123456789abcdef".toCharArray()
+
+        /** Shared filename sanitizer (store + share staging stay in sync). */
+        @JvmStatic
+        fun sanitizeId(id: String, maxLen: Int): String {
+            return id.replace(SAFE_ID_REGEX, "_").take(maxLen).ifEmpty { "report" }
+        }
 
         @JvmStatic
         fun jsonEscape(s: String): String {
@@ -55,8 +65,13 @@ class CrashReportStore(private val dir: File) {
                     '\n' -> sb.append("\\n")
                     '\r' -> sb.append("\\r")
                     '\t' -> sb.append("\\t")
-                    else -> if (c < ' ') {
-                        sb.append(String.format(Locale.US, "\\u%04x", c.code))
+                    else -> if (c < ' ' || c in '\uD800'..'\uDFFF') {
+                        sb.append("\\u")
+                        val v = c.code
+                        sb.append(HEX[(v ushr 12) and 0xF])
+                        sb.append(HEX[(v ushr 8) and 0xF])
+                        sb.append(HEX[(v ushr 4) and 0xF])
+                        sb.append(HEX[v and 0xF])
                     } else {
                         sb.append(c)
                     }
@@ -107,9 +122,9 @@ class CrashReportStore(private val dir: File) {
         }
 
         /**
-         * Drop-in [toJson] that guarantees the result fits within [maxBytes]
-         * UTF-8 bytes, so [write]'s backstop cap can never split the payload
-         * mid-JSON (which stores a file whose tail fields no longer parse).
+         * Drop-in [toJson] that shrinks the trace so the result normally fits
+         * within [maxBytes] UTF-8 bytes, keeping header fields intact and the
+         * payload valid JSON (never a mid-string cut).
          *
          * Only the trace field is ever shrunk — header fields stay intact —
          * and the `truncated` flag is set when shrinking happens here (OR-ed
@@ -117,6 +132,8 @@ class CrashReportStore(private val dir: File) {
          * bytes become 6-char unicode escapes), so the payload is re-measured after
          * each shrink; every round removes at least the measured excess
          * (escaping only ever expands), so this converges immediately.
+         * Headers alone exceeding [maxBytes] (or 8 guard rounds) are returned
+         * as-is — the "guarantee" is trace-bounded, not absolute.
          */
         @JvmStatic
         @JvmOverloads
@@ -142,13 +159,15 @@ class CrashReportStore(private val dir: File) {
             var trace = scrubbedTrace
             var json = toJson(id, exitTimestamp, capturedAtUtc, handlerWriteTime, source, reason, appVersion, osVersion, deviceModel, abi, processName, pid, truncated, trace, rssKb, pssKb)
             var guard = 0
-            while (json.toByteArray(StandardCharsets.UTF_8).size > maxBytes && trace.isNotEmpty() && guard++ < 8) {
-                val excess = json.toByteArray(StandardCharsets.UTF_8).size - maxBytes
+            var jsonBytes = json.toByteArray(StandardCharsets.UTF_8)
+            while (jsonBytes.size > maxBytes && trace.isNotEmpty() && guard++ < 8) {
+                val excess = jsonBytes.size - maxBytes
                 val rawBytes = trace.toByteArray(StandardCharsets.UTF_8)
                 // Capped at a valid UTF-8 boundary, never splitting a
                 // multi-byte sequence (split trailing bytes decode away).
                 trace = String(rawBytes, 0, (rawBytes.size - excess - 32).coerceAtLeast(0), StandardCharsets.UTF_8)
                 json = toJson(id, exitTimestamp, capturedAtUtc, handlerWriteTime, source, reason, appVersion, osVersion, deviceModel, abi, processName, pid, true, trace, rssKb, pssKb)
+                jsonBytes = json.toByteArray(StandardCharsets.UTF_8)
             }
             return json
         }
@@ -169,57 +188,85 @@ class CrashReportStore(private val dir: File) {
             maxLines: Int = 100,
             maxChars: Int = 12_000,
         ): Pair<String, Int> {
-            val lines = text.split('\n')
-            if (lines.size <= maxLines && text.length <= maxChars) {
-                return Pair(text, 0)
+            require(maxLines > 0) { "maxLines must be positive" }
+            require(maxChars > 0) { "maxChars must be positive" }
+            // Count lines without splitting the whole payload: a 100KB+
+            // tombstone split into a List<String> on the UI thread is the
+            // jank this preview exists to avoid.
+            var totalLines = 0
+            var idx = 0
+            while (true) {
+                totalLines++
+                val nl = text.indexOf('\n', idx)
+                if (nl < 0) break
+                idx = nl + 1
+            }
+            // Trailing '\n' leaves an empty split tail that is not a line.
+            if (text.endsWith('\n')) {
+                totalLines = (totalLines - 1).coerceAtLeast(0)
+            }
+            if (totalLines <= maxLines && text.length <= maxChars) {
+                // Strip a single trailing newline for display parity; it is
+                // not counted as an omitted line.
+                return Pair(if (text.endsWith('\n')) text.dropLast(1) else text, 0)
             }
             val sb = StringBuilder()
             var used = 0
             var shown = 0
-            for (line in lines) {
-                if (shown >= maxLines || used + line.length + 1 > maxChars) {
-                    break
-                }
+            var start = 0
+            while (shown < maxLines && start <= text.length) {
+                val nl = text.indexOf('\n', start)
+                val end = if (nl < 0) text.length else nl
+                val len = end - start
+                if (used + len + (if (shown > 0) 1 else 0) > maxChars) break
                 if (shown > 0) {
                     sb.append('\n')
                     used += 1
                 }
-                sb.append(line)
-                used += line.length
+                sb.append(text, start, end)
+                used += len
                 shown += 1
+                if (nl < 0) break
+                start = nl + 1
             }
             // A single leading line longer than maxChars still shows
             // something rather than an empty preview.
-            if (shown == 0 && lines.isNotEmpty()) {
-                sb.append(lines[0].take(maxChars))
+            if (shown == 0 && totalLines > 0) {
+                val firstEnd = text.indexOf('\n').let { if (it < 0) text.length else it }
+                sb.append(text, 0, minOf(firstEnd, maxChars))
                 shown = 1
             }
-            return Pair(sb.toString(), lines.size - shown)
+            return Pair(sb.toString(), (totalLines - shown).coerceAtLeast(0))
         }
 
         /** Minimal tolerant field extractor; returns null on corrupt input. */
         @JvmStatic
         fun parseSummary(file: File): Entry? {
             return try {
-                if (!file.isFile || file.length() > MAX_FILE_BYTES + 4096) {
+                if (!file.isFile || file.length() > MAX_FILE_BYTES + SIZE_SLOP_BYTES) {
                     return null
                 }
                 val text = file.readText(StandardCharsets.UTF_8)
                 if (!text.startsWith("{") || !text.contains("\"id\"")) {
                     return null
                 }
+                // Bound field search to the header before scrubbedTrace so a
+                // trace body containing a literal can never shadow a header.
+                val headerEnd = text.indexOf("\"scrubbedTrace\"")
+                val header = if (headerEnd >= 0) text.substring(0, headerEnd) else text
                 fun strField(name: String): String? {
                     val key = "\"" + name + "\":\""
-                    val i = text.indexOf(key)
+                    val i = header.indexOf(key)
                     if (i < 0) {
                         return null
                     }
                     var j = i + key.length
                     val sb = StringBuilder()
-                    while (j < text.length) {
-                        val c = text[j]
-                        if (c == '\\' && j + 1 < text.length) {
-                            val n = text[j + 1]
+                    var closed = false
+                    while (j < header.length) {
+                        val c = header[j]
+                        if (c == '\\' && j + 1 < header.length) {
+                            val n = header[j + 1]
                             when (n) {
                                 '"', '\\', '/' -> {
                                     sb.append(n)
@@ -246,8 +293,8 @@ class CrashReportStore(private val dir: File) {
                                     j += 2
                                 }
                                 'u' -> {
-                                    if (j + 5 < text.length) {
-                                        sb.append(text.substring(j + 2, j + 6).toInt(16).toChar())
+                                    if (j + 5 < header.length) {
+                                        sb.append(header.substring(j + 2, j + 6).toInt(16).toChar())
                                         j += 6
                                     } else {
                                         return null
@@ -259,37 +306,41 @@ class CrashReportStore(private val dir: File) {
                                 }
                             }
                         } else if (c == '"') {
+                            closed = true
                             break
                         } else {
                             sb.append(c)
                             j++
                         }
                     }
+                    // A file cut mid-string by write()'s backstop cap yields
+                    // a truncated id/source/reason — treat as corrupt, skip.
+                    if (!closed) return null
                     return sb.toString()
                 }
                 fun longField(name: String): Long? {
                     val key = "\"" + name + "\":"
-                    val i = text.indexOf(key)
+                    val i = header.indexOf(key)
                     if (i < 0) {
                         return null
                     }
-                    val rest = text.substring(i + key.length).trimStart()
+                    val rest = header.substring(i + key.length).trimStart()
                     if (rest.startsWith("null")) {
                         return null
                     }
-                    val end = rest.indexOfFirst { !it.isDigit() && it != '-' }
-                    val num = if (end < 0) rest else rest.substring(0, end)
-                    return num.toLongOrNull()
+                    // Leading '-' only; interior '-' ends the number
+                    // (toLongOrNull rejects it, but scan tightly anyway).
+                    var end = 0
+                    if (rest.startsWith("-")) end = 1
+                    while (end < rest.length && rest[end].isDigit()) end++
+                    if (end == 0 || (end == 1 && rest.startsWith("-"))) return null
+                    return rest.substring(0, end).toLongOrNull()
                 }
                 val id = strField("id") ?: return null
                 // Lenient defaults for forward-compat (new fields); id stays strict.
                 val source = strField("source") ?: "unknown"
                 val reason = strField("reason") ?: "unknown"
                 val exitTs = longField("exitTimestamp")
-                // Bounded search: only the header section before scrubbedTrace
-                // counts, so a trace body containing the literal never flips it.
-                val headerEnd = text.indexOf("\"scrubbedTrace\"")
-                val header = if (headerEnd >= 0) text.substring(0, headerEnd) else text
                 val truncated = header.contains("\"truncated\":true")
                 Entry(id, file, exitTs, source, reason, truncated)
             } catch (_: Throwable) {
@@ -336,7 +387,7 @@ class CrashReportStore(private val dir: File) {
             // Distinct ids map 1:1 in practice (<ts>-<pid>[-pending]);
             // sanitization may theoretically collide, so keep the full id
             // readable and rely on rotation for bounds.
-            val safe = id.replace(SAFE_ID_REGEX, "_").take(128).ifEmpty { "report" }
+            val safe = sanitizeId(id, 128)
             val tmp = File(dir, "$safe.tmp")
             tmp.writeBytes(capped)
             val dest = File(dir, "$safe.json")
@@ -378,13 +429,14 @@ class CrashReportStore(private val dir: File) {
     }
 
     fun read(entry: Entry): String? {
+        if (!isInStore(entry.file)) return null
         return readRaw(entry.file)
     }
 
     fun readRaw(file: File): String? {
         return try {
             // Bounded: reports are capped at write; refuse absurd files.
-            if (!file.isFile || file.length() > MAX_FILE_BYTES + 4096) {
+            if (!file.isFile || file.length() > MAX_FILE_BYTES + SIZE_SLOP_BYTES) {
                 return null
             }
             file.readText(StandardCharsets.UTF_8)
@@ -395,12 +447,39 @@ class CrashReportStore(private val dir: File) {
 
     fun delete(entry: Entry): Boolean {
         return try {
+            if (!isInStore(entry.file)) return false
             entry.file.delete()
         } catch (_: Throwable) {
             false
         }
     }
 
+    /** True when [file] resolves inside this store dir (Entry forgery guard). */
+    fun isInStore(file: File): Boolean {
+        return try {
+            val root = dir.canonicalPath + File.separator
+            file.canonicalPath.startsWith(root)
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** True when a sanitized report id already exists (relaunch dedup). */
+    fun exists(id: String): Boolean {
+        return try {
+            File(dir, "${sanitizeId(id, 128)}.json").isFile
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * Deletes all JSON reports (plus tmp/txt backstops in this dir).
+     *
+     * The `watermark` file is intentionally retained: it prevents
+     * re-surfacing already-drained exits. Staged `cacheDir/crash-shares`
+     * copies are *not* in this dir — the UI clears them alongside this call.
+     */
     fun deleteAll(): Boolean {
         return try {
             if (!dir.isDirectory) {

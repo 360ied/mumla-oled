@@ -30,6 +30,10 @@ private val Context.crashSeenStore by preferencesDataStore(name = "crash_seen")
 /**
  * DataStore-backed last-viewed crash report id (single-shot unseen tracking).
  * Read/written on the normal path only — never from the crash handler.
+ *
+ * Single-key by design: only the newest id is tracked, so if two crashes
+ * land between prompts only the newest is shown. Accepted — the prompt is a
+ * single-shot gateway, not a per-report queue.
  */
 object CrashReportSeenStore {
     private val KEY_LAST_SEEN = stringPreferencesKey("last_seen_report_id")

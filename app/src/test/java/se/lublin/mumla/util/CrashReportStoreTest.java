@@ -19,16 +19,15 @@ package se.lublin.mumla.util;
 
 import junit.framework.TestCase;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.List;
 import kotlin.Pair;
 
 public class CrashReportStoreTest extends TestCase {
 
     private File tmpDir() throws Exception {
-        File base = new File(System.getProperty("java.io.tmpdir"));
-        File dir = new File(base, "crashstore-test-" + System.nanoTime());
-        assertTrue(dir.mkdirs());
-        return dir;
+        return Files.createTempDirectory("crashstore-test-").toFile();
     }
 
     private static void deleteRecursive(File f) {
@@ -40,7 +39,9 @@ public class CrashReportStoreTest extends TestCase {
                 }
             }
         }
-        f.delete();
+        if (!f.delete()) {
+            f.deleteOnExit();
+        }
     }
 
     private String json(String id) {
@@ -68,8 +69,10 @@ public class CrashReportStoreTest extends TestCase {
             CrashReportStore store = new CrashReportStore(dir);
             for (int i = 0; i < 10; i++) {
                 assertNotNull(store.write("id-" + i, json("id-" + i)));
-                // Distinct mtimes for deterministic ordering.
-                Thread.sleep(5);
+                // Deterministic ordering without sleeping: lastModified
+                // granularity is coarse, and list() tie-breaks on id anyway.
+                File f = new File(dir, "id-" + i + ".json");
+                assertTrue(f.setLastModified(1_000_000L + i * 1000L));
             }
             List<CrashReportStore.Entry> entries = store.list();
             assertEquals(8, entries.size());
@@ -83,9 +86,9 @@ public class CrashReportStoreTest extends TestCase {
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("good-1", json("good-1")));
-            java.io.FileWriter w = new java.io.FileWriter(new File(dir, "bad.json"));
-            w.write("this is not json {{{");
-            w.close();
+            try (java.io.FileWriter w = new java.io.FileWriter(new File(dir, "bad.json"), StandardCharsets.UTF_8)) {
+                w.write("this is not json {{{");
+            }
             List<CrashReportStore.Entry> entries = store.list();
             assertEquals(1, entries.size());
             assertEquals("good-1", entries.get(0).getId());
@@ -114,9 +117,9 @@ public class CrashReportStoreTest extends TestCase {
         try {
             CrashReportStore store = new CrashReportStore(dir);
             assertNotNull(store.write("r-1", json("r-1")));
-            java.io.FileWriter w = new java.io.FileWriter(new File(dir, "r-1.txt"));
-            w.write("share payload");
-            w.close();
+            try (java.io.FileWriter w = new java.io.FileWriter(new File(dir, "r-1.txt"), StandardCharsets.UTF_8)) {
+                w.write("share payload");
+            }
             assertTrue(store.deleteAll());
             File[] files = dir.listFiles();
             assertNotNull(files);
@@ -146,6 +149,9 @@ public class CrashReportStoreTest extends TestCase {
         File dir = tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
+            // Backstop path: uncapped write of invalid JSON (raw suffix past
+            // '}') exercises only the length cap, not the toJsonCapped path
+            // (covered separately by testToJsonCappedFitsExplodingTrace).
             StringBuilder big = new StringBuilder();
             for (int i = 0; i < 300 * 1024; i++) {
                 big.append('a');
@@ -169,7 +175,6 @@ public class CrashReportStoreTest extends TestCase {
         try {
             // Tombstone-like control-heavy trace: JSON escaping expands each
             // control byte to a 6-char unicode escape, far beyond the raw cap.
-            // expands far beyond the raw cap, which used to split mid-JSON.
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < 256 * 1024; i++) {
                 sb.append((char) (i % 32));
@@ -177,7 +182,7 @@ public class CrashReportStoreTest extends TestCase {
             String payload = CrashReportStore.toJsonCapped("big-2", 1L, 2L, null,
                     "exit-info", "REASON_CRASH_NATIVE", "v", "o", "m", "a", "p", 1, false,
                     sb.toString(), 0L, 0L);
-            assertTrue(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= CrashReportStore.MAX_FILE_BYTES);
+            assertTrue(payload.getBytes(StandardCharsets.UTF_8).length <= CrashReportStore.MAX_FILE_BYTES);
             // Tail fields intact: valid JSON, not a mid-string cut.
             assertTrue(payload.endsWith("}"));
             assertTrue(payload.contains("\"pssKb\":0}"));
@@ -206,7 +211,7 @@ public class CrashReportStoreTest extends TestCase {
             sb.append("line ").append(i).append("\n");
         }
         Pair<String, Integer> r = CrashReportStore.previewForDisplay(sb.toString());
-        assertEquals(Integer.valueOf(151), r.getSecond());
+        assertEquals(Integer.valueOf(150), r.getSecond());
         assertTrue(r.getFirst().startsWith("line 0\n"));
         assertTrue(r.getFirst().endsWith("line 99"));
     }
