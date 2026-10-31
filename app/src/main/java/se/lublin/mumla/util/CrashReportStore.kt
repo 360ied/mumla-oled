@@ -19,6 +19,7 @@ package se.lublin.mumla.util
 
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.Locale
 
 /**
  * Pure file store rooted at a crash-reports directory (production:
@@ -42,6 +43,7 @@ class CrashReportStore(private val dir: File) {
     companion object {
         const val MAX_FILES = 8
         const val MAX_FILE_BYTES = 256 * 1024
+        private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]")
 
         @JvmStatic
         fun jsonEscape(s: String): String {
@@ -54,7 +56,7 @@ class CrashReportStore(private val dir: File) {
                     '\r' -> sb.append("\\r")
                     '\t' -> sb.append("\\t")
                     else -> if (c < ' ') {
-                        sb.append(String.format("\\u%04x", c.code))
+                        sb.append(String.format(Locale.US, "\\u%04x", c.code))
                     } else {
                         sb.append(c)
                     }
@@ -144,6 +146,14 @@ class CrashReportStore(private val dir: File) {
                                     sb.append('\t')
                                     j += 2
                                 }
+                                'b' -> {
+                                    sb.append('\b')
+                                    j += 2
+                                }
+                                'f' -> {
+                                    sb.append('\u000C')
+                                    j += 2
+                                }
                                 'u' -> {
                                     if (j + 5 < text.length) {
                                         sb.append(text.substring(j + 2, j + 6).toInt(16).toChar())
@@ -181,10 +191,15 @@ class CrashReportStore(private val dir: File) {
                     return num.toLongOrNull()
                 }
                 val id = strField("id") ?: return null
+                // Lenient defaults for forward-compat (new fields); id stays strict.
                 val source = strField("source") ?: "unknown"
                 val reason = strField("reason") ?: "unknown"
                 val exitTs = longField("exitTimestamp")
-                val truncated = text.contains("\"truncated\":true")
+                // Bounded search: only the header section before scrubbedTrace
+                // counts, so a trace body containing the literal never flips it.
+                val headerEnd = text.indexOf("\"scrubbedTrace\"")
+                val header = if (headerEnd >= 0) text.substring(0, headerEnd) else text
+                val truncated = header.contains("\"truncated\":true")
                 Entry(id, file, exitTs, source, reason, truncated)
             } catch (_: Throwable) {
                 null
@@ -204,7 +219,15 @@ class CrashReportStore(private val dir: File) {
         }
     }
 
-    /** Atomic write-then-rename. Truncates payload to [MAX_FILE_BYTES]. */
+    /**
+     * Atomic write-then-rename (tmp + rename, copy fallback; no fsync —
+     * OS buffers are acceptable for a crash backstop).
+     *
+     * Callers must pre-truncate the trace field and set `truncated`
+     * (see CrashReporter): the [MAX_FILE_BYTES] cap here is only a backstop
+     * and may split mid-JSON, yielding a file parseSummary skips. Capped
+     * at a valid UTF-8 boundary, never splitting a multi-byte sequence.
+     */
     fun write(id: String, json: String): File? {
         return try {
             if (!ensureDir()) {
@@ -212,11 +235,17 @@ class CrashReportStore(private val dir: File) {
             }
             val bytes = json.toByteArray(StandardCharsets.UTF_8)
             val capped = if (bytes.size > MAX_FILE_BYTES) {
-                bytes.copyOf(MAX_FILE_BYTES)
+                // Decode prefix with replacement instead of copying raw bytes,
+                // so no invalid trailing multi-byte sequence is stored.
+                String(bytes, 0, MAX_FILE_BYTES, StandardCharsets.UTF_8)
+                    .toByteArray(StandardCharsets.UTF_8)
             } else {
                 bytes
             }
-            val safe = id.replace(Regex("[^A-Za-z0-9._-]"), "_").take(128).ifEmpty { "report" }
+            // Distinct ids map 1:1 in practice (<ts>-<pid>[-pending]);
+            // sanitization may theoretically collide, so keep the full id
+            // readable and rely on rotation for bounds.
+            val safe = id.replace(SAFE_ID_REGEX, "_").take(128).ifEmpty { "report" }
             val tmp = File(dir, "$safe.tmp")
             tmp.writeBytes(capped)
             val dest = File(dir, "$safe.json")
@@ -249,7 +278,8 @@ class CrashReportStore(private val dir: File) {
                     entries.add(e)
                 }
             }
-            entries.sortByDescending { it.file.lastModified() }
+            // lastModified granularity is coarse; tie-break on id for determinism.
+            entries.sortWith(compareByDescending<Entry> { it.file.lastModified() }.thenByDescending { it.id })
             entries
         } catch (_: Throwable) {
             emptyList()
@@ -257,15 +287,15 @@ class CrashReportStore(private val dir: File) {
     }
 
     fun read(entry: Entry): String? {
-        return try {
-            entry.file.readText(StandardCharsets.UTF_8)
-        } catch (_: Throwable) {
-            null
-        }
+        return readRaw(entry.file)
     }
 
     fun readRaw(file: File): String? {
         return try {
+            // Bounded: reports are capped at write; refuse absurd files.
+            if (!file.isFile || file.length() > MAX_FILE_BYTES + 4096) {
+                return null
+            }
             file.readText(StandardCharsets.UTF_8)
         } catch (_: Throwable) {
             null
@@ -289,7 +319,9 @@ class CrashReportStore(private val dir: File) {
             val files = dir.listFiles() ?: return true
             for (f in files) {
                 try {
-                    if (f.isFile && (f.name.endsWith(".json") || f.name.endsWith(".tmp"))) {
+                    // Also remove staged share payloads (*.txt) so Delete-all
+                    // leaves no scrubbed copy behind (privacy).
+                    if (f.isFile && (f.name.endsWith(".json") || f.name.endsWith(".tmp") || f.name.endsWith(".txt"))) {
                         if (!f.delete()) {
                             ok = false
                         }
@@ -310,13 +342,16 @@ class CrashReportStore(private val dir: File) {
             if (entries.size <= MAX_FILES) {
                 return entries.size
             }
+            var deleted = 0
             for (i in MAX_FILES until entries.size) {
                 try {
-                    entries[i].file.delete()
+                    if (entries[i].file.delete()) {
+                        deleted++
+                    }
                 } catch (_: Throwable) {
                 }
             }
-            MAX_FILES
+            entries.size - deleted
         } catch (_: Throwable) {
             0
         }

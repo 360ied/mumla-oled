@@ -84,8 +84,31 @@ public class CrashReportScrubberTest extends TestCase {
         assertTrue(out.contains("se.lublin.mumla.app.MumlaActivity.onCreate(MumlaActivity.kt:42)"));
     }
 
+    public void testCausedByKeyMaterialCollapsed() {
+        String out = CrashReportScrubber.scrub("java.lang.RuntimeException: boom\nCaused by: java.lang.IllegalStateException: password=hunter2\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("hunter2"));
+        assertTrue(out.contains("Caused by:") && out.contains("<redacted>"));
+    }
+
+    public void testBareHostXyzRedacted() {
+        String out = CrashReportScrubber.scrub("Failed to connect to voice.example.xyz\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("voice.example.xyz"));
+    }
+
+    public void testSingleLabelUserHostRedacted() {
+        String out = CrashReportScrubber.scrub("login alice@intranet denied\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("alice@intranet"));
+    }
+
+    public void testColonCredentialCollapsed() {
+        String out = CrashReportScrubber.scrub("java.lang.RuntimeException: password: hunter2\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("<redacted>"));
+        assertFalse(out.contains("hunter2"));
+    }
+
     public void testNullGivesEmpty() {
         assertEquals("", CrashReportScrubber.scrub(null));
+        assertEquals("", CrashReportScrubber.scrub(""));
     }
 
     public void testBenignMessageKept() {

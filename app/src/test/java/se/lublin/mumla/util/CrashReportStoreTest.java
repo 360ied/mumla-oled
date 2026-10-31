@@ -108,6 +108,39 @@ public class CrashReportStoreTest extends TestCase {
         }
     }
 
+    public void testDeleteAllRemovesTxt() throws Exception {
+        File dir = tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            assertNotNull(store.write("r-1", json("r-1")));
+            java.io.FileWriter w = new java.io.FileWriter(new File(dir, "r-1.txt"));
+            w.write("share payload");
+            w.close();
+            assertTrue(store.deleteAll());
+            File[] files = dir.listFiles();
+            assertNotNull(files);
+            assertEquals(0, files.length);
+        } finally {
+            deleteRecursive(dir);
+        }
+    }
+
+    public void testTruncatedFlagBounded() throws Exception {
+        File dir = tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            // Trace body contains the literal; header flag stays false.
+            String trace = "body with \\\"truncated\\\":true inside";
+            String payload = CrashReportStore.toJson("t-1", null, 1L, null, "s", "r", "v", "o", "m", "a", "p", 1, false, trace, 0L, 0L);
+            assertNotNull(store.write("t-1", payload));
+            List<CrashReportStore.Entry> entries = store.list();
+            assertEquals(1, entries.size());
+            assertFalse(entries.get(0).getTruncated());
+        } finally {
+            deleteRecursive(dir);
+        }
+    }
+
     public void testLargePayloadTruncated() throws Exception {
         File dir = tmpDir();
         try {
