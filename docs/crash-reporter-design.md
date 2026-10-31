@@ -258,8 +258,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     across two patterns, so `:app` cannot probe them), the native button is disabled rather than
     throwing a Java exception that would masquerade as the wrong capture
     path. Every button shows a confirmation built with
-    `MaterialAlertDialogBuilder(requireContext())` ("This will crash/stall
-    the app and drop any live call. Continue?") that is *dismissed before*
+    `MaterialAlertDialogBuilder(requireContext())` ("This will crash/stall the app. Continue?") that is *dismissed before*
     the crash or block is issued: `dialog.dismiss()`, then throw/call inside
     the positive-button callback for crashes, and `dialog.dismiss()` then
     the main-looper `post` for ANR (a plain `AlertDialog` synchronous
