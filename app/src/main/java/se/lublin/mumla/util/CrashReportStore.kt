@@ -48,6 +48,9 @@ class CrashReportStore(private val dir: File) {
         const val SIZE_SLOP_BYTES = 4096L
         private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]+")
         private val HEX = "0123456789abcdef".toCharArray()
+        // Whitespace-tolerant to match the share path: future
+        // pretty-printing must not flip list vs share.
+        private val TRUNCATED_TRUE_REGEX = Regex("\"truncated\"\\s*:\\s*true")
 
         /** Shared filename sanitizer (store + share staging stay in sync). */
         @JvmStatic
@@ -167,8 +170,8 @@ class CrashReportStore(private val dir: File) {
             while (jsonBytes.size > maxBytes && trace.isNotEmpty() && guard++ < 8) {
                 val excess = jsonBytes.size - maxBytes
                 val rawBytes = trace.toByteArray(StandardCharsets.UTF_8)
-                // Capped at a valid UTF-8 boundary, never splitting a
-                // multi-byte sequence (split trailing bytes decode away).
+                // Truncated by bytes; a split trailing multi-byte sequence
+                // decodes away (replacement char) so output stays valid UTF-8.
                 trace = String(rawBytes, 0, (rawBytes.size - excess - 32).coerceAtLeast(0), StandardCharsets.UTF_8)
                 json = toJson(id, exitTimestamp, capturedAtUtc, handlerWriteTime, source, reason, appVersion, osVersion, deviceModel, abi, processName, pid, true, trace, rssKb, pssKb)
                 jsonBytes = json.toByteArray(StandardCharsets.UTF_8)
@@ -194,6 +197,7 @@ class CrashReportStore(private val dir: File) {
         ): Pair<String, Int> {
             require(maxLines > 0) { "maxLines must be positive" }
             require(maxChars > 0) { "maxChars must be positive" }
+            if (text.isEmpty()) return Pair("", 0)
             // Count lines without splitting the whole payload: a 100KB+
             // tombstone split into a List<String> on the UI thread is the
             // jank this preview exists to avoid.
@@ -298,8 +302,21 @@ class CrashReportStore(private val dir: File) {
                                 }
                                 'u' -> {
                                     if (j + 5 < header.length) {
-                                        sb.append(header.substring(j + 2, j + 6).toInt(16).toChar())
-                                        j += 6
+                                        val code = try {
+                                            header.substring(j + 2, j + 6).toIntOrNull(16)
+                                        } catch (_: Throwable) {
+                                            null
+                                        }
+                                        if (code != null) {
+                                            sb.append(code.toChar())
+                                            j += 6
+                                        } else {
+                                            // Foreign/corrupt escape: keep the
+                                            // backslash literally instead of
+                                            // discarding the whole file.
+                                            sb.append(c)
+                                            j++
+                                        }
                                     } else {
                                         return null
                                     }
@@ -345,7 +362,7 @@ class CrashReportStore(private val dir: File) {
                 val source = strField("source") ?: "unknown"
                 val reason = strField("reason") ?: "unknown"
                 val exitTs = longField("exitTimestamp")
-                val truncated = header.contains("\"truncated\":true")
+                val truncated = TRUNCATED_TRUE_REGEX.containsMatchIn(header)
                 Entry(id, file, exitTs, source, reason, truncated)
             } catch (_: Throwable) {
                 null
@@ -371,8 +388,9 @@ class CrashReportStore(private val dir: File) {
      *
      * Report payloads should be built with [toJsonCapped] so the result
      * fits: this cap is only a backstop and may split mid-JSON, yielding a
-     * file whose tail fields no longer parse. Capped
-     * at a valid UTF-8 boundary, never splitting a multi-byte sequence.
+     * file whose tail fields no longer parse. Truncated by bytes; a split
+     * trailing multi-byte sequence becomes U+FFFD so the stored file stays
+     * valid UTF-8.
      */
     fun write(id: String, json: String): File? {
         return try {
@@ -414,7 +432,10 @@ class CrashReportStore(private val dir: File) {
     // Note: files failing parseSummary (corrupt or over the size slop)
     // are invisible to list()/rotate() and persist until deleteAll().
     // Production output stays parsable, so this covers only the
-    // backstop-split path or foreign files in the private dir.
+    // backstop-split path or foreign files in the private dir (both require
+    // local file access to plant); Delete-all clears them alongside reports.
+    // Returns newest-first (lastModified desc, id desc tie-break): the
+    // single-shot seen-store logic relies on entries[0] being newest.
     fun list(): List<Entry> {
         return try {
             if (!dir.isDirectory) {
@@ -516,6 +537,7 @@ class CrashReportStore(private val dir: File) {
         }
     }
 
+    /** Post-rotation entry count (diagnostic-only; callers ignore it). */
     fun rotate(): Int {
         return try {
             // Reclaim .tmp orphans from a kill between writeBytes and renameTo.

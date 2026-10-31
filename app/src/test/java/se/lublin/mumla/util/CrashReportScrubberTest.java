@@ -80,6 +80,24 @@ public class CrashReportScrubberTest extends TestCase {
         assertFalse(bearer.contains("abc123"));
     }
 
+    public void testAuthenticationFormsRedacted() {
+        String auth = CrashReportScrubber.scrub("authentication=abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(auth.contains("[CREDENTIAL-REDACTED]"));
+        assertFalse(auth.contains("abc123"));
+        String authKey = CrashReportScrubber.scrub("auth_key=abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(authKey.contains("[CREDENTIAL-REDACTED]"));
+        assertFalse(authKey.contains("abc123"));
+    }
+
+    public void testUserIdFormsRedacted() {
+        String userId = CrashReportScrubber.scrub("user_id=alice\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(userId.contains("[USER-REDACTED]"));
+        assertFalse(userId.contains("alice"));
+        String userid = CrashReportScrubber.scrub("userid=alice\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(userid.contains("[USER-REDACTED]"));
+        assertFalse(userid.contains("alice"));
+    }
+
     public void testPrefixedUserKeyRedacted() {
         String out = CrashReportScrubber.scrub("db_user=alice-secret-9\n\tat Foo.bar(Foo.java:1)");
         assertTrue(out.contains("db_user=[USER-REDACTED]"));

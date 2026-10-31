@@ -83,7 +83,7 @@ public class CrashReportStoreTest extends TestCase {
             assertEquals(1, entries.size());
             String raw = store.read(entries.get(0));
             assertNotNull(raw);
-            kotlin.Pair<String, String> rendered = se.lublin.mumla.util.CrashReporter.renderSharePayload(raw);
+            Pair<String, String> rendered = CrashReporter.renderSharePayload(raw);
             assertNotNull(rendered);
             assertTrue(rendered.getSecond().contains("truncated: true"));
             // Escape round-trip: quotes and backslashes survive verbatim.

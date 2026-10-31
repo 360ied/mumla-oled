@@ -21,6 +21,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import junit.framework.TestCase;
+import kotlin.Pair;
 
 /**
  * JVM coverage for the hand-rolled CrashReporter extractors via the public
@@ -32,7 +33,7 @@ public class CrashReporterTest extends TestCase {
         String json = CrashReportStore.toJson("1-2", 1000L, 2000L, null,
                 "exit-info", "REASON_CRASH", "v", "36", "model", "arm64-v8a",
                 "proc", 2, true, "trace line", 11L, 22L);
-        kotlin.Pair<String, String> out = CrashReporter.renderSharePayload(json);
+        Pair<String, String> out = CrashReporter.renderSharePayload(json);
         assertNotNull(out);
         String txt = out.getSecond();
         assertTrue(txt.contains("osVersion: 36"));
@@ -54,7 +55,7 @@ public class CrashReporterTest extends TestCase {
             // via the trivial no-match path (documents the limit).
             File corruptExit = new File(dir, "150-42.json");
             Files.write(corruptExit.toPath(), "not json".getBytes(StandardCharsets.UTF_8));
-            CrashReporter.INSTANCE.mergePending(store);
+            CrashReporter.mergePending(store);
             assertTrue(new File(dir, CrashReportStore.sanitizeId("100-42-7-pending", 128) + ".json").isFile());
         } finally {
             CrashTestFiles.deleteRecursive(dir);
@@ -76,7 +77,7 @@ public class CrashReporterTest extends TestCase {
             String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
                     "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, exitTrace, 0L, 0L);
             assertNotNull(store.write("150-42", exitJson));
-            CrashReporter.INSTANCE.mergePending(store);
+            CrashReporter.mergePending(store);
             assertTrue(new File(dir, CrashReportStore.sanitizeId("100-42-9-pending", 128) + ".json").isFile());
         } finally {
             CrashTestFiles.deleteRecursive(dir);
@@ -93,7 +94,7 @@ public class CrashReporterTest extends TestCase {
             String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
                     "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "", 0L, 0L);
             assertNotNull(store.write("150-42", exitJson));
-            CrashReporter.INSTANCE.mergePending(store);
+            CrashReporter.mergePending(store);
             assertFalse(new File(dir, CrashReportStore.sanitizeId("100-42-21-pending", 128) + ".json").isFile());
         } finally {
             CrashTestFiles.deleteRecursive(dir);
@@ -112,7 +113,7 @@ public class CrashReporterTest extends TestCase {
             String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
                     "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "t", 0L, 0L);
             assertNotNull(store.write("150-42", exitJson));
-            CrashReporter.INSTANCE.mergePending(store);
+            CrashReporter.mergePending(store);
             assertTrue(new File(dir, CrashReportStore.sanitizeId("200-42-31-pending", 128) + ".json").isFile());
         } finally {
             CrashTestFiles.deleteRecursive(dir);
@@ -133,7 +134,7 @@ public class CrashReporterTest extends TestCase {
             String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
                     "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, body, 0L, 0L);
             assertNotNull(store.write("150-42", exitJson));
-            CrashReporter.INSTANCE.mergePending(store);
+            CrashReporter.mergePending(store);
             assertFalse(new File(dir, CrashReportStore.sanitizeId("100-42-11-pending", 128) + ".json").isFile());
             assertTrue(new File(dir, CrashReportStore.sanitizeId("150-42", 128) + ".json").isFile());
         } finally {
