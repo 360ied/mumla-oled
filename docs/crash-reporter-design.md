@@ -163,8 +163,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
 - Stored schema (one JSON file per incident, UTF-8) vs. shared payload (a
   rendered `.txt` attachment + one-line summary — never the raw JSON):
   `id` (exit-based `<exitTimestamp>-<pid>` for exit-info files; provisional
-  `<capturedAtUtc>-<pid>-pending` for handler files, renamed to the exit-based
-  id when a merge joins them), `exitTimestamp` (system wall-clock exit time;
+  `<capturedAtUtc>-<pid>-pending` for handler files, dropped when a merge
+  joins them — the surviving exit file keeps the exit-based id), `exitTimestamp` (system wall-clock exit time;
   absent on unmerged handler files — the join uses `handlerWriteTime`),
   `capturedAtUtc` (when this device wrote the file), `handlerWriteTime`
   (handler-source files only; equals `capturedAtUtc`, records the pre-death
@@ -182,7 +182,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   `pid`/`reason` whose `timestamp` falls within 60 s *after* the handler
   write. (The handler necessarily runs before death, so it can never know
   the future exit timestamp — exact timestamp equality is unknowable and is
-  not attempted.) Content hash of the two traces is a secondary
+  not attempted.) A trace-prefix comparison of the two traces is a secondary
   confirmation, not the primary key. No symmetric time window: a "same
   minute" window would collapse genuine crash loops and defeat the
   rotation test in §7. Clock skew fails safe toward duplicates: a jumped clock
@@ -210,8 +210,10 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     `res/xml/settings_about.xml` — a full screen, not a preference tweak
     (`preference_headers.xml` itself is unchanged: the screen opens from
     About, not as a sixth root entry).
-  - The detail view renders the exact scrubbed `.txt` that Share would send
-    (preview = payload, no hidden fields). Share uses the new `<provider>`
+  - The detail view renders a bounded head of the scrubbed `.txt` that Share
+    sends (first ~100 lines / ~12 KB plus an omitted-lines note) through the
+    dialog message view, whose framework ScrollView keeps the button bar
+    on-screen. Share uses the new `<provider>`
     (`EXTRA_STREAM`, `FLAG_GRANT_READ_URI_PERMISSION`) with a one-line
     `EXTRA_TEXT` summary.
   - Crash-test buttons (all builds, visible): a "Crash test" category
@@ -222,7 +224,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     `SettingsActivity.ALLOWED_FRAGMENTS`; Kotlin single inheritance rules out
     extending `HumlaServiceFragment`, so service state is reached by
     composition — `SettingsActivity` gains a `ServiceConnection` (bound in `onStart`, unbound
-    in `onStop` with an `mBound` guard; flag `0` like `MumlaActivity`, so the
+    in `onStop` with a bound-flag guard; flag `0` like `MumlaActivity`, so the
     bind only succeeds while the service is already running and the buttons
     sit disabled while unbound — fail-safe), since it extends `BaseActivity`,
     not a `HumlaServiceProvider`. The connection feeds an activity-held
@@ -236,8 +238,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     thread), native crash (calls
     `se.lublin.humla.audio.NativeCrashTest.nativeCrash()` — the wrapper lives in
     `:libraries:humla` under the existing audio-engine package convention
-    (no new package roots in the `.so`), declared as `companion object {
-    @JvmStatic external fun nativeCrash() }` (a thin non-external `crash()`
+    (no new package roots in the `.so`), declared as `object NativeCrashTest`
+    with `@JvmStatic external fun nativeCrash()` (a thin non-external `crash()`
     may wrap it at the call site, per the `native*` convention)` so the C++ side is the static form
     `JNIEXPORT void JNICALL
     Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash(JNIEnv*, jclass)`
@@ -249,7 +251,7 @@ API live in `:libraries:humla` under the existing `audio_engine` /
     (`Handler(Looper.getMainLooper()).post { Thread.sleep(15_000) }` — well
     past the ~5 s ANR threshold — to guarantee the system ANR dialog). The
     hook is never invoked during normal operation — reachable only via the
-    hidden gesture plus confirmation — so audio and cold paths are
+    Crash test category plus confirmation — so audio and cold paths are
     unchanged; if the library fails to load (the wrapper's public
     `isAvailable()` reports false from its own `loadError` capture — the
     existing `ensureLoaded()` helpers are private to their owners and split
@@ -285,8 +287,8 @@ API live in `:libraries:humla` under the existing `audio_engine` /
   never uploads — crash traces cannot ride device backup (§3.2–§3.3).
 - Recording itself needs no consent gate (nothing leaves the device), but the
   About screen documents that in one sentence, and Delete-all is one tap away.
-- Share preview is a bounded head of the share payload (first ~100 lines
-  plus an omitted-lines note pointing at the shared file): the full trace
+- Share preview is a bounded head of the share payload (first ~100 lines /
+  ~12 KB plus an omitted-lines note pointing at the shared file): the full trace
   is unreadable and janky in a dialog, while Share still sends the complete
   captured report; a one-line warning notes
   that device model / OS version will be visible wherever the report is
