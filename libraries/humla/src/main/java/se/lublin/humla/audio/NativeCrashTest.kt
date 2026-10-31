@@ -27,15 +27,11 @@ package se.lublin.humla.audio
  * Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash.
  */
 object NativeCrashTest {
-    @Volatile
-    private var loadError: Throwable? = null
-
-    init {
-        try {
-            System.loadLibrary("humlaaudio")
-        } catch (e: Throwable) {
-            loadError = e
-        }
+    private val loadError: Throwable? = try {
+        System.loadLibrary("humlaaudio")
+        null
+    } catch (e: Throwable) {
+        e
     }
 
     /**
