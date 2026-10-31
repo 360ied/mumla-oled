@@ -49,7 +49,7 @@ public class CrashReportScrubberTest extends TestCase {
 
     public void testUnderscoreJoinedCredentialRedacted() {
         String out = CrashReportScrubber.scrub("access_token=abc123\n\tat Foo.bar(Foo.java:1)");
-        assertTrue(out.contains("[CREDENTIAL-REDACTED]"));
+        assertTrue(out.contains("access_token=[CREDENTIAL-REDACTED]"));
         assertFalse(out.contains("abc123"));
         String refresh = CrashReportScrubber.scrub("refresh_token: xyz\n\tat Foo.bar(Foo.java:1)");
         assertTrue(refresh.contains("[CREDENTIAL-REDACTED]"));
@@ -69,6 +69,30 @@ public class CrashReportScrubberTest extends TestCase {
         String out = CrashReportScrubber.scrub("api key = abc123\n\tat Foo.bar(Foo.java:1)");
         assertTrue(out.contains("[CREDENTIAL-REDACTED]"));
         assertFalse(out.contains("abc123"));
+    }
+
+    public void testBareAuthBearerRedacted() {
+        String auth = CrashReportScrubber.scrub("auth=abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(auth.contains("auth=[CREDENTIAL-REDACTED]"));
+        assertFalse(auth.contains("abc123"));
+        String bearer = CrashReportScrubber.scrub("bearer=abc123\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(bearer.contains("bearer=[CREDENTIAL-REDACTED]"));
+        assertFalse(bearer.contains("abc123"));
+    }
+
+    public void testPrefixedUserKeyRedacted() {
+        String out = CrashReportScrubber.scrub("db_user=alice\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("db_user=[USER-REDACTED]"));
+        assertFalse(out.contains("alice"));
+        String login = CrashReportScrubber.scrub("app_login=bob\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(login.contains("app_login=[USER-REDACTED]"));
+        assertFalse(login.contains("bob"));
+    }
+
+    public void testCrlfNormalized() {
+        String out = CrashReportScrubber.scrub("boom\r\npassword=hunter2\r\n\tat Foo.bar(Foo.java:1)");
+        assertTrue(out.contains("password=[CREDENTIAL-REDACTED]"));
+        assertFalse(out.contains("\r"));
     }
 
     public void testUsernameRedacted() {

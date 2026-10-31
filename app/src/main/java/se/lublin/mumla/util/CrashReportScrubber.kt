@@ -39,11 +39,11 @@ object CrashReportScrubber {
     // (access_token, refresh_token, client_secret) still match: '_' is a
     // word char, so \\b alone never fires inside them. Space allowed in
     // "api key" via [ _-]?.
-    private val CREDENTIAL: Pattern = Pattern.compile("(?i)\\b[\\w-]*(password|passwd|pwd|token|secret|credential|api[ _-]?key)\\s*[:=]\\s*\\S+")
+    private val CREDENTIAL: Pattern = Pattern.compile("(?i)\\b([\\w-]*?(password|passwd|pwd|token|secret|credential|api[ _-]?key|auth|bearer))\\s*[:=]\\s*\\S+")
     // Bare "auth" cannot match "Authorization:" ("orization" intervenes
     // before ':'), so the header and bearer forms get their own pattern.
     private val AUTH_HEADER: Pattern = Pattern.compile("(?i)\\b(authorization\\s*:[^\\n\\r]+|bearer\\s+\\S+)")
-    private val USER_KEY: Pattern = Pattern.compile("(?i)\\b(user(name)?|login)\\s*[:=]\\s*\\S+")
+    private val USER_KEY: Pattern = Pattern.compile("(?i)\\b([\\w-]*?(user(name)?|login))\\s*[:=]\\s*\\S+")
 
     /**
      * Scrubs a full crash payload (header + stack trace).
