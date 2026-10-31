@@ -156,4 +156,40 @@ public class CrashReportStoreTest extends TestCase {
             deleteRecursive(dir);
         }
     }
+
+    public void testToJsonCappedSmallPassthrough() throws Exception {
+        String expected = CrashReportStore.toJson("c-1", null, 1L, null, "s", "r", "v", "o", "m", "a", "p", 1, false, "trace", 0L, 0L);
+        String actual = CrashReportStore.toJsonCapped("c-1", null, 1L, null, "s", "r", "v", "o", "m", "a", "p", 1, false, "trace", 0L, 0L);
+        assertEquals(expected, actual);
+    }
+
+    public void testToJsonCappedFitsExplodingTrace() throws Exception {
+        File dir = tmpDir();
+        try {
+            // Tombstone-like control-heavy trace: JSON escaping expands each
+            // control byte to a 6-char unicode escape, far beyond the raw cap.
+            // expands far beyond the raw cap, which used to split mid-JSON.
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 256 * 1024; i++) {
+                sb.append((char) (i % 32));
+            }
+            String payload = CrashReportStore.toJsonCapped("big-2", 1L, 2L, null,
+                    "exit-info", "REASON_CRASH_NATIVE", "v", "o", "m", "a", "p", 1, false,
+                    sb.toString(), 0L, 0L);
+            assertTrue(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= CrashReportStore.MAX_FILE_BYTES);
+            // Tail fields intact: valid JSON, not a mid-string cut.
+            assertTrue(payload.endsWith("}"));
+            assertTrue(payload.contains("\"pssKb\":0}"));
+            assertTrue(payload.contains("\"reason\":\"REASON_CRASH_NATIVE\""));
+            CrashReportStore store = new CrashReportStore(dir);
+            assertNotNull(store.write("big-2", payload));
+            List<CrashReportStore.Entry> entries = store.list();
+            assertEquals(1, entries.size());
+            assertEquals("big-2", entries.get(0).getId());
+            assertEquals("REASON_CRASH_NATIVE", entries.get(0).getReason());
+            assertTrue(entries.get(0).getTruncated());
+        } finally {
+            deleteRecursive(dir);
+        }
+    }
 }

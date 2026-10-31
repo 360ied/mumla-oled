@@ -133,7 +133,7 @@ object CrashReporter {
                 ""
             }
             val id = "${capturedAt}-${pid}-pending"
-            val json = CrashReportStore.toJson(
+            val json = CrashReportStore.toJsonCapped(
                 id,
                 null,
                 capturedAt,
@@ -244,7 +244,7 @@ object CrashReporter {
         } catch (_: Throwable) {
             safeProcessName()
         }
-        val json = CrashReportStore.toJson(
+        val json = CrashReportStore.toJsonCapped(
             id,
             ts,
             System.currentTimeMillis(),

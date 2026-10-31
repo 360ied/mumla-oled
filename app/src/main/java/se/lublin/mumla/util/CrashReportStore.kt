@@ -106,6 +106,53 @@ class CrashReportStore(private val dir: File) {
                 "}"
         }
 
+        /**
+         * Drop-in [toJson] that guarantees the result fits within [maxBytes]
+         * UTF-8 bytes, so [write]'s backstop cap can never split the payload
+         * mid-JSON (which stores a file whose tail fields no longer parse).
+         *
+         * Only the trace field is ever shrunk — header fields stay intact —
+         * and the `truncated` flag is set when shrinking happens here (OR-ed
+         * with the caller's upstream flag). JSON escaping expands (control
+         * bytes become 6-char unicode escapes), so the payload is re-measured after
+         * each shrink; every round removes at least the measured excess
+         * (escaping only ever expands), so this converges immediately.
+         */
+        @JvmStatic
+        @JvmOverloads
+        fun toJsonCapped(
+            id: String,
+            exitTimestamp: Long?,
+            capturedAtUtc: Long,
+            handlerWriteTime: Long?,
+            source: String,
+            reason: String,
+            appVersion: String,
+            osVersion: String,
+            deviceModel: String,
+            abi: String,
+            processName: String,
+            pid: Int,
+            truncated: Boolean,
+            scrubbedTrace: String,
+            rssKb: Long,
+            pssKb: Long,
+            maxBytes: Int = MAX_FILE_BYTES,
+        ): String {
+            var trace = scrubbedTrace
+            var json = toJson(id, exitTimestamp, capturedAtUtc, handlerWriteTime, source, reason, appVersion, osVersion, deviceModel, abi, processName, pid, truncated, trace, rssKb, pssKb)
+            var guard = 0
+            while (json.toByteArray(StandardCharsets.UTF_8).size > maxBytes && trace.isNotEmpty() && guard++ < 8) {
+                val excess = json.toByteArray(StandardCharsets.UTF_8).size - maxBytes
+                val rawBytes = trace.toByteArray(StandardCharsets.UTF_8)
+                // Capped at a valid UTF-8 boundary, never splitting a
+                // multi-byte sequence (split trailing bytes decode away).
+                trace = String(rawBytes, 0, (rawBytes.size - excess - 32).coerceAtLeast(0), StandardCharsets.UTF_8)
+                json = toJson(id, exitTimestamp, capturedAtUtc, handlerWriteTime, source, reason, appVersion, osVersion, deviceModel, abi, processName, pid, true, trace, rssKb, pssKb)
+            }
+            return json
+        }
+
         /** Minimal tolerant field extractor; returns null on corrupt input. */
         @JvmStatic
         fun parseSummary(file: File): Entry? {
@@ -223,9 +270,9 @@ class CrashReportStore(private val dir: File) {
      * Atomic write-then-rename (tmp + rename, copy fallback; no fsync —
      * OS buffers are acceptable for a crash backstop).
      *
-     * Callers must pre-truncate the trace field and set `truncated`
-     * (see CrashReporter): the [MAX_FILE_BYTES] cap here is only a backstop
-     * and may split mid-JSON, yielding a file parseSummary skips. Capped
+     * Report payloads should be built with [toJsonCapped] so the result
+     * fits: this cap is only a backstop and may split mid-JSON, yielding a
+     * file whose tail fields no longer parse. Capped
      * at a valid UTF-8 boundary, never splitting a multi-byte sequence.
      */
     fun write(id: String, json: String): File? {

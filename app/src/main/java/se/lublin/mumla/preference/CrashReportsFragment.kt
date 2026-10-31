@@ -214,6 +214,14 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             val padding = (16 * resources.displayMetrics.density).toInt()
             textView.setPadding(padding, padding, padding, padding)
             val container = androidx.core.widget.NestedScrollView(requireContext())
+            // Cap the scroll area to a fraction of the screen so huge
+            // native/ANR traces scroll internally instead of pushing the
+            // Share/Delete/Close button bar off-screen.
+            val maxContentHeight = (resources.displayMetrics.heightPixels * 0.55).toInt()
+            container.layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                maxContentHeight,
+            )
             container.addView(
                 textView,
                 ViewGroup.LayoutParams(
