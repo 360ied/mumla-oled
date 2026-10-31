@@ -53,10 +53,14 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         setPreferencesFromResource(R.xml.settings_crash_reports, rootKey)
         findPreference<Preference>("crash_delete_all")?.setOnPreferenceClickListener {
             val store = CrashReporter.store(requireContext())
-            store.deleteAll()
+            val ok = store.deleteAll()
             clearStagedShares()
             refreshList()
-            Toast.makeText(requireContext(), R.string.crash_all_deleted, Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                requireContext(),
+                if (ok) R.string.crash_all_deleted else R.string.crash_load_failed,
+                Toast.LENGTH_SHORT,
+            ).show()
             true
         }
         wireTestButtons()
@@ -231,6 +235,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 .setNegativeButton(R.string.delete) { dialog, _ ->
                     dialog.dismiss()
                     store.delete(entry)
+                    deleteStagedSharesFor(entry.id)
                     refreshList()
                     Toast.makeText(requireContext(), R.string.crash_deleted, Toast.LENGTH_SHORT).show()
                 }
@@ -319,7 +324,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
 
     private fun confirmAndRun(kind: String) {
         // Re-check at click time (TOCTOU): neither a call connected after the
-        // screen opened nor one connected between Continue and the crash may die.
+        // screen opened nor one connected while the dialog is open may die —
+        // the positive button re-checks immediately before acting.
         if (host()?.isCrashConnected() == true) {
             refreshServiceState()
             Toast.makeText(requireContext(), R.string.crash_test_disabled_call, Toast.LENGTH_SHORT).show()
@@ -340,6 +346,13 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             .setMessage(R.string.crash_confirm)
             .setPositiveButton(R.string.confirm) { d, _ ->
                 d.dismiss()
+                // Service can transition while the dialog is open
+                // (auto-reconnect/backoff); abort instead of killing a call.
+                if (host()?.isCrashConnected() == true) {
+                    refreshServiceState()
+                    Toast.makeText(requireContext(), R.string.crash_test_disabled_call, Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
                 runTest(kind)
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -371,7 +384,23 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             "REASON_CRASH" -> getString(R.string.crash_reason_crash)
             "REASON_CRASH_NATIVE" -> getString(R.string.crash_reason_native)
             "REASON_ANR" -> getString(R.string.crash_reason_anr)
-            else -> reason
+            else -> getString(R.string.crash_reason_crash)
+        }
+    }
+
+    private fun deleteStagedSharesFor(entryId: String) {
+        try {
+            val dir = File(requireContext().cacheDir, "crash-shares")
+            if (!dir.isDirectory) return
+            val prefix = CrashReportStore.sanitizeId(entryId, 64)
+            dir.listFiles { f -> f.isFile && f.name.startsWith(prefix) }?.forEach {
+                try {
+                    it.delete()
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not purge staged shares", e)
         }
     }
 
@@ -411,6 +440,5 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         private val TAG: String = CrashReportsFragment::class.java.simpleName
 
         private const val ANR_FREEZE_MS = 15_000L
-        private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]+")
     }
 }

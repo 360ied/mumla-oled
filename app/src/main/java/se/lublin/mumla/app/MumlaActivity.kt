@@ -95,7 +95,7 @@ import se.lublin.mumla.util.CrashReportSeenStore
 import se.lublin.mumla.util.HumlaServiceFragment
 import se.lublin.mumla.util.HumlaServiceProvider
 import se.lublin.mumla.util.MumlaTrustStore
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -566,7 +566,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 }
                 val newest = entries[0]
                 val lastSeen = try {
-                    kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                    kotlinx.coroutines.runBlocking {
                         CrashReportSeenStore.getLastSeen(appCtx)
                     }
                 } catch (e: Throwable) {
@@ -634,7 +634,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // silently consumed.
         snackbar.addCallback(object : Snackbar.Callback() {
             override fun onShown(sb: Snackbar?) {
-                CoroutineScope(Dispatchers.IO).launch {
+                lifecycleScope.launch(Dispatchers.IO) {
                     try {
                         CrashReportSeenStore.setLastSeen(applicationContext, newestId)
                     } catch (e: Throwable) {
@@ -833,6 +833,18 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         } catch (e: Exception) {
             Log.w(TAG, "Service bind failed", e)
             mBound = false
+        }
+        // Rotation within the 5s recheck window cancels it in onPause and
+        // never reschedules (onCreate fresh-branch only). Re-arm here when
+        // no prompt is showing and no recheck is armed; the check itself is
+        // single-shot via the seen-store so repeated resumes are harmless.
+        if (mCrashSnackbar == null && mCrashRecheck == null && !isFinishing && !isDestroyed) {
+            try {
+                checkCrashReports()
+                scheduleCrashRecheck()
+            } catch (e: Throwable) {
+                Log.w(TAG, "Crash reschedule failed", e)
+            }
         }
     }
 

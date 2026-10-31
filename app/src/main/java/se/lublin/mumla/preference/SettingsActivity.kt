@@ -89,7 +89,11 @@ class SettingsActivity : BaseActivity() {
                     val fragmentClass = Class.forName(deepLink)
                     val fragment = fragmentClass.getDeclaredConstructor().newInstance() as Fragment
                     val args = Bundle()
-                    args.putCharSequence("title", getString(R.string.crash_reports))
+                    // Title follows the fragment: only the crash path has a
+                    // dedicated label today; others fall back to their own.
+                    if (deepLink == CrashReportsFragment::class.java.name) {
+                        args.putCharSequence("title", getString(R.string.crash_reports))
+                    }
                     fragment.arguments = args
                     supportFragmentManager
                         .beginTransaction()

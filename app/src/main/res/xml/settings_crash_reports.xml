@@ -17,35 +17,36 @@
   ~ along with this program.  If not, see <http://www.gnu.org/licenses/>.
   -->
 
-<!-- android: namespace to match settings_about.xml (the launch site). -->
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<!-- android: key/title/summary to match settings_about.xml; app: iconSpaceReserved (androidx attr). -->
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
     <PreferenceCategory
         android:key="crash_list_category"
         android:title="@string/crash_reports"
-        android:iconSpaceReserved="false" />
+        app:iconSpaceReserved="false" />
     <Preference
         android:key="crash_delete_all"
         android:title="@string/crash_delete_all"
         android:summary="@string/crash_delete_all_summary"
-        android:iconSpaceReserved="false" />
+        app:iconSpaceReserved="false" />
     <PreferenceCategory
         android:key="crash_test"
         android:title="@string/crash_test"
-        android:iconSpaceReserved="false">
+        app:iconSpaceReserved="false">
         <Preference
             android:key="crash_test_java"
             android:title="@string/crash_test_java"
             android:summary="@string/crash_test_summary"
-            android:iconSpaceReserved="false" />
+            app:iconSpaceReserved="false" />
         <Preference
             android:key="crash_test_native"
             android:title="@string/crash_test_native"
             android:summary="@string/crash_test_summary"
-            android:iconSpaceReserved="false" />
+            app:iconSpaceReserved="false" />
         <Preference
             android:key="crash_test_anr"
             android:title="@string/crash_test_anr"
             android:summary="@string/crash_test_summary"
-            android:iconSpaceReserved="false" />
+            app:iconSpaceReserved="false" />
     </PreferenceCategory>
 </PreferenceScreen>
