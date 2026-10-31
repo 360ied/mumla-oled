@@ -164,18 +164,6 @@ class SettingsActivity : BaseActivity() {
         }
     }
 
-    // Session-only (process-scoped): survives rotation in the same process,
-    // resets on process death so a recreated process relocks. Deliberately
-    // not saved in onSaveInstanceState (which the system restores after
-    // process death too).
-    fun isCrashTestUnlocked(): Boolean {
-        return crashTestUnlockedGlobal
-    }
-
-    fun unlockCrashTest() {
-        crashTestUnlockedGlobal = true
-    }
-
     private fun notifyCrashFragment() {
         try {
             val fragment = supportFragmentManager.findFragmentById(R.id.settings_container)
@@ -194,9 +182,6 @@ class SettingsActivity : BaseActivity() {
 
     companion object {
         private val TAG: String = SettingsActivity::class.java.simpleName
-
-        @Volatile
-        private var crashTestUnlockedGlobal: Boolean = false
 
         const val EXTRA_LAUNCH_FRAGMENT = "launch_fragment"
 

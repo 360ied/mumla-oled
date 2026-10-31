@@ -232,7 +232,6 @@
     <string name="crash_test_native">Trigger native crash</string>
     <string name="crash_test_anr">Trigger ANR</string>
     <string name="crash_test_summary">Available while disconnected.</string>
-    <string name="crash_test_unlocked">Crash test unlocked</string>
     <string name="crash_confirm">This will crash/stall the app and drop any live call. Continue?</string>
     <string name="crash_test_disabled_call">Disconnect to enable.</string>
     <string name="crash_test_disabled_native">Native library unavailable.</string>
