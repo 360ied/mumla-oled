@@ -46,10 +46,11 @@ object CrashReporter {
     private const val TRACE_CAP_BYTES = 256 * 1024
 
     @Volatile
-    private var installed = false
+    private var handlerInstalled = false
     private val installLock = Any()
 
     fun storeDir(context: Context): File {
+        // Throws on locked storage — callers must catch (all current callers do).
         return File(context.noBackupFilesDir, DIR_NAME)
     }
 
@@ -58,21 +59,30 @@ object CrashReporter {
     }
 
     /**
-     * Must run as the first statement of Application.onCreate().
-     * Safe to call twice; second call is a no-op.
+     * First call after `super.onCreate()`, before any other app work.
+     * Safe to call twice: the handler installs once, the exit-info drain
+     * is watermark-guarded and idempotent so re-drains are safe.
      */
     @JvmStatic
     fun install(context: Context) {
         synchronized(installLock) {
-            if (installed) {
+            if (handlerInstalled) {
+                try {
+                    drainExitInfo(context.applicationContext)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Exit-info drain failed", e)
+                }
                 return
             }
-            installed = true
+            handlerInstalled = true
         }
         try {
             installHandler(context.applicationContext)
         } catch (e: Throwable) {
             Log.w(TAG, "Handler install failed", e)
+            synchronized(installLock) {
+                handlerInstalled = false
+            }
         }
         try {
             drainExitInfo(context.applicationContext)
@@ -91,6 +101,17 @@ object CrashReporter {
                 try {
                     if (previous != null) {
                         previous.uncaughtException(thread, throwable)
+                    } else {
+                        // No system handler (theoretical): kill explicitly so
+                        // a fatal throw never leaves a corrupted process alive.
+                        try {
+                            Process.killProcess(Process.myPid())
+                        } catch (_: Throwable) {
+                        }
+                        try {
+                            System.exit(10)
+                        } catch (_: Throwable) {
+                        }
                     }
                 } catch (_: Throwable) {
                 }
@@ -132,7 +153,10 @@ object CrashReporter {
             } catch (_: Throwable) {
                 ""
             }
-            val id = "${capturedAt}-${pid}-pending"
+            // Thread id disambiguates two threads crashing in the same
+            // millisecond on the same pid (provisional id only; the
+            // surviving exit file keeps the exit-based id).
+            val id = "${capturedAt}-${pid}-${thread.id}-pending"
             val json = CrashReportStore.toJsonCapped(
                 id,
                 null,
@@ -141,8 +165,8 @@ object CrashReporter {
                 "uncaught-handler",
                 "REASON_CRASH",
                 safeVersionName(),
-                Build.VERSION.RELEASE ?: "unknown",
-                Build.MODEL ?: "unknown",
+                Build.VERSION.RELEASE,
+                Build.MODEL,
                 safeAbi(),
                 safeProcessName(),
                 pid,
@@ -190,7 +214,7 @@ object CrashReporter {
                     ) {
                         continue
                     }
-                    writeExitReport(appContext, store, info)
+                    writeExitReport(dir, store, info)
                 } catch (_: Throwable) {
                 }
             }
@@ -207,7 +231,7 @@ object CrashReporter {
     }
 
     private fun writeExitReport(
-        appContext: Context,
+        dir: File,
         store: CrashReportStore,
         info: ApplicationExitInfo,
     ) {
@@ -217,8 +241,7 @@ object CrashReporter {
         val id = "${ts}-${pid}"
         // Skip if already recorded (relaunch without watermark advance).
         try {
-            val existing = File(storeDir(appContext), "$id.json")
-            if (existing.isFile) {
+            if (store.exists(id)) {
                 return
             }
         } catch (_: Throwable) {
@@ -252,8 +275,8 @@ object CrashReporter {
             "exit-info",
             reasonStr,
             safeVersionName(),
-            Build.VERSION.RELEASE ?: "unknown",
-            Build.MODEL ?: "unknown",
+            Build.VERSION.RELEASE,
+            Build.MODEL,
             safeAbi(),
             processName ?: safeProcessName(),
             pid,
@@ -280,6 +303,7 @@ object CrashReporter {
             val buf = ByteArray(8192)
             var total = 0
             var truncated = false
+            var zeroStreak = 0
             while (true) {
                 val n = try {
                     stream.read(buf)
@@ -291,8 +315,12 @@ object CrashReporter {
                     break
                 }
                 if (n == 0) {
+                    // Defensive: a faulty stream returning 0 forever would
+                    // stall process death; cap consecutive short reads.
+                    if (++zeroStreak > 32) break
                     continue
                 }
+                zeroStreak = 0
                 if (total + n > TRACE_CAP_BYTES) {
                     out.write(buf, 0, TRACE_CAP_BYTES - total)
                     truncated = true
@@ -337,7 +365,9 @@ object CrashReporter {
             }
             a.take(512) == b.take(512)
         } catch (_: Throwable) {
-            true
+            // Fail safe toward duplicates: an unreadable trace never
+            // authorizes dropping the pending file.
+            false
         }
     }
 
@@ -375,11 +405,13 @@ object CrashReporter {
                         // Exit file keeps the exit-based id (provisional id is
                         // dropped); its handlerWriteTime stays null by schema.
                         // Confirm content before dropping the pending file.
+                        // Fail safe toward duplicates: unreadable exit content
+                        // keeps the pending file, never deletes it.
                         val drop = try {
                             val exitRaw = store.readRaw(match.file)
-                            exitRaw == null || tracesConfirm(raw, exitRaw)
+                            exitRaw != null && tracesConfirm(raw, exitRaw)
                         } catch (_: Throwable) {
-                            true
+                            false
                         }
                         if (drop) {
                             try {
@@ -396,12 +428,16 @@ object CrashReporter {
     }
 
     private fun extractPidFromId(id: String): Long? {
-        // Exit id: "<exitTs>-<pid>"; pending id: "<ts>-<pid>-pending".
-        // Keyed on the -pending suffix explicitly so a future dash in the
-        // timestamp section cannot silently shift the index.
+        // Exit id: "<exitTs>-<pid>"; pending id: "<ts>-<pid>-<tid>-pending"
+        // (legacy "<ts>-<pid>-pending" still parses). Keyed on the -pending
+        // suffix explicitly so a future dash in the timestamp section cannot
+        // silently shift the index.
         return try {
             if (id.endsWith("-pending")) {
-                id.removeSuffix("-pending").substringAfterLast("-").toLongOrNull()
+                val core = id.removeSuffix("-pending")
+                val parts = core.split("-")
+                // [ts, pid] or [ts, pid, tid]: pid is index 1 when present.
+                if (parts.size >= 2) parts[1].toLongOrNull() else core.substringAfterLast("-").toLongOrNull()
             } else {
                 id.substringAfterLast("-").toLongOrNull()
             }
@@ -434,18 +470,47 @@ object CrashReporter {
     }
 
     private fun extractString(json: String, name: String): String? {
+        // Escape-aware (mirrors CrashReportStore.parseSummary): a trace body
+        // containing an escaped quote must not truncate a header value.
+        // Header-first invariant still holds, but unescape correctly anyway.
         return try {
             val key = "\"" + name + "\":\""
             val i = json.indexOf(key)
             if (i < 0) {
                 return null
             }
-            val start = i + key.length
-            val end = json.indexOf("\"", start)
-            if (end < 0) {
-                return null
+            var j = i + key.length
+            val sb = StringBuilder()
+            var closed = false
+            while (j < json.length) {
+                val c = json[j]
+                if (c == '\\' && j + 1 < json.length) {
+                    val n = json[j + 1]
+                    when (n) {
+                        '"', '\\', '/' -> { sb.append(n); j += 2 }
+                        'n' -> { sb.append('\n'); j += 2 }
+                        'r' -> { sb.append('\r'); j += 2 }
+                        't' -> { sb.append('\t'); j += 2 }
+                        'b' -> { sb.append('\b'); j += 2 }
+                        'f' -> { sb.append('\u000C'); j += 2 }
+                        'u' -> {
+                            if (j + 5 < json.length) {
+                                sb.append(json.substring(j + 2, j + 6).toInt(16).toChar())
+                                j += 6
+                            } else return null
+                        }
+                        else -> { sb.append(c); j++ }
+                    }
+                } else if (c == '"') {
+                    closed = true
+                    break
+                } else {
+                    sb.append(c)
+                    j++
+                }
             }
-            json.substring(start, end)
+            if (!closed) return null
+            sb.toString()
         } catch (_: Throwable) {
             null
         }
@@ -518,6 +583,8 @@ object CrashReporter {
     /**
      * Renders the share payload from stored raw JSON: a one-line summary plus
      * the scrubbed .txt body (preview = payload, never the raw JSON).
+     * Includes triage headers (os/device/abi/process/truncated/rss) so the
+     * recipient can tell a capped trace from a complete one.
      */
     @JvmStatic
     fun renderSharePayload(rawJson: String): Pair<String, String>? {
@@ -525,6 +592,14 @@ object CrashReporter {
             val id = extractString(rawJson, "id") ?: "report"
             val reason = extractString(rawJson, "reason") ?: "unknown"
             val appVersion = extractString(rawJson, "appVersion") ?: "unknown"
+            val osVersion = extractString(rawJson, "osVersion") ?: "unknown"
+            val deviceModel = extractString(rawJson, "deviceModel") ?: "unknown"
+            val abi = extractString(rawJson, "abi") ?: "unknown"
+            val processName = extractString(rawJson, "processName") ?: "unknown"
+            val source = extractString(rawJson, "source") ?: "unknown"
+            val pid = extractLong(rawJson, "pid")
+            val rss = extractLong(rawJson, "rssKb")
+            val pss = extractLong(rawJson, "pssKb")
             val trace = extractTrace(rawJson)
             val summary = "Mumla OLED crash report $id ($reason)"
             val sb = StringBuilder()
@@ -532,6 +607,19 @@ object CrashReporter {
             sb.append("id: ").append(id).append("\n")
             sb.append("reason: ").append(reason).append("\n")
             sb.append("appVersion: ").append(appVersion).append("\n")
+            sb.append("osVersion: ").append(osVersion).append("\n")
+            sb.append("deviceModel: ").append(deviceModel).append("\n")
+            sb.append("abi: ").append(abi).append("\n")
+            sb.append("processName: ").append(processName).append("\n")
+            sb.append("source: ").append(source).append("\n")
+            if (pid != null) sb.append("pid: ").append(pid).append("\n")
+            if (rss != null) sb.append("rssKb: ").append(rss).append("\n")
+            if (pss != null) sb.append("pssKb: ").append(pss).append("\n")
+            // truncated flag is header-searched like the store parser so a
+            // trace literal can never flip it.
+            val headerEnd = rawJson.indexOf("\"scrubbedTrace\"")
+            val header = if (headerEnd >= 0) rawJson.substring(0, headerEnd) else rawJson
+            if (header.contains("\"truncated\":true")) sb.append("truncated: true\n")
             val exitTs = extractLong(rawJson, "exitTimestamp")
             if (exitTs != null) {
                 sb.append("exitTimestamp: ").append(exitTs).append("\n")
