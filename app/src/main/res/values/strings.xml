@@ -236,4 +236,5 @@
     <string name="crash_test_disabled_call">Disconnect to enable.</string>
     <string name="crash_test_disabled_native">Native library unavailable.</string>
     <string name="crash_preview_omitted">… (%1$d more lines — see shared file for the complete captured report)</string>
+    <string name="crash_recording_notice">Crash reports are recorded on this device and never leave it unless you share one.</string>
 </resources>

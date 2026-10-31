@@ -46,6 +46,11 @@
         app:fragment="se.lublin.mumla.preference.CrashReportsFragment"
         app:iconSpaceReserved="false" />
     <Preference
+        android:key="crash_recording_notice"
+        android:title="@string/crash_recording_notice"
+        android:selectable="false"
+        app:iconSpaceReserved="false" />
+    <Preference
         android:title="@string/acknowledgements"
         android:summary="@string/acknowledgementsSum"
         app:iconSpaceReserved="false">
