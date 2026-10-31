@@ -17,9 +17,10 @@
 
 package se.lublin.mumla.util;
 
-import junit.framework.TestCase;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import junit.framework.TestCase;
 
 /**
  * JVM coverage for the hand-rolled CrashReporter extractors via the public
@@ -31,47 +32,76 @@ public class CrashReporterTest extends TestCase {
         String json = CrashReportStore.toJson("1-2", 1000L, 2000L, null,
                 "exit-info", "REASON_CRASH", "v", "36", "model", "arm64-v8a",
                 "proc", 2, true, "trace line", 11L, 22L);
-        try {
-            java.lang.reflect.Method m = CrashReporter.class.getMethod("renderSharePayload", String.class);
-            @SuppressWarnings("unchecked")
-            kotlin.Pair<String, String> out = (kotlin.Pair<String, String>) m.invoke(null, json);
-            assertNotNull(out);
-            String txt = out.getSecond();
-            assertTrue(txt.contains("osVersion: 36"));
-            assertTrue(txt.contains("deviceModel: model"));
-            assertTrue(txt.contains("truncated: true"));
-            assertTrue(txt.contains("trace line"));
-        } catch (Exception e) {
-            fail("renderSharePayload failed: " + e);
-        }
+        kotlin.Pair<String, String> out = CrashReporter.renderSharePayload(json);
+        assertNotNull(out);
+        String txt = out.getSecond();
+        assertTrue(txt.contains("osVersion: 36"));
+        assertTrue(txt.contains("deviceModel: model"));
+        assertTrue(txt.contains("truncated: true"));
+        assertTrue(txt.contains("trace line"));
+        assertTrue(txt.contains("capturedAtUtc: "));
     }
 
     public void testMergePendingKeepsUnreadableExit() throws Exception {
-        File dir = Files.createTempDirectory("crashreporter-test-").toFile();
+        File dir = CrashTestFiles.tmpDir();
         try {
             CrashReportStore store = new CrashReportStore(dir);
             String pendingJson = CrashReportStore.toJson("100-42-7-pending", null, 100L, 100L,
                     "uncaught-handler", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, "", 0L, 0L);
             assertNotNull(store.write("100-42-7-pending", pendingJson));
             // Corrupt exit entry with same pid/reason inside the dedup window:
-            // parseSummary skips it, but the raw file exists and is unreadable
-            // as JSON — pending must be kept (fail safe toward duplicates).
+            // parseSummary skips it, so no match exists — pending is kept
+            // via the trivial no-match path (documents the limit).
             File corruptExit = new File(dir, "150-42.json");
-            java.nio.file.Files.write(corruptExit.toPath(), "not json".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Files.write(corruptExit.toPath(), "not json".getBytes(StandardCharsets.UTF_8));
             CrashReporter.INSTANCE.mergePending(store);
             assertTrue(new File(dir, CrashReportStore.sanitizeId("100-42-7-pending", 128) + ".json").isFile());
         } finally {
-            deleteRecursive(dir);
+            CrashTestFiles.deleteRecursive(dir);
         }
     }
 
-    private static void deleteRecursive(File f) {
-        if (f.isDirectory()) {
-            File[] kids = f.listFiles();
-            if (kids != null) {
-                for (File k : kids) deleteRecursive(k);
-            }
+    public void testMergePendingKeepsDivergentExit() throws Exception {
+        File dir = CrashTestFiles.tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            // Valid exit entry, same pid/reason inside the window, but the
+            // first-512-chars trace differs (exit stream lacks the
+            // process=/thread= headers) — pending must survive.
+            String pendingTrace = "process=proc\nthread=main\njava.lang.RuntimeException: boom";
+            String pendingJson = CrashReportStore.toJson("100-42-9-pending", null, 100L, 100L,
+                    "uncaught-handler", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, pendingTrace, 0L, 0L);
+            assertNotNull(store.write("100-42-9-pending", pendingJson));
+            String exitTrace = "java.lang.RuntimeException: different";
+            String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
+                    "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, exitTrace, 0L, 0L);
+            assertNotNull(store.write("150-42", exitJson));
+            CrashReporter.INSTANCE.mergePending(store);
+            assertTrue(new File(dir, CrashReportStore.sanitizeId("100-42-9-pending", 128) + ".json").isFile());
+        } finally {
+            CrashTestFiles.deleteRecursive(dir);
         }
-        if (!f.delete()) f.deleteOnExit();
+    }
+
+    public void testMergePendingDropsConfirmedExit() throws Exception {
+        File dir = CrashTestFiles.tmpDir();
+        try {
+            CrashReportStore store = new CrashReportStore(dir);
+            // Same trace body on both sides (modulo pending headers): the
+            // secondary prefix check passes, so the pending is dropped.
+            String body = "java.lang.RuntimeException: boom\n\tat Foo.bar(Foo.java:1)";
+            String pendingJson = CrashReportStore.toJson("100-42-11-pending", null, 100L, 100L,
+                    "uncaught-handler", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false,
+                    "process=proc\nthread=main\n" + body, 0L, 0L);
+            assertNotNull(store.write("100-42-11-pending", pendingJson));
+            String exitJson = CrashReportStore.toJson("150-42", 150L, 151L, null,
+                    "exit-info", "REASON_CRASH", "v", "o", "m", "a", "p", 42, false, body, 0L, 0L);
+            assertNotNull(store.write("150-42", exitJson));
+            CrashReporter.INSTANCE.mergePending(store);
+            assertFalse(new File(dir, CrashReportStore.sanitizeId("100-42-11-pending", 128) + ".json").isFile());
+            assertTrue(new File(dir, CrashReportStore.sanitizeId("150-42", 128) + ".json").isFile());
+        } finally {
+            CrashTestFiles.deleteRecursive(dir);
+        }
     }
 }

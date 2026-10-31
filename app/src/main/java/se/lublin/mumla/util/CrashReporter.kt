@@ -65,16 +65,16 @@ object CrashReporter {
      */
     @JvmStatic
     fun install(context: Context) {
+        val already: Boolean
         synchronized(installLock) {
-            if (handlerInstalled) {
-                try {
-                    drainExitInfo(context.applicationContext)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Exit-info drain failed", e)
-                }
-                return
-            }
-            handlerInstalled = true
+            already = handlerInstalled
+            if (!already) handlerInstalled = true
+        }
+        if (already) {
+            // Re-entry (safe to call twice): drain outside the lock so a
+            // concurrent first install doing Binder/file I/O is not blocked.
+            drainAsync(context.applicationContext)
+            return
         }
         try {
             installHandler(context.applicationContext)
@@ -84,10 +84,26 @@ object CrashReporter {
                 handlerInstalled = false
             }
         }
+        // Exit-info drain does IPC + file I/O; keep it off the main thread.
+        // Handler fidelity needs no drain — the activity re-drain covers the
+        // same-launch prompt if this is still in flight.
+        drainAsync(context.applicationContext)
+    }
+
+    private fun drainAsync(appContext: Context) {
         try {
-            drainExitInfo(context.applicationContext)
-        } catch (e: Throwable) {
-            Log.w(TAG, "Exit-info drain failed", e)
+            Thread({
+                try {
+                    drainExitInfo(appContext)
+                } catch (_: Throwable) {
+                }
+            }, "crash-drain").start()
+        } catch (_: Throwable) {
+            // Fall back to sync so a prompt is never lost for lack of a thread.
+            try {
+                drainExitInfo(appContext)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -119,12 +135,33 @@ object CrashReporter {
         }
     }
 
+    /** Writer that drops beyond maxChars so huge stacks never materialize. */
+    private class BoundedStringWriter(private val maxChars: Int) : StringWriter(8192) {
+        override fun write(cbuf: CharArray, off: Int, len: Int) {
+            val remaining = maxChars - buffer.length
+            if (remaining <= 0) return
+            super.write(cbuf, off, minOf(len, remaining))
+        }
+        override fun write(str: String) {
+            val remaining = maxChars - buffer.length
+            if (remaining <= 0) return
+            super.write(str.substring(0, minOf(str.length, remaining)))
+        }
+        override fun write(c: Int) {
+            if (buffer.length >= maxChars) return
+            super.write(c)
+        }
+    }
+
     private fun writeHandlerReport(appContext: Context, thread: Thread, throwable: Throwable) {
         try {
             val capturedAt = System.currentTimeMillis()
             val pid = Process.myPid()
-            // Capped allocation: pre-sized buffer, truncated stack.
-            val sw = StringWriter(8192)
+            // Capped during write (not just after): huge stacks (e.g.
+            // StackOverflowError with 10k frames) never fully materialize.
+            // TRACE_CAP_BYTES is bytes; traces are ASCII-dominant so chars
+            // approximate bytes here — the post-write byte cap stays exact.
+            val sw = BoundedStringWriter(TRACE_CAP_BYTES)
             val pw = PrintWriter(sw)
             try {
                 pw.println("process=" + safeProcessName())
@@ -201,10 +238,9 @@ object CrashReporter {
             for (info in reasons) {
                 try {
                     val ts = info.timestamp
-                    if (ts > maxSeen) {
-                        maxSeen = ts
-                    }
-                    if (ts <= watermark) {
+                    // '<' (not '<='): same-millisecond exits are rechecked;
+                    // store.exists() dedups already-recorded ids.
+                    if (ts < watermark) {
                         continue
                     }
                     val reason = info.reason
@@ -212,9 +248,16 @@ object CrashReporter {
                         reason != ApplicationExitInfo.REASON_CRASH_NATIVE &&
                         reason != ApplicationExitInfo.REASON_ANR
                     ) {
+                        // Filtered (low-memory, normal exits): advance past.
+                        if (ts > maxSeen) maxSeen = ts
                         continue
                     }
-                    writeExitReport(dir, store, info)
+                    // Crash/ANR: advance only on successful write so a
+                    // transient failure (disk-full, locked storage) is
+                    // retried next launch instead of skipped.
+                    if (writeExitReport(dir, store, info)) {
+                        if (ts > maxSeen) maxSeen = ts
+                    }
                 } catch (_: Throwable) {
                 }
             }
@@ -234,7 +277,7 @@ object CrashReporter {
         dir: File,
         store: CrashReportStore,
         info: ApplicationExitInfo,
-    ) {
+    ): Boolean {
         val pid = info.pid
         val ts = info.timestamp
         val reasonStr = reasonName(info.reason)
@@ -242,7 +285,7 @@ object CrashReporter {
         // Skip if already recorded (relaunch without watermark advance).
         try {
             if (store.exists(id)) {
-                return
+                return true
             }
         } catch (_: Throwable) {
         }
@@ -285,9 +328,10 @@ object CrashReporter {
             rss,
             pss,
         )
-        try {
-            store.write(id, json)
+        return try {
+            store.write(id, json) != null
         } catch (_: Throwable) {
+            false
         }
     }
 
@@ -358,11 +402,17 @@ object CrashReporter {
     // causal pid+reason+window key alone.
     private fun tracesConfirm(pendingRaw: String, exitRaw: String): Boolean {
         return try {
-            val a = extractTrace(pendingRaw)
+            var a = extractTrace(pendingRaw)
             val b = extractTrace(exitRaw)
             if (a.isEmpty() || b.isEmpty()) {
                 return true
             }
+            // Pending traces carry 'process='/'thread=' headers the exit
+            // stream lacks; strip them so the 512-char window aligns.
+            a = a.lineSequence()
+                .filterNot { it.startsWith("process=") || it.startsWith("thread=") }
+                .joinToString("\n")
+            if (a.isEmpty()) return true
             a.take(512) == b.take(512)
         } catch (_: Throwable) {
             // Fail safe toward duplicates: an unreadable trace never
@@ -415,7 +465,7 @@ object CrashReporter {
                         }
                         if (drop) {
                             try {
-                                p.file.delete()
+                                store.delete(p)
                             } catch (_: Throwable) {
                             }
                         }
@@ -430,14 +480,16 @@ object CrashReporter {
     private fun extractPidFromId(id: String): Long? {
         // Exit id: "<exitTs>-<pid>"; pending id: "<ts>-<pid>-<tid>-pending"
         // (legacy "<ts>-<pid>-pending" still parses). Keyed on the -pending
-        // suffix explicitly so a future dash in the timestamp section cannot
-        // silently shift the index.
+        // suffix; pid is second-last when a thread id is present.
         return try {
             if (id.endsWith("-pending")) {
                 val core = id.removeSuffix("-pending")
                 val parts = core.split("-")
-                // [ts, pid] or [ts, pid, tid]: pid is index 1 when present.
-                if (parts.size >= 2) parts[1].toLongOrNull() else core.substringAfterLast("-").toLongOrNull()
+                when {
+                    parts.size >= 3 -> parts[parts.size - 2].toLongOrNull()
+                    parts.size == 2 -> parts[1].toLongOrNull()
+                    else -> core.substringAfterLast("-").toLongOrNull()
+                }
             } else {
                 id.substringAfterLast("-").toLongOrNull()
             }
@@ -450,42 +502,56 @@ object CrashReporter {
     // toJson emits scalar fields (id, pid, timestamps) before scrubbedTrace,
     // so the first occurrence of a field key is the header value even when
     // the trace body contains a quoted literal like "pid":.
+    // Header-bounded (mirrors CrashReportStore.parseSummary): every scalar
+    // precedes scrubbedTrace (trace always last), so a trace-body literal
+    // can never shadow a header value.
+    private fun headerSlice(json: String): String {
+        return try {
+            val i = json.indexOf("\"scrubbedTrace\"")
+            if (i < 0) json else json.substring(0, i)
+        } catch (_: Throwable) {
+            json
+        }
+    }
+
     private fun extractLong(json: String, name: String): Long? {
         return try {
+            val haystack = headerSlice(json)
             val key = "\"" + name + "\":"
-            val i = json.indexOf(key)
+            val i = haystack.indexOf(key)
             if (i < 0) {
                 return null
             }
-            val rest = json.substring(i + key.length).trimStart()
+            val rest = haystack.substring(i + key.length).trimStart()
             if (rest.startsWith("null")) {
                 return null
             }
-            val end = rest.indexOfFirst { !it.isDigit() && it != '-' }
-            val num = if (end < 0) rest else rest.substring(0, end)
-            num.toLongOrNull()
+            var end = 0
+            if (rest.startsWith("-")) end = 1
+            while (end < rest.length && rest[end].isDigit()) end++
+            if (end == 0 || (end == 1 && rest.startsWith("-"))) return null
+            rest.substring(0, end).toLongOrNull()
         } catch (_: Throwable) {
             null
         }
     }
 
     private fun extractString(json: String, name: String): String? {
-        // Escape-aware (mirrors CrashReportStore.parseSummary): a trace body
-        // containing an escaped quote must not truncate a header value.
-        // Header-first invariant still holds, but unescape correctly anyway.
+        // Escape-aware + header-bounded (mirrors CrashReportStore.parseSummary).
         return try {
+            val haystack = headerSlice(json)
             val key = "\"" + name + "\":\""
-            val i = json.indexOf(key)
+            val i = haystack.indexOf(key)
             if (i < 0) {
                 return null
             }
             var j = i + key.length
             val sb = StringBuilder()
             var closed = false
-            while (j < json.length) {
-                val c = json[j]
-                if (c == '\\' && j + 1 < json.length) {
-                    val n = json[j + 1]
+            while (j < haystack.length) {
+                val c = haystack[j]
+                if (c == '\\' && j + 1 < haystack.length) {
+                    val n = haystack[j + 1]
                     when (n) {
                         '"', '\\', '/' -> { sb.append(n); j += 2 }
                         'n' -> { sb.append('\n'); j += 2 }
@@ -494,8 +560,8 @@ object CrashReporter {
                         'b' -> { sb.append('\b'); j += 2 }
                         'f' -> { sb.append('\u000C'); j += 2 }
                         'u' -> {
-                            if (j + 5 < json.length) {
-                                sb.append(json.substring(j + 2, j + 6).toInt(16).toChar())
+                            if (j + 5 < haystack.length) {
+                                sb.append(haystack.substring(j + 2, j + 6).toInt(16).toChar())
                                 j += 6
                             } else return null
                         }
@@ -615,11 +681,15 @@ object CrashReporter {
             if (pid != null) sb.append("pid: ").append(pid).append("\n")
             if (rss != null) sb.append("rssKb: ").append(rss).append("\n")
             if (pss != null) sb.append("pssKb: ").append(pss).append("\n")
-            // truncated flag is header-searched like the store parser so a
-            // trace literal can never flip it.
+            val captured = extractLong(rawJson, "capturedAtUtc")
+            if (captured != null) sb.append("capturedAtUtc: ").append(captured).append("\n")
+            val handlerWrite = extractLong(rawJson, "handlerWriteTime")
+            if (handlerWrite != null) sb.append("handlerWriteTime: ").append(handlerWrite).append("\n")
+            // Explicit true/false (not just when true) so the recipient can
+            // tell a capped trace from a complete one.
             val headerEnd = rawJson.indexOf("\"scrubbedTrace\"")
             val header = if (headerEnd >= 0) rawJson.substring(0, headerEnd) else rawJson
-            if (header.contains("\"truncated\":true")) sb.append("truncated: true\n")
+            sb.append("truncated: ").append(if (header.contains("\"truncated\":true")) "true" else "false").append("\n")
             val exitTs = extractLong(rawJson, "exitTimestamp")
             if (exitTs != null) {
                 sb.append("exitTimestamp: ").append(exitTs).append("\n")
