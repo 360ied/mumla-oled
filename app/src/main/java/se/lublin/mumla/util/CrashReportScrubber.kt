@@ -29,6 +29,11 @@ import java.util.regex.Pattern
  * build IDs must survive for symbolization). Server addresses may appear
  * in shared reports; the detail screen warns before sharing.
  *
+ * Single-token values only: `password=my secret` redacts the first token
+ * (`my`); the remainder stays. Typical tokens/passwords are spaceless, and
+ * extending to end-of-line would over-redact same-line stack frames —
+ * accepted limitation, documented here.
+ *
  * Never returns null; never throws.
  */
 object CrashReportScrubber {

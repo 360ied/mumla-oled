@@ -51,9 +51,9 @@ public class CrashReportScrubberTest extends TestCase {
         String out = CrashReportScrubber.scrub("access_token=abc123\n\tat Foo.bar(Foo.java:1)");
         assertTrue(out.contains("access_token=[CREDENTIAL-REDACTED]"));
         assertFalse(out.contains("abc123"));
-        String refresh = CrashReportScrubber.scrub("refresh_token: xyz\n\tat Foo.bar(Foo.java:1)");
+        String refresh = CrashReportScrubber.scrub("refresh_token: xyz-secret-9\n\tat Foo.bar(Foo.java:1)");
         assertTrue(refresh.contains("[CREDENTIAL-REDACTED]"));
-        assertFalse(refresh.contains("xyz"));
+        assertFalse(refresh.contains("xyz-secret-9"));
         String secret = CrashReportScrubber.scrub("client_secret=shhh\n\tat Foo.bar(Foo.java:1)");
         assertTrue(secret.contains("[CREDENTIAL-REDACTED]"));
         assertFalse(secret.contains("shhh"));
@@ -81,12 +81,12 @@ public class CrashReportScrubberTest extends TestCase {
     }
 
     public void testPrefixedUserKeyRedacted() {
-        String out = CrashReportScrubber.scrub("db_user=alice\n\tat Foo.bar(Foo.java:1)");
+        String out = CrashReportScrubber.scrub("db_user=alice-secret-9\n\tat Foo.bar(Foo.java:1)");
         assertTrue(out.contains("db_user=[USER-REDACTED]"));
-        assertFalse(out.contains("alice"));
-        String login = CrashReportScrubber.scrub("app_login=bob\n\tat Foo.bar(Foo.java:1)");
+        assertFalse(out.contains("alice-secret-9"));
+        String login = CrashReportScrubber.scrub("app_login=bob-secret-9\n\tat Foo.bar(Foo.java:1)");
         assertTrue(login.contains("app_login=[USER-REDACTED]"));
-        assertFalse(login.contains("bob"));
+        assertFalse(login.contains("bob-secret-9"));
     }
 
     public void testCrlfNormalized() {
