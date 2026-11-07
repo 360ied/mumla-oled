@@ -20,6 +20,7 @@ See [`app/build.gradle`](../../app/build.gradle),
 4. **Half-migrated version catalog.** Catalog is meant to be the single
    source of truth, but `app/build.gradle` still hardcodes many
    `androidx` versions.
-5. **Slow gate.** `check.sh` enters `nix develop` three times and always
+5. **Slow gate.** `check.sh` re-execs itself under one `nix develop`
+   entry (fixed: was twice per run, native + Gradle) but still always
    runs the full native suite (~50 s cold). No incrementality at the
    Gradle level.

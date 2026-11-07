@@ -35,6 +35,18 @@ if [ -n "$UNINITIALIZED_SUBMODULES" ]; then
   exit 1
 fi
 
+# Steps 2 and below need the dev shell (python3, NDK, Gradle toolchain).
+# Enter it once for the whole run instead of once per step: re-exec this
+# script under `nix develop` when invoked from outside. Already inside (or
+# the marker is set, meaning re-exec did not land in a shell exporting
+# IN_NIX_SHELL) -> run the steps directly. The marker doubles as the exec-
+# loop guard. Note: if `nix` itself is missing, exec fails and `set -e`
+# exits here; there is no fall-through.
+if [ -z "${IN_NIX_SHELL:-}" ] && [ -z "${_CHECK_SH_REEXEC:-}" ]; then
+  export _CHECK_SH_REEXEC=1
+  exec nix develop --command "$0" "$@"
+fi
+
 echo ""
 echo "========================================"
 echo " 2. Running Python Unit Tests"
@@ -45,7 +57,7 @@ echo ""
 echo "========================================"
 echo " 2b. Running Native C++ Audio Tests"
 echo "========================================"
-nix develop --command ./scripts/test_native_audio.sh
+./scripts/test_native_audio.sh
 
 echo ""
 echo "========================================"
@@ -53,10 +65,10 @@ echo " 3. Running Gradle Tests"
 echo "========================================"
 if [ "$FULL_TEST" = true ]; then
   echo "Running full test suite..."
-  nix develop --command ./gradlew test
+  ./gradlew test
 else
   echo "Running fast FOSS debug unit tests..."
-  nix develop --command ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest
+  ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest
 fi
 
 echo ""
