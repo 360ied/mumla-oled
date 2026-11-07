@@ -5,17 +5,11 @@
 set -eo pipefail
 
 # Run from the repository root so suite paths work regardless of the
-# caller's working directory (mirrors test_native_audio.sh).
+# caller's working directory (test_native_audio.sh resolves paths from
+# BASH_SOURCE but does not cd; this gate goes one step further and cds).
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_PATH="$ROOT_DIR/scripts/$(basename "${BASH_SOURCE[0]}")"
 cd "$ROOT_DIR"
-
-FULL_TEST=false
-for arg in "$@"; do
-  if [ "$arg" = "--full" ]; then
-    FULL_TEST=true
-  fi
-done
 
 echo "========================================"
 echo " 1. Checking Git Branch & Submodules"
@@ -25,7 +19,7 @@ GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || true)
 GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
 
 if [ -z "$CURRENT_BRANCH" ]; then
-  echo "ERROR: Not inside a git checkout; run from the repository."
+  echo "ERROR: Not inside a git checkout; run from the repository." >&2
   exit 1
 fi
 
@@ -40,23 +34,30 @@ fi
 # Verify git submodules are initialized
 UNINITIALIZED_SUBMODULES=$(git submodule status 2>/dev/null | grep '^-' || true)
 if [ -n "$UNINITIALIZED_SUBMODULES" ]; then
-  echo "ERROR: Uninitialized git submodules detected:"
-  echo "$UNINITIALIZED_SUBMODULES"
-  echo "Run 'git submodule update --init --recursive' or './scripts/worktree.py add' to initialize them."
+  echo "ERROR: Uninitialized git submodules detected:" >&2
+  echo "$UNINITIALIZED_SUBMODULES" >&2
+  echo "Run 'git submodule update --init --recursive' or './scripts/worktree.py add' to initialize them." >&2
   exit 1
 fi
 
 # Steps 2 and below need the dev shell (python3, NDK, Gradle toolchain).
 # Enter it once for the whole run instead of once per step: re-exec this
-# script under `nix develop` when invoked from outside. Already inside (or
-# the marker is set, meaning re-exec did not land in a shell exporting
-# IN_NIX_SHELL) -> run the steps directly. The marker doubles as the exec-
-# loop guard. Note: if `nix` itself is missing, exec fails and `set -e`
-# exits here; there is no fall-through.
+# script under `nix develop` when invoked from outside. Past the guard
+# (already inside, or re-execed as shown by the marker) the steps run
+# directly. The marker doubles as the exec-loop guard. Note: if `nix`
+# itself is missing, exec fails and `set -e` exits here.
 if [ -z "${IN_NIX_SHELL:-}" ] && [ -z "${_CHECK_SH_REEXEC:-}" ]; then
-  export _CHECK_SH_REEXEC=1
-  exec nix develop --command "$SCRIPT_PATH" "$@"
+  _CHECK_SH_REEXEC=1 exec nix develop --command "$SCRIPT_PATH" "$@"
 fi
+
+# Parsed here so the pre-exec pass does no dead work; "$@" forwarding
+# above preserves the flags across the re-exec.
+FULL_TEST=false
+for arg in "$@"; do
+  if [ "$arg" = "--full" ]; then
+    FULL_TEST=true
+  fi
+done
 
 echo ""
 echo "========================================"
