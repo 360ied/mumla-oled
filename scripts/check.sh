@@ -35,6 +35,17 @@ if [ -n "$UNINITIALIZED_SUBMODULES" ]; then
   exit 1
 fi
 
+# Steps 2 and below need the dev shell (python3, NDK, Gradle toolchain).
+# Enter it once for the whole run instead of once per step: re-exec this
+# script under `nix develop` when invoked from outside. Already inside (or
+# the marker is set, meaning re-exec did not land us in the shell) -> run
+# the steps directly. The marker also guards against an exec loop if the
+# shell ever fails to set IN_NIX_SHELL.
+if [ -z "${IN_NIX_SHELL:-}" ] && [ -z "${_CHECK_SH_REEXEC:-}" ]; then
+  export _CHECK_SH_REEXEC=1
+  exec nix develop --command "$0" "$@"
+fi
+
 echo ""
 echo "========================================"
 echo " 2. Running Python Unit Tests"
@@ -43,19 +54,21 @@ python3 -m unittest discover -s scripts -p "test_*.py" -v
 
 echo ""
 echo "========================================"
-echo " 2b+3. Running Native + Gradle Tests (single nix shell)"
+echo " 2b. Running Native C++ Audio Tests"
 echo "========================================"
-# One `nix develop` entry for both suites: entering the dev shell dominates
-# startup cost, so share it. Fail-fast semantics preserved via && (a native
-# failure skips Gradle, as before).
+./scripts/test_native_audio.sh
+
+echo ""
+echo "========================================"
+echo " 3. Running Gradle Tests"
+echo "========================================"
 if [ "$FULL_TEST" = true ]; then
   echo "Running full test suite..."
-  GRADLE_CMD="./gradlew test"
+  ./gradlew test
 else
   echo "Running fast FOSS debug unit tests..."
-  GRADLE_CMD="./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest"
+  ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest
 fi
-nix develop --command bash -c "./scripts/test_native_audio.sh && $GRADLE_CMD"
 
 echo ""
 echo "========================================"
