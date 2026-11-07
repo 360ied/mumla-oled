@@ -43,21 +43,19 @@ python3 -m unittest discover -s scripts -p "test_*.py" -v
 
 echo ""
 echo "========================================"
-echo " 2b. Running Native C++ Audio Tests"
+echo " 2b+3. Running Native + Gradle Tests (single nix shell)"
 echo "========================================"
-nix develop --command ./scripts/test_native_audio.sh
-
-echo ""
-echo "========================================"
-echo " 3. Running Gradle Tests"
-echo "========================================"
+# One `nix develop` entry for both suites: entering the dev shell dominates
+# startup cost, so share it. Fail-fast semantics preserved via && (a native
+# failure skips Gradle, as before).
 if [ "$FULL_TEST" = true ]; then
   echo "Running full test suite..."
-  nix develop --command ./gradlew test
+  GRADLE_CMD="./gradlew test"
 else
   echo "Running fast FOSS debug unit tests..."
-  nix develop --command ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest
+  GRADLE_CMD="./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest"
 fi
+nix develop --command bash -c "./scripts/test_native_audio.sh && $GRADLE_CMD"
 
 echo ""
 echo "========================================"
