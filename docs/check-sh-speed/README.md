@@ -64,10 +64,14 @@ penalty repeatedly, or ccache becomes unavailable in some environment.
 
 ## 4. Pre-existing `check.sh` nits
 
-[`scripts/check.sh`](../../scripts/check.sh) uses `==` inside single brackets
+[`scripts/check.sh`](../../scripts/check.sh) used `==` inside single brackets
 (a bashism, harmless under its `bash` shebang) and `set -eo pipefail` without
 `-u`. No misbehavior observed.
 
 Deferred as out of scope: `check.sh` was intentionally untouched by the speed
 work (minimal-diff principle), and these are cosmetic. They belong in whatever
 commit next touches that file for a real reason.
+
+Update: the `==` tests were converted to POSIX `=` by the `build/check-sh-nits`
+branch; `-u` remains deferred (it would break `"$@"` with zero args on old
+bash, e.g. macOS 3.2).
