@@ -52,6 +52,12 @@ plugins {
     alias(libs.plugins.paparazzi) apply false
 }
 
+// Single source of truth for the native ABIs packaged into the APK/AAR.
+// Both :app and :libraries:humla consume this via rootProject.ext.sharedAbiFilters.
+ext {
+    sharedAbiFilters = ["armeabi-v7a", "arm64-v8a", "x86_64"]
+}
+
 // Shared javac lint for all modules (hoisted: an `allprojects` block inside a
 // child build file applies only to itself, so this lives at the root).
 allprojects {

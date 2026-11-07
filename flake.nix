@@ -39,7 +39,7 @@
               "x86_64"
               "arm64-v8a"
             ];
-            ndkVersion = "27.2.12479018"; # Must match ndkVersion in libraries/humla/build.gradle
+            ndkVersion = builtins.replaceStrings ["\n"] [""] (builtins.readFile ./gradle/ndk.version); # Single source: gradle/ndk.version
           };
 
           androidComposition = pkgs.androidenv.composeAndroidPackages {

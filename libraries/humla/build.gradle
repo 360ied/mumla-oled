@@ -33,6 +33,9 @@ repositories {
     google()
 }
 
+// Single source of truth is gradle/ndk.version (also read by flake.nix).
+def humlaNdkVersion = file("$rootDir/gradle/ndk.version").text.trim()
+
 dependencies {
     api libs.protobuf.javalite
 
@@ -63,7 +66,7 @@ android {
     namespace = 'se.lublin.humla'
 
     compileSdk = 36
-    ndkVersion = '27.2.12479018' // Must match ndkVersion in flake.nix
+    ndkVersion = humlaNdkVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
@@ -92,7 +95,7 @@ android {
         targetSdk 36
 
         ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+            abiFilters.addAll(rootProject.ext.sharedAbiFilters)
         }
     }
 

@@ -43,6 +43,11 @@ repositories {
 def signingFile = file 'signing.gradle'
 if (signingFile.exists()) apply from: signingFile
 
+// Shared with both build types so debug and release stay on the same
+// application ID and display name.
+def oledApplicationIdSuffix = ".oled15"
+def oledAppName = "Mumla OLED"
+
 android {
     namespace = 'se.lublin.mumla'
     compileSdk = 36
@@ -96,15 +101,18 @@ android {
         resourceConfigurations += ["en", "fr", "zh-rCN"]
 
         ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+            abiFilters.addAll(rootProject.ext.sharedAbiFilters)
         }
     }
 
+    // Single foss flavor retained: removing it would rename every task
+    // (assembleFossDebug -> assembleDebug, etc.) and break scripts/check.sh,
+    // docs, and CI. The dimension block stays because AGP requires one when
+    // productFlavors are present.
     flavorDimensions "release"
     productFlavors {
         foss {
             dimension "release"
-            applicationId "se.lublin.mumla"
         }
     }
 
@@ -113,8 +121,8 @@ android {
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            applicationIdSuffix ".oled15"
-            resValue "string", "app_name", "Mumla OLED"
+            applicationIdSuffix oledApplicationIdSuffix
+            resValue "string", "app_name", oledAppName
             if (signingConfigs.hasProperty("release")) {
                 signingConfig = signingConfigs.release
             } else {
@@ -123,8 +131,8 @@ android {
         }
         debug {
             versionNameSuffix "-debug"
-            applicationIdSuffix ".oled15"
-            resValue "string", "app_name", "Mumla OLED"
+            applicationIdSuffix oledApplicationIdSuffix
+            resValue "string", "app_name", oledAppName
         }
     }
     lint {
