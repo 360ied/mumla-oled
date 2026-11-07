@@ -4,9 +4,15 @@
 #
 set -eo pipefail
 
+# Run from the repository root so suite paths work regardless of the
+# caller's working directory (mirrors test_native_audio.sh).
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="$ROOT_DIR/scripts/$(basename "${BASH_SOURCE[0]}")"
+cd "$ROOT_DIR"
+
 FULL_TEST=false
 for arg in "$@"; do
-  if [ "$arg" == "--full" ]; then
+  if [ "$arg" = "--full" ]; then
     FULL_TEST=true
   fi
 done
@@ -14,13 +20,18 @@ done
 echo "========================================"
 echo " 1. Checking Git Branch & Submodules"
 echo "========================================"
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || true)
 GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
 
+if [ -z "$CURRENT_BRANCH" ]; then
+  echo "ERROR: Not inside a git checkout; run from the repository."
+  exit 1
+fi
+
 if [ "$GIT_DIR" != "$GIT_COMMON_DIR" ] && [ -n "$GIT_COMMON_DIR" ]; then
   echo "OK: Running inside Git worktree for branch '$CURRENT_BRANCH'."
-elif [ "$CURRENT_BRANCH" == "master" ]; then
+elif [ "$CURRENT_BRANCH" = "master" ]; then
   echo "WARNING: Currently on 'master' branch! AGENTS.md mandates dedicated worktrees."
 else
   echo "OK: On branch '$CURRENT_BRANCH'."
@@ -44,20 +55,20 @@ fi
 # exits here; there is no fall-through.
 if [ -z "${IN_NIX_SHELL:-}" ] && [ -z "${_CHECK_SH_REEXEC:-}" ]; then
   export _CHECK_SH_REEXEC=1
-  exec nix develop --command "$0" "$@"
+  exec nix develop --command "$SCRIPT_PATH" "$@"
 fi
 
 echo ""
 echo "========================================"
 echo " 2. Running Python Unit Tests"
 echo "========================================"
-python3 -m unittest discover -s scripts -p "test_*.py" -v
+python3 -m unittest discover -s "$ROOT_DIR/scripts" -p "test_*.py" -v
 
 echo ""
 echo "========================================"
 echo " 2b. Running Native C++ Audio Tests"
 echo "========================================"
-./scripts/test_native_audio.sh
+"$ROOT_DIR/scripts/test_native_audio.sh"
 
 echo ""
 echo "========================================"
@@ -65,10 +76,10 @@ echo " 3. Running Gradle Tests"
 echo "========================================"
 if [ "$FULL_TEST" = true ]; then
   echo "Running full test suite..."
-  ./gradlew test
+  "$ROOT_DIR/gradlew" test
 else
   echo "Running fast FOSS debug unit tests..."
-  ./gradlew testFossDebugUnitTest :libraries:humla:testDebugUnitTest
+  "$ROOT_DIR/gradlew" testFossDebugUnitTest :libraries:humla:testDebugUnitTest
 fi
 
 echo ""
