@@ -38,9 +38,10 @@ fi
 # Steps 2 and below need the dev shell (python3, NDK, Gradle toolchain).
 # Enter it once for the whole run instead of once per step: re-exec this
 # script under `nix develop` when invoked from outside. Already inside (or
-# the marker is set, meaning re-exec did not land us in the shell) -> run
-# the steps directly. The marker also guards against an exec loop if the
-# shell ever fails to set IN_NIX_SHELL.
+# the marker is set, meaning re-exec did not land in a shell exporting
+# IN_NIX_SHELL) -> run the steps directly. The marker doubles as the exec-
+# loop guard. Note: if `nix` itself is missing, exec fails and `set -e`
+# exits here; there is no fall-through.
 if [ -z "${IN_NIX_SHELL:-}" ] && [ -z "${_CHECK_SH_REEXEC:-}" ]; then
   export _CHECK_SH_REEXEC=1
   exec nix develop --command "$0" "$@"

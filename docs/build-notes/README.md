@@ -21,5 +21,6 @@ See [`app/build.gradle`](../../app/build.gradle),
    source of truth, but `app/build.gradle` still hardcodes many
    `androidx` versions.
 5. **Slow gate.** `check.sh` re-execs itself under one `nix develop`
-   entry (fixed: was once per suite) but still always runs the full
-   native suite (~50 s cold). No incrementality at the Gradle level.
+   entry (fixed: was twice per run, native + Gradle) but still always
+   runs the full native suite (~50 s cold). No incrementality at the
+   Gradle level.
