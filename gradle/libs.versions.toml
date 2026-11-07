@@ -50,6 +50,23 @@ hilt = "2.60.1"
 androidx-hilt = "1.4.0"
 room = "2.8.5"
 datastore-preferences = "1.2.1"
+# Legacy UI / test pins migrated from hardcoded strings in :app and
+# :libraries:humla (build/catalog-cleanup). Floors binding, patches float.
+appcompat = "1.7.1"
+cardview = "1.0.0"
+documentfile = "1.1.0"
+fragment = "1.8.9"
+recyclerview = "1.4.0"
+exifinterface = "1.4.2"
+material = "1.13.0"
+preference = "1.2.1"
+media = "1.7.0"
+jsoup = "1.23.2"
+junit = "4.13.2"
+robolectric = "4.15.1"
+protobuf = "4.36.2"
+annotations = "26.1.0"
+minidns = "1.0.5"
 # Paparazzi fork (RESOLVED 2026-10-12: disqualified on AGP 8 AND AGP 9,
 # deferred to slice 6): on AGP 8 it breaks resource merging build-wide
 # (`MergedResourceWriterRequest` NoSuchMethodError); on AGP 9 it configures and
@@ -80,6 +97,22 @@ room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore-preferences" }
+appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+cardview = { module = "androidx.cardview:cardview", version.ref = "cardview" }
+documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
+fragment = { module = "androidx.fragment:fragment", version.ref = "fragment" }
+recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
+exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
+material = { module = "com.google.android.material:material", version.ref = "material" }
+preference = { module = "androidx.preference:preference", version.ref = "preference" }
+media = { module = "androidx.media:media", version.ref = "media" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
+annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }
+minidns-hla = { module = "org.minidns:minidns-hla", version.ref = "minidns" }
+minidns-android21 = { module = "org.minidns:minidns-android21", version.ref = "minidns" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
