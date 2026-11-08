@@ -71,7 +71,7 @@ flowchart TB
 
 ## Report Structure
 
-This investigation is organized into four companion documents:
+This investigation is organized into five companion documents:
 
 | Document | Focus |
 | :--- | :--- |
@@ -79,3 +79,4 @@ This investigation is organized into four companion documents:
 | [02-submodules-and-toolchain-parity.md](02-submodules-and-toolchain-parity.md) | Third-party submodule integration (`opus` v1.6.1 and `rnnoise`), why `add_subdirectory(opus)` is a trap, flag and internal header isolation (`arch.h`, `pitch.h`, `kiss_fft.h`, `-DUSE_WEIGHTS_FILE`), and the complete flag parity matrix between `ndk-build` and NDK 27's `android.toolchain.cmake`. |
 | [03-empirical-benchmarks-and-verification.md](03-empirical-benchmarks-and-verification.md) | Quantitative measurements from the prototype CMake + Ninja build: byte-exact `.so` size comparisons at `android-21` and `android-30`, ELF segment and `.dynsym` inspections, AGP 9.0.1 `--dry-run` task-graph verification, host build/test timings, and cross-worktree `ccache` hit-rate proofs. |
 | [04-migration-blueprint-and-pitfalls.md](04-migration-blueprint-and-pitfalls.md) | The six migration pitfalls and their mitigations, complete ready-to-land files (`CMakeLists.txt`, `libraries/humla/build.gradle`, `scripts/test_native_audio.sh`, `flake.nix`, `.gitignore`), and the pre-completion verification checklist. |
+| [05-implementation-deviations.md](05-implementation-deviations.md) | Deviations of the landed `build/cmake-native` implementation from the blueprint: the absolute-`ctest` fix, the unused-import cleanup, the `Android.mk`/`Application.mk` deletion, and the release-verification scope note. |
