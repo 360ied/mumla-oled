@@ -95,6 +95,8 @@ android {
 
         externalNativeBuild {
             cmake {
+                // -Wno-deprecated is a CMake CLI flag (not a toolchain define): it
+                // suppresses NDK 27's cmake_minimum_required(VERSION 3.6.0) warning under CMake >= 3.27 (Pitfall 4).
                 arguments "-DANDROID_STL=c++_static", "-Wno-deprecated"
             }
         }
@@ -103,6 +105,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/jni/CMakeLists.txt")
+            // Keep in sync: flake.nix SDK cmake PATH, scripts/test_native_audio.sh fallback.
             version = "4.1.2"
         }
     }
@@ -228,8 +231,9 @@ tasks.matching { it.name == "check" }.configureEach {
 
 // AGP's externalNativeBuild.cmake wires buildCMake* directly into
 // merge*NativeLibs via task-output edges, so no startParameter regex gate or
-// taskGraph.whenReady guard is needed. Unit-test tasks never trigger CMake;
-// packaging tasks get native libs automatically.
+// taskGraph.whenReady guard is needed. Unit-test tasks stay out of the CMake
+// graph via those edges (verified by --dry-run; re-validate after AGP
+// upgrades); packaging tasks get native libs automatically.
 
 // NOTE: Test tasks deliberately do NOT depend on testNativeAudioEngine.
 // That edge re-ran the full native rebuild (~50s cold-cache, and never

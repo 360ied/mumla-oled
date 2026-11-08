@@ -15,6 +15,7 @@ CMAKE_BIN="$(command -v cmake || true)"
 NINJA_BIN="$(command -v ninja || true)"
 CTEST_BIN="$(command -v ctest || true)"
 if [[ -z "$CMAKE_BIN" || -z "$NINJA_BIN" || -z "$CTEST_BIN" ]] && [[ -n "${ANDROID_HOME:-}" ]]; then
+    # Keep in sync: build.gradle cmake version, flake.nix SDK cmake PATH.
     SDK_CMAKE_BIN_DIR="$ANDROID_HOME/cmake/4.1.2/bin"
     if [[ -d "$SDK_CMAKE_BIN_DIR" ]]; then
         [[ -z "$CMAKE_BIN" && -x "$SDK_CMAKE_BIN_DIR/cmake" ]] && CMAKE_BIN="$SDK_CMAKE_BIN_DIR/cmake"
@@ -24,7 +25,7 @@ if [[ -z "$CMAKE_BIN" || -z "$NINJA_BIN" || -z "$CTEST_BIN" ]] && [[ -n "${ANDRO
 fi
 
 if [[ -z "$CMAKE_BIN" || -z "$NINJA_BIN" || -z "$CTEST_BIN" ]]; then
-    echo "test_native_audio.sh: error: cmake, ninja, and ctest are required (enter 'nix develop' or install cmake/ninja)." >&2
+    echo "test_native_audio.sh: error: cmake, ninja, and ctest are required (enter 'nix develop' or install cmake/ninja; ctest ships with cmake)." >&2
     exit 1
 fi
 

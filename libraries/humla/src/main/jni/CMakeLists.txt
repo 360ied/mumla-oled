@@ -77,6 +77,11 @@ parse_opus_mk("${OPUS_DIR}/silk_sources.mk" "SILK_SOURCES_FIXED" SILK_SOURCES_FI
 parse_opus_mk("${OPUS_DIR}/opus_sources.mk" "OPUS_SOURCES" OPUS_SOURCES)
 parse_opus_mk("${OPUS_DIR}/opus_sources.mk" "OPUS_SOURCES_FLOAT" OPUS_SOURCES_FLOAT)
 
+# Re-run configure when upstream Opus source lists change (e.g. submodule
+# bump): file(STRINGS) reads are invisible to Ninja's re-run rule otherwise,
+# and .cxx/ survives `gradlew clean`, so without this a bump could link stale
+# sources with no automatic recovery.
+
 set(OPUS_COMPILE_FLAGS
     -DOPUS_BUILD
     -DVAR_ARRAYS
@@ -201,17 +206,21 @@ else()
     find_package(JNI REQUIRED)
 
     set(HOST_FLAGS -O2 -Wall -Wextra -Werror -UNDEBUG)
+    # -Wmaybe-uninitialized is GCC-only: AppleClang rejects the unknown group
+    # and -Werror promotes that rejection, so gate the suppression on GNU.
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        list(APPEND HOST_FLAGS -Wno-maybe-uninitialized)
+    endif()
 
     target_compile_options(humlaopus PRIVATE
         ${OPUS_COMPILE_FLAGS}
         ${HOST_FLAGS}
-        -Wno-maybe-uninitialized
     )
 
     add_library(humlacrypto_obj OBJECT
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
     )
-    target_include_directories(humlacrypto_obj PUBLIC "${CRYPTO_DIR}")
+    target_include_directories(humlacrypto_obj PRIVATE "${CRYPTO_DIR}")
     target_compile_options(humlacrypto_obj PRIVATE ${HOST_FLAGS})
 
     add_executable(test_audio_engine

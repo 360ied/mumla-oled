@@ -90,6 +90,7 @@
               export GRADLE_USER_HOME="''${REPO_ROOT}/.gradle-home"
               export ANDROID_USER_HOME="''${REPO_ROOT}/.gradle-home/android"
               export CCACHE_DIR="''${REPO_ROOT}/.gradle-home/ccache"
+              # Keep in sync: build.gradle cmake version, test_native_audio.sh fallback.
               export PATH="${androidSdkRoot}/cmake/4.1.2/bin:$PATH"
               export CCACHE_BASEDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
               export CCACHE_NOHASHDIR=1

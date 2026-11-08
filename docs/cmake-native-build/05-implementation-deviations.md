@@ -3,10 +3,11 @@
 This document records every place where the landed implementation on branch
 `build/cmake-native` intentionally differs from the blueprint in
 [04-migration-blueprint-and-pitfalls.md](04-migration-blueprint-and-pitfalls.md).
-There are three deviations: one functional fix and two judgment calls.
-Everything else — including
-[`libraries/humla/src/main/jni/CMakeLists.txt`](../../libraries/humla/src/main/jni/CMakeLists.txt),
-which is byte-identical to the blueprint's code block — follows the plan verbatim.
+There are three original deviations (§5.1–§5.3: one functional fix and two
+judgment calls) plus post-review follow-up fixes (§5.4).
+[`libraries/humla/src/main/jni/CMakeLists.txt`](../../libraries/humla/src/main/jni/CMakeLists.txt)
+was byte-identical to the blueprint's code block at implementation time
+(commit `c639c95b`); §5.4 records the only subsequent changes and why.
 
 ---
 
@@ -37,9 +38,10 @@ without the SDK `bin/` directory on `PATH`, `cmake -E chdir <dir> ctest`
 fails with a bare `no such file or directory` because the `ctest` subcommand
 cannot be exec'd. This was reproduced during implementation: the wrapper
 succeeded under `nix develop` (where the new `flake.nix` `PATH` export puts
-`ctest` on `PATH`) but failed when `check.sh` ran in an environment without
-that export. Resolving `ctest` absolutely makes the wrapper robust in both
-environments. The error message was updated accordingly ("cmake, ninja, and
+`ctest` on `PATH`) but failed whenever that export was absent — observed via
+`scripts/check.sh` running in a shell whose `nix develop` re-exec guard was
+already satisfied (`IN_NIX_SHELL` set) without the flake `PATH` export.
+Resolving `ctest` absolutely makes the wrapper robust in both environments. The error message was updated accordingly ("cmake, ninja, and
 ctest are required").
 
 ---
@@ -92,5 +94,37 @@ has no local `app/signing.gradle` (required for `assembleFossRelease`). The
 stripped outputs matched the blueprint's `android-30` column byte-for-byte
 (`arm64-v8a` 730,088 B, `armeabi-v7a` 506,592 B, `x86_64` 798,016 B) with
 intact hardening (`0x4000` LOAD alignment, `GNU_RELRO`, `BIND_NOW`,
-`__stack_chk_fail`) and zero `opus_*`/`rnnoise_*` symbol leaks, so the proof
-is equivalent.
+`__stack_chk_fail`) and zero `opus_*`/`rnnoise_*` symbol leaks. The native
+`.so` bytes are the blueprint's whole subject, and APK packaging of those
+identical inputs is independently proven by `assembleFossDebug` succeeding on
+the same branch — together equivalent proof for release APK native content.
+
+## 5.4 Post-Review Follow-Up Fixes (Pedantic Review)
+
+A three-slice pedantic review of the branch found no blocking defects and
+confirmed parity, but produced three small code fixes implemented here (plus
+comment-only clarifications elsewhere). These supersede the byte-parity
+statement in the preamble.
+
+1. **Missing `CMAKE_CONFIGURE_DEPENDS` (only P1).** `file(STRINGS)` reads of
+   the Opus `.mk` files are invisible to Ninja's re-run rule, so a submodule
+   bump would link stale sources with no automatic recovery — and
+   `gradlew clean` cannot recover either, because `.cxx/` lives outside
+   `build/`. Fixed with `set_property(DIRECTORY APPEND PROPERTY
+   CMAKE_CONFIGURE_DEPENDS ...)` on the three `.mk` files.
+2. **GCC-only `-Wno-maybe-uninitialized` gated on GNU.** The unconditional
+   suppression breaks AppleClang hosts under `-Werror` (unknown warning
+   group); the flag is now appended to `HOST_FLAGS` only when both the C and
+   C++ compilers report `GNU`. Behavior under GCC (including the Nix dev
+   shell) is unchanged.
+3. **`humlacrypto_obj` includes demoted `PUBLIC` → `PRIVATE`.** An `OBJECT`
+   library consumed only via `$<TARGET_OBJECTS>` propagates no usage
+   requirements, so `PUBLIC` was misleading; both consumers already redeclare
+   the include privately.
+
+Deliberately not actioned: `parse_opus_mk` hardening (upstream-identical
+technique, fail-closed, adversarial inputs structurally impossible),
+`CC`/`CXX`-with-arguments support (removal of the old word-splitting hack was
+an intentional improvement toward CMake idioms), `.cxx/` ignore anchoring and
+flake trim strictness (theoretical only), and `check.sh` strictness alignment
+(pre-existing, out of scope).
