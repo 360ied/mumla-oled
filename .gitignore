@@ -58,3 +58,6 @@ libraries/humla/src/main/assets/rnnoise_model.bin
 
 # Git worktrees
 /.worktrees/
+
+# CMake / AGP native build state
+**/.cxx/
