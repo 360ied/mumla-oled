@@ -20,7 +20,8 @@
 //
 // The hermetic engine tests use FakeDecoder/FakeVoiceEncoder, so they never
 // link libopus. This file links the real 1.6.1 sources (same
-// CELT/SILK/Opus lists, flags and fixed-point mode as Android.mk) and
+// CELT/SILK/Opus lists, flags and fixed-point mode as `CMakeLists.txt`
+// — previously `Android.mk`, deleted on the CMake migration) and
 // covers: (1) voice interop — encode→decode round trip through the
 // production classes at 48 kHz mono, the only configuration the app uses;
 // (2) decodeFloat/packetSampleCount robustness — fixed-seed corpus of empty,

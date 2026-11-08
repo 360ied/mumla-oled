@@ -15,8 +15,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import java.util.Locale
-
 // Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
 // AGP 9 built-in Kotlin provides the kotlin-android plugin (no alias) and the
 // `kotlin { compilerOptions }` extension; kapt runs under legacy-kapt.
@@ -80,9 +78,6 @@ android {
         }
     }
 
-    sourceSets.main.jniLibs.srcDir 'src/main/libs/'
-    sourceSets.main.jni.srcDirs = [] // Disable NDK build support until it supports multiple modules.
-
     // Need to enable this when defaultConfig below contains some custom BuildConfig
     buildFeatures {
         buildConfig = true
@@ -96,6 +91,22 @@ android {
 
         ndk {
             abiFilters.addAll(rootProject.ext.sharedAbiFilters)
+        }
+
+        externalNativeBuild {
+            cmake {
+                // -Wno-deprecated is a CMake CLI flag (not a toolchain define): it
+                // suppresses NDK 27's cmake_minimum_required(VERSION 3.6.0) warning under CMake >= 3.27 (Pitfall 4).
+                arguments "-DANDROID_STL=c++_static", "-Wno-deprecated"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/jni/CMakeLists.txt")
+            // Keep in sync: flake.nix SDK cmake PATH, scripts/test_native_audio.sh fallback.
+            version = "4.1.2"
         }
     }
 
@@ -194,35 +205,6 @@ android {
     }
     preBuild.dependsOn prepareRnnoiseModel
 
-    // Trigger NDK build on java compilation task with full core parallelism and incremental tracking.
-    task ndkBuild(type: Exec) {
-        dependsOn prepareRnnoiseModel
-        inputs.dir file('src/main/jni')
-        // Track the NDK version so an NDK upgrade invalidates stale .so files
-        // instead of reporting UP-TO-DATE.
-        inputs.property("ndkVersion", android.ndkVersion)
-        outputs.dir file('src/main/libs')
-        // AGP 9 new DSL removed android.ndkDirectory: resolve the NDK via
-        // androidComponents.sdkComponents (matches android.ndkVersion above).
-        def ndkExe = "${androidComponents.sdkComponents.ndkDirectory.get().asFile}/ndk-build"
-        // No Gradle internal API (DefaultNativePlatform breaks on upgrade;
-        // OperatingSystem.current() does not exist on this Gradle line):
-        // plain os.name sniffing is stable across versions.
-        if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")) {
-          ndkExe += '.cmd'
-        }
-        def jobs = Runtime.runtime.availableProcessors()
-        commandLine ndkExe, "-j${jobs}", '-C', file('src/main/jni/').absolutePath
-    }
-
-    // NOTE: ndkBuild is wired to preBuild lazily in the startParameter gate
-    // at the bottom of this file, only when the requested tasks actually
-    // package native libs. See below.
-    // Host JVM tests exercise Java code only (native coverage comes from the
-    // host-built lib in build/test-native, see java.library.path below), so
-    // forcing a 3-ABI NDK build on every `./gradlew test...` run only slowed
-    // the dev loop. Packaging tasks still get native libs via preBuild.
-
     lint {
         abortOnError = true
         disable 'InvalidPackage', 'MissingTranslation'
@@ -230,6 +212,10 @@ android {
         ignoreWarnings = false
         quiet = false
     }
+}
+
+tasks.matching { it.name.startsWith("configureCMake") }.configureEach {
+    dependsOn(tasks.named("prepareRnnoiseModel"))
 }
 
 task testNativeAudioEngine(type: Exec) {
@@ -243,41 +229,11 @@ tasks.matching { it.name == "check" }.configureEach {
     dependsOn testNativeAudioEngine
 }
 
-// Only build native .so files when the requested tasks actually package them
-// (:app consumes this library's JNI libs at APK/AAR packaging time).
-// Unit-test-only runs such as `./gradlew testDebugUnitTest` or scripts/check.sh
-// step 3 must not pay for a 3-ABI ndk-build: host JVM tests exercise Java
-// only and load the host-built lib from build/test-native (see
-// java.library.path below). startParameter is used instead of
-// taskGraph.whenReady because dependency edges must exist before the
-// execution plan is calculated.
-if (gradle.startParameter.taskNames.any { it ==~ /.*(assemble|bundle|package|install|publish|build|connected).*/ }) {
-    tasks.named("preBuild").configure { dependsOn tasks.named("ndkBuild") }
-}
-// Note: `build` intentionally matches broadly (e.g. `build`,
-// `assembleFossDebugUnitTest`); over-triggering only costs an NDK build,
-// never correctness — the fail-closed guard below covers the other direction.
-
-// Fail closed when a packaging subtask is invoked directly (e.g.
-// `:libraries:humla:mergeDebugJniLibs`), bypassing the startParameter gate
-// above, which only sees top-level CLI spellings. Without ndkBuild in the
-// graph, Gradle would package stale or missing .so files, so refuse instead.
-gradle.taskGraph.whenReady { graph ->
-    def consumesNativeLibs = graph.allTasks.any { t ->
-        t.project == project && (
-            (t.name.startsWith("merge") && (t.name.contains("JniLib") || t.name.contains("NativeLibs"))) ||
-            (t.name.startsWith("copy") && t.name.contains("JniLib")) ||
-            t.name.startsWith("strip") ||
-            (t.name.startsWith("package") && !t.name.contains("Resources")) ||
-            (t.name.startsWith("bundle") && t.name.endsWith("Aar")) ||
-            t.name.startsWith("assemble")
-        )
-    }
-    def hasNdkBuild = graph.allTasks.any { t -> t.project == project && t.name == "ndkBuild" }
-    if (consumesNativeLibs && !hasNdkBuild) {
-        throw new GradleException('Refusing to package native libs without ndkBuild in the task graph (direct packaging-subtask invocation is unsupported; run a top-level task such as :app:assembleFossDebug instead).')
-    }
-}
+// AGP's externalNativeBuild.cmake wires buildCMake* directly into
+// merge*NativeLibs via task-output edges, so no startParameter regex gate or
+// taskGraph.whenReady guard is needed. Unit-test tasks stay out of the CMake
+// graph via those edges (verified by --dry-run; re-validate after AGP
+// upgrades); packaging tasks get native libs automatically.
 
 // NOTE: Test tasks deliberately do NOT depend on testNativeAudioEngine.
 // That edge re-ran the full native rebuild (~50s cold-cache, and never
@@ -287,9 +243,4 @@ gradle.taskGraph.whenReady { graph ->
 // still covers native via the check dependency above.
 tasks.withType(Test).configureEach {
     systemProperty "java.library.path", "${project.rootDir}/build/test-native"
-}
-
-tasks.named('clean', Delete) {
-    delete layout.projectDirectory.dir('src/main/libs')
-    delete layout.projectDirectory.dir('src/main/obj')
 }

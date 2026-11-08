@@ -65,7 +65,6 @@
               pkgs.gradle
               pkgs.protobuf
               pkgs.git
-              pkgs.gnumake
               pkgs.python3
               pkgs.ccache
               pkgs.markdownlint-cli
@@ -91,6 +90,10 @@
               export GRADLE_USER_HOME="''${REPO_ROOT}/.gradle-home"
               export ANDROID_USER_HOME="''${REPO_ROOT}/.gradle-home/android"
               export CCACHE_DIR="''${REPO_ROOT}/.gradle-home/ccache"
+              # Keep in sync: build.gradle cmake version, test_native_audio.sh fallback.
+              export PATH="${androidSdkRoot}/cmake/4.1.2/bin:$PATH"
+              export CCACHE_BASEDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              export CCACHE_NOHASHDIR=1
               echo "Mumla OLED Development Environment Loaded"
               echo "Java Version: $(${jdk}/bin/java -version 2>&1 | head -n 1)"
               echo "ANDROID_HOME: $ANDROID_HOME"
