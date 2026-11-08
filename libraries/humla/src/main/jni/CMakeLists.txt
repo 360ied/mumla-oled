@@ -81,7 +81,11 @@ parse_opus_mk("${OPUS_DIR}/opus_sources.mk" "OPUS_SOURCES_FLOAT" OPUS_SOURCES_FL
 # bump): file(STRINGS) reads are invisible to Ninja's re-run rule otherwise,
 # and .cxx/ survives `gradlew clean`, so without this a bump could link stale
 # sources with no automatic recovery.
-
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${OPUS_DIR}/celt_sources.mk"
+    "${OPUS_DIR}/silk_sources.mk"
+    "${OPUS_DIR}/opus_sources.mk"
+)
 set(OPUS_COMPILE_FLAGS
     -DOPUS_BUILD
     -DVAR_ARRAYS
