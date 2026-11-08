@@ -32,11 +32,14 @@ fi
 CC_BIN="${CC:-gcc}"
 CXX_BIN="${CXX:-g++}"
 
-# Configure when build.ninja is missing or the toolchain changed.
+# Configure when build.ninja is missing or the toolchain changed. The
+# fingerprint covers compiler paths and versions plus cmake/ninja versions;
+# anything else fails loudly at the next ninja/cmake invocation rather than
+# misbuilding.
 TOOLCHAIN_STAMP="$BUILD_DIR/.toolchain_fingerprint"
 TOOLCHAIN_CANDIDATE="$BUILD_DIR/.toolchain_fingerprint.new"
 mkdir -p "$BUILD_DIR"
-{ printf '%s\n%s\n' "$CC_BIN" "$CXX_BIN"; "$CXX_BIN" --version; } > "$TOOLCHAIN_CANDIDATE" 2>/dev/null || echo "unknown" > "$TOOLCHAIN_CANDIDATE"
+{ printf '%s\n%s\n' "$CC_BIN" "$CXX_BIN"; "$CMAKE_BIN" --version; "$NINJA_BIN" --version; "$CC_BIN" --version; "$CXX_BIN" --version; } > "$TOOLCHAIN_CANDIDATE" 2>/dev/null || echo "unknown" > "$TOOLCHAIN_CANDIDATE"
 if [[ ! -f "$BUILD_DIR/build.ninja" ]] || ! cmp -s "$TOOLCHAIN_STAMP" "$TOOLCHAIN_CANDIDATE" 2>/dev/null; then
     rm -rf "$BUILD_DIR/CMakeCache.txt" "$BUILD_DIR/CMakeFiles"
     "$CMAKE_BIN" -Wno-deprecated \

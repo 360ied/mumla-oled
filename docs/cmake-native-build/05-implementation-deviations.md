@@ -4,10 +4,10 @@ This document records every place where the landed implementation on branch
 `build/cmake-native` intentionally differs from the blueprint in
 [04-migration-blueprint-and-pitfalls.md](04-migration-blueprint-and-pitfalls.md).
 There are three original deviations (§5.1–§5.3: one functional fix and two
-judgment calls) plus post-review follow-up fixes (§5.4).
+judgment calls) plus post-review follow-up fixes (§5.4–§5.5).
 [`libraries/humla/src/main/jni/CMakeLists.txt`](../../libraries/humla/src/main/jni/CMakeLists.txt)
 was byte-identical to the blueprint's code block at implementation time
-(commit `c639c95b`); §5.4 records the only subsequent changes and why.
+(commit `c639c95b`); §5.4–§5.5 record the only subsequent changes and why.
 
 ---
 
@@ -128,3 +128,31 @@ technique, fail-closed, adversarial inputs structurally impossible),
 an intentional improvement toward CMake idioms), `.cxx/` ignore anchoring and
 flake trim strictness (theoretical only), and `check.sh` strictness alignment
 (pre-existing, out of scope).
+
+Comment-only clarifications applied in the same batch (no behavior change):
+the `buildCMake*` wiring hedge and `-Wno-deprecated` note in `build.gradle`,
+`4.1.2` keep-in-sync comments in `build.gradle`/`flake.nix`/`test_native_audio.sh`,
+the wrapper's `ctest ships with cmake` hint, and the §5.1 mechanism plus
+release-proof wording updates in this document.
+
+## 5.5 Second-Batch Review Fixes
+
+A second (single-reviewer) pass verified every §5.4 fix against committed
+bytes and live `build.ninja` evidence, found no new functional defects, and
+produced the following small batch:
+
+1. **Wrapper fingerprint covers cmake/ninja/compiler versions.** The old
+   fingerprint recorded only the compiler paths and `CXX --version`, so a
+   cmake/ninja swap or a CC-only upgrade escaped detection (loud failure at
+   the next invocation, never silent misbuild — but avoidable). The candidate
+   now includes `cmake --version`, `ninja --version`, and both compiler
+   versions.
+2. **ccache launcher guard hardened per language.** The coupled
+   `NOT C_LAUNCHER AND NOT CXX_LAUNCHER` gate is replaced with independent
+   per-language gates, and a directory-valued `NDK_CCACHE` is ignored rather
+   than failing obscurely as a launcher. Default behavior (NDK sets neither)
+is unchanged.
+3. **Stale doc references cleaned.** `test_opus_interop.cpp` cited the
+   deleted `Android.mk` as the source-list authority (now `CMakeLists.txt`),
+   and the report index linked the deleted makefiles without noting the
+   deletion (now annotated with a pointer to §5.3).

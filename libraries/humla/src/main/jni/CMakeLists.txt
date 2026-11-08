@@ -24,17 +24,20 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Route compilation through ccache when available (covers both Android NDK and
 # host builds; NDK's android.toolchain.cmake does not read $ENV{NDK_CCACHE}).
-if(NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
-    if(DEFINED ENV{NDK_CCACHE} AND EXISTS "$ENV{NDK_CCACHE}")
-        set(CCACHE_PROGRAM "$ENV{NDK_CCACHE}")
-    else()
-        find_program(CCACHE_PROGRAM ccache)
+# Each language is gated independently so presetting one launcher never leaves
+# the other silently uncached; a directory-valued NDK_CCACHE is ignored rather
+# than failing obscurely as a launcher.
+find_program(_HUMLA_CCACHE_PROGRAM ccache)
+foreach(_HUMLA_LANG C CXX)
+    if(NOT CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER)
+        if(DEFINED ENV{NDK_CCACHE} AND EXISTS "$ENV{NDK_CCACHE}" AND NOT IS_DIRECTORY "$ENV{NDK_CCACHE}")
+            set(CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER "$ENV{NDK_CCACHE}")
+        elseif(_HUMLA_CCACHE_PROGRAM)
+            set(CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER "${_HUMLA_CCACHE_PROGRAM}")
+        endif()
     endif()
-    if(CCACHE_PROGRAM)
-        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    endif()
-endif()
+endforeach()
+unset(_HUMLA_LANG)
 
 set(JNI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(OPUS_DIR "${JNI_ROOT}/opus")
@@ -81,7 +84,7 @@ parse_opus_mk("${OPUS_DIR}/opus_sources.mk" "OPUS_SOURCES_FLOAT" OPUS_SOURCES_FL
 # bump): file(STRINGS) reads are invisible to Ninja's re-run rule otherwise,
 # and .cxx/ survives `gradlew clean`, so without this a bump could link stale
 # sources with no automatic recovery.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${OPUS_DIR}/celt_sources.mk"
     "${OPUS_DIR}/silk_sources.mk"
     "${OPUS_DIR}/opus_sources.mk"
@@ -210,8 +213,9 @@ else()
     find_package(JNI REQUIRED)
 
     set(HOST_FLAGS -O2 -Wall -Wextra -Werror -UNDEBUG)
-    # -Wmaybe-uninitialized is GCC-only: AppleClang rejects the unknown group
-    # and -Werror promotes that rejection, so gate the suppression on GNU.
+    # -Wmaybe-uninitialized is GCC-only: non-GNU compilers (e.g.
+    # AppleClang/Clang) reject the unknown group and -Werror promotes that
+    # rejection, so gate the suppression on GNU.
     if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         list(APPEND HOST_FLAGS -Wno-maybe-uninitialized)
     endif()
