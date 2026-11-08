@@ -23,7 +23,7 @@ A single [`libraries/humla/src/main/jni/CMakeLists.txt`](04-migration-blueprint-
 - **Android NDK packaging** via AGP 9.0.1's first-class `externalNativeBuild.cmake` across `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
 - **Host C++ unit/interop/fuzz testing and host JNI compilation** (`test_audio_engine`, `test_crypt_state`, and host `libhumlaaudio.so`/`.dylib`) via CMake + Ninja + CTest.
 
-Crucially, **the existing Nix Android SDK composition in [`flake.nix`](../../flake.nix) already ships CMake `4.1.2`, Ninja `1.12.1`, and CTest `4.1.2`** under `$ANDROID_HOME/cmake/4.1.2/bin/` by default—requiring **zero `flake.lock` changes or new Nix store downloads**.
+Crucially, **the existing Nix Android SDK composition in [`flake.nix`](../../flake.nix) already ships CMake `4.1.2`, Ninja `1.12.1`, and CTest `4.1.2`** under `$ANDROID_HOME/cmake/4.1.2/bin/` — present on disk by default, requiring **zero `flake.lock` changes or new Nix store downloads** (still requires adding that `bin/` directory to `PATH`, see [§4](04-migration-blueprint-and-pitfalls.md#4-supporting-updates-in-flakenix-gitignore-and-agentsmd)).
 
 ```mermaid
 flowchart TB
@@ -65,7 +65,7 @@ flowchart TB
 | **Stripped `.so` size (`arm64-v8a`)** | `730,632 B` (`android-21`) | `730,632 B` (`android-21`, `0 B` $\Delta$) / `730,088 B` (`android-30`, `−544 B`) |
 | **Stripped `.so` size (`armeabi-v7a`)** | `507,812 B` (`android-21`) | `507,228 B` (`android-21`, `−584 B`) / `506,592 B` (`android-30`, `−1,220 B`) |
 | **Stripped `.so` size (`x86_64`)** | `798,568 B` (`android-21`) | `798,568 B` (`android-21`, `0 B` $\Delta$) / `798,016 B` (`android-30`, `−552 B`) |
-| **Nix `flake.lock` impact** | N/A | **None** (`$ANDROID_HOME/cmake/4.1.2/bin` is already in the dev shell) |
+| **Nix `flake.lock` impact** | N/A | **None** (present under `$ANDROID_HOME` in the dev shell — no new store downloads; still requires `PATH` export, see §4) |
 
 ---
 

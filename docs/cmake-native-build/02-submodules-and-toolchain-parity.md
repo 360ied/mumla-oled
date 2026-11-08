@@ -21,7 +21,7 @@ A naive CMake migration might attempt `add_subdirectory(opus EXCLUDE_FROM_ALL)` 
                      --git-dir=${CMAKE_CURRENT_LIST_DIR}/.git describe
                      --tags --match "v*" OUTPUT_VARIABLE OPUS_PACKAGE_VERSION)
    ```
-   Because `OpusPackageVersion.cmake` resides in `opus/cmake/`, `${CMAKE_CURRENT_LIST_DIR}/.git` evaluates to `opus/cmake/.git`, which **never exists**. (Even at `opus/.git`, in a Git submodule or worktree `.git` is a `gitdir:` pointer file, not a directory.) The fallback file `opus/package_version` only exists in release tarballs, not git checkouts. Consequently, `get_package_version` always hits its failure branch:
+   Because `OpusPackageVersion.cmake` resides in `opus/cmake/`, `${CMAKE_CURRENT_LIST_DIR}/.git` evaluates to `opus/cmake/.git`, which **never exists**. The fallback probe checks `${CMAKE_CURRENT_LIST_DIR}/package_version`, i.e. `opus/cmake/package_version` — a path that is never shipped (even release tarballs ship `opus/package_version` at the top level, not under `cmake/`). Consequently, `get_package_version` always hits its failure branch:
    ```cmake
    message(WARNING "Could not get package version.")
    set(OPUS_PACKAGE_VERSION 0)
@@ -41,12 +41,12 @@ A naive CMake migration might attempt `add_subdirectory(opus EXCLUDE_FROM_ALL)` 
    SILK_SOURCES += $(SILK_SOURCES_ARM_RTCD)
    endif
    ```
-   Inspection of [`opus/celt/arm/armcpu.c:31`](../../libraries/humla/src/main/jni/opus/celt/arm/armcpu.c#L31), [`opus/celt/arm/arm_celt_map.c:34`](../../libraries/humla/src/main/jni/opus/celt/arm/arm_celt_map.c#L34), and [`opus/silk/arm/arm_silk_map.c`](../../libraries/humla/src/main/jni/opus/silk/arm/arm_silk_map.c) shows that the entire contents of all three files are guarded by `#if defined(OPUS_HAVE_RTCD)`. Because `HUMLA_OPUS_CFLAGS` does not define `OPUS_HAVE_RTCD`, those three files compile to empty translation units (`0 B` of code and data) on `armeabi-v7a`.
+   Inspection of [`opus/celt/arm/armcpu.c:34`](../../libraries/humla/src/main/jni/opus/celt/arm/armcpu.c#L34), [`opus/celt/arm/arm_celt_map.c:38`](../../libraries/humla/src/main/jni/opus/celt/arm/arm_celt_map.c#L38), and [`opus/silk/arm/arm_silk_map.c:35`](../../libraries/humla/src/main/jni/opus/silk/arm/arm_silk_map.c#L35) shows that all definitions in all three files are guarded by `#if defined(OPUS_HAVE_RTCD)` / `#ifdef OPUS_HAVE_RTCD` (leading `#include`s such as `config.h`, `kiss_fft.h`, and `armcpu.h` precede the guard). Because `HUMLA_OPUS_CFLAGS` does not define `OPUS_HAVE_RTCD`, those three files compile to effectively empty translation units (no emitted symbols or data) on `armeabi-v7a`.
 
 ### Recommended Opus Integration: Direct `.mk` Source Parsing
 Even upstream [`opus/cmake/OpusSources.cmake`](../../libraries/humla/src/main/jni/opus/cmake/OpusSources.cmake) does not hardcode source lists—it parses `celt_sources.mk`, `silk_sources.mk`, and `opus_sources.mk` via `file(STRINGS ...)`.
 
-In CMake, `file(STRINGS <file> <out>)` automatically joins backslash-continued lines (`\`). A 15-line helper function in our own `CMakeLists.txt` reads `CELT_SOURCES`, `SILK_SOURCES`, `SILK_SOURCES_FIXED`, `OPUS_SOURCES`, and `OPUS_SOURCES_FLOAT` directly from the submodule's `.mk` files in **< 1 ms** with **zero `try_compile` overhead**, guaranteeing that:
+In CMake, `file(STRINGS <file> <out>)` automatically joins backslash-continued lines (`\`). A 15-line helper function in our own `CMakeLists.txt` reads `CELT_SOURCES`, `SILK_SOURCES`, `SILK_SOURCES_FIXED`, `OPUS_SOURCES`, and `OPUS_SOURCES_FLOAT` directly from the submodule's `.mk` files in **< 1 ms** with **zero `try_compile` overhead**. Only those five variables are parsed — `*_ARM_RTCD`, `*_X86_RTCD`, `SSE`/`SSE2`/`SSE4_1`/`AVX2`, `ARM_NEON_INTR`, `ARM_ASM`, and `lpcnet_sources.mk` (`dnn/`) are intentionally excluded (ARM RTCD files are empty TUs without `OPUS_HAVE_RTCD` per §2.1 item 4; x86 SIMD/NEON would diverge from the audited fixed-point footprint), guaranteeing that:
 - `opus/{celt,silk,opus}_sources.mk` remains the single source of truth across submodule updates.
 - Both Android (`libhumlaaudio.so`) and Host (`test_audio_engine`) compile the exact same `humlaopus` target with the exact same fixed-point configuration (`-DOPUS_BUILD -DVAR_ARRAYS -DFIXED_POINT -DHAVE_LRINTF=1`).
 

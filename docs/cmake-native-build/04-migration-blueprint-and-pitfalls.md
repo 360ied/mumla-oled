@@ -34,11 +34,11 @@ This document provides the concrete implementation blueprint for migrating Mumla
 - **Mechanism**: NDK's `android.toolchain.cmake` checks the CMake variable `NDK_CCACHE` / `ANDROID_CCACHE` and ignores `$ENV{NDK_CCACHE}`. Furthermore, without `CCACHE_BASEDIR` and `CCACHE_NOHASHDIR=1`, every worktree under `.worktrees/<branch>` misses the shared `ccache`.
 - **Mitigation**:
   1. In `CMakeLists.txt`, configure `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` from `$ENV{NDK_CCACHE}` or `find_program(CCACHE_PROGRAM ccache)`.
-  2. In [`flake.nix`](../../flake.nix) `shellHook`, export `CCACHE_BASEDIR="${PWD}"` and `CCACHE_NOHASHDIR=1`.
+  2. In [`flake.nix`](../../flake.nix) `shellHook`, export `CCACHE_BASEDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"` and `CCACHE_NOHASHDIR=1`. `CCACHE_BASEDIR` must be the active worktree root (`--show-toplevel`), not `flake.nix`'s `REPO_ROOT` (which resolves via `--git-common-dir` to the main repository so `CCACHE_DIR` stays shared); re-enter `nix develop` after changing worktrees.
 
 ### Pitfall 6: Host JVM Unit Tests (`CryptStateTest`) Need Host `libhumlaaudio.so`
 - **Mechanism**: When `:libraries:humla:testDebugUnitTest` runs on the JVM, `CryptState` calls `System.loadLibrary("humlaaudio")` against `java.library.path` (`${project.rootDir}/build/test-native`). Under `scripts/check.sh`, step 2b (`scripts/test_native_audio.sh`) runs before step 3 (`gradlew`), so `build/test-native/libhumlaaudio.so` is always present. However, if a developer creates a brand-new worktree and runs `nix develop --command ./gradlew :libraries:humla:testDebugUnitTest` directly *before* running `scripts/test_native_audio.sh`, `build/test-native/libhumlaaudio.so` does not exist yet.
-- **Opportunity with CMake**: Because `CMakeLists.txt` defines the 2-TU host `humlaaudio` shared library as a distinct target (`ninja -C build/test-native humlaaudio`), building *only* the host JNI library takes **< 0.1 s** warm / **< 0.5 s** cold (and `5 ms` when up-to-date) without compiling or running the 156-TU Opus/audio test binaries. If desired, a lightweight Gradle task `buildHostTestJni` (`ninja -C build/test-native humlaaudio`) can be wired to `tasks.withType(Test)` at virtually zero cost (`5 ms` no-op), or the current `check.sh` ordering can be kept as-is.
+- **Decision with CMake**: Because `CMakeLists.txt` defines the 2-TU host `humlaaudio` shared library as a distinct target (`ninja -C build/test-native humlaaudio`), building *only* the host JNI library takes **< 0.1 s** warm / **< 0.5 s** cold (and `5 ms` when up-to-date) without compiling or running the 156-TU Opus/audio test binaries (156 test TUs = 136 Opus `.c` + ~20 audio/test sources; 158 total host TUs include the 2-TU JNI lib). Scope for this migration: keep the current `check.sh` ordering as-is (step 2b before Gradle); do **not** add a `buildHostTestJni` Gradle task — recorded as deferred, not in-scope.
 
 ---
 
@@ -97,8 +97,12 @@ set(TEST_CPP_DIR "${JNI_ROOT}/../../test/cpp")
 
 # Parse source lists from upstream Opus .mk files (file(STRINGS) joins \-continuations).
 # The opus submodule is pinned to upstream v1.6.1
-# (22244de5a79bd1d6d623c32e72bf1954b56235be); lpcnet_sources.mk (dnn/, deep
-# PLC + DRED) is opt-in and conflicts with fixed-point, so it is excluded.
+# (22244de5a79bd1d6d623c32e72bf1954b56235be); only CELT_SOURCES, SILK_SOURCES,
+# SILK_SOURCES_FIXED, OPUS_SOURCES, and OPUS_SOURCES_FLOAT are parsed.
+# *_ARM_RTCD, *_X86_RTCD, SSE/SSE2/SSE4_1/AVX2, ARM_NEON_INTR, ARM_ASM, and
+# lpcnet_sources.mk (dnn/, deep PLC + DRED) are intentionally excluded: ARM RTCD
+# files are empty TUs without OPUS_HAVE_RTCD, and x86 SIMD/NEON would diverge
+# from the audited fixed-point footprint.
 function(parse_opus_mk mk_file var_name out_var)
     file(STRINGS "${mk_file}" lines)
     set(result "")
@@ -314,8 +318,12 @@ endif()
 
 ### 2. Changes to [`libraries/humla/build.gradle`](../../libraries/humla/build.gradle)
 
-1. **Remove** `sourceSets.main.jniLibs.srcDir 'src/main/libs/'` and `sourceSets.main.jni.srcDirs = []` (lines 83–84).
-2. **Add** `externalNativeBuild` inside `defaultConfig` and `android`:
+Keep `task prepareRnnoiseModel`, `task testNativeAudioEngine`, the `tasks.withType(Test)` `java.library.path` edge, and the unconditional `preBuild.dependsOn prepareRnnoiseModel` at line 195 (asset path for `src/main/assets/rnnoise_model.bin`).
+
+1. **Delete** `sourceSets.main.jniLibs.srcDir 'src/main/libs/'` and `sourceSets.main.jni.srcDirs = []` at lines 83–84.
+2. **Add** `externalNativeBuild` in two places inside the existing `android { ... }` block (keep the existing `ndk { abiFilters.addAll(rootProject.ext.sharedAbiFilters) }` as-is):
+   - inside `defaultConfig { ... }`, after the existing `ndk { ... }` block;
+   - at `android`-block scope as a sibling of `defaultConfig`, `lint`, and `sourceSets`:
    ```groovy
    defaultConfig {
        testApplicationId "se.lublin.humla.test"
@@ -341,12 +349,14 @@ endif()
        }
    }
    ```
-3. **Replace** `task ndkBuild(type: Exec)`, the `if (gradle.startParameter.taskNames.any ...)` block, the `gradle.taskGraph.whenReady` guard, and the `tasks.named('clean', Delete)` block with:
+3. **Delete** `task ndkBuild(type: Exec) { ... }` at lines 198–216 plus its wiring comment at lines 218–224, the `if (gradle.startParameter.taskNames.any ...)` gate at lines 254–259, the `gradle.taskGraph.whenReady` guard at lines 265–280, and the `tasks.named('clean', Delete)` block at lines 292–295 (outputs now live under `build/` and `.cxx/`, so no in-tree cleanup is needed). **Keep** line 195.
+4. **Add** at top level (outside `android { ... }`):
    ```groovy
    tasks.matching { it.name.startsWith("configureCMake") }.configureEach {
        dependsOn(tasks.named("prepareRnnoiseModel"))
    }
    ```
+   This covers direct `:libraries:humla:mergeDebugNativeLibs` invocations where `preBuild` is not in the graph; the asset path stays covered by the kept line-195 edge.
 
 ---
 
@@ -367,12 +377,12 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 JNI_DIR="$ROOT_DIR/libraries/humla/src/main/jni"
 BUILD_DIR="$ROOT_DIR/build/test-native"
 
-# Locate cmake and ninja (prefer PATH, fall back to SDK cmake under ANDROID_HOME).
+# Locate cmake and ninja (prefer PATH, fall back to the pinned SDK cmake under ANDROID_HOME).
 CMAKE_BIN="$(command -v cmake || true)"
 NINJA_BIN="$(command -v ninja || true)"
-if [[ -z "$CMAKE_BIN" || -z "$NINJA_BIN" ]] && [[ -n "${ANDROID_HOME:-}" && -d "$ANDROID_HOME/cmake" ]]; then
-    SDK_CMAKE_BIN_DIR="$(find "$ANDROID_HOME/cmake" -maxdepth 2 -type d -name bin 2>/dev/null | sort -V | tail -n 1)"
-    if [[ -n "$SDK_CMAKE_BIN_DIR" ]]; then
+if [[ -z "$CMAKE_BIN" || -z "$NINJA_BIN" ]] && [[ -n "${ANDROID_HOME:-}" ]]; then
+    SDK_CMAKE_BIN_DIR="$ANDROID_HOME/cmake/4.1.2/bin"
+    if [[ -d "$SDK_CMAKE_BIN_DIR" ]]; then
         [[ -z "$CMAKE_BIN" && -x "$SDK_CMAKE_BIN_DIR/cmake" ]] && CMAKE_BIN="$SDK_CMAKE_BIN_DIR/cmake"
         [[ -z "$NINJA_BIN" && -x "$SDK_CMAKE_BIN_DIR/ninja" ]] && NINJA_BIN="$SDK_CMAKE_BIN_DIR/ninja"
     fi
@@ -407,8 +417,7 @@ fi
 
 "$NINJA_BIN" -C "$BUILD_DIR"
 
-"$BUILD_DIR/test_audio_engine"
-"$BUILD_DIR/test_crypt_state"
+"$CMAKE_BIN" -E chdir "$BUILD_DIR" ctest --output-on-failure
 ```
 
 ---
@@ -416,17 +425,17 @@ fi
 ### 4. Supporting Updates in [`flake.nix`](../../flake.nix), [`.gitignore`](../../.gitignore), and [`AGENTS.md`](../../AGENTS.md)
 
 1. **[`flake.nix`](../../flake.nix)**:
-   - Remove `pkgs.gnumake` from `buildInputs` (no longer needed once `ndk-build` is retired).
-   - Add `$ANDROID_HOME/cmake/4.1.2/bin` to `PATH` and export `CCACHE_BASEDIR` + `CCACHE_NOHASHDIR` in `shellHook`:
+   - Remove `pkgs.gnumake` from `buildInputs` after verifying with `grep -rn 'gnumake\|ndk-build\|ndkBuild' --include='*.nix' --include='*.gradle' --include='*.sh' .` that no other consumer remains (today only `flake.nix:68` and the retired wiring hit).
+   - Add `$ANDROID_HOME/cmake/4.1.2/bin` to `PATH` and export `CCACHE_BASEDIR` + `CCACHE_NOHASHDIR` in `shellHook` (note: `CCACHE_BASEDIR` is the active worktree root, while `REPO_ROOT` stays the main repository so `CCACHE_DIR` remains shared):
      ```nix
      export PATH="${androidSdkRoot}/cmake/4.1.2/bin:$PATH"
      export CCACHE_DIR="''${REPO_ROOT}/.gradle-home/ccache"
-     export CCACHE_BASEDIR="''${PWD}"
+     export CCACHE_BASEDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
      export CCACHE_NOHASHDIR=1
      ```
 2. **[`libraries/humla/.gitignore`](../../libraries/humla/.gitignore) & [`.gitignore`](../../.gitignore)**:
-   - Add `.cxx/` to ignore AGP's CMake build staging directory.
-   - Remove `src/main/libs/` and `src/main/obj/` from `libraries/humla/.gitignore` after deleting any leftover untracked directories.
+   - Add `.cxx/` to [`libraries/humla/.gitignore`](../../libraries/humla/.gitignore) (AGP stages per-module CMake state at `libraries/humla/.cxx/`) and `**/.cxx/` to the root [`.gitignore`](../../.gitignore) (covers `app/.cxx/` and any future module).
+   - One-time migration cleanup: `rm -rf libraries/humla/src/main/libs libraries/humla/src/main/obj build/test-native`, then remove `src/main/libs/` and `src/main/obj/` from [`libraries/humla/.gitignore`](../../libraries/humla/.gitignore).
 3. **[`AGENTS.md`](../../AGENTS.md)**:
    - Update the **Native Build Wiring** bullet under **Verification** to reference `externalNativeBuild.cmake` (`buildCMake*`) instead of `ndkBuild`.
 

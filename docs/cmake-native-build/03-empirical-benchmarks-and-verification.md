@@ -129,7 +129,7 @@ Configuring `externalNativeBuild.cmake` on `:libraries:humla` and inspecting the
 
 ## 3.4 Host C++ Test & Host JNI Build Timings
 
-Running the host build (`humlaopus`, `test_audio_engine`, `test_crypt_state`, and host `libhumlaaudio.so`) through CMake `4.1.2` + Ninja `1.12.1` + CTest `4.1.2`:
+Running the host build (`humlaopus`, `test_audio_engine`, `test_crypt_state`, and host `libhumlaaudio.so`) through CMake `4.1.2` + Ninja `1.12.1` + CTest `4.1.2` (counting convention: 158 total host TUs = 156 test TUs — 136 Opus `.c` + ~20 audio/test sources — plus the 2-TU host `humlaaudio` JNI lib):
 
 | Phase | Measured Wall Time | Measured User / Sys Time | Notes |
 | :--- | ---: | ---: | :--- |
@@ -148,6 +148,6 @@ To verify the fix for the 81.67% `ccache` miss rate diagnosed in [01-current-arc
 | Configuration | `wt1` (First Worktree) | `wt2` (Second Worktree) | Cross-Worktree Hit Rate |
 | :--- | :--- | :--- | ---: |
 | **Current `flake.nix` (`CCACHE_DIR` only)** | `0 hits / 1 miss` | `0 hits / 1 miss` | **`0.00%`** |
-| **With `CCACHE_BASEDIR="$PWD"` + `CCACHE_NOHASHDIR=1`** | `0 hits / 1 miss` | `1 hit / 0 misses` | **`100.00%`** |
+| **With worktree-root `CCACHE_BASEDIR` + `CCACHE_NOHASHDIR=1`** | `0 hits / 1 miss` | `1 hit / 0 misses` | **`100.00%`** |
 
-Exporting `CCACHE_BASEDIR="${PWD}"` and `CCACHE_NOHASHDIR=1` in [`flake.nix`](../../flake.nix)'s `shellHook` makes `ccache` rewrite all absolute paths inside the active worktree to relative paths before computing the manifest/direct hash, enabling instant (`~0.33 s` host, `~1.0 s` 3-ABI Android) cache hits in newly created worktrees.
+Exporting `CCACHE_BASEDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"` and `CCACHE_NOHASHDIR=1` in [`flake.nix`](../../flake.nix)'s `shellHook` makes `ccache` rewrite all absolute paths inside the active worktree root (not `flake.nix`'s `REPO_ROOT`, which stays pointed at the main repository so `CCACHE_DIR` remains shared) to relative paths before computing the manifest/direct hash, enabling instant (`~0.33 s` host, `~1.0 s` 3-ABI Android) cache hits in newly created worktrees (re-enter `nix develop` after changing worktrees).
