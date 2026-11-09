@@ -195,22 +195,25 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // VoIP mode ownership (one owner: this route policy — never the pipeline
     // and never the SCO manager alone). Held for voice routes so capture-side
     // effects attach into a coupled HAL loop, released for media routes and
-    // on disconnect/destroy. Claimed tracks whether WE set IN_COMM: a
-    // pre-held mode (phone call, concurrent SCO) is never cleared by us.
+    // on disconnect/destroy. Claimed means WE set IN_COMM and saved the
+    // previous mode; Released means we hold nothing and must never restore.
+    // A pre-held mode (phone call, concurrent SCO) stays Released: we claim
+    // nothing and change nothing, so release never clears someone else's mode.
     private var mAudioManager: AudioManager? = null
 
-    // Route/mode ownership fields below are touched on the main thread and
-    // in the disconnect path on connection threads: volatile for visibility,
-    // with ensure/release/apply serialized via synchronized methods so a
-    // device callback racing a disconnect cannot corrupt the restore baseline.
-    @Volatile
-    private var mSavedAudioMode: Int = AudioManager.MODE_NORMAL
+    // Voice-mode ownership: one atomic snapshot. Touched on the main thread
+    // and in the disconnect path on connection threads: volatile for
+    // visibility, with ensure/release serialized via synchronized methods so
+    // a device callback racing a disconnect cannot corrupt the restore
+    // baseline. A single reference replaces the former held/claimed/saved
+    // triple, which always moved together (held ≡ claimed).
+    private sealed interface ModeHold {
+        data object Released : ModeHold
+        data class Claimed(val savedMode: Int) : ModeHold
+    }
 
     @Volatile
-    private var mVoiceModeHeld: Boolean = false
-
-    @Volatile
-    private var mVoiceModeClaimed: Boolean = false
+    private var mModeHold: ModeHold = ModeHold.Released
 
     // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
     // SCO absence). Present sinks select the media triple; SCO and the bare
@@ -230,15 +233,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mHandsetAudioStream: Int = AudioManager.STREAM_MUSIC
     private var mDeviceCallback: AudioDeviceCallback? = null
-    // Slice 4: Handler postDelayed chains become cancellable Jobs in the
-    // service scope. Disarm = job?.cancel(), replacing removeCallbacks
-    // one-for-one. mHandler stays only for AudioManager device-callback
-    // registration, which requires a Handler. Volatile: cancelReconnect()/
-    // disconnect() are binder-reachable off-main, matching every
-    // neighboring cross-thread flag in this file. The connection generation
-    // below is bumped on main (connect is main-confined); the filtered
-    // callbacks arrive on Main via Handler posts, so volatile here is
-    // belt-and-braces visibility, not an IO-thread requirement.
+    // Service-scope Jobs replace Handler postDelayed chains. Disarm =
+    // job?.cancel(), replacing removeCallbacks one-for-one. mHandler stays
+    // only for AudioManager device-callback registration, which requires a
+    // Handler. Volatile: cancelReconnect()/disconnect() are
+    // binder-reachable off-main, matching every neighboring cross-thread
+    // flag in this file. The connection generation below is bumped on main
+    // (connect is main-confined); only onConnectionSynchronized arrives via
+    // a Main Handler post (HumlaConnection posts sync), while
+    // onConnectionDisconnected runs directly on connection threads, so
+    // volatile here is required for the disconnect path, not belt-and-braces.
     @Volatile
     private var connectionGeneration = 0
     @Volatile
@@ -251,26 +255,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mSettleAttempts: Int = 0
 
-    @Volatile
-    private var mSettleFired: Boolean = false
-
-    // Whether a settle recheck is queued. Set only beside a launch, cleared
-    // on dispatch, reset, or teardown — never restored from a snapshot —
-    // so the flag can never claim protection no callback provides.
-    // Single writes only (volatile suffices).
-    @Volatile
-    private var mSettlePending: Boolean = false
-
     private fun armRouteSettle() {
         routeSettleJob?.cancel()
-        mSettlePending = true
         val launchedSettle = lifecycleScope.launch {
             delay(ROUTE_SETTLE_RECHECK_MS)
-            // Dispatch consumes the queued protection: clear the flag so a
-            // later fresh edge can arm anew (funnel top also clears fired).
-            mSettlePending = false
-            mSettleFired = true
-            applyAudioRoute("media settle recheck", false)
+            applyAudioRoute("media settle recheck", false, settle = true)
         }
         launchedSettle.invokeOnCompletion {
             if (routeSettleJob === launchedSettle) routeSettleJob = null
@@ -281,7 +270,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     private fun cancelRouteSettle() {
         routeSettleJob?.cancel()
         routeSettleJob = null
-        mSettlePending = false
     }
 
     private fun cancelRouteDebounce() {
@@ -868,7 +856,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val voice = updateRouteBuilder()
             // See funnel: only our own claimed hold implicates us in any
             // system SCO raised during it.
-            val syncClaimedHold = mVoiceModeHeld && mVoiceModeClaimed
+            val syncClaimedHold = mModeHold is ModeHold.Claimed
             applyVoiceMode(voice)
             createAudioHandler()
             if (!voice) {
@@ -1132,24 +1120,24 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * Holds MODE_IN_COMMUNICATION for the voice route. Called before every
      * pipeline creation so capture-side effects attach into an already-coupled
      * HAL loop, never while the pipeline runs. Recreate-safe: re-holding an
-     * already-held mode is idempotent and never re-saves. A pre-held mode
-     * (phone call, concurrent SCO bring-up) counts as held but unclaimed,
-     * so release below never clears someone else's mode.
+     * already-claimed mode is idempotent and never re-saves. A pre-held mode
+     * (phone call, concurrent SCO bring-up) stays Released, so release below
+     * never clears someone else's mode; the next voice pass retries the claim.
      */
     @Synchronized
     private fun ensureVoiceMode() {
         val audioManager = mAudioManager
-        if (audioManager == null || mVoiceModeHeld) {
+        if (audioManager == null || mModeHold is ModeHold.Claimed) {
             return
         }
         try {
             val mode = audioManager.mode
             // Externally held (phone call setup or another app): claim
-            // nothing and change nothing. Deliberately leaves mVoiceModeHeld
-            // unset so the next voice pass retries the claim — setting it
-            // here would starve the voice route of IN_COMM after the
-            // external holder lets go (no release path re-arms a marker
-            // that was never a real hold).
+            // nothing and change nothing. Deliberately stays Released so the
+            // next voice pass retries the claim — recording a hold here
+            // would starve the voice route of IN_COMM after the external
+            // holder lets go (no release path re-arms a marker that was
+            // never a real hold).
             if (mode == AudioManager.MODE_IN_COMMUNICATION) {
                 Log.i(TAG, "VoIP mode already held, not claiming")
                 return
@@ -1160,38 +1148,32 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 Log.i(TAG, "Cellular call active, not claiming voice mode")
                 return
             }
-            mSavedAudioMode = mode
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            mVoiceModeHeld = true
-            mVoiceModeClaimed = true
-            Log.i(TAG, "VoIP mode held (was $mSavedAudioMode)")
+            mModeHold = ModeHold.Claimed(mode)
+            Log.i(TAG, "VoIP mode held (was $mode)")
         } catch (e: Exception) {
             Log.w(TAG, "VoIP mode hold failed", e)
         }
     }
 
     /**
-     * Releases a held voice mode, guarded like BluetoothScoManager: an
-     * unclaimed (pre-held) mode is never touched, and a claimed one is only
+     * Releases a claimed voice mode. A Released hold (including a pre-held
+     * mode we never claimed) is never touched, and a claimed one is only
      * restored while our IN_COMM is still current, so a phone call or another
      * app that moved it since is never clobbered.
      */
     @Synchronized
     private fun releaseVoiceMode() {
         val audioManager = mAudioManager
-        if (audioManager == null || !mVoiceModeHeld) {
+        val hold = mModeHold
+        if (audioManager == null || hold !is ModeHold.Claimed) {
             return
         }
-        val claimed = mVoiceModeClaimed
-        mVoiceModeHeld = false
-        mVoiceModeClaimed = false
-        if (!claimed) {
-            return
-        }
+        mModeHold = ModeHold.Released
         try {
             if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
-                audioManager.mode = mSavedAudioMode
-                Log.i(TAG, "VoIP mode released (restored $mSavedAudioMode)")
+                audioManager.mode = hold.savedMode
+                Log.i(TAG, "VoIP mode released (restored ${hold.savedMode})")
             }
         } catch (e: Exception) {
             Log.w(TAG, "VoIP mode release failed", e)
@@ -1349,25 +1331,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * and observers. Skips the reload when the applied route is unchanged
      * unless forceReload (settings path) demands it.
      */
-    private fun applyAudioRoute(reason: String, forceReload: Boolean) {
+    private fun applyAudioRoute(reason: String, forceReload: Boolean, settle: Boolean = false) {
         // Snapshot outside the group lock: all funnel callers are main-Looper
         // confined (device recompute, settings, SCO callbacks, posted sync),
         // so no concurrent funnel rewrite is expected; a surprise concurrent
         // rewrite would at worst cause one redundant idempotent reload.
+        // Settle edges pass settle=true; every other caller is a fresh edge
+        // (settle=false). Fresh edges never cancel outstanding protection
+        // here — arming below re-posts when still uncovered.
         val before = mAppliedVoiceRoute
-        // Settle bookkeeping: consume the fired flag. Fresh edges never
-        // cancel outstanding protection here — arming below re-posts when
-        // still uncovered — and nothing ever restores the pending flag
-        // without posting, so the flag can never claim protection no
-        // callback provides (no wedge). Volatile suffices: no
-        // read-modify-restore spans threads, only single writes.
-        val settle = mSettleFired
-        mSettleFired = false
         val voice = updateRouteBuilder()
         // Capture before applyVoiceMode clears it: did WE hold the mode for
         // the episode now ending? Only our own claimed hold implicates us in
         // any system SCO raised during it (see counter method below).
-        val wasClaimedHold = mVoiceModeHeld && mVoiceModeClaimed
+        val wasClaimedHold = mModeHold is ModeHold.Claimed
         if (mConnectionState == ConnectionState.CONNECTED) {
             applyVoiceMode(voice)
             if (!voice) {
@@ -1407,8 +1384,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // Fresh edge (!settle, entering or already-voice) or budgeted
             // settle follow-up: exactly one check queued. Fresh edges reset
             // the budget — each real BT change deserves full cover; settle
-            // runs consume it. No blind restore anywhere: the flag is set
-            // only beside a post, cleared on dispatch/teardown/reset.
+            // runs consume it.
             if (!settle) {
                 mSettleAttempts = 0
             } else {
@@ -1419,8 +1395,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             cancelRouteSettle()
             mSettleAttempts = 0
         }
-        // Else (settle budget exhausted): the dispatched check already
-        // cleared the flag; rest without cover until a fresh edge re-arms.
+        // Else (settle budget exhausted): rest without cover until a fresh
+        // edge re-arms.
     }
 
     /**
