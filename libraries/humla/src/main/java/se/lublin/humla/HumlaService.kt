@@ -41,7 +41,10 @@ import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AudioOutput
+import se.lublin.humla.audio.AndroidAudioPlatform
+import se.lublin.humla.audio.AudioPlatform
 import se.lublin.humla.audio.BluetoothScoManager
+import se.lublin.humla.audio.ScoLink
 import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
 import se.lublin.humla.audio.inputmode.IInputMode
@@ -180,7 +183,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // connection threads, but volatile to match this file's discipline for
     // cross-thread route fields (a stale null is the only real hazard).
     @Volatile
-    private var mScoManager: BluetoothScoManager? = null
+    private var mScoLink: ScoLink? = null
 
     // Written on the main thread (applyScoRoute) and in the disconnect path
     // (stopScoWithNotify), which HumlaConnection invokes on TCP-reader
@@ -191,16 +194,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mScoRouteActive: Boolean = false
 
-    // VoIP mode ownership (one owner: this route policy — never the pipeline
+    // Platform port (slice 3): production AudioManager surface behind a
+    // fakeable seam. Never null after the field initializer; hasManager is
+    // false until onCreate wires the real manager (mirrors the old nullable
+    // AudioManager safe-calls).
+    private var mAudioPlatform: AudioPlatform = AndroidAudioPlatform(null)
+
+    // Voice-mode ownership (one owner: this route policy — never the pipeline
     // and never the SCO manager alone). Held for voice routes so capture-side
     // effects attach into a coupled HAL loop, released for media routes and
-    // on disconnect/destroy. Claimed means WE set IN_COMM and saved the
-    // previous mode; Released means we hold nothing and must never restore.
-    // A pre-held mode (phone call, concurrent SCO) stays Released: we claim
-    // nothing and change nothing, so release never clears someone else's mode.
-    private var mAudioManager: AudioManager? = null
-
-    // Voice-mode ownership: one atomic snapshot. Touched on the main thread
+    // on disconnect/destroy. One atomic snapshot. Touched on the main thread
     // and in the disconnect path on connection threads: volatile for
     // visibility, with ensure/release serialized via synchronized methods so
     // a device callback racing a disconnect cannot corrupt the restore
@@ -512,12 +515,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
         mConnectionState = ConnectionState.DISCONNECTED
         try {
-            mAudioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager?
+            mAudioPlatform =
+                AndroidAudioPlatform(getSystemService(Context.AUDIO_SERVICE) as AudioManager?)
         } catch (e: Exception) {
             Log.w(TAG, "VoIP mode: no AudioManager", e)
-            mAudioManager = null
+            mAudioPlatform = AndroidAudioPlatform(null)
         }
-        mScoManager = BluetoothScoManager(this, object : BluetoothScoManager.Listener {
+        mScoLink = BluetoothScoManager(this, object : BluetoothScoManager.Listener {
             override fun onScoConnected() {
                 applyScoRoute(true, "Bluetooth SCO connected")
             }
@@ -549,7 +553,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 }
             }
             mDeviceCallback = deviceCallback
-            mAudioManager?.registerAudioDeviceCallback(deviceCallback, mHandler)
+            mAudioPlatform.registerDeviceCallback(deviceCallback, mHandler)
         } catch (e: Exception) {
             Log.w(TAG, "Route device listener failed", e)
             mDeviceCallback = null
@@ -577,7 +581,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // UI work (SoundPool recreate, proximity lock) would revive audio on
         // a dead service. destroy() stops the link and cancels the manager
         // scope (slice 4: timeout child cancelled, no timer survives destroy).
-        mScoManager?.destroy()
+        mScoLink?.destroy()
         // Same builder group as the funnel/teardown paths: clear under the
         // monitor so a racing recompute cannot resurrect SCO after destroy.
         // Media/applied resets ride along: all three are one route snapshot.
@@ -591,7 +595,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         val deviceCallback = mDeviceCallback
         if (deviceCallback != null) {
             try {
-                mAudioManager?.unregisterAudioDeviceCallback(deviceCallback)
+                mAudioPlatform.unregisterDeviceCallback(deviceCallback)
             } catch (e: Exception) {
                 Log.w(TAG, "Route device listener removal failed", e)
             }
@@ -734,8 +738,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun isBluetoothScoActive(): Boolean {
-        val scoManager = mScoManager
-        return scoManager != null && scoManager.isActive()
+        val scoLink = mScoLink
+        return scoLink != null && scoLink.isActive()
     }
 
     /**
@@ -755,18 +759,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // manager idempotence absorb any tearing — that is the real guard).
         val requested: Boolean
         val state: ConnectionState
-        val scoManager: BluetoothScoManager?
+        val scoLink: ScoLink?
         val connection: HumlaConnection?
         synchronized(this) {
             requested = mScoRequested
             state = mConnectionState
-            scoManager = mScoManager
+            scoLink = mScoLink
             connection = mConnection
         }
         if (requested && state == ConnectionState.CONNECTED &&
-            scoManager != null && scoManager.isIdle()
+            scoLink != null && scoLink.isIdle()
         ) {
-            scoManager.start()
+            scoLink.start()
             // Re-validate identity, state, and intent: a disable or a
             // disconnect/reconnect cycle during bring-up must not leave
             // a stray attempt running (stop() never callbacks, silent).
@@ -774,7 +778,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (mConnection !== connection || mConnectionState != ConnectionState.CONNECTED ||
                     !mScoRequested
                 ) {
-                    scoManager.stop()
+                    scoLink.stop()
                     return false
                 }
             }
@@ -1067,9 +1071,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * left for the next funnel recompute, which owns it.
      */
     private fun stopScoWithNotify() {
-        val scoManager = mScoManager ?: return
-        val wasActive = scoManager.isActive()
-        scoManager.stop()
+        val scoLink = mScoLink ?: return
+        val wasActive = scoLink.isActive()
+        scoLink.stop()
         synchronized(this) {
             mAudioBuilder.setScoEnabled(false)
             mScoRouteActive = false
@@ -1083,7 +1087,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (mDestroyed) {
                     return@launch
                 }
-                if (mScoManager?.isActive() == true) {
+                if (mScoLink?.isActive() == true) {
                     // Re-connected since teardown queued: fresh callbacks
                     // own the UI; a stale false must not overwrite them.
                     return@launch
@@ -1120,12 +1124,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      */
     @Synchronized
     private fun ensureVoiceMode() {
-        val audioManager = mAudioManager
-        if (audioManager == null || mModeHold is ModeHold.Claimed) {
+        if (!mAudioPlatform.hasManager || mModeHold is ModeHold.Claimed) {
             return
         }
         try {
-            val mode = audioManager.mode
+            val mode = mAudioPlatform.mode
             // Externally held (phone call setup or another app): claim
             // nothing and change nothing. Deliberately stays Released so the
             // next voice pass retries the claim — recording a hold here
@@ -1142,7 +1145,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 Log.i(TAG, "Cellular call active, not claiming voice mode")
                 return
             }
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            mAudioPlatform.mode = AudioManager.MODE_IN_COMMUNICATION
             mModeHold = ModeHold.Claimed(mode)
             Log.i(TAG, "VoIP mode held (was $mode)")
         } catch (e: Exception) {
@@ -1158,15 +1161,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      */
     @Synchronized
     private fun releaseVoiceMode() {
-        val audioManager = mAudioManager
         val hold = mModeHold
-        if (audioManager == null || hold !is ModeHold.Claimed) {
+        if (!mAudioPlatform.hasManager || hold !is ModeHold.Claimed) {
             return
         }
         mModeHold = ModeHold.Released
         try {
-            if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
-                audioManager.mode = hold.savedMode
+            if (mAudioPlatform.mode == AudioManager.MODE_IN_COMMUNICATION) {
+                mAudioPlatform.mode = hold.savedMode
                 Log.i(TAG, "VoIP mode released (restored ${hold.savedMode})")
             }
         } catch (e: Exception) {
@@ -1237,9 +1239,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * SCO path ever selects voice over Bluetooth.
      */
     private fun queryMediaDevicesPresent(): Boolean {
-        val audioManager = mAudioManager ?: return false
+        if (!mAudioPlatform.hasManager) return false
         try {
-            val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val outputs = mAudioPlatform.getOutputDevices()
                 ?: return false
             val seen = StringBuilder()
             var found = false
@@ -1407,7 +1409,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * certain stranding it repairs.
      */
     private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean) {
-        val audioManager = mAudioManager ?: return
+        if (!mAudioPlatform.hasManager) return
         if (!wasClaimedHold || mScoRequested || mScoRouteActive) {
             return
         }
@@ -1415,7 +1417,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
         try {
-            if (audioManager.mode == AudioManager.MODE_IN_CALL) {
+            if (mAudioPlatform.mode == AudioManager.MODE_IN_CALL) {
                 return
             }
         } catch (e: Exception) {
@@ -1429,18 +1431,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // path on S+ (where legacy stop is unreliable against a
             // device-path selection), legacy stop below on 30.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                audioManager.clearCommunicationDevice()
+                mAudioPlatform.clearCommunicationDevice()
             } else {
                 // Stop-then-clear, mirroring the manager's own release:
                 // stopping first tears down the link, clearing the routing
                 // flag second matches the documented start order in reverse.
                 try {
-                    audioManager.stopBluetoothSco()
+                    mAudioPlatform.stopBluetoothSco()
                 } catch (ignored: Exception) {
                     Log.w(TAG, "Unrequested SCO stop threw", ignored)
                 }
                 try {
-                    audioManager.isBluetoothScoOn = false
+                    mAudioPlatform.bluetoothScoOn = false
                 } catch (ignored: Exception) {
                     Log.w(TAG, "Unrequested SCO routing clear threw", ignored)
                 }
@@ -1456,13 +1458,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * S+ reads the communication device; 30 falls back to the legacy SCO flag.
      */
     private fun isSystemScoOn(): Boolean {
-        val audioManager = mAudioManager ?: return false
+        if (!mAudioPlatform.hasManager) return false
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val info = audioManager.communicationDevice
+                val info = mAudioPlatform.getCommunicationDevice()
                 return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
             }
-            return audioManager.isBluetoothScoOn
+            return mAudioPlatform.bluetoothScoOn
         } catch (e: Exception) {
             return false
         }
@@ -1490,13 +1492,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * start requests while starting or active, and stop is idempotent.
      */
     private fun updateBluetoothScoRoute() {
-        val scoManager = mScoManager ?: return
+        val scoLink = mScoLink ?: return
         if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
-            scoManager.start()
-        } else if (!scoManager.isIdle()) {
+            scoLink.start()
+        } else if (!scoLink.isIdle()) {
             // Skip the platform round-trip when already idle; stop() is safe
             // but needlessly releases and bumps the callback generation.
-            scoManager.stop()
+            scoLink.stop()
         }
     }
 
@@ -1525,11 +1527,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // Main-serialized with the toggle path (both main-Looper) with
         // volatile reads; unlike binder-originated retryBluetoothSco this
         // needs no snapshot block, only the post-start re-validation below.
-        val scoManager = mScoManager
-        if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || scoManager == null) {
+        val scoLink = mScoLink
+        if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || scoLink == null) {
             return
         }
-        if (!scoManager.isIdle()) {
+        if (!scoLink.isIdle()) {
             return
         }
         if (added == null) {
@@ -1554,7 +1556,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // Fast path: HFP surfaced directly. Fallback: any BT add with an
         // SCO device actually available (A2DP-first stagger, quiet HALs).
         // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
-        if (!scoInAdded && !(anyBtInAdded && scoManager.isScoDeviceAvailable())) {
+        if (!scoInAdded && !(anyBtInAdded && scoLink.isScoDeviceAvailable())) {
             return
         }
         Log.i(TAG, "Bluetooth headset attached with SCO requested; starting bring-up")
@@ -1566,7 +1568,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         if (mConnection !== connection || mConnectionState != ConnectionState.CONNECTED ||
             !mScoRequested
         ) {
-            scoManager.stop()
+            scoLink.stop()
         }
     }
 

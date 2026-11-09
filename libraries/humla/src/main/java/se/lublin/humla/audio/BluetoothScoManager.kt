@@ -76,7 +76,7 @@ import kotlinx.coroutines.launch
  * its claim, stranding the mode on later media switches — so this manager
  * only selects and releases the SCO route, never the mode.
  */
-class BluetoothScoManager {
+class BluetoothScoManager : ScoLink {
     companion object {
         private const val TAG = "BluetoothScoManager"
 
@@ -213,7 +213,7 @@ class BluetoothScoManager {
      * {@link Listener#onScoFailed} (never {@code onScoDisconnected}), so
      * callers must not assume the link is up when this returns.
      */
-    fun start() {
+    override fun start() {
         synchronized(this) {
             if (state != STATE_IDLE) {
                 return
@@ -245,7 +245,7 @@ class BluetoothScoManager {
      * drops any already-posted failure on delivery. AudioManager mode is
      * owned by the service route policy, never touched here (see class note).
      */
-    fun stop() {
+    override fun stop() {
         synchronized(this) {
             // One atomic unit with the flip: timeout cancel, observer
             // teardown, and the generation bump cannot interleave with a
@@ -264,20 +264,20 @@ class BluetoothScoManager {
     }
 
     /** Cancels the manager scope; called once from the service teardown. */
-    fun destroy() {
+    override fun destroy() {
         stop()
         scoScope.cancel()
     }
 
     /** True when no bring-up is in progress and no link is up. */
     @Synchronized
-    fun isIdle(): Boolean {
+    override fun isIdle(): Boolean {
         return state == STATE_IDLE
     }
 
     /** True only once the link has reported connected and not since dropped. */
     @Synchronized
-    fun isActive(): Boolean {
+    override fun isActive(): Boolean {
         return state == STATE_ACTIVE
     }
 
@@ -431,7 +431,7 @@ class BluetoothScoManager {
      * S+ queries the communication-device list; 30 falls back to the
      * legacy off-call availability flag.
      */
-    fun isScoDeviceAvailable(): Boolean {
+    override fun isScoDeviceAvailable(): Boolean {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 return isScoDeviceAvailableModern()
