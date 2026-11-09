@@ -12,12 +12,16 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
 import se.lublin.humla.audio.AudioRouteController;
 
 /**
@@ -31,24 +35,28 @@ import se.lublin.humla.audio.AudioRouteController;
  * with no Robolectric), so this truth table is the JVM-testable seam for the
  * route matrix, pinning AudioRouteController.computeVoiceRoute.
  */
-public class AudioRoutePolicyTest extends TestCase {
+public class AudioRoutePolicyTest {
 
-    public void testPhoneAloneStaysVoice() {
+    @Test
+    public void phoneAloneStaysVoice() {
         assertTrue("No SCO and no media sink must stay voice",
                 AudioRouteController.computeVoiceRoute(false, false));
     }
 
-    public void testScoForcesVoiceWithoutMediaSink() {
+    @Test
+    public void scoForcesVoiceWithoutMediaSink() {
         assertTrue("Confirmed SCO must select voice",
                 AudioRouteController.computeVoiceRoute(true, false));
     }
 
-    public void testScoForcesVoiceOverMediaSink() {
+    @Test
+    public void scoForcesVoiceOverMediaSink() {
         assertTrue("Confirmed SCO must win over a present media sink",
                 AudioRouteController.computeVoiceRoute(true, true));
     }
 
-    public void testMediaSinkWithoutScoSelectsMedia() {
+    @Test
+    public void mediaSinkWithoutScoSelectsMedia() {
         assertFalse("A present media sink without SCO must select media",
                 AudioRouteController.computeVoiceRoute(false, true));
     }

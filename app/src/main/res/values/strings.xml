@@ -189,7 +189,7 @@
     <string name="grant_perm_microphone">Please grant microphone permission.</string>
     <string name="grant_perm_bluetooth">Please grant Bluetooth permission to use a headset.</string>
     <!-- Shown when SCO bring-up fails for any non-permission reason. -->
-    <string name="bluetooth_sco_failed">Bluetooth headset unavailable, using phone audio.</string>
+    <string name="bluetooth_sco_failed">Bluetooth headset unavailable, using phone speaker or connected audio.</string>
     <!-- Shown when SCO bring-up fails for lack of the Bluetooth grant. -->
     <string name="bluetooth_sco_permission">Bluetooth permission required for headset audio.</string>
     <string name="grant_perm_notifications">Please grant permission to send notifications.</string>

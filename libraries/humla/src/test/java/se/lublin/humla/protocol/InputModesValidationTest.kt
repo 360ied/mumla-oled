@@ -18,7 +18,7 @@
 package se.lublin.humla.protocol
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.fail
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import se.lublin.humla.Constants
 import se.lublin.humla.util.ConfigDelta
@@ -29,17 +29,14 @@ import se.lublin.humla.util.ConfigDelta
  * half-duplex-only delta never computes against a poisoned value and
  * `apply()` can reject the delta before publishing params.
  */
-class AudioSettingsValidationTest {
+class InputModesValidationTest {
 
     @Test
     fun unknownTransmitModeThrowsWithoutPoisoningHolder() {
         val modes = InputModes()
         val before = modes.transmitMode
-        try {
+        assertThrows(IllegalArgumentException::class.java) {
             modes.validateAudioDelta(ConfigDelta(transmitMode = 999))
-            fail("expected IllegalArgumentException for unknown transmit mode")
-        } catch (e: IllegalArgumentException) {
-            // Expected.
         }
         assertEquals(before, modes.transmitMode)
     }
@@ -58,12 +55,15 @@ class AudioSettingsValidationTest {
             transmitMode = Constants.TRANSMIT_PUSH_TO_TALK,
             halfDuplex = false,
         )
-        try {
+        assertThrows(IllegalArgumentException::class.java) {
             modes.validateAudioDelta(ConfigDelta(transmitMode = 999))
-            fail("expected IllegalArgumentException for unknown transmit mode")
-        } catch (e: IllegalArgumentException) {
-            // Expected.
         }
         assertEquals(Constants.TRANSMIT_PUSH_TO_TALK, modes.transmitMode)
+    }
+
+    @Test
+    fun emptyDeltaPassesValidation() {
+        val modes = InputModes()
+        modes.validateAudioDelta(ConfigDelta())
     }
 }

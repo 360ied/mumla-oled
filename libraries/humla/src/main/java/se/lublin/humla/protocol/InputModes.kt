@@ -36,16 +36,16 @@ class InputModes(
         ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX),
     val toggle: ToggleInputMode = ToggleInputMode(),
     val continuous: ContinuousInputMode = ContinuousInputMode(),
-    var transmitMode: Int = 0,
+    var transmitMode: Int = Constants.TRANSMIT_VOICE_ACTIVITY,
     var halfDuplex: Boolean = false,
 )
 
 /**
  * Applies the builder-knob and input-mode mapping beside
  * [AudioHandler.Builder]: threshold, boost, transmit mode, quality, frames
- * per packet, half duplex, and leveler. Throws IllegalArgumentException on
- * unknown transmit mode; callers must pre-validate with [validateAudioDelta]
- * before committing any state so a bad delta is all-or-nothing.
+ * per packet, half duplex, and leveler. Validates first via
+ * [validateAudioDelta] so a bad delta is all-or-nothing and never
+ * partially mutates the holder.
  */
 fun InputModes.validateAudioDelta(delta: ConfigDelta) {
     val transmitMode = delta.transmitMode
@@ -65,6 +65,7 @@ fun InputModes.applyAudioDelta(
     liveHandler: AudioHandler?,
     liveConnection: HumlaConnection?,
 ) {
+    validateAudioDelta(delta)
     val detectionThreshold = delta.detectionThreshold
     if (detectionThreshold != null) {
         activity.setThreshold(detectionThreshold)

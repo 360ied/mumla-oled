@@ -20,10 +20,9 @@ package se.lublin.humla.audio
 /**
  * SCO link port behind the route policy.
  *
- * Slice 3 of the HumlaService decomposition: the production implementation
- * is [BluetoothScoManager] (retrofitted without constructor or timeout-scope
- * changes); controller tests use trivial fakes. Method-for-method with the
- * manager's public surface so the in-place substitution is mechanical.
+ * The production implementation is [BluetoothScoManager]; controller
+ * tests use trivial fakes. Method-for-method with the manager's public
+ * surface so the in-place substitution is mechanical.
  */
 interface ScoLink {
     /** Begins SCO bring-up; no-op while starting or active. */
@@ -43,7 +42,7 @@ interface ScoLink {
 
     /**
      * Fail-closed availability probe: false on any error. S+ queries the
-     * communication-device list; 30 falls back to the legacy off-call flag.
+     * communication-device list; pre-S falls back to the legacy off-call flag.
      */
     fun isScoDeviceAvailable(): Boolean
 }

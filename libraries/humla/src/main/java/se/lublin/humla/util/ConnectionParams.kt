@@ -29,26 +29,55 @@ import se.lublin.humla.model.Server
  *
  * `server` travels by reference — it is mutable (`setResolved` in
  * `onConnectionEstablished`) and excluded from value equality. Byte arrays
- * and lists are defensively copied at freeze time on the `apply()` path
- * (which does `copyOf()`/`toList()`); direct construction must already hold
- * frozen inputs, as the public constructor aliases caller-supplied arrays
- * and lists. `reconnectNeeded` stays
- * presence-based: any delta carrying a reconnect-relevant key returns true,
- * even for an unchanged value.
+ * and lists are defensively copied on construction so direct construction
+ * also holds frozen inputs. `reconnectNeeded` is `HumlaService.apply`'s local
+ * presence-based return (any delta carrying a reconnect-relevant key
+ * returns true, even for an unchanged value), not a member here.
  */
-data class ConnectionParams(
+class ConnectionParams(
     val server: Server? = null,
-    val certificate: ByteArray? = null,
+    certificate: ByteArray? = null,
     val certificatePassword: String? = null,
     val forceTcp: Boolean = false,
     val clientName: String? = null,
-    val accessTokens: List<String>? = null,
+    accessTokens: List<String>? = null,
     val trustStore: String? = null,
     val trustStorePassword: String? = null,
     val trustStoreFormat: String? = null,
-    val localMuteHistory: List<Int>? = null,
-    val localIgnoreHistory: List<Int>? = null,
+    localMuteHistory: List<Int>? = null,
+    localIgnoreHistory: List<Int>? = null,
 ) {
+    val certificate: ByteArray? = certificate?.copyOf()
+    val accessTokens: List<String>? = accessTokens?.toList()
+    val localMuteHistory: List<Int>? = localMuteHistory?.toList()
+    val localIgnoreHistory: List<Int>? = localIgnoreHistory?.toList()
+
+    fun copy(
+        server: Server? = this.server,
+        certificate: ByteArray? = this.certificate?.copyOf(),
+        certificatePassword: String? = this.certificatePassword,
+        forceTcp: Boolean = this.forceTcp,
+        clientName: String? = this.clientName,
+        accessTokens: List<String>? = this.accessTokens?.toList(),
+        trustStore: String? = this.trustStore,
+        trustStorePassword: String? = this.trustStorePassword,
+        trustStoreFormat: String? = this.trustStoreFormat,
+        localMuteHistory: List<Int>? = this.localMuteHistory?.toList(),
+        localIgnoreHistory: List<Int>? = this.localIgnoreHistory?.toList(),
+    ): ConnectionParams = ConnectionParams(
+        server = server,
+        certificate = certificate?.copyOf(),
+        certificatePassword = certificatePassword,
+        forceTcp = forceTcp,
+        clientName = clientName,
+        accessTokens = accessTokens?.toList(),
+        trustStore = trustStore,
+        trustStorePassword = trustStorePassword,
+        trustStoreFormat = trustStoreFormat,
+        localMuteHistory = localMuteHistory?.toList(),
+        localIgnoreHistory = localIgnoreHistory?.toList(),
+    )
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ConnectionParams) return false

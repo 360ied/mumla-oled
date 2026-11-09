@@ -64,4 +64,12 @@ class ScoFailureMessageTest {
             MumlaService.scoFailureMessage(null),
         )
     }
+
+    @Test
+    fun unknownReasonMapsToGenericString() {
+        assertEquals(
+            R.string.bluetooth_sco_failed,
+            MumlaService.scoFailureMessage("some-future-reason"),
+        )
+    }
 }

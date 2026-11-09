@@ -27,11 +27,16 @@ import android.os.Handler
 /**
  * Platform port behind the route policy.
  *
- * Slice 3 of the HumlaService decomposition: wraps exactly the AudioManager
- * surface the route code touches so the controller is testable on the plain
- * JVM with fakes (plus TestScope for timers — no Robolectric, no shadows).
- * The S+ vs legacy split stays inside the production implementation;
- * callers never check SDK versions.
+ * Wraps the AudioManager surface the route code touches so the controller
+ * is testable on the plain JVM with fakes (plus TestScope for timers — no
+ * Robolectric, no shadows). The S+ vs legacy split stays inside the
+ * production implementation; callers never check SDK versions.
+ *
+ * Core route members ([hasManager], [mode], [getOutputDevices],
+ * [registerDeviceCallback], [unregisterDeviceCallback], [isSystemScoOn],
+ * [clearSystemSco]) serve production. [getCommunicationDevice],
+ * [bluetoothScoOn], [clearCommunicationDevice] and [stopBluetoothSco]
+ * are a test-only seam mirroring the manager's primitives.
  */
 interface AudioPlatform {
     /** False before onCreate wires the real manager, or when lookup failed. */
@@ -149,8 +154,17 @@ class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
         }
         // Stop-then-clear, mirroring the manager's own release: stopping
         // first tears down the link, clearing the routing flag second
-        // matches the documented start order in reverse.
-        manager?.stopBluetoothSco()
-        manager?.isBluetoothScoOn = false
+        // matches the documented start order in reverse. Isolated per-step
+        // containment so a throwing stop never skips the flag clear.
+        try {
+            manager?.stopBluetoothSco()
+        } catch (e: Exception) {
+            android.util.Log.w("AudioPlatform", "stopBluetoothSco failed", e)
+        }
+        try {
+            manager?.isBluetoothScoOn = false
+        } catch (e: Exception) {
+            android.util.Log.w("AudioPlatform", "clear SCO flag failed", e)
+        }
     }
 }

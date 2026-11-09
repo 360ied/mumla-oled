@@ -12,27 +12,29 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.assertEquals;
+
+import org.junit.Test;
 
 import java.lang.reflect.Field;
 
 /**
  * Pins the reconnect-backoff truth table in {@link HumlaService}.
- * Slice 4 replaces the Handler postDelayed with delay() but keeps these
- * exact delays: 0-&gt;1000, 1-&gt;3000, 2-&gt;6000, 3-&gt;12000, &gt;=4-&gt;25000.
+ * Delays: 0-&gt;1000, 1-&gt;3000, 2-&gt;6000, 3-&gt;12000, &gt;=4-&gt;25000.
  *
  * <p>The static table is pinned directly (mirrors AudioRoutePolicyTest);
  * instance delegation is pinned via the mReconnectAttempts field so the
  * switch cannot drift behind the service state.
  */
-public class ReconnectBackoffTest extends TestCase {
+public class ReconnectBackoffTest {
 
-    public void testStaticBackoffTable() {
+    @Test
+    public void staticBackoffTable() {
         assertEquals(1000, HumlaService.getReconnectDelayForAttempts(0));
         assertEquals(3000, HumlaService.getReconnectDelayForAttempts(1));
         assertEquals(6000, HumlaService.getReconnectDelayForAttempts(2));
@@ -42,12 +44,14 @@ public class ReconnectBackoffTest extends TestCase {
         assertEquals(25000, HumlaService.getReconnectDelayForAttempts(100));
     }
 
-    public void testConstantsMatchTable() {
+    @Test
+    public void constantsMatchTable() {
         assertEquals(1000, HumlaService.RECONNECT_DELAY_INITIAL);
         assertEquals(25000, HumlaService.RECONNECT_DELAY_MAX);
     }
 
-    public void testInstanceDelegatesToStaticTable() throws Exception {
+    @Test
+    public void instanceDelegatesToStaticTable() throws Exception {
         HumlaService service = new HumlaService();
         Field attempts = HumlaService.class.getDeclaredField("mReconnectAttempts");
         attempts.setAccessible(true);

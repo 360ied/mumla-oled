@@ -43,6 +43,7 @@ import se.lublin.humla.audio.AppliedRoute
 import se.lublin.humla.audio.AudioRouteController
 import se.lublin.humla.audio.RouteEvent
 import se.lublin.humla.audio.BluetoothScoManager
+import se.lublin.humla.audio.ScoLink
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.NotConnectedException
 import se.lublin.humla.exception.NotSynchronizedException
@@ -195,6 +196,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mVoiceTargetId: Byte = 0
     private lateinit var mWhisperTargetList: WhisperTargetList
+    private val whisperLock = Any()
 
     private var mWakeLock: PowerManager.WakeLock? = null
     private var mWifiLock: WifiManager.WifiLock? = null
@@ -225,7 +227,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     @Volatile
     private var mReconnectAttempts = 0
+    @Volatile
     private var mNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile
     private var mNetworkCallbackRegistered = false
 
     private val mAudioInputListener: AudioHandler.AudioEncodeListener =
@@ -426,20 +430,26 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
         // SCO callbacks forward to the route controller. They are posted
         // async (manager scope Main.immediate), so `route` is initialized
-        // before any callback fires.
-        val scoLink = BluetoothScoManager(this, object : BluetoothScoManager.Listener {
-            override fun onScoConnected() {
-                route.onScoConnected()
-            }
+        // before any callback fires. Null-tolerant like the platform above:
+        // a missing AudioManager must not crash onCreate.
+        val scoLink: ScoLink? = try {
+            BluetoothScoManager(this, object : BluetoothScoManager.Listener {
+                override fun onScoConnected() {
+                    route.onScoConnected()
+                }
 
-            override fun onScoDisconnected() {
-                route.onScoDisconnected()
-            }
+                override fun onScoDisconnected() {
+                    route.onScoDisconnected()
+                }
 
-            override fun onScoFailed(reason: String?) {
-                route.onScoFailed(reason)
-            }
-        })
+                override fun onScoFailed(reason: String?) {
+                    route.onScoFailed(reason)
+                }
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO: no AudioManager", e)
+            null
+        }
         route = AudioRouteController(audioPlatform, scoLink, lifecycleScope, routeHost)
         route.registerDeviceListener(mHandler)
         route.onInit()
@@ -463,8 +473,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         releaseWifiLock()
     }
 
-    // Non-null Intent: matches Service.onBind's platform signature exactly; a
-    // nullable parameter does not override (the pre-image Java was non-null).
+    // Non-null Intent: matches Service.onBind's platform type (Intent!)
+    // exactly; both Intent and Intent? override. The pre-image Java was
+    // non-null, so this keeps the non-null form.
     open override fun onBind(intent: Intent): IBinder {
         return HumlaBinder(this)
     }
@@ -479,13 +490,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             setReconnecting(false)
             return
         }
+        if (server.host == null) {
+            Log.w(TAG, "connect() called with null host, cancelling reconnect")
+            setReconnecting(false)
+            return
+        }
 
         try {
             // Straight to CONNECTING: teardown below runs synchronously
             // before the new attempt, so observers never see a transient
             // CONNECTED -> DISCONNECTED -> CONNECTING flap on re-connect.
             mVoiceTargetId = 0
-            mWhisperTargetList.clear()
+            synchronized(whisperLock) { mWhisperTargetList.clear() }
 
             val wakeLock = mWakeLock
             if (wakeLock != null) {
@@ -737,7 +753,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         mModelHandler = null
         mAudioHandler = null
         mVoiceTargetId = 0
-        mWhisperTargetList.clear()
+        synchronized(whisperLock) { mWhisperTargetList.clear() }
         // Route teardown (media refresh, SCO release, mode release, settle
         // cancel) lives in the controller.
         route.onEvent(RouteEvent.SessionEnded)
@@ -881,20 +897,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     protected open fun onAudioRouteChanged() {
     }
 
-    
-    
-    
-    
-    
-    
-    
-
-    
-    
-    
-    
-    
-    
     /**
      * Instantiates an audio handler with the current service settings, destroying any previous
      * handler. Requires synchronization with the server, as the maximum bandwidth and session must
@@ -951,7 +953,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             connection.addTCPMessageHandlers(handler)
             connection.addUDPMessageHandlers(handler)
         } catch (e: NotSynchronizedException) {
-            throw RuntimeException("Attempted to create audio handler when not synchronized!")
+            throw AudioException("Attempted to create audio handler when not synchronized!")
         }
     }
 
@@ -1089,7 +1091,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // callback reloads once more on confirm); the connect-time
             // bundle never reloads here since no handler exists yet.
             suppressReload = !delta.hasOtherAudioKeys() &&
-                (requested || !route.isScoRequested())
+                (requested || !route.isScoRequested)
             route.setScoRequested(requested)
             if (!requested) {
                 // Synchronous teardown with notifications: stop() itself never
@@ -1421,7 +1423,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val user = modelHandler.getUser(session)
             val users = ArrayList<User>(1)
             if (user != null) users.add(user)
-            return Message(getSessionId(), self?.name, ArrayList(0), ArrayList(0), users, message)
+            return Message(getSessionId(), self?.name, emptyList(), emptyList(), users, message)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1445,7 +1447,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             if (targetChannel != null) targetChannels.add(targetChannel)
             return Message(
                 getSessionId(), self?.name, targetChannels,
-                if (tree) targetChannels else ArrayList(0), ArrayList(0), message
+                if (tree) targetChannels else emptyList(), emptyList(), message
             )
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
@@ -1467,11 +1469,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun setMuteDeafState(session: Int, mute: Boolean, deaf: Boolean) {
+        // Mirror self-path/murmur coercion (murmur/Messages.cpp): deaf
+        // implies mute, unmute implies undeafen, so the wire packet is
+        // canonical even though the server would canonicalise anyway.
+        var m = mute
+        var d = deaf
+        if (d) m = true
+        if (!m) d = false
         val usb = Mumble.UserState.newBuilder()
         usb.session = session
-        usb.mute = mute
-        usb.deaf = deaf
-        if (!mute) usb.suppress = false
+        usb.mute = m
+        usb.deaf = d
+        if (!m) usb.suppress = false
         requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
@@ -1605,12 +1614,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun registerWhisperTarget(target: WhisperTarget?): Byte {
-        val id = mWhisperTargetList.append(target ?: throw NullPointerException("target"))
+        val t = target ?: throw NullPointerException("target")
+        val id = synchronized(whisperLock) { mWhisperTargetList.append(t) }
         if (id.toInt() < 0) {
             return (-1).toByte()
         }
 
-        val voiceTarget = (target ?: throw NullPointerException("target")).createTarget()
+        val voiceTarget = t.createTarget()
         val vtb = Mumble.VoiceTarget.newBuilder()
         vtb.id = id.toInt()
         vtb.addTargets(voiceTarget)
@@ -1619,7 +1629,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun unregisterWhisperTarget(targetId: Byte) {
-        mWhisperTargetList.free(targetId)
+        if (targetId < WhisperTargetList.TARGET_MIN || targetId > WhisperTargetList.TARGET_MAX) {
+            return
+        }
+        synchronized(whisperLock) { mWhisperTargetList.free(targetId) }
     }
 
     open override fun setVoiceTargetId(targetId: Byte) {
@@ -1644,7 +1657,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun getWhisperTarget(): WhisperTarget? {
         if (VoiceTargetMode.fromId(mVoiceTargetId) == VoiceTargetMode.WHISPER) {
-            return mWhisperTargetList.get(mVoiceTargetId)
+            return synchronized(whisperLock) { mWhisperTargetList.get(mVoiceTargetId) }
         }
         return null
     }
@@ -1660,7 +1673,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun setListeningChannel(channelId: Int, listening: Boolean) {
         if (!isSynchronized()) return
         val usb = Mumble.UserState.newBuilder()
-        usb.session = getSessionId()
+        try {
+            usb.session = getSessionId()
+        } catch (e: IllegalStateException) {
+            return
+        }
         if (listening) {
             usb.addListeningChannelAdd(channelId)
         } else {
@@ -1672,7 +1689,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun setListeningVolume(channelId: Int, volumeAdjustment: Float) {
         if (!isSynchronized()) return
         val usb = Mumble.UserState.newBuilder()
-        usb.session = getSessionId()
+        try {
+            usb.session = getSessionId()
+        } catch (e: IllegalStateException) {
+            return
+        }
         val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
         vab.listeningChannel = channelId
         vab.volumeAdjustment = volumeAdjustment
@@ -1717,9 +1738,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         CONNECTION_LOST
     }
 
-    // Internal visibility restores the original's instantiate-only-in-onBind
-    // posture (a private constructor is not expressible for outer access in
-    // Kotlin); the class stays final with no in-repo subclasses.
+    // internal visibility keeps construction module-private (same-module
+    // tests and outer-class access allowed); onBind remains the sole
+    // production instantiation site.
     class HumlaBinder internal constructor(private val mService: IHumlaService) : Binder() {
         fun getService(): IHumlaService {
             return mService

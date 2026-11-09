@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
  * {@code onScoDisconnected} originate on main-thread platform callbacks;
  * {@code onScoFailed} is always launched in the manager scope (Main.immediate)
  * and dropped when its session generation is stale, so {@code stop()} truly
- * never callbacks. Slice 4: coroutine cancellation is the epoch for the
+ * never callbacks. Coroutine cancellation is the epoch for the
  * timeout path (stop cancels the timeout child); the generation still guards
  * platform device-listener callbacks, which cannot be cancelled.
  *
@@ -78,7 +78,7 @@ import kotlinx.coroutines.launch
  */
 class BluetoothScoManager : ScoLink {
     companion object {
-        private const val TAG = "BluetoothScoManager"
+        private val TAG = BluetoothScoManager::class.java.name
 
         /** Per-attempt budget for the link to report connected before retry/fail. */
         private const val CONNECT_TIMEOUT_MS = 8000L
@@ -110,8 +110,8 @@ class BluetoothScoManager : ScoLink {
          * (ODD-23): another bring-up attempt remains while fewer than
          * {@code maxAttempts} attempts have run. Refusal and no-device fail
          * unconditionally in their callers — no budget branch exists to drift.
-         * Public for the JVM truth-table test (widened: Kotlin has no package
-         * visibility); not part of the production API.
+         * Visible for the JVM truth-table test (public for Java callers;
+         * Kotlin has no package visibility); not part of the production API.
          */
         @JvmStatic
         fun shouldRetryBringUp(attempts: Int, maxAttempts: Int): Boolean {
@@ -137,7 +137,7 @@ class BluetoothScoManager : ScoLink {
     private val audioManager: AudioManager
     private val listener: Listener
 
-    // Slice 4: Handler timeout becomes a cancellable child (withTimeout-style
+    // Handler timeout becomes a cancellable child (withTimeout-style
     // delay); stop() cancels it, so cancellation is the epoch for the timer.
     // Main.immediate is hardcoded (not injected like the budgets below):
     // correct on device; JVM tests need a Main-dispatcher rule to cover this.
@@ -184,9 +184,8 @@ class BluetoothScoManager : ScoLink {
         MAX_ATTEMPTS
     )
 
-    // Widened to public: Kotlin has no package visibility (was package-private
-    // for the JVM truth-table test).
-    constructor(
+    // Visible for the JVM truth-table test; not part of the production API.
+    internal constructor(
         context: Context?,
         listener: Listener?,
         connectTimeoutMs: Long,
@@ -370,7 +369,7 @@ class BluetoothScoManager : ScoLink {
             // fallback; setActive (or stop) removes it.
             armTimeout()
             scoScope.launch {
-                if (isStartingEpoch(epoch)) {
+                if (isStartingEpoch(epoch) && isScoActiveNow()) {
                     setActive()
                 } else {
                     Log.i(TAG, "Dropping stale SCO fast-path activation")
@@ -404,6 +403,9 @@ class BluetoothScoManager : ScoLink {
 
     // Modern device query (S+): callers guarantee the version via
     // bringUpModern/isScoDeviceAvailableModern (both @TargetApi(S)).
+    // Null-element guard stays despite the @NonNull element type: an OEM
+    // HAL may return nulls, which must stay fail-closed, not warn away.
+    @Suppress("SENSELESS_COMPARISON")
     @TargetApi(Build.VERSION_CODES.S)
     private fun findScoDevice(): AudioDeviceInfo? {
         // Explicitly nullable: the framework annotates this @NonNull, but a
@@ -428,7 +430,7 @@ class BluetoothScoManager : ScoLink {
      * Fail-closed false on any error: doubt falls through to event-driven
      * setup, never to a blind bring-up attempt. Public for the service
      * route policy (same library, adjacent package).
-     * S+ queries the communication-device list; 30 falls back to the
+     * S+ queries the communication-device list; pre-S falls back to the
      * legacy off-call availability flag.
      */
     override fun isScoDeviceAvailable(): Boolean {
@@ -505,12 +507,30 @@ class BluetoothScoManager : ScoLink {
         }
         try {
             audioManager.startBluetoothSco()
-            audioManager.isBluetoothScoOn = true
         } catch (e: SecurityException) {
             Log.w(TAG, "startBluetoothSco denied", e)
             return REASON_PERMISSION
         } catch (e: Exception) {
             Log.w(TAG, "startBluetoothSco threw", e)
+            return REASON_ERROR
+        }
+        try {
+            audioManager.isBluetoothScoOn = true
+        } catch (e: SecurityException) {
+            Log.w(TAG, "SCO flag set denied after start; stopping link", e)
+            try {
+                audioManager.stopBluetoothSco()
+            } catch (ignored: Exception) {
+                Log.w(TAG, "SCO stop after flag failure threw", ignored)
+            }
+            return REASON_PERMISSION
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO flag set threw after start; stopping link", e)
+            try {
+                audioManager.stopBluetoothSco()
+            } catch (ignored: Exception) {
+                Log.w(TAG, "SCO stop after flag failure threw", ignored)
+            }
             return REASON_ERROR
         }
         markRouteHeld()
@@ -712,8 +732,8 @@ class BluetoothScoManager : ScoLink {
 
     private fun armTimeout() {
         // Assigns outside the monitor while stop()/setActive()/fail()
-        // cancel-and-null under it: an interleaved stop() can orphan an 8 s
-        // no-op timer, but its onConnectTimeout still finds state != STARTING
+        // cancel-and-null under it: an interleaved stop() can orphan a
+        // timeout-budget no-op timer, but its onConnectTimeout still finds state != STARTING
         // and returns, so the window is harmless (kept unsynchronized to
         // avoid blocking bring-up on teardown).
         timeoutJob?.cancel()

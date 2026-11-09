@@ -17,7 +17,10 @@
 
 package se.lublin.humla.audio;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
 
 /**
  * Pins the pure SCO retry-budget decision in {@link BluetoothScoManager}
@@ -32,35 +35,40 @@ import junit.framework.TestCase;
  * with no Robolectric), so this truth table is the JVM-testable seam for the
  * bring-up matrix.
  */
-public class BluetoothScoRetryPolicyTest extends TestCase {
+public class BluetoothScoRetryPolicyTest {
 
-    public void testFreshBringUpAlwaysRetries() {
+    @Test
+    public void freshBringUpAlwaysRetries() {
         assertTrue("Zero attempts must always retry",
                 BluetoothScoManager.shouldRetryBringUp(0, 2));
         assertTrue("Zero attempts must retry even with a budget of one",
                 BluetoothScoManager.shouldRetryBringUp(0, 1));
     }
 
-    public void testTimeoutAfterFirstAttemptRetries() {
+    @Test
+    public void timeoutAfterFirstAttemptRetries() {
         assertTrue("First timeout of two must retry",
                 BluetoothScoManager.shouldRetryBringUp(1, 2));
     }
 
-    public void testExhaustedBudgetFails() {
+    @Test
+    public void exhaustedBudgetFails() {
         assertFalse("Second timeout of two must fail, not retry",
                 BluetoothScoManager.shouldRetryBringUp(2, 2));
         assertFalse("Overrun attempts must fail, not retry",
                 BluetoothScoManager.shouldRetryBringUp(5, 2));
     }
 
-    public void testSingleAttemptBudget() {
+    @Test
+    public void singleAttemptBudget() {
         assertTrue("No attempts run yet must retry even with a budget of one",
                 BluetoothScoManager.shouldRetryBringUp(0, 1));
         assertFalse("Budget of one fails once it has run",
                 BluetoothScoManager.shouldRetryBringUp(1, 1));
     }
 
-    public void testZeroBudgetNeverRetries() {
+    @Test
+    public void zeroBudgetNeverRetries() {
         assertFalse("Zero budget must fail immediately",
                 BluetoothScoManager.shouldRetryBringUp(0, 0));
     }

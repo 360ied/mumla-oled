@@ -30,9 +30,9 @@ import se.lublin.humla.net.HandshakeFailure
  * A composite wrapper around Humla observers to easily broadcast to each observer.
  * Created by andrew on 12/07/14.
  *
- * <p>Fan-out isolates failures: a throwing observer is logged and the rest
- * still run. Only {@code RuntimeException} is caught — an {@code Error} still
- * aborts the broadcast. Registration rejects {@code null} fail-fast while
+ * Fan-out isolates failures: a throwing observer is logged and the rest
+ * still run. Only [RuntimeException] is caught — an [Error] still
+ * aborts the broadcast. Registration rejects `null` fail-fast while
  * unregistration tolerates it for defensive call sites.
  */
 class HumlaCallbacks : IHumlaObserver {
@@ -40,7 +40,7 @@ class HumlaCallbacks : IHumlaObserver {
         Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
 
     fun registerObserver(observer: IHumlaObserver) {
-        java.util.Objects.requireNonNull(observer, "observer")
+        requireNotNull(observer) { "observer" }
         callbacks.add(observer)
     }
 
