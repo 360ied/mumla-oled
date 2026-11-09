@@ -45,6 +45,12 @@ public class ReconnectBackoffTest {
     }
 
     @Test
+    public void negativeAttemptsFailClosedToMax() {
+        assertEquals(25000, HumlaService.getReconnectDelayForAttempts(-1));
+        assertEquals(25000, HumlaService.getReconnectDelayForAttempts(Integer.MIN_VALUE));
+    }
+
+    @Test
     public void constantsMatchTable() {
         assertEquals(1000, HumlaService.RECONNECT_DELAY_INITIAL);
         assertEquals(25000, HumlaService.RECONNECT_DELAY_MAX);
