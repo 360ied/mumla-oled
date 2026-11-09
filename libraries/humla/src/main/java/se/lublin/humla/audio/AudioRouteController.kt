@@ -121,6 +121,11 @@ internal class AudioRouteController(
         }
     }
 
+    // Slice 8: single-writer (main) / many-reader visibility. Funnel writes
+    // run on main only, but binder getters and retrySco may read from any
+    // thread, so fields stay @Volatile for publication. No lock: with one
+    // writer there is nothing to serialize. deviceCallback is the exception:
+    // written and read on main only, so it stays a plain var.
     @Volatile
     private var scoRequested: Boolean = false
 
