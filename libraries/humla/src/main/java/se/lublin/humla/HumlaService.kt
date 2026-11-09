@@ -65,6 +65,7 @@ import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.ModelHandler
 import se.lublin.humla.protocol.applyAudioDelta
+import se.lublin.humla.protocol.validateAudioDelta
 import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.ConnectionParams
@@ -989,6 +990,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * @see se.lublin.humla.HumlaService
      */
     open fun apply(delta: ConfigDelta): Boolean {
+        // Pure validation first: the only throwing input (unknown transmit
+        // mode) must fail before any commit, so a bad delta cannot publish
+        // params/push tokens and then abort the audio/route steps.
+        inputModes.validateAudioDelta(delta)
         var reconnectNeeded = false
         var suppressReload = false
         // 1. Merge connection params; frozen atomically below. Presence-based

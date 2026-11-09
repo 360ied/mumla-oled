@@ -44,9 +44,21 @@ class InputModes(
  * Applies the builder-knob and input-mode mapping beside
  * [AudioHandler.Builder]: threshold, boost, transmit mode, quality, frames
  * per packet, half duplex, and leveler. Throws IllegalArgumentException on
- * unknown transmit mode; the service lets it propagate from `apply()` so it
- * never reaches the route controller.
+ * unknown transmit mode; callers must pre-validate with [validateAudioDelta]
+ * before committing any state so a bad delta is all-or-nothing.
  */
+fun InputModes.validateAudioDelta(delta: ConfigDelta) {
+    val transmitMode = delta.transmitMode
+    if (transmitMode != null) {
+        when (transmitMode) {
+            Constants.TRANSMIT_PUSH_TO_TALK,
+            Constants.TRANSMIT_CONTINUOUS,
+            Constants.TRANSMIT_VOICE_ACTIVITY -> {}
+            else ->
+                throw IllegalArgumentException("Unknown transmit mode: $transmitMode")
+        }
+    }
+}
 fun InputModes.applyAudioDelta(
     delta: ConfigDelta,
     builder: AudioHandler.Builder,
@@ -66,9 +78,11 @@ fun InputModes.applyAudioDelta(
     }
     val transmitMode = delta.transmitMode
     if (transmitMode != null) {
-        this.transmitMode = transmitMode
+        // Validated by validateAudioDelta before any commit; the holder is
+        // only assigned once the branch resolves, so a bad value can never
+        // poison it for a later half-duplex-only delta.
         val inputMode: IInputMode
-        when (this.transmitMode) {
+        when (transmitMode) {
             Constants.TRANSMIT_PUSH_TO_TALK ->
                 inputMode = toggle
             Constants.TRANSMIT_CONTINUOUS ->
@@ -76,8 +90,9 @@ fun InputModes.applyAudioDelta(
             Constants.TRANSMIT_VOICE_ACTIVITY ->
                 inputMode = activity
             else ->
-                throw IllegalArgumentException("Unknown transmit mode: ${this.transmitMode}")
+                throw IllegalArgumentException("Unknown transmit mode: $transmitMode")
         }
+        this.transmitMode = transmitMode
         builder.setInputMode(inputMode)
     }
     val inputQuality = delta.inputQuality
@@ -86,9 +101,8 @@ fun InputModes.applyAudioDelta(
     }
     val framesPerPacket = delta.framesPerPacket
     if (framesPerPacket != null) {
-        val fpp = framesPerPacket
-        builder.setTargetFramesPerPacket(fpp)
-        liveConnection?.setTargetFramesPerPacket(fpp)
+        builder.setTargetFramesPerPacket(framesPerPacket)
+        liveConnection?.setTargetFramesPerPacket(framesPerPacket)
     }
     val halfDuplex = delta.halfDuplex
     if (halfDuplex != null) {
