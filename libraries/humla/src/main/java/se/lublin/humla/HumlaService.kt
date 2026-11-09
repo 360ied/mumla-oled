@@ -43,10 +43,6 @@ import se.lublin.humla.audio.AppliedRoute
 import se.lublin.humla.audio.AudioRouteController
 import se.lublin.humla.audio.RouteEvent
 import se.lublin.humla.audio.BluetoothScoManager
-import se.lublin.humla.audio.inputmode.ActivityInputMode
-import se.lublin.humla.audio.inputmode.ContinuousInputMode
-import se.lublin.humla.audio.inputmode.IInputMode
-import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.NotConnectedException
 import se.lublin.humla.exception.NotSynchronizedException
@@ -66,9 +62,12 @@ import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protocol.AudioHandler
+import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.ModelHandler
+import se.lublin.humla.protocol.applyAudioDelta
 import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
+import se.lublin.humla.util.ConnectionParams
 import se.lublin.humla.util.HumlaCallbacks
 import se.lublin.humla.util.HumlaDisconnectedException
 import se.lublin.humla.util.HumlaException
@@ -126,23 +125,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
     }
 
-    // Service settings
-    private var mServer: Server? = null
-    private var mCertificate: ByteArray? = null
-    private var mCertificatePassword: String? = null
-    private var mForceTcp: Boolean = false
-    private var mClientName: String? = null
-    private var mAccessTokens: List<String>? = null
-    private var mTrustStore: String? = null
-    private var mTrustStorePassword: String? = null
-    private var mTrustStoreFormat: String? = null
-    private var mLocalMuteHistory: List<Int>? = null
-    private var mLocalIgnoreHistory: List<Int>? = null
+    // Connection parameters (config track): one immutable snapshot, frozen at
+    // the apply() boundary under the service monitor and published through a
+    // single volatile. connect() and onConnectionEstablished() read one
+    // snapshot instead of eleven fields.
+    @Volatile
+    private var connectionParams = ConnectionParams()
     private lateinit var mAudioBuilder: AudioHandler.Builder
-    private var mTransmitMode: Int = 0
-    private var mHalfDuplex: Boolean = false
-
-    // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
+    // Audio-knob holder: three mode instances plus transmit mode and half
+    // duplex in one field. Main-confined like apply(); the route controller
+    // never sees it (its SettingsChanged event carries only reload).
+    private val inputModes = InputModes()
     // Route owner (slice 4): all route state and choreography live in the
     // controller behind ports; this service owns one instance, feeds it
     // lifecycle events, and forwards three API members to it. The route
@@ -223,10 +216,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     @Volatile
     private var mAudioHandler: AudioHandler? = null
-
-    private lateinit var mActivityInputMode: ActivityInputMode
-    private lateinit var mToggleInputMode: ToggleInputMode
-    private lateinit var mContinuousInputMode: ContinuousInputMode
 
     // Written from main (start/connect UI) and connection threads
     // (disconnect path): volatile so reconnect UI never strands on stale state.
@@ -453,9 +442,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         route = AudioRouteController(audioPlatform, scoLink, lifecycleScope, routeHost)
         route.registerDeviceListener(mHandler)
         route.onInit()
-        mToggleInputMode = ToggleInputMode()
-        mActivityInputMode = ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX)
-        mContinuousInputMode = ContinuousInputMode()
         mWhisperTargetList = WhisperTargetList()
 
         // initialize minidns dns lookup mechanisms
@@ -483,7 +469,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     protected open fun connect() {
-        val server = mServer
+        // One atomic snapshot for the whole attempt; the server reference
+        // travels by reference (mutable, resolved in onConnectionEstablished).
+        val params = connectionParams
+        val server = params.server
         if (server == null) {
             Log.w(TAG, "connect() called with null mServer, cancelling reconnect")
             setReconnecting(false)
@@ -577,13 +566,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val connection = HumlaConnection(connectionListener)
             mConnection = connection
             connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
-            connection.setForceTCP(mForceTcp)
-            connection.setKeys(mCertificate, mCertificatePassword)
-            connection.setTrustStore(mTrustStore, mTrustStorePassword, mTrustStoreFormat)
+            connection.setForceTCP(params.forceTcp)
+            connection.setKeys(params.certificate, params.certificatePassword)
+            connection.setTrustStore(params.trustStore, params.trustStorePassword, params.trustStoreFormat)
 
             val modelHandler = ModelHandler(
                 this, mCallbacks, this,
-                mLocalMuteHistory, mLocalIgnoreHistory
+                params.localMuteHistory, params.localIgnoreHistory
             )
             mModelHandler = modelHandler
             connection.addTCPMessageHandlers(modelHandler)
@@ -651,14 +640,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun onConnectionEstablished() {
-        val server = mServer
+        val params = connectionParams
+        val server = params.server
         val connection = mConnection
         if (server != null && connection != null) {
             server.setResolved(connection.getHost(), connection.getPort())
         }
 
         // Send version information and authenticate.
-        val version = Constants.createVersionMessage(mClientName)
+        val version = Constants.createVersionMessage(params.clientName)
 
         val auth = Mumble.Authenticate.newBuilder()
         if (server != null) {
@@ -666,7 +656,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             auth.password = server.password
         }
         auth.opus = true
-        auth.addAllTokens(mAccessTokens ?: emptyList())
+        auth.addAllTokens(params.accessTokens ?: emptyList())
 
         // onConnectionEstablished is invoked by the connection itself, which
         // cannot be gone here; require it instead of silently dropping auth.
@@ -1001,100 +991,47 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open fun apply(delta: ConfigDelta): Boolean {
         var reconnectNeeded = false
         var suppressReload = false
+        // 1. Merge connection params; frozen atomically below. Presence-based
+        // reconnect: any delta carrying a reconnect-relevant key returns true.
+        var params = connectionParams
         if (delta.server != null) {
-            mServer = delta.server
+            params = params.copy(server = delta.server)
             reconnectNeeded = true
         }
         val certificate = delta.certificate
         if (certificate != null) {
-            mCertificate = certificate.data.copyOf()
+            params = params.copy(
+                certificate = certificate.data.copyOf(),
+                // A null password keeps the previous one, mirroring the old
+                // bundle where an absent password key left it untouched.
+                certificatePassword = certificate.password ?: params.certificatePassword,
+            )
             reconnectNeeded = true
-            // A null password keeps the previous one, mirroring the old
-            // bundle where an absent password key left it untouched.
-            if (certificate.password != null) {
-                mCertificatePassword = certificate.password
-            }
-        }
-        val detectionThreshold = delta.detectionThreshold
-        if (detectionThreshold != null) {
-            mActivityInputMode.setThreshold(detectionThreshold)
-            val audioHandler = mAudioHandler
-            if (audioHandler != null) {
-                audioHandler.setVadThresholds(
-                    mActivityInputMode.vadMax,
-                    mActivityInputMode.vadMin
-                )
-            }
-        }
-        val amplitudeBoost = delta.amplitudeBoost
-        if (amplitudeBoost != null) {
-            mAudioBuilder.setAmplitudeBoost(amplitudeBoost)
-        }
-        val transmitMode = delta.transmitMode
-        if (transmitMode != null) {
-            mTransmitMode = transmitMode
-            val inputMode: IInputMode
-            when (mTransmitMode) {
-                Constants.TRANSMIT_PUSH_TO_TALK ->
-                    inputMode = mToggleInputMode
-                Constants.TRANSMIT_CONTINUOUS ->
-                    inputMode = mContinuousInputMode
-                Constants.TRANSMIT_VOICE_ACTIVITY ->
-                    inputMode = mActivityInputMode
-                else ->
-                    throw IllegalArgumentException("Unknown transmit mode: $mTransmitMode")
-            }
-            mAudioBuilder.setInputMode(inputMode)
-        }
-        val inputQuality = delta.inputQuality
-        if (inputQuality != null) {
-            mAudioBuilder.setTargetBitrate(inputQuality)
         }
         val forceTcp = delta.forceTcp
         if (forceTcp != null) {
-            mForceTcp = forceTcp
+            params = params.copy(forceTcp = forceTcp)
             reconnectNeeded = true
         }
         if (delta.clientName != null) {
-            mClientName = delta.clientName
+            params = params.copy(clientName = delta.clientName)
             reconnectNeeded = true
         }
         if (delta.accessTokens != null) {
-            mAccessTokens = delta.accessTokens?.toList()
-            val connection = mConnection
-            if (connection != null && connection.isConnected()) {
-                connection.sendAccessTokens(requireNotNull(mAccessTokens))
-            }
-        }
-        val audioStream = delta.audioStream
-        if (audioStream != null) {
-            // Handset-derived intent (earpiece vs speakerphone voice); the
-            // route policy re-derives the effective stream before every
-            // pipeline creation, so mid-call toggles apply on recreate.
-            // Funnel-only: no direct builder write here (it would be
-            // overwritten by the reload below anyway).
-            route.setHandsetStream(audioStream)
-        }
-        val framesPerPacket = delta.framesPerPacket
-        if (framesPerPacket != null) {
-            val fpp = framesPerPacket
-            mAudioBuilder.setTargetFramesPerPacket(fpp)
-            mConnection?.setTargetFramesPerPacket(fpp)
+            params = params.copy(accessTokens = delta.accessTokens?.toList())
         }
         val trustStore = delta.trustStore
         if (trustStore != null) {
             val trustStorePath = trustStore.path
             if (isTrustStorePathAllowed(trustStorePath)) {
-                mTrustStore = trustStorePath
+                params = params.copy(
+                    trustStore = trustStorePath,
+                    // Password and format describe the store at this path, so
+                    // they are only applied together with an accepted path.
+                    trustStorePassword = trustStore.password ?: params.trustStorePassword,
+                    trustStoreFormat = trustStore.format ?: params.trustStoreFormat,
+                )
                 reconnectNeeded = true
-                // Password and format describe the store at this path, so
-                // they are only applied together with an accepted path.
-                if (trustStore.password != null) {
-                    mTrustStorePassword = trustStore.password
-                }
-                if (trustStore.format != null) {
-                    mTrustStoreFormat = trustStore.format
-                }
             } else {
                 Log.w(
                     TAG,
@@ -1103,14 +1040,35 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 )
             }
         }
-        val halfDuplex = delta.halfDuplex
-        if (halfDuplex != null) {
-            mHalfDuplex = halfDuplex
+        if (delta.localMuteHistory != null) {
+            params = params.copy(localMuteHistory = delta.localMuteHistory?.toList())
+            reconnectNeeded = true
         }
-        if (delta.halfDuplex != null || delta.transmitMode != null) {
-            mAudioBuilder.setHalfDuplexEnabled(
-                mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex
-            )
+        if (delta.localIgnoreHistory != null) {
+            params = params.copy(localIgnoreHistory = delta.localIgnoreHistory?.toList())
+            reconnectNeeded = true
+        }
+        synchronized(this) {
+            connectionParams = params
+        }
+        // 2. Push access tokens live.
+        if (delta.accessTokens != null) {
+            val connection = mConnection
+            if (connection != null && connection.isConnected()) {
+                connection.sendAccessTokens(requireNotNull(params.accessTokens))
+            }
+        }
+        // 3. Apply audio settings (builder knobs, input modes, leveler).
+        inputModes.applyAudioDelta(delta, mAudioBuilder, mAudioHandler, mConnection)
+        // 4. Route inputs and toggle side effects.
+        val audioStream = delta.audioStream
+        if (audioStream != null) {
+            // Handset-derived intent (earpiece vs speakerphone voice); the
+            // route policy re-derives the effective stream before every
+            // pipeline creation, so mid-call toggles apply on recreate.
+            // Funnel-only: no direct builder write here (it would be
+            // overwritten by the reload below anyway).
+            route.setHandsetStream(audioStream)
         }
         val bluetoothSco = delta.bluetoothSco
         if (bluetoothSco != null) {
@@ -1132,20 +1090,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             route.updateScoRoute()
         }
-        if (delta.localMuteHistory != null) {
-            mLocalMuteHistory = delta.localMuteHistory?.toList()
-            reconnectNeeded = true
-        }
-        if (delta.localIgnoreHistory != null) {
-            mLocalIgnoreHistory = delta.localIgnoreHistory?.toList()
-            reconnectNeeded = true
-        }
-        val adaptiveLeveler = delta.adaptiveLeveler
-        if (adaptiveLeveler != null) {
-            mAudioBuilder.setAdaptiveLevelerEnabled(adaptiveLeveler)
-        }
 
-        // Reload audio subsystem if initialized. Guarded on CONNECTED as well
+        // 5. Reload audio subsystem if initialized. Guarded on CONNECTED as well
         // as initialization: a disconnect racing a settings change must not
         // resurrect the pipeline (or trip the DEBUG assertion inside).
         // The SCO-only suppressReload rule stays here (it reads the config
@@ -1242,7 +1188,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getTargetServer(): Server? {
-        return mServer
+        return connectionParams.server
     }
 
     @Throws(HumlaDisconnectedException::class)
@@ -1377,7 +1323,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getTransmitMode(): Int {
-        return mTransmitMode
+        return inputModes.transmitMode
     }
 
     open override fun getCodec(): HumlaUDPMessageType? {
@@ -1389,11 +1335,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun isTalking(): Boolean {
-        return mToggleInputMode.isTalkingOn
+        return inputModes.toggle.isTalkingOn
     }
 
     open override fun setTalkingState(talking: Boolean) {
-        mToggleInputMode.isTalkingOn = talking
+        inputModes.toggle.isTalkingOn = talking
         mAudioHandler?.setPttTalking(talking)
     }
 
