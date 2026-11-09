@@ -21,6 +21,7 @@ package se.lublin.humla
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
@@ -38,6 +39,7 @@ import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.audio.AndroidAudioPlatform
+import se.lublin.humla.audio.AppliedRoute
 import se.lublin.humla.audio.AudioRouteController
 import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.audio.inputmode.ActivityInputMode
@@ -447,7 +449,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 route.onScoFailed(reason)
             }
         })
-        route = AudioRouteController(audioPlatform, scoLink, lifecycleScope, routeHost, mAudioBuilder)
+        route = AudioRouteController(audioPlatform, scoLink, lifecycleScope, routeHost)
         route.registerDeviceListener(mHandler)
         route.onInit()
         mToggleInputMode = ToggleInputMode()
@@ -901,6 +903,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             existing.shutdown()
         }
 
+        // Route decides; the builder carries it: push the controller decision
+        // into the builder immediately before initialize, the only point
+        // these fields are consumed. The service re-reads the current voice
+        // target below (ordering: push decision, then init with live IDs).
+        val routeDecision = route.decision()
+        when (routeDecision) {
+            AppliedRoute.VOICE_SCO -> {
+                mAudioBuilder.setScoEnabled(true)
+                mAudioBuilder.setVoiceRouteEnabled(true)
+                mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                mAudioBuilder.setAudioStream(AudioManager.STREAM_VOICE_CALL)
+            }
+            AppliedRoute.VOICE_HANDSET -> {
+                mAudioBuilder.setScoEnabled(false)
+                mAudioBuilder.setVoiceRouteEnabled(true)
+                mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                mAudioBuilder.setAudioStream(route.handsetStream())
+            }
+            AppliedRoute.MEDIA -> {
+                mAudioBuilder.setScoEnabled(false)
+                mAudioBuilder.setVoiceRouteEnabled(false)
+                mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                mAudioBuilder.setAudioStream(AudioManager.STREAM_MUSIC)
+            }
+        }
         try {
             val connection = requireConnection()
             val modelHandler = requireModelHandler()
@@ -1105,14 +1132,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // Reload audio subsystem if initialized. Guarded on CONNECTED as well
         // as initialization: a disconnect racing a settings change must not
         // resurrect the pipeline (or trip the DEBUG assertion inside).
-        // Routed through the single funnel so source/stream/mode follow the
-        // current route instead of the raw bundle values.
+        // The SCO-only suppressReload rule stays here (it reads the config
+        // delta): reload=false updates inputs only with no recreate, still
+        // re-evaluating notify; reload=true recreates even when unchanged.
+        // Connect-time (no pipeline) records the decision for the next
+        // create, never recreating.
         val audioHandler = mAudioHandler
-        if (!suppressReload && audioHandler != null && audioHandler.isInitialized() &&
+        if (audioHandler != null && audioHandler.isInitialized() &&
             mConnectionState == ConnectionState.CONNECTED
         ) {
-            route.onFunnel("settings changed", true)
-            Log.i(TAG, "Audio subsystem reloaded after settings change.")
+            route.onSettingsChanged(!suppressReload)
+            if (!suppressReload) {
+                Log.i(TAG, "Audio subsystem reloaded after settings change.")
+            }
         }
         return reconnectNeeded
     }

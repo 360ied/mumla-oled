@@ -20,7 +20,6 @@ package se.lublin.humla.audio
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.util.Log
@@ -29,7 +28,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import se.lublin.humla.exception.AudioException
-import se.lublin.humla.protocol.AudioHandler
 
 /**
  * Owns all audio-route state and choreography.
@@ -52,7 +50,6 @@ internal class AudioRouteController(
     private val sco: ScoLink?,
     private val scope: CoroutineScope,
     private val host: Host,
-    private val builder: AudioHandler.Builder,
 ) {
     interface Host {
         /** True while the session is synchronized (CONNECTED). */
@@ -177,6 +174,24 @@ internal class AudioRouteController(
     val isMediaRouteActive: Boolean
         get() = mediaSelected && !scoRouteActive
 
+    /** Current route decision, pushed into the builder at pipeline creation. */
+    fun decision(): AppliedRoute {
+        synchronized(lock) {
+            return when {
+                scoRouteActive -> AppliedRoute.VOICE_SCO
+                appliedVoiceRoute -> AppliedRoute.VOICE_HANDSET
+                else -> AppliedRoute.MEDIA
+            }
+        }
+    }
+
+    /** Handset-derived stream for VOICE_HANDSET; read when pushing the decision. */
+    fun handsetStream(): Int {
+        synchronized(lock) {
+            return handsetStream
+        }
+    }
+
     fun isScoActive(): Boolean {
         val link = synchronized(lock) { sco }
         return link != null && link.isActive()
@@ -265,6 +280,11 @@ internal class AudioRouteController(
         }
     }
 
+    /** Settings reload event (slice 5 seam). */
+    fun onSettingsChanged(reload: Boolean) {
+        onFunnel("settings changed", reload)
+    }
+
     /**
      * Route parts of onConnectionSynchronized. The service owns state,
      * wake-lock, and onConnected; this owns the route application.
@@ -333,11 +353,9 @@ internal class AudioRouteController(
     fun onDestroyed() {
         destroyed = true
         synchronized(lock) { sco }?.destroy()
-        // Same builder group as the funnel/teardown paths: clear under the
-        // monitor so a racing recompute cannot resurrect SCO after destroy.
-        // Media/applied resets ride along: all three are one route snapshot.
+        // Bare teardown, no builder touch: the next create pushes a fresh
+        // decision, and stale builder state is never consumed in between.
         synchronized(lock) {
-            builder.setScoEnabled(false)
             scoRouteActive = false
             mediaSelected = false
             appliedVoiceRoute = true
@@ -359,7 +377,6 @@ internal class AudioRouteController(
         val wasActive = link.isActive()
         link.stop()
         synchronized(lock) {
-            builder.setScoEnabled(false)
             scoRouteActive = false
         }
         if (wasActive) {
@@ -541,22 +558,14 @@ internal class AudioRouteController(
         }
     }
 
-    /** Route decision + builder group; caller holds the lock. */
+    /** Route decision + flags; caller holds the lock. No builder touch: the
+     * service pushes decision() into the builder at creation (slice 5). */
     private fun updateRouteBuilderLocked(mediaPresent: Boolean): Boolean {
         val scoActive = scoRouteActive
         val media = !scoActive && mediaPresent
         mediaSelected = media
         val voice = computeVoiceRoute(scoActive, media)
         appliedVoiceRoute = voice
-        builder.setScoEnabled(scoActive)
-        builder.setVoiceRouteEnabled(voice)
-        if (voice) {
-            builder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            builder.setAudioStream(if (scoActive) AudioManager.STREAM_VOICE_CALL else handsetStream)
-        } else {
-            builder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            builder.setAudioStream(AudioManager.STREAM_MUSIC)
-        }
         return voice
     }
 
@@ -833,4 +842,16 @@ internal class AudioRouteController(
 internal sealed interface ModeHold {
     data object Released : ModeHold
     data class Claimed(val savedMode: Int) : ModeHold
+}
+
+/**
+ * Applied route decision, pushed into the builder at pipeline creation.
+ * VOICE_SCO and VOICE_HANDSET both select the voice triple; MEDIA selects
+ * the media triple. The handset stream for VOICE_HANDSET travels alongside
+ * via handsetStream().
+ */
+internal enum class AppliedRoute {
+    VOICE_SCO,
+    VOICE_HANDSET,
+    MEDIA,
 }
