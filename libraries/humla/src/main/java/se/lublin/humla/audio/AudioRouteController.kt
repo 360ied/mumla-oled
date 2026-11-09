@@ -20,7 +20,6 @@ package se.lublin.humla.audio
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -54,6 +53,12 @@ internal class AudioRouteController(
     private val host: Host,
 ) {
     interface Host {
+        /**
+         * Threading: members must be lock-free and safe from any thread.
+         * Funnel calls run on main (slice 8), but binder-originated
+         * retrySco reads isLive/sessionToken off-main; keep these to
+         * volatile reads with no blocking or re-entrant calls.
+         */
         /** True while the session is synchronized (CONNECTED). */
         val isLive: Boolean
 
@@ -113,7 +118,7 @@ internal class AudioRouteController(
          * Route truth table: confirmed SCO forces the voice triple; otherwise a
          * present media sink (BT A2DP / wired headset) selects media, and its
          * absence keeps voice. Public for the JVM truth-table test (Kotlin has
-         * no package visibility); mirrors BluetoothScoManager.shouldRetryBringUp.
+         * no package visibility).
          */
         @JvmStatic
         fun computeVoiceRoute(scoActive: Boolean, mediaDevicesPresent: Boolean): Boolean {
@@ -523,10 +528,10 @@ internal class AudioRouteController(
 
     private fun updateRoute(): RouteUpdate {
         val mediaPresent = queryMediaDevicesPresent()
-        // Main-serialized (slice 8): direct field access, no lock.
+        // Main-serialized (slice 8): direct field access, no lock. The raw
+        // sink presence feeds the truth table; SCO is handled by its own arm.
         val scoActive = scoRouteActive
-        val media = !scoActive && mediaPresent
-        val voice = computeVoiceRoute(scoActive, media)
+        val voice = computeVoiceRoute(scoActive, mediaPresent)
         val next = when {
             scoActive -> AppliedRoute.VOICE_SCO
             voice -> AppliedRoute.VOICE_HANDSET
@@ -693,26 +698,9 @@ internal class AudioRouteController(
             return
         }
         try {
-            // Mirror our manager's own release: the communication-device
-            // path on S+ (where legacy stop is unreliable against a
-            // device-path selection), legacy stop below on 30.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                platform.clearCommunicationDevice()
-            } else {
-                // Stop-then-clear, mirroring the manager's own release:
-                // stopping first tears down the link, clearing the routing
-                // flag second matches the documented start order in reverse.
-                try {
-                    platform.stopBluetoothSco()
-                } catch (ignored: Exception) {
-                    Log.w(TAG, "Unrequested SCO stop threw", ignored)
-                }
-                try {
-                    platform.bluetoothScoOn = false
-                } catch (ignored: Exception) {
-                    Log.w(TAG, "Unrequested SCO routing clear threw", ignored)
-                }
-            }
+            // S+ device path or legacy stop-then-clear lives in the platform;
+            // no SDK check here (the split stays in the production impl).
+            platform.clearSystemSco()
             Log.i(TAG, "Cleared unrequested system SCO after media flip")
         } catch (e: Exception) {
             Log.w(TAG, "Unrequested SCO clear failed", e)
@@ -721,14 +709,10 @@ internal class AudioRouteController(
 
     private fun isSystemScoOn(): Boolean {
         if (!platform.hasManager) return false
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val info = platform.getCommunicationDevice()
-                return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-            }
-            return platform.bluetoothScoOn
+        return try {
+            platform.isSystemScoOn()
         } catch (e: Exception) {
-            return false
+            false
         }
     }
 

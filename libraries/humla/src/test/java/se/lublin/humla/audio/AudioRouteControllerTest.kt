@@ -53,6 +53,7 @@ class AudioRouteControllerTest {
         var throwOnUnregister = false
         var capturedCallback: AudioDeviceCallback? = null
         var commDevice: AudioDeviceInfo? = null
+        var useSPlusSystemSco = false
         var scoOnValue = false
         val events = mutableListOf<String>()
         val modeSets = mutableListOf<Int>()
@@ -91,6 +92,17 @@ class AudioRouteControllerTest {
         override fun clearCommunicationDevice() {
             events += "clearComm"
         }
+        override fun isSystemScoOn(): Boolean =
+            if (useSPlusSystemSco) commDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            else scoOnValue
+        override fun clearSystemSco() {
+            if (useSPlusSystemSco) {
+                clearCommunicationDevice()
+            } else {
+                stopBluetoothSco()
+                bluetoothScoOn = false
+            }
+        }
         override fun stopBluetoothSco() {
             events += "stopSco"
         }
@@ -105,6 +117,8 @@ class AudioRouteControllerTest {
         var destroyCount = 0
         val events = mutableListOf<String>()
         override fun start() {
+            // No-op while starting or active, per the ScoLink contract.
+            if (!idleValue || activeValue) return
             startCount++
             events += "start"
             // Mirrors the manager: IDLE -> STARTING (busy, not yet active).
@@ -312,6 +326,9 @@ class AudioRouteControllerTest {
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         platform.scoOnValue = true
         // Order probe: platform stop events vs host recreate events share one timeline.
+        // clearSystemSco is the seam under test: the probe replicates the
+        // legacy stop-then-clear through its own overrides to keep the
+        // ordering assertion on the observed calls.
         val probePlatform = object : AudioPlatform by platform {
             override fun stopBluetoothSco() {
                 shared += "stop"
@@ -323,6 +340,10 @@ class AudioRouteControllerTest {
                     shared += "scoOn=false"
                     platform.scoOnValue = value
                 }
+            override fun clearSystemSco() {
+                stopBluetoothSco()
+                bluetoothScoOn = false
+            }
         }
         val probeRoute = AudioRouteController(probePlatform, sco, this, object : AudioRouteController.Host by host {
             override fun recreatePipeline() {
@@ -344,6 +365,44 @@ class AudioRouteControllerTest {
         assertTrue(
             "clear must precede media pipeline creation, got $shared",
             shared.indexOf("stop") < shared.indexOf("recreate"),
+        )
+        assertEquals(AppliedRoute.MEDIA, probeRoute.decision())
+    }
+
+    @Test
+    fun foreignScoCounterClearsBeforeMediaPipelineOnSPlus() = runTest {
+        val (platform, sco, host) = newFakes()
+        val shared = mutableListOf<String>()
+        // S+ branch: the system SCO surfaces as a communication device.
+        platform.useSPlusSystemSco = true
+        platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        platform.commDevice = deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
+        // Order probe: platform clear events vs host recreate events share one timeline.
+        val probePlatform = object : AudioPlatform by platform {
+            override fun clearSystemSco() {
+                shared += "clearComm"
+                platform.clearSystemSco()
+            }
+        }
+        val probeRoute = AudioRouteController(probePlatform, sco, this, object : AudioRouteController.Host by host {
+            override fun recreatePipeline() {
+                shared += "recreate"
+                host.recreatePipeline()
+            }
+        })
+        // Voice start claims the hold; the media flip must counter first.
+        platform.devices = emptyArray()
+        probeRoute.onInit()
+        probeRoute.onEvent(RouteEvent.SettingsChanged(false))
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        shared.clear()
+        probeRoute.onEvent(RouteEvent.SettingsChanged(false))
+        assertTrue("counter must clear S+ system SCO, got $shared", "clearComm" in shared)
+        assertTrue("media flip must recreate, got $shared", "recreate" in shared)
+        assertTrue(
+            "clear must precede media pipeline creation, got $shared",
+            shared.indexOf("clearComm") < shared.indexOf("recreate"),
         )
         assertEquals(AppliedRoute.MEDIA, probeRoute.decision())
     }
@@ -485,8 +544,13 @@ class AudioRouteControllerTest {
         // Contained: the controller survives and the funnel still works.
         route.onEvent(RouteEvent.SettingsChanged(false))
         assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
+        // Register once successfully so the unregister path is exercised:
+        // the tail must survive a throwing platform, not a null callback.
+        route.registerDeviceListener(mock(Handler::class.java))
         platform.throwOnUnregister = true
         route.unregisterDeviceListener()
+        route.onEvent(RouteEvent.SettingsChanged(false))
+        assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
     }
 
     @Test

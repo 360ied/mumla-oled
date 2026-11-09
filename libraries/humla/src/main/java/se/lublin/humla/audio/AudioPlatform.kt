@@ -17,6 +17,7 @@
 
 package se.lublin.humla.audio
 
+import android.annotation.TargetApi
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -29,8 +30,8 @@ import android.os.Handler
  * Slice 3 of the HumlaService decomposition: wraps exactly the AudioManager
  * surface the route code touches so the controller is testable on the plain
  * JVM with fakes (plus TestScope for timers — no Robolectric, no shadows).
- * The S+ vs legacy split stays inside the production implementation; callers
- * keep their version guards, which become redundant but harmless.
+ * The S+ vs legacy split stays inside the production implementation;
+ * callers never check SDK versions.
  */
 interface AudioPlatform {
     /** False before onCreate wires the real manager, or when lookup failed. */
@@ -49,16 +50,33 @@ interface AudioPlatform {
     fun unregisterDeviceCallback(callback: AudioDeviceCallback)
 
     /** S+ communication device; null on pre-S or when absent. */
+    @TargetApi(Build.VERSION_CODES.S)
     fun getCommunicationDevice(): AudioDeviceInfo?
 
     /** Legacy SCO flag; false when absent. */
     var bluetoothScoOn: Boolean
 
     /** S+ route clear; no-op on pre-S or when absent. */
+    @TargetApi(Build.VERSION_CODES.S)
     fun clearCommunicationDevice()
 
     /** Legacy SCO stop; no-op when absent. */
     fun stopBluetoothSco()
+
+    /**
+     * System-raised SCO state behind the S+ / legacy split: the S+ device
+     * path when available, the legacy SCO flag below. Fail-closed (false)
+     * when the manager is absent; HAL throws propagate to the caller,
+     * which treats them as absent too.
+     */
+    fun isSystemScoOn(): Boolean
+
+    /**
+     * Clears a system-raised SCO link before a media pipeline starts, via
+     * the S+ device path or the legacy stop-then-clear sequence. No-op when
+     * the manager is absent.
+     */
+    fun clearSystemSco()
 }
 
 /**
@@ -90,6 +108,7 @@ class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
         manager?.unregisterAudioDeviceCallback(callback)
     }
 
+    @TargetApi(Build.VERSION_CODES.S)
     override fun getCommunicationDevice(): AudioDeviceInfo? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return null
@@ -103,6 +122,7 @@ class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
             manager?.isBluetoothScoOn = value
         }
 
+    @TargetApi(Build.VERSION_CODES.S)
     override fun clearCommunicationDevice() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return
@@ -112,5 +132,25 @@ class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
 
     override fun stopBluetoothSco() {
         manager?.stopBluetoothSco()
+    }
+
+    override fun isSystemScoOn(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val info = manager?.communicationDevice
+            return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        }
+        return manager?.isBluetoothScoOn == true
+    }
+
+    override fun clearSystemSco() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            manager?.clearCommunicationDevice()
+            return
+        }
+        // Stop-then-clear, mirroring the manager's own release: stopping
+        // first tears down the link, clearing the routing flag second
+        // matches the documented start order in reverse.
+        manager?.stopBluetoothSco()
+        manager?.isBluetoothScoOn = false
     }
 }
