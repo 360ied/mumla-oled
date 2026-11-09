@@ -36,7 +36,8 @@ import android.os.Handler
  * [registerDeviceCallback], [unregisterDeviceCallback], [isSystemScoOn],
  * [clearSystemSco]) serve production. [getCommunicationDevice],
  * [bluetoothScoOn], [clearCommunicationDevice] and [stopBluetoothSco]
- * are a test-only seam mirroring the manager's primitives.
+ * are a test-only seam mirroring the manager's primitives (fakes probe
+ * ordering through them; no production caller uses them directly).
  */
 interface AudioPlatform {
     /** False before onCreate wires the real manager, or when lookup failed. */
@@ -92,6 +93,9 @@ interface AudioPlatform {
  * check [hasManager] before touching mode, so the fallback never fires).
  */
 class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
+    companion object {
+        private const val TAG = "AudioPlatform"
+    }
     override val hasManager: Boolean
         get() = manager != null
 
@@ -159,12 +163,12 @@ class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
         try {
             manager?.stopBluetoothSco()
         } catch (e: Exception) {
-            android.util.Log.w("AudioPlatform", "stopBluetoothSco failed", e)
+            android.util.Log.w(TAG, "stopBluetoothSco failed", e)
         }
         try {
             manager?.isBluetoothScoOn = false
         } catch (e: Exception) {
-            android.util.Log.w("AudioPlatform", "clear SCO flag failed", e)
+            android.util.Log.w(TAG, "clear SCO flag failed", e)
         }
     }
 }

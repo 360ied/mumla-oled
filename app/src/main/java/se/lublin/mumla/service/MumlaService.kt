@@ -1421,7 +1421,7 @@ open class MumlaService : HumlaService(),
         @JvmStatic
         @StringRes
         fun scoFailureMessage(reason: String?): Int =
-            if (BluetoothScoManager.REASON_PERMISSION == reason)
+            if (reason == BluetoothScoManager.REASON_PERMISSION)
                 R.string.bluetooth_sco_permission
             else
                 R.string.bluetooth_sco_failed

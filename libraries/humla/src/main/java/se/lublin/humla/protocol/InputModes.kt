@@ -28,37 +28,74 @@ import se.lublin.humla.util.ConfigDelta
 /**
  * Audio-knob holder (config track of the HumlaService decomposition): the
  * three input-mode instances plus the transmit mode and half-duplex flag.
- * Replaces five service fields with one. Main-confined like `apply()`;
- * no volatility needed.
+ * Replaces five service fields with one. Writes are main-confined like
+ * `apply()`; `transmitMode`/`halfDuplex` are additionally read off-main via
+ * `HumlaService.getTransmitMode`, so they are volatile for visibility
+ * (single-writer, no atomic group transitions).
+ *
+ * The holder starts with voice-activity defaults while
+ * `AudioHandler.Builder.mInputMode` stays null until the first
+ * mode-carrying delta runs: `MumlaService.buildConnectDelta` always sets
+ * `transmitMode`, so the first `apply()` carries it in practice. A delta
+ * without `transmitMode` leaves the previous holder value in place.
  */
 class InputModes(
     val activity: ActivityInputMode =
         ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX),
     val toggle: ToggleInputMode = ToggleInputMode(),
     val continuous: ContinuousInputMode = ContinuousInputMode(),
+    @Volatile
     var transmitMode: Int = Constants.TRANSMIT_VOICE_ACTIVITY,
+    @Volatile
     var halfDuplex: Boolean = false,
-)
+) {
+    init {
+        require(
+            transmitMode == Constants.TRANSMIT_PUSH_TO_TALK ||
+                transmitMode == Constants.TRANSMIT_CONTINUOUS ||
+                transmitMode == Constants.TRANSMIT_VOICE_ACTIVITY
+        ) {
+            "Unknown transmit mode: $transmitMode"
+        }
+    }
+
+    internal fun resolveInputMode(mode: Int): IInputMode {
+        return when (mode) {
+            Constants.TRANSMIT_PUSH_TO_TALK -> toggle
+            Constants.TRANSMIT_CONTINUOUS -> continuous
+            Constants.TRANSMIT_VOICE_ACTIVITY -> activity
+            else ->
+                throw IllegalArgumentException("Unknown transmit mode: $mode")
+        }
+    }
+}
 
 /**
- * Applies the builder-knob and input-mode mapping beside
- * [AudioHandler.Builder]: threshold, boost, transmit mode, quality, frames
- * per packet, half duplex, and leveler. Validates first via
- * [validateAudioDelta] so a bad delta is all-or-nothing and never
- * partially mutates the holder.
+ * Validates the audio half of [ConfigDelta]. Only `transmitMode` (via the
+ * shared resolver) and NaN float knobs throw; other ranges (bitrate, FPP)
+ * pass through to downstream sanitizers (FPP silent-coerce, VAD clamp).
+ * Strict-reject (mode) vs silent-coerce (FPP) is intentional: mode selects
+ * the input pipeline, FPP only tunes packetization.
  */
 fun InputModes.validateAudioDelta(delta: ConfigDelta) {
     val transmitMode = delta.transmitMode
     if (transmitMode != null) {
-        when (transmitMode) {
-            Constants.TRANSMIT_PUSH_TO_TALK,
-            Constants.TRANSMIT_CONTINUOUS,
-            Constants.TRANSMIT_VOICE_ACTIVITY -> {}
-            else ->
-                throw IllegalArgumentException("Unknown transmit mode: $transmitMode")
+        resolveInputMode(transmitMode)
+    }
+    val detectionThreshold = delta.detectionThreshold
+    if (detectionThreshold != null) {
+        require(!detectionThreshold.isNaN()) {
+            "detectionThreshold must not be NaN"
+        }
+    }
+    val amplitudeBoost = delta.amplitudeBoost
+    if (amplitudeBoost != null) {
+        require(!amplitudeBoost.isNaN()) {
+            "amplitudeBoost must not be NaN"
         }
     }
 }
+
 fun InputModes.applyAudioDelta(
     delta: ConfigDelta,
     builder: AudioHandler.Builder,
@@ -80,19 +117,9 @@ fun InputModes.applyAudioDelta(
     val transmitMode = delta.transmitMode
     if (transmitMode != null) {
         // Validated by validateAudioDelta before any commit; the holder is
-        // only assigned once the branch resolves, so a bad value can never
+        // only assigned once the resolver returns, so a bad value can never
         // poison it for a later half-duplex-only delta.
-        val inputMode: IInputMode
-        when (transmitMode) {
-            Constants.TRANSMIT_PUSH_TO_TALK ->
-                inputMode = toggle
-            Constants.TRANSMIT_CONTINUOUS ->
-                inputMode = continuous
-            Constants.TRANSMIT_VOICE_ACTIVITY ->
-                inputMode = activity
-            else ->
-                throw IllegalArgumentException("Unknown transmit mode: $transmitMode")
-        }
+        val inputMode = resolveInputMode(transmitMode)
         this.transmitMode = transmitMode
         builder.setInputMode(inputMode)
     }

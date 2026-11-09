@@ -20,6 +20,7 @@ package se.lublin.humla.util
 import java.security.cert.X509Certificate
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import se.lublin.humla.BuildConfig
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
@@ -32,8 +33,10 @@ import se.lublin.humla.net.HandshakeFailure
  *
  * Fan-out isolates failures: a throwing observer is logged and the rest
  * still run. Only [RuntimeException] is caught — an [Error] still
- * aborts the broadcast. Registration rejects `null` fail-fast while
- * unregistration tolerates it for defensive call sites.
+ * aborts the broadcast (callers must not throw checked; interface methods
+ * declare none). Registration rejects `null` fail-fast while
+ * unregistration tolerates it for defensive call sites. Delivery order over
+ * the concurrent set is nondeterministic and undocumented.
  */
 class HumlaCallbacks : IHumlaObserver {
     private val callbacks: MutableSet<IHumlaObserver> =
@@ -154,7 +157,7 @@ class HumlaCallbacks : IHumlaObserver {
                 // Never swallow coroutine cancellation as a mere observer
                 // failure (no in-tree observer throws it today; belt and
                 // braces for a future coroutine-based observer).
-                if (observerError is kotlinx.coroutines.CancellationException) {
+                if (observerError is CancellationException) {
                     throw observerError
                 }
                 // Full traces in debug only: a persistently-throwing observer

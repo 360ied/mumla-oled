@@ -142,10 +142,10 @@ internal class AudioRouteController(
     @Volatile
     private var settleAttempts: Int = 0
 
-    @Volatile
+    // Main-confined timer jobs: armed/cancelled only on the funnel thread,
+    // so no cross-thread publication is needed. Plain vars (not volatile).
     private var debounceJob: Job? = null
 
-    @Volatile
     private var settleJob: Job? = null
 
     @Volatile
@@ -309,13 +309,14 @@ internal class AudioRouteController(
     /**
      * Route parts of onConnectionDisconnected. The service owns state,
      * locks, model teardown, and onDisconnected; this owns route teardown.
+     * The live-media query runs before the SCO stop so gap observers see
+     * truth (A2DP still attached reads media); the snapshot assignment runs
+     * after the stop so posted-teardown guards see the cleared flag.
      */
     private fun onSessionEnded() {
         // Media decision goes stale here (teardown clears SCO only; the next
         // funnel recomputes): refresh from a live query so gap observers see
         // truth (A2DP still attached reads media) instead of a forced value.
-        // Stored after the SCO stop below so the AppliedRoute snapshot sees
-        // the cleared link; both run synchronously with no interleaving.
         val liveMedia = queryMediaDevicesPresent()
 
         // Never leak the SCO link across disconnects: the next sync re-arms
@@ -400,7 +401,8 @@ internal class AudioRouteController(
      * Applies a confirmed route to the pipeline, cue hook, and observers in
      * that order. Skips everything when the confirmed SCO state is unchanged.
      * The whole funnel is main-confined, so the flag cannot flip mid-funnel;
-     * the post-funnel guard stays as cheap idempotence.
+     * the post-funnel re-check below stays as cheap idempotence against a
+     * re-confirm queued behind us.
      */
     private fun onScoLinkChanged(active: Boolean) {
         val unchanged: Boolean = active == scoRouteActive
@@ -424,6 +426,12 @@ internal class AudioRouteController(
     }
 
     fun onScoFailed(reason: String?) {
+        // Destroyed services must not Toast: the funnel gate below only covers
+        // the route half. Guard the observer fan-out for symmetry with
+        // stopScoWithNotify's posted-teardown guard.
+        if (destroyed) {
+            return
+        }
         onEvent(RouteEvent.ScoLinkChanged(false))
         // onScoFailed is posted to the main thread; connected and
         // disconnected arrive on main-thread platform callbacks.
@@ -452,6 +460,12 @@ internal class AudioRouteController(
         debounceJob?.cancel()
         val launched = scope.launch {
             delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
+            // Post-destroy arrivals must not recompute: onDestroyed cancels the
+            // job, but a job already past delay still resumes. Gate the body
+            // for symmetry with the onEvent destroyed check.
+            if (destroyed) {
+                return@launch
+            }
             recompute("device route changed", forceReload = false, settle = false, firstCreate = false)
         }
         launched.invokeOnCompletion {
@@ -653,6 +667,17 @@ internal class AudioRouteController(
                 host.recreatePipeline()
                 Log.i(TAG, "$reason; audio pipeline recreated (" + (if (voice) "voice" else "media") + ").")
             } catch (e: AudioException) {
+                Log.e(TAG, "Route-change audio reload failed", e)
+                host.onPipelineError(e.message)
+            } catch (e: RuntimeException) {
+                // Defensive: funnel race (isLive flip between gate and
+                // createAudioHandler requires) surfaces IAE here. Service
+                // contains it as AudioException, but never crash Main.
+                Log.e(TAG, "Route-change audio reload failed", e)
+                host.onPipelineError(e.message)
+            } catch (e: AssertionError) {
+                // DEBUG-only not-connected assert racing a disconnect.
+                // Report via the pipeline error path, never crash Main.
                 Log.e(TAG, "Route-change audio reload failed", e)
                 host.onPipelineError(e.message)
             }

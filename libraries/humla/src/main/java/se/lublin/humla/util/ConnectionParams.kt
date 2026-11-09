@@ -20,7 +20,7 @@ package se.lublin.humla.util
 import se.lublin.humla.model.Server
 
 /**
- * Immutable connection-parameter snapshot (config track of the HumlaService
+ * Shallow-frozen connection-parameter snapshot (config track of the HumlaService
  * decomposition): the 11 apply-time values `connect()` and
  * `onConnectionEstablished()` read. Frozen at the `apply()` boundary
  * (main-confined) and published through a single volatile field, so
@@ -54,16 +54,16 @@ class ConnectionParams(
 
     fun copy(
         server: Server? = this.server,
-        certificate: ByteArray? = this.certificate?.copyOf(),
+        certificate: ByteArray? = this.certificate,
         certificatePassword: String? = this.certificatePassword,
         forceTcp: Boolean = this.forceTcp,
         clientName: String? = this.clientName,
-        accessTokens: List<String>? = this.accessTokens?.toList(),
+        accessTokens: List<String>? = this.accessTokens,
         trustStore: String? = this.trustStore,
         trustStorePassword: String? = this.trustStorePassword,
         trustStoreFormat: String? = this.trustStoreFormat,
-        localMuteHistory: List<Int>? = this.localMuteHistory?.toList(),
-        localIgnoreHistory: List<Int>? = this.localIgnoreHistory?.toList(),
+        localMuteHistory: List<Int>? = this.localMuteHistory,
+        localIgnoreHistory: List<Int>? = this.localIgnoreHistory,
     ): ConnectionParams = ConnectionParams(
         server = server,
         certificate = certificate?.copyOf(),

@@ -65,31 +65,37 @@ interface IHumlaObserver {
 
     /**
      * Called on the main thread when the Bluetooth SCO link transitions.
+     * Delivery is on the caller thread; the in-tree route host always calls
+     * on main. Out-of-tree observers must not assume a looper.
      * @param active true if SCO is up and carrying call audio, false on
      *               teardown or failed bring-up (phone-audio fallback).
      */
     fun onBluetoothScoChanged(active: Boolean)
 
     /**
-     * Called on the main thread when Bluetooth SCO bring-up fails.
+     * Called when Bluetooth SCO bring-up fails.
      * Replaces the library-owned Toast: the app layer renders user-visible
      * feedback. Edges stay coalesced by the existing route debounce; no
-     * extra throttle here.
+     * extra throttle here. Delivery is on the caller thread; the in-tree
+     * route host always calls on main.
      * In-tree observers should extend HumlaObserver (no-op default); this
      * is an in-tree library interface, so out-of-tree direct implementors
      * must add an override when upgrading.
      * @param reason failure reason (see BluetoothScoManager REASON_*), or
      *               null when unknown.
      */
-    fun onBluetoothScoFailed(reason: String?)
+    fun onBluetoothScoFailed(reason: String?) {
+    }
 
     /**
-     * Called on the main thread after every confirmed audio-route change
+     * Called after every confirmed audio-route change
      * (voice triple vs media path, SCO or media-sink driven), after the
-     * pipeline reload. Use it to follow output routing (e.g. volume stream);
-     * SCO-specific UI belongs in onBluetoothScoChanged.
+     * pipeline reload. Delivery is on the caller thread; the in-tree route
+     * host always calls on main. Use it to follow output routing (e.g. volume
+     * stream); SCO-specific UI belongs in onBluetoothScoChanged.
      */
-    fun onAudioRouteChanged()
+    fun onAudioRouteChanged() {
+    }
 
     fun onLogInfo(message: String?)
 

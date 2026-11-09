@@ -43,7 +43,12 @@ class Channel : IChannel, Comparable<Channel> {
     override var maxUsers: Int = 0
     override var isEnterRestricted: Boolean = false
     private var canEnterField: Boolean = true
+    // Visible across threads: ModelHandler writers run on the TCP/model thread
+    // while isListeningToChannel reads off any binder thread. ConcurrentHashMap
+    // gives map safety, not field visibility.
+    @Volatile
     override var isListening: Boolean = false
+    @Volatile
     override var listeningVolume: Float = 1.0f
 
     constructor()

@@ -106,10 +106,11 @@ class BluetoothScoManager : ScoLink {
         const val REASON_ERROR = "error"
 
         /**
-         * Pure retry-budget decision shared by the timeout and stack-error paths
-         * (ODD-23): another bring-up attempt remains while fewer than
-         * {@code maxAttempts} attempts have run. Refusal and no-device fail
-         * unconditionally in their callers — no budget branch exists to drift.
+         * Pure retry-budget decision for the connect-timeout path: another
+         * bring-up attempt remains while fewer than `maxAttempts` attempts
+         * have run. Refusal and no-device fail unconditionally in their
+         * callers — no budget branch exists to drift. (Stack-error
+         * failures go straight to `fail()` with no retry.)
          * Visible for the JVM truth-table test (public for Java callers;
          * Kotlin has no package visibility); not part of the production API.
          */

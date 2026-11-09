@@ -67,7 +67,6 @@ import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.ModelHandler
 import se.lublin.humla.protocol.applyAudioDelta
 import se.lublin.humla.protocol.validateAudioDelta
-import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.ConnectionParams
 import se.lublin.humla.util.HumlaCallbacks
@@ -75,7 +74,6 @@ import se.lublin.humla.util.HumlaDisconnectedException
 import se.lublin.humla.util.HumlaException
 import se.lublin.humla.util.HumlaLogger
 import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.util.TrustStoreRef
 import se.lublin.humla.util.VoiceTargetMode
 import java.io.File
 import java.io.IOException
@@ -117,6 +115,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
          */
         @JvmStatic
         fun getReconnectDelayForAttempts(attempts: Int): Int {
+            // Negative attempts are unreachable (mReconnectAttempts resets to 0
+            // and only increments); fail closed to MAX like any large value.
+            if (attempts < 0) return RECONNECT_DELAY_MAX
             return when (attempts) {
                 0 -> RECONNECT_DELAY_INITIAL
                 1 -> 3000
@@ -185,6 +186,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // a Main Handler post (HumlaConnection posts sync), while
     // onConnectionDisconnected runs directly on connection threads, so
     // volatile here is required for the disconnect path, not belt-and-braces.
+    // Serializes reconnect timer + network-callback registration: setReconnecting
+    // runs from Main/binder (disconnect/cancelReconnect/onStartCommand) and from
+    // connection threads (onConnectionDisconnected), so cancel+assign and
+    // check-then-register must not interleave and orphan a job or double-register.
+    private val reconnectLock = Any()
+
     @Volatile
     private var connectionGeneration = 0
     @Volatile
@@ -435,15 +442,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         val scoLink: ScoLink? = try {
             BluetoothScoManager(this, object : BluetoothScoManager.Listener {
                 override fun onScoConnected() {
-                    route.onScoConnected()
+                    if (::route.isInitialized) route.onScoConnected()
                 }
 
                 override fun onScoDisconnected() {
-                    route.onScoDisconnected()
+                    if (::route.isInitialized) route.onScoDisconnected()
                 }
 
                 override fun onScoFailed(reason: String?) {
-                    route.onScoFailed(reason)
+                    if (::route.isInitialized) route.onScoFailed(reason)
                 }
             })
         } catch (e: Exception) {
@@ -470,6 +477,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // Route teardown (link, mode, device listener, timers) lives in the
         // controller; bare teardown, no notify by design.
         route.onEvent(RouteEvent.Destroyed)
+        // Socket + mic teardown: disconnect() alone only drops the socket
+        // (pipeline shutdown rides the async disconnect callback, which may
+        // never run after destroy). Shut down synchronously so a destroyed
+        // service never leaks the connection or capture while the process
+        // lives on.
+        mAudioHandler?.let { oldHandler ->
+            mConnection?.removeTCPMessageHandler(oldHandler)
+            mConnection?.removeUDPMessageHandler(oldHandler)
+            oldHandler.shutdown()
+        }
+        mModelHandler = null
+        mAudioHandler = null
+        mConnection?.disconnect()
+        mConnection = null
         releaseWifiLock()
     }
 
@@ -795,7 +816,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     private fun registerNetworkCallback() {
-        if (mNetworkCallbackRegistered) return
+        synchronized(reconnectLock) {
+            if (mNetworkCallbackRegistered) return
+        }
         try {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager?
             if (cm != null) {
@@ -816,8 +839,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                                     mConnectionState != ConnectionState.CONNECTING
                                 ) {
                                     Log.v(TAG, "Network available, triggering immediate reconnect.")
-                                    reconnectJob?.cancel()
-                                    reconnectJob = null
+                                    synchronized(reconnectLock) {
+                                        reconnectJob?.cancel()
+                                        reconnectJob = null
+                                    }
                                     mReconnectAttempts++
                                     connect()
                                 }
@@ -826,7 +851,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                     }
                 }
                 cm.registerDefaultNetworkCallback(requireNotNull(mNetworkCallback))
-                mNetworkCallbackRegistered = true
+                synchronized(reconnectLock) {
+                    mNetworkCallbackRegistered = true
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error registering network callback: " + e.message)
@@ -834,7 +861,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     private fun unregisterNetworkCallback() {
-        if (!mNetworkCallbackRegistered) return
+        synchronized(reconnectLock) {
+            if (!mNetworkCallbackRegistered) return
+        }
         try {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager?
             val callback = mNetworkCallback
@@ -844,17 +873,21 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering network callback: " + e.message)
         } finally {
-            mNetworkCallbackRegistered = false
+            synchronized(reconnectLock) {
+                mNetworkCallbackRegistered = false
+            }
         }
     }
 
     open fun setReconnecting(reconnecting: Boolean) {
-        if (!reconnecting) {
-            mReconnecting = false
-            reconnectJob?.cancel()
-            reconnectJob = null
-            unregisterNetworkCallback()
-            return
+        synchronized(reconnectLock) {
+            if (!reconnecting) {
+                mReconnecting = false
+                reconnectJob?.cancel()
+                reconnectJob = null
+                unregisterNetworkCallback()
+                return
+            }
         }
 
         mReconnecting = true
@@ -881,9 +914,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
         }
         launchedReconnect.invokeOnCompletion {
-            if (reconnectJob === launchedReconnect) reconnectJob = null
+            synchronized(reconnectLock) {
+                if (reconnectJob === launchedReconnect) reconnectJob = null
+            }
         }
-        reconnectJob = launchedReconnect
+        synchronized(reconnectLock) {
+            reconnectJob = launchedReconnect
+        }
     }
 
     
@@ -954,6 +991,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             connection.addUDPMessageHandlers(handler)
         } catch (e: NotSynchronizedException) {
             throw AudioException("Attempted to create audio handler when not synchronized!")
+        } catch (e: IllegalArgumentException) {
+            // TOCTOU: isLive (volatile mConnectionState) can flip between the
+            // funnel's gate and these requires when a disconnect lands on a
+            // connection thread. Contain as AudioException so the route
+            // funnel reports via onPipelineError instead of crashing Main.
+            throw AudioException("Audio pipeline torn down during recreate", e)
         }
     }
 
@@ -1143,7 +1186,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             throw NotSynchronizedException()
         val handler = mAudioHandler
         if (handler == null)
-            throw RuntimeException("Audio handler should always be instantiated while connected!")
+            throw IllegalStateException("Audio handler should always be instantiated while connected!")
         return handler
     }
 
@@ -1158,7 +1201,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             throw NotSynchronizedException()
         val handler = mModelHandler
         if (handler == null)
-            throw RuntimeException("Model handler should always be instantiated while connected!")
+            throw IllegalStateException("Model handler should always be instantiated while connected!")
         return handler
     }
 
@@ -1403,7 +1446,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun kickBanUser(session: Int, reason: String?, ban: Boolean) {
         val urb = Mumble.UserRemove.newBuilder()
         urb.session = session
-        urb.reason = reason
+        if (reason != null) {
+            urb.reason = reason
+        }
         urb.ban = ban
         requireConnection().sendTCPMessage(urb.build(), HumlaTCPMessageType.UserRemove)
     }
@@ -1415,7 +1460,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
             val tmb = Mumble.TextMessage.newBuilder()
             tmb.addSession(session)
-            tmb.message = message
+            if (message != null) {
+                tmb.message = message
+            }
             requireConnection().sendTCPMessage(tmb.build(), HumlaTCPMessageType.TextMessage)
 
             val modelHandler = getModelHandler()
@@ -1437,7 +1484,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val tmb = Mumble.TextMessage.newBuilder()
             if (tree) tmb.addTreeId(channel)
             else tmb.addChannelId(channel)
-            tmb.message = message
+            if (message != null) {
+                tmb.message = message
+            }
             requireConnection().sendTCPMessage(tmb.build(), HumlaTCPMessageType.TextMessage)
 
             val modelHandler = getModelHandler()
@@ -1457,7 +1506,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun setUserComment(session: Int, comment: String?) {
         val usb = Mumble.UserState.newBuilder()
         usb.session = session
-        usb.comment = comment
+        if (comment != null) {
+            usb.comment = comment
+        }
         requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
@@ -1615,16 +1666,25 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun registerWhisperTarget(target: WhisperTarget?): Byte {
         val t = target ?: throw NullPointerException("target")
+        // Resolve the live connection before allocating: the 5-bit ID space
+        // is exhaustible, and a disconnect between alloc and send would leak
+        // the slot. Fail fast with no side effect when offline.
+        val live = mConnection ?: throw IllegalArgumentException("No active connection")
         val id = synchronized(whisperLock) { mWhisperTargetList.append(t) }
         if (id.toInt() < 0) {
             return (-1).toByte()
         }
 
-        val voiceTarget = t.createTarget()
-        val vtb = Mumble.VoiceTarget.newBuilder()
-        vtb.id = id.toInt()
-        vtb.addTargets(voiceTarget)
-        requireConnection().sendTCPMessage(vtb.build(), HumlaTCPMessageType.VoiceTarget)
+        try {
+            val voiceTarget = t.createTarget()
+            val vtb = Mumble.VoiceTarget.newBuilder()
+            vtb.id = id.toInt()
+            vtb.addTargets(voiceTarget)
+            live.sendTCPMessage(vtb.build(), HumlaTCPMessageType.VoiceTarget)
+        } catch (e: RuntimeException) {
+            synchronized(whisperLock) { mWhisperTargetList.free(id) }
+            throw e
+        }
         return id
     }
 
