@@ -20,15 +20,11 @@ package se.lublin.humla
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioDeviceCallback
-import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Binder
-import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.PowerManager
@@ -42,9 +38,8 @@ import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.audio.AndroidAudioPlatform
-import se.lublin.humla.audio.AudioPlatform
+import se.lublin.humla.audio.AudioRouteController
 import se.lublin.humla.audio.BluetoothScoManager
-import se.lublin.humla.audio.ScoLink
 import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
 import se.lublin.humla.audio.inputmode.IInputMode
@@ -98,22 +93,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         const val RECONNECT_DELAY_INITIAL = 1000
         const val RECONNECT_DELAY_MAX = 25000
 
-        /**
-         * One-shot settle recheck for voice-by-absence: BT profiles attach
-         * staggered (HFP/ACL first, A2DP sink seconds later), so the first
-         * device edge can see no media sink and slam the call onto
-         * speakerphone-voice. Entering voice without SCO arms delayed
-         * recomputes to catch the lagging A2DP edge even if it posts no second
-         * callback; still absent means a genuinely sink-less phone, correctly
-         * left on voice. Bounded to two extra checks (~3s, ~6s) per episode —
-         * never a loop — covering typical profile-stagger windows.
-         */
-        private const val ROUTE_SETTLE_RECHECK_MS = 3000L
-        private const val ROUTE_SETTLE_MAX_RECHECKS = 2
-
-        /** Debounce for device attach/detach flurries: one recompute per burst. */
-        private const val ROUTE_RECOMPUTE_DEBOUNCE_MS = 300L
-
         @JvmStatic
         fun init(context: Context?) {
             try {
@@ -128,22 +107,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
 
         /**
-         * Route truth table: confirmed SCO forces the voice triple; otherwise a
-         * present media sink (BT A2DP / wired headset) selects media, and its
-         * absence keeps voice. Widened to public: Kotlin has no package
-         * visibility; the JVM truth-table test pins this, mirroring
-         * BluetoothScoManager.shouldRetryBringUp.
-         */
-        @JvmStatic
-        fun computeVoiceRoute(scoActive: Boolean, mediaDevicesPresent: Boolean): Boolean {
-            return scoActive || !mediaDevicesPresent
-        }
-
-        /**
          * Pure reconnect-backoff truth table behind [getReconnectDelay].
          * Static so the JVM test pins the switch without constructing a
-         * Service (mirrors computeVoiceRoute above). Slice 4 replaces the
-         * Handler postDelayed with delay() but keeps these exact delays.
+         * Service (mirrors AudioRouteController.computeVoiceRoute).
          */
         @JvmStatic
         fun getReconnectDelayForAttempts(attempts: Int): Int {
@@ -173,68 +139,44 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     private var mTransmitMode: Int = 0
     private var mHalfDuplex: Boolean = false
 
-    // Volatile: written in apply, read across service threads in
-    // updateBluetoothScoRoute, retryBluetoothSco, and the route callbacks.
     // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
-    @Volatile
-    private var mScoRequested: Boolean = false
+    // Route owner (slice 4): all route state and choreography live in the
+    // controller behind ports; this service owns one instance, feeds it
+    // lifecycle events, and forwards three API members to it. The route
+    // monitor group moved atomically onto the controller's private lock —
+    // no route field remains under the service monitor.
+    private lateinit var route: AudioRouteController
 
-    // Assigned once in onCreate, never reassigned: safe to dereference from
-    // connection threads, but volatile to match this file's discipline for
-    // cross-thread route fields (a stale null is the only real hazard).
-    @Volatile
-    private var mScoLink: ScoLink? = null
-
-    // Written on the main thread (applyScoRoute) and in the disconnect path
-    // (stopScoWithNotify), which HumlaConnection invokes on TCP-reader
-    // threads; read on both. Volatile for visibility; confirmed-flag flips
-    // are serialized in fine-grained synchronized blocks (see applyScoRoute,
-    // stopScoWithNotify, updateRouteBuilderLocked), while the funnel, device
-    // query, IPC, and fan-out they trigger run outside the service monitor.
-    @Volatile
-    private var mScoRouteActive: Boolean = false
-
-    // Platform port (slice 3): production AudioManager surface behind a
-    // fakeable seam. Never null after the field initializer; hasManager is
-    // false until onCreate wires the real manager (mirrors the old nullable
-    // AudioManager safe-calls).
-    private var mAudioPlatform: AudioPlatform = AndroidAudioPlatform(null)
-
-    // Voice-mode ownership (one owner: this route policy — never the pipeline
-    // and never the SCO manager alone). Held for voice routes so capture-side
-    // effects attach into a coupled HAL loop, released for media routes and
-    // on disconnect/destroy. One atomic snapshot. Touched on the main thread
-    // and in the disconnect path on connection threads: volatile for
-    // visibility, with ensure/release serialized via synchronized methods so
-    // a device callback racing a disconnect cannot corrupt the restore
-    // baseline. A single reference replaces the former held/claimed/saved
-    // triple, which always moved together (held ≡ claimed).
-    private sealed interface ModeHold {
-        data object Released : ModeHold
-        data class Claimed(val savedMode: Int) : ModeHold
+    private val routeHost = object : AudioRouteController.Host {
+        override val isLive: Boolean
+            get() = mConnectionState == ConnectionState.CONNECTED
+        override val sessionToken: Int
+            get() = connectionGeneration
+        override fun hasLivePipeline(): Boolean {
+            val handler = mAudioHandler
+            return handler != null && handler.isInitialized()
+        }
+        override fun recreatePipeline() {
+            createAudioHandler()
+        }
+        override fun onPipelineError(message: String?) {
+            onConnectionWarning(message)
+        }
+        override fun onRouteChanged() {
+            onAudioRouteChanged()
+            mCallbacks.onAudioRouteChanged()
+        }
+        override fun onScoChanged(active: Boolean) {
+            mCallbacks.onBluetoothScoChanged(active)
+        }
+        override fun onScoTeardown() {
+            onAudioRouteChanged()
+            mCallbacks.onBluetoothScoChanged(false)
+        }
+        override fun onBluetoothScoFailed(reason: String?) {
+            mCallbacks.onBluetoothScoFailed(reason)
+        }
     }
-
-    @Volatile
-    private var mModeHold: ModeHold = ModeHold.Released
-
-    // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
-    // SCO absence). Present sinks select the media triple; SCO and the bare
-    // phone stay voice (computeVoiceRoute). Listener is always registered
-    // (minSdk 30; audio-device APIs are API 23); no version gate remains. Named for what it stores (the gated decision, not raw
-    // presence): recomputed from the live query on every route application.
-    @Volatile
-    private var mMediaRouteSelected: Boolean = false
-
-    @Volatile
-    private var mAppliedVoiceRoute = true
-
-    // Default MUSIC means speakerphone-voice until settings arrive: the voice
-    // triple maps any non-VOICE_CALL stream to speakerphone (see AudioHandler
-    // init), so do not "fix" this to STREAM_VOICE_CALL (that would flip the
-    // default to earpiece).
-    @Volatile
-    private var mHandsetAudioStream: Int = AudioManager.STREAM_MUSIC
-    private var mDeviceCallback: AudioDeviceCallback? = null
     // Service-scope Jobs replace Handler postDelayed chains. Disarm =
     // job?.cancel(), replacing removeCallbacks one-for-one. mHandler stays
     // only for AudioManager device-callback registration, which requires a
@@ -248,41 +190,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var connectionGeneration = 0
     @Volatile
-    private var routeDebounceJob: Job? = null
-    @Volatile
-    private var routeSettleJob: Job? = null
-    @Volatile
     private var reconnectJob: Job? = null
 
-    @Volatile
-    private var mSettleAttempts: Int = 0
 
-    private fun armRouteSettle() {
-        routeSettleJob?.cancel()
-        val launchedSettle = lifecycleScope.launch {
-            delay(ROUTE_SETTLE_RECHECK_MS)
-            applyAudioRoute("media settle recheck", false, settle = true)
-        }
-        launchedSettle.invokeOnCompletion {
-            if (routeSettleJob === launchedSettle) routeSettleJob = null
-        }
-        routeSettleJob = launchedSettle
-    }
 
-    private fun cancelRouteSettle() {
-        routeSettleJob?.cancel()
-        routeSettleJob = null
-    }
-
-    private fun cancelRouteDebounce() {
-        routeDebounceJob?.cancel()
-        routeDebounceJob = null
-    }
-
-    // Set in onDestroy: posted teardowns (SCO notify) check it before
-    // touching route audio on a dead service.
-    @Volatile
-    private var mDestroyed = false
 
     @Volatile
     private var mVoiceTargetId: Byte = 0
@@ -303,7 +214,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // device-callback funnel started reading them off the main thread:
     // disconnect writes them on connection threads. Volatile for visibility
     // only, not atomic group transitions: readers pair them with the
-    // volatile mConnectionState gate (see applyAudioRoute), never a lock.
+    // volatile mConnectionState gate (see the route controller), never a lock.
     @Volatile
     private var mModelHandler: ModelHandler? = null
 
@@ -514,51 +425,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 }
             }
         mConnectionState = ConnectionState.DISCONNECTED
-        try {
-            mAudioPlatform =
-                AndroidAudioPlatform(getSystemService(Context.AUDIO_SERVICE) as AudioManager?)
+        val audioPlatform = try {
+            AndroidAudioPlatform(getSystemService(Context.AUDIO_SERVICE) as AudioManager?)
         } catch (e: Exception) {
             Log.w(TAG, "VoIP mode: no AudioManager", e)
-            mAudioPlatform = AndroidAudioPlatform(null)
+            AndroidAudioPlatform(null)
         }
-        mScoLink = BluetoothScoManager(this, object : BluetoothScoManager.Listener {
+        // SCO callbacks forward to the route controller. They are posted
+        // async (manager scope Main.immediate), so `route` is initialized
+        // before any callback fires.
+        val scoLink = BluetoothScoManager(this, object : BluetoothScoManager.Listener {
             override fun onScoConnected() {
-                applyScoRoute(true, "Bluetooth SCO connected")
+                route.onScoConnected()
             }
 
             override fun onScoDisconnected() {
-                applyScoRoute(false, "Bluetooth SCO disconnected, falling back to phone audio")
+                route.onScoDisconnected()
             }
 
             override fun onScoFailed(reason: String?) {
-                applyScoRoute(false, "Bluetooth SCO unavailable, falling back to phone audio")
-                // onScoFailed is posted to the main thread; connected and
-                // disconnected arrive on main-thread platform callbacks.
-                // User-visible feedback is an observer event (slice 2): the
-                // app layer renders the Toast, humla owns no UI.
-                mCallbacks.onBluetoothScoFailed(reason)
+                route.onScoFailed(reason)
             }
         })
-        try {
-            val deviceCallback = object : AudioDeviceCallback() {
-                override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>?) {
-                    logDeviceTypes("added", added)
-                    onRouteDevicesChanged()
-                    maybeStartRequestedSco(added)
-                }
-
-                override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>?) {
-                    logDeviceTypes("removed", removed)
-                    onRouteDevicesChanged()
-                }
-            }
-            mDeviceCallback = deviceCallback
-            mAudioPlatform.registerDeviceCallback(deviceCallback, mHandler)
-        } catch (e: Exception) {
-            Log.w(TAG, "Route device listener failed", e)
-            mDeviceCallback = null
-        }
-        mMediaRouteSelected = queryMediaDevicesPresent()
+        route = AudioRouteController(audioPlatform, scoLink, lifecycleScope, routeHost, mAudioBuilder)
+        route.registerDeviceListener(mHandler)
+        route.onInit()
         mToggleInputMode = ToggleInputMode()
         mActivityInputMode = ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX)
         mContinuousInputMode = ContinuousInputMode()
@@ -570,42 +461,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun onDestroy() {
         super.onDestroy()
-        mDestroyed = true
         mReconnectAttempts = 0
         setReconnecting(false)
         val wakeLock = mWakeLock
         if (wakeLock != null && wakeLock.isHeld) {
             wakeLock.release()
         }
-        // Bare teardown, no notify: observers detach in onDestroy and posted
-        // UI work (SoundPool recreate, proximity lock) would revive audio on
-        // a dead service. destroy() stops the link and cancels the manager
-        // scope (slice 4: timeout child cancelled, no timer survives destroy).
-        mScoLink?.destroy()
-        // Same builder group as the funnel/teardown paths: clear under the
-        // monitor so a racing recompute cannot resurrect SCO after destroy.
-        // Media/applied resets ride along: all three are one route snapshot.
-        synchronized(this) {
-            mAudioBuilder.setScoEnabled(false)
-            mScoRouteActive = false
-            mMediaRouteSelected = false
-            mAppliedVoiceRoute = true
-        }
-        releaseVoiceMode()
-        val deviceCallback = mDeviceCallback
-        if (deviceCallback != null) {
-            try {
-                mAudioPlatform.unregisterDeviceCallback(deviceCallback)
-            } catch (e: Exception) {
-                Log.w(TAG, "Route device listener removal failed", e)
-            }
-            mDeviceCallback = null
-        }
-        // Unconditional: the funnel arms settle on any route edge, so teardown
-        // must clear it too.
-        cancelRouteDebounce()
-        cancelRouteSettle()
-        mSettleAttempts = 0
+        // Route teardown (link, mode, device listener, timers) lives in the
+        // controller; bare teardown, no notify by design.
+        route.onDestroyed()
         releaseWifiLock()
     }
 
@@ -733,13 +597,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         releaseWifiLock()
         // Tear down SCO synchronously: the async disconnect callback may lag,
         // and a quick reconnect must not reuse a stale link or route flag.
-        stopScoWithNotify()
+        route.stopScoWithNotify()
         mConnection?.disconnect()
     }
 
     open override fun isBluetoothScoActive(): Boolean {
-        val scoLink = mScoLink
-        return scoLink != null && scoLink.isActive()
+        return route.isScoActive()
     }
 
     /**
@@ -750,41 +613,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * pipeline, cues, and volume observers never diverge mid-callback.
      */
     open override fun isMediaRouteActive(): Boolean {
-        return mMediaRouteSelected && !mScoRouteActive
+        return route.isMediaRouteActive
     }
 
     open override fun retryBluetoothSco(): Boolean {
-        // Copy to locals before IPC so a torn read is impossible; the copy
-        // is not group-atomic versus writers (post-start re-validation +
-        // manager idempotence absorb any tearing — that is the real guard).
-        val requested: Boolean
-        val state: ConnectionState
-        val scoLink: ScoLink?
-        val connection: HumlaConnection?
-        synchronized(this) {
-            requested = mScoRequested
-            state = mConnectionState
-            scoLink = mScoLink
-            connection = mConnection
-        }
-        if (requested && state == ConnectionState.CONNECTED &&
-            scoLink != null && scoLink.isIdle()
-        ) {
-            scoLink.start()
-            // Re-validate identity, state, and intent: a disable or a
-            // disconnect/reconnect cycle during bring-up must not leave
-            // a stray attempt running (stop() never callbacks, silent).
-            synchronized(this) {
-                if (mConnection !== connection || mConnectionState != ConnectionState.CONNECTED ||
-                    !mScoRequested
-                ) {
-                    scoLink.stop()
-                    return false
-                }
-            }
-            return true
-        }
-        return false
+        return route.retrySco()
     }
 
     open fun isConnectionEstablished(): Boolean {
@@ -850,32 +683,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             wakeLock.acquire()
         }
 
-        try {
-            val voice = updateRouteBuilder()
-            // See funnel: only our own claimed hold implicates us in any
-            // system SCO raised during it.
-            val syncClaimedHold = mModeHold is ModeHold.Claimed
-            applyVoiceMode(voice)
-            createAudioHandler()
-            if (!voice) {
-                counterUnrequestedSystemSco(syncClaimedHold)
-            } else if (!mScoRouteActive && !mMediaRouteSelected) {
-                // Sync landed in voice-by-absence (A2DP still staggering):
-                // arm the same bounded recheck the funnel uses, coalescing
-                // with any funnel-armed one already queued.
-                mSettleAttempts = 0
-                armRouteSettle()
-            }
-        } catch (e: AudioException) {
-            Log.e(TAG, "Audio pipeline creation failed", e)
-            onConnectionWarning(e.message)
-        }
-        updateBluetoothScoRoute()
-        // First creation bypasses the funnel: push route-dependent audio
-        // (cues, proximity) explicitly so an A2DP-attached first connect
-        // does not leave them on the voice stream until the next flap.
-        onAudioRouteChanged()
-        mCallbacks.onAudioRouteChanged()
+        // Route application (mode, pipeline, SCO, cues) lives in the
+        // controller; pipeline errors are reported via onPipelineError.
+        // First creation bypasses the funnel but still pushes
+        // route-dependent audio explicitly (see controller).
+        route.onSessionStarted()
 
         mCallbacks.onConnected()
     }
@@ -914,23 +726,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         mAudioHandler = null
         mVoiceTargetId = 0
         mWhisperTargetList.clear()
-        // Media decision goes stale here (teardown clears SCO only; the next
-        // funnel recomputes): refresh from a live query so gap observers see
-        // truth (A2DP still attached reads media) instead of a forced value.
-        // Under the group monitor like every other route write; the query
-        // itself (binder IPC) runs outside it.
-        val liveMedia = queryMediaDevicesPresent()
-        synchronized(this) {
-            mMediaRouteSelected = liveMedia
-        }
-
-        // Never leak the SCO link across disconnects: the next sync re-arms
-        // it via updateBluetoothScoRoute when still requested.
-        stopScoWithNotify()
-        releaseVoiceMode()
-        // No live call remains for a settle recheck to recover.
-        cancelRouteSettle()
-        mSettleAttempts = 0
+        // Route teardown (media refresh, SCO release, mode release, settle
+        // cancel) lives in the controller.
+        route.onSessionEnded()
 
         mCallbacks.onDisconnected(e)
     }
@@ -1060,50 +858,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         reconnectJob = launchedReconnect
     }
 
-    /**
-     * Stops SCO and clears the confirmed-route flag, emitting route-change
-     * notifications when a live link was up. stop() itself never callbacks,
-     * so synchronous teardowns must notify explicitly or volume, cues, and
-     * menu state strand on the voice route. Only the confirmed-flag/builder
-     * section holds the service monitor (serialized with applyScoRoute and
-     * the route builder group); manager IPC and the posted notify stay
-     * outside so the lock never pins across slow work. Media selection is
-     * left for the next funnel recompute, which owns it.
-     */
-    private fun stopScoWithNotify() {
-        val scoLink = mScoLink ?: return
-        val wasActive = scoLink.isActive()
-        scoLink.stop()
-        synchronized(this) {
-            mAudioBuilder.setScoEnabled(false)
-            mScoRouteActive = false
-        }
-        if (wasActive) {
-            // Posted: teardown callers (disconnect, destroy, mid-call disable)
-            // may run off the main thread, but hook and observers are
-            // main-thread confined. Posting also orders the event after the
-            // synchronous disable-path pipeline reload.
-            lifecycleScope.launch {
-                if (mDestroyed) {
-                    return@launch
-                }
-                if (mScoLink?.isActive() == true) {
-                    // Re-connected since teardown queued: fresh callbacks
-                    // own the UI; a stale false must not overwrite them.
-                    return@launch
-                }
-                if (mScoRouteActive) {
-                    // A newer link confirmed while this teardown was
-                    // queued (bring-up won the race after our flag flip):
-                    // its own connected-notify carries the truth.
-                    return@launch
-                }
-                onAudioRouteChanged()
-                mCallbacks.onBluetoothScoChanged(false)
-            }
-        }
-    }
-
+    
     /**
      * Invoked on the main thread after every confirmed audio-route change
      * (SCO or media-sink), after the pipeline reload. Subclasses override to
@@ -1114,464 +869,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     protected open fun onAudioRouteChanged() {
     }
 
-    /**
-     * Holds MODE_IN_COMMUNICATION for the voice route. Called before every
-     * pipeline creation so capture-side effects attach into an already-coupled
-     * HAL loop, never while the pipeline runs. Recreate-safe: re-holding an
-     * already-claimed mode is idempotent and never re-saves. A pre-held mode
-     * (phone call, concurrent SCO bring-up) stays Released, so release below
-     * never clears someone else's mode; the next voice pass retries the claim.
-     */
-    @Synchronized
-    private fun ensureVoiceMode() {
-        if (!mAudioPlatform.hasManager || mModeHold is ModeHold.Claimed) {
-            return
-        }
-        try {
-            val mode = mAudioPlatform.mode
-            // Externally held (phone call setup or another app): claim
-            // nothing and change nothing. Deliberately stays Released so the
-            // next voice pass retries the claim — recording a hold here
-            // would starve the voice route of IN_COMM after the external
-            // holder lets go (no release path re-arms a marker that was
-            // never a real hold).
-            if (mode == AudioManager.MODE_IN_COMMUNICATION) {
-                Log.i(TAG, "VoIP mode already held, not claiming")
-                return
-            }
-            // A genuine cellular call owns the audio path: never steal
-            // MODE_IN_CALL either, for the same liveness reason.
-            if (mode == AudioManager.MODE_IN_CALL) {
-                Log.i(TAG, "Cellular call active, not claiming voice mode")
-                return
-            }
-            mAudioPlatform.mode = AudioManager.MODE_IN_COMMUNICATION
-            mModeHold = ModeHold.Claimed(mode)
-            Log.i(TAG, "VoIP mode held (was $mode)")
-        } catch (e: Exception) {
-            Log.w(TAG, "VoIP mode hold failed", e)
-        }
-    }
+    
+    
+    
+    
+    
+    
+    
 
-    /**
-     * Releases a claimed voice mode. A Released hold (including a pre-held
-     * mode we never claimed) is never touched, and a claimed one is only
-     * restored while our IN_COMM is still current, so a phone call or another
-     * app that moved it since is never clobbered.
-     */
-    @Synchronized
-    private fun releaseVoiceMode() {
-        val hold = mModeHold
-        if (!mAudioPlatform.hasManager || hold !is ModeHold.Claimed) {
-            return
-        }
-        mModeHold = ModeHold.Released
-        try {
-            if (mAudioPlatform.mode == AudioManager.MODE_IN_COMMUNICATION) {
-                mAudioPlatform.mode = hold.savedMode
-                Log.i(TAG, "VoIP mode released (restored ${hold.savedMode})")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "VoIP mode release failed", e)
-        }
-    }
-
-    /**
-     * Applies a confirmed route to the pipeline, cue hook, and observers in
-     * that order. All route callbacks (SCO, media-sink) converge here via
-     * applyAudioRoute below; this entry keeps the SCO-specific observer push
-     * truthful while the route push carries output-routing state. Skips
-     * everything when the confirmed SCO state is unchanged (e.g. a failure
-     * that never went active); the failure toast is the caller's job.
-     * Only the confirmed-flag flip holds the service monitor (serialized
-     * with the teardown path); the funnel, IPC, and fan-out below run
-     * outside it so a slow HAL never pins the disconnect path.
-     */
-    private fun applyScoRoute(active: Boolean, reason: String) {
-        val logUnchanged: Boolean
-        synchronized(this) {
-            if (active == mScoRouteActive) {
-                // Log outside the block below: keep the critical section to
-                // the flip alone.
-                logUnchanged = true
-            } else {
-                mScoRouteActive = active
-                logUnchanged = false
-            }
-        }
-        if (logUnchanged) {
-            Log.i(TAG, "SCO route unchanged, skipping reload ($reason).")
-            return
-        }
-        applyAudioRoute(reason, false)
-        // Re-validate: a teardown racing this route may have flipped the
-        // flag while the funnel ran; its own notify carries the newer state.
-        synchronized(this) {
-            if (active != mScoRouteActive) {
-                return
-            }
-        }
-        mCallbacks.onBluetoothScoChanged(active)
-    }
-
-    /**
-     * Debounced device-listener entry: attach/detach flurries converge into
-     * one route application instead of one pipeline recreate per event.
-     */
-    private fun onRouteDevicesChanged() {
-        routeDebounceJob?.cancel()
-        val launchedDebounce = lifecycleScope.launch {
-            delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
-            applyAudioRoute("device route changed", false)
-        }
-        launchedDebounce.invokeOnCompletion {
-            if (routeDebounceJob === launchedDebounce) routeDebounceJob = null
-        }
-        routeDebounceJob = launchedDebounce
-    }
-
-    /**
-     * Synchronous media-sink presence: BT A2DP / BLE / wired-USB headset
-     * outputs currently attached (minSdk 30: audio-device APIs are API 23,
-     * always present).
-     * (voice). BLE/LE Audio and hearing aids ride the media path like A2DP
-     * per the echo-cancellation plan (accepted gap: no AEC there); only the
-     * SCO path ever selects voice over Bluetooth.
-     */
-    private fun queryMediaDevicesPresent(): Boolean {
-        if (!mAudioPlatform.hasManager) return false
-        try {
-            val outputs = mAudioPlatform.getOutputDevices()
-                ?: return false
-            val seen = StringBuilder()
-            var found = false
-            for (device in outputs) {
-                if (device == null) {
-                    continue
-                }
-                val type = device.type
-                if (seen.isNotEmpty()) {
-                    seen.append(',')
-                }
-                seen.append(type)
-                when (type) {
-                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                    AudioDeviceInfo.TYPE_BLE_HEADSET,
-                    AudioDeviceInfo.TYPE_BLE_SPEAKER,
-                    AudioDeviceInfo.TYPE_HEARING_AID,
-                    AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-                    AudioDeviceInfo.TYPE_USB_HEADSET,
-                    AudioDeviceInfo.TYPE_USB_DEVICE ->
-                        found = true
-                    else -> {}
-                }
-            }
-            // INFO, not DEBUG: recomputes are rare (edges/settings/sync) and
-            // this line settles every "was A2DP visible?" question in the field.
-            Log.i(TAG, "Media-sink query: outputs=[$seen] media=$found")
-            return found
-        } catch (e: Exception) {
-            Log.w(TAG, "Media-sink query failed", e)
-        }
-        return false
-    }
-
-    /**
-     * Pushes the current route decision into the builder: voice flag, SCO
-     * flag, and effective source/stream. Voice keeps the handset-derived
-     * stream (earpiece vs speakerphone intent); media is always MIC/MUSIC.
-     * Returns the applied voice decision for mode handling by the caller.
-     * The device query runs outside the monitor (binder IPC); only the
-     * flag/builder group below holds it, mutually exclusive with the
-     * teardown write in stopScoWithNotify.
-     */
-    private fun updateRouteBuilder(): Boolean {
-        val mediaPresent = queryMediaDevicesPresent()
-        synchronized(this) {
-            return updateRouteBuilderLocked(mediaPresent)
-        }
-    }
-
-    /** Route decision + builder group; caller holds the service monitor. */
-    private fun updateRouteBuilderLocked(mediaPresent: Boolean): Boolean {
-        val sco = mScoRouteActive
-        val media = !sco && mediaPresent
-        mMediaRouteSelected = media
-        val voice = computeVoiceRoute(sco, media)
-        mAppliedVoiceRoute = voice
-        mAudioBuilder.setScoEnabled(sco)
-        mAudioBuilder.setVoiceRouteEnabled(voice)
-        if (voice) {
-            mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            mAudioBuilder.setAudioStream(if (sco) AudioManager.STREAM_VOICE_CALL else mHandsetAudioStream)
-        } else {
-            mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            mAudioBuilder.setAudioStream(AudioManager.STREAM_MUSIC)
-        }
-        return voice
-    }
-
-    private fun applyVoiceMode(voice: Boolean) {
-        if (voice) {
-            ensureVoiceMode()
-        } else {
-            releaseVoiceMode()
-        }
-    }
-
-    /**
-     * Single funnel for every live route change: recomputes the decision,
-     * holds or releases the voice mode around pipeline creation (mode first,
-     * capture after, per the HAL coupling requirement), then refreshes cues
-     * and observers. Skips the reload when the applied route is unchanged
-     * unless forceReload (settings path) demands it.
-     */
-    private fun applyAudioRoute(reason: String, forceReload: Boolean, settle: Boolean = false) {
-        // Snapshot outside the group lock: all funnel callers are main-Looper
-        // confined (device recompute, settings, SCO callbacks, posted sync),
-        // so no concurrent funnel rewrite is expected; a surprise concurrent
-        // rewrite would at worst cause one redundant idempotent reload.
-        // Settle edges pass settle=true; every other caller is a fresh edge
-        // (settle=false). Fresh edges never cancel outstanding protection
-        // here — arming below re-posts when still uncovered.
-        val before = mAppliedVoiceRoute
-        val voice = updateRouteBuilder()
-        // Capture before applyVoiceMode clears it: did WE hold the mode for
-        // the episode now ending? Only our own claimed hold implicates us in
-        // any system SCO raised during it (see counter method below).
-        val wasClaimedHold = mModeHold is ModeHold.Claimed
-        if (mConnectionState == ConnectionState.CONNECTED) {
-            applyVoiceMode(voice)
-            if (!voice) {
-                // Media won: clear foreign SCO BEFORE (re)creating the
-                // pipeline so no media lifetime starts while HFP is up.
-                counterUnrequestedSystemSco(wasClaimedHold)
-            }
-        } else {
-            // Disconnected (or never connected): device attach/detach must
-            // not re-acquire global IN_COMM with no pipeline and no call.
-            // The next sync re-holds via onConnectionSynchronized.
-            releaseVoiceMode()
-        }
-        val audioHandler = mAudioHandler
-        if ((forceReload || voice != before) && audioHandler != null && audioHandler.isInitialized() &&
-            mConnectionState == ConnectionState.CONNECTED
-        ) {
-            try {
-                createAudioHandler()
-                Log.i(TAG, "$reason; audio pipeline recreated (" + (if (voice) "voice" else "media") + ").")
-            } catch (e: AudioException) {
-                Log.e(TAG, "Route-change audio reload failed", e)
-                onConnectionWarning(e.message)
-            }
-        }
-        val routeChanged = forceReload || voice != before
-        if (routeChanged) {
-            onAudioRouteChanged()
-            mCallbacks.onAudioRouteChanged()
-        }
-        // Else: unchanged route — observers query live state on demand and
-        // the SCO bit has its own direct emit, so skip the heavy cue rebuild
-        // (SoundPool/proximity) on every irrelevant device edge.
-        val voiceByAbsence = voice && !mScoRouteActive && !mMediaRouteSelected
-        val liveCall = mConnectionState == ConnectionState.CONNECTED
-        if (voiceByAbsence && liveCall && (!settle || mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
-            // Fresh edge (!settle, entering or already-voice) or budgeted
-            // settle follow-up: exactly one check queued. Fresh edges reset
-            // the budget — each real BT change deserves full cover; settle
-            // runs consume it.
-            if (!settle) {
-                mSettleAttempts = 0
-            } else {
-                mSettleAttempts += 1
-            }
-            armRouteSettle()
-        } else if (!voiceByAbsence || !liveCall) {
-            cancelRouteSettle()
-            mSettleAttempts = 0
-        }
-        // Else (settle budget exhausted): rest without cover until a fresh
-        // edge re-arms.
-    }
-
-    /**
-     * Tears down system-raised SCO audio that our transient voice hold may
-     * have triggered. When HFP attaches during a voice-by-absence window,
-     * the platform auto-establishes SCO (IN_COMM reads as an active call)
-     * even though SCO was never requested — and that link persists after we
-     * release the mode and flip to media, stranding the user on HFP instead
-     * of A2DP. Runs only when leaving a claimed hold for media with SCO
-     * unrequested and system SCO currently on; never touches our own
-     * confirmed SCO, and never runs while disconnected. Skipped during a
-     * genuine cellular call (MODE_IN_CALL): carrier SCO is never ours to
-     * tear down. That check is racy in principle; accepted against the
-     * certain stranding it repairs.
-     */
-    private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean) {
-        if (!mAudioPlatform.hasManager) return
-        if (!wasClaimedHold || mScoRequested || mScoRouteActive) {
-            return
-        }
-        if (mConnectionState != ConnectionState.CONNECTED) {
-            return
-        }
-        try {
-            if (mAudioPlatform.mode == AudioManager.MODE_IN_CALL) {
-                return
-            }
-        } catch (e: Exception) {
-            return
-        }
-        if (!isSystemScoOn()) {
-            return
-        }
-        try {
-            // Mirror our manager's own release: the communication-device
-            // path on S+ (where legacy stop is unreliable against a
-            // device-path selection), legacy stop below on 30.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                mAudioPlatform.clearCommunicationDevice()
-            } else {
-                // Stop-then-clear, mirroring the manager's own release:
-                // stopping first tears down the link, clearing the routing
-                // flag second matches the documented start order in reverse.
-                try {
-                    mAudioPlatform.stopBluetoothSco()
-                } catch (ignored: Exception) {
-                    Log.w(TAG, "Unrequested SCO stop threw", ignored)
-                }
-                try {
-                    mAudioPlatform.bluetoothScoOn = false
-                } catch (ignored: Exception) {
-                    Log.w(TAG, "Unrequested SCO routing clear threw", ignored)
-                }
-            }
-            Log.i(TAG, "Cleared unrequested system SCO after media flip")
-        } catch (e: Exception) {
-            Log.w(TAG, "Unrequested SCO clear failed", e)
-        }
-    }
-
-    /**
-     * Whether platform SCO audio is currently up, independent of our manager.
-     * S+ reads the communication device; 30 falls back to the legacy SCO flag.
-     */
-    private fun isSystemScoOn(): Boolean {
-        if (!mAudioPlatform.hasManager) return false
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val info = mAudioPlatform.getCommunicationDevice()
-                return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-            }
-            return mAudioPlatform.bluetoothScoOn
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    /** One-line field diagnostic: which device types an edge carried. */
-    private fun logDeviceTypes(edge: String, devices: Array<AudioDeviceInfo>?) {
-        if (devices == null) {
-            Log.i(TAG, "Route devices $edge: none")
-            return
-        }
-        val types = StringBuilder()
-        for (device in devices) {
-            if (types.isNotEmpty()) {
-                types.append(',')
-            }
-            types.append(device?.type ?: -1)
-        }
-        Log.i(TAG, "Route devices $edge: [$types]")
-    }
-
-    /**
-     * Starts or stops SCO bring-up to match the requested toggle and the
-     * connection state. Safe to call redundantly: the manager ignores
-     * start requests while starting or active, and stop is idempotent.
-     */
-    private fun updateBluetoothScoRoute() {
-        val scoLink = mScoLink ?: return
-        if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
-            scoLink.start()
-        } else if (!scoLink.isIdle()) {
-            // Skip the platform round-trip when already idle; stop() is safe
-            // but needlessly releases and bumps the callback generation.
-            scoLink.stop()
-        }
-    }
-
-    /**
-     * Starts a requested-but-idle SCO bring-up when an HFP device attaches
-     * mid-call. Bring-up otherwise only runs at sync and on toggle changes,
-     * so a headset powered on later (e.g. after an earlier NO_DEVICE
-     * failure) would never establish SCO until the next toggle. Runs only
-     * from IDLE while requested and connected; the manager itself drops
-     * duplicate starts, and failure still reports through the normal toast.
-     * Runs on the main Looper (device callback thread).
-     *
-     * <p>Trigger coverage: a classic-HFP SCO entry in the added array is
-     * the fast path. Some HALs surface HFP only via A2DP-then-nothing (or
-     * stagger it past the callback), so any Bluetooth output add also
-     * polls the manager's own availability query before giving up — the
-     * same query bring-up itself uses pre-audio. LE Audio rides the media
-     * path by design and needs no trigger. Device callbacks exist on all
-     * supported devices (minSdk 30): sync and toggle paths still cover those
-     * devices, late power-on does not.
-     *
-     * <p>Each triggering edge may re-toast on persistent failure
-     * (permission denied, no device): accepted as edge-driven feedback.
-     */
-    private fun maybeStartRequestedSco(added: Array<AudioDeviceInfo>?) {
-        // Main-serialized with the toggle path (both main-Looper) with
-        // volatile reads; unlike binder-originated retryBluetoothSco this
-        // needs no snapshot block, only the post-start re-validation below.
-        val scoLink = mScoLink
-        if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || scoLink == null) {
-            return
-        }
-        if (!scoLink.isIdle()) {
-            return
-        }
-        if (added == null) {
-            return
-        }
-        var scoInAdded = false
-        var anyBtInAdded = false
-        for (device in added) {
-            if (device == null) {
-                continue
-            }
-            when (device.type) {
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
-                    scoInAdded = true
-                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                AudioDeviceInfo.TYPE_BLE_HEADSET,
-                AudioDeviceInfo.TYPE_BLE_SPEAKER ->
-                    anyBtInAdded = true
-                else -> {}
-            }
-        }
-        // Fast path: HFP surfaced directly. Fallback: any BT add with an
-        // SCO device actually available (A2DP-first stagger, quiet HALs).
-        // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
-        if (!scoInAdded && !(anyBtInAdded && scoLink.isScoDeviceAvailable())) {
-            return
-        }
-        Log.i(TAG, "Bluetooth headset attached with SCO requested; starting bring-up")
-        val connection = mConnection
-        updateBluetoothScoRoute()
-        // A disconnect may have raced us (state still reads CONNECTED
-        // until the async teardown flips it): mirror the retry
-        // re-validation so a stale start cannot outlive teardown.
-        if (mConnection !== connection || mConnectionState != ConnectionState.CONNECTED ||
-            !mScoRequested
-        ) {
-            scoLink.stop()
-        }
-    }
-
+    
+    
+    
+    
+    
+    
     /**
      * Instantiates an audio handler with the current service settings, destroying any previous
      * handler. Requires synchronization with the server, as the maximum bandwidth and session must
@@ -1638,7 +949,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * Loads all defined settings from the given delta into the HumlaService.
      * Null fields are unchanged. Some settings may only take effect after a
      * reconnect. Throws IllegalArgumentException on unknown transmit mode;
-     * the pipeline recreate funnels through applyAudioRoute, which handles
+     * the pipeline recreate funnels through the route controller, which handles
      * AudioException internally.
      * @param delta A one-shot configuration command.
      * @return true if a reconnect is required for changes to take effect.
@@ -1719,7 +1030,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // pipeline creation, so mid-call toggles apply on recreate.
             // Funnel-only: no direct builder write here (it would be
             // overwritten by the reload below anyway).
-            mHandsetAudioStream = audioStream
+            route.setHandsetStream(audioStream)
         }
         val framesPerPacket = delta.framesPerPacket
         if (framesPerPacket != null) {
@@ -1768,15 +1079,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // callback reloads once more on confirm); the connect-time
             // bundle never reloads here since no handler exists yet.
             suppressReload = !delta.hasOtherAudioKeys() &&
-                (requested || !mScoRequested)
-            mScoRequested = requested
+                (requested || !route.isScoRequested())
+            route.setScoRequested(requested)
             if (!requested) {
                 // Synchronous teardown with notifications: stop() itself never
                 // callbacks, and the generic reload below only refreshes the
                 // pipeline, not observers or cue audio.
-                stopScoWithNotify()
+                route.stopScoWithNotify()
             }
-            updateBluetoothScoRoute()
+            route.updateScoRoute()
         }
         if (delta.localMuteHistory != null) {
             mLocalMuteHistory = delta.localMuteHistory?.toList()
@@ -1800,7 +1111,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         if (!suppressReload && audioHandler != null && audioHandler.isInitialized() &&
             mConnectionState == ConnectionState.CONNECTED
         ) {
-            applyAudioRoute("settings changed", true)
+            route.onFunnel("settings changed", true)
             Log.i(TAG, "Audio subsystem reloaded after settings change.")
         }
         return reconnectNeeded

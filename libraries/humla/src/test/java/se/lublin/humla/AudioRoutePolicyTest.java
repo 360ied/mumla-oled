@@ -18,9 +18,10 @@
 package se.lublin.humla;
 
 import junit.framework.TestCase;
+import se.lublin.humla.audio.AudioRouteController;
 
 /**
- * Pins the pure audio-route truth table in {@link HumlaService}.
+ * Pins the pure audio-route truth table in {@link AudioRouteController}.
  * Confirmed SCO forces the voice triple (voice source/mode/usage for
  * platform AEC); otherwise a present media sink (BT A2DP / wired headset)
  * selects the media path, and its absence keeps voice.
@@ -34,21 +35,21 @@ public class AudioRoutePolicyTest extends TestCase {
 
     public void testPhoneAloneStaysVoice() {
         assertTrue("No SCO and no media sink must stay voice",
-                HumlaService.computeVoiceRoute(false, false));
+                AudioRouteController.computeVoiceRoute(false, false));
     }
 
     public void testScoForcesVoiceWithoutMediaSink() {
         assertTrue("Confirmed SCO must select voice",
-                HumlaService.computeVoiceRoute(true, false));
+                AudioRouteController.computeVoiceRoute(true, false));
     }
 
     public void testScoForcesVoiceOverMediaSink() {
         assertTrue("Confirmed SCO must win over a present media sink",
-                HumlaService.computeVoiceRoute(true, true));
+                AudioRouteController.computeVoiceRoute(true, true));
     }
 
     public void testMediaSinkWithoutScoSelectsMedia() {
         assertFalse("A present media sink without SCO must select media",
-                HumlaService.computeVoiceRoute(false, true));
+                AudioRouteController.computeVoiceRoute(false, true));
     }
 }
