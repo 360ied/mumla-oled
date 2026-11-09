@@ -70,12 +70,16 @@ HumlaConnection.HumlaConnectionListener, HumlaLogger`. The `AudioHandler` and
 (`mAudioInputListener`, `mAudioOutputListener`), not supertypes.
 
 The class is also a **base class**: `MumlaService` in the app module extends
-it. `MumlaService` overrides `onAudioRouteChanged()` (a `protected open` hook
-inside the route code), `onConnectionSynchronized()`,
+it. The route/lifecycle-relevant overrides are `onAudioRouteChanged()` (a
+`protected open` hook inside the route code), `onConnectionSynchronized()`,
 `onConnectionDisconnected()`, `buildConnectDelta()`, `onStartCommand()`,
-`cancelReconnect()`, and the text-message senders, and it calls `apply()`,
-`isMediaRouteActive()`, and `isBluetoothScoActive()`. Every extraction below
-has to keep that inheritance contract intact.
+`onCreate()`, `onBind()`, `onDestroy()`, `onConfigurationChanged()`,
+`onSettingChanged()`, `cancelReconnect()`, the text-message senders, and the
+`@Synchronized` chat-log methods `getMessageLog()` / `clearMessageLog()` (which
+matter for the §3.3 lock-contention argument), and it calls `apply()`,
+`isMediaRouteActive()`, and `isBluetoothScoActive()`. The full override list is
+longer (talk-key, mute, overlay, notification helpers); the route/lifecycle
+subset above is what every extraction below has to keep intact.
 
 ## 2. Where the lines and state actually sit
 
@@ -163,7 +167,7 @@ permission-denied branch with no other UI path (§3.5).
 | inputs (from `apply`) | `mScoRequested`, `mHandsetAudioStream` | 2 fields |
 | platform references | `mAudioManager`, `mScoManager`, `mDeviceCallback` | 3 fields (become ports) |
 | observation | `mScoRouteActive` (confirmed SCO link) | 1 field |
-| applied decision | `mMediaRouteSelected`, `mAppliedVoiceRoute` | 1 enum: `VOICE_SCO` / `VOICE_HANDSET` / `MEDIA` |
+| applied decision | `mMediaRouteSelected`, `mAppliedVoiceRoute` | 1 enum after slice 7: `VOICE_SCO` / `VOICE_HANDSET` / `MEDIA` |
 | voice-mode ownership | `mVoiceModeHeld`, `mVoiceModeClaimed`, `mSavedAudioMode` | 1 sealed type: `Released` / `Claimed(savedMode)` |
 | settle recheck | `mSettleAttempts`, `mSettleFired`, `mSettlePending`, `routeSettleJob` | attempts + job |
 | debounce | `routeDebounceJob` | 1 field |
@@ -201,12 +205,12 @@ Around them sit two inputs and one observation.
 
 "Apply the current route" happens in four places, each a partial copy:
 
-| site | decision | voice mode | foreign-SCO counter | pipeline | notify | settle |
-|---|---|---|---|---|---|---|
-| `applyAudioRoute` (funnel) | ✓ | ✓ | **before** pipeline | if changed | if changed | arm / cancel / budget |
-| `onConnectionSynchronized` | ✓ | ✓ | **after** pipeline | always | always | arm only, no budget |
-| `onConnectionDisconnected` | raw query | release | — | shutdown | — | cancel |
-| `onDestroy` | reset | release | — | — | — (deliberate) | cancel |
+| site | decision | voice mode | foreign-SCO counter | pipeline | notify | settle | lock |
+|---|---|---|---|---|---|---|---|
+| `applyAudioRoute` (funnel) | ✓ | ✓ | **before** pipeline | if changed | if changed | arm / cancel / budget | service monitor |
+| `onConnectionSynchronized` | ✓ | ✓ | **after** pipeline | always | always | arm only, no budget | service monitor |
+| `onConnectionDisconnected` | raw query | release | — | shutdown | — | cancel | service monitor (conn thread) |
+| `onDestroy` | reset | release | — | — | — (deliberate) | cancel | service monitor (shared with `MumlaService` chat-log nulling) |
 
 The funnel's comment (L1374–1376) states the ordering rule: clear foreign
 SCO *before* creating a media pipeline. The sync copy creates the pipeline
@@ -257,7 +261,7 @@ only CONNECTING:
 The last item is not route state. Whatever fixes this has to end the whole
 old session, pipeline included, not only the route.
 
-**Reachability.** The in-app UI never takes this path.
+**Reachability.** The Mumla OLED in-app UI never takes this path.
 `MumlaActivity.connectToServerWithPerm()` turns a tap on another server
 while connected into a switch dialog. The dialog calls `disconnect()` and
 reconnects only from the resulting `onDisconnected` callback, so the old
@@ -275,7 +279,8 @@ infers from a callback the connection machine may legitimately discard.
 
 ### 3.5 The `Toast` is a missing observer event
 
-`onScoFailed` (L542–554, inside `onCreate`) shows
+`onScoFailed` (`HumlaService.kt` L543–554, in the SCO listener created in
+`onCreate`) shows
 `R.string.bluetooth_sco_permission` when the reason is
 `BluetoothScoManager.REASON_PERMISSION`, and `R.string.bluetooth_sco_failed`
 otherwise. The permission message is the only place the user learns that
@@ -319,8 +324,17 @@ carrier calls, overcome in place.
 ## 4. Target design: `AudioRouteController`
 
 One class in `se.lublin.humla.audio` owns all route state and all route
-choreography. `HumlaService` owns an instance, feeds it events, and forwards
-three API members to it.
+choreography. New files (all in
+`libraries/humla/src/main/java/se/lublin/humla/audio/`):
+`AudioRouteController.kt` (controller + `Host` + `RouteEvent` + `AppliedRoute`
++ `ModeHold`), `AudioPlatform.kt` (platform port), `ScoLink.kt` (SCO port).
+Controller tests live in `libraries/humla/src/test/` (plain JVM + fakes +
+`TestScope`; no Robolectric, no shadows). `HumlaService` owns one instance,
+feeds it events, and forwards three API members to it. `internal` visibility
+is safe: the controller never leaks into the `MumlaService` override
+signature — `MumlaService` keeps overriding the `protected open`
+`onAudioRouteChanged()` hook on the service, which the `Host`
+implementation calls before fanning out to `mCallbacks`.
 
 ```kotlin
 internal class AudioRouteController(
@@ -331,20 +345,21 @@ internal class AudioRouteController(
     private val host: Host,
 ) {
     interface Host {
-        val isLive: Boolean              // connection state == CONNECTED
-        val sessionToken: Int            // connectionGeneration; replaces connection
+        val isLive: Boolean              // synchronized == CONNECTED (not merely TCP connected)
+        val sessionToken: Int            // connectionGeneration snapshot, delivered under the controller lock
                                          // identity checks in retry/attach re-validation
-        fun hasLivePipeline(): Boolean
-        fun recreatePipeline()           // createAudioHandler(); may throw AudioException
-        fun onRouteChanged()             // subclass hook, then mCallbacks fan-out
-        fun onScoChanged(active: Boolean)
-        fun onScoFailed(reason: String?) // replaces the Toast (§3.5)
+        fun hasLivePipeline(): Boolean   // mAudioHandler != null
+        fun recreatePipeline()           // createAudioHandler(); may throw AudioException —
+                                         // caller catches, logs via onConnectionWarning, keeps old pipeline
+        fun onRouteChanged()             // subclass hook, then mCallbacks fan-out; main thread, hook first
+        fun onScoChanged(active: Boolean) // existing onBluetoothScoChanged fan-out, unchanged ordering
+        fun onBluetoothScoFailed(reason: String?) // replaces the Toast (§3.5); same name as slice 2
     }
 
     fun setScoRequested(requested: Boolean)   // inputs from apply()
     fun setHandsetStream(stream: Int)
     fun onEvent(event: RouteEvent)            // the single funnel
-    fun decision(): RouteDecision             // pushed into AudioHandler.Builder
+    fun decision(): AppliedRoute              // pushed into AudioHandler.Builder
     val isMediaRouteActive: Boolean
     val isScoActive: Boolean
     fun retrySco(): Boolean
@@ -352,7 +367,13 @@ internal class AudioRouteController(
 
 sealed interface RouteEvent {
     data object SessionStarted : RouteEvent
+    // Route teardown runs even when a reconnect is already scheduled (today
+    // stopScoWithNotify + releaseVoiceMode + cancelRouteSettle run with
+    // reconnect==true). isLive stays CONNECTED-only; there is no separate
+    // reconnect event by design — the gap between sessions has no route.
     data object SessionEnded : RouteEvent       // disconnect callback AND superseding connect()
+    // Removal is intentionally payload-free: only the add path uses the array
+    // (maybeStartRequestedSco); both callbacks converge into one recompute.
     data class DevicesChanged(val added: Array<AudioDeviceInfo>?) : RouteEvent
     data class ScoLinkChanged(val active: Boolean) : RouteEvent
     data class SettingsChanged(val reload: Boolean) : RouteEvent // decided by apply()
@@ -377,14 +398,25 @@ Design constraints:
   `isMediaRouteActive()`, and `retryBluetoothSco()` become one-line
   forwards.
 - **Ports, not Android types, at the seam.** `AudioPlatform` wraps the
-  eight `AudioManager` methods the route code uses, including the
-  `Build.VERSION` S+ split for the communication device. `ScoLink` is an
-  interface that `BluetoothScoManager` implements. Both get trivial fakes,
-  so the controller is testable on the JVM with `kotlinx-coroutines-test`.
-  That library is already a `:libraries:humla` test dependency.
+  `AudioManager` surface the route code touches: `mode` get/set,
+  `getDevices(GET_DEVICES_OUTPUTS)`, `registerAudioDeviceCallback` /
+  `unregisterAudioDeviceCallback`, `communicationDevice` get (S+) /
+  `isBluetoothScoOn` get/set (legacy), `clearCommunicationDevice` (S+),
+  `stopBluetoothSco` (legacy). The S+ vs legacy split stays inside the
+  production implementation. `ScoLink` is a new interface extracted from
+  `BluetoothScoManager`'s public surface (`start()` / `stop()` / `destroy()`
+  / `isIdle()` / `isActive()` / `isScoDeviceAvailable()`); slice 3 creates
+  the interface and retrofits `BluetoothScoManager` to implement it (it
+  currently has no supertype), keeping its `Dispatchers.Main.immediate`
+  timeout scope and constructor inside the manager. Both ports get trivial
+  fakes, so the controller is testable on the JVM with
+  `kotlinx-coroutines-test`. That library is already a
+  `:libraries:humla` test dependency.
 - **Route decides; the builder carries it.** Today route writes four
-  `AudioHandler.Builder` fields under the service monitor. In the target,
-  `createAudioHandler()` pushes `route.decision()` into the builder
+  `AudioHandler.Builder` fields under the service monitor (`scoEnabled`,
+  `voiceRouteEnabled`, `audioSource`, `audioStream` — see
+  `updateRouteBuilderLocked`). In the target, `createAudioHandler()` pushes
+  `route.decision()` (`AppliedRoute`) into the builder
   immediately before `initialize()`, which is the only point those fields
   are consumed. Builder knobs (bitrate, boost, input mode, frames per
   packet) remain configuration's.
@@ -407,9 +439,13 @@ and one `onEvent` call at each lifecycle edge.
 ## 5. Migration plan
 
 Each slice is a separate, behavior-preserving commit (or short series) with
-`./scripts/check.sh` green. The file absorbs about 1.7 edits a day, so slices
-should be small enough to land between other work, and the big move
-(slice 4) should land in one sitting.
+`./scripts/check.sh` green **plus its own oracle below** (JVM test, device
+smoke, or diff invariant — `check.sh` alone is not done). The file absorbs
+about 1.7 edits a day, so slices should be small enough to land between
+other work, and the big move (slice 4) should land in one sitting. Slice 2
+has no dependency on slices 1/3 and can ship first or in parallel; the
+configuration track is independent of route slices 1–4 and only needs slice
+5's `SettingsChanged(reload)` seam before it lands.
 
 **Slice 1: shrink route state in place.** No moves.
 - Delete `mSettlePending`.
@@ -417,49 +453,75 @@ should be small enough to land between other work, and the big move
   `ModeHold` and delete the dead `!claimed` branch.
 - Replace `mSettleFired` with an explicit trigger parameter on
   `applyAudioRoute`.
-- Fix the stale comments: L195–199, L1135–1137, L239–241, L257–260.
+- Fix the stale comments: `HumlaService.kt` L195–199, L1135–1137, L239–241,
+  L257–260.
 
 Net effect: −4 fields (one deleted, three collapsed into one, one turned
 into a parameter), fewer things to carry across the move. Pure refactor,
-reviewable line by line.
+reviewable line by line. Oracle: `check.sh` green plus zero behavior delta
+(`AudioRoutePolicyTest` green; device smoke: SCO connect/disconnect, wired
+plug/unplug, settings toggle each produce one route recompute in logcat).
 
 **Slice 2: Toast → observer event.**
 - Add `onBluetoothScoFailed(reason: String?)` to `IHumlaObserver`, with a
   no-op in the `HumlaObserver` adapter. Every in-tree observer extends the
-  adapter.
+  adapter. (§4 `Host` uses this same name.)
 - Fan it out through `HumlaCallbacks` from the same point the `Toast` fires
-  today.
-- `MumlaService`'s existing `mObserver` shows the same `Toast` with the same
-  two strings, moved to app resources.
+  today (the `BluetoothScoManager.Listener.onScoFailed` arm in `onCreate`),
+  on the same main-thread posting the `Toast` uses.
+- `MumlaService`'s existing `mObserver` (which already overrides
+  connection/notification methods) adds an `onBluetoothScoFailed` override
+  that shows the same `Toast.LENGTH_LONG` with the same two strings, moved
+  to `app/src/main/res/values/strings.xml` as `bluetooth_sco_failed` /
+  `bluetooth_sco_permission` (copied from the library's default-locale
+  values; `MumlaService` keeps the `REASON_PERMISSION` branch).
 - Remove `android.widget.Toast` and the `R` string usage from
   `HumlaService`.
 
 Behavior is identical, including the accepted re-toast on each failing
-device edge.
+device edge (edges stay coalesced by the existing 300 ms debounce; no extra
+throttle in this slice — file a follow-up if burst spam is observed).
+Oracle: `check.sh` green; device smoke with Bluetooth denied shows the same
+two strings from the app package; `HumlaService` no longer imports
+`android.widget.Toast`.
 
 **Slice 3: ports in place.** No moves.
-- Introduce `AudioPlatform` (the eight `AudioManager` methods route code
-  uses, including the `Build.VERSION` S+ split) and `ScoLink` (implemented
-  by `BluetoothScoManager`).
-- Construct them in `onCreate` and switch every route call site in
+- Create `AudioPlatform.kt` (interface + production `AudioManager` impl) and
+  `ScoLink.kt` (new interface: `start()` / `stop()` / `destroy()` /
+  `isIdle()` / `isActive()` / `isScoDeviceAvailable()`), and retrofit
+  `BluetoothScoManager` to implement `ScoLink` without changing its
+  constructor or timeout scope.
+- Construct both in `onCreate` and switch every route call site in
   `HumlaService` over, one for one.
 
 This is a mechanical substitution, reviewable without understanding the
-route policy. It shrinks the move to come, which is otherwise untested:
-slice 4 then relocates code that already talks only to ports. If cheap
-characterization tests are wanted before the move, write them against the
-ports here, using Robolectric only for the `Service` shell (§3.6).
+route policy (each hunk is one call site, same args, same branching).
+Oracle: `git diff -w` shows call-site renames only; `check.sh` green. It
+shrinks the move to come, which is otherwise untested: slice 4 then
+relocates code that already talks only to ports. If cheap characterization
+tests are wanted before the move, write them against the ports here, using
+Robolectric only for the `Service` shell (§3.6).
 
 **Slice 4: extract `AudioRouteController` as one unit.**
 - Move all remaining route fields, every route member, and the 165
   embedded lines (§2.2) behind the §4 interface, with the existing volatile
-  and lock discipline but on a **private lock object**.
+  and lock discipline but on a **private lock object**. The route monitor
+  group is: `mScoRequested`, `mHandsetAudioStream`, `mScoRouteActive`,
+  `mMediaRouteSelected` / `mAppliedVoiceRoute` (→ `AppliedRoute` in slice 7),
+  `ModeHold` (`mVoiceModeHeld` / `mVoiceModeClaimed` / `mSavedAudioMode`),
+  `mSettleAttempts` + `routeDebounceJob` / `routeSettleJob`, plus the port
+  refs `mAudioManager` / `mScoManager` / `mDeviceCallback` (slice 1 already
+  removed `mSettlePending` and `mSettleFired`).
 - Keep the four choreography copies as four controller methods, still
-  divergent, so the move is mechanical and diffable.
+  divergent, so the move is mechanical and diffable:
+  `onSessionStarted()` (ex-sync), `onFunnel()` (ex-`applyAudioRoute`),
+  `onSessionEnded()` (ex-disconnect), `onDestroyed()` (ex-`onDestroy`).
 
 Hard rule: the route monitor group moves atomically. A half-moved state in
 which some route fields are guarded by the service monitor and others by
-the controller's lock is a data race, not an intermediate step.
+the controller's lock is a data race, not an intermediate step. Oracle:
+`grep -n "synchronized(this)" HumlaService.kt` shows no route fields under
+the service monitor; route-only `git diff --stat` with no behavior delta.
 
 Lock-identity change: route no longer shares a monitor with `MumlaService`'s
 chat log or with `retryBluetoothSco`'s connection snapshot. Neither sharing
@@ -471,42 +533,80 @@ body.
 - `apply()` keeps computing whether to reload, including the SCO-only
   `suppressReload` rule, and passes the result as `SettingsChanged(reload)`.
   The rule reads `delta.hasOtherAudioKeys()`, a fact about the config
-  delta that the controller should not need to see.
+  delta that the controller should not need to see. Truth table the
+  controller implements: `reload=false` → update inputs only, no
+  `recreatePipeline`, still re-evaluate notify; `reload=true + route
+  unchanged` → `recreatePipeline` anyway (bitrate-class reload);
+  `reload=true + route changed` → funnel ordering (foreign-SCO clear before
+  pipeline); connect-time `hasLivePipeline()==false` → record decision for
+  the next `createAudioHandler`, never recreate. `IllegalArgumentException`
+  on unknown input mode and `delta.server==null` / `buildConnectDelta==null`
+  stay in `apply()` — they never reach the controller.
 - `createAudioHandler()` pushes `route.decision()` into the builder.
 - After this slice, no route field or builder route flag is touched outside
-  the controller.
+  the controller. `Host.recreatePipeline()` takes no target args because the
+  decision is already in the controller; the service re-applies the current
+  `mVoiceTargetId` / whisper list to the new `AudioHandler` after each
+  controller-owned recreate (ordering: recreate, then re-push targets).
+  Oracle: `grep -n "mScoRequested\|mHandsetAudioStream\|mAppliedVoiceRoute"`
+  outside the controller returns only the two setter call sites.
 
 **Slice 6: tests.** This is the payoff that justifies the extraction, so
 schedule it immediately after the move and not "later". Use fakes for
-`AudioPlatform` and `ScoLink` and a `TestScope` for virtual time. Minimum
-suite, each case corresponding to a past fix commit:
+`AudioPlatform` and `ScoLink` and a `TestScope` for virtual time. Each bullet
+is a falsifiable oracle (fake assertion + virtual-time advance), not a
+vibe check. Minimum suite, each case corresponding to a past fix commit:
 - the settle budget: at most two rechecks per episode, a fresh edge resets
-  it, and settle runs consume it;
-- debounce: a burst of device edges produces exactly one recompute;
+  it, and settle runs consume it (assert exactly N `recreatePipeline` calls
+  per episode via fake `Host`);
+- debounce: a burst of device edges produces exactly one recompute (advance
+  300 ms once, count funnel entries);
 - mode hold: never claims over `MODE_IN_COMMUNICATION` or `MODE_IN_CALL`,
-  and restores the saved mode only while ours is still current;
+  and restores the saved mode only while ours is still current (fake
+  `AudioPlatform.mode` sequence assertion);
 - the foreign-SCO counter: fires only after our claimed hold, with SCO
   unrequested and confirmed SCO down, never during `MODE_IN_CALL`, and
-  clears before the media pipeline is created;
+  clears before the media pipeline is created (assert clear-before-create
+  ordering in fake);
 - the teardown race: a queued SCO-false notify is suppressed once a newer
   link confirms;
-- `retrySco` re-validation across a session-token change.
+- `retrySco` re-validation across a session-token change (stale token is a
+  no-op);
+- platform edges: `AudioManager==null`, `getDevices` null/throws → `false`,
+  `register`/`unregisterAudioDeviceCallback` throws, `mode` get/set throws,
+  `isScoDeviceAvailable` false → `REASON_NO_DEVICE` re-toast path;
+- device matrix: A2DP / BLE headset / BLE speaker / hearing-aid / wired /
+  USB each select media, SCO selects voice, LE Audio stays on the media
+  path (`maybeStartRequestedSco` fallback only for SCO/A2DP/BLE-class + flag).
 
 **Slice 7: unify the choreography.** These are the only intentional behavior
-changes in the route plan. Each gets its own commit and is justified by a
-slice-6 test.
-- Collapse the four copies into `onEvent`:
+changes in the route plan. Each gets its own commit, each justified by the
+named slice-6 test, with user-observable oracle in parentheses:
+- Collapse the four copies into `onEvent` (funnel-event map:
+  `onConnectionSynchronized` → `SessionStarted`; `onConnectionDisconnected`
+  / superseding `connect()` → `SessionEnded` (idempotent under the
+generation filter — the second delivery is a no-op); `onDestroy` →
+  `Destroyed`; `onRouteDevicesChanged` → `DevicesChanged`;
+  `maybeStartRequestedSco` / `updateBluetoothScoRoute` → `DevicesChanged` +
+  `ScoLinkChanged`; `applyScoRoute` → `ScoLinkChanged`; `armRouteSettle` /
+  debounce expiry → `SettleRecheck`; `apply()` →
+  `SettingsChanged(reload)`):
   - sync becomes `SessionStarted` and goes through the funnel's ordering,
-    which fixes the counter-after-pipeline drift (§3.2);
-  - disconnect becomes `SessionEnded`;
-  - destroy becomes `Destroyed`.
+    which fixes the counter-after-pipeline drift (§3.2) (test: foreign-SCO
+    counter; oracle: no mode leak, media route audible after sync);
+  - disconnect becomes `SessionEnded` (test: teardown race; oracle: no
+    double `onConnecting` announcement, SCO released once);
+  - destroy becomes `Destroyed` (test: settle-budget; oracle: no recheck
+    after destroy, silent teardown by design).
 - Replace `mMediaRouteSelected`/`mAppliedVoiceRoute` with `AppliedRoute`.
 - Close §3.4 by having `connect()` end the old session before it overwrites
   `mConnection`:
   - shut down and unregister the old `AudioHandler`;
   - send `route.onEvent(SessionEnded)`;
-  - decide explicitly whether observers see `onDisconnected` (today they go
-    straight to `onConnecting`).
+  - observers go straight to `onConnecting` with **no** `onDisconnected`
+    (preserves today's observable behavior; a spurious disconnect would
+    flash the Mumla OLED reconnect UI and TTS). Record the before/after
+    observer trace in the commit.
 
   This is a few lines inside `connect()`, not a split of the connection
   machine. The route event alone would leave the old pipeline capturing.
@@ -525,18 +625,20 @@ FIFO-ordered ahead of it. Explicit `disconnect()` currently tears SCO down
 synchronously on purpose. Do this only with slice-6 tests in place and a
 dedicated review of that ordering claim.
 
-### Configuration track (after slice 5)
+### Configuration track (independent; needs only slice 5's seam)
 
-Slice 5 has already moved the route inputs out of `apply()`. Two things
-remain:
+Slice 5 has already moved the route inputs out of `apply()`. It can ship
+before, parallel to, or after route slices 1–4. Two things remain:
 
 - **`ConnectionParams`.** Replace the 11 connection-parameter fields with
-  one value held in a single `@Volatile` field. `connect()` and
-  `onConnectionEstablished()` read one snapshot. Keep `reconnectNeeded`
+  one immutable snapshot held in a single `@Volatile` field. `connect()` and
+  `onConnectionEstablished()` read one snapshot. Construction protocol (to be
+  pinned in the slice commit): freeze at the `apply()` boundary under the
+  service monitor; `Server` is mutable (`setResolved` in
+  `onConnectionEstablished`), so it travels by reference and is excluded
+  from value equality. Keep `reconnectNeeded`
   presence-based in this step: today any delta that *contains* a
-  reconnect-relevant key returns true, even for an unchanged value. Note
-  that `Server` is mutable (`setResolved` in `onConnectionEstablished`), so
-  value equality on it is not a safe basis for a diff.
+  reconnect-relevant key returns true, even for an unchanged value.
 - **Audio settings.** Move the builder-knob and input-mode mapping
   (threshold, boost, transmit mode, quality, frames per packet, half duplex,
   leveler) into an applier beside `AudioHandler.Builder`, with an
