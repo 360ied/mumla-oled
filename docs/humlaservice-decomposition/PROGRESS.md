@@ -15,7 +15,7 @@ Tracks implementation of the plan in [`README.md`](README.md) on branch
 | 5 — route inputs and pipeline handoff | done | `86d5ffff` | `AppliedRoute` + `decision()`; `createAudioHandler()` pushes the decision into the builder at the single consumption point; `apply()` keeps the `suppressReload` rule and passes `SettingsChanged(reload)`; builder removed from the controller. |
 | 6 — tests | done | `dcf7f29e` | New `AudioRouteControllerTest` (fakes + `TestScope` virtual time, no Robolectric): settle budget, lagging-sink catch-up, debounce, mode claim/restore guards, foreign-SCO clear-before-create ordering, teardown-race suppression, retry re-validation, platform fail-closed edges, device matrix. 24 tests; `mockito-core` added for `AudioDeviceInfo` doubles. |
 | 7 — unify the choreography | done | `fca067bc` | `RouteEvent` + single `onEvent` funnel; `SessionStarted` runs funnel ordering (fixes the counter-after-pipeline drift); `AppliedRoute` replaces both route booleans; `connect()` ends the old session explicitly (pipeline shutdown + `SessionEnded`, no `onDisconnected`). |
-| 8 — main-thread confinement | skipped (optional) | — | Per the plan, needs a dedicated review of the `connect()` FIFO-ordering claim. Locks are now isolated in one class, so it can land later cheaply. |
+| 8 — main-thread confinement | done | `812c0926` | Off-main `onEvent` posted to `scope` (main); private lock removed, volatile visibility retained; JVM tests stay synchronous (no looper). FIFO ordering holds via main-confined `connect()` + service generation filter. |
 
 ## Configuration track
 
