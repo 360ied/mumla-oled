@@ -13,7 +13,7 @@ Tracks implementation of the plan in [`README.md`](README.md) on branch
 | 3 — ports in place | done | `48bfe553` | New `audio/AudioPlatform.kt` (interface + `AndroidAudioPlatform`) and `audio/ScoLink.kt` (`BluetoothScoManager` retrofitted, constructor/scope untouched); every route call site switched one for one. |
 | 4 — extract `AudioRouteController` | done | `6f53d175` | New `audio/AudioRouteController.kt` (controller + `Host` + `ModeHold`); route monitor group moved atomically onto a private lock; four choreography copies kept divergent for a mechanical diff. No route field under the service monitor. Truth-table test moved to the controller. |
 | 5 — route inputs and pipeline handoff | done | `86d5ffff` | `AppliedRoute` + `decision()`; `createAudioHandler()` pushes the decision into the builder at the single consumption point; `apply()` keeps the `suppressReload` rule and passes `SettingsChanged(reload)`; builder removed from the controller. |
-| 6 — tests | done | `dcf7f29e` | New `AudioRouteControllerTest` (fakes + `TestScope` virtual time, no Robolectric): settle budget, lagging-sink catch-up, debounce, mode claim/restore guards, foreign-SCO clear-before-create ordering, teardown-race suppression, retry re-validation, platform fail-closed edges, device matrix. 24 tests; `mockito-core` added for `AudioDeviceInfo` doubles. |
+| 6 — tests | done | `dcf7f29e` + `fc8ac19c` | `AudioRouteControllerTest` (fakes + `TestScope` virtual time, no Robolectric) plus `AudioSettingsValidationTest`: settle budget, lagging-sink catch-up, debounce, mode claim/restore guards, foreign-SCO clear-before-create ordering on both legacy and S+ paths, teardown-race suppression, retry re-validation, platform fail-closed edges, device matrix, transmit-mode validation; 25 + 3 tests; `mockito-core` for `AudioDeviceInfo` doubles. App layer: `ScoFailureMessageTest` pins the Toast reason bucketing. |
 | 7 — unify the choreography | done | `fca067bc` | `RouteEvent` + single `onEvent` funnel; `SessionStarted` runs funnel ordering (fixes the counter-after-pipeline drift); `AppliedRoute` replaces both route booleans; `connect()` ends the old session explicitly (pipeline shutdown + `SessionEnded`, no `onDisconnected`). |
 | 8 — main-thread confinement | done | `812c0926` | Off-main `onEvent` posted to `scope` (main); private lock removed, volatile visibility retained; JVM tests stay synchronous (no looper). FIFO ordering holds via main-confined `connect()` + service generation filter. |
 
@@ -28,9 +28,11 @@ Tracks implementation of the plan in [`README.md`](README.md) on branch
 ## Verification
 
 `./scripts/check.sh` green at every commit (native suite + JVM unit tests,
-including the 24 controller tests). Slice oracles held: no `synchronized(this)`
-remains in `HumlaService`; no `mSco*`/`mAppliedVoiceRoute`/`ModeHold` field
-outside the controller; builder route flags written only in the
+including the controller, validation, and Toast-mapping tests). Slice oracles held: no route field
+remains under the service monitor (per the plan, no *route fields* under
+the monitor; `connectionParams` is published via one volatile); no `mSco*`/`ModeHold`
+route field outside the controller (`AudioHandler.mScoActive` is pipeline
+state, out of scope); builder route flags written only in the
 `createAudioHandler()` decision push.
 
 ## End state (this branch)

@@ -35,6 +35,7 @@ import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import org.jsoup.Jsoup
@@ -451,10 +452,7 @@ open class MumlaService : HumlaService(),
         override fun onBluetoothScoFailed(reason: String?) {
             Toast.makeText(
                 this@MumlaService,
-                if (BluetoothScoManager.REASON_PERMISSION == reason)
-                    R.string.bluetooth_sco_permission
-                else
-                    R.string.bluetooth_sco_failed,
+                scoFailureMessage(reason),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -1413,6 +1411,20 @@ open class MumlaService : HumlaService(),
         const val ACTION_DEAFEN = "se.lublin.mumla.action.DEAFEN"
         const val ACTION_TOGGLE_OVERLAY = "se.lublin.mumla.action.TOGGLE_OVERLAY"
         const val ACTION_CANCEL_RECONNECT = "se.lublin.mumla.action.CANCEL_RECONNECT"
+
+        /**
+         * Pure REASON_* to string-resource mapping for the SCO-failure Toast,
+         * extracted so the bucketing is JVM-testable: only the permission
+         * denial gets the permission string; every other reason (including
+         * null) shares the generic one.
+         */
+        @JvmStatic
+        @StringRes
+        fun scoFailureMessage(reason: String?): Int =
+            if (BluetoothScoManager.REASON_PERMISSION == reason)
+                R.string.bluetooth_sco_permission
+            else
+                R.string.bluetooth_sco_failed
 
         @JvmStatic
         fun getServerKey(server: Server?): String {

@@ -29,7 +29,7 @@ import se.lublin.humla.audio.AudioRouteController;
  * <p>The full service cannot be constructed on the JVM (it needs a platform
  * {@code Context} and main-looper {@code Handler}; this module is JUnit-only
  * with no Robolectric), so this truth table is the JVM-testable seam for the
- * route matrix, mirroring BluetoothScoManager.shouldRetryBringUp.
+ * route matrix, pinning AudioRouteController.computeVoiceRoute.
  */
 public class AudioRoutePolicyTest extends TestCase {
 
