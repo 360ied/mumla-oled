@@ -63,6 +63,7 @@ preference = "1.2.1"
 media = "1.7.0"
 jsoup = "1.23.2"
 junit = "4.13.2"
+mockito = "5.14.2"
 robolectric = "4.15.1"
 protobuf = "4.36.2"
 annotations = "26.1.0"
@@ -108,6 +109,7 @@ preference = { module = "androidx.preference:preference", version.ref = "prefere
 media = { module = "androidx.media:media", version.ref = "media" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 junit = { module = "junit:junit", version.ref = "junit" }
+mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
 annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }

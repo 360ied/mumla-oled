@@ -58,6 +58,7 @@ dependencies {
     implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation libs.junit
+    testImplementation libs.mockito.core
 }
 
 android {
