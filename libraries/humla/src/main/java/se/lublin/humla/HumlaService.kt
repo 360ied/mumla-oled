@@ -41,6 +41,7 @@ import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.audio.AndroidAudioPlatform
 import se.lublin.humla.audio.AppliedRoute
 import se.lublin.humla.audio.AudioRouteController
+import se.lublin.humla.audio.RouteEvent
 import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
@@ -471,7 +472,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
         // Route teardown (link, mode, device listener, timers) lives in the
         // controller; bare teardown, no notify by design.
-        route.onDestroyed()
+        route.onEvent(RouteEvent.Destroyed)
         releaseWifiLock()
     }
 
@@ -506,6 +507,21 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // Tear down any prior connection before overwriting: a second
             // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
             // NetworkCallback reconnect) must not orphan the old socket.
+            // End the old session explicitly: the old connection's async
+            // disconnect callback will be dropped as stale once generation
+            // moves below, so without this the old route teardown and the
+            // old pipeline shutdown would never run. Observers go straight
+            // to onConnecting with no onDisconnected (a spurious disconnect
+            // would flash the reconnect UI and TTS). The old pipeline must
+            // end here too — the route event alone would leave it capturing.
+            mAudioHandler?.let { oldHandler ->
+                mConnection?.removeTCPMessageHandler(oldHandler)
+                mConnection?.removeUDPMessageHandler(oldHandler)
+                oldHandler.shutdown()
+            }
+            mModelHandler = null
+            mAudioHandler = null
+            route.onEvent(RouteEvent.SessionEnded)
             mConnection?.disconnect()
             mConnection = null
             // Generation-scoped listener: the old connection's TCP read-loop
@@ -689,7 +705,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // controller; pipeline errors are reported via onPipelineError.
         // First creation bypasses the funnel but still pushes
         // route-dependent audio explicitly (see controller).
-        route.onSessionStarted()
+        route.onEvent(RouteEvent.SessionStarted)
 
         mCallbacks.onConnected()
     }
@@ -730,7 +746,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         mWhisperTargetList.clear()
         // Route teardown (media refresh, SCO release, mode release, settle
         // cancel) lives in the controller.
-        route.onSessionEnded()
+        route.onEvent(RouteEvent.SessionEnded)
 
         mCallbacks.onDisconnected(e)
     }
@@ -1141,7 +1157,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         if (audioHandler != null && audioHandler.isInitialized() &&
             mConnectionState == ConnectionState.CONNECTED
         ) {
-            route.onSettingsChanged(!suppressReload)
+            route.onEvent(RouteEvent.SettingsChanged(!suppressReload))
             if (!suppressReload) {
                 Log.i(TAG, "Audio subsystem reloaded after settings change.")
             }

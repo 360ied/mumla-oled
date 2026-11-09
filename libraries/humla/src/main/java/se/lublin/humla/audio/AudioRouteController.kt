@@ -128,10 +128,7 @@ internal class AudioRouteController(
     private var scoRouteActive: Boolean = false
 
     @Volatile
-    private var mediaSelected: Boolean = false
-
-    @Volatile
-    private var appliedVoiceRoute = true
+    private var appliedRoute: AppliedRoute = AppliedRoute.VOICE_HANDSET
 
     @Volatile
     private var handsetStream: Int = AudioManager.STREAM_MUSIC
@@ -172,16 +169,12 @@ internal class AudioRouteController(
     }
 
     val isMediaRouteActive: Boolean
-        get() = mediaSelected && !scoRouteActive
+        get() = synchronized(lock) { appliedRoute } == AppliedRoute.MEDIA
 
     /** Current route decision, pushed into the builder at pipeline creation. */
     fun decision(): AppliedRoute {
         synchronized(lock) {
-            return when {
-                scoRouteActive -> AppliedRoute.VOICE_SCO
-                appliedVoiceRoute -> AppliedRoute.VOICE_HANDSET
-                else -> AppliedRoute.MEDIA
-            }
+            return appliedRoute
         }
     }
 
@@ -235,7 +228,7 @@ internal class AudioRouteController(
     fun onInit() {
         val media = queryMediaDevicesPresent()
         synchronized(lock) {
-            mediaSelected = media
+            appliedRoute = if (!media) AppliedRoute.VOICE_HANDSET else AppliedRoute.MEDIA
         }
     }
 
@@ -244,13 +237,12 @@ internal class AudioRouteController(
             val callback = object : AudioDeviceCallback() {
                 override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>?) {
                     logDeviceTypes("added", added)
-                    onDevicesChanged()
-                    maybeStartRequestedSco(added)
+                    onEvent(RouteEvent.DevicesChanged(added))
                 }
 
                 override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>?) {
                     logDeviceTypes("removed", removed)
-                    onDevicesChanged()
+                    onEvent(RouteEvent.DevicesChanged(null))
                 }
             }
             synchronized(lock) {
@@ -280,67 +272,57 @@ internal class AudioRouteController(
         }
     }
 
-    /** Settings reload event (slice 5 seam). */
-    fun onSettingsChanged(reload: Boolean) {
-        onFunnel("settings changed", reload)
+    /**
+     * Single funnel-event map (slice 7 unification):
+     * onConnectionSynchronized -> SessionStarted;
+     * onConnectionDisconnected / superseding connect() -> SessionEnded
+     * (idempotent under the generation filter — the second delivery is a
+     * no-op); onDestroy -> Destroyed; device callbacks -> DevicesChanged;
+     * SCO callbacks -> ScoLinkChanged; apply() -> SettingsChanged(reload);
+     * settle/debounce expiry -> SettleRecheck.
+     */
+    fun onEvent(event: RouteEvent) {
+        when (event) {
+            is RouteEvent.SessionStarted -> onSessionStarted()
+            is RouteEvent.SessionEnded -> onSessionEnded()
+            is RouteEvent.Destroyed -> onDestroyed()
+            is RouteEvent.DevicesChanged -> onDevicesChanged(event.added)
+            is RouteEvent.ScoLinkChanged -> onScoLinkChanged(event.active)
+            is RouteEvent.SettingsChanged -> recompute("settings changed", event.reload, settle = false, firstCreate = false)
+            is RouteEvent.SettleRecheck -> recompute("media settle recheck", forceReload = false, settle = true, firstCreate = false)
+        }
     }
 
     /**
-     * Route parts of onConnectionSynchronized. The service owns state,
+     * Session start through the unified funnel (slice 7): the old sync copy
+     * created the pipeline before the foreign-SCO counter; the funnel orders
+     * counter-before-pipeline, and firstCreate keeps the unconditional build
+     * plus route notify the sync path requires. The service owns state,
      * wake-lock, and onConnected; this owns the route application.
      */
-    fun onSessionStarted() {
-        try {
-            val voice = updateRouteBuilder()
-            // See funnel: only our own claimed hold implicates us in any
-            // system SCO raised during it.
-            val syncClaimedHold = synchronized(lock) { modeHold is ModeHold.Claimed }
-            applyVoiceMode(voice)
-            try {
-                host.recreatePipeline()
-            } catch (e: AudioException) {
-                Log.e(TAG, "Audio pipeline creation failed", e)
-                host.onPipelineError(e.message)
-            }
-            if (!voice) {
-                counterUnrequestedSystemSco(syncClaimedHold)
-            } else if (!scoRouteActive && !mediaSelected) {
-                // Sync landed in voice-by-absence (A2DP still staggering):
-                // arm the same bounded recheck the funnel uses, coalescing
-                // with any funnel-armed one already queued.
-                synchronized(lock) {
-                    settleAttempts = 0
-                }
-                armRouteSettle()
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Session route start failed", e)
-        }
+    private fun onSessionStarted() {
+        recompute("sync", forceReload = false, settle = false, firstCreate = true)
         updateScoRoute()
-        // First creation bypasses the funnel: push route-dependent audio
-        // (cues, proximity) explicitly so an A2DP-attached first connect
-        // does not leave them on the voice stream until the next flap.
-        host.onRouteChanged()
     }
 
     /**
      * Route parts of onConnectionDisconnected. The service owns state,
      * locks, model teardown, and onDisconnected; this owns route teardown.
      */
-    fun onSessionEnded() {
+    private fun onSessionEnded() {
         // Media decision goes stale here (teardown clears SCO only; the next
         // funnel recomputes): refresh from a live query so gap observers see
         // truth (A2DP still attached reads media) instead of a forced value.
-        // Under the group lock like every other route write; the query
-        // itself (binder IPC) runs outside it.
+        // Stored after the SCO stop below so the AppliedRoute snapshot sees
+        // the cleared link; both run synchronously with no interleaving.
         val liveMedia = queryMediaDevicesPresent()
-        synchronized(lock) {
-            mediaSelected = liveMedia
-        }
 
         // Never leak the SCO link across disconnects: the next sync re-arms
         // it via updateScoRoute when still requested.
         stopScoWithNotify()
+        synchronized(lock) {
+            appliedRoute = if (liveMedia) AppliedRoute.MEDIA else AppliedRoute.VOICE_HANDSET
+        }
         releaseVoiceMode()
         // No live call remains for a settle recheck to recover.
         cancelRouteSettle()
@@ -350,15 +332,14 @@ internal class AudioRouteController(
     }
 
     /** Bare teardown, no notify: observers detach in onDestroy. */
-    fun onDestroyed() {
+    private fun onDestroyed() {
         destroyed = true
         synchronized(lock) { sco }?.destroy()
         // Bare teardown, no builder touch: the next create pushes a fresh
         // decision, and stale builder state is never consumed in between.
         synchronized(lock) {
             scoRouteActive = false
-            mediaSelected = false
-            appliedVoiceRoute = true
+            appliedRoute = AppliedRoute.VOICE_HANDSET
         }
         releaseVoiceMode()
         unregisterDeviceListener()
@@ -422,7 +403,12 @@ internal class AudioRouteController(
      * Only the confirmed-flag flip holds the lock; the funnel, IPC, and
      * fan-out below run outside it so a slow HAL never pins teardown.
      */
-    fun onScoLinkChanged(active: Boolean, reason: String) {
+    private fun onScoLinkChanged(active: Boolean) {
+        val reason = if (active) {
+            "Bluetooth SCO connected"
+        } else {
+            "Bluetooth SCO disconnected, falling back to phone audio"
+        }
         val unchanged: Boolean
         synchronized(lock) {
             unchanged = active == scoRouteActive
@@ -434,7 +420,7 @@ internal class AudioRouteController(
             Log.i(TAG, "SCO route unchanged, skipping reload ($reason).")
             return
         }
-        onFunnel(reason, false)
+        recompute(reason, forceReload = false, settle = false, firstCreate = false)
         // Re-validate: a teardown racing this route may have flipped the
         // flag while the funnel ran; its own notify carries the newer state.
         synchronized(lock) {
@@ -446,7 +432,7 @@ internal class AudioRouteController(
     }
 
     fun onScoFailed(reason: String?) {
-        onScoLinkChanged(false, "Bluetooth SCO unavailable, falling back to phone audio")
+        onEvent(RouteEvent.ScoLinkChanged(false))
         // onScoFailed is posted to the main thread; connected and
         // disconnected arrive on main-thread platform callbacks.
         // User-visible feedback is an observer event: the app layer renders
@@ -455,22 +441,26 @@ internal class AudioRouteController(
     }
 
     fun onScoConnected() {
-        onScoLinkChanged(true, "Bluetooth SCO connected")
+        onEvent(RouteEvent.ScoLinkChanged(true))
     }
 
     fun onScoDisconnected() {
-        onScoLinkChanged(false, "Bluetooth SCO disconnected, falling back to phone audio")
+        onEvent(RouteEvent.ScoLinkChanged(false))
     }
 
     /**
      * Debounced device-listener entry: attach/detach flurries converge into
      * one route application instead of one pipeline recreate per event.
      */
-    private fun onDevicesChanged() {
+    private fun onDevicesChanged(added: Array<AudioDeviceInfo>?) {
+        // Removal is intentionally payload-free: only the add path uses the
+        // array (maybeStartRequestedSco); both callbacks converge into one
+        // debounced recompute.
+        maybeStartRequestedSco(added)
         synchronized(lock) { debounceJob }?.cancel()
         val launched = scope.launch {
             delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
-            onFunnel("device route changed", false)
+            recompute("device route changed", forceReload = false, settle = false, firstCreate = false)
         }
         launched.invokeOnCompletion {
             synchronized(lock) {
@@ -486,7 +476,7 @@ internal class AudioRouteController(
         synchronized(lock) { settleJob }?.cancel()
         val launched = scope.launch {
             delay(ROUTE_SETTLE_RECHECK_MS)
-            onFunnel("media settle recheck", false, settle = true)
+            onEvent(RouteEvent.SettleRecheck)
         }
         launched.invokeOnCompletion {
             synchronized(lock) {
@@ -551,22 +541,27 @@ internal class AudioRouteController(
         return false
     }
 
-    private fun updateRouteBuilder(): Boolean {
+    private data class RouteUpdate(
+        val voice: Boolean,
+        val route: AppliedRoute,
+        val changed: Boolean,
+    )
+
+    private fun updateRoute(): RouteUpdate {
         val mediaPresent = queryMediaDevicesPresent()
         synchronized(lock) {
-            return updateRouteBuilderLocked(mediaPresent)
+            val scoActive = scoRouteActive
+            val media = !scoActive && mediaPresent
+            val voice = computeVoiceRoute(scoActive, media)
+            val next = when {
+                scoActive -> AppliedRoute.VOICE_SCO
+                voice -> AppliedRoute.VOICE_HANDSET
+                else -> AppliedRoute.MEDIA
+            }
+            val changed = next != appliedRoute
+            appliedRoute = next
+            return RouteUpdate(voice, next, changed)
         }
-    }
-
-    /** Route decision + flags; caller holds the lock. No builder touch: the
-     * service pushes decision() into the builder at creation (slice 5). */
-    private fun updateRouteBuilderLocked(mediaPresent: Boolean): Boolean {
-        val scoActive = scoRouteActive
-        val media = !scoActive && mediaPresent
-        mediaSelected = media
-        val voice = computeVoiceRoute(scoActive, media)
-        appliedVoiceRoute = voice
-        return voice
     }
 
     private fun applyVoiceMode(voice: Boolean) {
@@ -628,13 +623,16 @@ internal class AudioRouteController(
     }
 
     /**
-     * Single funnel for every live route change: recomputes the decision,
-     * holds or releases the voice mode around pipeline creation (mode first,
-     * capture after, per the HAL coupling requirement), then refreshes cues
-     * and observers. Skips the reload when the applied route is unchanged
-     * unless forceReload (settings path) demands it.
+     * Single funnel for every live route change (slice 7 unification): the
+     * sync path now runs through this same ordering, which fixes the
+     * counter-after-pipeline drift the divergent sync copy had. Recomputes
+     * the decision, holds or releases the voice mode around pipeline
+     * creation (mode first, foreign-SCO counter before capture, per the HAL
+     * coupling requirement), then refreshes cues and observers. Skips the
+     * reload when the applied route is unchanged unless forceReload
+     * (settings path) or firstCreate (sync path) demands it.
      */
-    fun onFunnel(reason: String, forceReload: Boolean, settle: Boolean = false) {
+    private fun recompute(reason: String, forceReload: Boolean, settle: Boolean, firstCreate: Boolean) {
         // All funnel callers are main-confined (device recompute, settings,
         // SCO callbacks, posted sync), so no concurrent funnel rewrite is
         // expected; a surprise concurrent rewrite would at worst cause one
@@ -642,8 +640,8 @@ internal class AudioRouteController(
         // Settle edges pass settle=true; every other caller is a fresh edge
         // (settle=false). Fresh edges never cancel outstanding protection
         // here — arming below re-posts when still uncovered.
-        val before = synchronized(lock) { appliedVoiceRoute }
-        val voice = updateRouteBuilder()
+        val update = updateRoute()
+        val voice = update.voice
         // Capture before applyVoiceMode clears it: did WE hold the mode for
         // the episode now ending? Only our own claimed hold implicates us in
         // any system SCO raised during it (see counter method below).
@@ -658,11 +656,15 @@ internal class AudioRouteController(
         } else {
             // Disconnected (or never connected): device attach/detach must
             // not re-acquire global IN_COMM with no pipeline and no call.
-            // The next sync re-holds via onSessionStarted.
+            // The next SessionStarted re-holds.
             releaseVoiceMode()
         }
-        if ((forceReload || voice != before) && host.hasLivePipeline() && host.isLive
-        ) {
+        // Sync always builds (first creation); live edges rebuild only over
+        // a live pipeline when forced or moved. A failed sync build leaves
+        // no pipeline; later edges do not retry it (preserved behavior).
+        val shouldRecreate = host.isLive &&
+            (firstCreate || (host.hasLivePipeline() && (forceReload || update.changed)))
+        if (shouldRecreate) {
             try {
                 host.recreatePipeline()
                 Log.i(TAG, "$reason; audio pipeline recreated (" + (if (voice) "voice" else "media") + ").")
@@ -671,14 +673,15 @@ internal class AudioRouteController(
                 host.onPipelineError(e.message)
             }
         }
-        val routeChanged = forceReload || voice != before
+        val routeChanged = firstCreate || forceReload || update.changed
         if (routeChanged) {
             host.onRouteChanged()
         }
         // Else: unchanged route — observers query live state on demand and
         // the SCO bit has its own direct emit, so skip the heavy cue rebuild
         // (SoundPool/proximity) on every irrelevant device edge.
-        val voiceByAbsence = voice && !scoRouteActive && !mediaSelected
+        // Voice-by-absence is exactly VOICE_HANDSET (voice, SCO down, no sink).
+        val voiceByAbsence = update.route == AppliedRoute.VOICE_HANDSET
         val liveCall = host.isLive
         val attempts = synchronized(lock) { settleAttempts }
         if (voiceByAbsence && liveCall && (!settle || attempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
@@ -842,6 +845,22 @@ internal class AudioRouteController(
 internal sealed interface ModeHold {
     data object Released : ModeHold
     data class Claimed(val savedMode: Int) : ModeHold
+}
+
+/**
+ * Single funnel-event map (slice 7): every lifecycle edge converges into
+ * [AudioRouteController.onEvent]. Removal is intentionally payload-free:
+ * only the add path uses the array (maybeStartRequestedSco).
+ */
+internal sealed interface RouteEvent {
+    data object SessionStarted : RouteEvent
+    /** Route teardown runs even when a reconnect is already scheduled. */
+    data object SessionEnded : RouteEvent
+    data object Destroyed : RouteEvent
+    data class DevicesChanged(val added: Array<AudioDeviceInfo>?) : RouteEvent
+    data class ScoLinkChanged(val active: Boolean) : RouteEvent
+    data class SettingsChanged(val reload: Boolean) : RouteEvent
+    data object SettleRecheck : RouteEvent
 }
 
 /**
