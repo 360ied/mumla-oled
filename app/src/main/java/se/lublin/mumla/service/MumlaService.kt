@@ -30,7 +30,9 @@ import android.media.SoundPool
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -46,6 +48,7 @@ import java.util.LinkedHashMap
 import java.util.Optional
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaService
+import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
 import se.lublin.humla.model.IUser
@@ -56,7 +59,6 @@ import se.lublin.humla.net.TlsHostnameVerifier
 import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.HumlaException
-import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.TrustStoreRef
 import se.lublin.mumla.BuildConfig
@@ -191,6 +193,10 @@ open class MumlaService : HumlaService(),
     private var mTalkReceiver: BroadcastReceiver? = null
     /** Tracks TALK receiver registration: registered once connected with the broadcast
      * allowed, unregistered on disconnect or opt-out, so toggles never double-register. */
+    /** Guard for the TALK-receiver check-then-act: register runs on Main
+     * while unregister also runs on the connection thread
+     * (onConnectionDisconnected), so the flag alone cannot serialize them. */
+    private val talkReceiverLock = Any()
     private var mTalkReceiverRegistered: Boolean = false
 
     private fun updateConnectedNotification() {
@@ -450,11 +456,16 @@ open class MumlaService : HumlaService(),
         }
 
         override fun onBluetoothScoFailed(reason: String?) {
-            Toast.makeText(
-                this@MumlaService,
-                scoFailureMessage(reason),
-                Toast.LENGTH_LONG
-            ).show()
+            // Toast requires the main looper; the route host calls on main
+            // in-tree, but the observer contract allows any caller thread.
+            val message = scoFailureMessage(reason)
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                Toast.makeText(this@MumlaService, message, Toast.LENGTH_LONG).show()
+            } else {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(this@MumlaService, message, Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -687,28 +698,32 @@ open class MumlaService : HumlaService(),
         super.onDestroy()
     }
 
-    /** Registers the TALK broadcast receiver if not already registered. Main thread only. */
+    /** Registers the TALK broadcast receiver if not already registered. */
     private fun registerTalkReceiver() {
-        if (mTalkReceiverRegistered) {
-            return
+        synchronized(talkReceiverLock) {
+            if (mTalkReceiverRegistered) {
+                return
+            }
+            val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
+            ContextCompat.registerReceiver(
+                this, receiver,
+                IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            mTalkReceiverRegistered = true
         }
-        val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
-        ContextCompat.registerReceiver(
-            this, receiver,
-            IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
-            ContextCompat.RECEIVER_EXPORTED
-        )
-        mTalkReceiverRegistered = true
     }
 
-    /** Unregisters the TALK broadcast receiver if registered. Main thread only. */
+    /** Unregisters the TALK broadcast receiver if registered. */
     private fun unregisterTalkReceiver() {
-        if (!mTalkReceiverRegistered) {
-            return
+        synchronized(talkReceiverLock) {
+            if (!mTalkReceiverRegistered) {
+                return
+            }
+            val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
+            unregisterReceiver(receiver)
+            mTalkReceiverRegistered = false
         }
-        val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
-        unregisterReceiver(receiver)
-        mTalkReceiverRegistered = false
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -1416,11 +1431,11 @@ open class MumlaService : HumlaService(),
          * Pure REASON_* to string-resource mapping for the SCO-failure Toast,
          * extracted so the bucketing is JVM-testable: only the permission
          * denial gets the permission string; every other reason (including
-         * null) shares the generic one.
+         * null) shares the generic one. Internal: only the observer above
+         * and the same-module test use it.
          */
-        @JvmStatic
         @StringRes
-        fun scoFailureMessage(reason: String?): Int =
+        internal fun scoFailureMessage(reason: String?): Int =
             if (reason == BluetoothScoManager.REASON_PERMISSION)
                 R.string.bluetooth_sco_permission
             else

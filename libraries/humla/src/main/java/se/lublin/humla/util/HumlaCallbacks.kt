@@ -43,10 +43,13 @@ class HumlaCallbacks : IHumlaObserver {
         Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
 
     fun registerObserver(observer: IHumlaObserver) {
-        requireNotNull(observer) { "observer" }
+        requireNotNull(observer) { "observer must not be null" }
         callbacks.add(observer)
     }
 
+    // Nullable by design: defensive call sites pass possibly-null refs.
+    // IHumlaService.unregisterObserver stays non-null (fail-fast at the
+    // service boundary); the asymmetry is intentional, not a mismatch.
     fun unregisterObserver(observer: IHumlaObserver?) {
         if (observer == null) return
         callbacks.remove(observer)
@@ -165,10 +168,15 @@ class HumlaCallbacks : IHumlaObserver {
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError)
                 } else {
+                    // Same throwable in release: class name + message alone
+                    // lose the stack the field needs. Rate is bounded by the
+                    // fan-out (one line per throwing observer per callback),
+                    // accepted over an undebuggable release.
                     android.util.Log.w(
                         "HumlaCallbacks",
                         "Observer " + observer.javaClass.name +
-                            " threw, continuing fan-out: " + observerError
+                            " threw, continuing fan-out",
+                        observerError
                     )
                 }
             }

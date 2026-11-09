@@ -58,6 +58,7 @@ dependencies {
     implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation libs.junit
+    // AudioDeviceInfo/Builder doubles for the route + input-modes JVM tests.
     testImplementation libs.mockito.core
 }
 

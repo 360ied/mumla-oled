@@ -75,9 +75,11 @@ public class BluetoothScoRetryPolicyTest {
     }
 
     @Test
-    public void negativeAttemptsRetriedAsUnstarted() {
-        // Unreachable in production (attempts start at 0); the pure function
-        // treats negatives as below budget, pinned to prevent drift.
+    public void negativeAttemptsDocumentAsBelowBudget() {
+        // Unreachable in production (attempts start at 0 and only increment);
+        // the pure function treats negatives as below budget. Pinned as a
+        // drift detector — a future fail-closed clamp must update this test
+        // deliberately, not silently.
         assertTrue(BluetoothScoManager.shouldRetryBringUp(-1, 2));
     }
 }

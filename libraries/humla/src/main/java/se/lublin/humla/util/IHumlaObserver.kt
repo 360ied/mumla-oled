@@ -77,10 +77,10 @@ interface IHumlaObserver {
      * Replaces the library-owned Toast: the app layer renders user-visible
      * feedback. Edges stay coalesced by the existing route debounce; no
      * extra throttle here. Delivery is on the caller thread; the in-tree
-     * route host always calls on main.
-     * In-tree observers should extend HumlaObserver (no-op default); this
-     * is an in-tree library interface, so out-of-tree direct implementors
-     * must add an override when upgrading.
+     * route host always calls on main. In-tree observers should extend
+     * HumlaObserver (no-op default); out-of-tree direct implementors in
+     * Java without -Xjvm-default must add an override when upgrading
+     * (Kotlin observers inherit the default no-op).
      * @param reason failure reason (see BluetoothScoManager REASON_*), or
      *               null when unknown.
      */
@@ -93,6 +93,9 @@ interface IHumlaObserver {
      * pipeline reload. Delivery is on the caller thread; the in-tree route
      * host always calls on main. Use it to follow output routing (e.g. volume
      * stream); SCO-specific UI belongs in onBluetoothScoChanged.
+     * In-tree observers should extend HumlaObserver (no-op default);
+     * out-of-tree direct implementors in Java without -Xjvm-default must
+     * add an override when upgrading (Kotlin observers inherit the default).
      */
     fun onAudioRouteChanged() {
     }

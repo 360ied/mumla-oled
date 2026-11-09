@@ -65,7 +65,6 @@ import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.ModelHandler
-import se.lublin.humla.protocol.applyAudioDelta
 import se.lublin.humla.protocol.validateAudioDelta
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.ConnectionParams
@@ -78,13 +77,14 @@ import se.lublin.humla.util.VoiceTargetMode
 import java.io.File
 import java.io.IOException
 import java.security.cert.X509Certificate
-import java.util.ArrayList
+import java.util.concurrent.atomic.AtomicInteger
+import org.jetbrains.annotations.TestOnly
 
 open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     HumlaConnection.HumlaConnectionListener, HumlaLogger {
 
     companion object {
-        private val TAG = HumlaService::class.java.name
+        private val TAG = "HumlaService"
 
         /**
          * An action to immediately connect to a given Mumble server.
@@ -94,6 +94,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
         const val RECONNECT_DELAY_INITIAL = 1000
         const val RECONNECT_DELAY_MAX = 25000
+
+        /** Grace beyond a scheduled reconnect delay while the Doze shield is held. */
+        private const val WAKELOCK_GRACE_MS = 15000L
 
         @JvmStatic
         fun init(context: Context?) {
@@ -150,7 +153,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         override val isLive: Boolean
             get() = mConnectionState == ConnectionState.CONNECTED
         override val sessionToken: Int
-            get() = connectionGeneration
+            get() = connectionGeneration.get()
         override fun hasLivePipeline(): Boolean {
             val handler = mAudioHandler
             return handler != null && handler.isInitialized()
@@ -181,19 +184,27 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // only for AudioManager device-callback registration, which requires a
     // Handler. Volatile: cancelReconnect()/disconnect() are
     // binder-reachable off-main, matching every neighboring cross-thread
-    // flag in this file. The connection generation below is bumped on main
-    // (connect is main-confined); only onConnectionSynchronized arrives via
-    // a Main Handler post (HumlaConnection posts sync), while
-    // onConnectionDisconnected runs directly on connection threads, so
-    // volatile here is required for the disconnect path, not belt-and-braces.
+    // flag in this file. The connection generation below is bumped on
+    // connect (main-confined today) and onDestroy; only
+    // onConnectionSynchronized arrives via a Main Handler post
+    // (HumlaConnection posts sync), while onConnectionDisconnected runs
+    // directly on connection threads, so atomicity (not just visibility) is
+    // required for the disconnect path, not belt-and-braces.
     // Serializes reconnect timer + network-callback registration: setReconnecting
     // runs from Main/binder (disconnect/cancelReconnect/onStartCommand) and from
     // connection threads (onConnectionDisconnected), so cancel+assign and
     // check-then-register must not interleave and orphan a job or double-register.
     private val reconnectLock = Any()
 
-    @Volatile
-    private var connectionGeneration = 0
+    // Serializes apply()'s read-modify-write merge+publish: two interleaved
+    // applies must not lose each other's keys (see apply()).
+    private val applyLock = Any()
+
+    // Bumped on connect (main-confined today) and onDestroy (main); read on
+    // connection threads via the listener stale filter. Atomic, not
+    // @Volatile++: volatile increment is read+write, so two racing connects
+    // could share a generation and the stale filter would fail.
+    private val connectionGeneration = AtomicInteger(0)
     @Volatile
     private var reconnectJob: Job? = null
 
@@ -232,8 +243,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     @Volatile
     private var mReconnecting: Boolean = false
 
-    @Volatile
-    private var mReconnectAttempts = 0
+    // Incremented on the main scope (timer/onAvailable), reset from Main and
+    // binder threads: atomic, not @Volatile++, so a reset can never tear an
+    // increment mid-flight (lost increment = wrong backoff; lost reset =
+    // inflated backoff after cancel).
+    private val mReconnectAttempts = AtomicInteger(0)
     @Volatile
     private var mNetworkCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile
@@ -468,7 +482,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun onDestroy() {
         super.onDestroy()
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
+        // Invalidate the shared listener: the old connection's still-flying
+        // async posts must not mutate state or fan out observers after death.
+        // (Pipeline + route teardown below run synchronously, so nothing the
+        // stale callback would do is still needed.)
+        connectionGeneration.incrementAndGet()
         setReconnecting(false)
         val wakeLock = mWakeLock
         if (wakeLock != null && wakeLock.isHeld) {
@@ -529,7 +548,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (wakeLock.isHeld) {
                     wakeLock.release()
                 }
-                wakeLock.acquire(15000)
+                wakeLock.acquire(WAKELOCK_GRACE_MS)
             }
             acquireWifiLock()
 
@@ -559,7 +578,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // connection's async post would wipe the live attempt's handlers
             // (model/audio null, route reset, phantom observer disconnect).
             // Interface delegation forwards every other callback untouched.
-            val generation = ++connectionGeneration
+            val generation = connectionGeneration.incrementAndGet()
             val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
                 // All five callbacks filter on generation: a stale connection's
                 // async posts (established/warning/handshake/disconnect/sync)
@@ -567,7 +586,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 // CONNECTING guards make stale established/handshake
                 // unreachable today, but the filter is airtight regardless.
                 private fun isStale(): Boolean {
-                    if (generation != connectionGeneration) {
+                    if (generation != connectionGeneration.get()) {
                         Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
                         return true
                     }
@@ -629,7 +648,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun disconnect() {
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
         setReconnecting(false)
         // Synchronous state: the async read-loop finally still delivers the
         // formal onConnectionDisconnected, but observers must see
@@ -645,7 +664,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // Tear down SCO synchronously: the async disconnect callback may lag,
         // and a quick reconnect must not reuse a stale link or route flag.
         route.stopScoWithNotify()
-        mConnection?.disconnect()
+        val connection = mConnection
+        if (connection != null) {
+            connection.disconnect()
+        } else {
+            // No socket, so no async callback will run the full teardown
+            // (mode/route/settle): run the route half explicitly. Posted to
+            // the funnel when off-main; idempotent with the callback path.
+            route.onEvent(RouteEvent.SessionEnded)
+        }
     }
 
     open override fun isBluetoothScoActive(): Boolean {
@@ -712,13 +739,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
 
-        // TODO hackish, but this seems to happen?!
+        // Unreachable in practice: the model is created with the connection
+        // and cleared only on teardown paths that also leave CONNECTED. Fail
+        // deterministic instead of stranding CONNECTING with no retry armed.
         if (mModelHandler == null) {
             Log.e(TAG, "onConnectionSynchronized: mModelHandler is null")
+            mConnectionState = ConnectionState.DISCONNECTED
+            setReconnecting(false)
             return
         }
 
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
         setReconnecting(false)
         mConnectionState = ConnectionState.CONNECTED
 
@@ -812,7 +843,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getReconnectDelay(): Int {
-        return getReconnectDelayForAttempts(mReconnectAttempts)
+        return getReconnectDelayForAttempts(mReconnectAttempts.get())
     }
 
     private fun registerNetworkCallback() {
@@ -843,7 +874,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                                         reconnectJob?.cancel()
                                         reconnectJob = null
                                     }
-                                    mReconnectAttempts++
+                                    mReconnectAttempts.incrementAndGet()
                                     connect()
                                 }
                             }
@@ -880,6 +911,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open fun setReconnecting(reconnecting: Boolean) {
+        // One monitor for the whole method (register/unregister take the same
+        // lock reentrantly): a true+true race must not launch two jobs or
+        // register the network callback twice and orphan one of each.
         synchronized(reconnectLock) {
             if (!reconnecting) {
                 mReconnecting = false
@@ -888,28 +922,27 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 unregisterNetworkCallback()
                 return
             }
-        }
 
-        mReconnecting = true
-        registerNetworkCallback()
-        val delayMs = getReconnectDelay()
-        Log.v(TAG, "Scheduling reconnect in $delayMs ms (attempt $mReconnectAttempts)")
-        val wakeLock = mWakeLock
-        if (wakeLock != null) {
-            if (wakeLock.isHeld) {
-                wakeLock.release()
+            mReconnecting = true
+            registerNetworkCallback()
+            val delayMs = getReconnectDelay()
+            Log.v(TAG, "Scheduling reconnect in $delayMs ms (attempt ${mReconnectAttempts.get()})")
+            val wakeLock = mWakeLock
+            if (wakeLock != null) {
+                if (wakeLock.isHeld) {
+                    wakeLock.release()
+                }
+                wakeLock.acquire((delayMs + WAKELOCK_GRACE_MS).toLong())
             }
-            wakeLock.acquire((delayMs + 15000).toLong())
-        }
-        reconnectJob?.cancel()
-        val launchedReconnect = lifecycleScope.launch {
+            reconnectJob?.cancel()
+            val launchedReconnect = lifecycleScope.launch {
             delay(delayMs.toLong())
             // Mirror the onAvailable CONNECTING guard: the timer can resume
             // after onAvailable already connected (cancel is best-effort),
             // and an unguarded connect() would double-increment attempts and
             // tear down a just-started handshake.
             if (mReconnecting && mConnectionState != ConnectionState.CONNECTING) {
-                mReconnectAttempts++
+                mReconnectAttempts.incrementAndGet()
                 connect()
             }
         }
@@ -918,7 +951,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (reconnectJob === launchedReconnect) reconnectJob = null
             }
         }
-        synchronized(reconnectLock) {
             reconnectJob = launchedReconnect
         }
     }
@@ -1020,7 +1052,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         try {
             val filesDir = filesDir ?: return false
             val base = filesDir.canonicalFile.path
-            val candidate = File(path).canonicalFile.path
+            // Resolve relative paths against the app files dir (the process
+            // CWD is not the files dir), then canonicalize to collapse '..'.
+            val raw = File(path)
+            val candidate = (if (raw.isAbsolute) raw else File(filesDir, path)).canonicalFile.path
             return candidate.startsWith(base + File.separator)
         } catch (e: IOException) {
             return false
@@ -1030,7 +1065,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     /**
      * Loads all defined settings from the given delta into the HumlaService.
      * Null fields are unchanged. Some settings may only take effect after a
-     * reconnect. Throws IllegalArgumentException on unknown transmit mode;
+     * reconnect. Throws IllegalArgumentException on invalid audio input
+     * (unknown transmit mode, non-finite knobs, sub-floor bitrate);
      * the pipeline recreate funnels through the route controller, which handles
      * AudioException internally.
      * @param delta A one-shot configuration command.
@@ -1038,78 +1074,90 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * @see se.lublin.humla.HumlaService
      */
     open fun apply(delta: ConfigDelta): Boolean {
-        // Pure validation first: the only throwing input (unknown transmit
-        // mode) must fail before any commit, so a bad delta cannot publish
-        // params/push tokens and then abort the audio/route steps.
+        // Pure validation first: the throwing inputs (unknown transmit mode,
+        // non-finite knobs, sub-floor bitrate) must fail before any commit, so
+        // a bad delta cannot publish params/push tokens and then abort the
+        // audio/route steps.
         inputModes.validateAudioDelta(delta)
         var reconnectNeeded = false
         var suppressReload = false
-        // 1. Merge connection params; frozen atomically below. Presence-based
+        // 1. Merge connection params; serialized by applyLock below (the
+        // merge-plus-publish is read-modify-write: two interleaved applies
+        // must not lose each other's keys). Presence-based reconnect: any
+        // delta carrying a reconnect-relevant key returns true.
+        // 1. Merge connection params under applyLock: the read-modify-write
+        // must not lose keys when two applies interleave. Presence-based
         // reconnect: any delta carrying a reconnect-relevant key returns true.
-        var params = connectionParams
-        if (delta.server != null) {
-            params = params.copy(server = delta.server)
-            reconnectNeeded = true
-        }
-        val certificate = delta.certificate
-        if (certificate != null) {
-            params = params.copy(
-                certificate = certificate.data.copyOf(),
-                // A null password keeps the previous one, mirroring the old
-                // bundle where an absent password key left it untouched.
-                certificatePassword = certificate.password ?: params.certificatePassword,
-            )
-            reconnectNeeded = true
-        }
-        val forceTcp = delta.forceTcp
-        if (forceTcp != null) {
-            params = params.copy(forceTcp = forceTcp)
-            reconnectNeeded = true
-        }
-        if (delta.clientName != null) {
-            params = params.copy(clientName = delta.clientName)
-            reconnectNeeded = true
-        }
-        if (delta.accessTokens != null) {
-            params = params.copy(accessTokens = delta.accessTokens?.toList())
-        }
-        val trustStore = delta.trustStore
-        if (trustStore != null) {
-            val trustStorePath = trustStore.path
-            if (isTrustStorePathAllowed(trustStorePath)) {
+        synchronized(applyLock) {
+            var params = connectionParams
+            if (delta.server != null) {
+                params = params.copy(server = delta.server)
+                reconnectNeeded = true
+            }
+            val certificate = delta.certificate
+            if (certificate != null) {
                 params = params.copy(
-                    trustStore = trustStorePath,
-                    // Password and format describe the store at this path, so
-                    // they are only applied together with an accepted path.
-                    trustStorePassword = trustStore.password ?: params.trustStorePassword,
-                    trustStoreFormat = trustStore.format ?: params.trustStoreFormat,
+                    certificate = certificate.data.copyOf(),
+                    // A null password keeps the previous one, mirroring the old
+                    // bundle where an absent password key left it untouched.
+                    certificatePassword = certificate.password ?: params.certificatePassword,
                 )
                 reconnectNeeded = true
-            } else {
-                Log.w(
-                    TAG,
-                    "Rejected trust store path (must be a .bks file under the app files directory); " +
-                        "keeping previous trust store settings."
-                )
             }
+            val forceTcp = delta.forceTcp
+            if (forceTcp != null) {
+                params = params.copy(forceTcp = forceTcp)
+                reconnectNeeded = true
+            }
+            if (delta.clientName != null) {
+                params = params.copy(clientName = delta.clientName)
+                reconnectNeeded = true
+            }
+            if (delta.accessTokens != null) {
+                params = params.copy(accessTokens = delta.accessTokens?.toList())
+            }
+            val trustStore = delta.trustStore
+            if (trustStore != null) {
+                val trustStorePath = trustStore.path
+                if (isTrustStorePathAllowed(trustStorePath)) {
+                    params = params.copy(
+                        trustStore = trustStorePath,
+                        // Password and format describe the store at this path, so
+                        // they are only applied together with an accepted path.
+                        trustStorePassword = trustStore.password ?: params.trustStorePassword,
+                        trustStoreFormat = trustStore.format ?: params.trustStoreFormat,
+                    )
+                    reconnectNeeded = true
+                } else {
+                    Log.w(
+                        TAG,
+                        "Rejected trust store path (must be a .bks file under the app files directory); " +
+                            "keeping previous trust store settings."
+                    )
+                }
+            }
+            if (delta.localMuteHistory != null) {
+                params = params.copy(localMuteHistory = delta.localMuteHistory?.toList())
+                reconnectNeeded = true
+            }
+            if (delta.localIgnoreHistory != null) {
+                params = params.copy(localIgnoreHistory = delta.localIgnoreHistory?.toList())
+                reconnectNeeded = true
+            }
+            // Serialized publish of the locally-built snapshot; volatile
+            // visibility is what cross-thread readers need once the lock
+            // guarantees a single writer at a time.
+            connectionParams = params
         }
-        if (delta.localMuteHistory != null) {
-            params = params.copy(localMuteHistory = delta.localMuteHistory?.toList())
-            reconnectNeeded = true
-        }
-        if (delta.localIgnoreHistory != null) {
-            params = params.copy(localIgnoreHistory = delta.localIgnoreHistory?.toList())
-            reconnectNeeded = true
-        }
-        // Main-confined publish of an already-frozen snapshot; volatile
-        // visibility (not mutual exclusion) is what readers need, and the
-        // snapshot was built locally above with no read-modify-write.
-        connectionParams = params
-        // 2. Push access tokens live.
+        // 2. Push access tokens live. Post-sync only: pre-sync the snapshot
+        // already carries them into connect()'s Authenticate, and an early
+        // duplicate would race the handshake auth.
         if (delta.accessTokens != null) {
             val connection = mConnection
-            if (connection != null && connection.isConnected()) {
-                connection.sendAccessTokens(requireNotNull(params.accessTokens))
+            if (connection != null && connection.isSynchronized()) {
+                // Re-read the published snapshot (merged above): the local
+                // merge copy never escapes the applyLock region.
+                connection.sendAccessTokens(requireNotNull(connectionParams.accessTokens))
             }
         }
         // 3. Apply audio settings (builder knobs, input modes, leveler).
@@ -1127,14 +1175,21 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         val bluetoothSco = delta.bluetoothSco
         if (bluetoothSco != null) {
             val requested = bluetoothSco
+            // Read the previous request before overwriting: the enable rule
+            // below depends on old-vs-new, so name it explicitly.
+            val wasScoRequested = route.isScoRequested
             // A fresh enable skips the end-of-method reload only when the
             // bundle holds nothing else audio-affecting: the confirmed
             // callback then performs the single pipeline recreate on the
             // SCO route. Bundled audio changes reload immediately (and the
-            // callback reloads once more on confirm); the connect-time
-            // bundle never reloads here since no handler exists yet.
+            // callback reloads once more on confirm) — the immediate reload
+            // stays even for pure enables because the failure path
+            // early-returns without reloading, and stranding new audio
+            // settings on a failed bring-up would be worse than one extra
+            // recreate; the connect-time bundle never reloads here since no
+            // handler exists yet.
             suppressReload = !delta.hasOtherAudioKeys() &&
-                (requested || !route.isScoRequested)
+                (requested || !wasScoRequested)
             route.setScoRequested(requested)
             if (!requested) {
                 // Synchronous teardown with notifications: stop() itself never
@@ -1219,11 +1274,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getReconnectAttempts(): Int {
-        return mReconnectAttempts
+        return mReconnectAttempts.get()
+    }
+
+    /**
+     * Test seam: the JVM suite cannot drive the Main timers that mutate the
+     * counter, so tests set it directly. Production never calls this.
+     */
+    @TestOnly
+    fun setReconnectAttemptsForTest(attempts: Int) {
+        mReconnectAttempts.set(attempts)
     }
 
     open override fun cancelReconnect() {
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
         setReconnecting(false)
         // Only release the Doze shield when no live or in-flight attempt holds
         // it: cancelling a future retry while CONNECTED must not drop the
@@ -1468,7 +1532,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val modelHandler = getModelHandler()
             val self = modelHandler.getUser(getSessionId())
             val user = modelHandler.getUser(session)
-            val users = ArrayList<User>(1)
+            val users = mutableListOf<User>()
             if (user != null) users.add(user)
             return Message(getSessionId(), self?.name, emptyList(), emptyList(), users, message)
         } catch (e: NotSynchronizedException) {
@@ -1492,7 +1556,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val modelHandler = getModelHandler()
             val self = modelHandler.getUser(getSessionId())
             val targetChannel = modelHandler.getChannel(channel)
-            val targetChannels = ArrayList<Channel>()
+            val targetChannels = mutableListOf<Channel>()
             if (targetChannel != null) targetChannels.add(targetChannel)
             return Message(
                 getSessionId(), self?.name, targetChannels,
@@ -1716,8 +1780,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getWhisperTarget(): WhisperTarget? {
-        if (VoiceTargetMode.fromId(mVoiceTargetId) == VoiceTargetMode.WHISPER) {
-            return synchronized(whisperLock) { mWhisperTargetList.get(mVoiceTargetId) }
+        // Snapshot: the id is written from Main/binder while the list is
+        // guarded by whisperLock — check-then-get on the live field could
+        // return another target's entry after a mode flip.
+        val targetId = mVoiceTargetId
+        if (VoiceTargetMode.fromId(targetId) == VoiceTargetMode.WHISPER) {
+            return synchronized(whisperLock) { mWhisperTargetList.get(targetId) }
         }
         return null
     }

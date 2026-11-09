@@ -21,8 +21,6 @@ import static org.junit.Assert.assertEquals;
 
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 /**
  * Pins the reconnect-backoff truth table in {@link HumlaService}.
  * Delays: 0-&gt;1000, 1-&gt;3000, 2-&gt;6000, 3-&gt;12000, &gt;=4-&gt;25000.
@@ -46,6 +44,10 @@ public class ReconnectBackoffTest {
 
     @Test
     public void negativeAttemptsFailClosedToMax() {
+        // Unreachable in production (the counter resets to 0 and only
+        // increments): the pure function treats negatives as below budget.
+        // Pinned as a drift detector — a future fail-closed clamp must
+        // update this test deliberately, not silently.
         assertEquals(25000, HumlaService.getReconnectDelayForAttempts(-1));
         assertEquals(25000, HumlaService.getReconnectDelayForAttempts(Integer.MIN_VALUE));
     }
@@ -57,17 +59,15 @@ public class ReconnectBackoffTest {
     }
 
     @Test
-    public void instanceDelegatesToStaticTable() throws Exception {
+    public void instanceDelegatesToStaticTable() {
         HumlaService service = new HumlaService();
-        Field attempts = HumlaService.class.getDeclaredField("mReconnectAttempts");
-        attempts.setAccessible(true);
         int[] expected = {1000, 3000, 6000, 12000, 25000};
         for (int i = 0; i < expected.length; i++) {
-            attempts.setInt(service, i);
+            service.setReconnectAttemptsForTest(i);
             assertEquals("attempt " + i + " must map to " + expected[i],
                     expected[i], service.getReconnectDelay());
         }
-        attempts.setInt(service, 42);
+        service.setReconnectAttemptsForTest(42);
         assertEquals(25000, service.getReconnectDelay());
     }
 }

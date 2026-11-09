@@ -28,9 +28,10 @@ import se.lublin.humla.model.Server
  * independently mutating fields.
  *
  * `server` travels by reference — it is mutable (`setResolved` in
- * `onConnectionEstablished`) and excluded from value equality. Byte arrays
- * and lists are defensively copied on construction so direct construction
- * also holds frozen inputs. `reconnectNeeded` is `HumlaService.apply`'s local
+ * `onConnectionEstablished`) and compared by identity, not value. Byte arrays
+ * and lists are defensively copied on construction, and getters return
+ * defensive copies too, so a reader holding the returned array/list can
+ * never mutate the published snapshot. `reconnectNeeded` is `HumlaService.apply`'s local
  * presence-based return (any delta carrying a reconnect-relevant key
  * returns true, even for an unchanged value), not a member here.
  */
@@ -48,9 +49,13 @@ class ConnectionParams(
     localIgnoreHistory: List<Int>? = null,
 ) {
     val certificate: ByteArray? = certificate?.copyOf()
+        get() = field?.clone()
     val accessTokens: List<String>? = accessTokens?.toList()
+        get() = field?.toList()
     val localMuteHistory: List<Int>? = localMuteHistory?.toList()
+        get() = field?.toList()
     val localIgnoreHistory: List<Int>? = localIgnoreHistory?.toList()
+        get() = field?.toList()
 
     fun copy(
         server: Server? = this.server,

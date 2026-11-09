@@ -246,18 +246,20 @@ class BluetoothScoManager : ScoLink {
      * owned by the service route policy, never touched here (see class note).
      */
     override fun stop() {
+        val taken: Observers
         synchronized(this) {
-            // One atomic unit with the flip: timeout cancel, observer
-            // teardown, and the generation bump cannot interleave with a
-            // concurrent bring-up's register/arm, matching fail() and
-            // dropActiveLink(). Unregister calls are idempotent and fast;
-            // route release stays outside the monitor.
+            // One atomic unit with the flip: timeout cancel and the
+            // generation bump cannot interleave with a concurrent
+            // bring-up's register/arm, matching fail() and dropActiveLink().
+            // The unregister IPC runs outside the monitor below; route
+            // release stays outside too.
             timeoutJob?.cancel()
             timeoutJob = null
-            teardownObservers()
+            taken = takeObserversLocked()
             state = STATE_IDLE
             ++generation
         }
+        unregisterObservers(taken)
         // Guarded release: a stale hold must never clear another app's
         // routing selection.
         releaseRouteIfHeld()
@@ -588,6 +590,9 @@ class BluetoothScoManager : ScoLink {
         }
         Log.i(TAG, "SCO bring-up attempt timed out, retrying")
         // Clear observers and any half-requested route before re-attempting.
+        // Reusing the same generation is safe: the teardown drops every
+        // in-flight callback registration, so the first attempt has no live
+        // observer left to be mistaken for the retry's.
         teardownObservers()
         releaseRouteIfHeld()
         synchronized(this) {
@@ -615,6 +620,7 @@ class BluetoothScoManager : ScoLink {
     }
 
     private fun dropActiveLink() {
+        val taken: Observers
         synchronized(this) {
             if (state != STATE_ACTIVE) {
                 return
@@ -622,8 +628,9 @@ class BluetoothScoManager : ScoLink {
             state = STATE_IDLE
             timeoutJob?.cancel()
             timeoutJob = null
-            teardownObservers()
+            taken = takeObserversLocked()
         }
+        unregisterObservers(taken)
         releaseRouteIfHeld()
         Log.i(TAG, "Bluetooth SCO disconnected")
         // Main-thread origin; see setActive.
@@ -632,6 +639,7 @@ class BluetoothScoManager : ScoLink {
 
     private fun fail(reason: String?) {
         val generationCopy: Int
+        val taken: Observers
         synchronized(this) {
             if (state == STATE_IDLE) {
                 return
@@ -639,9 +647,10 @@ class BluetoothScoManager : ScoLink {
             state = STATE_IDLE
             timeoutJob?.cancel()
             timeoutJob = null
-            teardownObservers()
+            taken = takeObserversLocked()
             generationCopy = generation
         }
+        unregisterObservers(taken)
         releaseRouteIfHeld()
         Log.w(TAG, "Bluetooth SCO failed: " + reason)
         // Always launched in the manager scope: failures can surface on the
@@ -827,9 +836,20 @@ class BluetoothScoManager : ScoLink {
         return true
     }
 
-    @Synchronized
-    private fun teardownObservers() {
-        val current = deviceListener
+    /** Snapshot holder so observer unregister IPC never pins the monitor. */
+    private class Observers(val deviceListener: Any?, val scoReceiver: BroadcastReceiver?)
+
+    /** Nulls the observer fields; caller must hold the monitor. */
+    private fun takeObserversLocked(): Observers {
+        val taken = Observers(deviceListener, scoReceiver)
+        deviceListener = null
+        scoReceiver = null
+        return taken
+    }
+
+    /** Unregisters a snapshot outside the monitor (idempotent, fast). */
+    private fun unregisterObservers(taken: Observers) {
+        val current = taken.deviceListener
         if (current != null) {
             // Guarded: the listener class and remove call exist only on S+.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -839,17 +859,25 @@ class BluetoothScoManager : ScoLink {
                     Log.w(TAG, "Device listener removal threw", e)
                 }
             }
-            deviceListener = null
         }
-        val receiver = scoReceiver
+        val receiver = taken.scoReceiver
         if (receiver != null) {
             try {
                 context.unregisterReceiver(receiver)
             } catch (e: Exception) {
                 Log.w(TAG, "SCO receiver removal threw", e)
             }
-            scoReceiver = null
         }
+    }
+
+    /**
+     * Clears both observer backends. Snapshots under the monitor, unregisters
+     * outside it: bring-up IPC must never pin the lock that main-thread
+     * callbacks and stop() need (see class note). Callers already holding
+     * the monitor must use takeObserversLocked + unregisterObservers instead.
+     */
+    private fun teardownObservers() {
+        unregisterObservers(synchronized(this) { takeObserversLocked() })
     }
 
     // Modern removal (S+): callers guarantee the version above. Takes Any

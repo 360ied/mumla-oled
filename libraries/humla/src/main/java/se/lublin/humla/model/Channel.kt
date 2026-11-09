@@ -42,6 +42,9 @@ class Channel : IChannel, Comparable<Channel> {
     override var permissions: Int = 0
     override var maxUsers: Int = 0
     override var isEnterRestricted: Boolean = false
+    // Written on the model thread, read on UI/binder: volatile for
+    // cross-thread visibility (same hazard as listening state below).
+    @Volatile
     private var canEnterField: Boolean = true
     // Visible across threads: ModelHandler writers run on the TCP/model thread
     // while isListeningToChannel reads off any binder thread. ConcurrentHashMap
@@ -115,19 +118,19 @@ class Channel : IChannel, Comparable<Channel> {
     fun getAllLinks(): Set<Channel> {
         val seen = HashSet<Channel>()
         seen.add(this)
-        if (linkList.isEmpty()) {
-            return Collections.unmodifiableSet(seen)
-        }
         val stack = ArrayDeque<Channel>()
         stack.push(this)
         while (!stack.isEmpty()) {
             val ch = stack.pop()
-            // Snapshot copy protects the traversal below, but the copy itself
-            // iterates the live (non-thread-safe) list: an off-monitor
-            // mutator racing here can still CME. Writers mutate under
-            // ModelHandler's monitor while readers (UI) call this freely —
-            // pre-existing parity arrangement, retained, not widened.
-            for (linked in ArrayList(ch.linkList)) {
+            // Snapshot under the channel leaf lock (see addLink): the copy
+            // used to iterate the live list, so an off-monitor mutator
+            // racing the traversal could CME. Writers take the ModelHandler
+            // monitor *then* this lock; readers take only this lock, one
+            // channel at a time — ordering is fixed, so no deadlock.
+            val snapshot: List<Channel> = synchronized(ch.linkList) {
+                ArrayList(ch.linkList)
+            }
+            for (linked in snapshot) {
                 // linkList's element type is non-null (addLink rejects null),
                 // so no null check: the pre-image Java guard is unreachable.
                 if (seen.add(linked)) {
@@ -139,25 +142,31 @@ class Channel : IChannel, Comparable<Channel> {
     }
 
     fun addLink(channel: Channel?) {
-        if (channel == null || channel == this || linkList.contains(channel)) {
-            return
-        }
-        for (i in linkList.indices) {
-            val sc = linkList[i]
-            if (channel.compareTo(sc) <= 0) {
-                linkList.add(i, channel)
+        synchronized(linkList) {
+            if (channel == null || channel == this || linkList.contains(channel)) {
                 return
             }
+            for (i in linkList.indices) {
+                val sc = linkList[i]
+                if (channel.compareTo(sc) <= 0) {
+                    linkList.add(i, channel)
+                    return
+                }
+            }
+            linkList.add(channel)
         }
-        linkList.add(channel)
     }
 
     fun removeLink(channel: Channel?) {
-        linkList.remove(channel)
+        synchronized(linkList) {
+            linkList.remove(channel)
+        }
     }
 
     fun clearLinks() {
-        linkList.clear()
+        synchronized(linkList) {
+            linkList.clear()
+        }
     }
 
     /**

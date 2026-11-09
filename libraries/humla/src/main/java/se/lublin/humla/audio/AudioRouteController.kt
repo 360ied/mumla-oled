@@ -34,11 +34,12 @@ import se.lublin.humla.exception.AudioException
  *
  * Mechanical relocation of every route field and member behind ports,
  * unified behind a single main-confined event funnel. All funnel mutations
- * run on the main thread; off-main SessionEnded (connection threads) is
- * posted to [scope] on entry, so teardown and reconnect teardown are
- * FIFO-serialized with the main-confined connect() path. Synchronous binder
- * reads (route getters) and retrySco stay safe from any thread via volatile
- * visibility plus session-token re-validation.
+ * run on the main thread; off-main events (connection threads) are posted
+ * to [scope] on entry with the session token captured, and the posted body
+ * re-checks the token before running, so a stale teardown can never clobber
+ * a newer session. Synchronous binder reads (route getters) and retrySco
+ * stay safe from any thread via volatile visibility plus session-token
+ * re-validation.
  */
 internal class AudioRouteController(
     private val platform: AudioPlatform,
@@ -90,7 +91,7 @@ internal class AudioRouteController(
     }
 
     companion object {
-        private val TAG = AudioRouteController::class.java.name
+        private val TAG = "AudioRouteController"
 
         /**
          * One-shot settle recheck for voice-by-absence: BT profiles attach
@@ -173,6 +174,11 @@ internal class AudioRouteController(
      * atomic default.
      */
     fun setHandsetStream(stream: Int) {
+        if (stream != AudioManager.STREAM_MUSIC && stream != AudioManager.STREAM_VOICE_CALL) {
+            // Fail-fast signal only: the pipeline still consumes the value
+            // verbatim and validates at creation (pre-extraction behavior).
+            Log.w(TAG, "Unexpected handset stream $stream; expected MUSIC or VOICE_CALL")
+        }
         handsetStream = stream
     }
 
@@ -263,25 +269,47 @@ internal class AudioRouteController(
     }
 
     /**
+     * Stale-post filter for the off-main funnel entry: drop events queued
+     * by a superseded session (or after teardown). Pure in the host token
+     * so the predicate itself is JVM-testable without a looper; the posting
+     * path above is Main-dispatcher only.
+     */
+    internal fun shouldDropStaleEvent(capturedToken: Int): Boolean {
+        return destroyed || host.sessionToken != capturedToken
+    }
+
+    /**
      * Single funnel-event map:
      * onConnectionSynchronized -> SessionStarted;
      * onConnectionDisconnected / superseding connect() -> SessionEnded
-     * (idempotent under the generation filter — the second delivery is a
-     * no-op); onDestroy -> Destroyed; device callbacks -> DevicesChanged;
-     * SCO callbacks -> ScoLinkChanged; apply() -> SettingsChanged(reload);
-     * settle/debounce expiry -> SettleRecheck.
+     * (idempotent under the session-token filter — a stale delivery whose
+     * token moved is dropped); onDestroy -> Destroyed; device callbacks ->
+     * DevicesChanged; SCO callbacks -> ScoLinkChanged; apply() ->
+     * SettingsChanged(reload); settle/debounce expiry -> SettleRecheck.
      *
-     * Funnel mutations run on main. An off-main SessionEnded
-     * (connection threads) is posted to [scope] and FIFO-serialized with
-     * the main-confined connect() path; the service generation filter
-     * drops the stale second delivery before it reaches the route.
+     * Funnel mutations run on main. Off-main events (connection threads)
+     * are posted to [scope] with the session token captured; the posted
+     * body re-checks it (see [shouldDropStaleEvent]) so a teardown queued
+     * behind a fast reconnect cannot run against the new session. Ordering
+     * is best-effort queue order, not strict FIFO with the synchronous
+     * connect() teardown.
      */
     fun onEvent(event: RouteEvent) {
         if (destroyed && event !is RouteEvent.Destroyed) {
             return
         }
         if (!isMainThread()) {
-            scope.launch { onEvent(event) }
+            if (event is RouteEvent.Destroyed) {
+                scope.launch { onEvent(event) }
+                return
+            }
+            val token = host.sessionToken
+            scope.launch {
+                if (shouldDropStaleEvent(token)) {
+                    return@launch
+                }
+                onEvent(event)
+            }
             return
         }
         when (event) {
@@ -349,37 +377,62 @@ internal class AudioRouteController(
 
     /**
      * Synchronous SCO teardown with notifications (explicit disconnect,
-     * toggle disable). Thread-safe entry (idempotent); notify ordering vs
-     * the funnel is best-effort.
+     * toggle disable). The link stop itself is synchronous and idempotent;
+     * the funnel-owned flag flip is funneled when off-main so a
+     * Main-confined edge can never race it (see class note). Notify
+     * ordering vs the funnel is best-effort.
      */
     fun stopScoWithNotify() {
         val link = sco ?: return
         val wasActive = link.isActive()
         link.stop()
+        if (!isMainThread()) {
+            // Binder/off-main disconnect: stop() above is safe anywhere, but
+            // scoRouteActive is funnel-owned. Funnel the flip + notify.
+            val token = host.sessionToken
+            scope.launch {
+                if (shouldDropStaleEvent(token)) {
+                    return@launch
+                }
+                // A new bring-up may have confirmed since the synchronous
+                // stop above (same session, e.g. retrySco racing the
+                // disconnect): never clear a live link's flag.
+                if (sco?.isActive() != true) {
+                    scoRouteActive = false
+                }
+                if (wasActive) {
+                    postTeardownNotify()
+                }
+            }
+            return
+        }
         scoRouteActive = false
         if (wasActive) {
             // Posted: orders the notify after the synchronous disable-path
-            // pipeline reload. Main-confined, so the flag cannot flip under
-            // the funnel anymore; the guards below stay as cheap idempotence
-            // against a re-confirm queued behind us.
-            scope.launch {
-                if (destroyed) {
-                    return@launch
-                }
-                if (sco?.isActive() == true) {
-                    // Re-connected since teardown queued: fresh callbacks
-                    // own the UI; a stale false must not overwrite them.
-                    return@launch
-                }
-                if (scoRouteActive) {
-                    // A newer link confirmed while this teardown was
-                    // queued (bring-up won the race after our flag flip):
-                    // its own connected-notify carries the truth.
-                    return@launch
-                }
-                host.onScoTeardown()
-            }
+            // pipeline reload. Single-writer (funnel) while on main, so the
+            // flag cannot flip under us; the guards below stay as cheap
+            // idempotence against a re-confirm queued behind us.
+            scope.launch { postTeardownNotify() }
         }
+    }
+
+    /** Posted-teardown notify guards, shared by the main and funneled paths. */
+    private fun postTeardownNotify() {
+        if (destroyed) {
+            return
+        }
+        if (sco?.isActive() == true) {
+            // Re-connected since teardown queued: fresh callbacks
+            // own the UI; a stale false must not overwrite them.
+            return
+        }
+        if (scoRouteActive) {
+            // A newer link confirmed while this teardown was
+            // queued (bring-up won the race after our flag flip):
+            // its own connected-notify carries the truth.
+            return
+        }
+        host.onScoTeardown()
     }
 
     fun updateScoRoute() {
@@ -407,7 +460,9 @@ internal class AudioRouteController(
     private fun onScoLinkChanged(active: Boolean) {
         val unchanged: Boolean = active == scoRouteActive
         if (unchanged) {
-            Log.i(TAG, "SCO route unchanged, skipping reload.")
+            // Steady state for the normal STARTING→fail path; DEBUG so every
+            // failed bring-up does not read as an anomaly in logcat.
+            Log.d(TAG, "SCO route unchanged, skipping reload.")
             return
         }
         scoRouteActive = active
@@ -417,8 +472,9 @@ internal class AudioRouteController(
             "Bluetooth SCO disconnected, falling back to phone audio"
         }
         recompute(reason, forceReload = false, settle = false, firstCreate = false)
-        // Main-confined: no teardown can flip the flag mid-funnel; keep the
-        // guard as idempotence.
+        // Single-writer while funnel-confined (statically unreachable when
+        // the confinement holds); kept as cheap idempotence against a
+        // re-confirm queued behind us.
         if (active != scoRouteActive) {
             return
         }
@@ -432,9 +488,22 @@ internal class AudioRouteController(
         if (destroyed) {
             return
         }
+        if (!isMainThread()) {
+            // Funnel the whole failure (route half + observer half) so the
+            // user-visible Toast can never fire for a superseded session.
+            val token = host.sessionToken
+            scope.launch {
+                if (shouldDropStaleEvent(token)) {
+                    return@launch
+                }
+                onScoFailed(reason)
+            }
+            return
+        }
         onEvent(RouteEvent.ScoLinkChanged(false))
-        // onScoFailed is posted to the main thread; connected and
-        // disconnected arrive on main-thread platform callbacks.
+        // Main-confined from here: connected/disconnected arrive on
+        // main-thread platform callbacks, and the off-main entry above
+        // re-checks the session token before reaching this point.
         // User-visible feedback is an observer event: the app layer renders
         // the Toast, humla owns no UI.
         host.onBluetoothScoFailed(reason)
@@ -530,9 +599,10 @@ internal class AudioRouteController(
                     else -> {}
                 }
             }
-            // INFO, not DEBUG: recomputes are rare (edges/settings/sync) and
-            // this line settles every "was A2DP visible?" question in the field.
-            Log.i(TAG, "Media-sink query: outputs=[$seen] media=$found")
+            // DEBUG: decision changes already log at INFO in recompute, so
+            // the steady-state per-query line would spam attach/detach
+            // flurries (debounce still queries per burst).
+            Log.d(TAG, "Media-sink query: outputs=[$seen] media=$found")
             return found
         } catch (e: Exception) {
             Log.w(TAG, "Media-sink query failed", e)
