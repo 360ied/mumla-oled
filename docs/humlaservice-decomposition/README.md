@@ -18,8 +18,8 @@ Subject: [`HumlaService.kt`](../../libraries/humla/src/main/java/se/lublin/humla
   855 of 2,357 member lines (~36%) and 16 of 52 fields. It has no unit
   tests beyond a one-line truth table. Roughly one in five commits touching
   the file since August were route work, more than half of them fixes or
-  labeled rounds of review findings. The route logic is being verified by reading it, because
-  it cannot be tested where it lives.
+  labeled rounds of review findings. The route logic is being verified by
+  reading it, because it cannot be unit-tested on the JVM where it lives.
 - **The route state is smaller than it looks.** Of its 16 fields, one is
   write-only (`mSettlePending`), one always equals another
   (`mVoiceModeClaimed` ≡ `mVoiceModeHeld`), one is a function argument passed
@@ -29,21 +29,24 @@ Subject: [`HumlaService.kt`](../../libraries/humla/src/main/java/se/lublin/humla
 - **The route choreography is written four times.** Sync, the funnel, the
   disconnect callback, and `onDestroy` each re-implement part of "apply the
   route", and the sync copy has drifted from the funnel. A traced (not yet
-  device-reproduced) consequence: CONNECT while CONNECTED skips route
-  teardown entirely (§3.4).
+  device-reproduced) consequence: CONNECT while CONNECTED skips the old
+  session's teardown entirely, route and audio pipeline alike (§3.4). The
+  in-app UI does not take that path, so it is a latent hazard rather than
+  a field bug.
 - **The configuration fields are the session's, not misplaced.** The 11
   connection parameters are read by `connect()` and
   `onConnectionEstablished()`. The fix is one value object, not eviction.
 - **The `Toast` is misowned, not unnecessary.** It is the user's only signal
   that Bluetooth permission was denied. Turn it into an observer event.
 - **Recommended plan:** shrink the route state in place (§5, slice 1),
-  extract it whole into an `AudioRouteController` behind ports (slices 3–4),
-  write the tests that were impossible before (slice 5), then unify the
-  choreography (slice 6). Configuration and power-lock tidying are a
+  put the platform behind ports while the code still lives in the service
+  (slice 3), extract it whole into an `AudioRouteController` (slices 4–5),
+  write the JVM tests the ports make possible (slice 6), then unify the
+  choreography (slice 7). Configuration and power-lock tidying are a
   separate, lower-priority track. Leave the connection machine, the façade,
   and the subclass hooks alone.
 
-Expected end state: `HumlaService` drops from 52 fields to about 27 and from
+Expected end state: `HumlaService` drops from 52 fields to about 23 and from
 2,442 lines to roughly 1,500–1,650, and the route policy gains a test suite.
 The line count is a side effect, not the goal.
 
@@ -251,6 +254,20 @@ only CONNECTING:
 - the old `AudioHandler` keeps capturing until the new sync's
   `createAudioHandler()` replaces it.
 
+The last item is not route state. Whatever fixes this has to end the whole
+old session, pipeline included, not only the route.
+
+**Reachability.** The in-app UI never takes this path.
+`MumlaActivity.connectToServerWithPerm()` turns a tap on another server
+while connected into a switch dialog. The dialog calls `disconnect()` and
+reconnects only from the resulting `onDisconnected` callback, so the old
+teardown runs before the new attempt starts. `MumlaService` is not
+exported. The network-callback reconnect runs only while reconnecting,
+which means after the old session's disconnect callback has already torn
+down. What remains is an `ACTION_CONNECT` that lands while the activity has
+no bound service, or a future caller that skips the dialog. This is a
+latent hazard, not an observed field bug.
+
 This is traced from code and not yet reproduced on a device. Either way it
 shows the structural point: session end should be an explicit event the
 connection machine sends to the route owner, not something the route code
@@ -272,13 +289,19 @@ so moving them to the app costs nothing.
 The route policy's only test is `AudioRoutePolicyTest`, which pins the
 one-line `computeVoiceRoute(sco, media)` truth table. The settle budget,
 debounce coalescing, mode-hold restore guard, foreign-SCO counter gating, and
-teardown races are untested. They can't be tested in place:
+teardown races are untested. They can't be unit-tested on the plain JVM in
+place:
 - they need a constructed `Service`;
 - they call `AudioManager`;
 - they schedule on `lifecycleScope`.
 
 The existing `HumlaServiceVoiceTargetTest` gets an instance only through
-reflection.
+reflection. Robolectric would lift the first and third limits.
+`:app` already has it as a test dependency; `:libraries:humla` does not.
+But the route code also drives `BluetoothScoManager` and API-level
+`AudioManager` branches, and those would need shadows. That is enough work
+that putting ports in front of the platform (§5, slice 3) is the cheaper
+way to get tests.
 
 The history shows the cost. Of 93 commits touching `HumlaService` since
 2026-08-01, 18 name route, SCO, or settle work in the subject, and 10 of
@@ -332,7 +355,7 @@ sealed interface RouteEvent {
     data object SessionEnded : RouteEvent       // disconnect callback AND superseding connect()
     data class DevicesChanged(val added: Array<AudioDeviceInfo>?) : RouteEvent
     data class ScoLinkChanged(val active: Boolean) : RouteEvent
-    data class SettingsChanged(val forceReload: Boolean) : RouteEvent
+    data class SettingsChanged(val reload: Boolean) : RouteEvent // decided by apply()
     data object SettleRecheck : RouteEvent
     data object Destroyed : RouteEvent          // bare teardown, no notify
 }
@@ -365,6 +388,14 @@ Design constraints:
   immediately before `initialize()`, which is the only point those fields
   are consumed. Builder knobs (bitrate, boost, input mode, frames per
   packet) remain configuration's.
+- **Route owns when the pipeline is recreated, for every reason.** The
+  voice mode must be held before capture starts, so every live recreate
+  goes through the funnel. That includes a settings reload with no route
+  change, such as a bitrate change: `apply()` already reloads through
+  `applyAudioRoute(..., forceReload = true)`. The controller therefore owns
+  the timing of every live recreate (`Host.recreatePipeline()`), while
+  configuration decides only *whether* a reload is due. State this in the
+  slice 4 commit; it is the seam's main non-obvious consequence.
 - **Constants move with their owner.** `ROUTE_SETTLE_RECHECK_MS`,
   `ROUTE_SETTLE_MAX_RECHECKS`, `ROUTE_RECOMPUTE_DEBOUNCE_MS`, and
   `computeVoiceRoute` leave the companion object.
@@ -378,7 +409,7 @@ and one `onEvent` call at each lifecycle edge.
 Each slice is a separate, behavior-preserving commit (or short series) with
 `./scripts/check.sh` green. The file absorbs about 1.7 edits a day, so slices
 should be small enough to land between other work, and the big move
-(slice 3) should land in one sitting.
+(slice 4) should land in one sitting.
 
 **Slice 1: shrink route state in place.** No moves.
 - Delete `mSettlePending`.
@@ -388,8 +419,9 @@ should be small enough to land between other work, and the big move
   `applyAudioRoute`.
 - Fix the stale comments: L195–199, L1135–1137, L239–241, L257–260.
 
-Net effect: −3 fields, fewer things to carry across the move. Pure
-refactor, reviewable line by line.
+Net effect: −4 fields (one deleted, three collapsed into one, one turned
+into a parameter), fewer things to carry across the move. Pure refactor,
+reviewable line by line.
 
 **Slice 2: Toast → observer event.**
 - Add `onBluetoothScoFailed(reason: String?)` to `IHumlaObserver`, with a
@@ -405,14 +437,25 @@ refactor, reviewable line by line.
 Behavior is identical, including the accepted re-toast on each failing
 device edge.
 
-**Slice 3: extract `AudioRouteController` as one unit.**
-- Move all 16 route fields, every route member, and the 165 embedded lines
-  (§2.2) behind the §4 interface, with the existing volatile and lock
-  discipline but on a **private lock object**.
+**Slice 3: ports in place.** No moves.
+- Introduce `AudioPlatform` (the eight `AudioManager` methods route code
+  uses, including the `Build.VERSION` S+ split) and `ScoLink` (implemented
+  by `BluetoothScoManager`).
+- Construct them in `onCreate` and switch every route call site in
+  `HumlaService` over, one for one.
+
+This is a mechanical substitution, reviewable without understanding the
+route policy. It shrinks the move to come, which is otherwise untested:
+slice 4 then relocates code that already talks only to ports. If cheap
+characterization tests are wanted before the move, write them against the
+ports here, using Robolectric only for the `Service` shell (§3.6).
+
+**Slice 4: extract `AudioRouteController` as one unit.**
+- Move all remaining route fields, every route member, and the 165
+  embedded lines (§2.2) behind the §4 interface, with the existing volatile
+  and lock discipline but on a **private lock object**.
 - Keep the four choreography copies as four controller methods, still
   divergent, so the move is mechanical and diffable.
-- Introduce `AudioPlatform` and `ScoLink` as part of this slice so the
-  controller has no direct `AudioManager` dependency.
 
 Hard rule: the route monitor group moves atomically. A half-moved state in
 which some route fields are guarded by the service monitor and others by
@@ -423,15 +466,17 @@ chat log or with `retryBluetoothSco`'s connection snapshot. Neither sharing
 provided a guarantee (§3.3), so this is safe, but state it in the commit
 body.
 
-**Slice 4: route inputs and pipeline handoff.**
-- `apply()` calls `route.setScoRequested()` and `route.setHandsetStream()`,
-  and moves the SCO-only `suppressReload` rule into the controller; it is
-  route policy.
+**Slice 5: route inputs and pipeline handoff.**
+- `apply()` calls `route.setScoRequested()` and `route.setHandsetStream()`.
+- `apply()` keeps computing whether to reload, including the SCO-only
+  `suppressReload` rule, and passes the result as `SettingsChanged(reload)`.
+  The rule reads `delta.hasOtherAudioKeys()`, a fact about the config
+  delta that the controller should not need to see.
 - `createAudioHandler()` pushes `route.decision()` into the builder.
 - After this slice, no route field or builder route flag is touched outside
   the controller.
 
-**Slice 5: tests.** This is the payoff that justifies the extraction, so
+**Slice 6: tests.** This is the payoff that justifies the extraction, so
 schedule it immediately after the move and not "later". Use fakes for
 `AudioPlatform` and `ScoLink` and a `TestScope` for virtual time. Minimum
 suite, each case corresponding to a past fix commit:
@@ -447,31 +492,42 @@ suite, each case corresponding to a past fix commit:
   link confirms;
 - `retrySco` re-validation across a session-token change.
 
-**Slice 6: unify the choreography.** These are the only intentional behavior
+**Slice 7: unify the choreography.** These are the only intentional behavior
 changes in the route plan. Each gets its own commit and is justified by a
-slice-5 test.
+slice-6 test.
 - Collapse the four copies into `onEvent`:
   - sync becomes `SessionStarted` and goes through the funnel's ordering,
     which fixes the counter-after-pipeline drift (§3.2);
   - disconnect becomes `SessionEnded`;
   - destroy becomes `Destroyed`.
 - Replace `mMediaRouteSelected`/`mAppliedVoiceRoute` with `AppliedRoute`.
-- Have `connect()` send `SessionEnded` when it supersedes a live
-  connection. This closes §3.4; reproduce it on a device first and record
-  the before/after.
+- Close §3.4 by having `connect()` end the old session before it overwrites
+  `mConnection`:
+  - shut down and unregister the old `AudioHandler`;
+  - send `route.onEvent(SessionEnded)`;
+  - decide explicitly whether observers see `onDisconnected` (today they go
+    straight to `onConnecting`).
 
-**Slice 7 (optional): main-thread confinement.** With every entry point
+  This is a few lines inside `connect()`, not a split of the connection
+  machine. The route event alone would leave the old pipeline capturing.
+  Because the path is unreachable from the in-app UI and the service is not
+  exported, a device reproduction needs an in-process trigger, such as a
+  debug-only hook or an instrumentation test. Record the before/after.
+  Given the reachability (§3.4), this is the lowest-priority item in the
+  slice.
+
+**Slice 8 (optional): main-thread confinement.** With every entry point
 going through `onEvent`, the controller could post off-main events
 (`SessionEnded` from connection threads, `retrySco` from binder) to main and
 drop every `@Volatile` and lock. The ordering argument is that `connect()`
 is main-confined, so a teardown posted before a reconnect is initiated is
 FIFO-ordered ahead of it. Explicit `disconnect()` currently tears SCO down
-synchronously on purpose. Do this only with slice-5 tests in place and a
+synchronously on purpose. Do this only with slice-6 tests in place and a
 dedicated review of that ordering claim.
 
-### Configuration track (after slice 4)
+### Configuration track (after slice 5)
 
-Slice 4 has already moved the route inputs out of `apply()`. Two things
+Slice 5 has already moved the route inputs out of `apply()`. Two things
 remain:
 
 - **`ConnectionParams`.** Replace the 11 connection-parameter fields with
@@ -491,7 +547,8 @@ remain:
 1. merge params;
 2. push access tokens live;
 3. apply audio settings;
-4. send `route.onEvent(SettingsChanged)`;
+4. send `route.onEvent(SettingsChanged(reload))`, with `reload` computed
+   here (§5, slice 5);
 5. return `reconnectNeeded`.
 
 ### Optional: power-hold policy
@@ -513,7 +570,8 @@ value; do it only when these sites next need a change.
 - **Splitting the connection machine.** `connect`, the five callbacks,
   `setReconnecting`, the network callback, and `connectionGeneration` form
   one state machine with real ordering constraints. Splitting it from its
-  state would create a distributed god object.
+  state would create a distributed god object. The §3.4 fix in slice 7 is
+  a few lines inside `connect()`, not a split.
 - **Restructuring the façade.** About 300 lines of one-line forwards are the
   cost of a published API. Kotlin `by` delegation does not fit, because the
   delegate (the model handler) changes per connection.
@@ -526,10 +584,17 @@ value; do it only when these sites next need a change.
 
 | | before | after route + config tracks |
 |---|---:|---:|
-| `HumlaService` fields | 52 | ~27 |
+| `HumlaService` fields | 52 | ~23 |
 | `HumlaService` lines | 2,442 | ~1,500–1,650 |
 | route fields | 16 (in service) | ~11 (in controller) |
 | route unit tests | 1 truth table | settle, debounce, mode, counter, races |
+
+Field arithmetic: the route track takes 16 fields out and adds one
+controller field (52 → 37). `ConnectionParams` replaces 11 fields with one
+(→ 27). The `InputModes` holder replaces five (the three mode instances,
+`mTransmitMode`, `mHalfDuplex`) with one (→ 23); `mAudioBuilder` stays.
+Inside the controller, slice 1 removes four of the 16 route fields and
+slice 7's `AppliedRoute` one more, leaving 11.
 
 ## 6. What would change this plan
 
@@ -538,14 +603,17 @@ value; do it only when these sites next need a change.
   and 2 are worth doing regardless.
 - **More contributors.** The file has a single author, so shared-monitor and
   shared-field hazards are managed by one mental model. A second
-  contributor makes slices 3–5 urgent rather than advisable.
+  contributor makes slices 3–6 urgent rather than advisable.
 - **Upstream route ownership.** If a future Android release or a platform
   helper could own "which sink is live", the settle and foreign-SCO
   machinery would shrink instead of relocating. The controller boundary is
   where such a change would plug in.
-- **§3.4 not reproducing.** If CONNECT while CONNECTED proves to tear down
-  correctly through a path not traced here, slice 6 loses one motivating
-  bug. The duplication argument stands on its own.
+- **§3.4 not reproducing.** The in-app UI disconnects before switching
+  servers, so a reproduction attempt that goes through the UI will not hit
+  the path at all; it needs an in-process trigger. If CONNECT while
+  CONNECTED still proves to tear down correctly through a path not traced
+  here, slice 7 loses one motivating bug. The duplication argument stands
+  on its own.
 
 ## Appendix A: reproduction
 
@@ -666,3 +734,25 @@ The first version of this document (`358dfb8b`) is superseded. Corrections:
 The `MumlaService` inheritance contract, the redundant route flags, the
 duplicated choreography, the threading facts, and the CONNECT-while-CONNECTED
 teardown gap are new in this version.
+
+A review of the second version (`85ea33d2`) confirmed its factual findings
+(the script output, the redundant flags, the §3.2 ordering drift, the
+threading facts) and corrected the plan:
+- **Ports first.** The ports now get their own in-place slice (slice 3)
+  before the move, so the move itself carries less untested change. Every
+  later slice number shifted up by one.
+- **Testability.** §3.6 overstated "can't be tested in place": Robolectric
+  is already an `:app` test dependency. Ports remain the cheaper route to
+  tests.
+- **§3.4.** The gap is not route-only (the old pipeline keeps capturing),
+  so the fix ends the whole old session inside `connect()`. The path is
+  also unreachable from the in-app UI, which disconnects before switching
+  servers, so it is now framed as a latent hazard and given the lowest
+  priority.
+- **Pipeline ownership.** §4 now states that the controller owns the
+  timing of every live recreate, including non-route settings reloads.
+- **`suppressReload`.** The rule stays in `apply()`, because it reads the
+  config delta, and travels in `SettingsChanged(reload)`.
+- **Arithmetic.** Slice 1 removes four fields, not three. The end state is
+  about 23 service fields, not 27, once the `InputModes` holder is
+  counted.
