@@ -55,6 +55,7 @@ import se.lublin.humla.net.TlsHostnameVerifier
 import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.HumlaException
+import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.TrustStoreRef
 import se.lublin.mumla.BuildConfig
@@ -445,6 +446,17 @@ open class MumlaService : HumlaService(),
 
         override fun onUserTalkStateUpdated(user: IUser?) {
             handleUserTalkStateUpdated(user)
+        }
+
+        override fun onBluetoothScoFailed(reason: String?) {
+            Toast.makeText(
+                this@MumlaService,
+                if (BluetoothScoManager.REASON_PERMISSION == reason)
+                    R.string.bluetooth_sco_permission
+                else
+                    R.string.bluetooth_sco_failed,
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 

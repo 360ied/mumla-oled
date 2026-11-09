@@ -121,6 +121,10 @@ class HumlaCallbacks : IHumlaObserver {
         broadcast { o -> o.onBluetoothScoChanged(active) }
     }
 
+    override fun onBluetoothScoFailed(reason: String?) {
+        broadcast { o -> o.onBluetoothScoFailed(reason) }
+    }
+
     override fun onAudioRouteChanged() {
         broadcast { it.onAudioRouteChanged() }
     }

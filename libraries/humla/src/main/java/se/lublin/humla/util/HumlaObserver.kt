@@ -83,6 +83,9 @@ open class HumlaObserver : IHumlaObserver {
     override fun onBluetoothScoChanged(active: Boolean) {
     }
 
+    override fun onBluetoothScoFailed(reason: String?) {
+    }
+
     override fun onAudioRouteChanged() {
     }
 

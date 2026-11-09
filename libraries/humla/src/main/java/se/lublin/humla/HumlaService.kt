@@ -33,7 +33,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
-import android.widget.Toast
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
@@ -531,14 +530,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 applyScoRoute(false, "Bluetooth SCO unavailable, falling back to phone audio")
                 // onScoFailed is posted to the main thread; connected and
                 // disconnected arrive on main-thread platform callbacks.
-                Toast.makeText(
-                    this@HumlaService,
-                    if (BluetoothScoManager.REASON_PERMISSION == reason)
-                        R.string.bluetooth_sco_permission
-                    else
-                        R.string.bluetooth_sco_failed,
-                    Toast.LENGTH_LONG
-                ).show()
+                // User-visible feedback is an observer event (slice 2): the
+                // app layer renders the Toast, humla owns no UI.
+                mCallbacks.onBluetoothScoFailed(reason)
             }
         })
         try {

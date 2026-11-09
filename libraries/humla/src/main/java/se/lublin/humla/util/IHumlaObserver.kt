@@ -71,6 +71,16 @@ interface IHumlaObserver {
     fun onBluetoothScoChanged(active: Boolean)
 
     /**
+     * Called on the main thread when Bluetooth SCO bring-up fails.
+     * Replaces the library-owned Toast: the app layer renders user-visible
+     * feedback. Edges stay coalesced by the existing route debounce; no
+     * extra throttle here.
+     * @param reason failure reason (see BluetoothScoManager REASON_*), or
+     *               null when unknown.
+     */
+    fun onBluetoothScoFailed(reason: String?)
+
+    /**
      * Called on the main thread after every confirmed audio-route change
      * (voice triple vs media path, SCO or media-sink driven), after the
      * pipeline reload. Use it to follow output routing (e.g. volume stream);
