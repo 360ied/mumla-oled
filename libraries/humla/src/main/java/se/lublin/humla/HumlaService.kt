@@ -475,13 +475,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         val params = connectionParams
         val server = params.server
         if (server == null) {
-            Log.w(TAG, "connect() called with null mServer, cancelling reconnect")
+            Log.w(TAG, "connect() called with null server, cancelling reconnect")
             setReconnecting(false)
             return
         }
 
         try {
-            mConnectionState = ConnectionState.DISCONNECTED
+            // Straight to CONNECTING: teardown below runs synchronously
+            // before the new attempt, so observers never see a transient
+            // CONNECTED -> DISCONNECTED -> CONNECTING flap on re-connect.
             mVoiceTargetId = 0
             mWhisperTargetList.clear()
 
@@ -694,8 +696,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
         // Route application (mode, pipeline, SCO, cues) lives in the
         // controller; pipeline errors are reported via onPipelineError.
-        // First creation bypasses the funnel but still pushes
-        // route-dependent audio explicitly (see controller).
+        // First creation runs through the funnel with firstCreate, which
+        // keeps the unconditional build plus route notify the sync path
+        // requires (see controller).
         route.onEvent(RouteEvent.SessionStarted)
 
         mCallbacks.onConnected()
@@ -1053,9 +1056,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             params = params.copy(localIgnoreHistory = delta.localIgnoreHistory?.toList())
             reconnectNeeded = true
         }
-        synchronized(this) {
-            connectionParams = params
-        }
+        // Main-confined publish of an already-frozen snapshot; volatile
+        // visibility (not mutual exclusion) is what readers need, and the
+        // snapshot was built locally above with no read-modify-write.
+        connectionParams = params
         // 2. Push access tokens live.
         if (delta.accessTokens != null) {
             val connection = mConnection

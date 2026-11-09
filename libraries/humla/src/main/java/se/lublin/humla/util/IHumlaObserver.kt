@@ -75,6 +75,9 @@ interface IHumlaObserver {
      * Replaces the library-owned Toast: the app layer renders user-visible
      * feedback. Edges stay coalesced by the existing route debounce; no
      * extra throttle here.
+     * In-tree observers should extend HumlaObserver (no-op default); this
+     * is an in-tree library interface, so out-of-tree direct implementors
+     * must add an override when upgrading.
      * @param reason failure reason (see BluetoothScoManager REASON_*), or
      *               null when unknown.
      */

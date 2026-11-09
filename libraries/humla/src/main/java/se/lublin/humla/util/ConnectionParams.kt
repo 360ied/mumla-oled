@@ -22,14 +22,17 @@ import se.lublin.humla.model.Server
 /**
  * Immutable connection-parameter snapshot (config track of the HumlaService
  * decomposition): the 11 apply-time values `connect()` and
- * `onConnectionEstablished()` read. Frozen at the `apply()` boundary under
- * the service monitor and published through a single volatile field, so
+ * `onConnectionEstablished()` read. Frozen at the `apply()` boundary
+ * (main-confined) and published through a single volatile field, so
  * connection threads always observe one atomic snapshot instead of eleven
  * independently mutating fields.
  *
  * `server` travels by reference — it is mutable (`setResolved` in
  * `onConnectionEstablished`) and excluded from value equality. Byte arrays
- * and lists are defensively copied at freeze time. `reconnectNeeded` stays
+ * and lists are defensively copied at freeze time on the `apply()` path
+ * (which does `copyOf()`/`toList()`); direct construction must already hold
+ * frozen inputs, as the public constructor aliases caller-supplied arrays
+ * and lists. `reconnectNeeded` stays
  * presence-based: any delta carrying a reconnect-relevant key returns true,
  * even for an unchanged value.
  */
