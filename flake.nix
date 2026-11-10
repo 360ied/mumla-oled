@@ -70,6 +70,9 @@
               pkgs.markdownlint-cli
               pkgs.cmark
               pkgs.cmark-gfm
+              # Target-architecture murmur interop harness (step 1):
+              # provides `mumble-server` for scripts/test_interop.sh.
+              pkgs.murmur
               androidSdk
             ];
 
