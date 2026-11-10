@@ -99,7 +99,11 @@ open class HumlaSSLSocketFactory {
     ) {
         mContext = SSLContext.getInstance("TLS")
 
-        val kmf = KeyManagerFactory.getInstance("X509")
+        // Default algorithm, not the hardcoded "X509": on Android the default
+        // *is* X509, so device behavior is unchanged, while plain-JVM test
+        // runtimes (Robolectric murmur interop, step 1) provide only SunX509.
+        // Hardcoding "X509" throws NoSuchAlgorithmException off-device.
+        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
         kmf.init(keystore, keystorePassword?.toCharArray() ?: CharArray(0))
 
         var pinnedTrustManager: X509TrustManager? = null
