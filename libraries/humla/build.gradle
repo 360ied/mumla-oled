@@ -173,8 +173,8 @@ android {
             cacheDir.mkdirs()
             def tarGz = file("${cacheDir}/rnnoise_data-${modelVersionOrDigest}.tar.gz")
             if (!tarGz.exists()) {
-                println "Downloading RNNoise model weights (${modelHash.substring(0, 7)})..."
-                def modelUrl = new URL("https://media.xiph.org/rnnoise/models/rnnoise_data-${modelHash}.tar.gz")
+                println "Downloading RNNoise model weights (${modelVersionOrDigest.substring(0, 7)})..."
+                def modelUrl = new URL("https://media.xiph.org/rnnoise/models/rnnoise_data-${modelVersionOrDigest}.tar.gz")
                 modelUrl.withInputStream { ins ->
                     tarGz.withOutputStream { outs -> outs << ins }
                 }
