@@ -46,12 +46,22 @@ class InputModes(
     val toggle: ToggleInputMode = ToggleInputMode(),
     val continuous: ContinuousInputMode = ContinuousInputMode(),
     transmitMode: Int = Constants.TRANSMIT_VOICE_ACTIVITY,
-    @Volatile
-    var halfDuplex: Boolean = false,
+    halfDuplex: Boolean = false,
 ) {
-    // Direct assignment bypasses the builder recompute in [applyAudioDelta];
-    // all in-tree writers go through the applier (verified by grep), so the
-    // setter stays public for the extension applier below.
+    // Direct assignment to activity/toggle/continuous internals bypasses the
+    // builder recompute in [applyAudioDelta]; all in-tree writers go through
+    // the applier (verified by grep). halfDuplex/transmitMode stay private-set
+    // so a future direct write can never strand AudioHandler.Builder state.
+    // Documented here (not on each field) to keep the primary-ctor readable.
+
+    /**
+     * Half-duplex flag (PTT && halfDuplex enables the half-duplex pipeline).
+     * Private setter like transmitMode: all writes go through applyAudioDelta.
+     * Volatile: read across threads with transmitMode.
+     */
+    @Volatile
+    var halfDuplex: Boolean = halfDuplex
+        private set
 
     /**
      * Validated at construction and on every applier write (see
@@ -63,13 +73,9 @@ class InputModes(
     var transmitMode: Int = transmitMode
         private set
     init {
-        require(
-            transmitMode == Constants.TRANSMIT_PUSH_TO_TALK ||
-                transmitMode == Constants.TRANSMIT_CONTINUOUS ||
-                transmitMode == Constants.TRANSMIT_VOICE_ACTIVITY
-        ) {
-            "Unknown transmit mode: $transmitMode"
-        }
+        // Single source of truth via the shared resolver: adding a mode
+        // touches only resolveInputMode, never this init second copy.
+        resolveInputMode(transmitMode)
     }
 
     internal fun resolveInputMode(mode: Int): IInputMode {

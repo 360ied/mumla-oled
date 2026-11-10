@@ -23,14 +23,26 @@ import java.util.Collections
 import java.util.HashSet
 
 class Channel : IChannel, Comparable<Channel> {
-    /** Model-thread confined: written by ModelHandler on the TCP/model thread, read on UI/binder. */
+    // Effectively immutable after construction (set once via Channel(id, ...)
+    // or the test-only empty ctor); volatile so binder/UI readers never see a
+    // default 0 on a constructed channel.
+    @Volatile
     override var id: Int = 0
-    /** Model-thread confined: use [resortInParent] after in-place updates (see ModelHandler). */
+    // Written on the model thread, read on UI/binder: volatile for
+    // cross-thread visibility. In-place order-key mutation must re-sort via
+    // [resortInParent] (see ModelHandler).
+    @Volatile
     override var position: Int = 0
+    @Volatile
     override var isTemporary: Boolean = false
+    @Volatile
     override var parent: Channel? = null
-    /** Model-thread confined: use [resortInParent] after in-place updates (see ModelHandler). */
+    // Written on the model thread, read on UI/binder: volatile for
+    // cross-thread visibility. In-place mutation must re-sort via
+    // [resortInParent] (see ModelHandler).
+    @Volatile
     override var name: String? = null
+    @Volatile
     override var description: String? = null
     // Copy-on-access like User's ByteString getters: holders of the getter
     // ref must not be able to mutate channel state through the array.
@@ -44,8 +56,11 @@ class Channel : IChannel, Comparable<Channel> {
     private val subchannelList = ArrayList<Channel>()
     private val userList = ArrayList<User>()
     private val linkList = ArrayList<Channel>()
+    @Volatile
     override var permissions: Int = 0
+    @Volatile
     override var maxUsers: Int = 0
+    @Volatile
     override var isEnterRestricted: Boolean = false
     // Written on the model thread, read on UI/binder: volatile for
     // cross-thread visibility (same hazard as listening state below).
@@ -134,7 +149,8 @@ class Channel : IChannel, Comparable<Channel> {
     /**
      * Returns the set of all channels transitively linked to this channel,
      * including this channel itself.
-     * Matches upstream Mumble's Channel::allLinks() traversal.
+     * Matches upstream Mumble's Channel::allLinks() traversal (depth-first
+     * via an explicit stack, like upstream QStack).
      * @return Set of all transitively linked channels.
      */
     fun getAllLinks(): Set<Channel> {

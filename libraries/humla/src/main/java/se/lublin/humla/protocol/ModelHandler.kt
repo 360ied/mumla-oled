@@ -65,6 +65,10 @@ class ModelHandler(
 
     @Volatile
     private var mPermissions: Int = 0
+    // Plain (not volatile): every access runs under the ModelHandler monitor
+    // (all message* writers are @Synchronized and readers take the same
+    // monitor), so visibility rides the monitor, not the field. mPermissions
+    // above is volatile only as belt-and-braces beside the same monitor.
     private var mSession: Int = 0
 
     fun getChannel(id: Int): Channel? {
@@ -139,6 +143,9 @@ class ModelHandler(
 
         // In-place order-key mutation must re-sort the parent list to preserve
         // Channel's sorted-insertion invariant (position/name are the sort keys).
+        // The re-sort runs after the parent move below (and is skipped when
+        // moved): addSubchannel sorted-inserts, so a moved channel is already
+        // ordered and an old-parent resort would be wasted work.
         var orderChanged = false
         if (msg.hasName() && ch.name != msg.name) {
             ch.name = msg.name
@@ -150,11 +157,26 @@ class ModelHandler(
             orderChanged = true
         }
 
-        if (orderChanged) {
-            ch.parent?.resortInParent(ch)
-        }
+        var moved = false
 
         if (msg.hasParent()) {
+            // Upstream parity (Messages.cpp msgChannelState): refuse moves
+            // into self or a descendant -- otherwise parent points at a
+            // channel whose subchannel list rejected us (self) or the tree
+            // cycles and resortInParent/subchannelUserCount recurse forever.
+            var pp = parent
+            var cycle = false
+            while (pp != null) {
+                if (pp == ch) {
+                    cycle = true
+                    break
+                }
+                pp = pp.parent
+            }
+            if (cycle) {
+                Log.w(TAG, "Server asked to move a channel into itself or a descendant; ignoring")
+                return
+            }
             val oldParent = ch.parent
             if (oldParent != parent) {
                 if (oldParent != null) {
@@ -164,7 +186,12 @@ class ModelHandler(
                 if (parent != null) {
                     parent.addSubchannel(ch)
                 }
+                moved = true
             }
+        }
+
+        if (orderChanged && !moved) {
+            ch.parent?.resortInParent(ch)
         }
 
         if (msg.hasDescriptionHash()) {
@@ -234,6 +261,19 @@ class ModelHandler(
         if (channel != null && channel.id != 0) {
             for (u in mUsers.values) {
                 u.removeListeningChannel(channel.id)
+            }
+            // Orphan repair: occupants still reference the deleted channel and
+            // subchannels still point at it as parent. Upstream disconnects on
+            // occupied remove as a protocol violation; we stay connected and
+            // explicitly detach instead (documented divergence -- dropping the
+            // whole session on a hostile packet is worse for Android).
+            for (u in mUsers.values) {
+                if (u.channel == channel) {
+                    u.channel = null
+                }
+            }
+            for (sub in ArrayList(channel.subchannels)) {
+                sub.parent = null
             }
             for (linked in ArrayList(channel.links)) {
                 linked.removeLink(channel)
@@ -389,10 +429,16 @@ class ModelHandler(
         }
 
         if (msg.hasChannelId()) {
-            val channel = mChannels[msg.channelId]
+            // Upstream parity (Messages.cpp msgUserState): fall back to root
+            // instead of dropping -- the same packet may still carry name,
+            // texture, comment, and listening updates below.
+            var channel = mChannels[msg.channelId]
             if (channel == null) {
-                Log.e(TAG, "Invalid channel for user!")
-                return // TODO handle better
+                Log.e(TAG, "Invalid channel for user! Falling back to root.")
+                channel = mChannels[0]
+                if (channel == null) {
+                    return
+                }
             }
             val old = usr.channel
 
@@ -488,13 +534,15 @@ class ModelHandler(
         if (msg.listeningVolumeAdjustmentCount > 0) {
             for (adj in msg.listeningVolumeAdjustmentList) {
                 if (adj.hasListeningChannel() && adj.hasVolumeAdjustment()) {
-                    val ch = mChannels[adj.listeningChannel]
-                    if (ch != null) {
-                        ch.listeningVolume = adj.volumeAdjustment
-                        // Fan out like the add/remove paths above: without this
-                        // the UI stays stale on volume-only packets. Gated to
-                        // the self-listening path as the neighbors are.
-                        if (usr.session == mSession) {
+                    // Upstream parity (Messages.cpp:510-518): only the local
+                    // user's adjustment drives local volume. Any other user's
+                    // packet must not clobber it (single per-channel field).
+                    if (usr.session == mSession) {
+                        val ch = mChannels[adj.listeningChannel]
+                        if (ch != null) {
+                            ch.listeningVolume = adj.volumeAdjustment
+                            // Fan out like the add/remove paths above: without this
+                            // the UI stays stale on volume-only packets.
                             mObserver.onChannelStateUpdated(ch)
                         }
                     }
