@@ -29,6 +29,7 @@ import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.`when`
 import se.lublin.humla.Constants
 import se.lublin.humla.audio.inputmode.ActivityInputMode
@@ -237,14 +238,14 @@ class InputModesValidationTest {
             )
         }
         assertEquals(before, modes.transmitMode)
-        org.mockito.Mockito.verifyNoInteractions(builder)
+        verifyNoInteractions(builder)
     }
 
     @Test
     fun outOfRangeFiniteThresholdsPassThenClamp() {
         val modes = InputModes()
         // Out-of-range finite thresholds pass validation (clamped downstream),
-        // e.g. 2.0 clamps to 1.0, -1.0 clamps to 0.0.
+        // e.g. 2.0 clamps to 1.0, -1.0 clamps to 0.0. Both directions pinned.
         modes.validateAudioDelta(ConfigDelta(detectionThreshold = 2.0f))
         modes.validateAudioDelta(ConfigDelta(detectionThreshold = -1.0f))
         modes.applyAudioDelta(
@@ -254,6 +255,13 @@ class InputModesValidationTest {
             null,
         )
         assertEquals(1.0f, modes.activity.vadMax, 1e-6f)
+        modes.applyAudioDelta(
+            ConfigDelta(detectionThreshold = -1.0f),
+            mock(AudioHandler.Builder::class.java),
+            null,
+            null,
+        )
+        assertEquals(0.0f, modes.activity.vadMax, 1e-6f)
     }
 
     @Test
@@ -274,6 +282,11 @@ class InputModesValidationTest {
         assertThrows(IllegalArgumentException::class.java) {
             modes.validateAudioDelta(ConfigDelta(inputQuality = 1000000))
         }
+        // Ceiling is MAX_INPUT_BITRATE (510000): boundary pinned both sides.
+        assertThrows(IllegalArgumentException::class.java) {
+            modes.validateAudioDelta(ConfigDelta(inputQuality = 510001))
+        }
+        modes.validateAudioDelta(ConfigDelta(inputQuality = 510000))
         modes.validateAudioDelta(ConfigDelta(inputQuality = 64000))
     }
 }
