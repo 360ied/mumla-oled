@@ -133,3 +133,23 @@ remediation was feasible and justified, against `master` and upstream
 Not re-checked in round 4: UI duplication counts,
 timing-test notes, and build-infra P1/P2 rows other than CI. Their earlier
 verdicts stand.
+
+## Round 5: roadmap restructure
+
+Round 5 rewrote [07](07-remediation-roadmap.md) around phases, a release
+bar, stable `R`/`Q` item IDs (earlier ordinal item numbers are retired), a
+disposition for every P0/P1 finding, and a reconciliation with
+[`docs/migration/`](../migration/status.md) and
+[`docs/humlaservice-decomposition/`](../humlaservice-decomposition/PROGRESS.md).
+New facts checked against `master` and upstream:
+
+| Item | Round-5 verdict | Change |
+|---|---|---|
+| `CrashReportsFragment` 15 s freeze test | Real code (`ANR_FREEZE_MS = 15_000L`), but by design: [crash-reporter](../crash-reporter/README.md) ships crash-test buttons in all builds for field-testable release traces, behind a confirmation dialog, disabled while connected or unbound | P1 → P3, closed |
+| Short `AudioRecord` reads zero-padded | Confirmed: `AudioInputEngine::processFrame` zero-fills when `count < SAMPLES_PER_10MS` | Stays P2, pulled into the release bar as R7 (audible) |
+| `MAX_OPUS_BUFFER_BYTES 1024` too small | Contradicted as a defect: upstream `EncodingOutputBuffer` is `std::array< unsigned char, 960 >` (`src/mumble/AudioInput.h`); Opus constrains packets to the buffer | P2 → P3, closed (note: 192 kbps unreachable at 60 ms, as upstream) |
+| Room `io()` bridge "until slice 4" | KDoc defers to slice 4, which landed 2026-10-13 per [status](../migration/status.md) without removing the bridge | Stale KDoc folded into R9 |
+| `AsyncTask` deferral | [porting guide](../migration/porting-guide.md) defers `AsyncTask` retirement to slice 7, which was killed 2026-10-15 | Deferral premise gone; R5 now, R23 opportunistic |
+| Crash-check thread, `MumbleImageGetter` | Correct today (generation counter; `shutdown()` called by current callers) | P1 → P3, deferred with triggers |
+| Orphaned P1s | `setTargetFragment`, `startActivityForResult`, `ServerInfoFragment` poll, crash-check thread, `MumbleImageGetter`, freeze test, `androidTest/` had no roadmap home | Each now has an `R` item or a recorded disposition |
+

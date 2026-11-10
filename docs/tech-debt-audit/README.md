@@ -2,7 +2,7 @@
 
 Snapshot: audit tree `b282a601`, 2026-11-09 (`master`; verify with
 `git log --oneline -1 b282a601`). Follow-up doc commits on `master` revise
-wording, severities, and remediations (round 4 in
+wording, severities, and remediations (rounds 4–5 in
 [06](06-validity-check.md#round-4-severity-and-remediation-review)); code
 citations refer to the audit tree — re-search symbols at `HEAD`.
 
@@ -44,7 +44,7 @@ reports will drift — search for the named symbol instead.
 | [04-build-infra.md](04-build-infra.md) | Build/infra | Gradle, Nix flake, scripts, signing, versioning, CI |
 | [05-crosscutting.md](05-crosscutting.md) | Cross-cutting | Tests, error handling, docs, licensing, naming, TODO backlog |
 | [06-validity-check.md](06-validity-check.md) | Validity check | Per-claim re-verification verdicts, corrections, downgrades |
-| [07-remediation-roadmap.md](07-remediation-roadmap.md) | Roadmap | Consolidated Top-9 paydown order plus quick-wins |
+| [07-remediation-roadmap.md](07-remediation-roadmap.md) | Roadmap | Phased paydown (release bar, R-item IDs), quick wins, disposition of every P0/P1 |
 
 Severity vocabulary used throughout:
 
@@ -53,7 +53,10 @@ Severity vocabulary used throughout:
   per-seam gates and parallelizable unless the roadmap notes a dependency;
   see [07](07-remediation-roadmap.md)).
 - **P1** — major hardening: silent failures, lifecycle exposure, missing
-  gates, deprecated APIs, accessibility gaps. Fix before release.
+  gates, deprecated APIs, accessibility gaps. Fix before release when it
+  meets the release bar in [07](07-remediation-roadmap.md) (user-facing,
+  hides user-facing failures, or cheap accessibility); otherwise in a later
+  roadmap phase.
 - **P2** — moderate: inefficiency, duplication, doc-rot, fragile scripts.
   Fix opportunistically.
 - **P3** — minor/report-only: dead paths, tuning notes, style debt.
@@ -99,6 +102,13 @@ then:
 - widened the main-thread bridge item to cover the Room `io()` helper, which
   runs real SQLite queries on the main thread.
 
+Round 5 restructured the roadmap into phases with an explicit release bar,
+gave every P0/P1 finding a disposition, reconciled the plan with
+`docs/migration/` and `docs/humlaservice-decomposition/`, closed the
+crash-test freeze (by design) and the Opus buffer note (smaller upstream
+buffer), and pulled the audible short-read zero-padding into the release
+bar.
+
 ### The P0 (ship order is [07](07-remediation-roadmap.md))
 
 Do not implement from this summary; build order + done-criteria live in
@@ -109,7 +119,7 @@ linked `01`–`05` tables are the normative slices.
    [`libraries/humla/build.gradle`](../../libraries/humla/build.gradle)
    (symbol `prepareRnnoiseModel` / `modelHash`) — breaks fresh clones and
    digest rotations. User impact: none at runtime (dev-only build breakage).
-   Done when a cold-cache gate run passes. See `07` item 1.
+   Done when a cold-cache gate run passes. See `07` R1.
 
 ### Former P0 clusters (P1 since round 4)
 
@@ -120,21 +130,22 @@ Each still has a roadmap item; the downgrade changes urgency, not validity.
   (symbol `nativeCreate`). Facts hold, but `app/proguard-rules.pro` keeps
   both listener methods, so the missing-method path needs a code change to
   trigger, and a failed `new` aborts on Android anyway. Cheap parity with the
-  output bridge. See `07` item 4.
+  output bridge. See `07` R4 (release bar).
 - Hand-mirrored `RNNModel` in
   [`RnnoiseProcessor.cpp`](../../libraries/humla/src/main/jni/audio_engine/RnnoiseProcessor.cpp)
   (symbol `RNNModel`). The submodule is gitlink-pinned, so drift needs a
   deliberate bump; the hazard is an unguarded bump, not shipped code. The
   upstream struct lives in `rnnoise/src/denoise.c`, not a header, so a
-  `static_assert` has nothing to compare against. See `07` item 7 and the
-  RNNoise quick-win.
+  `static_assert` has nothing to compare against. See `07` Q1 (upstream fix),
+  else R15.
 - `AsyncTask` in `app/` (deprecated API 30, still functional on API 36).
   Only [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt)
   (`mContext`) has a real defect (retained `Activity` across rotation, P1);
   [`ServerConnectTask.kt`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.kt)
   already uses `applicationContext`, and the
   [`ServerInfoTask.kt`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.kt)
-  ping pool is shut down on every rebuild (both P2). See `07` item 5.
+  ping pool is shut down on every rebuild (both P2). See `07` R5 (release
+  bar) and R23.
 - Main-thread blocking bridges (`runBlocking(Dispatchers.IO)`):
   [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt)
   (`read` / `write`), `SettingsRepository` `snapshotBlocking` /
@@ -143,7 +154,7 @@ Each still has a roadmap item; the downgrade changes urgency, not validity.
   first load and only writes wait on disk; the Room bridge runs real SQLite
   queries on main and is the larger ANR surface. The `MumlaActivity`
   crash-check `runBlocking` runs on a background thread and stays
-  allowlisted. See `07` item 6.
+  allowlisted. See `07` R9.
 
 ## How to cite evidence
 
@@ -161,13 +172,13 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
 
 | State | Implied code path | Audit coverage | Planned gate |
 |---|---|---|---|
-| Rotation (phone/tablet, pager position, poller generation) | `ChannelFragment` phone `ViewPager` vs tablet dual-pane branch; 2-page adapter titles; `ServerInfoFragment` 1 s poller surviving view destruction until `onDestroy` | Partial (rotation covered only for `AsyncTask` cert dialog) | Per-fragment rotation rows; `ViewPager2` remediation states adjacent-page retention and restores pager position plus cert-dialog state (`07` item 9) |
+| Rotation (phone/tablet, pager position, poller generation) | `ChannelFragment` phone `ViewPager` vs tablet dual-pane branch; 2-page adapter titles; `ServerInfoFragment` 1 s poller surviving view destruction until `onDestroy` | Partial (rotation covered only for `AsyncTask` cert dialog) | Per-fragment rotation rows; `ViewPager2` remediation states adjacent-page retention and restores pager position plus cert-dialog state (`07` R21) |
 | Background / Doze | Partial wake + wifi locks, `WAKELOCK_GRACE_MS`, `START_NOT_STICKY` losing the reconnect schedule on process death | Partial (P2 note only) | 5-row lifecycle table mirroring the backoff-table style (killed-while-connected reposts notification and reschedules; killed-while-reconnecting resumes backoff or documents loss as expected; Doze holds locks only inside the grace window); Doze + process-death cases in the smoke tier |
 | Process death (connected vs reconnecting) | Disconnect-state resets; duplicate-connect guard; backoff truth table | Partial | Same lifecycle table; killed-while-connected vs killed-while-reconnecting rows |
 | Empty / error conditions | Server-grid `emptyView`; empty-channel hiding default; null/empty release fallback | Partial | Empty/denied/revoked rows in `01` P1/P2 |
-| Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` icon-label quick-win); revoke-while-shown in `androidTest/` smoke tier |
+| Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` R6); revoke-while-shown in `androidTest/` smoke tier |
 | Adjacent tabs / concurrent workers | Poller firing while the ping pool shuts down; dual-tab observers of talk-state; `TalkBroadcastReceiver` vs media-session dispatch | Listed in isolation, not modeled jointly | One concurrent-service-callback row (`repeatOnLifecycle` + shared `Flow` criterion) |
-| Main-thread bridges (ANR surface) | `DataStorePreferenceDataStore` `read`/`write`, `SettingsRepository` `snapshotBlocking`/`updateBlocking`, `MumlaRoomDatabase` `io()`, `MumlaActivity` crash-check `runBlocking` (background thread) | Partial (P1 covers preference path plus Room) | `07` item 6 gate: zero main-thread `runBlocking` on the preference and Room paths; only the background crash-check stays allowlisted |
+| Main-thread bridges (ANR surface) | `DataStorePreferenceDataStore` `read`/`write`, `SettingsRepository` `snapshotBlocking`/`updateBlocking`, `MumlaRoomDatabase` `io()`, `MumlaActivity` crash-check `runBlocking` (background thread) | Partial (P1 covers preference path plus Room) | `07` R9 gate: zero main-thread `runBlocking` on the preference and Room paths; only the background crash-check stays allowlisted |
 
 ## Evidence transcripts (scoped, `master` at snapshot)
 
