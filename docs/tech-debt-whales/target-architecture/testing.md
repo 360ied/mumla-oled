@@ -14,7 +14,7 @@ Every migration step's done-when list is checked by the layers below.
 | State transitions | `testFossDebugUnitTest` | Fast | Every server message and intent as a pure function |
 | Virtual time | `testFossDebugUnitTest` | Fast | `HumlaClient`, `Session` with a fake transport, `RouteControl`, voice control with a fake native layer, the policy collector |
 | Native host suite | `check.sh` (existing `test_native_audio.sh`) | Medium | Engines, codec, OCB2, queues, loopback |
-| murmur interop | `check.sh` | Slow | Real TLS, real server, real reconnects |
+| murmur interop | `scripts/test_interop.sh` (never `check.sh`) | Slow (a minute or more) | Real TLS, real server, real reconnects |
 | On-device | Manual, at the developer's discretion | Slowest | Audio devices, Bluetooth, Android service rules |
 
 ## State-transition tests
@@ -95,10 +95,17 @@ Additions to the existing suite run by
 1. Its binary is `mumble-server` (version 1.5.939 in the flake's nixpkgs on
 2026-11-10).
 
+**Where it runs:** its own script, `scripts/test_interop.sh`, like
+`scripts/test_native_audio.sh`. It re-executes itself inside the nix dev
+shell as `check.sh` does, and runs a dedicated Gradle test task
+(`murmurInteropTest`). `check.sh` never calls it: `check.sh` is the fast
+mandatory pre-commit gate, and a suite that takes a minute or more does not
+belong there. When the script must run is an
+[open item](open-items.md#open-gating).
+
 **Harness:** JUnit tests in `:libraries:humla` tagged with a
-`MurmurInterop` category, excluded from `testFossDebugUnitTest` and run by
-a dedicated Gradle test task (`murmurInteropTest`) that `check.sh` calls.
-Each test class:
+`MurmurInterop` category, excluded from `testFossDebugUnitTest` and every
+other default test task. Each test class:
 
 1. picks a free loopback port;
 2. writes a temporary `murmur.ini` (loopback host, that port, a temporary

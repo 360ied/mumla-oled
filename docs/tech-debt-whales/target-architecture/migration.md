@@ -42,8 +42,8 @@ flowchart LR
    today's files and counts. Wired into `check.sh`.
 2. Dev shell: `pkgs.murmur`. Test resources: the loopback test certificate
    and key. `:libraries:humla` test dependencies: Robolectric (version
-   from the catalog). The `murmurInteropTest` Gradle task and its
-   `check.sh` step.
+   from the catalog). The `murmurInteropTest` Gradle task and
+   `scripts/test_interop.sh` (not wired into `check.sh`).
 3. Interop scenarios against today's `HumlaConnection` (see
    [testing](testing.md#murmur-interop)).
 4. `StateImmutabilityTest` scaffold (walks nothing until step 2) and

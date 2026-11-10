@@ -13,7 +13,7 @@ them.
 
 | Item | How it gets resolved | Gates |
 |---|---|---|
-| `check.sh` time budget for murmur interop | Measure the step 1 scenarios; split slow ones behind `check.sh --full` if the gate grows past what is tolerable | Step 1 |
+| When `scripts/test_interop.sh` must run | Developer's call: required at step completion and before merges, or only recommended (for example, when a change touches the transport, client and session, or native networking) | Step 1 |
 | Live handles keep screens updating | Spike (see [migration](migration.md#step-2--immutable-state)) | Step 2 |
 | `kotlinx-collections-immutable` version | Pin the current release at step 2 start (pre-1.0 accepted); run the state tests against it | Step 2 |
 | Jitter slot pool size (1024 slots proposed) | Pool stress test in the native suite (see [testing](testing.md#native-host-suite)) | Step 5a |
