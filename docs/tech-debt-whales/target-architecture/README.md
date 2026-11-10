@@ -262,6 +262,7 @@ update can reach a destroyed view.
 | **Authorities**: state split by who decides it, with joined views for readers | Split `User` by writer even though every reader needs the joined value, then rebuilt the join with extra machinery. |
 | **Rules only**: concurrency rules applied across the code | Discipline written down; does not make the wrong path harder. |
 | **Per-frame Kotlin transmit decision** (`canTransmit(state)` on the capture thread, as the final design) | Duplicates or fights the stateful native mechanics (voice activity, pre-speech buffer, end-of-transmission marker). Kept only as the interim before step 5a. |
+| **Hand-written protobuf encoding** in the native codec | Error-prone to write and maintain; nanopb generates allocation-free code from the same `.proto` file instead. |
 | **Leaving the native engine untouched** under the I/O layer | Its locks, callbacks under locks, and per-packet allocation are unsafe on realtime threads; refactoring it while keeping the no-I/O separation is the better trade. |
 
 ## Non-goals

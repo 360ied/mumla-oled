@@ -107,7 +107,9 @@ OCB2 in `crypto/` keeps its locks, since two network threads share it.
   `voice_io/` in step 5.
 
 `voice_io/` is the only native directory allowed to include socket,
-AAudio, thread, and JNI headers.
+AAudio, thread, and JNI headers. Third-party submodules (`opus`,
+`rnnoise`, `nanopb`) are outside the check's scope; the generated nanopb
+files under `voice_codec/generated/` are inside it.
 
 ## Remaining conventions
 

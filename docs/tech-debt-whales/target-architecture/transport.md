@@ -20,8 +20,8 @@ The transport lives in `se.lublin.humla.net` and is owned by one
 `Session`. It talks to the voice side only through `VoiceLink`, an
 interface the `VoiceEngine` implements (`setKeys`, `setDecryptIv`,
 `encryptIv`, `submit(SetVoiceRoute)`, `submit(SendPing)`,
-`queueTunnelled`, and the `UdpPing` events), so transport tests use a
-fake. It reuses today's framing, SRV lookup
+`queueTunnelled`, and the `UdpPing` and `CryptResyncRequested` events), so
+transport tests use a fake. It reuses today's framing, SRV lookup
 ([`HumlaTCP`](../../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt)),
 frame validation
 ([`FrameValidator`](../../../libraries/humla/src/main/java/se/lublin/humla/net/FrameValidator.kt)),
@@ -132,10 +132,14 @@ the `VoiceEngine` instead of a Kotlin `CryptState`:
 The client's `VoiceCommand.Start` includes the keys from `cryptKeys`, so a
 `CryptSetup` that arrives before voice starts is never lost.
 
-Today Mumla OLED never *requests* a resync itself (desktop Mumble sends an
-empty `CryptSetup` when decryption keeps failing). That stays out of scope
-here, to keep behavior unchanged; the `VoiceEngine`'s crypt statistics make
-it easy to add later.
+**Client-requested resync** is kept exactly as today's `HumlaUDP` does it
+(and as desktop Mumble's `ServerHandler` does): when a packet fails to
+decrypt, more than 5 s have passed since the last good packet, and more
+than 5 s since the last request, the receive thread emits
+`VoiceEvent.CryptResyncRequested`. The transport answers with an empty
+`CryptSetup`, which asks the server to send a fresh `server_nonce`. The
+receive thread keeps the last-request time, so requests are rate-limited at
+the source.
 
 ## Tunnel mode
 

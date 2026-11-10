@@ -228,12 +228,36 @@ Formats, ported byte-for-byte from today's Kotlin:
 - **1.2.2 workaround**: today's `applyLegacyCodecWorkaround`, applied when
   the server's legacy version is `0x10202`.
 
-The protobuf encoding and decoding are hand-written for these two small
-messages (field numbers and wire types from
-[`MumbleUDP.proto`](../../../libraries/humla/src/MumbleUDP.proto)),
-because pulling a protobuf runtime into the native build is not worth it
-for two messages. Host tests check them byte-for-byte against the
-Java-generated classes.
+### Protobuf through nanopb
+
+The protobuf side uses [nanopb](https://github.com/nanopb/nanopb), a C
+protobuf implementation built for embedded use: generated code, no
+allocation, fixed-size fields. It fits the no-I/O, no-allocation rules
+without a full protobuf runtime in the native build.
+
+- **Runtime:** nanopb as a submodule at `jni/nanopb`, registered in the root
+  `.gitmodules` like `opus` and `rnnoise`, pinned to the tag that matches
+  the generator. Compiled without `PB_ENABLE_MALLOC`, so it cannot
+  allocate. `scripts/worktree.py` already initializes every submodule, so
+  it needs no change.
+- **Generator:** `pkgs.nanopb` in the dev shell (0.4.9.1 in the flake's
+  nixpkgs on 2026-11-10). A script, `scripts/gen_nanopb.sh`, generates
+  `jni/voice_codec/generated/MumbleUDP.pb.{c,h}` from the same vendored
+  [`MumbleUDP.proto`](../../../libraries/humla/src/MumbleUDP.proto) the Java
+  classes come from, and fails if the generator and submodule versions
+  differ.
+- **Generated code is committed**, like the generated Java protobuf
+  classes, in commits separate from manual edits.
+- **Options file** (`MumbleUDP.options`) sets fixed sizes:
+  `Audio.opus_data` at `MAX_PACKET_BYTES` (2048), `Audio.positional_data`
+  at 3 floats, so decoded messages live in plain structs.
+- The codec functions above wrap nanopb's encode and decode with
+  caller-provided buffers. Host tests still check output byte-for-byte
+  against the Java-generated classes.
+
+The legacy format is not protobuf: it is Mumble's own variable-length
+integer encoding, already hand-written in Kotlin (`PacketBuffer`), and is
+ported as is.
 
 ## Voice I/O layer
 
@@ -261,7 +285,7 @@ flowchart LR
 | Capture | Yes | Read 10 ms of PCM; read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; push talk edges to the capture event queue |
 | Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); push talk events to the render event queue; write PCM to the device |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
-| Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted senders, push to the inbound queue; ping: report to Kotlin |
+| Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted senders, push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
 | Notifier | No | Every 20 ms while running, drain the capture and render event queues and deliver them to Kotlin in one call |
 
 - In **step 5a**, the capture and render loops are entry points called by
@@ -450,6 +474,7 @@ sealed interface VoiceEvent {
     data class UdpPing(val timestampMicros: Long, val serverVersionV2: Long?,
         val maxBandwidth: Int?) : VoiceEvent
     data class PipelineError(val message: String) : VoiceEvent
+    data object CryptResyncRequested : VoiceEvent
 }
 ```
 
