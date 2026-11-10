@@ -29,6 +29,9 @@ The existing JNI bridges for the engines
 (`NativeAudioInputEngineJni.cpp`, `NativeAudioOutputEngineJni.cpp`) and
 crypt (`NativeCryptStateJni.cpp`) are deleted when their Kotlin callers are
 (steps 5a and 5b); `voice_io` has the only JNI surface for voice.
+`NativeCrashTestJni.cpp` (the crash reporter's native crash test, not part
+of voice) moves to `jni/diagnostics/` in step 5a, outside the native
+tripwire's scope.
 
 ## Engine refactor
 
@@ -214,6 +217,11 @@ struct ParsedDatagram {
 bool parseDatagram(UdpFormat, const uint8_t* data, size_t length,
                    uint32_t legacyCodecWorkaroundVersion, ParsedDatagram* out);
 ```
+
+`kMaxFramesPerDatagram` is 12, the output engine's largest bundle
+(`MAX_DECODE_SAMPLES` is 12 × 10 ms). Today's legacy parser chains frames
+until the packet ends; real servers send one frame per datagram, so frames
+beyond the twelfth are dropped and counted, a bound today's code lacks.
 
 Formats, ported byte-for-byte from today's Kotlin:
 
@@ -413,6 +421,22 @@ Performed by the Kotlin **voice control thread**, in command order:
 The control thread is the only caller of start and stop, so they never race
 each other, and it is never the main thread.
 
+### Failures
+
+Voice failures never end the session: text, the channel tree, and every
+other feature keep working without audio, and the connection notification
+and chat log show the error.
+
+| Failure | Handling |
+|---|---|
+| Capture or playback stream cannot open (including a missing microphone permission; the activity requests permissions before connecting, as today) | `VoiceEvent.PipelineError`, `VoiceStatus.lastError`; the control thread retries on the next route change or settings change |
+| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above |
+| UDP socket cannot be created or connected | `VoiceEvent.UdpUnavailable`; the transport switches to tunnel mode at once, as it would after its 20 s rule |
+| Crypt key setup rejected (`setKeys` returns false) | Treated as a protocol violation: the transport fails the session, as today's invalid-key path does |
+
+The chat log feature formats `PipelineError` as a warning, as today's
+`Host.onPipelineError` and `onLogWarning` do.
+
 ## `VoicePolicy`
 
 ```kotlin
@@ -505,6 +529,8 @@ executed by the send thread (the control thread only enqueues it).
 ```kotlin
 data class VoiceStatus(
     val running: Boolean,
+    val bitrate: Int,                         // current encoder settings, from VoicePolicy
+    val framesPerPacket: Int,
     val localCrypt: CryptCounts,              // good, late, lost, resync (see client.md)
     val droppedOutbound: Long,
     val droppedInbound: Long,
@@ -521,6 +547,7 @@ sealed interface VoiceEvent {
     data class UdpPing(val timestampMicros: Long, val serverVersionV2: Long?,
         val maxBandwidth: Int?) : VoiceEvent
     data class PipelineError(val message: String) : VoiceEvent
+    data object UdpUnavailable : VoiceEvent
     data object CryptResyncRequested : VoiceEvent
     data class EncoderLimited(val maxBandwidth: Int, val bitrate: Int,
         val framesPerPacket: Int) : VoiceEvent

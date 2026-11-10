@@ -33,7 +33,9 @@ class HumlaClient(
 
 All lifecycle logic runs on one **client dispatcher**
 (`Dispatchers.Default.limitedParallelism(1)`). The public methods only
-launch onto it and return. This dispatcher handles lifecycle transitions
+launch onto it and return, whatever thread calls them (main, a feature,
+a broadcast receiver); there are no binder threads in the target, since
+nothing binds a service. This dispatcher handles lifecycle transitions
 only (a handful per connection), never server messages or voice, so it
 cannot become a bottleneck.
 
@@ -45,12 +47,17 @@ Everything a connection needs, frozen when `connect` is called, as today's
 ```kotlin
 data class ConnectTarget(
     val server: ServerEndpoint,
-    val certificate: CertRef?,                // today's ConfigDelta.CertRef (immutable; secrets redacted in toString)
-    val trustStore: TrustStoreRef?,           // today's ConfigDelta.TrustStoreRef
+    val certificate: ClientCertificate?,
+    val trustStore: TrustStoreRef?,           // today's ConfigDelta.TrustStoreRef (strings only)
     val forceTcp: Boolean,
     val clientName: String,
     val accessTokens: PersistentList<String>,
 )
+
+data class ClientCertificate(                 // replaces ConfigDelta.CertRef, whose ByteArray is mutable
+    val pkcs12: ByteString,
+    val password: String?,
+) { override fun toString() = "ClientCertificate(<${pkcs12.size()} bytes>, password=<redacted>)" }
 
 data class ServerEndpoint(                    // immutable copy of the Room Server row
     val serverId: Long,                       // Server.id: keys local mute/ignore lists and tokens
@@ -111,7 +118,7 @@ sealed interface ClientError {
     data class Connection(val message: String, val cause: Throwable?) : ClientError  // reconnects
     data class Rejected(val type: Int, val reason: String?) : ClientError           // Reject
     data class Removed(val actor: Int?, val reason: String?, val ban: Boolean) : ClientError
-    data class Trust(val chain: List<X509Certificate>, val failure: HandshakeFailure,
+    data class Trust(val chain: PersistentList<X509Certificate>, val failure: HandshakeFailure,
         val verifiedHost: String?) : ClientError                                    // TLS verification
 }
 ```
@@ -202,10 +209,17 @@ class Session internal constructor(
 
 1. The client loads `LocalFacts` (local mute/ignore lists for this server,
    persisted self-mute/deafen) from `LocalFactsStore` on the I/O
-   dispatcher.
+   dispatcher. If loading fails, the session starts with empty lists and
+   the stored self-mute values treated as unset, and the error is logged;
+   a database problem never blocks connecting.
 2. The client creates the `Transport`, which resolves the host (SRV first,
-   as today), opens the TLS socket, and verifies the certificate. A
-   verification failure completes `failure` with `ClientError.Trust`.
+   with today's lookup and fallback to the plain host name), opens the TLS
+   socket, and verifies the certificate. All of this runs on the I/O
+   dispatcher inside the attempt's scope, so `disconnect` or a new
+   `connect` cancels it; cancellation closes any socket already opened. A
+   verification failure completes `failure` with `ClientError.Trust`; any
+   other error before the session exists (DNS, connect, TLS I/O) is
+   `ClientError.Connection` and reconnects.
 3. The client creates the `Session` with phase `HANDSHAKING` and publishes
    `Connecting`.
 4. The session sends `Version` and `Authenticate` (username, password,
@@ -220,7 +234,9 @@ class Session internal constructor(
 7. The client publishes `Connected(session)`, sends `SessionStarted` to
    `RouteControl`, and submits `VoiceCommand.Start` with the server's UDP
    address, the crypt keys, the UDP packet format, whether voice starts
-   tunnelled, and the tunnel sink (see [voice](voice.md#kotlin-facade)).
+   tunnelled, the server's legacy version (for the 1.2.2 codec workaround),
+   and the tunnel sink, which is the transport's `sendTunnelled`
+   (see [voice](voice.md#kotlin-facade)).
    Codec and input settings reach the `VoiceEngine` from the settings flow,
    not through the client.
 
@@ -285,9 +301,8 @@ never held a reference to it.
 data class SessionStats(
     val tcpLatencyMicros: Long?,
     val udpLatencyMicros: Long?,
-    val usingUdp: Boolean,
-    val maxBandwidth: Int?,
-    val currentBandwidth: Int?,
+    val usingUdp: Boolean,                    // from TransportStats
+    val currentBandwidth: Int?,               // calculateAudioBandwidth(VoiceStatus.bitrate, framesPerPacket)
     val localCrypt: CryptCounts,              // from VoiceStatus
     val remoteCrypt: CryptCounts,             // from TransportStats (TCP Ping replies)
 )
@@ -298,5 +313,9 @@ data class CryptCounts(val good: Int, val late: Int, val lost: Int, val resync: 
 The session combines `transport.stats` and `voice.status` into `stats` with
 one `combine` collector in its scope. Before voice starts, `localCrypt` is
 all zeros. `usingUdp` comes only from the transport, which owns that
-decision (see [transport](transport.md#keepalive-and-udp-health)). Kept out of `SessionState` because latency
+decision (see [transport](transport.md#keepalive-and-udp-health)).
+`currentBandwidth` uses today's `calculateAudioBandwidth`, moved as is.
+The server's bandwidth cap is not a statistic: it lives in
+`ServerState.info.maxBandwidth` (see [state](state.md#types)), the single
+source for both screens and the encoder. Kept out of `SessionState` because latency
 changes every ping.

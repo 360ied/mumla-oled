@@ -50,7 +50,11 @@ A foreground `Service` of type `microphone` with no logic of its own.
   start a microphone foreground service from the background.
 - **Stays in the foreground** while `ClientState` is `Connecting`,
   `Connected`, or `Reconnecting`, including every reconnect cycle. It stops
-  itself when the state becomes `Idle` or `Failed`.
+  itself when the state becomes `Idle` or `Failed`. Today's `HumlaService`
+  lingers after a kick or ban (`CONNECTION_LOST` without reconnect) so the
+  bound UI can show the error; in the target the error lives in the
+  application-scoped `ClientState.Failed`, so screens show it without a
+  service, and the service can stop.
 - **Background connects** (talk broadcast, notification actions) are
   accepted only while the service is already in the foreground; otherwise
   they are ignored and logged.
@@ -71,16 +75,17 @@ the flows it needs. Features do not call each other.
 |---|---|---|---|
 | Connection notification and media session | `MumlaConnectionNotification` (including its `MediaSession`, custom actions, and headset-hook and claimed-key dispatch), `updateConnectedNotification`, `onMuteToggled`, `onDeafenToggled`, `onOverlayToggled`, `onDisconnect`, `onCancelReconnect`, `setSuppressNotifications` | `client.state`, `session.state` (self, channel), `talkActivity`, overlay setting, notification style setting | Builds the foreground notification in its connecting, connected, and reconnecting variants; owns the media session; actions call session and client intents. While the activity is in the foreground (today's `setSuppressNotifications`), a permission denial does not re-show the notification |
 | Message notifications | `MumlaMessageNotification`, `clearChatNotifications` | `session.events` (`TextMessageReceived`), `chatNotify` setting | Posts and clears message notifications. Never suppressed by chat visibility, as today |
-| Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `session.events`, `voice.events` (`EncoderLimited`) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`). Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings |
+| Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `session.events`, `session.state` (for filters), `voice.events` (`EncoderLimited`, `PipelineError`) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`). Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings, and applies today's filters: moves only when they enter or leave the self user's channel (with today's wording when the user moved themselves), recordings only in the same or a linked channel. `ConnectionWarning` and `PipelineError` are logged as warnings |
 | TTS | `speakTts`, `initTts`, TTS parts of `handleUserTalkStateUpdated` | `session.events`, TTS settings, self deafen state | Speaks messages with today's rules (HTML stripped, links shortened, short form when configured, the 250-character threshold, nothing while deafened), plus today's connection announcements and engine-failure messages |
 | PTT sounds | `initSoundPool`, `playPttSound`, `releaseSoundPool` | `talkActivity.selfTalking`, `route.state`, `pttSound` setting | Plays the PTT beeps on the stream today's code picks (voice call stream on the voice route, music otherwise); reloads on route change |
-| Talk keys | `onTalkKeyDown`, `onTalkKeyUp`, `onTalkKeyCancel` | Key events from the activity and media session, PTT settings | Calls `session.setPtt`, with toggle mode as today |
+| Talk keys | `onTalkKeyDown`, `onTalkKeyUp`, `onTalkKeyCancel` | Key events from the activity, the media session, and the on-screen PTT button, PTT settings | Calls `session.setPtt`, with toggle mode as today. A cancel (today's `ChannelFragment.onPause` and `ACTION_CANCEL` paths call `onTalkKeyCancel`) always ends a press, so leaving or rotating the screen mid-press never leaves transmit on |
 | Media key mute | `onMediaKeyMuteToggled` | Media session events, settings | Toggles self-mute; optional TTS announcement |
 | Hot corner | `MumlaHotCorner`, `onHotCorner*`, `updateHotCornerVisibility` | `client.state`, hot corner settings | Shows the overlay window; calls `session.setPtt` |
 | Overlay | `MumlaOverlay`, `setOverlayShown`, `isOverlayShown`, `updateOverlayVisibility`, `checkAndRequestOverlayPermission` | `session.state`, `talkActivity`, overlay settings | Shows who is talking in a system overlay |
 | Proximity | `shouldUseProximitySensor`, `setProximitySensorOn` | `route.state`, `client.state`, handset-mode setting | Holds `PROXIMITY_SCREEN_OFF_WAKE_LOCK` while connected in handset mode without SCO, as today's condition, with today's guards for devices without the sensor |
 | Permission denied | `onPermissionDenied` dialog, `isErrorShown`, `markErrorShown` | `session.events` (`PermissionDenied`) | Shows today's dialog once per error, as the error-shown flag does today |
-| Talk broadcast | `TalkBroadcastReceiver`, `registerTalkReceiver`, `unregisterTalkReceiver` | `client.state`, `allowTalkBroadcast` setting | Registers the receiver while connected; calls `session.setPtt` |
+| Talk broadcast | `TalkBroadcastReceiver`, `registerTalkReceiver`, `unregisterTalkReceiver` | `client.state`, `allowTalkBroadcast` setting, input mode | Registers the receiver while connected; maps on, off, and toggle to `session.setPtt` with today's guards (connected, push-to-talk mode only, unknown values ignored) |
+| Bluetooth permission guard | `MumlaService`'s `hasBluetoothConnectGrant` check when the Bluetooth headset preference changes | Bluetooth headset setting | When the preference is turned on without the `BLUETOOTH_CONNECT` grant, turns it back off and shows today's toast |
 | SCO failure message | `MumlaService.onBluetoothScoFailed` (Toast) | `route.events` | Shows the toast, with today's `scoFailureMessage` bucketing |
 
 Persisting and restoring self-mute/deafen moves into the session and
@@ -102,8 +107,8 @@ with `repeatOnLifecycle(STARTED)`.
 |---|---|---|---|
 | `MumlaActivity` | `MainViewModel` | `client.state` (target name, reconnect countdown, failure, wrong-password reason), crash report availability | Connect, switch server (with today's confirmation when already connected), disconnect, cancel reconnect, trust decisions, wrong-password retry |
 | `ChannelFragment` | `ChannelViewModel` | Self `UserInfo`, `talkActivity.selfTalking`, input mode setting | PTT button, self-mute and deafen |
-| `ChannelListFragment` + `ChannelListAdapter` | `ChannelListViewModel` | `ServerState.tree`, `users`, `talkActivity`, expanded channels | Join, move, menus |
-| `ChannelChatFragment` | `ChatViewModel` | Chat log feature, chat target (`ChatTargetProvider`), `ServerSettingsInfo` limits | Send text (with today's length and image-size checks), clear log |
+| `ChannelListFragment` + `ChannelListAdapter` | `ChannelListViewModel` | `ServerState.tree`, `users`, `talkActivity` | Join, move, menus. Expanded and collapsed channels stay where today's adapter keeps them |
+| `ChannelChatFragment` | `ChatViewModel` | Chat log feature, chat target, `ServerSettingsInfo` limits | Send text, clear log. The ViewModel holds the chat target as `StateFlow<ChatTarget?>` (channel or user ID), replacing the fragment-implemented `ChatTargetProvider` interface; the channel list sets it through the shared activity ViewModel. Length and image-size checks run in the ViewModel before `sendText`, with today's messages; `sendText` itself only fails when not connected, which the screen already shows |
 | `ServerInfoFragment` | `ServerInfoViewModel` | `ServerState.info`, `session.stats` | none |
 | `AccessTokenFragment` | `AccessTokenViewModel` | Tokens from the database | Edit tokens (saved to the database), `sendAccessTokens` to the live session after each change, as today |
 | `UserCommentFragment`, `ChannelDescriptionFragment` | `CommentViewModel` | The user's `comment` or channel's `description` in state | Request blob, `setComment` |

@@ -20,7 +20,7 @@ The transport lives in `se.lublin.humla.net` and is owned by one
 `Session`. It talks to the voice side only through `VoiceLink`, an
 interface the `VoiceEngine` implements (`setKeys`, `setDecryptIv`,
 `encryptIv`, `submit(SetVoiceRoute)`, `submit(SendPing)`,
-`queueTunnelled`, and the `UdpPing` and `CryptResyncRequested` events), so
+`queueTunnelled`, and the `UdpPing`, `CryptResyncRequested`, and `UdpUnavailable` events), so
 transport tests use a fake. It reuses today's framing, SRV lookup
 ([`HumlaTCP`](../../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt)),
 frame validation
@@ -37,6 +37,7 @@ interface Transport {
     val cryptKeys: StateFlow<CryptKeys?>      // latest full key set from CryptSetup
     val failure: Deferred<ClientError>        // completes once on a fatal transport error
     fun send(message: MessageLite, type: HumlaTCPMessageType)   // never blocks
+    fun sendTunnelled(packet: ByteArray)      // voice over TCP (UDPTunnel); never blocks
 }
 
 data class CryptKeys(                         // each exactly 16 bytes (AES block size)
@@ -51,7 +52,7 @@ interface VoiceLink {                         // implemented by VoiceEngine
     fun encryptIv(): ByteString
     fun submit(command: VoiceCommand)         // SetVoiceRoute, SendPing
     fun queueTunnelled(packet: ByteArray)
-    val events: SharedFlow<VoiceEvent>        // UdpPing, CryptResyncRequested
+    val events: SharedFlow<VoiceEvent>        // UdpPing, CryptResyncRequested, UdpUnavailable
     val status: StateFlow<VoiceStatus>        // local crypt counts for TCP pings
 }
 
@@ -118,7 +119,9 @@ with the same constants:
   format, matching the voice format).
 - **TCP `Ping` reply:** sets TCP latency and the remote crypt statistics.
 - **UDP ping reply** (reported by the `VoiceEngine`): sets UDP latency;
-  a protobuf ping may also update the server version and max bandwidth.
+  a protobuf ping may also carry the server version and max bandwidth,
+  which the session writes into `ServerState.info` (the single source of
+  the bandwidth cap; see [state](state.md#types)).
 - **Switch to TCP:** when UDP is in use, more than 20 s have passed, and
   either side reports zero good packets. The transport sends the dummy
   `UDPTunnel` message (3 zero bytes) that tells the server to tunnel, and
@@ -149,10 +152,14 @@ the `VoiceEngine` instead of a Kotlin `CryptState`:
 
 | `CryptSetup` contents | Action |
 |---|---|
-| `key`, `client_nonce`, `server_nonce` (each 16 bytes) | Publish `CryptKeys`; if voice is running, `VoiceLink.setKeys` |
-| `server_nonce` only (16 bytes) | Resync: `VoiceLink.setDecryptIv` |
-| Empty | The server asks for our nonce: reply with `CryptSetup(client_nonce = VoiceLink.encryptIv())` |
-| Any other size | Protocol violation: fail the session |
+| `key`, `client_nonce`, and `server_nonce` all present, each 16 bytes | Publish `CryptKeys`; if voice is running, `VoiceLink.setKeys` |
+| All three present, any of them not 16 bytes | Protocol violation: fail the session |
+| Not all three, but `server_nonce` present and 16 bytes | Resync: `VoiceLink.setDecryptIv` |
+| Not all three, `server_nonce` present but not 16 bytes | Protocol violation: fail the session |
+| Any other combination (including empty, or a key without nonces) | The server asks for our nonce: reply with `CryptSetup(client_nonce = VoiceLink.encryptIv())` |
+
+This is today's `HumlaConnection.messageCryptSetup` decision order,
+unchanged.
 
 The client's `VoiceCommand.Start` includes the keys from `cryptKeys`, so a
 `CryptSetup` that arrives before voice starts is never lost.
@@ -185,7 +192,6 @@ data class TransportStats(
     val udpLatencyMicros: Long?,
     val usingUdp: Boolean,
     val remoteCrypt: CryptCounts,             // from TCP Ping replies
-    val maxBandwidth: Int?,
 )
 ```
 

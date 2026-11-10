@@ -17,8 +17,18 @@ steps, the kill criteria, and the decisions this work reverses.
   alone. Step 6 needs step 3; step 7 needs steps 5b and 6.
 - Until step 7, today's `ConfigDelta` path keeps applying settings live:
   `HumlaService.apply` stays as a bridge that forwards each delta to the
-  new components as they appear (the client in step 3, voice and route in
-  step 4, `VoiceSettings` in step 5a). It is deleted in step 7.
+  new components as they appear (the client in step 3; voice, route, and
+  `VoiceSettings` in step 4). It is deleted in step 7.
+- **Interim owners.** Until step 6 creates `AppContainer`, `HumlaService`
+  constructs the new application-scoped objects itself (`HumlaClient`,
+  `LocalFactsStore`, `NetworkMonitor`, `TransportFactory`, and from step 4
+  `RouteControl` and the voice control). Step 6 moves their construction
+  into `AppContainer` and hands the same instances to `HumlaService`, so
+  there is only ever one of each.
+- **Main-thread assertion.** From step 3 on, every method that may block
+  (stream start and stop, platform route calls, thread joins) starts with
+  `checkNotMainThread()`, a small helper that throws in debug builds and
+  logs in release builds.
 - Spikes run in throwaway worktrees before the step that depends on them,
   and their findings are written into the relevant spec file before the
   step starts.
@@ -60,9 +70,10 @@ flowchart LR
 
 **Spike first:** live handles (see [state](state.md#compatibility-handles-migration-only))
 behind `ChannelListAdapter`. A Robolectric test drives the adapter over
-handles through a scripted sequence (users join, move, mute, leave;
-channels are renamed and removed) and asserts the rendered rows after
-each message. The spike passes when every assertion holds without changes
+handles through a scripted sequence (users join, move, mute, deafen,
+start and stop talking, start and stop listening, and leave; channels are
+renamed, re-ordered, linked, expanded, collapsed, and removed) and asserts
+the rendered rows after each message. The spike passes when every assertion holds without changes
 to the adapter.
 
 1. `kotlinx-collections-immutable` in the version catalog. The state types,
@@ -74,11 +85,14 @@ to the adapter.
 3. `SessionEvent` emission. A temporary adapter in `:libraries:humla`
    turns events into today's `HumlaLogger` strings, so the chat log keeps
    working; it moves to the app in step 6.
-4. `HumlaService` holds a `MutableStateFlow<SessionState>` and applies the
-   transitions; `ModelHandler` is deleted.
-5. Live handles replace `User` and `Channel` behind `IUser` and
-   `IChannel`; `IHumlaObserver` callbacks pass handles.
-6. `AudioHandler`'s reads of self and local-mute state come from the state
+4. One commit switches the model over, since the halves cannot work
+   apart: `HumlaService` holds a `MutableStateFlow<SessionState>` and
+   applies the transitions; live handles replace `User` and `Channel`
+   behind `IUser` and `IChannel`, whose navigation types narrow to the
+   interfaces and whose setters are removed (each writer becomes a session
+   intent); `IHumlaObserver` callbacks pass handles; `ModelHandler`,
+   `User`, and `Channel` are deleted.
+5. `AudioHandler`'s reads of self and local-mute state come from the state
    flow.
 
 **Done when:** `Channel`, `User`, and `ModelHandler` are off the
@@ -87,8 +101,11 @@ allowlist (deleted); `StateImmutabilityTest` walks `SessionState`.
 ## Step 3 — Client and session
 
 1. `Transport` extracted from `HumlaConnection` and `HumlaTCP`: framing,
-   reader thread, writer coroutine, TLS, keepalive, UDP health. It still
-   drives today's Kotlin `HumlaUDP` until step 5a.
+   reader thread, writer coroutine, TLS, keepalive, UDP health. Until step
+   5a it talks to voice through an interim `LegacyVoiceLink`, a
+   `VoiceLink` implementation over today's Kotlin `HumlaUDP` and
+   `CryptState` (keys, IVs, UDP pings, tunnelled packets, resync
+   requests); step 5a replaces it with the `VoiceEngine`.
 2. `Session`: scope, message coroutine, intents, statistics.
    `HumlaService` delegates `IHumlaSession` to the current session.
 3. `HumlaClient`, `ClientState`, `ReconnectPolicy` (with
@@ -103,24 +120,26 @@ interop harness drives `HumlaClient` directly.
 
 ## Step 4 — Voice control and route
 
-1. `RouteControl`: the controller moves to the route `HandlerThread`,
-   publishes `RouteState` and events, and `Host` is removed. `ScoLink`
-   callbacks use the route executor.
-2. Voice control thread: today's `AudioHandler` lifecycle (create, destroy,
-   recreate) runs there and follows `RouteState` (see
-   [route](route.md#migration-notes)).
-3. The policy collector publishes `StateFlow<VoicePolicy>`. Interim
-   consumer: the Kotlin capture thread reads it each frame and calls the
-   engine's `setMuted`/`setPttTalking` on change (see
+1. `RouteControl` (`route/RouteControl.kt`): the controller moves to the
+   route `HandlerThread`, publishes `RouteState` and events, and gains its
+   private route-session counter in the same commit that removes `Host`,
+   so `shouldDropStaleEvent` keeps working throughout (see
+   [route](route.md#thread)). `ScoLink` callbacks use the route executor.
+2. `VoiceControl` (`voice/VoiceControl.kt`), an interim class that owns
+   the voice control thread and today's `AudioHandler` lifecycle (create,
+   destroy, recreate), following `RouteState` (see
+   [route](route.md#migration-notes)). Step 5a replaces it with the
+   `VoiceEngine`.
+3. The `VoiceSettings` mapper and the policy collector, which publishes
+   `StateFlow<VoicePolicy>`. Interim consumer: the Kotlin capture thread
+   reads it each frame and calls the engine's `setMuted`/`setPttTalking`
+   (and bitrate and frames per packet) on change (see
    [voice](voice.md#interim-mute-step-4-before-5a)).
 4. Delete `mMuteLock` and the documented `AudioHandler` monitor order.
-   `AudioRouteController.shouldDropStaleEvent` keeps its job but takes its
-   token from the controller's own route-session counter instead of
-   `Host.sessionToken` (see [route](route.md#thread)).
 
 **Done when:** no `Thread.join` or other blocking wait is reachable from
-the main thread (checked by review and by a StrictMode-style assertion in
-debug builds on the voice control entry points); `AudioHandler`,
+the main thread (by review, and `checkNotMainThread()` guards every
+blocking method in `VoiceControl` and `RouteControl`); `AudioHandler`,
 `AudioRouteController`, and `BluetoothScoManager` are off the allowlist.
 
 ## Step 5a — Engine refactor, codec, network threads
@@ -144,9 +163,11 @@ debug builds on the voice control entry points); `AudioHandler`,
    `VoicePolicy` goes to native code. Delete `HumlaUDP`, the Kotlin framing
    in `AudioHandler`, the Kotlin `CryptState`, and the old JNI bridges.
 
-**Done when:** golden, allocation, codec, loopback, queue, and
-sequence-lock tests pass; the native tripwire's step-5a rules are on;
-`HumlaUDP` and `CryptState` are off the allowlist.
+**Done when:** golden, allocation, jitter-pool stress, codec, loopback,
+queue, and sequence-lock tests pass (the pool test fixes the slot count);
+`SINGLE_THREADED_ENGINE` is on in the native tripwire;
+`NativeCrashTestJni.cpp` lives in `jni/diagnostics/`; `HumlaUDP`,
+`CryptState`, `LegacyVoiceLink`, and `VoiceControl` are deleted.
 
 ## Step 5b — AAudio
 
@@ -170,11 +191,17 @@ path is in daily use without regressions the developer notices against
 
 `MumlaService` stays the bound service in this step; each feature moves a
 responsibility out of it, and `MumlaService` delegates the matching
-`IMumlaService` calls (for example `getMessageLog`) to the feature until
-step 7 deletes it.
+`IMumlaService` calls to the feature until step 7 deletes it. The binder
+calls stay synchronous: reads return the feature's current `StateFlow`
+value (for example `getMessageLog` returns the chat log's `value`), and
+writes launch into the feature's scope.
 
-1. `AppContainer` and the ViewModel factory; storage APIs become `suspend`
-   and the `runBlocking` bridges are deleted.
+1. `AppContainer` and the ViewModel factory. The container takes over
+   constructing the application-scoped objects `HumlaService` built as
+   interim owner (see the ground rules) and hands the same instances to
+   `HumlaService`. Storage APIs become `suspend` and the `runBlocking`
+   bridges are deleted; the few synchronous readers left read the settings
+   `StateFlow`'s current value.
 2. Features, one per commit (see [app](app.md#features)); the
    `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings
    (with their translations) move from `:libraries:humla` resources to
@@ -206,8 +233,9 @@ delegation.
 
 **Done when:** no screen implements an observer or extends
 `HumlaServiceFragment`; nothing binds a service; the allowlist no longer
-lists `HumlaService`, `MumlaService`, `MumlaActivity`, or the storage
-files.
+lists `HumlaService`, `MumlaService`, `MumlaActivity`, or the storage files
+(`MumlaRoomDatabase.kt`, `SettingsRepository.kt`, `AppDataStore.kt`,
+`DataStorePreferenceDataStore.kt`).
 
 ## Step 8 — Clean up
 

@@ -24,8 +24,9 @@ step 1 and only ever gets stricter.
 `ReentrantReadWriteLock`, `Executors\.`, `CountDownLatch`,
 `java\.util\.concurrent\.locks`.
 
-`\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`;
-`\b` keeps `currentThread(` and `createAudioHandler(` from matching.
+`\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`.
+The word boundaries keep `currentThread(` from matching the `Thread`
+pattern and `createAudioHandler(` from matching the `Handler` pattern.
 Comments are not stripped: a pattern named in a comment counts, which keeps
 the script simple and the comments honest.
 
@@ -43,16 +44,25 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
   listed file has **more** matching lines than its count, or if it has
   **fewer** (the count must be lowered in the same commit). A file with
   zero matching lines must be removed from the list.
-- Step 1 seeds the list with today's numbers. On `master` at `3041a6ca`,
+- Step 1 seeds the list with today's numbers. On `master` at `c988bbfe`,
   the patterns above match 335 lines in 34 files; step 1 recomputes the
   exact counts from the script itself when it lands.
 - **Adding a boundary file.** New code that genuinely needs a thread or a
   handler (the transport reader, `RouteControl`, the `VoiceEngine`
   facade) may add itself to the list, but only if its path is in the
   script's `BOUNDARY_FILES` constant. Adding a path to `BOUNDARY_FILES` is
-  a deliberate, reviewed change with a comment saying why; the list starts
-  with the five end-state files below. Every other change can only lower
-  counts or remove entries.
+  a deliberate, reviewed change with a comment saying why. The list starts
+  with these planned paths (the new ones are created by the steps named):
+
+  ```text
+  libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt            # TCP reader thread (step 3 keeps the file)
+  libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt
+  libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt      # step 4
+  libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt       # step 5a (step 4 uses voice/VoiceControl.kt, removed in 5a)
+  app/src/main/java/se/lublin/mumla/util/CrashReporter.kt
+  ```
+
+  Every other change can only lower counts or remove entries.
 - Every migration step's "done" includes lowering the totals.
 
 **Expected end state:** about five files, all at real boundaries: the
@@ -83,11 +93,17 @@ class reachable from `SessionState`, `ClientState`, `VoicePolicy`,
   `ByteString`, `InetAddress`, `X509Certificate`, `HandshakeFailure`,
   `Throwable`).
 
-**Handles are not walked.** The walk stops at `Session` (reached through
-`ClientState.Connected`), which is an object with a lifetime, not a value.
-`ClientState` holds `ServerEndpoint`, not the Room `Server` entity, so no
-mutable entity is reachable. `ByteArray` appears only in transport
-messages (`Inbound.Tunnelled`) and commands, which are not state roots.
+**What is walked.** The test follows only primary-constructor properties,
+so derived members declared in a class body (such as `ServerState.tree`)
+are not walked. It never descends into types on an explicit stop list,
+currently just `Session` (reached through `ClientState.Connected`), which
+is an object with a lifetime, not a value; its own state is a separate
+root. Enums (`SyncPhase`, `InputMode`, `AppliedRoute`, `StreamProfile`,
+`TalkState`) are leaves. `ClientState` holds `ServerEndpoint` and
+`ClientCertificate` (a `ByteString`), not the Room `Server` entity or a
+`ByteArray`, so nothing mutable is reachable. `ByteArray` appears only in
+transport messages (`Inbound.Tunnelled`) and commands, which are not state
+roots.
 
 Adding a new state type adds it to the walk automatically, because the
 walk follows property types. Step 1 adds the test with an empty root list;
@@ -117,19 +133,33 @@ policy runnable in plain JVM tests with virtual time.
 `<thread>`, `<pthread.h>`, `<semaphore.h>`, `<fcntl.h>`, `<unistd.h>`,
 `<jni.h>`.
 
-**Additionally forbidden in `audio_engine/` and `voice_codec/`** after
-step 5a: `<mutex>`, `<shared_mutex>`, `<condition_variable>`, `<atomic>`.
-OCB2 in `crypto/` keeps its locks, since two network threads share it.
+**Additionally forbidden in `audio_engine/` and `voice_codec/`** once the
+engine refactor lands: `<mutex>`, `<shared_mutex>`, `<condition_variable>`,
+`<atomic>`. The script holds this rule behind a constant,
+`SINGLE_THREADED_ENGINE`, which the last engine-refactor commit of step 5a
+flips to `True`. OCB2 in `crypto/` keeps its locks, since two network
+threads share it.
 
-**Existing exceptions** (allowlisted by file, removed when fixed):
-- `crypto/CryptStateOCB2.cpp`: `<fcntl.h>` and `<unistd.h>` for key
-  generation from `/dev/urandom` (client keys come from the server, so this
-  path is unused in practice).
-- `audio_engine/AudioOutputEngine.cpp`: `<android/log.h>` for logging.
-- The JNI bridges (`NativeAudioInputEngineJni.cpp`,
-  `NativeAudioOutputEngineJni.cpp`, `NativeCrashTestJni.cpp`,
-  `crypto/NativeCryptStateJni.cpp`) until they are deleted or moved to
-  `voice_io/` in step 5.
+**Exceptions** live in the same allowlist file, in a `[native]` section of
+`path: header` lines, and follow the same ratchet (they may only be
+removed):
+
+```text
+[native]
+libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <fcntl.h>
+libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <unistd.h>
+libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp: <jni.h>
+libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp: <jni.h>
+libraries/humla/src/main/jni/audio_engine/NativeCrashTestJni.cpp: <jni.h>
+libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>
+```
+
+- `CryptStateOCB2.cpp` reads `/dev/urandom` for key generation (client
+  keys come from the server, so this path is unused in practice).
+- The JNI bridges are deleted in step 5a (5b for anything `AudioInput` and
+  `AudioOutput` still need), and `NativeCrashTestJni.cpp` moves to
+  `jni/diagnostics/`.
+- Logging through `<android/log.h>` is not forbidden.
 
 `voice_io/` is the only native directory allowed to include socket,
 AAudio, thread, and JNI headers. Third-party submodules (`opus`,

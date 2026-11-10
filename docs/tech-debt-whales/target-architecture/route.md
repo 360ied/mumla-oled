@@ -61,7 +61,7 @@ class RouteControl(platform: AudioPlatform, sco: ScoLink?, prefs: Flow<RoutePref
 sealed interface RouteCommand {
     data object SessionStarted : RouteCommand
     data object SessionEnded : RouteCommand
-    data object RetrySco : RouteCommand       // today's retryBluetoothSco
+    data object RetrySco : RouteCommand       // today's retryBluetoothSco; its boolean result becomes the next RouteState
 }
 
 data class RoutePreferences(
@@ -108,7 +108,7 @@ travel with the profile as they do today (see
 | `Settling` → `Ready` | The decided route is confirmed (SCO link up, or no SCO wanted) |
 | `Settling` → `Fallback` | SCO fails, or the settle budget runs out (today's 3 s recheck, at most 2 rechecks) |
 | `Ready`/`Fallback` → `Settling` | A device change or preference change produces a different decision (after today's 300 ms debounce) |
-| `Fallback` → `Settling` | `RetrySco` |
+| `Fallback` → `Settling` | `RetrySco`, only when today's `retrySco` preconditions hold (SCO requested in preferences, a session is live, the SCO link exists and is idle, and the route-session counter has not moved); otherwise the command does nothing |
 | any → `Idle` | `SessionEnded` (SCO released, mode restored) |
 
 **Events:** `ScoFailed(reason)` when entering `Fallback` because of SCO,

@@ -1,6 +1,6 @@
 # Target Architecture
 
-Snapshot: `master` at `04a9cf8d`, 2026-11-10. Citations name files and
+Snapshot: claims about today's code verified against `master` at `c988bbfe`, 2026-11-10. Citations name files and
 symbols, not line numbers.
 
 Status: specification in progress. No code exists for any of this.
@@ -151,6 +151,10 @@ layer** (threads, sockets, devices).
 | Native send | Encrypt and send voice and pings | On the socket |
 | Native receive | Receive, decrypt, parse, drop locally muted senders | On the socket |
 | Native notifier | Talk activity and errors to Kotlin, every 20 ms | No |
+| Crash reporter | Today's uncaught-exception handling and its background thread, unchanged | Its own |
+
+DNS and SRV lookups run on the I/O dispatcher inside the connection
+attempt's scope. There are no binder threads: nothing binds a service.
 
 Nothing on main ever waits for another thread. Threads communicate by
 enqueuing commands or by publishing state that others read.

@@ -109,19 +109,25 @@ data class LocalState(
     val listeningVolumes: PersistentMap<Int, Float>,         // per channel, as last sent
 )
 
-sealed interface WhisperTarget {
-    val name: String?
-    data class Channel(val channelId: Int, val includeLinked: Boolean,
-        val includeSubchannels: Boolean, val group: String?) : WhisperTarget
-    data class Users(val sessions: PersistentList<Int>, override val name: String?) : WhisperTarget
-}
+data class WhisperTarget(                     // today's WhisperTargetChannel
+    val channelId: Int,
+    val includeLinked: Boolean,
+    val includeSubchannels: Boolean,
+    val group: String?,
+)
 ```
+
+Only channel whisper targets exist: today's `WhisperTargetUsers` throws
+`UnsupportedOperationException` from both members, so user whispers are
+not supported today and stay out of scope. A target's display name is the
+channel's name in state.
 
 `voiceTargetId` follows today's mode mapping (`VoiceTargetMode`): 0 is normal
 talking, 1–30 are registered whisper targets, and 31 is server loopback.
-`WhisperTarget` replaces today's `WhisperTargetChannel` and
-`WhisperTargetUsers` with immutable values that hold IDs, not live
-objects; `name` on `Channel` is derived from the channel's name in state.
+`VoiceTargetMode.fromId` moves into the state package unchanged, so screens
+derive the mode (and the active `WhisperTarget`) from `local` instead of
+today's `getVoiceTargetMode` and `getWhisperTarget`; a change is a state
+change, which replaces today's `onVoiceTargetChanged` callback.
 
 `UserInfo` deliberately carries server-decided, user-decided, and
 device-local facts together: every consumer needs the joined value, and
@@ -149,15 +155,17 @@ Sorting matches today exactly:
 
 Channels whose parent is missing (possible transiently between messages)
 are left out of the tree until the parent arrives. `tree` is a
-`lazy(LazyThreadSafetyMode.PUBLICATION)` property, so whichever thread reads
+`lazy(LazyThreadSafetyMode.PUBLICATION)` property declared in the class
+body, so it is not part of the data class's value (and not walked by the
+[immutability test](enforcement.md#state-immutability-test)), so whichever thread reads
 it first computes it, concurrent first reads are harmless, and values that
 no screen reads never pay for it.
 
 **Derived reads** that today live on the model objects come from state:
 `IChannel.isListening` is "the self user's `listeningChannels` contains this
 channel"; `listeningVolume` is `local.listeningVolumes`; `hasTexture` is
-`texture != null`; `UserInfo.userId` is `null` where today's `User.userId`
-is `-1`.
+`texture != null && !texture.isEmpty`, as today; `UserInfo.userId` is
+`null` where today's `User.userId` is `-1`.
 
 **Not in `SessionState`**, because they change too often or belong
 elsewhere:
@@ -176,8 +184,11 @@ elsewhere:
 | `SYNCING` | First `ChannelState` or `UserState` arrives | Not published: the message coroutine applies transitions to a private value |
 | `SYNCED` | `ServerSync` arrives | The private value is published in one `update`; every change after this publishes |
 
-After `SYNCED`, the message coroutine drains whatever is already queued
-(up to 64 messages), applies them in order, and publishes once. A burst
+After `SYNCED`, the message coroutine takes whatever is already queued in
+the transport's `inbound` channel, up to 64 messages, applies them in
+order, and publishes once; anything still queued is handled in the next
+batch, so nothing is dropped and no batch delays publication by more than
+64 messages. A burst
 therefore costs one publication, while a lone message is published
 immediately.
 
@@ -190,7 +201,7 @@ transitions in the state package; the others are handled where noted.
 |---|---|---|
 | `Version` | State, [transport](transport.md) | `info.versionV2/release/os/osVersion`; the transport derives the UDP format from the version |
 | `CodecVersion` | State | `info.opus`. Today's code also records a CELT fallback, but nothing reads it: voice is Opus-only today and stays so |
-| `ChannelState` | State | Create or update `ChannelInfo`; replace `links` when `links` is present, apply `links_add`/`links_remove` otherwise |
+| `ChannelState` | State | Create or update `ChannelInfo`. Links are applied in today's order, each step only when its field is present: replace with `links`, then remove `links_remove`, then add `links_add` |
 | `ChannelRemove` | State | Remove the channel and its whole subtree (never the root); drop them from other channels' links; users inside lose their `channelId` until the server moves them, as `ModelHandler` does today. Also drop every removed ID from every user's `listeningChannels`: **an intentional fix**, since today's code only drops the top removed channel and leaks listeners on its subchannels |
 | `UserState` | State, [events](#events) | Create or update `UserInfo` (see [self-mute](#self-mute-and-deafen)); emit join, move, recording, and other users' self-mute events |
 | `UserRemove` | State, client | Other user: remove and emit `UserLeft`. Self: the session fails with reason `USER_REMOVE` (no reconnect) |
@@ -281,7 +292,12 @@ never after reading `state.value` (see
 
 `Session.events` is a `SharedFlow<SessionEvent>` with a replay of 0 and a
 buffer of 256. It never drops: a full buffer suspends the message
-coroutine, which slows the server stream rather than losing events. Events
+coroutine, which slows the server stream rather than losing events. To
+keep that from stalling the connection, **collectors never do slow work
+inline**: features hand anything slow (TTS synthesis, database writes,
+notifications) to their own scope and return at once. A collector that
+stops (a closed screen, a crashed feature) unsubscribes and no longer
+holds the buffer. Events
 are semantic; the app turns them into text (replacing the
 `chat_notify_*` and `deny_reason_*` strings `ModelHandler` formats today).
 
@@ -300,6 +316,7 @@ sealed interface SessionEvent {
     data class UserSelfMuteChanged(val session: Int, val name: String?,
         val muted: Boolean, val deafened: Boolean) : SessionEvent
     data class WelcomeText(val text: String) : SessionEvent
+    data class ConnectionWarning(val message: String) : SessionEvent
     data class TextMessageSent(val channels: List<Int>, val trees: List<Int>,
         val users: List<Int>, val message: String, val sentAtMillis: Long) : SessionEvent
     data class PermissionDenied(val type: Int, val permission: Int?,
@@ -307,6 +324,15 @@ sealed interface SessionEvent {
         val name: String?) : SessionEvent
 }
 ```
+
+`UserMoved` and `RecordingChanged` are emitted for every user. Today's
+filters for which of them reach the chat log (moves into or out of the
+self user's channel, with actor-specific wording; recordings in the same
+or a linked channel, via `ChannelTree.allLinks`) move to the chat log
+feature (see [app](app.md#features)).
+
+`ConnectionWarning(message)` carries what today's `onConnectionWarning`
+logs as a chat warning.
 
 `SelfMuteStateChanged` is emitted by the `setSelfMuteDeaf` intent (today
 the toggle site logs the self line, never the echo).
@@ -338,10 +364,30 @@ behind those interfaces would compile and silently freeze screens, so step
 - Each handle caches the last value it saw. When the user or channel is
   gone from state, reads return that cached value, as a departed `User`
   object does today.
-- Navigation properties (`channel`, `parent`, `subchannels`, `users`)
-  return handles, not snapshots.
+- Navigation properties return handles, not snapshots. Today they are
+  typed as the concrete classes (`IUser.channel: Channel?`,
+  `IChannel.parent: Channel?`, `users: List<User>`,
+  `subchannels: List<Channel>`, `links: List<Channel>`), so step 2 narrows
+  them to `IChannel?`, `List<IUser>`, and `List<IChannel>`; the compiler
+  then points at every caller that needs the interface type.
 - Handles are equal when their IDs are equal, matching today's `equals`.
-- Handles are read-only. Mutation goes through `Session` intents.
+- Handles are read-only. `IUser` and `IChannel` lose their setters
+  (`var` properties and `set…` methods) in step 2; each app call site that
+  writes through them becomes a `Session` intent, and the compiler finds
+  them all.
+
+Handle member sources:
+
+| Member | Source |
+|---|---|
+| `IUser.hash` | `UserInfo.certHash` |
+| `IUser.userId` | `UserInfo.userId ?: -1` |
+| `IUser.talkState` | `VoiceEngine.talkActivity` (passive when absent) |
+| `IUser.textureCacheKey` | Today's derivation from the texture bytes, moved as is |
+| `IUser.listeningChannels`, `isListeningTo` | `UserInfo.listeningChannels` |
+| `IChannel.subchannelUserCount`, `links` | `ChannelTree.userCountInSubtree`, `ChannelInfo.links` as handles |
+| `IChannel.isListening`, `listeningVolume` | Derived reads above |
+| Everything else | The same-named `UserInfo` or `ChannelInfo` field |
 
 Reads of two properties are not mutually consistent (each reads the latest
 value), which matches today's per-field `@Volatile` behavior. New code uses
