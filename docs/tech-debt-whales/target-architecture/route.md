@@ -13,7 +13,7 @@ and
 have 27 commits between them since September. The controller is already
 close to the target: one event funnel (`RouteEvent`), main-thread
 confinement, ports for the platform (`AudioPlatform`) and SCO (`ScoLink`),
-a pure decision (`AppliedRoute`), and about 67 virtual-time tests. The
+a pure decision (`AppliedRoute`), and 71 virtual-time tests. The
 target keeps its logic and tests, and changes three things:
 
 1. It runs on its own thread instead of main.
@@ -34,10 +34,20 @@ just on a different thread.
   `context.mainExecutor` today.
 - Blocking platform calls (`setCommunicationDevice`, `setMode`, SCO
   bring-up) therefore run on the route thread, never on main.
-- `AudioRouteController.isMainThread` becomes `isRouteThread`; the off-thread
-  re-posting and the session-token stale check become unnecessary for
-  session identity (see [client](client.md#ending-a-session)), but the
-  controller keeps its own `SessionStarted`/`SessionEnded` ordering.
+- `AudioRouteController.isMainThread` becomes `isRouteThread`. Off-thread
+  re-posting stays, aimed at the route thread.
+- **The controller keeps its own session identity.** Device and Bluetooth
+  callbacks are application-scoped and can arrive between one session's
+  `SessionEnded` and the next `SessionStarted`, or be posted during one and
+  run during the next. Today's `shouldDropStaleEvent` compares against
+  `Host.sessionToken`; in the target the controller increments a private
+  route-session counter on each `SessionStarted`, captures it when posting,
+  and drops events whose captured value no longer matches, exactly as
+  today. Only the source of the counter changes.
+- Everything else the controller owns today stays inside it unchanged:
+  the `MODE_IN_COMMUNICATION` claim and restore (`ModeHold`), yielding to a
+  cellular call (`MODE_IN_CALL`), clearing an unrequested system SCO link,
+  media-sink queries, debounce, and the settle budget.
 
 ## API
 
@@ -63,6 +73,8 @@ data class RoutePreferences(
 `RouteControl` implements the client's `RouteLifecycle` interface
 (`SessionStarted`, `SessionEnded`), so the client depends only on that.
 
+`prefs` comes from the settings flow (`Settings.isBluetoothHeadset` and
+`isHandsetMode`, today's `ConfigDelta.bluetoothSco` and `audioStream`).
 Preference changes are collected on the route thread and become the
 controller's existing `SettingsChanged` event. Device changes, SCO link
 changes, and settle rechecks stay internal events, as today.
@@ -101,7 +113,8 @@ travel with the profile as they do today (see
 
 **Events:** `ScoFailed(reason)` when entering `Fallback` because of SCO,
 and `RouteChanged` on every entry to `Ready` or `Fallback`. A feature shows
-the SCO failure message (today's `ScoFailureMessage` bucketing); screens
+the SCO failure message (today's `scoFailureMessage` bucketing in
+`MumlaService`); screens
 and features read the current route from `state`.
 
 ## Session start

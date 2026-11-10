@@ -13,8 +13,12 @@ steps, the kill criteria, and the decisions this work reverses.
   testing is at the developer's discretion (see
   [testing](testing.md#on-device-testing)). Merging is a separate,
   user-requested action, as always.
-- Steps 2–5 are each worth landing alone. Step 6 needs steps 2 and 3.
-  Step 7 needs all earlier steps.
+- Every step leaves a working app. Steps 2–5 are each worth landing
+  alone. Step 6 needs step 3; step 7 needs steps 5b and 6.
+- Until step 7, today's `ConfigDelta` path keeps applying settings live:
+  `HumlaService.apply` stays as a bridge that forwards each delta to the
+  new components as they appear (the client in step 3, voice and route in
+  step 4, `VoiceSettings` in step 5a). It is deleted in step 7.
 - Spikes run in throwaway worktrees before the step that depends on them,
   and their findings are written into the relevant spec file before the
   step starts.
@@ -27,9 +31,8 @@ flowchart LR
     S3 --> S4["4 Voice control and route"]
     S4 --> S5a["5a Engine refactor,<br/>codec, network threads"]
     S5a --> S5b["5b AAudio"]
-    S2 --> S6["6 Screens on ViewModels"]
-    S3 --> S6
-    S5b --> S7["7 App cut-over"]
+    S3 --> S6["6 Container, storage,<br/>and features"]
+    S5b --> S7["7 Screens and service cut-over"]
     S6 --> S7
     S7 --> S8["8 Clean up"]
 ```
@@ -50,14 +53,17 @@ flowchart LR
    `PROGRESS.md`.
 
 **Done when:** the harness reproduces the stale-callback race fixed in
-`2e2a067d` with that fix reverted in a throwaway worktree, and passes on
-`master`.
+`2e2a067d` with that fix reverted in a throwaway worktree, failing on 10 of
+10 runs, and passes on 10 of 10 runs on `master`.
 
 ## Step 2 — Immutable state
 
 **Spike first:** live handles (see [state](state.md#compatibility-handles-migration-only))
-behind `ChannelListAdapter` on a large-server interop scenario. Confirms
-screens keep updating.
+behind `ChannelListAdapter`. A Robolectric test drives the adapter over
+handles through a scripted sequence (users join, move, mute, leave;
+channels are renamed and removed) and asserts the rendered rows after
+each message. The spike passes when every assertion holds without changes
+to the adapter.
 
 1. `kotlinx-collections-immutable` in the version catalog. The state types,
    `ChannelTree`, and their tests.
@@ -67,7 +73,7 @@ screens keep updating.
    `CodecVersion`), each with its existing tests ported.
 3. `SessionEvent` emission. A temporary adapter in `:libraries:humla`
    turns events into today's `HumlaLogger` strings, so the chat log keeps
-   working; it moves to the app in step 7.
+   working; it moves to the app in step 6.
 4. `HumlaService` holds a `MutableStateFlow<SessionState>` and applies the
    transitions; `ModelHandler` is deleted.
 5. Live handles replace `User` and `Channel` behind `IUser` and
@@ -88,8 +94,9 @@ allowlist (deleted); `StateImmutabilityTest` walks `SessionState`.
 3. `HumlaClient`, `ClientState`, `ReconnectPolicy` (with
    `ReconnectBackoffTest` ported), `NetworkMonitor`. `HumlaService`
    delegates `IHumlaService` to the client.
-4. Delete `connectionGeneration`, the connect, reconnect, apply, and
-   whisper locks, and `ConnectionParams` (replaced by `ConnectTarget`).
+4. Delete `connectionGeneration` and the connect, reconnect, and whisper
+   locks. `ConnectionParams` is replaced by `ConnectTarget`; the
+   `ConfigDelta` bridge (see the ground rules) keeps live settings working.
 
 **Done when:** `HumlaConnection` is off the allowlist (deleted), and the
 interop harness drives `HumlaClient` directly.
@@ -106,11 +113,14 @@ interop harness drives `HumlaClient` directly.
    consumer: the Kotlin capture thread reads it each frame and calls the
    engine's `setMuted`/`setPttTalking` on change (see
    [voice](voice.md#interim-mute-step-4-before-5a)).
-4. Delete `mMuteLock` and the documented `AudioHandler` monitor order, and
-   `AudioRouteController.shouldDropStaleEvent` (session identity now comes
-   from the client's start/stop ordering).
+4. Delete `mMuteLock` and the documented `AudioHandler` monitor order.
+   `AudioRouteController.shouldDropStaleEvent` keeps its job but takes its
+   token from the controller's own route-session counter instead of
+   `Host.sessionToken` (see [route](route.md#thread)).
 
-**Done when:** no `join` runs on main; `AudioHandler`,
+**Done when:** no `Thread.join` or other blocking wait is reachable from
+the main thread (checked by review and by a StrictMode-style assertion in
+debug builds on the voice control entry points); `AudioHandler`,
 `AudioRouteController`, and `BluetoothScoManager` are off the allowlist.
 
 ## Step 5a — Engine refactor, codec, network threads
@@ -145,7 +155,9 @@ cancellation through an AAudio session ID (see [open items](open-items.md)).
 Spikes run on the developer's device; Android 11–12 is not tested.
 
 1. Native capture and render threads (or AAudio callbacks), opening
-   streams with the profile from `RouteState` and reopening on disconnect.
+   streams with the profile from `RouteState`, reopening them when the
+   route changes, and reopening them when AAudio reports a disconnected
+   stream (`AAUDIO_ERROR_DISCONNECTED`).
 2. Echo cancellation attached to the AAudio session.
 3. Delete `AudioInput` and `AudioOutput`; update the audio pipeline
    description in `AGENTS.md`.
@@ -154,36 +166,48 @@ Spikes run on the developer's device; Android 11–12 is not tested.
 path is in daily use without regressions the developer notices against
 5a.
 
-## Step 6 — Screens on ViewModels
+## Step 6 — Container, storage, and features
 
-One screen per commit, in this order: `ServerInfoFragment`,
-`AccessTokenFragment`, comment fragments, `ChannelChatFragment`,
-`ChannelFragment`, `ChannelListFragment` (with the menus),
-`MumlaActivity`. Each commit removes that screen's `IHumlaObserver` and
-`HumlaServiceFragment` use (see [app](app.md#screens)).
-
-**Done when:** no screen implements an observer or extends
-`HumlaServiceFragment`.
-
-## Step 7 — App cut-over
+`MumlaService` stays the bound service in this step; each feature moves a
+responsibility out of it, and `MumlaService` delegates the matching
+`IMumlaService` calls (for example `getMessageLog`) to the feature until
+step 7 deletes it.
 
 1. `AppContainer` and the ViewModel factory; storage APIs become `suspend`
    and the `runBlocking` bridges are deleted.
 2. Features, one per commit (see [app](app.md#features)); the
-   `chat_notify_*` and `deny_reason_*` strings (with their translations)
-   move from `:libraries:humla` resources to `:app`, and the step-2
-   logging adapter is deleted.
-3. `ConnectionService` with the foreground rules; the UI starts it before
+   `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings
+   (with their translations) move from `:libraries:humla` resources to
+   `:app`, and the step-2 logging adapter is deleted when the chat log
+   feature lands.
+
+**Done when:** every row of the [feature table](app.md#features) has a
+feature class, and `MumlaService` contains only service lifetime and
+delegation.
+
+## Step 7 — Screens and service cut-over
+
+1. Screens on ViewModels, one per commit, in this order (each depends only
+   on features from step 6): `ServerInfoFragment`, `AccessTokenFragment`,
+   comment fragments, `ChannelChatFragment`, `ChannelFragment`,
+   `ChannelListFragment` (with the menus), `MumlaActivity`. Each commit
+   removes that screen's `IHumlaObserver` and `HumlaServiceFragment` use
+   (see [app](app.md#screens)).
+2. `ConnectionService` with the foreground rules; the UI starts it before
    connecting.
-4. Delete `MumlaService`, `IMumlaService`, `HumlaService`,
-   `HumlaServiceProvider`, `HumlaServiceFragment`, `ConfigDelta`, and the
-   service-binding code.
-5. Remove Hilt and kapt from both modules.
-6. Update the migration README's native fence and binder-surface decisions
+3. Delete `MumlaService`, `IMumlaService`, `HumlaService`,
+   `HumlaServiceProvider`, `HumlaServiceFragment`, `ConfigDelta` and its
+   bridge, and the service-binding code.
+4. Remove Hilt and kapt from both modules (`@HiltAndroidApp`, the one
+   `@Inject`, `DatabaseModule`, `SettingsModule`), now that `AppContainer`
+   constructs everything.
+5. Update the migration README's native fence and binder-surface decisions
    (see [below](#decisions-this-reverses)).
 
-**Done when:** nothing binds a service; the allowlist no longer lists
-`HumlaService`, `MumlaService`, `MumlaActivity`, or the storage files.
+**Done when:** no screen implements an observer or extends
+`HumlaServiceFragment`; nothing binds a service; the allowlist no longer
+lists `HumlaService`, `MumlaService`, `MumlaActivity`, or the storage
+files.
 
 ## Step 8 — Clean up
 

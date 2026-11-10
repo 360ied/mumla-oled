@@ -34,8 +34,25 @@ unchanged in behavior.
 interface Transport {
     val inbound: ReceiveChannel<Inbound>      // parsed messages, server order
     val stats: StateFlow<TransportStats>
-    fun send(message: MessageLite, type: HumlaTCPMessageType)   // never blocks
     val cryptKeys: StateFlow<CryptKeys?>      // latest full key set from CryptSetup
+    val failure: Deferred<ClientError>        // completes once on a fatal transport error
+    fun send(message: MessageLite, type: HumlaTCPMessageType)   // never blocks
+}
+
+data class CryptKeys(                         // each exactly 16 bytes (AES block size)
+    val key: ByteString,
+    val clientNonce: ByteString,              // our encrypt IV
+    val serverNonce: ByteString,              // our decrypt IV
+)
+
+interface VoiceLink {                         // implemented by VoiceEngine
+    fun setKeys(keys: CryptKeys)
+    fun setDecryptIv(iv: ByteString)
+    fun encryptIv(): ByteString
+    fun submit(command: VoiceCommand)         // SetVoiceRoute, SendPing
+    fun queueTunnelled(packet: ByteArray)
+    val events: SharedFlow<VoiceEvent>        // UdpPing, CryptResyncRequested
+    val status: StateFlow<VoiceStatus>        // local crypt counts for TCP pings
 }
 
 sealed interface Inbound {
@@ -49,17 +66,23 @@ sealed interface Inbound {
 - **Reader thread** (one per session, a plain `Thread`; on the allowlist):
   blocking reads of the 6-byte header (2-byte type, 4-byte length,
   big-endian), validation with `FrameValidator` (unknown type or length
-  over `MAX_FRAME_BYTES` is a protocol violation that fails the session),
+  over `MAX_FRAME_BYTES`, `0x7fffff`, is a protocol violation that
+  completes `failure`),
   payload read, protobuf parse, and `trySend` into `inbound`. `UDPTunnel`
   payloads are not parsed; they are delivered as `Inbound.Tunnelled`.
 - **Writer coroutine** on the I/O dispatcher, draining a bounded outbound
   channel (capacity 256) and writing frames. `send` uses `trySend`; a full
-  channel means the server has stopped reading for a long time, and fails
-  the session with `ClientError.Connection`.
+  channel means the server has stopped reading for a long time, so `send`
+  completes `failure` with `ClientError.Connection` and drops the message.
+  A write error completes `failure` the same way.
+
+Every fatal transport condition goes through `failure`; the session
+completes its own `failure` from it (see [client](client.md#session)).
 - **Ping coroutine** in the session scope (see below).
 
-`inbound` has capacity 1024. The reader uses `trySendBlocking`, which
-blocks the reader thread while the channel is full, so a backlog in the
+`inbound` has capacity 1024. The reader uses
+`kotlinx.coroutines.channels.trySendBlocking`, which blocks the reader
+thread (a plain thread, never a coroutine) while the channel is full, so a backlog in the
 session's message coroutine leaves bytes in the socket buffer and pushes
 back on the server through TCP flow control. Nothing is dropped.
 
@@ -105,8 +128,10 @@ with the same constants:
   `ServerSync` on, the dummy `UDPTunnel` is sent at `ServerSync`, and UDP is
   never used.
 
-The current UDP/TCP decision is published in `TransportStats.usingUdp` and
-pushed to the `VoiceEngine` with `VoiceCommand.SetVoiceRoute(udp: Boolean)`.
+**The transport alone owns the UDP/TCP decision.** It publishes it in
+`TransportStats.usingUdp` and pushes it to the `VoiceEngine` with
+`VoiceCommand.SetVoiceRoute(udp: Boolean)`; the `VoiceEngine` only follows
+that command and does not report its own idea of the route.
 
 ## UDP packet format
 

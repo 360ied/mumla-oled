@@ -44,18 +44,55 @@ Everything a connection needs, frozen when `connect` is called, as today's
 
 ```kotlin
 data class ConnectTarget(
-    val server: Server,                       // Room entity: host, port, username, password
-    val certificate: CertRef?,
-    val trustStore: TrustStoreRef?,
+    val server: ServerEndpoint,
+    val certificate: CertRef?,                // today's ConfigDelta.CertRef (immutable; secrets redacted in toString)
+    val trustStore: TrustStoreRef?,           // today's ConfigDelta.TrustStoreRef
     val forceTcp: Boolean,
     val clientName: String,
-    val accessTokens: List<String>,
+    val accessTokens: PersistentList<String>,
+)
+
+data class ServerEndpoint(                    // immutable copy of the Room Server row
+    val serverId: Long,                       // Server.id: keys local mute/ignore lists and tokens
+    val name: String?,
+    val host: String,
+    val port: Int,
+    val username: String?,
+    val password: String?,
 )
 ```
 
+The Room `Server` entity has mutable fields (and SRV resolution writes
+`resolvedHost`/`resolvedPort` into it today), so the target copies the
+fields it needs into `ServerEndpoint` when `connect` is called. SRV
+results stay inside the transport.
+
 Local mute/ignore history and the persisted self-mute state are not in the
 target; the session loads them from `LocalFactsStore` when it starts, so a
-reconnect always uses current values.
+reconnect always uses current values:
+
+```kotlin
+data class LocalFacts(
+    val mutedUserIds: PersistentSet<Int>,     // registered user IDs, per server
+    val ignoredUserIds: PersistentSet<Int>,
+    val selfMuted: Boolean,                   // persisted settings, as today
+    val selfDeafened: Boolean,
+)
+
+interface LocalFactsStore {
+    suspend fun load(serverId: Long): LocalFacts
+    suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean)
+    suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean)
+    suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean)
+}
+```
+
+The lists are keyed by registered user ID, as in today's database. When a
+`UserState` arrives for a registered user, the transition sets
+`localMuted`/`localIgnored` on that user's `UserInfo` from these sets, so
+session IDs never need to be stored. Unregistered users can be locally
+muted for the current session only, as today. Writes run on the I/O
+dispatcher in the session scope; the state update does not wait for them.
 
 ### `ClientState`
 
@@ -79,9 +116,11 @@ sealed interface ClientError {
 }
 ```
 
-`Connecting` also exposes the in-progress `Session` (as a nullable field
-on the client, `currentSession: StateFlow<Session?>`), so a screen can show
-the channel tree while it syncs if it wants to.
+The client also exposes `currentSession: StateFlow<Session?>`, set as soon
+as a session is created and cleared when it ends. While `Connecting`, that
+session's state is the `HANDSHAKING` value (no channels or users); the
+full tree is published at `ServerSync`, just before `Connected`. Screens
+that want the tree simply wait for `SYNCED`.
 
 ```mermaid
 stateDiagram-v2
@@ -201,15 +240,15 @@ is non-blocking: one atomic state update and/or one enqueued TCP message
 | `sendAccessTokens` | `sendAccessTokens(tokens)` |
 | `requestPermissions`, `requestComment`, `requestAvatar`, `requestChannelDescription` | `requestPermissions(channel)`, `requestComment(session)`, `requestTexture(session)`, `requestDescription(channel)` |
 | `registerUser`, `kickBanUser`, `setPrioritySpeaker`, `setMuteDeafState` | Same names |
-| `sendUserTextMessage`, `sendChannelTextMessage` | `sendText(target, message)`; returns nothing: the sent message is emitted as an event so the chat log has one input |
+| `sendUserTextMessage`, `sendChannelTextMessage` | `sendText(channels, trees, users, message)`; returns nothing: the sent message is emitted as an event so the chat log has one input |
 | `setUserComment` | `setComment(session, comment)` |
 | `setSelfMuteDeafState` | `setSelfMuteDeaf(mute, deaf)` (see [state](state.md#self-mute-and-deafen)) |
 | `linkChannels`, `unlinkChannels`, `unlinkAllChannels` | Same names, taking channel IDs |
 | `registerWhisperTarget`, `unregisterWhisperTarget`, `setVoiceTargetId`, `getVoiceTargetId`, `getVoiceTargetMode`, `getWhisperTarget` | `registerWhisperTarget`, `unregisterWhisperTarget`, `setVoiceTarget`; reads from `state.value.local` |
 | `setListeningChannel`, `setListeningVolume`, `isListeningToChannel` | `setListening`, `setListeningVolume`; reads from state |
 
-`sendText` adds one event type to [state](state.md#events):
-`TextMessageSent(target, message, sentAtMillis)`, so the chat log feature
+`sendText` emits `TextMessageSent` (see [state](state.md#events)), so the
+chat log feature
 records both directions from the event stream.
 
 | Today (`IHumlaService`) | Target |
@@ -219,7 +258,7 @@ records both directions from the event stream.
 | `isReconnecting`, `getReconnectAttempts`, `getReconnectDelay`, `cancelReconnect` | `ClientState.Reconnecting`; `client.cancelReconnect()` |
 | `disconnect` | `client.disconnect()` |
 | `isBluetoothScoActive`, `isMediaRouteActive`, `retryBluetoothSco` | `route.state`; `route.submit(RouteCommand.RetrySco)` |
-| `HumlaSession()` | `(client.state.value as? Connected)?.session` |
+| `HumlaSession()` | `(client.state.value as? Connected)?.session`. Today this throws `HumlaDisconnectedException` when disconnected and callers catch it; in the target, a null session is the normal "not connected" case, and ViewModels render it from state |
 
 ### Ending a session
 
@@ -249,11 +288,15 @@ data class SessionStats(
     val usingUdp: Boolean,
     val maxBandwidth: Int?,
     val currentBandwidth: Int?,
-    val crypt: CryptStats,                    // local and remote good/late/lost/resync
+    val localCrypt: CryptCounts,              // from VoiceStatus
+    val remoteCrypt: CryptCounts,             // from TransportStats (TCP Ping replies)
 )
+
+data class CryptCounts(val good: Int, val late: Int, val lost: Int, val resync: Int)
 ```
 
-Updated by the transport (see
-[transport](transport.md#keepalive-and-udp-health)) and the `VoiceEngine`
-status, merged by the session. Kept out of `SessionState` because latency
+The session combines `transport.stats` and `voice.status` into `stats` with
+one `combine` collector in its scope. Before voice starts, `localCrypt` is
+all zeros. `usingUdp` comes only from the transport, which owns that
+decision (see [transport](transport.md#keepalive-and-udp-health)). Kept out of `SessionState` because latency
 changes every ping.

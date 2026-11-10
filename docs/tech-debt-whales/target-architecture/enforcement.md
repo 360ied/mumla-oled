@@ -18,10 +18,16 @@ step 1 and only ever gets stricter.
 `libraries/humla/src/main/java`, excluding the generated
 `se/lublin/humla/protobuf/`.
 
-**Forbidden patterns** (regular expressions, word-bounded):
-`@Volatile`, `@Synchronized`, `\bsynchronized\(`, `\bThread\(`,
-`\bHandler\(`, `runBlocking`, `ReentrantLock`, `ReentrantReadWriteLock`,
-`Executors\.`, `CountDownLatch`, `java\.util\.concurrent\.locks`.
+**Forbidden patterns** (regular expressions):
+`@Volatile`, `@Synchronized`, `\bsynchronized\(`, `\bThread\s*[({]`,
+`\bHandlerThread\(`, `\bHandler\(`, `runBlocking`, `ReentrantLock`,
+`ReentrantReadWriteLock`, `Executors\.`, `CountDownLatch`,
+`java\.util\.concurrent\.locks`.
+
+`\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`;
+`\b` keeps `currentThread(` and `createAudioHandler(` from matching.
+Comments are not stripped: a pattern named in a comment counts, which keeps
+the script simple and the comments honest.
 
 **Allowlist:** `scripts/architecture-allowlist.txt`, one entry per line:
 
@@ -30,13 +36,24 @@ step 1 and only ever gets stricter.
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
 ```
 
-- `count` is the number of forbidden matches the file may contain.
-- The check fails if a file not on the list has any match, if a listed
-  file has **more** matches than its count, or if a listed file has
-  **fewer** (the count must be lowered in the same commit, so the list only
-  shrinks). A file with zero matches must be removed from the list.
-- Step 1 seeds the list with today's 31 files and their counts. Every
-  migration step's "done" includes lowering it.
+- `count` is the number of **lines** in the file that match at least one
+  pattern (what `grep -cE` reports), so a line with two patterns counts
+  once.
+- The check fails if a file not on the list has any matching line, if a
+  listed file has **more** matching lines than its count, or if it has
+  **fewer** (the count must be lowered in the same commit). A file with
+  zero matching lines must be removed from the list.
+- Step 1 seeds the list with today's numbers. On `master` at `3041a6ca`,
+  the patterns above match 335 lines in 34 files; step 1 recomputes the
+  exact counts from the script itself when it lands.
+- **Adding a boundary file.** New code that genuinely needs a thread or a
+  handler (the transport reader, `RouteControl`, the `VoiceEngine`
+  facade) may add itself to the list, but only if its path is in the
+  script's `BOUNDARY_FILES` constant. Adding a path to `BOUNDARY_FILES` is
+  a deliberate, reviewed change with a comment saying why; the list starts
+  with the five end-state files below. Every other change can only lower
+  counts or remove entries.
+- Every migration step's "done" includes lowering the totals.
 
 **Expected end state:** about five files, all at real boundaries: the
 `VoiceEngine` facade (owns the voice control thread and the JNI handle),
@@ -53,8 +70,8 @@ likely gaps.
 
 A JVM unit test in `:libraries:humla`, `StateImmutabilityTest`, walks every
 class reachable from `SessionState`, `ClientState`, `VoicePolicy`,
-`VoiceStatus`, `TalkActivity`, `RouteState`, and `SessionStats` by Kotlin
-reflection and fails if any:
+`VoiceSettings`, `VoiceStatus`, `TalkActivity`, `RouteState`, and
+`SessionStats` by Kotlin reflection and fails if any:
 
 - property is a `var`;
 - property's declared type is a `java.util` collection, a Kotlin
@@ -63,10 +80,18 @@ reflection and fails if any:
   (`ImmutableList` and friends permit mutable implementations);
 - class is not a `data class`, `data object`, enum, sealed interface, or one
   of an explicit list of immutable leaf types (`String`, primitives,
-  `ByteString`, `InetAddress`, `X509Certificate`, `Server`).
+  `ByteString`, `InetAddress`, `X509Certificate`, `HandshakeFailure`,
+  `Throwable`).
+
+**Handles are not walked.** The walk stops at `Session` (reached through
+`ClientState.Connected`), which is an object with a lifetime, not a value.
+`ClientState` holds `ServerEndpoint`, not the Room `Server` entity, so no
+mutable entity is reachable. `ByteArray` appears only in transport
+messages (`Inbound.Tunnelled`) and commands, which are not state roots.
 
 Adding a new state type adds it to the walk automatically, because the
-walk follows property types.
+walk follows property types. Step 1 adds the test with an empty root list;
+each later step adds its roots when the types exist.
 
 ## Android-free packages
 

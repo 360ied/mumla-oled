@@ -94,6 +94,12 @@ public:
   transitions first. When `transmitAllowed` goes false mid-utterance, it
   flushes the accumulator as an end-of-transmission packet into `out`,
   exactly as `setMuted(true)` does today.
+- `InputConfig` is the engine's own view, assembled by the capture thread
+  each frame from `VoicePolicy` and `VoiceSettings`; the engine never sees
+  either type.
+- Outbound packets hold up to `kMaxOpusBufferBytes` (1024) of Opus data, as
+  today. Inbound packets may be larger (up to `MAX_PACKET_BYTES`, 2048), as
+  today's output engine accepts.
 - `kMaxPacketsPerFrame` covers the pre-speech flush: the pre-speech buffer
   holds 8 frames (`PreSpeechRingBuffer::DEFAULT_CAPACITY_FRAMES`), so at one
   frame per packet a talk start can release 8 packets plus the current one.
@@ -173,9 +179,12 @@ engines on the host: fixed input PCM sequences (speech, silence, PTT
 toggles, mid-utterance mute) through the input engine, and fixed packet
 sequences (in-order, reordered, lost, terminators, 33 concurrent senders)
 through the output engine. The refactored engines must reproduce the
-captured packets and mixed PCM exactly. Opus encoding and decoding are
-deterministic for identical input and settings, so exact comparison is
-possible; any intended difference is a separate, reviewed change.
+captured packets and mixed PCM exactly. Goldens are recorded and compared
+by the existing host native suite (which already builds and runs these
+engines, with the RNNoise model from the repository), always on the host
+with the same toolchain, so Opus's determinism for identical input and
+settings makes exact comparison possible. Any intended difference is a
+separate, reviewed change.
 
 ## Packet codec
 
@@ -295,9 +304,9 @@ flowchart LR
   changes between 5a and 5b.
 - **Half duplex** (today's `AudioOutput.setHalfDuplexMuted`): the capture
   thread publishes "self is talking" in one atomic flag owned by the I/O
-  layer; while half duplex is enabled in `VoiceSettings` and the flag is
-  set, the render thread writes silence instead of the mix. The engines are
-  unaware of it.
+  layer; while `VoiceSettings.halfDuplex` is set and the flag is set, the
+  render thread writes silence instead of the mix. As today, half duplex
+  only applies in push-to-talk mode. The engines are unaware of it.
 - The capture entry point accepts any block size (AAudio bursts vary by
   device) and feeds the input engine in exact 10 ms frames, carrying the
   remainder to the next call. The render entry point splits requests larger
@@ -308,12 +317,19 @@ flowchart LR
 ### Queues
 
 All queues are fixed-capacity, single-producer single-consumer, lock-free
-rings, allocated at start. A full queue drops the new item and increments a
-counter reported in `VoiceStatus`; nothing blocks.
+rings, allocated at start. Nothing blocks. A completely full ring drops the
+new item and increments a counter reported in `VoiceStatus` (the producer
+cannot safely remove old items from a single-producer ring).
+
+**The outbound queue keeps today's drop-oldest behavior** (today's
+`HumlaUDP` send channel uses `DROP_OLDEST` with a bound of about 200 ms):
+the send thread, when it wakes, skips every queued packet older than
+200 ms of audio before sending, and counts them as dropped. The ring holds
+twice that, so in practice the drop-newest path never runs.
 
 | Queue | Producer → consumer | Item | Capacity |
 |---|---|---|---|
-| Outbound | Capture → send | Framed packet (≤ 1100 bytes) | 64 |
+| Outbound | Capture → send | Framed packet (≤ 1100 bytes) | 400 ms of packets at the current frames per packet (at most 40) |
 | Inbound | Receive → render | `InboundPacket` | 256 |
 | Tunnel inbound | Kotlin tunnel caller → render | `InboundPacket` | 256 |
 | Capture events | Capture → notifier | Self talk edge | 64 |
@@ -327,10 +343,28 @@ that.
 ### Policy and settings handoff
 
 Kotlin publishes two values into native code:
-- `VoicePolicy` (changes with session state; see [below](#voicepolicy)),
-- `VoiceSettings` (changes with user settings: input mode, bitrate, frames
-  per packet, amplitude boost, RNNoise, leveler, VAD thresholds, jitter
-  margin).
+- `VoicePolicy` (changes with session state and the server's bandwidth
+  cap; see [below](#voicepolicy)),
+- `VoiceSettings` (changes with user settings):
+
+```kotlin
+data class VoiceSettings(
+    val inputMode: InputMode,                 // Settings.inputMethod, via today's InputModes.resolveInputMode
+    val vadMax: Float,                        // Settings.detectionThreshold, via today's
+    val vadMin: Float,                        //   ActivityInputMode.setThreshold mapping
+    val amplitudeBoost: Float,                // Settings.amplitudeBoostMultiplier
+    val targetBitrate: Int,                   // Settings.inputQuality (today's ConfigDelta.inputQuality)
+    val targetFramesPerPacket: Int,           // Settings.framesPerPacket
+    val halfDuplex: Boolean,                  // Settings.isHalfDuplex && inputMode == PUSH_TO_TALK
+    val adaptiveLeveler: Boolean,             // Settings.isAdaptiveLevelerEnabled
+)
+```
+
+A `VoiceSettings` mapper in `:libraries:humla` builds this from the
+settings flow, reusing today's conversion code from `InputModes` and
+`ActivityInputMode`. Everything today's engine sets at creation and never
+changes (RNNoise enabled when its model loads, VAD hold frames, squelch
+floor, jitter margin of 4 frames) stays a constant of the I/O layer.
 
 Each is stored in a **sequence lock**: one writer (the JNI call), any
 number of readers (capture, receive, render). The writer increments the
@@ -385,23 +419,35 @@ each other, and it is never the main thread.
 data class VoicePolicy(
     val transmitAllowed: Boolean,
     val pttPressed: Boolean,
-    val voiceTarget: Int,                     // 0 = normal talking
+    val voiceTarget: Int,                     // 0 normal, 1-30 whisper, 31 server loopback
+    val bitrate: Int,                         // after the server's bandwidth cap
+    val framesPerPacket: Int,                 // after the server's bandwidth cap
     val locallyMuted: PersistentSet<Int>,     // sessions whose voice is dropped
 )
 
-fun voicePolicy(s: SessionState): VoicePolicy {
+fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
     val self = s.server.self
     val transmit = s.server.phase == SyncPhase.SYNCED && self != null &&
         !effectiveSelfMute(s) && !self.muted && !self.deafened && !self.suppressed
+    val encoder = computeEffectiveConfig(v.targetBitrate, v.targetFramesPerPacket,
+        s.server.info.maxBandwidth)        // today's AudioHandler function, moved as is
     return VoicePolicy(
         transmitAllowed = transmit,
         pttPressed = s.local.pttPressed,
         voiceTarget = s.local.voiceTargetId,
+        bitrate = encoder.bitrate,
+        framesPerPacket = encoder.framesPerPacket,
         locallyMuted = s.server.users.values.filter { it.localMuted }
             .map { it.session }.toPersistentSet(),
     )
 }
 ```
+
+The server's bandwidth cap (from `ServerSync`, `ServerConfig`, or a
+protobuf UDP ping) lowers bitrate and frames per packet exactly as today's
+`AudioHandler.setMaxBandwidth` does. When the cap changes the effective
+values, the policy collector emits `VoiceEvent.EncoderLimited`, which the
+chat log feature formats with today's `audio_max_bandwidth` string.
 
 `effectiveSelfMute` is defined in [state](state.md#self-mute-and-deafen):
 the user's desired self-mute wins over the server echo, and a server echo
@@ -410,22 +456,24 @@ of self-deafen always closes the gate.
 Deafen does not silence playback on the client: murmur stops sending voice
 to deafened users, as it does today.
 
-A single collector runs on its own single-thread dispatcher (never the
-voice control thread, which can block on stream changes). It maps each
-`SessionState` to a `VoicePolicy`, skips unchanged values, and calls
+A single collector (`PolicyCollector` in `se.lublin.humla.voice`) runs on
+its own single-thread dispatcher (never the voice control thread, which
+can block on stream changes). It combines the current session's state with
+`VoiceSettings`, maps each pair to a `VoicePolicy`, skips unchanged values, and calls
 `VoiceEngine.setPolicy`. A mute therefore reaches the gate within one
 collector dispatch plus at most one 10 ms frame.
 
 ## Kotlin facade
 
 ```kotlin
-class VoiceEngine(context: Context, settings: Flow<VoiceSettings>, route: StateFlow<RouteState>) {
+class VoiceEngine(context: Context, settings: StateFlow<VoiceSettings>,
+        route: StateFlow<RouteState>) : VoiceLifecycle, VoiceLink {
     fun submit(command: VoiceCommand)         // non-blocking; executed on the voice control thread
     fun setPolicy(policy: VoicePolicy)        // policy collector only
     fun queueTunnelled(packet: ByteArray)     // session message coroutine only
-    fun encryptIv(): ByteArray                // for CryptSetup replies
+    fun encryptIv(): ByteString               // for CryptSetup replies
     fun setKeys(keys: CryptKeys)              // CryptSetup with full keys
-    fun setDecryptIv(iv: ByteArray)           // CryptSetup resync
+    fun setDecryptIv(iv: ByteString)          // CryptSetup resync
 
     val status: StateFlow<VoiceStatus>
     val talkActivity: StateFlow<TalkActivity>
@@ -457,8 +505,7 @@ executed by the send thread (the control thread only enqueues it).
 ```kotlin
 data class VoiceStatus(
     val running: Boolean,
-    val usingUdp: Boolean,
-    val localCrypt: CryptCounts,              // good, late, lost, resync
+    val localCrypt: CryptCounts,              // good, late, lost, resync (see client.md)
     val droppedOutbound: Long,
     val droppedInbound: Long,
     val droppedJitter: Long,
@@ -475,10 +522,15 @@ sealed interface VoiceEvent {
         val maxBandwidth: Int?) : VoiceEvent
     data class PipelineError(val message: String) : VoiceEvent
     data object CryptResyncRequested : VoiceEvent
+    data class EncoderLimited(val maxBandwidth: Int, val bitrate: Int,
+        val framesPerPacket: Int) : VoiceEvent
 }
 ```
 
-`talkActivity` is updated by the notifier at most every 20 ms and feeds
+Talk states come from the output engine's existing mapping of each
+packet's talk context (`talkStateForFlags`: normal, shout, whisper,
+listener), as today. `talkActivity` is updated by the notifier at most
+every 20 ms and feeds
 screens, the overlay, and features. It is never part of `SessionState`.
 
 ## Interim mute (step 4, before 5a)

@@ -15,7 +15,7 @@ them.
 |---|---|---|
 | Live handles keep screens updating | Spike (see [migration](migration.md#step-2--immutable-state)) | Step 2 |
 | `kotlinx-collections-immutable` version | Pin the current release at step 2 start (pre-1.0 accepted); run the state tests against it | Step 2 |
-| Jitter slot pool size (1024 slots proposed) | Pool stress test in the native suite (see [testing](testing.md#native-host-suite)) | Step 5a |
+| Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); not a prerequisite | Step 5a (done-when) |
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
@@ -24,21 +24,31 @@ them.
 
 | Item | Notes |
 |---|---|
-| `VoiceEngine` application-scoped or per session | Decided: application-scoped (survives reconnects). Revisit only if keeping streams and engines across sessions causes problems on device; measuring the rebuild cost would settle it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8 |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
 
 ## Resolved
 
+Items resolved by the 2026-11-10 spec review are marked *(review)*.
+
 | Item | Resolution | Where |
 |---|---|---|
+| `VoiceEngine` scope | Application-scoped (survives reconnects); revisit only if keeping streams and engines across sessions causes problems on device | [voice](voice.md#kotlin-facade) |
+| Contradictions and undefined types *(review)* | One `TextMessageSent` shape; the transport alone owns UDP vs tunnel; `VoiceSettings`, `CryptKeys`, `CryptCounts`, `LocalFacts`, `LocalFactsStore`, `WhisperTarget`, `SyncPhase`, `ChannelTree`, `ServerEndpoint`, `VoiceLink` defined | [state](state.md#types), [client](client.md#connecttarget), [transport](transport.md#responsibilities), [voice](voice.md#policy-and-settings-handoff) |
+| Behaviors the first draft dropped *(review)* | Listening-volume message, ignored senders' text, other users' self-mute log, welcome text, bandwidth cap on the encoder, voice target 31, outbound drop-oldest, chat log limits, no chat-visibility suppression, mismatch dialog without pinning | [state](state.md#server-message-transitions), [voice](voice.md#queues), [app](app.md#features) |
+| `ChannelRemove` listener cleanup | Whole subtree, an intentional fix of a pre-existing leak | [state](state.md#server-message-transitions) |
+| Allowlist counting *(review)* | Matching lines per file; 335 lines in 34 files at `3041a6ca`; boundary files may join only via `BOUNDARY_FILES` | [enforcement](enforcement.md#concurrency-tripwire) |
+| Immutability walk scope *(review)* | Stops at `Session`; `ServerEndpoint` replaces the Room entity in `ClientState` | [enforcement](enforcement.md#state-immutability-test) |
+| Intermediate steps *(review)* | `ConfigDelta` bridge until step 7; container and features (step 6) before screens and service cut-over (step 7) | [migration](migration.md#ground-rules) |
+| Route session identity *(review)* | The controller keeps a private route-session counter for stale-event checks | [route](route.md#thread) |
+| App-layer coverage *(review)* | Port rule plus full settings and feature tables | [app](app.md#port-rule) |
 | Single control loop vs alternatives | Rejected; immutable state with atomic updates, one session object, command-only slow components | [README](README.md#rejected-alternatives) |
 | Splitting `User` by who decides each field | Rejected; one `UserInfo` with every fact, atomic updates | [state](state.md#types) |
 | Deep immutability of state | `kotlinx.collections.immutable` persistent collections plus a reflection test | [state](state.md#rules), [enforcement](enforcement.md#state-immutability-test) |
 | Copy cost of immutable state | Persistent collections; publish once at `ServerSync`; batch queued messages | [state](state.md#sync-phases-and-publication) |
 | Self-mute: desired vs echoed | Desired value drives the gate; echo updates the model; self-deaf echo always closes the gate; persisted and restored | [state](state.md#self-mute-and-deafen) |
 | When informational events fire | Only after `SYNCED`; warnings in every phase | [state](state.md#events) |
-| Where chat strings are formatted | In the app, from semantic events; temporary adapter until step 7 | [state](state.md#events), [migration](migration.md#step-7--app-cut-over) |
+| Where chat strings are formatted | In the app, from semantic events; temporary adapter until step 6 | [state](state.md#events), [migration](migration.md#step-6--container-storage-and-features) |
 | Client states and transitions | `ClientState` with five states and fixed edges | [client](client.md#clientstate) |
 | Reconnect rules | Today's policy, unchanged | [client](client.md#reconnect-policy) |
 | TLS trust failures | `Failed(Trust)`, never reconnect; app shows today's dialogs | [client](client.md#clientstate), [transport](transport.md#tls) |

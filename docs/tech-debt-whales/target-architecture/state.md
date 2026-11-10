@@ -31,6 +31,8 @@ data class SessionState(
     val local: LocalState,
 )
 
+enum class SyncPhase { HANDSHAKING, SYNCING, SYNCED }
+
 data class ServerState(
     val phase: SyncPhase,                     // HANDSHAKING, SYNCING, SYNCED
     val info: ServerInfo,
@@ -104,20 +106,58 @@ data class LocalState(
     val pttPressed: Boolean,
     val voiceTargetId: Int,                   // 0 = normal talking
     val whisperTargets: PersistentMap<Int, WhisperTarget>,   // registered VoiceTarget IDs 1..30
-    val listeningVolumes: PersistentMap<Int, Float>,         // per channel
+    val listeningVolumes: PersistentMap<Int, Float>,         // per channel, as last sent
 )
+
+sealed interface WhisperTarget {
+    val name: String?
+    data class Channel(val channelId: Int, val includeLinked: Boolean,
+        val includeSubchannels: Boolean, val group: String?) : WhisperTarget
+    data class Users(val sessions: PersistentList<Int>, override val name: String?) : WhisperTarget
+}
 ```
+
+`voiceTargetId` follows today's mode mapping (`VoiceTargetMode`): 0 is normal
+talking, 1–30 are registered whisper targets, and 31 is server loopback.
+`WhisperTarget` replaces today's `WhisperTargetChannel` and
+`WhisperTargetUsers` with immutable values that hold IDs, not live
+objects; `name` on `Channel` is derived from the channel's name in state.
 
 `UserInfo` deliberately carries server-decided, user-decided, and
 device-local facts together: every consumer needs the joined value, and
 atomic updates make several writers safe.
 
-**`ChannelTree`** is derived, not stored. It holds the children of each
-channel and the users in each channel, sorted exactly as today's
-`Channel.compareTo` (position, then name, then ID) and `User.compareTo`
-(name, then session) sort them. It is computed lazily the first time a
-state value's `tree` is read, so values that no screen reads never pay for
-it.
+**`ChannelTree`** is derived, not stored:
+
+```kotlin
+class ChannelTree private constructor(...) {
+    fun children(channelId: Int): List<ChannelInfo>      // sorted
+    fun users(channelId: Int): List<UserInfo>            // sorted
+    fun userCountInSubtree(channelId: Int): Int          // today's subchannelUserCount
+    fun allLinks(channelId: Int): Set<Int>               // today's getAllLinks: transitive links
+    companion object {
+        fun build(channels: Map<Int, ChannelInfo>, users: Map<Int, UserInfo>): ChannelTree
+    }
+}
+```
+
+Sorting matches today exactly:
+- **Channels** (`Channel.compareTo`): by `position`; then by name,
+  case-sensitive, with a null name first; then by ID.
+- **Users** (`User.compareTo`): by name, case-insensitive, with a null name
+  first; then by session.
+
+Channels whose parent is missing (possible transiently between messages)
+are left out of the tree until the parent arrives. `tree` is a
+`lazy(LazyThreadSafetyMode.PUBLICATION)` property, so whichever thread reads
+it first computes it, concurrent first reads are harmless, and values that
+no screen reads never pay for it.
+
+**Derived reads** that today live on the model objects come from state:
+`IChannel.isListening` is "the self user's `listeningChannels` contains this
+channel"; `listeningVolume` is `local.listeningVolumes`; `hasTexture` is
+`texture != null`; `UserInfo.userId` is `null` where today's `User.userId`
+is `-1`.
 
 **Not in `SessionState`**, because they change too often or belong
 elsewhere:
@@ -149,25 +189,29 @@ transitions in the state package; the others are handled where noted.
 | Message | Handled by | Effect |
 |---|---|---|
 | `Version` | State, [transport](transport.md) | `info.versionV2/release/os/osVersion`; the transport derives the UDP format from the version |
-| `CodecVersion` | State | `info.opus` |
+| `CodecVersion` | State | `info.opus`. Today's code also records a CELT fallback, but nothing reads it: voice is Opus-only today and stays so |
 | `ChannelState` | State | Create or update `ChannelInfo`; replace `links` when `links` is present, apply `links_add`/`links_remove` otherwise |
-| `ChannelRemove` | State | Remove the channel and its whole subtree (never the root); drop them from other channels' links and every user's `listeningChannels`; users inside lose their `channelId` until the server moves them, as `ModelHandler` does today |
-| `UserState` | State, [events](#events) | Create or update `UserInfo` (see [self-mute](#self-mute-and-deafen)); emit join, move, recording, and self-mute events |
+| `ChannelRemove` | State | Remove the channel and its whole subtree (never the root); drop them from other channels' links; users inside lose their `channelId` until the server moves them, as `ModelHandler` does today. Also drop every removed ID from every user's `listeningChannels`: **an intentional fix**, since today's code only drops the top removed channel and leaks listeners on its subchannels |
+| `UserState` | State, [events](#events) | Create or update `UserInfo` (see [self-mute](#self-mute-and-deafen)); emit join, move, recording, and other users' self-mute events |
 | `UserRemove` | State, client | Other user: remove and emit `UserLeft`. Self: the session fails with reason `USER_REMOVE` (no reconnect) |
-| `ServerSync` | State, transport, client | `selfSession`, `rootPermissions`, `maxBandwidth`, `welcomeText`; phase `SYNCED`; transport starts pings; client publishes `Connected` |
-| `ServerConfig` | State | `info.settings`, `welcomeText` |
+| `ServerSync` | State, transport, client | `selfSession`, `rootPermissions`, `maxBandwidth`, `welcomeText`; phase `SYNCED`; emit `WelcomeText` when present; transport starts pings; client publishes `Connected` |
+| `ServerConfig` | State | `info.settings`, `welcomeText`; `max_bandwidth` updates `info.maxBandwidth`, which lowers the encoder settings (see [voice](voice.md#voicepolicy)) |
 | `PermissionQuery` | State | Set `permissions` on the channel; when `flush` is set, reset every other channel's `permissions` to 0 first |
 | `PermissionDenied` | [Events](#events) | `PermissionDenied` event; no state change |
-| `TextMessage` | [Events](#events) | `TextMessageReceived` event; chat history is an app feature, not state |
+| `TextMessage` | [Events](#events) | `TextMessageReceived` event, except from a locally ignored sender, which is dropped as today; chat history is an app feature, not state |
 | `Reject` | Client | The session fails with reason `REJECT` (no reconnect) |
 | `CryptSetup` | [Transport](transport.md#crypt-setup) | Key setup or resync, forwarded to the `VoiceEngine` |
 | `Ping` | [Transport](transport.md#keepalive-and-udp-health) | TCP latency, remote crypt statistics, UDP/TCP mode decision |
 | `UDPTunnel` | [Transport](transport.md#tunnel-mode) | Tunnelled voice into the `VoiceEngine` |
 | `ACL`, `BanList`, `QueryUsers`, `UserList`, `UserStats`, `ContextAction`, `ContextActionModify`, `SuggestConfig`, `PluginDataTransmission` | Ignored | Not handled today; unchanged |
+| `Authenticate`, `VoiceTarget`, `RequestBlob` | Client-sent only | Never arrive from the server; sent by the session (see [intents](#user-intents)) |
 
 `ModelHandler`'s current handlers are the reference for every field-level
-detail (partial-update semantics, temporary channels, `canEnter`
-recomputation). Each one is ported as a transition with its existing
+detail: partial-update semantics, temporary channels, `can_enter` (copied
+from the message), cycle and self-parent guards, placeholder channels for
+unknown parents, re-sorting on position or name changes, falling back to
+the root for users in unknown channels, and clearing comment and texture
+when their hashes change. Each one is ported as a transition with its existing
 behavior pinned by state-transition tests (see [testing](testing.md)).
 
 ## Self-mute and deafen
@@ -217,11 +261,17 @@ writers of `local` and of device-local `UserInfo` fields. Each is one
 | `setSelfMuteDeaf(mute, deaf)` | `local.selfMuteDesired/selfDeafDesired`; optimistic self `UserInfo` | `UserState(self_mute, self_deaf)` |
 | `setPtt(pressed)` | `local.pttPressed` | none |
 | `setLocalMute(session, muted)` / `setLocalIgnore` | `UserInfo.localMuted/localIgnored` | none; persisted by user ID for registered users |
-| `setVoiceTarget(id)` | `local.voiceTargetId` | none |
-| `registerWhisperTarget(target)` | `local.whisperTargets` | `VoiceTarget` |
+| `setVoiceTarget(id)` | `local.voiceTargetId` (0–31) | none |
+| `registerWhisperTarget(target)` | Takes the lowest free ID in 1–30 inside the `update`; returns it, or `-1` when all 30 are taken, as today | `VoiceTarget` |
+| `unregisterWhisperTarget(id)` | Frees the ID (IDs outside 1–30 are ignored) | none, as today |
 | `setListening(channel, on)` | none until echo | `UserState(listening_channel_add/remove)` |
-| `setListeningVolume(channel, v)` | `local.listeningVolumes` | none |
-| All others (join, move, text, comment, kick, link, register, requests) | none until echo | one TCP message each, as today's `HumlaService` sends them |
+| `setListeningVolume(channel, v)` | `local.listeningVolumes` | `UserState(listening_volume_adjustment)`, as today |
+| All others (join, move, text, comment, kick, link, register, requests, admin mute/deafen) | none until echo | one TCP message each, with today's `HumlaService` coercions (deaf implies mute, unmute implies undeafen, admin unmute clears `suppress`) |
+
+Intents that need a connection fail as today when the session is not yet
+`SYNCED`: they are no-ops returning nothing (or `-1` for whisper
+registration), instead of today's mix of `IllegalArgumentException` and
+`IllegalStateException`.
 
 Decisions that depend on current state happen inside the `update` lambda,
 never after reading `state.value` (see
@@ -247,6 +297,9 @@ sealed interface SessionEvent {
         val actor: Int?) : SessionEvent
     data class RecordingChanged(val session: Int, val recording: Boolean) : SessionEvent
     data class SelfMuteStateChanged(val muted: Boolean, val deafened: Boolean) : SessionEvent
+    data class UserSelfMuteChanged(val session: Int, val name: String?,
+        val muted: Boolean, val deafened: Boolean) : SessionEvent
+    data class WelcomeText(val text: String) : SessionEvent
     data class TextMessageSent(val channels: List<Int>, val trees: List<Int>,
         val users: List<Int>, val message: String, val sentAtMillis: Long) : SessionEvent
     data class PermissionDenied(val type: Int, val permission: Int?,
@@ -255,9 +308,16 @@ sealed interface SessionEvent {
 }
 ```
 
+`SelfMuteStateChanged` is emitted by the `setSelfMuteDeaf` intent (today
+the toggle site logs the self line, never the echo).
+`UserSelfMuteChanged` is emitted for *other* users whose self-mute or
+self-deafen changes while they are in the self user's channel, as today.
+`WelcomeText` carries `ServerSync.welcome_text`, which today is logged to
+chat.
+
 Informational events (`UserJoinedServer`, `UserMoved`, `RecordingChanged`,
-`SelfMuteStateChanged`, and `UserLeft` without an actor) are emitted only
-after `SYNCED`, as `HumlaService.logInfo` suppresses them today, so the
+`SelfMuteStateChanged`, `UserSelfMuteChanged`, `WelcomeText`, and
+`UserLeft` without an actor) are emitted only after `SYNCED`, as `HumlaService.logInfo` suppresses them today, so the
 initial user list produces no join notifications. Kicks and bans
 (`UserLeft` with an actor), `PermissionDenied`, and `TextMessageReceived`
 are emitted in every phase, as today's warnings are.

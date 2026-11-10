@@ -29,6 +29,18 @@ Additional cases:
 - `PermissionQuery` with and without `flush`;
 - self `UserState` echoes against every combination of desired and echoed
   self-mute and self-deafen, including the deaf-only fail-closed case;
+- every field-level detail listed under
+  [server message transitions](state.md#server-message-transitions)
+  (cycle and self-parent guards, placeholder parents, re-sorting, root
+  fallback, hash-driven clearing, link replace/add/remove);
+- a text message from a locally ignored sender produces no event;
+- local mute and ignore applied from `LocalFacts` when a registered user
+  appears;
+- whisper target registration up to 30, the 31st returning `-1`, and
+  freeing;
+- listening add, remove, and volume intents and their outbound messages;
+- the bandwidth cap lowering bitrate and frames per packet
+  (`computeEffectiveConfig`), with `AudioBandwidthDegradationTest` ported;
 - every event, including that informational events are not emitted before
   `SYNCED`.
 
@@ -48,7 +60,12 @@ Scenarios:
 - the reconnect delay sequence and counter rules (from
   `ReconnectBackoffTest`);
 - mute, deafen, and PTT spam during connect and disconnect;
-- route flaps mid-connect, SCO failure while `Settling`, `RetrySco`.
+- route flaps mid-connect, SCO failure while `Settling`, `RetrySco`;
+- `Reject`, removal of self, and a trust failure each ending in `Failed`
+  with no reconnect;
+- forced TCP from `ServerSync`, the UDP-to-tunnel switch and back, and a
+  `CryptResyncRequested` event producing exactly one empty `CryptSetup`;
+- a full transport outbound channel failing the session.
 
 Invariants asserted after every step of every scenario:
 - at most one live session; nothing runs in a cancelled session's scope;
@@ -174,13 +191,14 @@ untested; the spec does not plan device work for it.
 
 ## `PROGRESS.md`
 
-Created in step 1 next to this file, as the `HumlaService` decomposition
-did. One row per step, updated in the step's final commit:
+Created in step 1 at
+`docs/tech-debt-whales/target-architecture/PROGRESS.md`, as the
+`HumlaService` decomposition did. One row per step, updated in the step's final commit:
 
 ```markdown
 | Step | Status | Commits | Allowlist (files / matches) | Notes |
 |---|---|---|---|---|
-| 1 Harness and gate | done | abc1234..def5678 | 31 / 330 | harness validated against 2e2a067d |
+| 1 Harness and gate | done | abc1234..def5678 | 34 / 335 | harness validated against 2e2a067d |
 | 2 Immutable state | in progress | | | |
 ```
 
