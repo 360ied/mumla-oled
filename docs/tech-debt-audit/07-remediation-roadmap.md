@@ -1,11 +1,14 @@
 # Remediation roadmap — Mumla OLED debt paydown
 
 Consolidated Top-10 order from [01](01-app-ui.md)–[05](05-crosscutting.md)
-after [validity corrections](06-validity-check.md). P0 first, then
-diagnosability, auth, contracts, gates, and UI modernization. Items are
-independent except 2↔8 (native guards plus model/destroy gates move together),
-4→10-settings (DataStore unblocks settings jank), and 5→diagnosability (logging
-makes 6/7 debuggable); quick-wins at the end are safe to parallelize.
+after [validity corrections](06-validity-check.md), reordered in
+[round 4](06-validity-check.md#round-4-severity-and-remediation-review): the
+one P0 first, then the CI gate that would have caught it, diagnosability,
+native hardening, app lifecycle, main-thread bridges, contracts, and UI
+modernization. Items are independent except 4↔7 (native input guards, model
+pin, and destroy lifetime move together), 6→9-settings (removing blocking
+bridges unblocks settings jank), and 3→diagnosability (logging makes 7/8
+debuggable); quick-wins at the end are safe to parallelize.
 
 Do not implement from the `README.md` digest alone; the item text below plus
 the linked `01`–`05` tables are the normative slices, each with its gate.
@@ -18,50 +21,83 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
    clones, cache evictions, and digest rotations. Gate: cold-cache run passes —
    `rm -rf libraries/humla/build/model_cache build/test-native && ./scripts/check.sh`.
    No dependency.
-2. **Harden input JNI creation plus callbacks (P0/P1, S).**
-   Mirror the output bridge in `NativeAudioInputEngineJni.cpp`: `nothrow`,
-   null checks, `ExceptionClear`, `delete ctx; return 0`, `GetJavaVM` check,
-   Kotlin zero-handle guard; then daemon attach plus per-upcall
-   exception check/log/clear plus detach-only-if-attached. Gate: input-bridge
-   failure injection returns `0` with cleanup; host suite compiles the touched
-   shims. Blocks the next native-audio change (with item 8). Files:
-   `audio_engine/NativeAudioInputEngineJni.cpp` (`nativeCreate`, both lambdas),
-   `audio/NativeAudioInputEngine.kt` (constructor zero-handle guard).
-3. **Retire `AsyncTask` plus the 50-thread ping pool (P0, S/M).**
-   `ServerConnectTask`, certificate-generate task (also drops the retained
-   `Activity` leak), `ServerInfoTask` pool. Replacement pattern already
-   in-tree. Highest deprecation plus thread-leak density. Gate: zero
-   `AsyncTask` references (`grep -rn AsyncTask app/src` empty); ping pool bounded (4–8) with `ViewModel` cache. Files:
-   `app/ServerConnectTask.kt`, `preference/MumlaCertificateGenerateTask.kt`,
-   `servers/ServerInfoTask.kt`, `servers/ServerAdapter.kt` (`MAX_ACTIVE_PINGS`).
-4. **Move DataStore off the UI thread (P0, M).**
-   Repository-as-source with `Flow` plus `lifecycleScope` collection. Gates
-   all settings-screen jank fixes behind it. Gate: zero `runBlocking` on the
-   preference path (`grep -rn runBlocking app/src/main/java/se/lublin/mumla/preference`
-   plus `SettingsRepository.kt` snapshot/update helpers empty of blocking calls);
-   settings screens collect a flow. Sibling bridges allowlisted:
-   `MumlaRoomDatabase.kt` (`io()`), crash-check background thread.
-   Files: `preference/DataStorePreferenceDataStore.kt` (`read`/`write`),
-   `SettingsRepository.kt` (`snapshotBlocking`/`updateBlocking`),
-   `db/MumlaRoomDatabase.kt` (`io`). Depends on nothing; item 3 can
-   proceed in parallel.
-5. **Fail loud on network plus logging (P1, S).**
+2. **Add gates plus pin the toolchain (P1, S).**
+   CI workflow (`check.sh` + `lintFossDebug` + `assembleFossDebug`), including
+   one run from a cold model cache so item-1-class breaks fail CI; pin shell
+   Gradle/`protoc` to wrapper/catalog with a `check.sh` assert; single-source
+   the CMake pin like NDK; harden signing to `findByName` plus fail-closed
+   plus example template; fail fast on tagless versions. Every other guard is
+   advisory without CI. Gate: green CI on `check.sh` + `lintFossDebug` +
+   `assembleFossDebug`; toolchain assert present. Workflow path:
+   `.github/workflows/` (missing today — created by this item); assert snippet
+   compares wrapper/catalog versions (Gradle `9.1.0`, protobuf `4.36.2`).
+   Best landed after item 1 so the first run is green.
+3. **Fail loud on network plus logging (P1, S).**
    Route TCP send `IOException` into `error()` with a drop counter; replace
    12 verified `printStackTrace` sites with tagged `Log.w/e`; append the
    throwable to `Log.e(+e.message)` sites; promote exception-in-callback
-   `Log.d` to `Log.w`. Makes the next three network/lifecycle bugs
-   diagnosable instead of silent. Gate: zero production `printStackTrace`
-   (12 sites — 5 app active + 7 core; `grep -rn printStackTrace` shows only the
-   intentional reporter use); send-failure counter present (name, location, and
-   level stated in the fix). No dependency.
-6. **Harden client certificates (P1, S).**
-   Random serials plus non-empty store password (or a documented threat
-   model), larger keys and shorter validity on next rotation. Small,
-   high-leverage auth work. Gate: random serials plus non-empty password (or
-   documented threat model). Files:
-   `libraries/humla/.../net/HumlaCertificateGenerator.kt` (serial, password,
-   key size, validity); check `grep -n "0x01\|toCharArray\|initialize(2048\|YEARS_VALID"` shows random serial plus non-empty password. No dependency.
-7. **Settle the foreground-service contract (P1, S).**
+   `Log.d` to `Log.w`. Makes later network/lifecycle bugs diagnosable instead
+   of silent. Gate: zero production `printStackTrace` (12 sites — 5 app
+   active + 7 core; `grep -rn printStackTrace` shows only the intentional
+   reporter use and no active app/core calls); send-failure counter present
+   (name, location, and level stated in the fix). No dependency.
+4. **Harden native input creation plus pin the RNNoise model contract (P1, S/M).**
+   Input bridge: mirror the output bridge in `NativeAudioInputEngineJni.cpp` —
+   `nothrow`, null checks, `ExceptionClear`, `delete ctx; return 0`,
+   `GetJavaVM` check, Kotlin zero-handle guard; then daemon attach plus
+   per-upcall exception check/log/clear plus detach-only-if-attached. Model
+   contract: preferably remove the hand-mirrored `RNNModel` by getting
+   `rnnoise_model_from_buffer` to set `file = NULL` (upstream PR, or a patch
+   applied at configure time) and calling it directly; otherwise fail CMake
+   configure when the RNNoise submodule revision differs from `d983458`
+   (`v0.2-14-gd983458`, per processor header comment) or when the
+   `struct RNNModel` text in `rnnoise/src/denoise.c` changes. Do not use
+   `static_assert(sizeof/offsetof)`: the upstream struct is in a `.c` file,
+   so there is nothing to compare the mirror with. Gate: input-bridge failure
+   injection returns `0` with cleanup; host suite compiles the touched shims;
+   configure fails on a changed RNNoise revision or struct (or the mirror is
+   gone). Files: `audio_engine/NativeAudioInputEngineJni.cpp` (`nativeCreate`,
+   both lambdas), `audio/NativeAudioInputEngine.kt` (constructor zero-handle
+   guard), `audio_engine/RnnoiseProcessor.cpp`, `CMakeLists.txt`.
+5. **Fix the certificate-generate leak plus retire `AsyncTask` (P1/P2, S/M).**
+   P1: certificate-generate task retains an `Activity` across rotation —
+   move to a coroutine plus `ViewModel`, `applicationContext` for DB work.
+   P2 in the same slice: `ServerConnectTask` (already `applicationContext`)
+   and the `ServerInfoTask` 50-thread ping pool (shut down on each rebuild,
+   but fragile). Replacement pattern already in-tree. Gate: certificate
+   dialog survives rotation without a retained `Activity`; zero `AsyncTask`
+   references (`grep -rn AsyncTask app/src` empty); ping pool bounded (4–8)
+   with `ViewModel` cache. Files: `preference/MumlaCertificateGenerateTask.kt`,
+   `preference/CertificateGenerateActivity.kt`, `app/ServerConnectTask.kt`,
+   `servers/ServerInfoTask.kt`, `servers/ServerAdapter.kt` (`MAX_ACTIVE_PINGS`).
+6. **Move blocking bridges off the main thread — DataStore and Room (P1, M+).**
+   Repository-as-source with `Flow` plus `lifecycleScope` collection for
+   settings; suspend DAO calls for the database. Room `io()` runs real SQLite
+   queries on main and is the larger ANR surface; DataStore reads hit its
+   in-memory cache after first load and only writes wait on disk. Effort may
+   exceed `M`: `SettingsRepository` `snapshotBlocking`/`updateBlocking` have
+   18 call sites through the legacy `Settings` facade, and the Room KDoc ties
+   its fix to the planned service-core suspend slice. Gate: zero main-thread
+   `runBlocking` on the preference path
+   (`grep -rn runBlocking app/src/main/java/se/lublin/mumla/preference`
+   empty; `SettingsRepository.kt` helpers non-blocking) and on the Room path
+   (`MumlaRoomDatabase.kt` `io()` gone or provably off-main); settings screens
+   collect a flow. Only the `MumlaActivity` crash-check `runBlocking`
+   (background thread) stays allowlisted. Files:
+   `preference/DataStorePreferenceDataStore.kt` (`read`/`write`),
+   `SettingsRepository.kt`, `Settings.kt`, `db/MumlaRoomDatabase.kt` (`io`).
+   Can proceed in parallel with item 5.
+7. **Native destroy lifetime, host coverage, and Opus error checks (P1, M).**
+   Registry/`shared_ptr` destroy discipline mirroring the crypto bridge;
+   host-suite coverage for `RnnoiseProcessor.cpp` plus JNI shims;
+   check/log/clamp every `opus_ctl` plus encode failures. Gate release on
+   these. Gate: `destroy()` blocks until callbacks quiesce; host suite loads
+   a real fixture; every `opus_ctl` return checked. Revs: Opus `v1.6.1`
+   (`22244de5` per `CMakeLists.txt` comment). Files:
+   `audio_engine/NativeAudio*Jni.cpp`, `audio_engine/OpusVoiceEncoder.cpp`,
+   `audio_engine/OpusVoiceDecoder.cpp`, `CMakeLists.txt`,
+   `scripts/test_native_audio.sh`. Moves with item 4.
+8. **Settle the foreground-service contract (P1, S).**
    The app layer already promotes (`MumlaConnectionNotification`
    `startForeground` with microphone type; manifest
    `foregroundServiceType="microphone"`), so this is a docs-plus-states item:
@@ -73,28 +109,7 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
    denied-notification path stated. Files: `libraries/humla/HumlaService.kt`
    (contract KDoc), `app/.../service/MumlaConnectionNotification.kt`,
    `app/src/main/AndroidManifest.xml` (microphone type + permission).
-8. **Pin the native model contract plus destroy lifetime (P0/P1, M).**
-   Layout asserts plus revision gate for the hand-mirrored `RNNModel`;
-   registry/`shared_ptr` destroy discipline mirroring the crypto bridge;
-   host-suite coverage for `RnnoiseProcessor.cpp` plus JNI shims; check/log/
-   clamp every `opus_ctl` plus encode failures. Gate the next native-audio
-   change (with item 2) and release (destroy race plus host coverage) on these.
-   Gate: configure fails on layout/rev drift; `destroy()` blocks until
-   callbacks quiesce; host suite loads a real fixture. Revs: Opus `v1.6.1`
-   (`22244de5` per `CMakeLists.txt` comment), RNNoise `v0.2-14-gd983458` (per
-   processor header comment). Assert shape: `static_assert(sizeof/offsetof)`
-   on the mirrored layout. Files: `audio_engine/RnnoiseProcessor.cpp`,
-   `audio_engine/NativeAudio*Jni.cpp`, `CMakeLists.txt`, `.gitmodules`.
-9. **Add gates plus pin the toolchain (P1, S).**
-   CI workflow (`check.sh` + `lintFossDebug` + `assembleFossDebug`); pin shell
-   Gradle/`protoc` to wrapper/catalog with a `check.sh` assert; single-source
-   the CMake pin like NDK; harden signing to `findByName` plus fail-closed
-   plus example template; fail fast on tagless versions. Every other guard is
-   advisory without CI. Gate: green CI on `check.sh` + `lintFossDebug` +
-   `assembleFossDebug`; toolchain assert present. Workflow path:
-   `.github/workflows/` (missing today — created by this item); assert snippet
-   compares wrapper/catalog versions (Gradle `9.1.0`, protobuf `4.36.2`).
-10. **Modernize channel navigation plus dedup plus accessibility (P1, S/M).**
+9. **Modernize channel navigation plus dedup plus accessibility (P1, S/M).**
     `ViewPager2` + `FragmentStateAdapter` + `MenuProvider` across channel and
     server-list fragments; one talk-state mapper, one tint helper, one volume
     helper (~60 duplicated lines deleted); label roughly a dozen icons and
@@ -106,7 +121,18 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
     `list_drawer_headerlogo`, `list_drawer_item`, `overlay_user_row`,
     `ptt_corner`, `server_list_row`, `token_row`; only the header logo and PTT
     corner are labeled); preview text uses `tools:text`;
-    rotation rows state pager retention. No dependency on 1–9.
+    rotation rows state pager retention. No dependency on 1–8.
+10. **Decide certificate key backup policy (P2, XS).**
+    Replaces the former certificate-hardening item, which was dropped in
+    round 4: `HumlaCertificateGenerator` values (serial `1`, RSA-2048,
+    20-year validity) match upstream `src/SelfSignedCertificate.cpp`, Mumble
+    keys users by certificate hash, and a PKCS#12 password stored next to
+    the blob adds nothing. The open question is `android:allowBackup="true"`
+    with no `dataExtractionRules`, which puts private keys in backups and
+    device transfers. Gate: either backup is documented as an intended
+    feature, or `dataExtractionRules` plus `fullBackupContent` exclude the
+    database. Files: `app/src/main/AndroidManifest.xml`, `res/xml/`
+    (new rules file if excluding). No dependency.
 
 ## Quick-wins (small, safe, independent)
 

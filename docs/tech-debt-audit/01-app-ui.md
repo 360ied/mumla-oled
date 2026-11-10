@@ -7,14 +7,19 @@ count/citation notes (see [06-validity-check.md](06-validity-check.md)).
 `app/build.gradle` itself is healthy (`compileSdk`/`targetSdk 36`,
 `minSdk 30`, lint `abortOnError=true`).
 
-## P0
+## Former P0 (re-ranked in round 4)
 
-| Location | Issue | Effort | Remediation |
-|---|---|---|---|
-| [`ServerConnectTask.kt`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.kt) (`AsyncTask` import/class) | `AsyncTask` deprecated since API 30; confusing serial/parallel semantics; no cancellation on destroy. Mitigated only by `applicationContext`. | S | Replace with `lifecycleScope.launch(Dispatchers.IO)` + `startService`, or a suspend function. Delete the class. |
-| [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt) (class + retained `mContext`) | Same deprecated API **plus retained `Activity` context** (raw `context`, not `applicationContext`) held across rotation; dialog shown from a dead instance. `onPreExecute`/`onPostExecute` guards do not erase retention. Admitted race comment in `CertificateGenerateActivity`. | S | Coroutine + `ViewModel`/retained worker; pass `applicationContext` for DB work; show dialogs only via the current activity. |
-| [`ServerInfoTask.kt`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.kt) + `ServerAdapter.kt` (`MAX_ACTIVE_PINGS = 50`, `executeOnExecutor`) | Deprecated API driving per-row UDP pings with a 50-thread pool per adapter instance. `FavouriteServerListFragment.updateServers()` rebuilds the adapter every `onResume`; old pool is shut down today but the pattern is fragile. | M | Coroutine `IO` dispatcher + bounded semaphore (4–8), `RecyclerView` + `DiffUtil`, cache responses in a `ViewModel`. |
-| [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt) (`runBlocking(Dispatchers.IO)` read/write) | Synchronous DataStore on the UI thread: every `Preference` bind/get/put blocks main. Class KDoc documents this as an interim stance. ANR risk under disk pressure; defeats async DataStore design. | M | Make a settings repository the single source exposing `Flow`; collect with `lifecycleScope` or migrate to an async preference store. |
+None of these meets the P0 definition (latent crash, data loss, ANR, or
+build break in shipped code). `AsyncTask` is deprecated but still works on
+API 36; DataStore reads hit its in-memory cache after first load. Severity
+per row below; see [06](06-validity-check.md#round-4-severity-and-remediation-review).
+
+| Location | Severity | Issue | Effort | Remediation |
+|---|---|---|---|---|
+| [`ServerConnectTask.kt`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.kt) (`AsyncTask` import/class) | P2 | `AsyncTask` deprecated since API 30; confusing serial/parallel semantics; no cancellation on destroy. Already uses `applicationContext`, so no leak; deprecation only. | S | Replace with `lifecycleScope.launch(Dispatchers.IO)` + `startService`, or a suspend function. Delete the class. |
+| [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt) (class + retained `mContext`) | P1 | Same deprecated API **plus retained `Activity` context** (raw `context`, not `applicationContext`) held across rotation; dialog shown from a dead instance. `onPreExecute`/`onPostExecute` guards do not erase retention. Admitted race comment in `CertificateGenerateActivity`. | S | Coroutine + `ViewModel`/retained worker; pass `applicationContext` for DB work; show dialogs only via the current activity. |
+| [`ServerInfoTask.kt`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.kt) + `ServerAdapter.kt` (`MAX_ACTIVE_PINGS = 50`, `executeOnExecutor`) | P2 | Deprecated API driving per-row UDP pings with a 50-thread pool per adapter instance. `FavouriteServerListFragment.updateServers()` rebuilds the adapter every `onResume`; old pool is shut down on each rebuild, so no leak today; the pattern is fragile. | M | Coroutine `IO` dispatcher + bounded semaphore (4–8), `RecyclerView` + `DiffUtil`, cache responses in a `ViewModel`. |
+| [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt) (`runBlocking(Dispatchers.IO)` read/write) | P1 | Synchronous DataStore on the UI thread: every `Preference` bind/get/put blocks main. Reads come from DataStore's in-memory cache after first load; writes (`store.edit`) wait on disk. Class KDoc documents this as an interim stance. Same pattern as `SettingsRepository` `snapshotBlocking`/`updateBlocking` (18 call sites via `Settings`) and `MumlaRoomDatabase` `io()`, whose real SQLite queries on main are the larger ANR surface. | M+ | Make a settings repository the single source exposing `Flow`; collect with `lifecycleScope` or migrate to an async preference store. Fix together with the Room bridge (`07` item 6). |
 
 ## P1
 

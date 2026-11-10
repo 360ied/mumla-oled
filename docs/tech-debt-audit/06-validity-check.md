@@ -11,8 +11,9 @@ existence is evidence. Verdicts: `VALID` (snippet plus interpretation hold),
 
 Zero P0s overturned. Zero P1s fully overturned. Two P1 sub-claims
 contradicted (timing-test hang framing and UDP-await framing); several
-counts and citations corrected. The original Top-10 order stands with
-wording tweaks below.
+counts and citations corrected. The original Top-10 order stood with
+wording tweaks below; round 4 (at the end of this file) later re-ranked
+severities and reordered the roadmap.
 
 ## Per-lane verdicts
 
@@ -107,3 +108,26 @@ wording tweaks below.
 - Host-app foreground-service handling since verified (landed per README
   transcript); certificate caller passwords and upstream parity re-check
   remain beyond background acceptance.
+
+## Round 4: severity and remediation review
+
+Rounds 1–3 checked whether each claim was true. Round 4 checked whether each
+severity matched the P0 definition in [README](README.md) and whether each
+remediation was feasible and justified, against `master` and upstream
+`../mumble`. Evidence lines are in the README evidence transcripts.
+
+| Item | Round-4 verdict | Change |
+|---|---|---|
+| `modelHash` cold-build break | Confirmed by reading `prepareRnnoiseModel`: lines using `modelHash` sit next to lines using `modelVersionOrDigest`, and no `modelHash` is declared anywhere in the build | Stays P0, roadmap item 1 |
+| No CI workflows | Confirmed (`.github/` holds only issue/PR templates) | Moved to roadmap item 2; a cold-cache CI run would have caught the `modelHash` class of break |
+| Input `nativeCreate` guards | Facts hold; R8 keeps both listener methods, and a failed `new` aborts on Android | P0 → P1 (cheap parity with the output bridge) |
+| `RNNModel` mirror | Facts hold; submodule is gitlink-pinned, so drift needs a deliberate bump. The upstream struct is in `rnnoise/src/denoise.c`, not a header | P0 → P1; `static_assert` gate replaced with a revision/struct-text configure check, or removal of the mirror via an RNNoise fix |
+| `AsyncTask` sites | Deprecated, still functional on API 36. Only the certificate-generate task has a real defect (retained `Activity`) | P0 → P1 (certificate task) and P2 (`ServerConnectTask`, ping pool) |
+| DataStore `runBlocking` | Reads hit the in-memory cache after first load; writes wait on disk. The Room `io()` bridge runs real SQLite queries on main but was allowlisted | P0 → P1; Room bridge added to the same item; effort raised because `snapshotBlocking`/`updateBlocking` have 18 call sites |
+| Certificate hardening | Contradicted: upstream `src/SelfSignedCertificate.cpp` uses serial `1`, RSA-2048, 20-year validity, matching Humla; Mumble keys users by certificate hash; any PKCS#12 password is stored next to the blob | Dropped. Replaced by a P2 decision on `allowBackup="true"` exposing keys in backups |
+| `printStackTrace` census | Full grep: 12 active (5 app + 7 core), 1 commented-out, 1 intentional reporter | Round-1 "one app site unresolved" note closed |
+| `03` table formatting | Two rows were split across lines, which breaks GFM tables | Rows joined |
+
+Not re-checked in round 4: the destroy race, UI duplication counts,
+timing-test notes, and build-infra P1/P2 rows other than CI. Their earlier
+verdicts stand.

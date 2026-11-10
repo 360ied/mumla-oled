@@ -1,9 +1,10 @@
 # Technical debt audit — Mumla OLED
 
-Snapshot: audit tree `b282a601`, 2026-11-10 (`master`; verify with
+Snapshot: audit tree `b282a601`, 2026-11-09 (`master`; verify with
 `git log --oneline -1 b282a601`). Follow-up doc commits on `master` revise
-wording only; code citations refer to the audit tree — re-search symbols
-at `HEAD`.
+wording, severities, and remediations (round 4 in
+[06](06-validity-check.md#round-4-severity-and-remediation-review)); code
+citations refer to the audit tree — re-search symbols at `HEAD`.
 
 Status: audit-only, no code changes.
 
@@ -58,7 +59,7 @@ Severity vocabulary used throughout:
 - **P3** — minor/report-only: dead paths, tuning notes, style debt.
 
 Effort (rough sizing only): `XS` ≤ half-day, `S` ≤ 2 days, `M` ≤ 1 week.
-Ranges (`S/M`) span the endpoints; severity spans (`P0/P1`) mean the slice
+Ranges (`S/M`) span the endpoints; `M+` means likely more than a week; severity spans (`P0/P1`) mean the slice
 touches both severities.
 
 ## Executive summary
@@ -71,62 +72,77 @@ sample-rate end to end, a hardened output JNI bridge, compliant license
 headers and no math blocks present (hence no GFM-math violation), and no
 absolute paths in docs.
 
-Debt concentrates in five P0 clusters (eight P0 table rows across lanes,
-seven unique defects — `modelHash` counted in both [02](02-humla-core.md) and
-[04](04-build-infra.md): one core, two native, four app, one build-infra
-duplicate — clustered by fix unit) plus 12-site logging silence
-([05](05-crosscutting.md)), missing CI workflows ([04](04-build-infra.md)),
-and JVM-masked device blind spots ([05](05-crosscutting.md)). No P0 was
-overturned by the validity check; softened items were the tint 4th cite
-(dropped), volume count (4 → `3+`), foreground-service wording (contract gap
-pending app-layer check), signing `hasProperty` wording (hardening stands),
-and timing-test scope (unbounded waits only), plus citation corrections (see
-[06-validity-check.md](06-validity-check.md)).
+Debt concentrates in one P0 — the cold-build `modelHash` break, counted in
+both [02](02-humla-core.md) and [04](04-build-infra.md) — plus a P1 tier led
+by missing CI workflows ([04](04-build-infra.md)), silent TCP send failures
+and 12-site logging silence ([02](02-humla-core.md), [05](05-crosscutting.md)),
+unguarded native input creation and an unenforced RNNoise layout pin
+([03](03-native-audio.md)), main-thread blocking bridges and a retained
+`Activity` in certificate generation ([01](01-app-ui.md)), and JVM-masked
+device blind spots ([05](05-crosscutting.md)).
 
-### The five P0 clusters (unordered — ship order is [07](07-remediation-roadmap.md))
+The first validity check overturned no P0; it softened the tint 4th cite
+(dropped), volume count (4 → `3+`), foreground-service wording (contract
+gap), signing `hasProperty` wording (hardening stands), and timing-test scope
+(unbounded waits only). A round-4 review against the P0 definition and
+upstream ([06](06-validity-check.md#round-4-severity-and-remediation-review))
+then:
+
+- downgraded four former P0 clusters (input JNI guards, `RNNModel` mirror,
+  `AsyncTask`, DataStore) to P1, because none is a latent crash, data loss,
+  ANR, or build break in the shipped code;
+- dropped the certificate-hardening item, because serial `1`, RSA-2048, and
+  20-year validity match upstream Mumble exactly, and replaced it with the
+  key-backup exposure it missed;
+- replaced the infeasible `static_assert` layout gate with a configure-time
+  revision/struct-text check (or removal of the mirror via an RNNoise patch);
+- widened the main-thread bridge item to cover the Room `io()` helper, which
+  runs real SQLite queries on the main thread.
+
+### The P0 (ship order is [07](07-remediation-roadmap.md))
 
 Do not implement from this summary; build order + done-criteria live in
 [07-remediation-roadmap.md](07-remediation-roadmap.md), whose items plus the
-linked `01`–`05` tables are the normative slices. Each cluster below
-links its normative roadmap item.
+linked `01`–`05` tables are the normative slices.
 
 1. Cold-build crash: undefined `modelHash` in
    [`libraries/humla/build.gradle`](../../libraries/humla/build.gradle)
    (symbol `prepareRnnoiseModel` / `modelHash`) — breaks fresh clones and
-digest rotations. User impact: none at runtime (dev-only build breakage).
+   digest rotations. User impact: none at runtime (dev-only build breakage).
    Done when a cold-cache gate run passes. See `07` item 1.
-2. Input `nativeCreate` has no JNI failure guards in
-   [`NativeAudioInputEngineJni.cpp`](../../libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp)
-   (symbol `nativeCreate`) — silent dead engine or crash on OOM/missing-method.
-   User impact: voice capture silently dead (no audio sent) or native crash.
-   Done when every failure path returns `0` with cleanup and Kotlin rejects
-   the zero handle. See `07` items 2 and 8.
-3. Hand-mirrored `RNNModel` layout in
-   [`RnnoiseProcessor.cpp`](../../libraries/humla/src/main/jni/audio_engine/RnnoiseProcessor.cpp)
-   (symbol `RNNModel`) with branch/tag-unpinned submodules and no
-   configure-time rev gate (gitlink-pinned but unenforced) — submodule drift
-   silently breaks model load/create/free (crash/freeze/memory unsafety).
-   User impact: denoiser silently bypassed or native crash on model change.
-   Done when a layout assert plus rev gate fails configure on drift. See `07`
-   item 8.
-4. Three `AsyncTask` sites in `app/` (deprecated API 30):
-   [`ServerConnectTask.kt`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.kt)
-   (`AsyncTask`), [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt)
-   (`mContext`), [`ServerInfoTask.kt`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.kt)
-   + `ServerAdapter.kt` (`MAX_ACTIVE_PINGS` pool) —
-   one retains an `Activity` context across rotation. User impact: rotation
-   loses the certificate dialog or leaks it; server-list pings waste threads.
-   Done when no `AsyncTask` remains and pings use a bounded coroutine pool.
-   Detail in [01](01-app-ui.md); see `07` item 3.
-5. Synchronous DataStore (`runBlocking(Dispatchers.IO)`) on the UI thread in
-   [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt)
-   (symbols `read` / `write`) — the principal P0 ANR vector (other `runBlocking`
-   bridges exist in `SettingsRepository` snapshot/update helpers, the database
-   `io()` helper, and the `MumlaActivity` crash-check background thread
-   (allowlisted — off the UI thread); disposition in `07` item 4 gate). User impact: settings
-   binds block main; visible jank or ANR under disk pressure; after the fix
-   settings load asynchronously with no main-thread block. Done when no
-   `runBlocking` remains on the preference path. See `07` item 4.
+
+### Former P0 clusters (P1 since round 4)
+
+Each still has a roadmap item; the downgrade changes urgency, not validity.
+
+- Input `nativeCreate` has no JNI failure guards in
+  [`NativeAudioInputEngineJni.cpp`](../../libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp)
+  (symbol `nativeCreate`). Facts hold, but `app/proguard-rules.pro` keeps
+  both listener methods, so the missing-method path needs a code change to
+  trigger, and a failed `new` aborts on Android anyway. Cheap parity with the
+  output bridge. See `07` item 4.
+- Hand-mirrored `RNNModel` in
+  [`RnnoiseProcessor.cpp`](../../libraries/humla/src/main/jni/audio_engine/RnnoiseProcessor.cpp)
+  (symbol `RNNModel`). The submodule is gitlink-pinned, so drift needs a
+  deliberate bump; the hazard is an unguarded bump, not shipped code. The
+  upstream struct lives in `rnnoise/src/denoise.c`, not a header, so a
+  `static_assert` has nothing to compare against. See `07` item 4.
+- `AsyncTask` in `app/` (deprecated API 30, still functional on API 36).
+  Only [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt)
+  (`mContext`) has a real defect (retained `Activity` across rotation, P1);
+  [`ServerConnectTask.kt`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.kt)
+  already uses `applicationContext`, and the
+  [`ServerInfoTask.kt`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.kt)
+  ping pool is shut down on every rebuild (both P2). See `07` item 5.
+- Main-thread blocking bridges (`runBlocking(Dispatchers.IO)`):
+  [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt)
+  (`read` / `write`), `SettingsRepository` `snapshotBlocking` /
+  `updateBlocking` (18 call sites via the legacy `Settings` facade), and
+  `MumlaRoomDatabase` `io()`. DataStore reads hit its in-memory cache after
+  first load and only writes wait on disk; the Room bridge runs real SQLite
+  queries on main and is the larger ANR surface. The `MumlaActivity`
+  crash-check `runBlocking` runs on a background thread and stays
+  allowlisted. See `07` item 6.
 
 ## How to cite evidence
 
@@ -144,13 +160,13 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
 
 | State | Implied code path | Audit coverage | Planned gate |
 |---|---|---|---|
-| Rotation (phone/tablet, pager position, poller generation) | `ChannelFragment` phone `ViewPager` vs tablet dual-pane branch; 2-page adapter titles; `ServerInfoFragment` 1 s poller surviving view destruction until `onDestroy` | Partial (rotation covered only for `AsyncTask` cert dialog) | Per-fragment rotation rows; `ViewPager2` remediation states adjacent-page retention and restores pager position plus cert-dialog state (`07` item 10) |
+| Rotation (phone/tablet, pager position, poller generation) | `ChannelFragment` phone `ViewPager` vs tablet dual-pane branch; 2-page adapter titles; `ServerInfoFragment` 1 s poller surviving view destruction until `onDestroy` | Partial (rotation covered only for `AsyncTask` cert dialog) | Per-fragment rotation rows; `ViewPager2` remediation states adjacent-page retention and restores pager position plus cert-dialog state (`07` item 9) |
 | Background / Doze | Partial wake + wifi locks, `WAKELOCK_GRACE_MS`, `START_NOT_STICKY` losing the reconnect schedule on process death | Partial (P2 note only) | 5-row lifecycle table mirroring the backoff-table style (killed-while-connected reposts notification and reschedules; killed-while-reconnecting resumes backoff or documents loss as expected; Doze holds locks only inside the grace window); Doze + process-death cases in the smoke tier |
 | Process death (connected vs reconnecting) | Disconnect-state resets; duplicate-connect guard; backoff truth table | Partial | Same lifecycle table; killed-while-connected vs killed-while-reconnecting rows |
 | Empty / error conditions | Server-grid `emptyView`; empty-channel hiding default; null/empty release fallback | Partial | Empty/denied/revoked rows in `01` P1/P2 |
-| Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` item 10); revoke-while-shown in `androidTest/` smoke tier |
+| Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` item 9); revoke-while-shown in `androidTest/` smoke tier |
 | Adjacent tabs / concurrent workers | Poller firing while the ping pool shuts down; dual-tab observers of talk-state; `TalkBroadcastReceiver` vs media-session dispatch | Listed in isolation, not modeled jointly | One concurrent-service-callback row (`repeatOnLifecycle` + shared `Flow` criterion) |
-| Main-thread bridges (ANR surface) | `DataStorePreferenceDataStore` `read`/`write`, `SettingsRepository` `snapshotBlocking`/`updateBlocking`, `MumlaRoomDatabase` `io()`, `MumlaActivity` crash-check `runBlocking` (background thread) | Partial (P0 covers the preference path) | `07` item 4 gate: zero `runBlocking` on the preference path; sibling bridges allowlisted with justification |
+| Main-thread bridges (ANR surface) | `DataStorePreferenceDataStore` `read`/`write`, `SettingsRepository` `snapshotBlocking`/`updateBlocking`, `MumlaRoomDatabase` `io()`, `MumlaActivity` crash-check `runBlocking` (background thread) | Partial (P1 covers preference path plus Room) | `07` item 6 gate: zero main-thread `runBlocking` on the preference and Room paths; only the background crash-check stays allowlisted |
 
 ## Evidence transcripts (scoped, `master` at snapshot)
 
@@ -174,6 +190,19 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
   in the processor header — neither machine-enforced.
 - Toolchain versions: AGP `9.0.1`, Gradle `9.1.0`, protobuf `4.36.2`, NDK
   `27.2.12479018`, CMake `4.1.2` (tri-synced by comment).
+- Certificate parity (round 4): upstream `src/SelfSignedCertificate.cpp`
+  sets serial `1` (`ASN1_INTEGER_set(serialNumber, 1)`), 2048-bit RSA, and
+  `X509_gmtime_adj(notAfter, 60 * 60 * 24 * 365 * 20)` — the same values as
+  `HumlaCertificateGenerator`. The app database stores any PKCS#12 password
+  next to the blob (`MumlaDatabase.addCertificate(name, certificate,
+  password)`). The manifest sets `android:allowBackup="true"` with no
+  `dataExtractionRules`/`fullBackupContent`.
+- RNNoise layout (round 4): `struct RNNModel` is defined in
+  `rnnoise/src/denoise.c`; `rnnoise.h` only forward-declares it.
+  `rnnoise_model_from_buffer` never sets `file`, which is why the mirror
+  exists.
+- R8 (round 4): `app/proguard-rules.pro` keeps `onAudioPacketEncoded` and
+  `onTalkingStateChanged` on input-listener implementations.
 
 ## Limitations
 
