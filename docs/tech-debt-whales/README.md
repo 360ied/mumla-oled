@@ -31,7 +31,7 @@ caused regressions.
 
 ```mermaid
 flowchart LR
-    W6["W6: harness + CI"] --> W1["W1: session object"]
+    W6["W6: end-to-end harness"] --> W1["W1: session object"]
     W1 --> W2["W2: model snapshots"]
     W2 --> W5["W5: app layer"]
     W1 --> W3["W3: audio control actor"]
@@ -268,7 +268,7 @@ observe).
 
 ---
 
-## W6 — No end-to-end harness, no CI
+## W6 — No end-to-end harness
 
 **Evidence**
 
@@ -276,8 +276,6 @@ observe).
   `HumlaService` has only `HumlaServiceVoiceTargetTest`.
 - No test drives a real or fake server through
   connect → sync → voice → reconnect → disconnect.
-- No CI workflow exists; `./scripts/check.sh` runs only on developer
-  machines.
 - Every race fix in W1's churn was verified by unit fakes plus manual
   device runs.
 
@@ -293,11 +291,12 @@ risk that sank the old grab bag.
   dev shell, plus a host-JVM integration suite that starts a throwaway
   server on loopback and drives `HumlaConnection` and the session end to
   end (TLS, sync, UDP crypt, reconnect, disconnect races).
-- Add a CI workflow running `./scripts/check.sh` plus the integration
-  suite.
+- Wire the suite into `./scripts/check.sh`, the existing pre-commit gate,
+  and keep it out of `testFossDebugUnitTest` so the fast loop stays fast.
+  Separate CI is out of scope: `check.sh` already gates every commit.
 
 **Done when:** a scripted connect/disconnect/reconnect torture run passes
-in CI. A known past race (e.g. disconnect during sync) is reproduced red,
+under `./scripts/check.sh`. A known past race (e.g. disconnect during sync) is reproduced red,
 then green.
 
 ---
