@@ -100,8 +100,12 @@ Additions to the existing suite run by
 shell as `check.sh` does, and runs a dedicated Gradle test task
 (`murmurInteropTest`). `check.sh` never calls it: `check.sh` is the fast
 mandatory pre-commit gate, and a suite that takes a minute or more does not
-belong there. When the script must run is an
-[open item](open-items.md#open-gating).
+belong there.
+
+**When to run it:** never required. It is recommended when a change touches
+networking code: the transport, the client and session, or the native
+networking in `voice_io`. Step 1's harness validation (below) is the one
+place the spec runs it as part of a done-when.
 
 **Harness:** JUnit tests in `:libraries:humla` tagged with a
 `MurmurInterop` category, excluded from `testFossDebugUnitTest` and every

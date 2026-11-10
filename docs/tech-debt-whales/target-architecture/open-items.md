@@ -13,12 +13,11 @@ them.
 
 | Item | How it gets resolved | Gates |
 |---|---|---|
-| When `scripts/test_interop.sh` must run | Developer's call: required at step completion and before merges, or only recommended (for example, when a change touches the transport, client and session, or native networking) | Step 1 |
 | Live handles keep screens updating | Spike (see [migration](migration.md#step-2--immutable-state)) | Step 2 |
 | `kotlinx-collections-immutable` version | Pin the current release at step 2 start (pre-1.0 accepted); run the state tests against it | Step 2 |
 | Jitter slot pool size (1024 slots proposed) | Pool stress test in the native suite (see [testing](testing.md#native-host-suite)) | Step 5a |
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
-| AAudio callback or blocking mode | Spike: glitch rate and latency for both on two devices | Step 5b |
+| AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
 
 ## Open (not gating)
@@ -52,6 +51,7 @@ them.
 | Engine behavior parity | Golden outputs recorded before the refactor | [voice](voice.md#behavior-pinning) |
 | Native protobuf for UDP | nanopb (submodule runtime, committed generated code, no allocation); legacy format ported from `PacketBuffer`; both checked against the Java classes | [voice](voice.md#protobuf-through-nanopb) |
 | Client-requested crypt resync | Kept as today (5 s since last good, 5 s between requests), now raised by the native receive thread | [transport](transport.md#crypt-setup) |
+| When `scripts/test_interop.sh` runs | Never required; recommended when a change touches networking code (transport, client and session, native networking) | [testing](testing.md#murmur-interop) |
 | Robolectric in `:libraries:humla` tests | Accepted, for driving today's `HumlaConnection` until step 3 | [testing](testing.md#murmur-interop) |
 | Policy and settings handoff to native | Sequence locks, single writer | [voice](voice.md#policy-and-settings-handoff) |
 | Realtime rules | Capture and render: no locks, allocation, or Kotlin calls; `sem_post` the only extra system call | [voice](voice.md#realtime-rules) |
