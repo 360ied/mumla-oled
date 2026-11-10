@@ -59,9 +59,6 @@
   - Run tools inside the dev shell: `nix develop --command <tool> <args>`.
   - If a tool is missing from the dev shell, use `nix run nixpkgs#<package> -- <args>` as a stopgap, or (preferred) add it to the dev shell `packages` in `flake.nix`.
 
-## Subagents
-- **Inherit Parent Thinking Level**: Subagents MUST inherit the thinking/reasoning level of the parent agent that spawned them — never silently downgrade to a lower or default level. Preserve full reasoning depth unless the user explicitly requests otherwise.
-
 ## Upstream Reference (`../mumble`)
 - Reference upstream C++ code and protocol schemas in `../mumble` (sibling of the repository root — from inside a worktree, bare `../mumble` resolves elsewhere; e.g., `../mumble/src/Mumble.proto`, `../mumble/src/MumbleUDP.proto`, connection/audio logic) to ensure exact behavioral and protocol parity.
 
