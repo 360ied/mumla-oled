@@ -49,9 +49,14 @@ class InputModes(
     halfDuplex: Boolean = false,
 ) {
     // Direct assignment to activity/toggle/continuous internals bypasses the
-    // builder recompute in [applyAudioDelta]; all in-tree writers go through
-    // the applier (verified by grep). halfDuplex/transmitMode stay private-set
-    // so a future direct write can never strand AudioHandler.Builder state.
+    // builder recompute in [applyAudioDelta]; all CONFIG writes go through
+    // the applier (verified by grep). The single live exception is
+    // [HumlaService.setTalkingState], which flips toggle.isTalkingOn
+    // directly as immediate PTT state (and forwards to the live handler) —
+    // it never touches thresholds, so the builder cannot strand. Keep it
+    // that way: new direct writers must go through the applier.
+    // halfDuplex/transmitMode stay private-set so a future direct write can
+    // never strand AudioHandler.Builder state.
     // Documented here (not on each field) to keep the primary-ctor readable.
 
     /**

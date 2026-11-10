@@ -127,6 +127,12 @@ class ModelHandler(
         var channel = mChannels[msg.channelId]
         var parent: Channel? = null
         if (msg.hasParent()) {
+            // Self-parent is trivially a cycle: refuse before creating any
+            // stub, so the parent ref can never point at a discarded object.
+            if (msg.parent == msg.channelId) {
+                Log.w(TAG, "Server asked to move a channel into itself; ignoring")
+                return
+            }
             parent = mChannels[msg.parent]
             if (parent == null) {
                 parent = createStubChannel(msg.parent)
@@ -140,6 +146,23 @@ class ModelHandler(
             mChannels[msg.channelId] = channel
         }
         val ch = channel
+
+        // Cycle guard BEFORE any mutation: a hostile cyclic move must not
+        // leave name/position half-applied with no observer notification.
+        // Upstream parity (Messages.cpp msgChannelState): refuse moves
+        // into self or a descendant -- otherwise parent points at a
+        // channel whose subchannel list rejected us (self) or the tree
+        // cycles and resortInParent/subchannelUserCount recurse forever.
+        if (msg.hasParent()) {
+            var pp = parent
+            while (pp != null) {
+                if (pp == ch) {
+                    Log.w(TAG, "Server asked to move a channel into itself or a descendant; ignoring")
+                    return
+                }
+                pp = pp.parent
+            }
+        }
 
         // In-place order-key mutation must re-sort the parent list to preserve
         // Channel's sorted-insertion invariant (position/name are the sort keys).
@@ -160,23 +183,6 @@ class ModelHandler(
         var moved = false
 
         if (msg.hasParent()) {
-            // Upstream parity (Messages.cpp msgChannelState): refuse moves
-            // into self or a descendant -- otherwise parent points at a
-            // channel whose subchannel list rejected us (self) or the tree
-            // cycles and resortInParent/subchannelUserCount recurse forever.
-            var pp = parent
-            var cycle = false
-            while (pp != null) {
-                if (pp == ch) {
-                    cycle = true
-                    break
-                }
-                pp = pp.parent
-            }
-            if (cycle) {
-                Log.w(TAG, "Server asked to move a channel into itself or a descendant; ignoring")
-                return
-            }
             val oldParent = ch.parent
             if (oldParent != parent) {
                 if (oldParent != null) {
@@ -262,29 +268,49 @@ class ModelHandler(
             for (u in mUsers.values) {
                 u.removeListeningChannel(channel.id)
             }
-            // Orphan repair: occupants still reference the deleted channel and
-            // subchannels still point at it as parent. Upstream disconnects on
+            // Subtree delete: the server may remove a channel without
+            // separately removing its descendants. Upstream disconnects on
             // occupied remove as a protocol violation; we stay connected and
-            // explicitly detach instead (documented divergence -- dropping the
-            // whole session on a hostile packet is worse for Android).
+            // explicitly detach the whole subtree instead (documented
+            // divergence -- dropping the whole session on a hostile packet
+            // is worse for Android). Iterative: the tree must stay
+            // cycle-free for subchannelUserCount, but never trust it here.
+            val removed = ArrayList<Channel>()
+            val stack = ArrayList<Channel>()
+            stack.add(channel)
+            while (stack.isNotEmpty()) {
+                val node = stack.removeAt(stack.size - 1)
+                removed.add(node)
+                stack.addAll(node.subchannels)
+            }
+            val removedIds = removed.map { it.id }.toSet()
             for (u in mUsers.values) {
-                if (u.channel == channel) {
+                val uc = u.channel
+                if (uc != null && removedIds.contains(uc.id)) {
                     u.channel = null
                 }
             }
-            for (sub in ArrayList(channel.subchannels)) {
-                sub.parent = null
+            for (node in removed) {
+                for (linked in ArrayList(node.links)) {
+                    linked.removeLink(node)
+                }
+                node.clearLinks()
+                mChannels.remove(node.id)
             }
-            for (linked in ArrayList(channel.links)) {
-                linked.removeLink(channel)
-            }
-            channel.clearLinks()
-            mChannels.remove(channel.id)
             val parent = channel.parent
             if (parent != null) {
                 parent.removeSubchannel(channel)
             }
-            mObserver.onChannelRemoved(channel)
+            // Fully disconnect the detached subtree (children-first) so no
+            // removed node keeps a stale down-link: each node leaves with
+            // an empty subchannel list and a null parent.
+            for (node in removed.asReversed()) {
+                for (sub in ArrayList(node.subchannels)) {
+                    node.removeSubchannel(sub)
+                }
+                node.parent = null
+                mObserver.onChannelRemoved(node)
+            }
         }
     }
 
@@ -436,41 +462,47 @@ class ModelHandler(
             if (channel == null) {
                 Log.e(TAG, "Invalid channel for user! Falling back to root.")
                 channel = mChannels[0]
-                if (channel == null) {
-                    return
+            }
+            if (channel == null) {
+                // No root either (pre-sync model): leave the user unplaced
+                // but fall through -- the name/texture/comment/listening
+                // updates below and the terminal notify must still run, so
+                // the packet is never half-dropped and the user never leaks
+                // in mUsers without an observer event.
+                usr.channel = null
+            } else {
+                val old = usr.channel
+
+                usr.channel = channel
+
+                if (!newUser) {
+                    mObserver.onUserJoinedChannel(usr, channel, old)
                 }
-            }
-            val old = usr.channel
 
-            usr.channel = channel
+                val sessionChannel = self?.channel
 
-            if (!newUser) {
-                mObserver.onUserJoinedChannel(usr, channel, old)
-            }
-
-            val sessionChannel = self?.channel
-
-            // Notify the user of other users' current channel changes
-            if (self != null && sessionChannel != null && old != null && self != usr) {
-                // TODO add logic for other user moving self
-                val actorString = if (actor != null) MessageFormatter.highlightString(actor.name) else mContext.getString(R.string.the_server)
-                if (sessionChannel != channel && sessionChannel == old) {
-                    // User moved out of self's channel
-                    if (actor != null && actor.session == usr.session) {
-                        // By themselves
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_user_left_channel, MessageFormatter.highlightString(usr.name), MessageFormatter.highlightString(channel.name)))
-                    } else {
-                        // By external actor
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_user_left_channel_by, MessageFormatter.highlightString(usr.name), MessageFormatter.highlightString(channel.name), actorString))
-                    }
-                } else if (sessionChannel == channel) {
-                    // User moved into self's channel
-                    if (actor != null && actor.session == usr.session) {
-                        // By themselves
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_user_joined_channel, MessageFormatter.highlightString(usr.name)))
-                    } else {
-                        // By external actor
-                        mLogger.logInfo(mContext.getString(R.string.chat_notify_user_joined_channel_by, MessageFormatter.highlightString(usr.name), MessageFormatter.highlightString(old.name), actorString))
+                // Notify the user of other users' current channel changes
+                if (self != null && sessionChannel != null && old != null && self != usr) {
+                    // TODO add logic for other user moving self
+                    val actorString = if (actor != null) MessageFormatter.highlightString(actor.name) else mContext.getString(R.string.the_server)
+                    if (sessionChannel != channel && sessionChannel == old) {
+                        // User moved out of self's channel
+                        if (actor != null && actor.session == usr.session) {
+                            // By themselves
+                            mLogger.logInfo(mContext.getString(R.string.chat_notify_user_left_channel, MessageFormatter.highlightString(usr.name), MessageFormatter.highlightString(channel.name)))
+                        } else {
+                            // By external actor
+                            mLogger.logInfo(mContext.getString(R.string.chat_notify_user_left_channel_by, MessageFormatter.highlightString(usr.name), MessageFormatter.highlightString(channel.name), actorString))
+                        }
+                    } else if (sessionChannel == channel) {
+                        // User moved into self's channel
+                        if (actor != null && actor.session == usr.session) {
+                            // By themselves
+                            mLogger.logInfo(mContext.getString(R.string.chat_notify_user_joined_channel, MessageFormatter.highlightString(usr.name)))
+                        } else {
+                            // By external actor
+                            mLogger.logInfo(mContext.getString(R.string.chat_notify_user_joined_channel_by, MessageFormatter.highlightString(usr.name), MessageFormatter.highlightString(old.name), actorString))
+                        }
                     }
                 }
             }

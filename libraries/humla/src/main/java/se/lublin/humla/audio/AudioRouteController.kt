@@ -148,7 +148,8 @@ internal class AudioRouteController(
     @Volatile
     private var modeHold: ModeHold = ModeHold.Released
 
-    @Volatile
+    // Main-confined recheck budget (written in recompute/onSessionEnded/
+    // onDestroyed, read in recompute): plain var like the timer jobs below.
     private var settleAttempts: Int = 0
 
     // Main-confined timer jobs: armed/cancelled only on the funnel thread,
@@ -370,6 +371,7 @@ internal class AudioRouteController(
         appliedRoute = if (liveMedia) AppliedRoute.MEDIA else AppliedRoute.VOICE_HANDSET
         releaseVoiceMode()
         // No live call remains for a settle recheck to recover.
+        cancelRouteDebounce()
         cancelRouteSettle()
         settleAttempts = 0
     }
@@ -401,6 +403,13 @@ internal class AudioRouteController(
      * the funnel-owned flag flip is funneled when off-main so a
      * Main-confined edge can never race it (see class note). Notify
      * ordering vs the funnel is best-effort.
+     * Accepted transient: between the synchronous stop above and the
+     * funneled flip, a main recompute may still read stale-true and
+     * transiently select VOICE_SCO. The flip lands on the funnel right
+     * behind and the next edge corrects it — one redundant voice
+     * recreate at most. Clearing synchronously instead would risk the
+     * worse inconsistency (active link, false flag) if a bring-up wins
+     * the race, so the funnel stays the authority.
      */
     fun stopScoWithNotify() {
         val link = sco ?: return
@@ -442,9 +451,6 @@ internal class AudioRouteController(
         if (shouldDropStaleEvent(capturedToken)) {
             return
         }
-        if (destroyed) {
-            return
-        }
         if (sco?.isActive() == true) {
             // Re-connected since teardown queued: fresh callbacks
             // own the UI; a stale false must not overwrite them.
@@ -460,6 +466,9 @@ internal class AudioRouteController(
     }
 
     fun updateScoRoute() {
+        if (destroyed) {
+            return
+        }
         val link = sco ?: return
         val requested = scoRequested
         // Main-confined with SessionEnded: no concurrent teardown can
@@ -672,7 +681,28 @@ internal class AudioRouteController(
     }
 
     private fun ensureVoiceMode() {
-        if (!platform.hasManager || modeHold is ModeHold.Claimed) {
+        if (!platform.hasManager) {
+            return
+        }
+        if (modeHold is ModeHold.Claimed) {
+            // Liveness: an out-of-process steal (IN_COMM -> NORMAL/IN_CALL)
+            // leaves the voice route without IN_COMM. Re-assert unless a
+            // genuine cellular call owns the path (never steal IN_CALL).
+            try {
+                val current = platform.mode
+                if (current == AudioManager.MODE_IN_COMMUNICATION) {
+                    return
+                }
+                if (current == AudioManager.MODE_IN_CALL) {
+                    Log.i(TAG, "Cellular call stole voice mode, releasing hold")
+                    modeHold = ModeHold.Released
+                    return
+                }
+                Log.w(TAG, "Voice mode stolen, re-asserting IN_COMM")
+                platform.mode = AudioManager.MODE_IN_COMMUNICATION
+            } catch (e: Exception) {
+                Log.w(TAG, "Voice mode re-assert failed", e)
+            }
             return
         }
         try {
@@ -713,12 +743,15 @@ internal class AudioRouteController(
         // below may clear it. Known platform limitation (AudioManager offers
         // no ownership check); the ensure side already avoids claiming over
         // a foreign hold.
-        modeHold = ModeHold.Released
+        // Clear only after a successful restore: the getter/setter can throw
+        // (HAL), and clearing first would strand IN_COMM with no owner.
+        // On failure the hold stays Claimed so the next teardown retries.
         try {
             if (platform.mode == AudioManager.MODE_IN_COMMUNICATION) {
                 platform.mode = hold.savedMode
                 Log.i(TAG, "VoIP mode released (restored ${hold.savedMode})")
             }
+            modeHold = ModeHold.Released
         } catch (e: Exception) {
             Log.w(TAG, "VoIP mode release failed", e)
         }
@@ -777,14 +810,16 @@ internal class AudioRouteController(
                 Log.e(TAG, "Route-change audio reload failed", e)
                 host.onPipelineError(e.message)
             } catch (e: AssertionError) {
-                // Belt-and-braces: createAudioHandler now throws ISE (caught
-                // above), but any future DEBUG assert must still report via
-                // the pipeline error path, never crash Main.
+                // Deliberate containment over fail-fast: the funnel runs on
+                // Main, so even a DEBUG programming assert must report via
+                // the pipeline error path rather than crashing the process.
+                // Pinned by runtimeAndAssertFailuresReportViaPipelineError.
                 Log.e(TAG, "Route-change audio reload failed", e)
                 host.onPipelineError(e.message)
             }
         }
-        val routeChanged = host.isLive && (firstCreate || (forceReload || update.changed))
+        val routeChanged = host.isLive &&
+            (firstCreate || (host.hasLivePipeline() && (forceReload || update.changed)))
         if (routeChanged) {
             host.onRouteChanged()
         }
@@ -815,7 +850,6 @@ internal class AudioRouteController(
     }
 
     private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean) {
-        if (!platform.hasManager) return
         val requested = scoRequested
         if (!wasClaimedHold || requested || scoRouteActive) {
             return
@@ -823,6 +857,9 @@ internal class AudioRouteController(
         if (!host.isLive) {
             return
         }
+        // No hasManager pre-check here: isSystemScoOn() below is the single
+        // fail-closed gate (mode reads tolerate a null manager via the
+        // platform fallback), so one guard covers the whole path.
         try {
             if (platform.mode == AudioManager.MODE_IN_CALL) {
                 return
@@ -899,12 +936,15 @@ internal class AudioRouteController(
                 else -> {}
             }
         }
-        // Fast path: HFP surfaced directly. Fallback: any BT add with an
-        // SCO device actually available (A2DP-first stagger, quiet HALs).
+        // Fast path first: HFP surfaced directly needs no HAL probe. Only
+        // probe when a BT add lacks direct HFP (A2DP-first stagger, quiet
+        // HALs); pure wired/A2DP edges skip the IPC entirely.
         // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
         // Fail-closed on probe errors: a throwing ScoLink must never crash
         // the funnel/Main; treat as unavailable and skip the bring-up.
-        val scoAvailable = try {
+        val scoAvailable = if (scoInAdded || !anyBtInAdded) {
+            false
+        } else try {
             link.isScoDeviceAvailable()
         } catch (e: Exception) {
             Log.w(TAG, "SCO availability probe failed", e)

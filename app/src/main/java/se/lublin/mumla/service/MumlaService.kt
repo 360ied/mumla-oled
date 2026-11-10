@@ -86,6 +86,11 @@ open class MumlaService : HumlaService(),
     // off-main; NONE could publish two handlers.
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
+    // Set on the main thread in onDestroy; read on the main thread in the
+    // posted Toast block above. Guards a post that won the race and runs
+    // during teardown (Service has no isDestroyed like Activity does).
+    private var serviceDestroyed = false
+
     // Widened to public fields: Kotlin has no package visibility, and the
     // Robolectric suite reads/assigns these as fields from a Java subclass.
     @JvmField
@@ -464,13 +469,20 @@ open class MumlaService : HumlaService(),
             // Toast requires the main looper; the route host calls on main
             // in-tree, but the observer contract allows any caller thread.
             // applicationContext: the posted path may run after onDestroy,
-            // where a Service Toast would leak the dead Service.
+            // where a Service Toast would leak the dead Service. The posted
+            // block re-checks liveness (onDestroy drops pending posts) so a
+            // stale failure never toasts over the next session.
             val messageRes = scoFailureMessage(reason)
             if (Looper.myLooper() == Looper.getMainLooper()) {
                 Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
             } else {
                 mainHandler.post {
-                    Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
+                    // Service destroyed while queued: onDestroy already dropped
+                    // this post as a backstop; the flag covers a post that
+                    // won the race and runs during teardown.
+                    if (!serviceDestroyed) {
+                        Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
@@ -704,6 +716,13 @@ open class MumlaService : HumlaService(),
         if (messageNotification != null) {
             messageNotification.dismiss()
         }
+        // Drop queued main-hop callbacks (SCO failure Toast): a post landing
+        // after destroy would toast stale state over the next session. The
+        // posted block re-checks serviceDestroyed as a backstop for in-flight
+        // runs. Forcing the lazy init here is harmless (one Handler) and
+        // keeps the drain unconditional.
+        serviceDestroyed = true
+        mainHandler.removeCallbacksAndMessages(null)
         releaseSoundPool()
         mSelfTalking = false
         super.onDestroy()

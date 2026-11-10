@@ -23,11 +23,19 @@ import java.util.Collections
 import java.util.HashSet
 
 class Channel : IChannel, Comparable<Channel> {
-    // Effectively immutable after construction (set once via Channel(id, ...)
-    // or the test-only empty ctor); volatile so binder/UI readers never see a
-    // default 0 on a constructed channel.
+    companion object {
+        /** Iterative subchannelUserCount stops descending past this depth. */
+        private const val SUBCHANNEL_DEPTH_CAP = 64
+    }
+
+    // Immutable after construction (set once via the id constructor; the
+    // setter is private so the id-based equals/hashCode can never corrupt
+    // HashSet/Map membership). Volatile so binder/UI readers never see a
+    // default 0 on a constructed channel. (Stays `var`, not `val`: Java
+    // rejects final+volatile in the kapt stub, and the Java tests use it.)
     @Volatile
     override var id: Int = 0
+        private set
     // Written on the model thread, read on UI/binder: volatile for
     // cross-thread visibility. In-place order-key mutation must re-sort via
     // [resortInParent] (see ModelHandler).
@@ -48,6 +56,8 @@ class Channel : IChannel, Comparable<Channel> {
     // ref must not be able to mutate channel state through the array.
     // Note: overrides an immutable `IChannel` val as a mutable concrete-only
     // var (see `IChannel` KDoc); mutation is only via this concrete type.
+    // Volatile for cross-thread visibility like every neighboring scalar.
+    @Volatile
     override var descriptionHash: ByteArray? = null
         get() = field?.clone()
         set(value) {
@@ -83,7 +93,8 @@ class Channel : IChannel, Comparable<Channel> {
 
     /**
      * See `User.channel`.
-     * Widened to public: Kotlin has no package visibility.
+     * Public (not `internal`): the Java unit tests call these directly,
+     * and Kotlin `internal` is name-mangled against Java callers.
      */
     fun addUser(user: User) {
         synchronized(userList) {
@@ -100,7 +111,8 @@ class Channel : IChannel, Comparable<Channel> {
 
     /**
      * See `User.channel`.
-     * Widened to public: Kotlin has no package visibility.
+     * Public (not `internal`): the Java unit tests call these directly,
+     * and Kotlin `internal` is name-mangled against Java callers.
      */
     fun removeUser(user: User) {
         synchronized(userList) {
@@ -114,6 +126,9 @@ class Channel : IChannel, Comparable<Channel> {
     override val subchannels: List<Channel>
         get() = synchronized(subchannelList) { ArrayList(subchannelList) }
 
+    // Nullable by contract: the Java suite pins null-tolerant ignore
+    // (ChannelLinksTest), so the signature stays nullable despite the
+    // non-null callers in ModelHandler.
     fun addSubchannel(channel: Channel?) {
         synchronized(subchannelList) {
             if (channel == null || channel == this || subchannelList.contains(channel)) return
@@ -128,6 +143,7 @@ class Channel : IChannel, Comparable<Channel> {
         }
     }
 
+    // Nullable by contract: see addSubchannel.
     fun removeSubchannel(channel: Channel?) {
         synchronized(subchannelList) {
             subchannelList.remove(channel)
@@ -179,6 +195,7 @@ class Channel : IChannel, Comparable<Channel> {
         return Collections.unmodifiableSet(seen)
     }
 
+    // Nullable by contract: see addSubchannel.
     fun addLink(channel: Channel?) {
         synchronized(linkList) {
             if (channel == null || channel == this || linkList.contains(channel)) {
@@ -195,6 +212,7 @@ class Channel : IChannel, Comparable<Channel> {
         }
     }
 
+    // Nullable by contract: see addSubchannel.
     fun removeLink(channel: Channel?) {
         synchronized(linkList) {
             linkList.remove(channel)
@@ -209,16 +227,35 @@ class Channel : IChannel, Comparable<Channel> {
 
     /**
      * Recursively fetches the subchannel user count.
+     * Iterative with a depth cap: a hostile deep chain (no client-side
+     * nesting check; murmur caps at 10) must not overflow the stack on the
+     * UI bind path. Past the cap, deeper levels count as 0 and a warning
+     * is logged once per call.
      * FIXME: is it necessary to cache this?
      * @return The sum of users in this channel and its subchannel.
      */
     override val subchannelUserCount: Int
         get() {
             val usersSnapshot: List<User> = synchronized(userList) { ArrayList(userList) }
-            val subsSnapshot: List<Channel> = synchronized(subchannelList) { ArrayList(subchannelList) }
             var userCount = usersSnapshot.size
-            for (subc in subsSnapshot) {
-                userCount += subc.subchannelUserCount
+            val stack = ArrayDeque<Pair<Channel, Int>>()
+            synchronized(subchannelList) {
+                for (sub in subchannelList) stack.add(Pair(sub, 1))
+            }
+            var capped = false
+            while (stack.isNotEmpty()) {
+                val (node, depth) = stack.removeLast()
+                val users: List<User> = synchronized(node.userList) { ArrayList(node.userList) }
+                userCount += users.size
+                if (depth < SUBCHANNEL_DEPTH_CAP) {
+                    val subs: List<Channel> = synchronized(node.subchannelList) { ArrayList(node.subchannelList) }
+                    for (sub in subs) stack.add(Pair(sub, depth + 1))
+                } else {
+                    capped = true
+                }
+            }
+            if (capped) {
+                android.util.Log.w("Channel", "subchannelUserCount hit depth cap $SUBCHANNEL_DEPTH_CAP; deeper levels uncounted")
             }
             return userCount
         }
@@ -231,9 +268,7 @@ class Channel : IChannel, Comparable<Channel> {
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other == null || javaClass != other.javaClass) return false
-
-        other as Channel
+        if (other !is Channel) return false
 
         if (id != other.id) return false
 
@@ -244,6 +279,13 @@ class Channel : IChannel, Comparable<Channel> {
         return id
     }
 
+    // Total order for the sorted-insertion lists: position first, then name
+    // (nulls first: unseen stubs sort before named channels), then id.
+    // Intentionally NOT upstream Channel::lessThan (same-parent position
+    // compare + localeAwareCompare): addLink sorts cross-parent links where
+    // upstream has no order, and locale ordering would differ per device.
+    // Consistent with equals for ordering purposes (same id + different
+    // position/name still compares non-zero; lists are re-sorted on mutate).
     override fun compareTo(other: Channel): Int {
         if (position != other.position) {
             return Integer.compare(position, other.position)

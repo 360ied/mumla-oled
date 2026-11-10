@@ -80,11 +80,9 @@ public class BluetoothScoRetryPolicyTest {
     }
 
     @Test
-    public void negativeAttemptsDocumentAsBelowBudget() {
+    public void negativeAttemptsAreAboveBudget() {
         // Unreachable in production (attempts start at 0 and only increment);
-        // the pure function treats negatives as below budget. Pinned as a
-        // drift detector — a future fail-closed clamp must update this test
-        // deliberately, not silently.
-        assertTrue(BluetoothScoManager.shouldRetryBringUp(-1, 2));
+        // fail-closed: a negative count must not read as retryable.
+        assertFalse(BluetoothScoManager.shouldRetryBringUp(-1, 2));
     }
 }

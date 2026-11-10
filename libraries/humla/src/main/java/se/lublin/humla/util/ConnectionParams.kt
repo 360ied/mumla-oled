@@ -57,7 +57,7 @@ class ConnectionParams(
     private val localMuteHistoryBacking: List<Int>? = localMuteHistory?.toList()
     private val localIgnoreHistoryBacking: List<Int>? = localIgnoreHistory?.toList()
     val certificate: ByteArray?
-        get() = certificateBacking?.clone()
+        get() = certificateBacking?.copyOf()
     val accessTokens: List<String>?
         get() = accessTokensBacking?.toList()
     val localMuteHistory: List<Int>?

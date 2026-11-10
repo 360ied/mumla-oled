@@ -197,6 +197,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // check-then-register must not interleave and orphan a job or double-register.
     private val reconnectLock = Any()
 
+    // Serializes connect()'s generation-bump-to-CONNECTING section against
+    // binder-reachable disconnect(): without it a disconnect landing between
+    // the bump and the mConnection assignment reads null, takes the
+    // no-socket branch, and connect() then overwrites the synchronous
+    // DISCONNECTED with CONNECTING. Both sides hold this only for local
+    // teardown/state (socket close, never network wait); connection-thread
+    // callbacks never take it, so no lock-ordering hazard.
+    private val connectLock = Any()
+
     // Serializes apply()'s read-modify-write merge+publish: two interleaved
     // applies must not lose each other's keys (see apply()).
     private val applyLock = Any()
@@ -390,6 +399,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             if (isConnect) {
                 // A user-initiated connect supersedes any scheduled automatic reconnect.
                 // Disarm it so a stale retry can't orphan this attempt once it succeeds.
+                // Consecutive-failure backoff is intentionally NOT reset here: a
+                // failing manual retry means the server is still down, so the
+                // next auto-retry keeps the grown delay instead of hammering
+                // at INITIAL. Success resets via onConnectionSynchronized.
                 setReconnecting(false)
                 connect()
             }
@@ -539,176 +552,184 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     protected open fun connect() {
-        // One atomic snapshot for the whole attempt; the server reference
-        // travels by reference (mutable, resolved in onConnectionEstablished).
-        val params = connectionParams
-        val server = params.server
-        if (server == null) {
-            Log.w(TAG, "connect() called with null server, cancelling reconnect")
-            setReconnecting(false)
-            return
-        }
-        if (server.host == null) {
-            Log.w(TAG, "connect() called with null host, cancelling reconnect")
-            setReconnecting(false)
-            return
-        }
-
-        try {
-            // Straight to CONNECTING: teardown below runs synchronously
-            // before the new attempt, so observers never see a transient
-            // CONNECTED -> DISCONNECTED -> CONNECTING flap on re-connect.
-            // Reset voice-target routing explicitly: a prior WHISPER session
-            // must not strand ChannelFragment's panel. NORMAL (0) matches
-            // setVoiceTargetId's emit, but connect() runs before observers
-            // expect callbacks, so only emit if previously non-normal.
-            // Id and list reset atomically: the id write rides the same
-            // monitor as the list clear (getWhisperTarget snapshots id then
-            // gets under lock), and the emit stays outside the lock --
-            // onVoiceTargetChanged fans out to observers that may re-enter
-            // getWhisperTarget, which would deadlock inside the monitor.
-            val prevVoiceTarget = synchronized(whisperLock) {
-                val prev = mVoiceTargetId
-                mVoiceTargetId = 0
-                mWhisperTargetList.clear()
-                prev
+        synchronized(connectLock) {
+            // One atomic snapshot for the whole attempt; the server reference
+            // travels by reference (mutable, resolved in onConnectionEstablished).
+            val params = connectionParams
+            val server = params.server
+            if (server == null) {
+                Log.w(TAG, "connect() called with null server, cancelling reconnect")
+                setReconnecting(false)
+                return
             }
-            if (prevVoiceTarget.toInt() != 0) {
-                mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+            if (server.host == null) {
+                Log.w(TAG, "connect() called with null host, cancelling reconnect")
+                setReconnecting(false)
+                return
             }
 
-            val wakeLock = mWakeLock
-            if (wakeLock != null) {
-                if (wakeLock.isHeld) {
-                    wakeLock.release()
+            try {
+                // Straight to CONNECTING: teardown below runs synchronously
+                // before the new attempt, so observers never see a transient
+                // CONNECTED -> DISCONNECTED -> CONNECTING flap on re-connect.
+                // Reset voice-target routing explicitly: a prior WHISPER session
+                // must not strand ChannelFragment's panel. NORMAL (0) matches
+                // setVoiceTargetId's emit, but connect() runs before observers
+                // expect callbacks, so only emit if previously non-normal.
+                // Id and list reset atomically: the id write rides the same
+                // monitor as the list clear (getWhisperTarget snapshots id then
+                // gets under lock), and the emit stays outside the lock --
+                // onVoiceTargetChanged fans out to observers that may re-enter
+                // getWhisperTarget, which would deadlock inside the monitor.
+                val prevVoiceTarget = synchronized(whisperLock) {
+                    val prev = mVoiceTargetId
+                    mVoiceTargetId = 0
+                    mWhisperTargetList.clear()
+                    prev
                 }
-                wakeLock.acquire(WAKELOCK_GRACE_MS)
-            }
-            acquireWifiLock()
+                if (prevVoiceTarget.toInt() != 0) {
+                    mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+                }
 
-            // Invalidate first: the old connection's read loop may still be
-            // alive (silent disconnect posts async; a racing fatal error
-            // delivers synchronously on the IO thread). Bumping before any
-            // old-teardown work -- matching onDestroy -- closes the window
-            // where a stale post between disconnect() and the bump would
-            // slip the generation filter and drive the new attempt's state.
-            val generation = connectionGeneration.incrementAndGet()
-            // Tear down any prior connection before overwriting: a second
-            // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
-            // NetworkCallback reconnect) must not orphan the old socket.
-            // End the old session explicitly: the old connection's async
-            // disconnect callback will be dropped as stale once generation
-            // moves below, so without this the old route teardown and the
-            // old pipeline shutdown would never run. Observers go straight
-            // to onConnecting with no onDisconnected (a spurious disconnect
-            // would flash the reconnect UI and TTS). The old pipeline must
-            // end here too — the route event alone would leave it capturing.
-            mAudioHandler?.let { oldHandler ->
-                mConnection?.removeTCPMessageHandler(oldHandler)
-                mConnection?.removeUDPMessageHandler(oldHandler)
-                oldHandler.shutdown()
-            }
-            mModelHandler = null
-            mAudioHandler = null
-            route.onEvent(RouteEvent.SessionEnded)
-            mConnection?.disconnect()
-            mConnection = null
-            // Generation was bumped above (before teardown), so the old
-            // connection's async posts arrive stale and are filtered below.
-            // Interface delegation forwards every other callback untouched.
-            val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
-                // All five callbacks filter on generation: a stale connection's
-                // async posts (established/warning/handshake/disconnect/sync)
-                // must never drive the live attempt's state machine. The
-                // CONNECTING guards make stale established/handshake
-                // unreachable today, but the filter is airtight regardless.
-                private fun isStale(): Boolean {
-                    if (generation != connectionGeneration.get()) {
-                        Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
-                        return true
+                val wakeLock = mWakeLock
+                if (wakeLock != null) {
+                    if (wakeLock.isHeld) {
+                        wakeLock.release()
                     }
-                    return false
+                    wakeLock.acquire(WAKELOCK_GRACE_MS)
                 }
+                acquireWifiLock()
 
-                override fun onConnectionEstablished() {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionEstablished()
+                // Invalidate first: the old connection's read loop may still be
+                // alive (silent disconnect posts async; a racing fatal error
+                // delivers synchronously on the IO thread). Bumping before any
+                // old-teardown work -- matching onDestroy -- closes the window
+                // where a stale post between disconnect() and the bump would
+                // slip the generation filter and drive the new attempt's state.
+                // The whole bump-to-CONNECTING section rides connectLock
+                // against binder disconnect() (see the lock's declaration).
+                val generation = connectionGeneration.incrementAndGet()
+                // Tear down any prior connection before overwriting: a second
+                // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
+                // NetworkCallback reconnect) must not orphan the old socket.
+                // End the old session explicitly: the old connection's async
+                // disconnect callback will be dropped as stale once generation
+                // moves below, so without this the old route teardown and the
+                // old pipeline shutdown would never run. Observers go straight
+                // to onConnecting with no onDisconnected (a spurious disconnect
+                // would flash the reconnect UI and TTS). The old pipeline must
+                // end here too — the route event alone would leave it capturing.
+                mAudioHandler?.let { oldHandler ->
+                    mConnection?.removeTCPMessageHandler(oldHandler)
+                    mConnection?.removeUDPMessageHandler(oldHandler)
+                    oldHandler.shutdown()
                 }
+                mModelHandler = null
+                mAudioHandler = null
+                route.onEvent(RouteEvent.SessionEnded)
+                mConnection?.disconnect()
+                mConnection = null
+                // Generation was bumped above (before teardown), so the old
+                // connection's async posts arrive stale and are filtered below.
+                // Interface delegation forwards every other callback untouched.
+                val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
+                    // All five callbacks filter on generation: a stale connection's
+                    // async posts (established/warning/handshake/disconnect/sync)
+                    // must never drive the live attempt's state machine. The
+                    // CONNECTING guards make stale established/handshake
+                    // unreachable today, but the filter is airtight regardless.
+                    private fun isStale(): Boolean {
+                        if (generation != connectionGeneration.get()) {
+                            Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
+                            return true
+                        }
+                        return false
+                    }
 
-                override fun onConnectionWarning(warning: String?) {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionWarning(warning)
-                }
+                    override fun onConnectionEstablished() {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionEstablished()
+                    }
 
-                override fun onConnectionHandshakeFailed(
-                    chain: Array<X509Certificate>?,
-                    failure: HandshakeFailure,
-                    verifiedHost: String?
-                ) {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionHandshakeFailed(chain, failure, verifiedHost)
-                }
+                    override fun onConnectionWarning(warning: String?) {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionWarning(warning)
+                    }
 
-                override fun onConnectionDisconnected(e: HumlaException?) {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionDisconnected(e)
-                }
+                    override fun onConnectionHandshakeFailed(
+                        chain: Array<X509Certificate>?,
+                        failure: HandshakeFailure,
+                        verifiedHost: String?
+                    ) {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionHandshakeFailed(chain, failure, verifiedHost)
+                    }
 
-                override fun onConnectionSynchronized() {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionSynchronized()
+                    override fun onConnectionDisconnected(e: HumlaException?) {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionDisconnected(e)
+                    }
+
+                    override fun onConnectionSynchronized() {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionSynchronized()
+                    }
                 }
+                val connection = HumlaConnection(connectionListener)
+                mConnection = connection
+                connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
+                connection.setForceTCP(params.forceTcp)
+                connection.setKeys(params.certificate, params.certificatePassword)
+                connection.setTrustStore(params.trustStore, params.trustStorePassword, params.trustStoreFormat)
+
+                val modelHandler = ModelHandler(
+                    this, mCallbacks, this,
+                    params.localMuteHistory, params.localIgnoreHistory
+                )
+                mModelHandler = modelHandler
+                connection.addTCPMessageHandlers(modelHandler)
+
+                mConnectionState = ConnectionState.CONNECTING
+
+                mCallbacks.onConnecting()
+
+                connection.connect(requireNotNull(server.host), server.port)
+            } catch (e: HumlaException) {
+                Log.e(TAG, "Connect failed", e)
+                onConnectionDisconnected(e)
             }
-            val connection = HumlaConnection(connectionListener)
-            mConnection = connection
-            connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
-            connection.setForceTCP(params.forceTcp)
-            connection.setKeys(params.certificate, params.certificatePassword)
-            connection.setTrustStore(params.trustStore, params.trustStorePassword, params.trustStoreFormat)
-
-            val modelHandler = ModelHandler(
-                this, mCallbacks, this,
-                params.localMuteHistory, params.localIgnoreHistory
-            )
-            mModelHandler = modelHandler
-            connection.addTCPMessageHandlers(modelHandler)
-
-            mConnectionState = ConnectionState.CONNECTING
-
-            mCallbacks.onConnecting()
-
-            connection.connect(requireNotNull(server.host), server.port)
-        } catch (e: HumlaException) {
-            Log.e(TAG, "Connect failed", e)
-            onConnectionDisconnected(e)
         }
     }
 
     open override fun disconnect() {
-        mReconnectAttempts.set(0)
-        setReconnecting(false)
-        // Synchronous state: the async read-loop finally still delivers the
-        // formal onConnectionDisconnected, but observers must see
-        // DISCONNECTED from the explicit call, not a lingering CONNECTING.
-        // Harmless under the generation + CONNECTING guards (a quick
-        // reconnect bumps generation; the stale post is filtered).
-        mConnectionState = ConnectionState.DISCONNECTED
-        val wakeLock = mWakeLock
-        if (wakeLock != null && wakeLock.isHeld) {
-            wakeLock.release()
-        }
-        releaseWifiLock()
-        // Tear down SCO synchronously: the async disconnect callback may lag,
-        // and a quick reconnect must not reuse a stale link or route flag.
-        route.stopScoWithNotify()
-        val connection = mConnection
-        if (connection != null) {
-            connection.disconnect()
-        } else {
-            // No socket, so no async callback will run the full teardown
-            // (mode/route/settle): run the route half explicitly. Posted to
-            // the funnel when off-main; idempotent with the callback path.
-            route.onEvent(RouteEvent.SessionEnded)
+        synchronized(connectLock) {
+            mReconnectAttempts.set(0)
+            setReconnecting(false)
+            // Synchronous state: the async read-loop finally still delivers the
+            // formal onConnectionDisconnected, but observers must see
+            // DISCONNECTED from the explicit call, not a lingering CONNECTING.
+            // Serialized against connect() via connectLock: a disconnect
+            // landing mid-connect either runs fully before the bump (then
+            // connect proceeds to CONNECTING) or tears down the new attempt
+            // (final state DISCONNECTED) — never a null-read resurrection.
+            mConnectionState = ConnectionState.DISCONNECTED
+            val wakeLock = mWakeLock
+            if (wakeLock != null && wakeLock.isHeld) {
+                wakeLock.release()
+            }
+            releaseWifiLock()
+            // Tear down SCO synchronously: the async disconnect callback may lag,
+            // and a quick reconnect must not reuse a stale link or route flag.
+            route.stopScoWithNotify()
+            val connection = mConnection
+            if (connection != null) {
+                connection.disconnect()
+            } else {
+                // No socket, so no async callback will run the full teardown
+                // (mode/route/settle): run the route half explicitly. Posted to
+                // the funnel when off-main; idempotent with the callback path.
+                route.onEvent(RouteEvent.SessionEnded)
+            }
         }
     }
 
@@ -977,7 +998,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /** Internal reconnect driver; not part of `IHumlaService`. Tests use `setReconnectAttemptsForTest`. */
-    internal open fun setReconnecting(reconnecting: Boolean) {
+    internal fun setReconnecting(reconnecting: Boolean) {
         // One monitor for the whole method (register/unregister take the same
         // lock reentrantly): a true+true race must not launch two jobs or
         // register the network callback twice and orphan one of each.
@@ -1040,10 +1061,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      */
     @Throws(AudioException::class)
     private fun createAudioHandler() {
-        // Fail with ISE (not AssertionError) so the route funnel's
-        // `catch (RuntimeException)` containment holds without a dedicated
-        // Error branch; app catches ISE on the binder boundary.
-        if (BuildConfig.DEBUG && mConnectionState != ConnectionState.CONNECTED) {
+        // Unconditional (was DEBUG-only): release and debug must share the
+        // same containment path. The funnel catches RuntimeException, and
+        // app callers translate binder ISE, so throwing here is contained.
+        if (mConnectionState != ConnectionState.CONNECTED) {
             throw IllegalStateException("Attempted to instantiate audio handler when not connected!")
         }
 
@@ -1167,7 +1188,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         synchronized(applyLock) {
             var params = connectionParams
             if (delta.server != null) {
-                params = params.copy(server = delta.server)
+                // Snapshot the app's Server: ConnectionParams stores the
+                // reference and onConnectionEstablished mutates it via
+                // setResolved() on the connection thread, so publishing the
+                // live ref would let the app mutate host/port/user under an
+                // in-flight connect (and leak resolved state back into the
+                // app's object). Copy field-for-field like getTargetServer.
+                val s = delta.server
+                val snapshot = Server(s.id, s.name, s.host, s.port, s.username, s.password).also {
+                    it.resolvedHost = s.resolvedHost
+                    it.resolvedPort = s.resolvedPort
+                }
+                params = params.copy(server = snapshot)
                 reconnectNeeded = true
             }
             val certificate = delta.certificate
@@ -1845,6 +1877,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             vtb.id = id.toInt()
             vtb.addTargets(voiceTarget)
             live.sendTCPMessage(vtb.build(), HumlaTCPMessageType.VoiceTarget)
+            // sendTCPMessage drops silently when disconnected (no throw):
+            // a disconnect racing the send would leak one of 30 slots.
+            // Re-validate under no lock (free is idempotent); freeing a
+            // just-sent target is harmless — the next connect clears all.
+            if (!live.isConnected()) {
+                synchronized(whisperLock) { mWhisperTargetList.free(id) }
+                throw IllegalStateException("No active connection")
+            }
         } catch (e: RuntimeException) {
             synchronized(whisperLock) { mWhisperTargetList.free(id) }
             throw e
@@ -1936,8 +1976,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun isListeningToChannel(channelId: Int): Boolean {
-        // Fail closed when disconnected: no exception-driven control flow —
-        // requireModelHandler throws IAE on null, never NotSynchronizedException.
+        // Fail closed when disconnected: getModelHandler throws
+        // NotSynchronizedException when unsynchronized, IAE only on the
+        // unreachable synchronized-but-null case — so null-tolerate here
+        // instead of throwing on any binder thread.
         val handler = mModelHandler ?: return false
         val ch = handler.getChannels()[channelId]
         return ch != null && ch.isListening

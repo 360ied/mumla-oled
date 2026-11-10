@@ -150,6 +150,10 @@
     <string name="shout_target">向 %s 呼喊</string>
     <string name="shout_configure">配置语音目标</string>
     <string name="grant_perm_microphone">请授予麦克风权限。</string>
+    <!-- SCO bring-up failure (default-locale `bluetooth_sco_failed`). -->
+    <string name="bluetooth_sco_failed">蓝牙耳机不可用，正在使用手机扬声器或已连接的音频。</string>
+    <!-- SCO permission failure (default-locale `bluetooth_sco_permission`). -->
+    <string name="bluetooth_sco_permission">使用耳机音频需要蓝牙权限。</string>
     <string name="grant_perm_draw_over_apps">请授予在其他应用上层显示权限。</string>
     <string name="default_">默认</string>
     <plurals name="notification_unread_many">

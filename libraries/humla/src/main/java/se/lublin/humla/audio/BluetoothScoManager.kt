@@ -115,11 +115,17 @@ class BluetoothScoManager : ScoLink {
         @VisibleForTesting
         @JvmStatic
         fun shouldRetryBringUp(attempts: Int, maxAttempts: Int): Boolean {
-            return attempts < maxAttempts
+            return attempts in 0 until maxAttempts
         }
     }
 
     interface Listener {
+        /**
+         * Callbacks run on the manager scope and must not throw: a throwing
+         * observer is logged and contained for [RuntimeException], but an
+         * [Error] still propagates to the scope. In practice HumlaService
+         * never throws from these paths.
+         */
         /** The SCO link is up; the audio pipeline may now select the voice-call route. */
         fun onScoConnected()
 
@@ -193,9 +199,10 @@ class BluetoothScoManager : ScoLink {
     ) {
         // Nullability is explicit but the fail-fast contract is Java-identical:
         // Objects.requireNonNull returns its input type, so the Elvis throw
-        // below is what actually narrows to non-null (same NPE + message).
-        val ctx = context ?: throw NullPointerException("context")
-        val lis = listener ?: throw NullPointerException("listener")
+        // below is what actually narrows to non-null. Messages name the
+        // contract (not just the value) for readable NPE reports.
+        val ctx = context ?: throw NullPointerException("BluetoothScoManager context must not be null")
+        val lis = listener ?: throw NullPointerException("BluetoothScoManager listener must not be null")
         require(connectTimeoutMs >= 0) { "connectTimeoutMs must be >= 0" }
         require(maxAttempts >= 1) { "maxAttempts must be >= 1" }
         this.context = ctx.applicationContext
@@ -548,9 +555,11 @@ class BluetoothScoManager : ScoLink {
     }
 
     // Legacy broadcast mapping: CONNECTED while starting completes the
-    // bring-up; a drop or error while active falls back. Mid-bring-up
-    // disconnects and error states burn the attempt timeout like transient
-    // modern selection flaps (see onModernDeviceChanged).
+    // bring-up; a drop or error while active falls back. A legacy ERROR
+    // while STARTING is terminal link failure (unlike transient modern
+    // selection flaps): fail fast instead of burning the attempt timeout.
+    // A mid-bring-up DISCONNECTED still burns the timeout — the legacy
+    // stack may flap before the first CONNECTED.
     private fun onLegacyScoStateChanged(scoState: Int, epoch: Int) {
         val stateCopy: ScoState
         val currentEpoch: Int
@@ -559,6 +568,12 @@ class BluetoothScoManager : ScoLink {
             currentEpoch = generation
         }
         if (epoch != currentEpoch) {
+            return
+        }
+        if (stateCopy == ScoState.STARTING &&
+            scoState == AudioManager.SCO_AUDIO_STATE_ERROR
+        ) {
+            fail(REASON_ERROR)
             return
         }
         if (stateCopy == ScoState.STARTING &&
@@ -657,7 +672,7 @@ class BluetoothScoManager : ScoLink {
         }
         unregisterObservers(taken)
         releaseRouteIfHeld()
-        Log.w(TAG, "Bluetooth SCO failed: " + reason)
+        Log.w(TAG, "Bluetooth SCO failed: $reason")
         // Always launched in the manager scope: failures can surface on the
         // start() caller's thread. The generation check drops delivery when
         // stop() or a newer start() has since moved on, honoring stop()'s
@@ -765,15 +780,32 @@ class BluetoothScoManager : ScoLink {
     }
 
     private fun armTimeout(epoch: Int) {
-        // Assigns outside the monitor while stop()/setActive()/fail()
-        // cancel-and-null under it (kept unsynchronized to avoid blocking
-        // bring-up on teardown). The epoch guard in onConnectTimeout drops
-        // orphans that outlive a stop/start cycle instead of tearing down
-        // the new session.
-        timeoutJob?.cancel()
-        timeoutJob = scoScope.launch {
+        // Epoch-guarded: a stop() that lands between the bring-up's epoch
+        // check and this arm must not resurrect a timer for a dead session.
+        // The guard runs under the monitor; the launch itself stays outside
+        // it so bring-up never blocks on teardown. onConnectTimeout
+        // re-validates the epoch before acting, so an orphaned timer is a
+        // harmless no-op even if the cancel below races it.
+        synchronized(this) {
+            if (epoch != generation || state != ScoState.STARTING) {
+                return
+            }
+            timeoutJob?.cancel()
+        }
+        val job = scoScope.launch {
             delay(connectTimeoutMs)
             onConnectTimeout(epoch)
+        }
+        synchronized(this) {
+            // Lost the race with stop()/fail(): they nulled the job and
+            // moved state off STARTING — drop our timer instead of
+            // resurrecting it.
+            if (epoch != generation || state != ScoState.STARTING) {
+                job.cancel()
+                return
+            }
+            timeoutJob?.cancel()
+            timeoutJob = job
         }
     }
 
@@ -907,11 +939,15 @@ class BluetoothScoManager : ScoLink {
     // Modern removal (S+): callers guarantee the version above. Takes Any
     // so no field or method signature names the S+-only listener type
     // (class-verification safety on API 30); the cast only ever executes
-    // on S+.
+    // on S+. The explicit check (rather than relying on the caller's
+    // catch) keeps a wiring bug from surfacing as a ClassCastException.
     @TargetApi(Build.VERSION_CODES.S)
     private fun removeModernListener(listener: Any) {
-        audioManager.removeOnCommunicationDeviceChangedListener(
-            listener as AudioManager.OnCommunicationDeviceChangedListener
-        )
+        val modern = listener as? AudioManager.OnCommunicationDeviceChangedListener
+        if (modern == null) {
+            Log.w(TAG, "Device listener has unexpected type; skipping removal")
+            return
+        }
+        audioManager.removeOnCommunicationDeviceChangedListener(modern)
     }
 }

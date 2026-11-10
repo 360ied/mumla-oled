@@ -236,8 +236,9 @@ class AudioRouteControllerTest {
         }
     }
 
-    // Relies on mockito-inline (mockito-core 5.x inlines final Android types
-    // on the JVM with returnDefaultValues); Handler mocks below are
+    // Relies on mockito-core 5.x (final Android types are mocked inline on
+    // the JVM with returnDefaultValues; the mockito-inline artifact was
+    // folded into mockito-core in 5.x); Handler mocks below are
     // capture-only because FakePlatform drops the handler (see handler test).
     private fun deviceOf(type: Int): AudioDeviceInfo {
         val device = mock(AudioDeviceInfo::class.java)
@@ -383,6 +384,80 @@ class AudioRouteControllerTest {
             listOf(AudioManager.MODE_IN_COMMUNICATION, AudioManager.MODE_NORMAL),
             platform.modeSets,
         )
+    }
+
+    @Test
+    fun failedVoiceModeReleaseRetriesOnNextTeardown() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        // HAL throws mid-release: the hold must stay Claimed (not strand
+        // IN_COMM with no owner), so the next teardown retries.
+        platform.throwOnMode = true
+        route.onEvent(RouteEvent.SessionEnded)
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        assertEquals(listOf(AudioManager.MODE_IN_COMMUNICATION), platform.modeSets)
+        // HAL recovers: the retry restores the saved baseline.
+        platform.throwOnMode = false
+        route.onEvent(RouteEvent.SessionEnded)
+        assertEquals(AudioManager.MODE_NORMAL, platform.modeValue)
+        assertEquals(
+            listOf(AudioManager.MODE_IN_COMMUNICATION, AudioManager.MODE_NORMAL),
+            platform.modeSets,
+        )
+    }
+
+    @Test
+    fun stolenVoiceModeReassertsOnNextVoicePass() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        // Out-of-process steal while Claimed: the next voice pass must not
+        // run the route without IN_COMM. It re-asserts instead of dropping
+        // to Released and waiting for a future edge.
+        platform.modeValue = AudioManager.MODE_NORMAL
+        platform.modeSets.clear()
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        assertEquals(listOf(AudioManager.MODE_IN_COMMUNICATION), platform.modeSets)
+    }
+
+    @Test
+    fun stolenVoiceModeYieldsToCellularCall() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        // Cellular call steals the path: release the claim without touching
+        // IN_CALL, so the later teardown does not restore over it.
+        platform.modeValue = AudioManager.MODE_IN_CALL
+        platform.modeSets.clear()
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AudioManager.MODE_IN_CALL, platform.modeValue)
+        assertTrue(platform.modeSets.isEmpty())
+        // And teardown while IN_CALL holds leaves the call audio alone.
+        route.onEvent(RouteEvent.SessionEnded)
+        assertEquals(AudioManager.MODE_IN_CALL, platform.modeValue)
+        assertTrue(platform.modeSets.isEmpty())
+    }
+
+    @Test
+    fun updateScoRouteAfterDestroyNeverRestartsLink() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.setScoRequested(true)
+        route.onEvent(RouteEvent.Destroyed)
+        assertEquals(1, sco.destroyCount)
+        // Post-destroy bring-up must not restart SCO on the dead scope,
+        // even with a live host and a requested link.
+        route.updateScoRoute()
+        assertEquals(0, sco.startCount)
     }
 
     @Test
@@ -1073,13 +1148,16 @@ class AudioRouteControllerTest {
         host.pipeline = false
         val route = AudioRouteController(platform, sco, this, host)
         route.onInit()
-        // Live edge with no pipeline: must not resurrect one.
+        // Live edge with no pipeline: must not resurrect one -- and must not
+        // notify observers of a route change that carries no pipeline.
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         route.onEvent(RouteEvent.SettingsChanged(reload = true))
         assertEquals(0, host.recreateCount)
+        assertEquals(0, host.routeChangedCount)
         // Sync always builds (first creation), even with no prior pipeline.
         route.onEvent(RouteEvent.SessionStarted)
         assertEquals(1, host.recreateCount)
+        assertEquals(1, host.routeChangedCount)
     }
 
     @Test

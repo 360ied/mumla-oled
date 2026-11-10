@@ -39,13 +39,16 @@ import se.lublin.humla.net.HandshakeFailure
  * the concurrent set is nondeterministic and undocumented.
  */
 class HumlaCallbacks : IHumlaObserver {
+    companion object {
+        private const val TAG = "HumlaCallbacks"
+    }
+
     private val callbacks: MutableSet<IHumlaObserver> =
         Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
 
-    // Non-null by Kotlin's intrinsic check; requireNotNull only customizes the
-    // message for Java callers (intrinsic NPE would otherwise read as generic).
+    // Kotlin's intrinsic null check already rejects a null argument before
+    // the body runs, so no explicit check is needed here.
     fun registerObserver(observer: IHumlaObserver) {
-        requireNotNull(observer) { "observer must not be null" }
         callbacks.add(observer)
     }
 
@@ -175,16 +178,14 @@ class HumlaCallbacks : IHumlaObserver {
                 // Release logs the observer class + message without the stack.
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w(
-                        "HumlaCallbacks",
-                        "Observer " + observer.javaClass.name +
-                            " threw, continuing fan-out",
+                        TAG,
+                        "Observer ${observer.javaClass.name} threw, continuing fan-out",
                         observerError
                     )
                 } else {
                     android.util.Log.w(
-                        "HumlaCallbacks",
-                        "Observer " + observer.javaClass.name +
-                            " threw (" + observerError.message + "), continuing fan-out"
+                        TAG,
+                        "Observer ${observer.javaClass.name} threw (${observerError.message}), continuing fan-out"
                     )
                 }
             }

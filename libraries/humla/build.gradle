@@ -79,17 +79,24 @@ android {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
             // Default interface methods are real Java defaults (not DefaultImpls),
             // so out-of-tree Java observers inherit onBluetoothScoFailed/onAudioRouteChanged.
+            // `-jvm-default=enable` is the legacy spelling (Kotlin 2.x prefers
+            // `all`/`all-compatibility`); keep until a KGP bump re-validates
+            // IHumluObserver Java interop under the new flag.
             freeCompilerArgs.add("-jvm-default=enable")
         }
     }
 
-    // Need to enable this when defaultConfig below contains some custom BuildConfig
+    // BuildConfig.DEBUG reads below (no custom buildConfigFields); AGP 9
+    // defaults buildConfig off, so this must stay enabled.
     buildFeatures {
         buildConfig = true
     }
 
     defaultConfig {
         testApplicationId "se.lublin.humla.test"
+        // AGP 8+ prefers testNamespace for the test APK; testApplicationId
+        // above still sets the test package. Add testNamespace if AGP 9
+        // starts warning on the missing key.
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         minSdkVersion 30
         targetSdk 36
@@ -148,9 +155,11 @@ android {
             if (!expectedDigest.matches('[0-9a-f]{64}')) {
                 throw new GradleException("RNNoise model_sha256 is malformed (expected 64 lowercase hex chars); refusing to download.")
             }
-            def modelHash = versionFile.exists() ? versionFile.text.trim() : expectedDigest
-            if (!modelHash.toLowerCase().equals(expectedDigest)) {
-                throw new GradleException("RNNoise model version/digest drift: model_version (${modelHash}) does not match model_sha256 (${expectedDigest}); update both.")
+            // model_version when present, else the vendored digest: either
+            // way this names the tarball stem for this run.
+            def modelVersionOrDigest = versionFile.exists() ? versionFile.text.trim() : expectedDigest
+            if (!modelVersionOrDigest.toLowerCase().equals(expectedDigest)) {
+                throw new GradleException("RNNoise model version/digest drift: model_version (${modelVersionOrDigest}) does not match model_sha256 (${expectedDigest}); update both.")
             }
             // Steady-state skip: valid only when the stamp proves the outputs
             // were generated from this exact digest. Existence alone is not
@@ -162,7 +171,7 @@ android {
             }
             def cacheDir = file("${project.buildDir}/model_cache")
             cacheDir.mkdirs()
-            def tarGz = file("${cacheDir}/rnnoise_data-${modelHash}.tar.gz")
+            def tarGz = file("${cacheDir}/rnnoise_data-${modelVersionOrDigest}.tar.gz")
             if (!tarGz.exists()) {
                 println "Downloading RNNoise model weights (${modelHash.substring(0, 7)})..."
                 def modelUrl = new URL("https://media.xiph.org/rnnoise/models/rnnoise_data-${modelHash}.tar.gz")
@@ -212,6 +221,10 @@ android {
 
     lint {
         abortOnError = true
+        // InvalidPackage: pre-existing (JNA-style deps); MissingTranslation:
+        // resourceConfigurations strips to en/fr/zh-rCN and new strings land
+        // English-first until translators catch up (Transifex). Re-enable
+        // MissingTranslation once the bluetooth SCO strings are translated.
         disable 'InvalidPackage', 'MissingTranslation'
         explainIssues = true
         ignoreWarnings = false

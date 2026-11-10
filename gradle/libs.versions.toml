@@ -14,8 +14,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 # Migration Slice 0 scaffold (docs/migration/slices.md).
-# Single source of truth for modern-stack pins. Floors are binding, patches float.
-# Verified 2026-10-12 at scaffold; re-verify when consuming new artifacts in later slices.
+# Single source of truth for modern-stack pins. Floors are binding
+# (never depend below the floored version; Dependabot-style bumps must keep
+# the floor), patches float (patch bumps need no re-verification).
+# Verified 2026-10-12 at scaffold; slices 6+ consumed mockito 5.14.2 and
+# coroutines-test doubles without re-verifying the rest — re-verify a pin
+# when its artifact is next touched.
 #
 # KSP fork (ordered, not open): no stable KSP for Kotlin 2.4 on Maven Central
 # at scaffold (latest symbol-processing-api is 2.3.12), so annotation processing
