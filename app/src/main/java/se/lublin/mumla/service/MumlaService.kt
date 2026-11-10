@@ -81,8 +81,10 @@ open class MumlaService : HumlaService(),
     Settings.OnSettingChangedListener,
     MumlaConnectionNotification.OnActionListener, IMumlaService {
     // Cached main handler for off-main observer hops (e.g. SCO failure Toast).
-    // Avoids allocating a Handler per rare failure.
-    private val mainHandler by lazy(LazyThreadSafetyMode.NONE) { Handler(Looper.getMainLooper()) }
+    // Avoids allocating a Handler per rare failure. SYNCHRONIZED (default): the
+    // observer contract allows any caller thread, so first access may race
+    // off-main; NONE could publish two handlers.
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     // Widened to public fields: Kotlin has no package visibility, and the
     // Robolectric suite reads/assigns these as fields from a Java subclass.
@@ -461,12 +463,14 @@ open class MumlaService : HumlaService(),
         override fun onBluetoothScoFailed(reason: String?) {
             // Toast requires the main looper; the route host calls on main
             // in-tree, but the observer contract allows any caller thread.
-            val message = scoFailureMessage(reason)
+            // applicationContext: the posted path may run after onDestroy,
+            // where a Service Toast would leak the dead Service.
+            val messageRes = scoFailureMessage(reason)
             if (Looper.myLooper() == Looper.getMainLooper()) {
-                Toast.makeText(this@MumlaService, message, Toast.LENGTH_LONG).show()
+                Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
             } else {
                 mainHandler.post {
-                    Toast.makeText(this@MumlaService, message, Toast.LENGTH_LONG).show()
+                    Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -507,11 +511,15 @@ open class MumlaService : HumlaService(),
     /**
      * Refreshes route-dependent cue audio after a confirmed route change
      * (SCO or media-sink). The pipeline owns voice routing; this owns the
-     * PTT SoundPool.
+     * PTT SoundPool. Main-only after onCreate (route onInit never notifies
+     * synchronously, closing the super.onCreate-to-mSettings window); null
+     * mSettings is a programming error, surfaced fail-fast.
      */
     override fun onAudioRouteChanged() {
         initSoundPool()
-        val settings = mSettings ?: throw NullPointerException("mSettings")
+        // Null-tolerant: if a future controller ever notifies synchronously
+        // from onInit, skip instead of crashing the service out of onCreate.
+        val settings = mSettings ?: return
         setProximitySensorOn(shouldUseProximitySensor(settings))
     }
 

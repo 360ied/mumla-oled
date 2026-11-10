@@ -42,6 +42,8 @@ class HumlaCallbacks : IHumlaObserver {
     private val callbacks: MutableSet<IHumlaObserver> =
         Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
 
+    // Non-null by Kotlin's intrinsic check; requireNotNull only customizes the
+    // message for Java callers (intrinsic NPE would otherwise read as generic).
     fun registerObserver(observer: IHumlaObserver) {
         requireNotNull(observer) { "observer must not be null" }
         callbacks.add(observer)
@@ -147,7 +149,12 @@ class HumlaCallbacks : IHumlaObserver {
         broadcast { o -> o.onLogError(message) }
     }
 
-    /** Fan-out with per-observer isolation: a throwing observer is logged and the rest still run. */
+    /**
+     * Fan-out with per-observer isolation: a throwing observer is logged
+     * and the rest still run -- except [CancellationException], which
+     * propagates (structured concurrency must not be swallowed) and aborts
+     * the remaining fan-out by design.
+     */
     private fun interface ObserverCall {
         fun call(observer: IHumlaObserver)
     }
@@ -164,7 +171,8 @@ class HumlaCallbacks : IHumlaObserver {
                     throw observerError
                 }
                 // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
+                // on a high-frequency callback must not spam release logcat.
+                // Release logs the observer class + message without the stack.
                 if (BuildConfig.DEBUG) {
                     android.util.Log.w(
                         "HumlaCallbacks",
@@ -173,15 +181,10 @@ class HumlaCallbacks : IHumlaObserver {
                         observerError
                     )
                 } else {
-                    // Same throwable in release: class name + message alone
-                    // lose the stack the field needs. Rate is bounded by the
-                    // fan-out (one line per throwing observer per callback),
-                    // accepted over an undebuggable release.
                     android.util.Log.w(
                         "HumlaCallbacks",
                         "Observer " + observer.javaClass.name +
-                            " threw, continuing fan-out",
-                        observerError
+                            " threw (" + observerError.message + "), continuing fan-out"
                     )
                 }
             }
