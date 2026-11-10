@@ -73,7 +73,7 @@ wording tweaks below.
 | Base `app_name` plus user-visible short strings; identifier exemption | Supported (core strings verified; preferences/username/locale lines need a grep) |
 | `returnDefaultValues` blind spots | Supported |
 | Timing examples | Supported as snippets; hang/shard framing contradicted (bounded `await`/`awaitTermination` already correct) |
-| Zero `androidTest/` | Weak — single-probe corroboration, needs a `find` to prove |
+| Zero `androidTest/` | Supported — `find` over both `src` trees returns no files and neither holds an `androidTest/` dir (landed per README transcript); `testInstrumentationRunner` still declared |
 | Counts (`catch (ignored)`, TODO, test inventory) | Unverified tallies carried forward; need grep/listing to lock |
 
 ## Required wording changes (applied in 01–05 and 07)
@@ -84,21 +84,26 @@ wording tweaks below.
 - Correct the certificate path to `net/`; note both SRV timeouts are 800 ms.
 - Correct `getBitrate` wording (cached `m_bitrate` when encoder null, otherwise unchecked `ctl` output).
 - Soften signing from `will mis-sign` to `unsupported pattern, harden`.
-- Soften foreground-service from definite kill to contract gap pending
-  app-layer verification.
+- Soften foreground-service from definite kill to contract gap; app-layer
+  promotion since verified (`MumlaConnectionNotification` + manifest — landed
+  per README transcript; residual states in the README appendix).
 - Correct `printStackTrace` to 12 verified production plus 1 intentional;
   correct Android.mk to links-plus-prose; correct overlay paths to `service/`.
 - Downgrade timing-test P1 to unbounded waits and wall-clock asserts only;
   UDP bounded awaits and the user-remove start-gate are already correct.
-- Mark preferences/username/locale, `androidTest/` zero, and tally totals as
-  needing a grep/`find` to lock; do not act on unverified lines.
+- Mark preferences/username/locale and tally totals (`catch (ignored)`, TODO,
+  test inventory) as needing a grep to lock; do not act on unverified lines.
+  (`androidTest/` zero and foreground promotion are closed by landed `find`.)
 
 ## Missing evidence (bounded)
 
 - No build/run execution: cold-path throw, `hasProperty` runtime behavior,
   pending-exception poisoning, and destroy race are code-path inferences.
-- No full-repo grep outputs for `printStackTrace`, `catch (ignored)`, TODO,
-  short product strings, or `Android.mk` mentions.
-- No directory listings for `androidTest/`, JNI tree, or test-file globs.
-- No host-app foreground-service handling, certificate caller passwords, or
-  upstream parity re-check beyond background acceptance.
+- No full-repo grep outputs for `catch (ignored)`, TODO,
+  short product strings, or `Android.mk` mentions (`printStackTrace` and
+  `androidTest/` landed full-repo greps/listings per README transcript).
+- No directory listings for JNI tree or test-file globs (`androidTest/`
+  dir absence landed via `find` + listing).
+- Host-app foreground-service handling since verified (landed per README
+  transcript); certificate caller passwords and upstream parity re-check
+  remain beyond background acceptance.

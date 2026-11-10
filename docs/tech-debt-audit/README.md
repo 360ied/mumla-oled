@@ -28,8 +28,8 @@ proposes a paydown order. It does not land any code changes itself.
 Five parallel read-only reviewer lanes (top reasoning tier), each sweeping
 its seam with exact `path` + symbol citations (no line pins; file paths are
 the stable part of each citation — prefer symbol search; historic lane
-`path:line` quotes are stale by design, so re-search the named symbol instead.
-by five independent read-only evidence-auditor lanes that re-read every P0/P1
+`path:line` quotes are stale by design, so re-search the named symbol instead),
+verified by five independent read-only evidence-auditor lanes that re-read every P0/P1
 claim against primary sources and verdict it `VALID` / `PARTIAL` / `INVALID`.
 No tests were run for this audit; it is a code-reading audit, not a behavioral
 test report. File paths are stable; any `path:line` numbers quoted from lane
@@ -109,8 +109,11 @@ digest rotations. User impact: none at runtime (dev-only build breakage).
    User impact: denoiser silently bypassed or native crash on model change.
    Done when a layout assert plus rev gate fails configure on drift. See `07`
    item 8.
-4. Three `AsyncTask` sites in `app/` (deprecated API 30): `ServerConnectTask`,
-   `MumlaCertificateGenerateTask`, `ServerInfoTask` (+ 50-thread ping pool) —
+4. Three `AsyncTask` sites in `app/` (deprecated API 30):
+   [`ServerConnectTask.kt`](../../app/src/main/java/se/lublin/mumla/app/ServerConnectTask.kt)
+   (`AsyncTask`), [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt)
+   (`mContext`), [`ServerInfoTask.kt`](../../app/src/main/java/se/lublin/mumla/servers/ServerInfoTask.kt)
+   + `ServerAdapter.kt` (`MAX_ACTIVE_PINGS` pool) —
    one retains an `Activity` context across rotation. User impact: rotation
    loses the certificate dialog or leaks it; server-list pings waste threads.
    Done when no `AsyncTask` remains and pings use a bounded coroutine pool.
@@ -118,8 +121,9 @@ digest rotations. User impact: none at runtime (dev-only build breakage).
 5. Synchronous DataStore (`runBlocking(Dispatchers.IO)`) on the UI thread in
    [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt)
    (symbols `read` / `write`) — the principal P0 ANR vector (other `runBlocking`
-   bridges exist in `SettingsRepository` snapshot/update helpers and the
-   database `io()` helper — same treatment or explicit allowlist; see appendix). User impact: settings
+   bridges exist in `SettingsRepository` snapshot/update helpers, the database
+   `io()` helper, and the `MumlaActivity` crash-check background thread
+   (allowlisted — off the UI thread); disposition in `07` item 4 gate). User impact: settings
    binds block main; visible jank or ANR under disk pressure; after the fix
    settings load asynchronously with no main-thread block. Done when no
    `runBlocking` remains on the preference path. See `07` item 4.
@@ -146,6 +150,7 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
 | Empty / error conditions | Server-grid `emptyView`; empty-channel hiding default; null/empty release fallback | Partial | Empty/denied/revoked rows in `01` P1/P2 |
 | Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` item 10); revoke-while-shown in `androidTest/` smoke tier |
 | Adjacent tabs / concurrent workers | Poller firing while the ping pool shuts down; dual-tab observers of talk-state; `TalkBroadcastReceiver` vs media-session dispatch | Listed in isolation, not modeled jointly | One concurrent-service-callback row (`repeatOnLifecycle` + shared `Flow` criterion) |
+| Main-thread bridges (ANR surface) | `DataStorePreferenceDataStore` `read`/`write`, `SettingsRepository` `snapshotBlocking`/`updateBlocking`, `MumlaRoomDatabase` `io()`, `MumlaActivity` crash-check `runBlocking` (background thread) | Partial (P0 covers the preference path) | `07` item 4 gate: zero `runBlocking` on the preference path; sibling bridges allowlisted with justification |
 
 ## Evidence transcripts (scoped, `master` at snapshot)
 

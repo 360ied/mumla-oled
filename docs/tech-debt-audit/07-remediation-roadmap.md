@@ -37,7 +37,13 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
 4. **Move DataStore off the UI thread (P0, M).**
    Repository-as-source with `Flow` plus `lifecycleScope` collection. Gates
    all settings-screen jank fixes behind it. Gate: zero `runBlocking` on the
-   preference path; settings screens collect a flow. Depends on nothing; item 3 can
+   preference path (`grep -rn runBlocking app/src/main/java/se/lublin/mumla/preference`
+   plus `SettingsRepository.kt` snapshot/update helpers empty of blocking calls);
+   settings screens collect a flow. Sibling bridges allowlisted:
+   `MumlaRoomDatabase.kt` (`io()`), crash-check background thread.
+   Files: `preference/DataStorePreferenceDataStore.kt` (`read`/`write`),
+   `SettingsRepository.kt` (`snapshotBlocking`/`updateBlocking`),
+   `db/MumlaRoomDatabase.kt` (`io`). Depends on nothing; item 3 can
    proceed in parallel.
 5. **Fail loud on network plus logging (P1, S).**
    Route TCP send `IOException` into `error()` with a drop counter; replace
@@ -52,7 +58,9 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
    Random serials plus non-empty store password (or a documented threat
    model), larger keys and shorter validity on next rotation. Small,
    high-leverage auth work. Gate: random serials plus non-empty password (or
-   documented threat model). No dependency.
+   documented threat model). Files:
+   `libraries/humla/.../net/HumlaCertificateGenerator.kt` (serial, password,
+   key size, validity); check `grep -n "0x01\|toCharArray\|initialize(2048\|YEARS_VALID"` shows random serial plus non-empty password. No dependency.
 7. **Settle the foreground-service contract (P1, S).**
    The app layer already promotes (`MumlaConnectionNotification`
    `startForeground` with microphone type; manifest
@@ -60,8 +68,11 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
    add the library contract comment plus a 4-row state table
    (connected/background, connecting/background, notification-denied on API
    33+, Doze vs locks plus `START_NOT_STICKY` loss) and extend the smoke tier
-   with Doze + process-death cases. Gate: table landed; denied-notification
-   path stated.
+   with Doze + process-death cases. Gate: table landed (rows: connected/bg,
+   connecting/bg, notification-denied, Doze — each with expected behavior);
+   denied-notification path stated. Files: `libraries/humla/HumlaService.kt`
+   (contract KDoc), `app/.../service/MumlaConnectionNotification.kt`,
+   `app/src/main/AndroidManifest.xml` (microphone type + permission).
 8. **Pin the native model contract plus destroy lifetime (P0/P1, M).**
    Layout asserts plus revision gate for the hand-mirrored `RNNModel`;
    registry/`shared_ptr` destroy discipline mirroring the crypto bridge;
