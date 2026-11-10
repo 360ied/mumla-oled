@@ -67,6 +67,12 @@ python3 -m unittest discover -s "$ROOT_DIR/scripts" -p "test_*.py" -v
 
 echo ""
 echo "========================================"
+echo " 2a. Checking Target-Architecture Tripwires"
+echo "========================================"
+python3 "$ROOT_DIR/scripts/check_architecture.py"
+
+echo ""
+echo "========================================"
 echo " 2b. Running Native C++ Audio Tests"
 echo "========================================"
 "$ROOT_DIR/scripts/test_native_audio.sh"
