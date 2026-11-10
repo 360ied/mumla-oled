@@ -166,7 +166,12 @@ class HumlaCallbacks : IHumlaObserver {
                 // Full traces in debug only: a persistently-throwing observer
                 // on a high-frequency callback must not spam logcat.
                 if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError)
+                    android.util.Log.w(
+                        "HumlaCallbacks",
+                        "Observer " + observer.javaClass.name +
+                            " threw, continuing fan-out",
+                        observerError
+                    )
                 } else {
                     // Same throwable in release: class name + message alone
                     // lose the stack the field needs. Rate is bounded by the

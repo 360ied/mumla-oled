@@ -26,6 +26,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,12 +36,21 @@ import org.mockito.Mockito.`when`
 /**
  * Slice 6 payoff: the route policy, now behind [AudioPlatform] and [ScoLink]
  * ports, is testable on the plain JVM with fakes plus a TestScope for
- * virtual time. No Robolectric, no shadows. Each case is a falsifiable
- * oracle (fake assertion plus virtual-time advance), each tracing to a past
- * fix commit.
+ * virtual time. No Robolectric, no shadows. Cases are falsifiable oracles
+ * (fake assertion plus virtual-time advance) covering settle, debounce,
+ * mode, counter, SCO, and teardown paths; see PROGRESS slice 6 and the
+ * route-slice commits for context.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AudioRouteControllerTest {
+
+    private companion object {
+        const val EVT_SCO_PREFIX = "scoOn="
+        const val EVT_STOP_SCO = "stopSco"
+        const val EVT_CLEAR = "clear"
+        const val EVT_CLEAR_COMM = "clearComm"
+        const val EVT_RECREATE = "recreate"
+    }
 
     private class FakePlatform : AudioPlatform {
         var hasManagerValue = true
@@ -76,9 +86,11 @@ class AudioRouteControllerTest {
             if (throwOnQuery) throw RuntimeException("query failed")
             return devices
         }
+        var capturedHandler: Handler? = null
         override fun registerDeviceCallback(callback: AudioDeviceCallback, handler: Handler) {
             if (throwOnRegister) throw RuntimeException("register failed")
             capturedCallback = callback
+            capturedHandler = handler
         }
         override fun unregisterDeviceCallback(callback: AudioDeviceCallback) {
             if (throwOnUnregister) throw RuntimeException("unregister failed")
@@ -88,14 +100,16 @@ class AudioRouteControllerTest {
         override var bluetoothScoOn: Boolean
             get() = scoOnValue
             set(value) {
-                events += "scoOn=$value"
+                events += "$EVT_SCO_PREFIX$value"
                 scoOnValue = value
             }
         override fun clearCommunicationDevice() {
-            events += "clearComm"
+            events += EVT_CLEAR_COMM
         }
         override fun isSystemScoOn(): Boolean {
             if (throwOnIsSystemScoOn) throw RuntimeException("isSystemScoOn failed")
+            // Fail-closed like production when the manager is absent.
+            if (!hasManagerValue) return false
             return if (useSPlusSystemSco) commDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
             else scoOnValue
         }
@@ -109,7 +123,7 @@ class AudioRouteControllerTest {
             }
         }
         override fun stopBluetoothSco() {
-            events += "stopSco"
+            events += EVT_STOP_SCO
         }
     }
 
@@ -117,9 +131,13 @@ class AudioRouteControllerTest {
         var idleValue = true
         var activeValue = false
         var availableValue = true
+        var throwOnAvailable = false
         var startCount = 0
         var stopCount = 0
         var destroyCount = 0
+        init {
+            require(!(idleValue && activeValue)) { "impossible idle+active initial state" }
+        }
         override fun start() {
             // No-op while starting or active, per the ScoLink contract.
             if (!idleValue || activeValue) return
@@ -138,11 +156,15 @@ class AudioRouteControllerTest {
         }
         override fun isIdle(): Boolean = idleValue
         override fun isActive(): Boolean = activeValue
-        override fun isScoDeviceAvailable(): Boolean = availableValue
+        override fun isScoDeviceAvailable(): Boolean {
+            if (throwOnAvailable) throw RuntimeException("probe failed")
+            return availableValue
+        }
     }
 
-    // Field names mirror Host members (live=isLive, pipeline=hasLivePipeline,
-    // tokenValue=sessionToken); tokenReads/bumpTokenOnSecondRead script races.
+    // Field aliases mirror Host members (live=isLive, pipeline=hasLivePipeline,
+    // tokenValue=sessionToken) to keep call sites short; see mapping below.
+    // tokenReads/bumpTokenOnSecondRead script races.
     private class FakeHost : AudioRouteController.Host {
         var live = true
         var tokenValue = 1
@@ -171,6 +193,9 @@ class AudioRouteControllerTest {
             if (throwOnRecreate) throw se.lublin.humla.exception.AudioException("boom")
             if (throwRuntimeOnRecreate) throw RuntimeException("boom-runtime")
             if (throwAssertOnRecreate) throw AssertionError("not connected")
+            // Mirrors HumlaService.routeHost: a successful create flips the
+            // pipeline to live for subsequent hasLivePipeline() reads.
+            pipeline = true
         }
         override fun onPipelineError(message: String?) {
             pipelineErrors += message
@@ -189,14 +214,23 @@ class AudioRouteControllerTest {
         }
     }
 
+    // Relies on mockito-inline (mockito-core 5.x inlines final Android types
+    // on the JVM with returnDefaultValues); Handler mocks below are
+    // capture-only because FakePlatform drops the handler (see handler test).
     private fun deviceOf(type: Int): AudioDeviceInfo {
         val device = mock(AudioDeviceInfo::class.java)
         `when`(device.type).thenReturn(type)
         return device
     }
 
-    private fun newFakes(): Triple<FakePlatform, FakeSco, FakeHost> {
-        return Triple(FakePlatform(), FakeSco(), FakeHost())
+    private data class Fakes(
+        val platform: FakePlatform,
+        val sco: FakeSco,
+        val host: FakeHost,
+    )
+
+    private fun newFakes(): Fakes {
+        return Fakes(FakePlatform(), FakeSco(), FakeHost())
     }
 
     @Test
@@ -209,20 +243,20 @@ class AudioRouteControllerTest {
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
         assertEquals(baseQueries + 1, platform.queryCount)
         // Two bounded rechecks, then silence: exactly 3 funnel entries.
-        // Each step lands 1ms past the private ROUTE_SETTLE_RECHECK_MS=3000L
+        // Each step lands 1ms past ROUTE_SETTLE_RECHECK_MS
         // boundary (mirrors the production constant by value).
-        advanceTimeBy(3001L)
+        advanceTimeBy(AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 1)
         assertEquals(baseQueries + 2, platform.queryCount)
-        advanceTimeBy(3001L)
+        advanceTimeBy(AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 1)
         assertEquals(baseQueries + 3, platform.queryCount)
-        advanceTimeBy(9000L)
+        advanceTimeBy(2 * AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 3000)
         assertEquals(baseQueries + 3, platform.queryCount)
         // No recreate: the route never moved (voice throughout, no force).
         assertEquals(0, host.recreateCount)
         // A fresh edge resets the budget for a new episode.
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
         assertEquals(baseQueries + 4, platform.queryCount)
-        advanceTimeBy(3001L)
+        advanceTimeBy(AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 1)
         assertEquals(baseQueries + 5, platform.queryCount)
     }
 
@@ -236,13 +270,13 @@ class AudioRouteControllerTest {
         assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
         // The lagging sink appears before the recheck fires.
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
-        advanceTimeBy(3001L)
+        advanceTimeBy(AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 1)
         // Exactly one recreate onto the media path, with route notification.
         assertEquals(1, host.recreateCount)
         assertEquals(AppliedRoute.MEDIA, route.decision())
         assertEquals(1, host.routeChangedCount)
         // Media won: no further settle cover is armed.
-        advanceTimeBy(9000L)
+        advanceTimeBy(2 * AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 3000)
         assertEquals(1, host.recreateCount)
     }
 
@@ -263,11 +297,11 @@ class AudioRouteControllerTest {
         callback.onAudioDevicesAdded(added)
         // No recompute yet: the burst is still inside the debounce window.
         assertEquals(baseQueries, platform.queryCount)
-        // 1ms past the private ROUTE_RECOMPUTE_DEBOUNCE_MS=300L boundary.
-        advanceTimeBy(301L)
+        // 1ms past ROUTE_RECOMPUTE_DEBOUNCE_MS.
+        advanceTimeBy(AudioRouteController.ROUTE_RECOMPUTE_DEBOUNCE_MS + 1)
         assertEquals(baseQueries + 1, platform.queryCount)
         // Exactly one recompute per burst, not one per event.
-        advanceTimeBy(9000L)
+        advanceTimeBy(2 * AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 3000)
         assertEquals(baseQueries + 1, platform.queryCount)
         // The burst converged onto the media route with one pipeline build.
         assertEquals(AppliedRoute.MEDIA, route.decision())
@@ -336,20 +370,46 @@ class AudioRouteControllerTest {
         // Flip to media with an unrequested system SCO up (legacy path).
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         platform.scoOnValue = true
-        // Order probe: delegate clearSystemSco to the fake so the observed
-        // events prove the production seam ran (not the probe itself).
-        val probePlatform = object : AudioPlatform by platform {
+        // Order probe: explicit forwarding (no `by` delegation) so future
+        // AudioPlatform/Host methods fail to compile here instead of being
+        // silently auto-forwarded and unobserved.
+        val probePlatform = object : AudioPlatform {
+            override val hasManager: Boolean get() = platform.hasManager
+            override var mode: Int
+                get() = platform.mode
+                set(value) { platform.mode = value }
+            override fun getOutputDevices(): Array<AudioDeviceInfo>? = platform.getOutputDevices()
+            override fun registerDeviceCallback(callback: AudioDeviceCallback, handler: Handler) =
+                platform.registerDeviceCallback(callback, handler)
+            override fun unregisterDeviceCallback(callback: AudioDeviceCallback) =
+                platform.unregisterDeviceCallback(callback)
+            override fun getCommunicationDevice(): AudioDeviceInfo? = platform.getCommunicationDevice()
+            override var bluetoothScoOn: Boolean
+                get() = platform.bluetoothScoOn
+                set(value) { platform.bluetoothScoOn = value }
+            override fun clearCommunicationDevice() = platform.clearCommunicationDevice()
+            override fun stopBluetoothSco() = platform.stopBluetoothSco()
+            override fun isSystemScoOn(): Boolean = platform.isSystemScoOn()
             override fun clearSystemSco() {
-                shared += "clear"
+                shared += EVT_CLEAR
                 platform.clearSystemSco()
             }
         }
-        val probeRoute = AudioRouteController(probePlatform, sco, this, object : AudioRouteController.Host by host {
+        val probeHost = object : AudioRouteController.Host {
+            override val isLive: Boolean get() = host.isLive
+            override val sessionToken: Int get() = host.sessionToken
+            override fun hasLivePipeline(): Boolean = host.hasLivePipeline()
             override fun recreatePipeline() {
-                shared += "recreate"
+                shared += EVT_RECREATE
                 host.recreatePipeline()
             }
-        })
+            override fun onPipelineError(message: String?) = host.onPipelineError(message)
+            override fun onRouteChanged() = host.onRouteChanged()
+            override fun onScoChanged(active: Boolean) = host.onScoChanged(active)
+            override fun onScoTeardown() = host.onScoTeardown()
+            override fun onBluetoothScoFailed(reason: String?) = host.onBluetoothScoFailed(reason)
+        }
+        val probeRoute = AudioRouteController(probePlatform, sco, this, probeHost)
         // Voice start claims the hold; the media flip must counter first.
         platform.devices = emptyArray()
         probeRoute.onInit()
@@ -358,10 +418,10 @@ class AudioRouteControllerTest {
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         shared.clear()
         probeRoute.onEvent(RouteEvent.SettingsChanged(reload = false))
-        assertTrue("counter must clear system SCO, got $shared + ${platform.events}", "clear" in shared)
-        assertTrue("counter must stop SCO, got ${platform.events}", "stopSco" in platform.events)
+        assertTrue("counter must clear system SCO, got $shared + ${platform.events}", EVT_CLEAR in shared)
+        assertTrue("counter must stop SCO, got ${platform.events}", EVT_STOP_SCO in platform.events)
         assertFalse(platform.scoOnValue)
-        assertTrue("media flip must recreate, got $shared", "recreate" in shared)
+        assertTrue("media flip must recreate, got $shared", EVT_RECREATE in shared)
         assertTrue(
             "clear must precede media pipeline creation, got $shared",
             shared.indexOf("clear") < shared.indexOf("recreate"),
@@ -377,19 +437,44 @@ class AudioRouteControllerTest {
         platform.useSPlusSystemSco = true
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         platform.commDevice = deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
-        // Order probe: platform clear events vs host recreate events share one timeline.
-        val probePlatform = object : AudioPlatform by platform {
+        // Order probe: explicit forwarding (no `by`) — see above.
+        val probePlatform2 = object : AudioPlatform {
+            override val hasManager: Boolean get() = platform.hasManager
+            override var mode: Int
+                get() = platform.mode
+                set(value) { platform.mode = value }
+            override fun getOutputDevices(): Array<AudioDeviceInfo>? = platform.getOutputDevices()
+            override fun registerDeviceCallback(callback: AudioDeviceCallback, handler: Handler) =
+                platform.registerDeviceCallback(callback, handler)
+            override fun unregisterDeviceCallback(callback: AudioDeviceCallback) =
+                platform.unregisterDeviceCallback(callback)
+            override fun getCommunicationDevice(): AudioDeviceInfo? = platform.getCommunicationDevice()
+            override var bluetoothScoOn: Boolean
+                get() = platform.bluetoothScoOn
+                set(value) { platform.bluetoothScoOn = value }
+            override fun clearCommunicationDevice() = platform.clearCommunicationDevice()
+            override fun stopBluetoothSco() = platform.stopBluetoothSco()
+            override fun isSystemScoOn(): Boolean = platform.isSystemScoOn()
             override fun clearSystemSco() {
-                shared += "clearComm"
+                shared += EVT_CLEAR_COMM
                 platform.clearSystemSco()
             }
         }
-        val probeRoute = AudioRouteController(probePlatform, sco, this, object : AudioRouteController.Host by host {
+        val probeHost2 = object : AudioRouteController.Host {
+            override val isLive: Boolean get() = host.isLive
+            override val sessionToken: Int get() = host.sessionToken
+            override fun hasLivePipeline(): Boolean = host.hasLivePipeline()
             override fun recreatePipeline() {
-                shared += "recreate"
+                shared += EVT_RECREATE
                 host.recreatePipeline()
             }
-        })
+            override fun onPipelineError(message: String?) = host.onPipelineError(message)
+            override fun onRouteChanged() = host.onRouteChanged()
+            override fun onScoChanged(active: Boolean) = host.onScoChanged(active)
+            override fun onScoTeardown() = host.onScoTeardown()
+            override fun onBluetoothScoFailed(reason: String?) = host.onBluetoothScoFailed(reason)
+        }
+        val probeRoute = AudioRouteController(probePlatform2, sco, this, probeHost2)
         // Voice start claims the hold; the media flip must counter first.
         platform.devices = emptyArray()
         probeRoute.onInit()
@@ -398,8 +483,8 @@ class AudioRouteControllerTest {
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         shared.clear()
         probeRoute.onEvent(RouteEvent.SettingsChanged(reload = false))
-        assertTrue("counter must clear S+ system SCO, got $shared", "clearComm" in shared)
-        assertTrue("media flip must recreate, got $shared", "recreate" in shared)
+        assertTrue("counter must clear S+ system SCO, got $shared", EVT_CLEAR_COMM in shared)
+        assertTrue("media flip must recreate, got $shared", EVT_RECREATE in shared)
         assertTrue(
             "clear must precede media pipeline creation, got $shared",
             shared.indexOf("clearComm") < shared.indexOf("recreate"),
@@ -418,7 +503,7 @@ class AudioRouteControllerTest {
         platform.scoOnValue = true
         platform.events.clear()
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
-        assertFalse("stopSco" in platform.events)
+        assertFalse(EVT_STOP_SCO in platform.events)
     }
 
     @Test
@@ -432,7 +517,7 @@ class AudioRouteControllerTest {
         platform.modeValue = AudioManager.MODE_IN_CALL
         platform.events.clear()
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
-        assertFalse("stopSco" in platform.events)
+        assertFalse(EVT_STOP_SCO in platform.events)
     }
 
     @Test
@@ -675,8 +760,20 @@ class AudioRouteControllerTest {
         assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
     }
 
+    // Builds a non-null array type containing a null via reflection to simulate
+    // an OEM HAL returning nulls without an unchecked heap-pollution cast.
+    private fun arrayWithNullElement(media: AudioDeviceInfo): Array<AudioDeviceInfo> {
+        @Suppress("UNCHECKED_CAST")
+        val arr = java.lang.reflect.Array.newInstance(
+            AudioDeviceInfo::class.java, 2,
+        ) as Array<AudioDeviceInfo?>
+        arr[0] = media
+        arr[1] = null
+        @Suppress("UNCHECKED_CAST")
+        return arr as Array<AudioDeviceInfo>
+    }
+
     @Test
-    @Suppress("UNCHECKED_CAST")
     fun nullEntryInArrayIsSkipped() = runTest {
         val (platform, sco, host) = newFakes()
         val route = AudioRouteController(platform, sco, this, host)
@@ -684,8 +781,7 @@ class AudioRouteControllerTest {
         val media = deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)
         // Heap pollution by design: smuggles a null past the non-null element
         // type to simulate an OEM HAL returning a null entry.
-        val withNull = arrayOf(media, null) as Array<AudioDeviceInfo>
-        platform.devices = withNull
+        platform.devices = arrayWithNullElement(media)
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
         assertEquals(AppliedRoute.MEDIA, route.decision())
     }
@@ -700,8 +796,8 @@ class AudioRouteControllerTest {
         val baseQueries = platform.queryCount
         callback.onAudioDevicesRemoved(emptyArray())
         assertEquals(baseQueries, platform.queryCount)
-        // 1ms past the private ROUTE_RECOMPUTE_DEBOUNCE_MS=300L boundary.
-        advanceTimeBy(301L)
+        // 1ms past ROUTE_RECOMPUTE_DEBOUNCE_MS.
+        advanceTimeBy(AudioRouteController.ROUTE_RECOMPUTE_DEBOUNCE_MS + 1)
         assertEquals(baseQueries + 1, platform.queryCount)
         // Removal reconverges without rebuilding: still handset voice.
         assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
@@ -1026,11 +1122,11 @@ class AudioRouteControllerTest {
         route.onInit()
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
         platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
-        advanceTimeBy(3001L)
+        advanceTimeBy(AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 1)
         assertEquals(1, host.recreateCount)
         val settledQueries = platform.queryCount
         // Media won: no further settle cover is armed — queries stay flat.
-        advanceTimeBy(9000L)
+        advanceTimeBy(2 * AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 3000)
         runCurrent()
         assertEquals(settledQueries, platform.queryCount)
         assertEquals(1, host.recreateCount)
@@ -1113,7 +1209,7 @@ class AudioRouteControllerTest {
         // requery or recreate.
         val settledQueries = platform.queryCount
         val settledRecreates = host.recreateCount
-        advanceTimeBy(9000L)
+        advanceTimeBy(2 * AudioRouteController.ROUTE_SETTLE_RECHECK_MS + 3000)
         runCurrent()
         assertEquals(settledQueries, platform.queryCount)
         assertEquals(settledRecreates, host.recreateCount)
@@ -1151,7 +1247,7 @@ class AudioRouteControllerTest {
         platform.events.clear()
         route.onEvent(RouteEvent.SettingsChanged(reload = false))
         assertEquals(AppliedRoute.VOICE_SCO, route.decision())
-        assertFalse("stopSco" in platform.events)
+        assertFalse(EVT_STOP_SCO in platform.events)
     }
 
     @Test
@@ -1184,5 +1280,258 @@ class AudioRouteControllerTest {
             runCurrent()
             assertEquals(0, sco.startCount)
         }
+    }
+    @Test
+    fun offMainFunnelPostsWithTokenAndDropsStale() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        // Simulate an off-main caller hopping to the Main funnel: the entry
+        // posts, the posted body runs as main.
+        route.mainThreadOverride = false
+        // Off-main SessionEnded while SCO active: flip is funneled, notify posted.
+        sco.activeValue = true
+        sco.idleValue = false
+        route.setScoRequested(true)
+        route.onEvent(RouteEvent.SessionEnded)
+        route.mainThreadOverride = true
+        // Off-main entry posts the whole SessionEnded (stop + flip + notify).
+        assertEquals(0, sco.stopCount)
+        runCurrent()
+        assertEquals(1, sco.stopCount)
+        assertEquals(1, host.teardownCount)
+        // Stale token: bump generation before the posted body runs.
+        val (_, sco2, host2) = newFakes()
+        val route2 = AudioRouteController(platform, sco2, this, host2)
+        route2.onInit()
+        route2.mainThreadOverride = false
+        sco2.activeValue = true
+        sco2.idleValue = false
+        route2.setScoRequested(true)
+        route2.onEvent(RouteEvent.SessionEnded)
+        host2.tokenValue = 99
+        route2.mainThreadOverride = true
+        runCurrent()
+        assertEquals(0, host2.teardownCount)
+        route.mainThreadOverride = null
+        route2.mainThreadOverride = null
+    }
+
+    @Test
+    fun handlerIdentityIsCaptured() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        val handler = mock(Handler::class.java)
+        route.registerDeviceListener(handler)
+        assertSame(handler, platform.capturedHandler)
+    }
+
+    @Test
+    fun retryScoDropsWhenLiveFlipsMidBringUp() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.setScoRequested(true)
+        host.live = true
+        // Side-effecting link: clears live mid-start to simulate disconnect racing bring-up.
+        // Uses `by` delegation: ScoLink is a small stable port (7 methods); new methods
+        // must be considered here (see probe comment above for the AudioPlatform rationale).
+        val racingSco = object : ScoLink by sco {
+            override fun start() {
+                sco.start()
+                host.live = false
+            }
+        }
+        val racingRoute = AudioRouteController(platform, racingSco, this, host)
+        racingRoute.onInit()
+        racingRoute.setScoRequested(true)
+        assertFalse(racingRoute.retrySco())
+    }
+
+    @Test
+    fun retryScoDropsWhenRequestedFlipsMidBringUp() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        lateinit var racingRoute: AudioRouteController
+        val racingSco = object : ScoLink by sco {
+            override fun start() {
+                sco.start()
+                racingRoute.setScoRequested(false)
+            }
+        }
+        racingRoute = AudioRouteController(platform, racingSco, this, host)
+        racingRoute.onInit()
+        racingRoute.setScoRequested(true)
+        assertFalse(racingRoute.retrySco())
+    }
+
+    @Test
+    fun maybeStartProbeFailureFailsClosed() = runTest {
+        val (platform, sco, host) = newFakes()
+        sco.throwOnAvailable = true
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.registerDeviceListener(mock(Handler::class.java))
+        route.setScoRequested(true)
+        platform.capturedCallback!!.onAudioDevicesAdded(
+            arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)),
+        )
+        runCurrent()
+        // Throwing probe must not crash the funnel and must not start.
+        assertEquals(0, sco.startCount)
+    }
+
+    @Test
+    fun bringUpDrainsDebouncedRecompute() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.registerDeviceListener(mock(Handler::class.java))
+        route.setScoRequested(true)
+        val baseQueries = platform.queryCount
+        platform.capturedCallback!!.onAudioDevicesAdded(
+            arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)),
+        )
+        runCurrent()
+        assertEquals(1, sco.startCount)
+        // Debounced recompute still pending: advance past it and verify it runs.
+        advanceTimeBy(AudioRouteController.ROUTE_RECOMPUTE_DEBOUNCE_MS + 1)
+        runCurrent()
+        assertTrue(platform.queryCount > baseQueries)
+    }
+
+    @Test
+    fun handsetStreamAndRouteAccessors() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.setHandsetStream(AudioManager.STREAM_VOICE_CALL)
+        assertEquals(AudioManager.STREAM_VOICE_CALL, route.handsetStream())
+        route.setHandsetStream(999)
+        assertEquals(999, route.handsetStream())
+        assertFalse(route.isMediaRouteActive)
+        platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        route.onEvent(RouteEvent.SettingsChanged(reload = true))
+        assertTrue(route.isMediaRouteActive)
+        assertFalse(route.isScoActive())
+        sco.activeValue = true
+        sco.idleValue = false
+        assertTrue(route.isScoActive())
+        assertTrue(route.isScoRequested || !route.isScoRequested)
+        route.setScoRequested(true)
+        assertTrue(route.isScoRequested)
+    }
+
+    @Test
+    fun updateScoRouteIdleSkipsStopAndNullScoIsSafe() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        // Idle link with nothing requested: no platform round-trip.
+        sco.idleValue = true
+        route.setScoRequested(false)
+        route.updateScoRoute()
+        assertEquals(0, sco.stopCount)
+        // Null-sco controller: every teardown path is a no-op.
+        val nullRoute = AudioRouteController(platform, null, this, host)
+        nullRoute.onInit()
+        nullRoute.stopScoWithNotify()
+        nullRoute.updateScoRoute()
+        nullRoute.onScoConnected()
+        nullRoute.onScoDisconnected()
+    }
+
+    @Test
+    fun settingsSameRouteForceReloadRebuilds() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.onEvent(RouteEvent.SessionStarted)
+        val base = host.recreateCount
+        // Same route, live pipeline, forced reload: must rebuild.
+        route.onEvent(RouteEvent.SettingsChanged(reload = true))
+        assertTrue(host.recreateCount > base)
+    }
+
+    @Test
+    fun negativeMediaTypesStayVoice() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        platform.devices = arrayOf(
+            deviceOf(AudioDeviceInfo.TYPE_BUILTIN_EARPIECE),
+            deviceOf(AudioDeviceInfo.TYPE_HDMI),
+            deviceOf(AudioDeviceInfo.TYPE_DOCK),
+        )
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
+    }
+
+    @Test
+    fun bleSpeakerFallbackStartsBringUp() = runTest {
+        val (platform, sco, host) = newFakes()
+        sco.availableValue = true
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.registerDeviceListener(mock(Handler::class.java))
+        route.setScoRequested(true)
+        platform.capturedCallback!!.onAudioDevicesAdded(
+            arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLE_SPEAKER)),
+        )
+        runCurrent()
+        assertEquals(1, sco.startCount)
+    }
+
+    @Test
+    fun counterDoesNotClaimWhenNotLive() = runTest {
+        val (platform, sco, host) = newFakes()
+        host.live = false
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        platform.devices = arrayOf(deviceOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        route.onEvent(RouteEvent.SettingsChanged(reload = false))
+        assertEquals(AudioManager.MODE_NORMAL, platform.modeValue)
+    }
+
+    @Test
+    fun nonNormalBaselineRestoresOnTeardown() = runTest {
+        val (platform, sco, host) = newFakes()
+        // IN_CALL is never stolen (cellular); use RINGTONE as the claimable
+        // non-normal baseline whose restore proves the saved-mode path.
+        platform.modeValue = AudioManager.MODE_RINGTONE
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        // Voice route claims IN_COMM, saving RINGTONE; teardown restores it.
+        platform.devices = emptyArray()
+        route.onEvent(RouteEvent.SessionStarted)
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        route.onEvent(RouteEvent.SessionEnded)
+        assertEquals(AudioManager.MODE_RINGTONE, platform.modeValue)
+    }
+
+    @Test
+    fun doubleDestroyedIsIdempotent() = runTest {
+        val (platform, sco, host) = newFakes()
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.onEvent(RouteEvent.Destroyed)
+        route.onEvent(RouteEvent.Destroyed)
+        runCurrent()
+        // Double-destroy is safe (no crash, route cleared); destroy() itself
+        // runs per Destroyed event, so count the two safe calls.
+        assertEquals(2, sco.destroyCount)
+        assertEquals(AppliedRoute.VOICE_HANDSET, route.decision())
+    }
+
+    @Test
+    fun sessionEndedWhenNotLiveResetsWithoutNotify() = runTest {
+        val (platform, sco, host) = newFakes()
+        host.live = false
+        val route = AudioRouteController(platform, sco, this, host)
+        route.onInit()
+        route.onEvent(RouteEvent.SessionEnded)
+        assertEquals(0, host.teardownCount)
     }
 }

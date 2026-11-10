@@ -23,7 +23,7 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 /**
- * Pins the pure SCO retry-budget decision in {@link BluetoothScoManager}.
+ * Pins the pure SCO retry-budget decision in [BluetoothScoManager].
  * The connect-timeout path (`onConnectTimeout`) retries while
  * {@code shouldRetryBringUp} holds: another attempt
  * remains while fewer than {@code maxAttempts} attempts have run, otherwise
@@ -31,7 +31,8 @@ import org.junit.Test;
  * retry; refusal and no-device fail unconditionally in their
  * callers, so no budget branch exists to pin for those reasons.
  *
- * <p>The full manager cannot be constructed on the JVM (it needs a platform
+ *
+ * The full manager cannot be constructed on the JVM (it needs a platform
  * {@code Context} and main-looper {@code Handler}; this module is JUnit-only
  * with no Robolectric), so this truth table is the JVM-testable seam for the
  * bring-up matrix.
@@ -40,6 +41,8 @@ public class BluetoothScoRetryPolicyTest {
 
     @Test
     public void freshBringUpAlwaysRetries() {
+        // Pure-function pin: attempt 0 never reaches onConnectTimeout in production
+        // (attemptBringUp increments before arming), but the function itself retries.
         assertTrue("Zero attempts must always retry",
                 BluetoothScoManager.shouldRetryBringUp(0, 2));
         assertTrue("Zero attempts must retry even with a budget of one",
@@ -70,6 +73,8 @@ public class BluetoothScoRetryPolicyTest {
 
     @Test
     public void zeroBudgetNeverRetries() {
+        // Unreachable via ctor (require maxAttempts >= 1); pure-function pin for symmetry
+        // with the negative-attempts drift detector above.
         assertFalse("Zero budget must fail immediately",
                 BluetoothScoManager.shouldRetryBringUp(0, 0));
     }

@@ -21,10 +21,11 @@ package se.lublin.humla.audio
  * SCO link port behind the route policy.
  *
  * The production implementation is [BluetoothScoManager]; controller
- * tests use trivial fakes. Method-for-method with the manager's public
- * surface so the in-place substitution is mechanical.
+ * tests use trivial fakes. Instance-method-for-instance-method with the manager's
+ * public SCO surface (the manager additionally exposes REASON_*, retry policy,
+ * and constructors) so the in-place substitution is mechanical.
  */
-interface ScoLink {
+internal interface ScoLink {
     /** Begins SCO bring-up; no-op while starting or active. */
     fun start()
 

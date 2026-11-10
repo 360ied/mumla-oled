@@ -22,7 +22,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.ArgumentMatchers.anyFloat
+import org.mockito.ArgumentMatchers.anyInt
+import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
@@ -63,10 +66,10 @@ class InputModesValidationTest {
         modes.validateAudioDelta(ConfigDelta(transmitMode = Constants.TRANSMIT_VOICE_ACTIVITY))
         assertEquals(Constants.TRANSMIT_VOICE_ACTIVITY, modes.transmitMode)
         assertFalse(modes.halfDuplex)
-        assertEquals(ActivityInputMode.DEFAULT_VAD_MAX, modes.activity.vadMax, 0.0f)
+        assertEquals(ActivityInputMode.DEFAULT_VAD_MAX, modes.activity.vadMax, 1e-6f)
         // Finite thresholds pass validation, still without mutating.
         modes.validateAudioDelta(ConfigDelta(detectionThreshold = 0.5f, amplitudeBoost = 1.0f))
-        assertEquals(ActivityInputMode.DEFAULT_VAD_MAX, modes.activity.vadMax, 0.0f)
+        assertEquals(ActivityInputMode.DEFAULT_VAD_MAX, modes.activity.vadMax, 1e-6f)
     }
 
     @Test
@@ -121,7 +124,7 @@ class InputModesValidationTest {
         }
         // Holder untouched by the rejected deltas.
         assertEquals(Constants.TRANSMIT_VOICE_ACTIVITY, modes.transmitMode)
-        assertEquals(ActivityInputMode.DEFAULT_VAD_MAX, modes.activity.vadMax, 0.0f)
+        assertEquals(ActivityInputMode.DEFAULT_VAD_MAX, modes.activity.vadMax, 1e-6f)
     }
 
     @Test
@@ -165,11 +168,11 @@ class InputModesValidationTest {
         // Specific instance (not any()): Kotlin non-null param + any() null
         // would NPE at the stub call site.
         `when`(builder.setInputMode(modes.toggle)).thenReturn(builder)
-        `when`(builder.setTargetBitrate(org.mockito.ArgumentMatchers.anyInt())).thenReturn(builder)
-        `when`(builder.setTargetFramesPerPacket(org.mockito.ArgumentMatchers.anyInt())).thenReturn(builder)
-        `when`(builder.setAmplitudeBoost(org.mockito.ArgumentMatchers.anyFloat())).thenReturn(builder)
-        `when`(builder.setHalfDuplexEnabled(org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(builder)
-        `when`(builder.setAdaptiveLevelerEnabled(org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(builder)
+        `when`(builder.setTargetBitrate(anyInt())).thenReturn(builder)
+        `when`(builder.setTargetFramesPerPacket(anyInt())).thenReturn(builder)
+        `when`(builder.setAmplitudeBoost(anyFloat())).thenReturn(builder)
+        `when`(builder.setHalfDuplexEnabled(anyBoolean())).thenReturn(builder)
+        `when`(builder.setAdaptiveLevelerEnabled(anyBoolean())).thenReturn(builder)
         val liveHandler = mock(AudioHandler::class.java)
         val liveConnection = mock(HumlaConnection::class.java)
         modes.applyAudioDelta(
@@ -187,11 +190,11 @@ class InputModesValidationTest {
             liveConnection,
         )
         assertEquals(Constants.TRANSMIT_PUSH_TO_TALK, modes.transmitMode)
-        assertEquals(true, modes.halfDuplex)
+        assertTrue(modes.halfDuplex)
         // The live VAD push must ride along: a regression dropping it would
         // leave the running pipeline on stale thresholds.
-        assertEquals(0.5f, modes.activity.vadMax, 0.0f)
-        verify(liveHandler).setVadThresholds(anyFloat(), anyFloat())
+        assertEquals(0.5f, modes.activity.vadMax, 1e-6f)
+        verify(liveHandler).setVadThresholds(eq(modes.activity.vadMax), eq(modes.activity.vadMin))
         verify(builder).setInputMode(modes.toggle)
         verify(builder).setHalfDuplexEnabled(true)
         verify(builder).setTargetBitrate(64000)
@@ -216,7 +219,7 @@ class InputModesValidationTest {
         }
         // Validate-before-commit covers the mutating entry too: the holder
         // keeps its thresholds and the builder sees no boost.
-        assertEquals(before, modes.activity.vadMax, 0.0f)
+        assertEquals(before, modes.activity.vadMax, 1e-6f)
         verify(builder, never()).setAmplitudeBoost(anyFloat())
     }
 
@@ -234,5 +237,43 @@ class InputModesValidationTest {
             )
         }
         assertEquals(before, modes.transmitMode)
+        org.mockito.Mockito.verifyNoInteractions(builder)
+    }
+
+    @Test
+    fun outOfRangeFiniteThresholdsPassThenClamp() {
+        val modes = InputModes()
+        // Out-of-range finite thresholds pass validation (clamped downstream),
+        // e.g. 2.0 clamps to 1.0, -1.0 clamps to 0.0.
+        modes.validateAudioDelta(ConfigDelta(detectionThreshold = 2.0f))
+        modes.validateAudioDelta(ConfigDelta(detectionThreshold = -1.0f))
+        modes.applyAudioDelta(
+            ConfigDelta(detectionThreshold = 2.0f),
+            mock(AudioHandler.Builder::class.java),
+            null,
+            null,
+        )
+        assertEquals(1.0f, modes.activity.vadMax, 1e-6f)
+    }
+
+    @Test
+    fun amplitudeBoostRangeEnforced() {
+        val modes = InputModes()
+        assertThrows(IllegalArgumentException::class.java) {
+            modes.validateAudioDelta(ConfigDelta(amplitudeBoost = -1.0f))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            modes.validateAudioDelta(ConfigDelta(amplitudeBoost = 1e30f))
+        }
+        modes.validateAudioDelta(ConfigDelta(amplitudeBoost = 2.0f))
+    }
+
+    @Test
+    fun inputQualityCeilingEnforced() {
+        val modes = InputModes()
+        assertThrows(IllegalArgumentException::class.java) {
+            modes.validateAudioDelta(ConfigDelta(inputQuality = 1000000))
+        }
+        modes.validateAudioDelta(ConfigDelta(inputQuality = 64000))
     }
 }

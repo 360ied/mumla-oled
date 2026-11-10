@@ -23,6 +23,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
+import android.util.Log
+import androidx.annotation.VisibleForTesting
 
 /**
  * Platform port behind the route policy.
@@ -39,7 +41,7 @@ import android.os.Handler
  * are a test-only seam mirroring the manager's primitives (fakes probe
  * ordering through them; no production caller uses them directly).
  */
-interface AudioPlatform {
+internal interface AudioPlatform {
     /** False before onCreate wires the real manager, or when lookup failed. */
     val hasManager: Boolean
 
@@ -55,18 +57,22 @@ interface AudioPlatform {
     /** No-op when absent (mirrors the former safe-call). */
     fun unregisterDeviceCallback(callback: AudioDeviceCallback)
 
-    /** S+ communication device; null on pre-S or when absent. */
+    /** S+ communication device; null on pre-S or when absent. Test-only seam. */
     @TargetApi(Build.VERSION_CODES.S)
+    @VisibleForTesting
     fun getCommunicationDevice(): AudioDeviceInfo?
 
-    /** Legacy SCO flag; false when absent. */
+    /** Legacy SCO flag; false when absent. Test-only seam. */
+    @VisibleForTesting
     var bluetoothScoOn: Boolean
 
-    /** S+ route clear; no-op on pre-S or when absent. */
+    /** S+ route clear; no-op on pre-S or when absent. Test-only seam. */
     @TargetApi(Build.VERSION_CODES.S)
+    @VisibleForTesting
     fun clearCommunicationDevice()
 
-    /** Legacy SCO stop; no-op when absent. */
+    /** Legacy SCO stop; no-op when absent. Test-only seam. */
+    @VisibleForTesting
     fun stopBluetoothSco()
 
     /**
@@ -92,7 +98,7 @@ interface AudioPlatform {
  * mutations are no-ops, and mode reads fall back to MODE_NORMAL (callers
  * check [hasManager] before touching mode, so the fallback never fires).
  */
-class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
+internal class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
     companion object {
         private const val TAG = "AudioPlatform"
     }
@@ -163,12 +169,12 @@ class AndroidAudioPlatform(private val manager: AudioManager?) : AudioPlatform {
         try {
             manager?.stopBluetoothSco()
         } catch (e: Exception) {
-            android.util.Log.w(TAG, "stopBluetoothSco failed", e)
+            Log.w(TAG, "stopBluetoothSco failed", e)
         }
         try {
             manager?.isBluetoothScoOn = false
         } catch (e: Exception) {
-            android.util.Log.w(TAG, "clear SCO flag failed", e)
+            Log.w(TAG, "clear SCO flag failed", e)
         }
     }
 }

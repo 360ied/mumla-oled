@@ -77,6 +77,9 @@ android {
         compilerOptions {
             // Match the Java toolchain: without this Kotlin defaults to 1.8 bytecode.
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+            // Default interface methods are real Java defaults (not DefaultImpls),
+            // so out-of-tree Java observers inherit onBluetoothScoFailed/onAudioRouteChanged.
+            freeCompilerArgs.add("-jvm-default=enable")
         }
     }
 
@@ -242,7 +245,9 @@ tasks.matching { it.name == "check" }.configureEach {
 // up-to-date at the Gradle level since the Exec task declares no
 // inputs/outputs) on every unit-test invocation, duplicating scripts/check.sh
 // step 2b which already runs the same suite explicitly. `./gradlew check`
-// still covers native via the check dependency above.
+// still covers native via the check dependency above. Run via check.sh (or
+// run test_native_audio.sh first) for direct Gradle invocations: CryptState
+// tests load libhumlaaudio from build/test-native and fail without it.
 tasks.withType(Test).configureEach {
     systemProperty "java.library.path", "${project.rootDir}/build/test-native"
 }

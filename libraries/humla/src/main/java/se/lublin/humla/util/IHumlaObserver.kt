@@ -67,7 +67,7 @@ interface IHumlaObserver {
      * Called on the main thread when the Bluetooth SCO link transitions.
      * Delivery is on the caller thread; the in-tree route host always calls
      * on main. Out-of-tree observers must not assume a looper.
-     * @param active true if SCO is up and carrying call audio, false on
+     * @param active True if SCO is up and carrying call audio, false on
      *               teardown or failed bring-up (phone-audio fallback).
      */
     fun onBluetoothScoChanged(active: Boolean)
@@ -79,9 +79,9 @@ interface IHumlaObserver {
      * extra throttle here. Delivery is on the caller thread; the in-tree
      * route host always calls on main. In-tree observers should extend
      * HumlaObserver (no-op default); out-of-tree direct implementors in
-     * Java without -Xjvm-default must add an override when upgrading
+     * Java inherit the default (jvm-default=enable); no override needed
      * (Kotlin observers inherit the default no-op).
-     * @param reason failure reason (see BluetoothScoManager REASON_*), or
+     * @param reason Failure reason (see `BluetoothScoManager` `REASON_*`), or
      *               null when unknown.
      */
     fun onBluetoothScoFailed(reason: String?) {

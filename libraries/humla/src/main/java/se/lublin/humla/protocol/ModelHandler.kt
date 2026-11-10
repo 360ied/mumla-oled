@@ -137,11 +137,22 @@ class ModelHandler(
         }
         val ch = channel
 
-        if (msg.hasName())
+        // In-place order-key mutation must re-sort the parent list to preserve
+        // Channel's sorted-insertion invariant (position/name are the sort keys).
+        var orderChanged = false
+        if (msg.hasName() && ch.name != msg.name) {
             ch.name = msg.name
+            orderChanged = true
+        }
 
-        if (msg.hasPosition())
+        if (msg.hasPosition() && ch.position != msg.position) {
             ch.position = msg.position
+            orderChanged = true
+        }
+
+        if (orderChanged) {
+            ch.parent?.resortInParent(ch)
+        }
 
         if (msg.hasParent()) {
             val oldParent = ch.parent

@@ -23,6 +23,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -47,7 +48,7 @@ internal class AudioRouteController(
     private val scope: CoroutineScope,
     private val host: Host,
 ) {
-    interface Host {
+    internal interface Host {
         /**
          * Threading: members must be lock-free and safe from any thread.
          * Funnel calls run on main, but binder-originated
@@ -91,7 +92,7 @@ internal class AudioRouteController(
     }
 
     companion object {
-        private val TAG = "AudioRouteController"
+        internal const val TAG = "AudioRouteController"
 
         /**
          * One-shot settle recheck for voice-by-absence: BT profiles attach
@@ -103,11 +104,14 @@ internal class AudioRouteController(
          * left on voice. Bounded to two extra checks (~3s, ~6s) per episode —
          * never a loop — covering typical profile-stagger windows.
          */
-        private const val ROUTE_SETTLE_RECHECK_MS = 3000L
-        private const val ROUTE_SETTLE_MAX_RECHECKS = 2
+        @VisibleForTesting
+        internal const val ROUTE_SETTLE_RECHECK_MS = 3000L
+        @VisibleForTesting
+        internal const val ROUTE_SETTLE_MAX_RECHECKS = 2
 
         /** Debounce for device attach/detach flurries: one recompute per burst. */
-        private const val ROUTE_RECOMPUTE_DEBOUNCE_MS = 300L
+        @VisibleForTesting
+        internal const val ROUTE_RECOMPUTE_DEBOUNCE_MS = 300L
 
         /**
          * Route truth table: confirmed SCO forces the voice triple; otherwise a
@@ -154,8 +158,14 @@ internal class AudioRouteController(
 
     private var deviceCallback: AudioDeviceCallback? = null
 
+    /** Test-only override for the main-thread gate; null uses Looper. Lets JVM tests
+     * exercise the off-main funnel posting path that is dead under returnDefaultValues. */
+    @VisibleForTesting
+    internal var mainThreadOverride: Boolean? = null
+
     /** Main-thread gate for the funnel; JVM unit tests have no looper and run sync. */
     private fun isMainThread(): Boolean {
+        mainThreadOverride?.let { return it }
         val main = Looper.getMainLooper() ?: return true
         return Looper.myLooper() == main
     }
@@ -169,14 +179,15 @@ internal class AudioRouteController(
 
     /**
      * Handset stream intent (earpiece vs speakerphone voice). Any int is
-     * accepted; the pipeline consumes it verbatim and invalid values fail
-     * at creation, not here. Default MUSIC preserves the pre-extraction
-     * atomic default.
+     * accepted; the pipeline consumes it verbatim and anything other than
+     * VOICE_CALL behaves as speakerphone/media (see AudioHandler field docs
+     * and AudioOutput usage mapping). Default MUSIC preserves the
+     * pre-extraction atomic default.
      */
     fun setHandsetStream(stream: Int) {
         if (stream != AudioManager.STREAM_MUSIC && stream != AudioManager.STREAM_VOICE_CALL) {
-            // Fail-fast signal only: the pipeline still consumes the value
-            // verbatim and validates at creation (pre-extraction behavior).
+            // Warn-and-coerce only: the pipeline still consumes the value
+            // verbatim; anything else maps to speakerphone/media downstream.
             Log.w(TAG, "Unexpected handset stream $stream; expected MUSIC or VOICE_CALL")
         }
         handsetStream = stream
@@ -208,8 +219,7 @@ internal class AudioRouteController(
         val link: ScoLink? = sco
         val live = host.isLive
         val token = host.sessionToken
-        if (requested && live && link != null && link.isIdle()
-        ) {
+        if (requested && live && link != null && link.isIdle()) {
             link.start()
             // Re-validate identity, state, and intent: a disable or a
             // disconnect/reconnect cycle during bring-up must not leave
@@ -401,7 +411,7 @@ internal class AudioRouteController(
                     scoRouteActive = false
                 }
                 if (wasActive) {
-                    postTeardownNotify()
+                    postTeardownNotify(token)
                 }
             }
             return
@@ -409,15 +419,19 @@ internal class AudioRouteController(
         scoRouteActive = false
         if (wasActive) {
             // Posted: orders the notify after the synchronous disable-path
-            // pipeline reload. Single-writer (funnel) while on main, so the
-            // flag cannot flip under us; the guards below stay as cheap
-            // idempotence against a re-confirm queued behind us.
-            scope.launch { postTeardownNotify() }
+            // pipeline reload. Captures the session token so a fast
+            // reconnect that bumps the generation before this runs is
+            // dropped as stale instead of fanning out into the new session.
+            val token = host.sessionToken
+            scope.launch { postTeardownNotify(token) }
         }
     }
 
     /** Posted-teardown notify guards, shared by the main and funneled paths. */
-    private fun postTeardownNotify() {
+    private fun postTeardownNotify(capturedToken: Int) {
+        if (shouldDropStaleEvent(capturedToken)) {
+            return
+        }
         if (destroyed) {
             return
         }
@@ -752,7 +766,7 @@ internal class AudioRouteController(
                 host.onPipelineError(e.message)
             }
         }
-        val routeChanged = firstCreate || (host.isLive && (forceReload || update.changed))
+        val routeChanged = host.isLive && (firstCreate || (forceReload || update.changed))
         if (routeChanged) {
             host.onRouteChanged()
         }
@@ -870,7 +884,15 @@ internal class AudioRouteController(
         // Fast path: HFP surfaced directly. Fallback: any BT add with an
         // SCO device actually available (A2DP-first stagger, quiet HALs).
         // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
-        if (!scoInAdded && !(anyBtInAdded && link.isScoDeviceAvailable())) {
+        // Fail-closed on probe errors: a throwing ScoLink must never crash
+        // the funnel/Main; treat as unavailable and skip the bring-up.
+        val scoAvailable = try {
+            link.isScoDeviceAvailable()
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO availability probe failed", e)
+            false
+        }
+        if (!scoInAdded && !(anyBtInAdded && scoAvailable)) {
             return
         }
         Log.i(TAG, "Bluetooth headset attached with SCO requested; starting bring-up")

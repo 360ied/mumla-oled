@@ -28,6 +28,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,38 +40,38 @@ import kotlinx.coroutines.launch
 /**
  * Owns the Bluetooth SCO (HFP) audio route for a voice session.
  *
- * <p>SCO link bring-up is asynchronous and unreliable: the platform call
+ * SCO link bring-up is asynchronous and unreliable: the platform call
  * returns before the link exists, establishment takes seconds, and failure is
  * silent without a state callback. This manager hides that behind a small state
  * machine with a connect timeout, one retry, and automatic fallback reporting.
  *
- * <p>SCO link bring-up runs on one of two platform backends by API level:
- * API 31+ uses {@code setCommunicationDevice()} with a
- * {@code TYPE_BLUETOOTH_SCO} device from
- * {@code getAvailableCommunicationDevices()}, observed via
- * {@code OnCommunicationDeviceChangedListener}. API 30 uses the legacy
- * {@code startBluetoothSco()}/{@code stopBluetoothSco()} pair, observed via
- * the {@code ACTION_SCO_AUDIO_STATE_UPDATED} broadcast. Both backends share
+ * SCO link bring-up runs on one of two platform backends by API level:
+ * API 31+ uses `setCommunicationDevice()` with a
+ * `TYPE_BLUETOOTH_SCO` device from
+ * `getAvailableCommunicationDevices()`, observed via
+ * `OnCommunicationDeviceChangedListener`. API 30 uses the legacy
+ * `startBluetoothSco()`/`stopBluetoothSco()` pair, observed via
+ * the `ACTION_SCO_AUDIO_STATE_UPDATED` broadcast. Both backends share
  * the same state machine, timeout, retry budget, and epoch guards below.
  *
- * <p>Locking: {@code state}, {@code attempts}, {@code generation}, {@code routeHeld},
- * {@code routeHeldEpoch}, {@code deviceListener}, and {@code scoReceiver} are
+ * Locking: `state`, `attempts`, `generation`, `routeHeld`,
+ * `routeHeldEpoch`, `deviceListener`, and `scoReceiver` are
  * guarded by the manager monitor. Bring-up runs outside the monitor and re-validates by
- * session epoch after each IPC step, so a concurrent {@code stop()} aborts
+ * session epoch after each IPC step, so a concurrent `stop()` aborts
  * the sequence instead of interleaving with it. Observer register/teardown
  * take the monitor themselves; their IPC is idempotent and fast. Route
  * release always runs outside the monitor. All listener
- * callbacks run outside the monitor: {@code onScoConnected} and
- * {@code onScoDisconnected} originate on main-thread platform callbacks;
- * {@code onScoFailed} is always launched in the manager scope (Main.immediate)
- * and dropped when its session generation is stale, so {@code stop()} truly
+ * callbacks run outside the monitor: `onScoConnected` and
+ * `onScoDisconnected` originate on main-thread platform callbacks;
+ * `onScoFailed` is always launched in the manager scope (Main.immediate)
+ * and dropped when its session generation is stale, so `stop()` truly
  * never callbacks. Coroutine cancellation is the epoch for the
  * timeout path (stop cancels the timeout child); the generation still guards
  * platform device-listener callbacks, which cannot be cancelled.
  *
- * <p>AudioManager mode is deliberately NOT owned here. The service route
- * policy ({@code HumlaService}) is the single owner of
- * {@code MODE_IN_COMMUNICATION}: it holds the mode for the whole voice-route
+ * AudioManager mode is deliberately NOT owned here. The service route
+ * policy (`HumlaService`) is the single owner of
+ * `MODE_IN_COMMUNICATION`: it holds the mode for the whole voice-route
  * duration, which covers confirmed SCO sessions. Setting it here as well
  * made the service classify our own hold as externally owned and give up
  * its claim, stranding the mode on later media switches — so this manager
@@ -78,7 +79,7 @@ import kotlinx.coroutines.launch
  */
 class BluetoothScoManager : ScoLink {
     companion object {
-        private val TAG = BluetoothScoManager::class.java.name
+        private val TAG = BluetoothScoManager::class.java.simpleName
 
         /** Per-attempt budget for the link to report connected before retry/fail. */
         private const val CONNECT_TIMEOUT_MS = 8000L
@@ -86,9 +87,7 @@ class BluetoothScoManager : ScoLink {
         /** Total bring-up attempts (initial + one retry) before reporting failure. */
         private const val MAX_ATTEMPTS = 2
 
-        private const val STATE_IDLE = 0
-        private const val STATE_STARTING = 1
-        private const val STATE_ACTIVE = 2
+        private enum class ScoState { IDLE, STARTING, ACTIVE }
 
         /** The grant is missing or was revoked mid-bring-up; surface a permission hint. */
         const val REASON_PERMISSION = "permission"
@@ -111,9 +110,9 @@ class BluetoothScoManager : ScoLink {
          * have run. Refusal and no-device fail unconditionally in their
          * callers — no budget branch exists to drift. (Stack-error
          * failures go straight to `fail()` with no retry.)
-         * Visible for the JVM truth-table test (public for Java callers;
-         * Kotlin has no package visibility); not part of the production API.
+         * Visible for the JVM truth-table test; not part of the production API.
          */
+        @VisibleForTesting
         @JvmStatic
         fun shouldRetryBringUp(attempts: Int, maxAttempts: Int): Boolean {
             return attempts < maxAttempts
@@ -129,7 +128,7 @@ class BluetoothScoManager : ScoLink {
 
         /**
          * The link never came up.
-         * @param reason one of {@code REASON_*}.
+         * @param reason one of `REASON_*`.
          */
         fun onScoFailed(reason: String?)
     }
@@ -155,7 +154,7 @@ class BluetoothScoManager : ScoLink {
     private val connectTimeoutMs: Long
     private val maxAttempts: Int
 
-    private var state: Int = STATE_IDLE
+    private var state: ScoState = ScoState.IDLE
     private var attempts: Int = 0
     private var generation: Int = 0
     private var routeHeld: Boolean = false
@@ -210,19 +209,19 @@ class BluetoothScoManager : ScoLink {
     /**
      * Begins SCO bring-up. No-op while starting or active. Every failure —
      * including pre-flight checks — reports through a posted
-     * {@link Listener#onScoFailed} (never {@code onScoDisconnected}), so
+     * {@link Listener#onScoFailed} (never `\1`), so
      * callers must not assume the link is up when this returns.
      */
     override fun start() {
         synchronized(this) {
-            if (state != STATE_IDLE) {
+            if (state != ScoState.IDLE) {
                 return
             }
             // Flip first: pre-flight failures below report through fail(), which
             // only notifies when leaving a non-IDLE state. Bump the generation
             // so callbacks posted by earlier sessions are dropped on delivery.
             // A new session never inherits a stale route hold.
-            state = STATE_STARTING
+            state = ScoState.STARTING
             attempts = 0
             routeHeld = false
             routeHeldEpoch = -1
@@ -256,7 +255,7 @@ class BluetoothScoManager : ScoLink {
             timeoutJob?.cancel()
             timeoutJob = null
             taken = takeObserversLocked()
-            state = STATE_IDLE
+            state = ScoState.IDLE
             ++generation
         }
         unregisterObservers(taken)
@@ -274,13 +273,13 @@ class BluetoothScoManager : ScoLink {
     /** True when no bring-up is in progress and no link is up. */
     @Synchronized
     override fun isIdle(): Boolean {
-        return state == STATE_IDLE
+        return state == ScoState.IDLE
     }
 
     /** True only once the link has reported connected and not since dropped. */
     @Synchronized
     override fun isActive(): Boolean {
-        return state == STATE_ACTIVE
+        return state == ScoState.ACTIVE
     }
 
     // Bring-up runs outside the monitor (see class locking note), keyed by
@@ -306,7 +305,7 @@ class BluetoothScoManager : ScoLink {
 
     private fun isStartingEpoch(epoch: Int): Boolean {
         synchronized(this) {
-            return state == STATE_STARTING && epoch == generation
+            return state == ScoState.STARTING && epoch == generation
         }
     }
 
@@ -357,7 +356,7 @@ class BluetoothScoManager : ScoLink {
         if (!accepted) {
             return REASON_REFUSED
         }
-        markRouteHeld()
+        markRouteHeld(epoch)
         if (!isStartingEpoch(epoch)) {
             // Stopped after the request landed: undo it, since stop() ran
             // before the request existed. Epoch-scoped: a newer session may
@@ -370,7 +369,7 @@ class BluetoothScoManager : ScoLink {
             // complete now instead of burning the timeout waiting for a
             // change event that will never come. The timeout stays armed as
             // fallback; setActive (or stop) removes it.
-            armTimeout()
+            armTimeout(epoch)
             scoScope.launch {
                 if (isStartingEpoch(epoch) && isScoActiveNow()) {
                     setActive()
@@ -380,7 +379,7 @@ class BluetoothScoManager : ScoLink {
             }
             return null
         }
-        armTimeout()
+        armTimeout(epoch)
         return null
     }
 
@@ -455,7 +454,7 @@ class BluetoothScoManager : ScoLink {
 
     private fun onModernDeviceChanged(device: AudioDeviceInfo?, epoch: Int) {
         val scoNow: Boolean
-        val stateCopy: Int
+        val stateCopy: ScoState
         val currentEpoch: Int
         synchronized(this) {
             stateCopy = state
@@ -467,9 +466,9 @@ class BluetoothScoManager : ScoLink {
             // the route now and this stale event must not move the machine.
             return
         }
-        if (stateCopy == STATE_STARTING && scoNow) {
+        if (stateCopy == ScoState.STARTING && scoNow) {
             setActive()
-        } else if (stateCopy == STATE_ACTIVE && !scoNow) {
+        } else if (stateCopy == ScoState.ACTIVE && !scoNow) {
             dropActiveLink()
         }
         // A system move to a non-SCO device mid-bring-up is left to burn the
@@ -496,13 +495,11 @@ class BluetoothScoManager : ScoLink {
         if (!isStartingEpoch(epoch)) {
             return null
         }
-        try {
-            if (!registerDeviceListener()) {
-                return REASON_ERROR
-            }
-        } catch (e: SecurityException) {
-            Log.w(TAG, "SCO receiver denied", e)
-            return REASON_PERMISSION
+        // registerLegacyReceiver swallows all registration errors to false and
+        // never throws, so no SecurityException catch here (modern path keeps
+        // its own permission mapping).
+        if (!registerDeviceListener()) {
+            return REASON_ERROR
         }
         if (!isStartingEpoch(epoch)) {
             teardownObservers()
@@ -536,7 +533,7 @@ class BluetoothScoManager : ScoLink {
             }
             return REASON_ERROR
         }
-        markRouteHeld()
+        markRouteHeld(epoch)
         if (!isStartingEpoch(epoch)) {
             releaseRouteIfHeldForEpoch(epoch)
             return null
@@ -546,7 +543,7 @@ class BluetoothScoManager : ScoLink {
         // always report "active" and complete before the link exists -
         // cancelling the timeout and disabling the retry/failure net.
         // Always await the CONNECTED broadcast.
-        armTimeout()
+        armTimeout(epoch)
         return null
     }
 
@@ -555,7 +552,7 @@ class BluetoothScoManager : ScoLink {
     // disconnects and error states burn the attempt timeout like transient
     // modern selection flaps (see onModernDeviceChanged).
     private fun onLegacyScoStateChanged(scoState: Int, epoch: Int) {
-        val stateCopy: Int
+        val stateCopy: ScoState
         val currentEpoch: Int
         synchronized(this) {
             stateCopy = state
@@ -564,11 +561,11 @@ class BluetoothScoManager : ScoLink {
         if (epoch != currentEpoch) {
             return
         }
-        if (stateCopy == STATE_STARTING &&
+        if (stateCopy == ScoState.STARTING &&
             scoState == AudioManager.SCO_AUDIO_STATE_CONNECTED
         ) {
             setActive()
-        } else if (stateCopy == STATE_ACTIVE &&
+        } else if (stateCopy == ScoState.ACTIVE &&
             (scoState == AudioManager.SCO_AUDIO_STATE_DISCONNECTED ||
                 scoState == AudioManager.SCO_AUDIO_STATE_ERROR)
         ) {
@@ -576,10 +573,10 @@ class BluetoothScoManager : ScoLink {
         }
     }
 
-    private fun onConnectTimeout() {
+    private fun onConnectTimeout(epoch: Int) {
         val retry: Boolean
         synchronized(this) {
-            if (state != STATE_STARTING) {
+            if (state != ScoState.STARTING || epoch != generation) {
                 return
             }
             retry = shouldRetryBringUp(attempts, maxAttempts)
@@ -596,7 +593,7 @@ class BluetoothScoManager : ScoLink {
         teardownObservers()
         releaseRouteIfHeld()
         synchronized(this) {
-            if (state != STATE_STARTING) {
+            if (state != ScoState.STARTING || epoch != generation) {
                 return
             }
         }
@@ -606,26 +603,30 @@ class BluetoothScoManager : ScoLink {
 
     private fun setActive() {
         synchronized(this) {
-            if (state != STATE_STARTING) {
+            if (state != ScoState.STARTING) {
                 return
             }
-            state = STATE_ACTIVE
+            state = ScoState.ACTIVE
             timeoutJob?.cancel()
             timeoutJob = null
         }
         Log.i(TAG, "Bluetooth SCO connected")
         // Main-thread origin (broadcast, device listener, or timeout), so a
         // direct call preserves connected-then-callback ordering.
-        listener.onScoConnected()
+        try {
+            listener.onScoConnected()
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO connected listener threw", e)
+        }
     }
 
     private fun dropActiveLink() {
         val taken: Observers
         synchronized(this) {
-            if (state != STATE_ACTIVE) {
+            if (state != ScoState.ACTIVE) {
                 return
             }
-            state = STATE_IDLE
+            state = ScoState.IDLE
             timeoutJob?.cancel()
             timeoutJob = null
             taken = takeObserversLocked()
@@ -634,17 +635,21 @@ class BluetoothScoManager : ScoLink {
         releaseRouteIfHeld()
         Log.i(TAG, "Bluetooth SCO disconnected")
         // Main-thread origin; see setActive.
-        listener.onScoDisconnected()
+        try {
+            listener.onScoDisconnected()
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO disconnected listener threw", e)
+        }
     }
 
     private fun fail(reason: String?) {
         val generationCopy: Int
         val taken: Observers
         synchronized(this) {
-            if (state == STATE_IDLE) {
+            if (state == ScoState.IDLE) {
                 return
             }
-            state = STATE_IDLE
+            state = ScoState.IDLE
             timeoutJob?.cancel()
             timeoutJob = null
             taken = takeObserversLocked()
@@ -662,7 +667,11 @@ class BluetoothScoManager : ScoLink {
                 generationCopy == generation
             }
             if (current) {
-                listener.onScoFailed(reason)
+                try {
+                    listener.onScoFailed(reason)
+                } catch (e: Exception) {
+                    Log.w(TAG, "SCO failure listener threw", e)
+                }
             } else {
                 Log.i(TAG, "Dropping stale SCO failure callback: " + reason)
             }
@@ -673,44 +682,55 @@ class BluetoothScoManager : ScoLink {
     // that follows a completed fail()/drop() cannot clear another app's
     // routing selection.
     private fun releaseRouteIfHeld() {
-        val held: Boolean
+        val epoch: Int
         synchronized(this) {
-            held = routeHeld
-            routeHeld = false
-            routeHeldEpoch = -1
+            if (!routeHeld) {
+                return
+            }
+            epoch = routeHeldEpoch
         }
-        if (held) {
-            releaseRoute()
+        if (releaseRoute()) {
+            synchronized(this) {
+                if (routeHeld && routeHeldEpoch == epoch) {
+                    routeHeld = false
+                    routeHeldEpoch = -1
+                }
+            }
         }
     }
 
-    private fun markRouteHeld() {
+    private fun markRouteHeld(epoch: Int) {
         synchronized(this) {
             routeHeld = true
-            routeHeldEpoch = generation
+            routeHeldEpoch = epoch
         }
     }
 
     /**
      * Epoch-scoped release for stale abort paths: only clears the hold when
      * it still belongs to the given session generation. Authoritative
-     * teardowns (stop/fail/drop/timeout) use {@link #releaseRouteIfHeld}.
+     * teardowns (stop/fail/drop/timeout) use [releaseRouteIfHeld].
      */
     private fun releaseRouteIfHeldForEpoch(epoch: Int) {
-        val release: Boolean
+        val held: Boolean
         synchronized(this) {
-            release = routeHeld && routeHeldEpoch == epoch
-            if (release) {
-                routeHeld = false
-                routeHeldEpoch = -1
-            }
+            held = routeHeld && routeHeldEpoch == epoch
         }
-        if (release) {
-            releaseRoute()
+        if (!held) {
+            return
+        }
+        if (releaseRoute()) {
+            synchronized(this) {
+                if (routeHeld && routeHeldEpoch == epoch) {
+                    routeHeld = false
+                    routeHeldEpoch = -1
+                }
+            }
         }
     }
 
-    private fun releaseRoute() {
+    private fun releaseRoute(): Boolean {
+        var ok = true
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 releaseRouteModern()
@@ -722,16 +742,20 @@ class BluetoothScoManager : ScoLink {
                     audioManager.stopBluetoothSco()
                 } catch (ignored: Exception) {
                     Log.w(TAG, "Legacy SCO stop threw", ignored)
+                    ok = false
                 }
                 try {
                     audioManager.isBluetoothScoOn = false
                 } catch (ignored: Exception) {
                     Log.w(TAG, "Legacy SCO routing clear threw", ignored)
+                    ok = false
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "SCO route release threw", e)
+            ok = false
         }
+        return ok
     }
 
     // Modern route release (S+): callers guarantee the version above.
@@ -740,16 +764,16 @@ class BluetoothScoManager : ScoLink {
         audioManager.clearCommunicationDevice()
     }
 
-    private fun armTimeout() {
+    private fun armTimeout(epoch: Int) {
         // Assigns outside the monitor while stop()/setActive()/fail()
-        // cancel-and-null under it: an interleaved stop() can orphan a
-        // timeout-budget no-op timer, but its onConnectTimeout still finds state != STARTING
-        // and returns, so the window is harmless (kept unsynchronized to
-        // avoid blocking bring-up on teardown).
+        // cancel-and-null under it (kept unsynchronized to avoid blocking
+        // bring-up on teardown). The epoch guard in onConnectTimeout drops
+        // orphans that outlive a stop/start cycle instead of tearing down
+        // the new session.
         timeoutJob?.cancel()
         timeoutJob = scoScope.launch {
             delay(connectTimeoutMs)
-            onConnectTimeout()
+            onConnectTimeout(epoch)
         }
     }
 

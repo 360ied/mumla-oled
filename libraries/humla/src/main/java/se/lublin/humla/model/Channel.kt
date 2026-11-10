@@ -23,14 +23,19 @@ import java.util.Collections
 import java.util.HashSet
 
 class Channel : IChannel, Comparable<Channel> {
+    /** Model-thread confined: written by ModelHandler on the TCP/model thread, read on UI/binder. */
     override var id: Int = 0
+    /** Model-thread confined: use [resortInParent] after in-place updates (see ModelHandler). */
     override var position: Int = 0
     override var isTemporary: Boolean = false
     override var parent: Channel? = null
+    /** Model-thread confined: use [resortInParent] after in-place updates (see ModelHandler). */
     override var name: String? = null
     override var description: String? = null
     // Copy-on-access like User's ByteString getters: holders of the getter
     // ref must not be able to mutate channel state through the array.
+    // Note: overrides an immutable `IChannel` val as a mutable concrete-only
+    // var (see `IChannel` KDoc); mutation is only via this concrete type.
     override var descriptionHash: ByteArray? = null
         get() = field?.clone()
         set(value) {
@@ -62,52 +67,69 @@ class Channel : IChannel, Comparable<Channel> {
     }
 
     /**
-     * @see User.channel
+     * See `User.channel`.
      * Widened to public: Kotlin has no package visibility.
      */
     fun addUser(user: User) {
-        for (i in userList.indices) {
-            val u = userList[i]
-            if (user.compareTo(u) <= 0) {
-                userList.add(i, user)
-                return
+        synchronized(userList) {
+            for (i in userList.indices) {
+                val u = userList[i]
+                if (user.compareTo(u) <= 0) {
+                    userList.add(i, user)
+                    return
+                }
             }
+            userList.add(user)
         }
-        userList.add(user)
     }
 
     /**
-     * @see User.channel
+     * See `User.channel`.
      * Widened to public: Kotlin has no package visibility.
      */
     fun removeUser(user: User) {
-        userList.remove(user)
+        synchronized(userList) {
+            userList.remove(user)
+        }
     }
 
     override val users: List<User>
-        get() = Collections.unmodifiableList(userList)
+        get() = synchronized(userList) { ArrayList(userList) }
 
     override val subchannels: List<Channel>
-        get() = Collections.unmodifiableList(subchannelList)
+        get() = synchronized(subchannelList) { ArrayList(subchannelList) }
 
     fun addSubchannel(channel: Channel?) {
-        if (channel == null || channel == this || subchannelList.contains(channel)) return
-        for (i in subchannelList.indices) {
-            val sc = subchannelList[i]
-            if (channel.compareTo(sc) <= 0) {
-                subchannelList.add(i, channel)
-                return
+        synchronized(subchannelList) {
+            if (channel == null || channel == this || subchannelList.contains(channel)) return
+            for (i in subchannelList.indices) {
+                val sc = subchannelList[i]
+                if (channel.compareTo(sc) <= 0) {
+                    subchannelList.add(i, channel)
+                    return
+                }
             }
+            subchannelList.add(channel)
         }
-        subchannelList.add(channel)
     }
 
     fun removeSubchannel(channel: Channel?) {
-        subchannelList.remove(channel)
+        synchronized(subchannelList) {
+            subchannelList.remove(channel)
+        }
+    }
+
+    /** Re-sorts an in-place mutated child (position/name) to preserve sorted-insertion order. */
+    fun resortInParent(child: Channel) {
+        synchronized(subchannelList) {
+            if (subchannelList.remove(child)) {
+                addSubchannel(child)
+            }
+        }
     }
 
     override val links: List<Channel>
-        get() = Collections.unmodifiableList(linkList)
+        get() = synchronized(linkList) { ArrayList(linkList) }
 
     /**
      * Returns the set of all channels transitively linked to this channel,
@@ -176,8 +198,10 @@ class Channel : IChannel, Comparable<Channel> {
      */
     override val subchannelUserCount: Int
         get() {
-            var userCount = userList.size
-            for (subc in subchannelList) {
+            val usersSnapshot: List<User> = synchronized(userList) { ArrayList(userList) }
+            val subsSnapshot: List<Channel> = synchronized(subchannelList) { ArrayList(subchannelList) }
+            var userCount = usersSnapshot.size
+            for (subc in subsSnapshot) {
                 userCount += subc.subchannelUserCount
             }
             return userCount

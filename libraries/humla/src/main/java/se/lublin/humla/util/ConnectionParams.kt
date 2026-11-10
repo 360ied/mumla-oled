@@ -48,14 +48,22 @@ class ConnectionParams(
     localMuteHistory: List<Int>? = null,
     localIgnoreHistory: List<Int>? = null,
 ) {
-    val certificate: ByteArray? = certificate?.copyOf()
-        get() = field?.clone()
-    val accessTokens: List<String>? = accessTokens?.toList()
-        get() = field?.toList()
-    val localMuteHistory: List<Int>? = localMuteHistory?.toList()
-        get() = field?.toList()
-    val localIgnoreHistory: List<Int>? = localIgnoreHistory?.toList()
-        get() = field?.toList()
+    // Private backing fields: internal reads use these directly to avoid
+    // allocating a defensive copy per equals/hashCode/toString/copy call.
+    // Public getters below still return copies so holders can never mutate
+    // the published snapshot.
+    private val certificateBacking: ByteArray? = certificate?.copyOf()
+    private val accessTokensBacking: List<String>? = accessTokens?.toList()
+    private val localMuteHistoryBacking: List<Int>? = localMuteHistory?.toList()
+    private val localIgnoreHistoryBacking: List<Int>? = localIgnoreHistory?.toList()
+    val certificate: ByteArray?
+        get() = certificateBacking?.clone()
+    val accessTokens: List<String>?
+        get() = accessTokensBacking?.toList()
+    val localMuteHistory: List<Int>?
+        get() = localMuteHistoryBacking?.toList()
+    val localIgnoreHistory: List<Int>?
+        get() = localIgnoreHistoryBacking?.toList()
 
     fun copy(
         server: Server? = this.server,
@@ -71,56 +79,57 @@ class ConnectionParams(
         localIgnoreHistory: List<Int>? = this.localIgnoreHistory,
     ): ConnectionParams = ConnectionParams(
         server = server,
-        certificate = certificate?.copyOf(),
+        certificate = certificate,
         certificatePassword = certificatePassword,
         forceTcp = forceTcp,
         clientName = clientName,
-        accessTokens = accessTokens?.toList(),
+        accessTokens = accessTokens,
         trustStore = trustStore,
         trustStorePassword = trustStorePassword,
         trustStoreFormat = trustStoreFormat,
-        localMuteHistory = localMuteHistory?.toList(),
-        localIgnoreHistory = localIgnoreHistory?.toList(),
+        localMuteHistory = localMuteHistory,
+        localIgnoreHistory = localIgnoreHistory,
     )
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ConnectionParams) return false
         return server === other.server &&
-            (certificate === other.certificate ||
-                (certificate != null && other.certificate != null &&
-                    certificate.contentEquals(other.certificate))) &&
+            (certificateBacking === other.certificateBacking ||
+                (certificateBacking != null && other.certificateBacking != null &&
+                    certificateBacking.contentEquals(other.certificateBacking))) &&
             certificatePassword == other.certificatePassword &&
             forceTcp == other.forceTcp &&
             clientName == other.clientName &&
-            accessTokens == other.accessTokens &&
+            accessTokensBacking == other.accessTokensBacking &&
             trustStore == other.trustStore &&
             trustStorePassword == other.trustStorePassword &&
             trustStoreFormat == other.trustStoreFormat &&
-            localMuteHistory == other.localMuteHistory &&
-            localIgnoreHistory == other.localIgnoreHistory
+            localMuteHistoryBacking == other.localMuteHistoryBacking &&
+            localIgnoreHistoryBacking == other.localIgnoreHistory
     }
 
     override fun hashCode(): Int {
         var result = System.identityHashCode(server)
-        result = 31 * result + (certificate?.contentHashCode() ?: 0)
+        result = 31 * result + (certificateBacking?.contentHashCode() ?: 0)
         result = 31 * result + (certificatePassword?.hashCode() ?: 0)
         result = 31 * result + forceTcp.hashCode()
         result = 31 * result + (clientName?.hashCode() ?: 0)
-        result = 31 * result + (accessTokens?.hashCode() ?: 0)
+        result = 31 * result + (accessTokensBacking?.hashCode() ?: 0)
         result = 31 * result + (trustStore?.hashCode() ?: 0)
         result = 31 * result + (trustStorePassword?.hashCode() ?: 0)
         result = 31 * result + (trustStoreFormat?.hashCode() ?: 0)
-        result = 31 * result + (localMuteHistory?.hashCode() ?: 0)
-        result = 31 * result + (localIgnoreHistory?.hashCode() ?: 0)
+        result = 31 * result + (localMuteHistoryBacking?.hashCode() ?: 0)
+        result = 31 * result + (localIgnoreHistoryBacking?.hashCode() ?: 0)
         return result
     }
 
     // Redacted: certificates, passwords, and tokens must never reach logs.
+    // server prints as host:port (non-secret routing info); identity hash is useless.
     override fun toString(): String =
-        "ConnectionParams(server=$server, certificate=<${certificate?.size ?: 0} bytes>, " +
+        "ConnectionParams(server=${server?.host}:${server?.port}, certificate=<${certificateBacking?.size ?: 0} bytes>, " +
             "certificatePassword=<redacted>, forceTcp=$forceTcp, clientName=$clientName, " +
             "accessTokens=<redacted>, trustStore=$trustStore, " +
             "trustStorePassword=<redacted>, trustStoreFormat=$trustStoreFormat, " +
-            "localMuteHistory=$localMuteHistory, localIgnoreHistory=$localIgnoreHistory)"
+            "localMuteHistory=$localMuteHistoryBacking, localIgnoreHistory=$localIgnoreHistoryBacking)"
 }

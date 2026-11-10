@@ -35,9 +35,10 @@ import se.lublin.humla.util.ConfigDelta
  *
  * The holder starts with voice-activity defaults while
  * `AudioHandler.Builder.mInputMode` stays null until the first
- * mode-carrying delta runs: `MumlaService.buildConnectDelta` always sets
- * `transmitMode`, so the first `apply()` carries it in practice. A delta
- * without `transmitMode` leaves the previous holder value in place.
+ * mode-carrying delta runs: the app-layer `MumlaService.buildConnectDelta`
+ * override always sets `transmitMode` (base returns null), so the first
+ * `apply()` carries it in practice. A delta without `transmitMode` leaves
+ * the previous holder value in place.
  */
 class InputModes(
     val activity: ActivityInputMode =
@@ -48,6 +49,10 @@ class InputModes(
     @Volatile
     var halfDuplex: Boolean = false,
 ) {
+    // Direct assignment bypasses the builder recompute in [applyAudioDelta];
+    // all in-tree writers go through the applier (verified by grep), so the
+    // setter stays public for the extension applier below.
+
     /**
      * Validated at construction and on every applier write (see
      * [applyAudioDelta]); the private setter keeps direct assignment from
@@ -137,7 +142,16 @@ class InputModes(
 /** Floor for [ConfigDelta.inputQuality]: no downstream sanitizer floors the
  * native target (only the bandwidth-degraded copy is floored at 8000), and
  * the settings UI mins at the same value. */
-private const val MIN_INPUT_BITRATE = 8000
+internal const val MIN_INPUT_BITRATE = 8000
+
+/** Ceiling for [ConfigDelta.inputQuality]: Opus NB/WB/SW/FB tops out at 510kbit/s;
+ * UI max is far below; values above are almost certainly a caller bug. */
+internal const val MAX_INPUT_BITRATE = 510000
+
+/** Gain range for [ConfigDelta.amplitudeBoost]: 0 (mute) to 4x (+12dB).
+ * Negative gain would invert phase; huge gain overflows the native limiter. */
+internal const val MIN_AMPLITUDE_BOOST = 0f
+internal const val MAX_AMPLITUDE_BOOST = 4f
 
 /**
  * Validates the audio half of [ConfigDelta]. The throwing inputs (unknown
@@ -164,15 +178,18 @@ fun InputModes.validateAudioDelta(delta: ConfigDelta) {
     val amplitudeBoost = delta.amplitudeBoost
     if (amplitudeBoost != null) {
         // No downstream clamp: Inf gain hits the native limiter raw (silent
-        // frames go 0*Inf=NaN through the JNI int cast).
+        // frames go 0*Inf=NaN through the JNI int cast); negatives invert.
         require(amplitudeBoost.isFinite()) {
             "amplitudeBoost must be finite"
+        }
+        require(amplitudeBoost in MIN_AMPLITUDE_BOOST..MAX_AMPLITUDE_BOOST) {
+            "amplitudeBoost must be in $MIN_AMPLITUDE_BOOST..$MAX_AMPLITUDE_BOOST"
         }
     }
     val inputQuality = delta.inputQuality
     if (inputQuality != null) {
-        require(inputQuality >= MIN_INPUT_BITRATE) {
-            "inputQuality must be >= $MIN_INPUT_BITRATE"
+        require(inputQuality in MIN_INPUT_BITRATE..MAX_INPUT_BITRATE) {
+            "inputQuality must be in $MIN_INPUT_BITRATE..$MAX_INPUT_BITRATE"
         }
     }
 }

@@ -28,6 +28,7 @@ import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.lifecycle.LifecycleService
@@ -88,7 +89,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
         /**
          * An action to immediately connect to a given Mumble server.
-         * Requires a server (see {@link #buildConnectDelta}).
+         * Requires a server (see [buildConnectDelta]).
          */
         const val ACTION_CONNECT = "se.lublin.humla.CONNECT"
 
@@ -145,8 +146,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // Route owner (slice 4): all route state and choreography live in the
     // controller behind ports; this service owns one instance, feeds it
     // lifecycle events, and forwards three API members to it. The route
-    // monitor group moved atomically onto the controller's private lock —
-    // no route field remains under the service monitor.
+    // monitor group moved atomically into the controller (main-confined volatile
+    // fields, no lock) — no route field remains under applyLock.
     private lateinit var route: AudioRouteController
 
     private val routeHost = object : AudioRouteController.Host {
@@ -207,9 +208,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     private val connectionGeneration = AtomicInteger(0)
     @Volatile
     private var reconnectJob: Job? = null
-
-
-
 
     @Volatile
     private var mVoiceTargetId: Byte = 0
@@ -540,7 +538,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // Straight to CONNECTING: teardown below runs synchronously
             // before the new attempt, so observers never see a transient
             // CONNECTED -> DISCONNECTED -> CONNECTING flap on re-connect.
-            mVoiceTargetId = 0
+            // Reset voice-target routing explicitly: a prior WHISPER session
+            // must not strand ChannelFragment's panel. NORMAL (0) matches
+            // setVoiceTargetId's emit, but connect() runs before observers
+            // expect callbacks, so only emit if previously non-normal.
+            if (mVoiceTargetId.toInt() != 0) {
+                mVoiceTargetId = 0
+                mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+            } else {
+                mVoiceTargetId = 0
+            }
             synchronized(whisperLock) { mWhisperTargetList.clear() }
 
             val wakeLock = mWakeLock
@@ -699,7 +706,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /**
-     * @return true if Humla has received the ServerSync message, indicating synchronization with
+     * @return True if Humla has received the ServerSync message, indicating synchronization with
      * the server's model and settings. This is the main state of the service.
      */
     open fun isSynchronized(): Boolean {
@@ -739,13 +746,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
 
-        // Unreachable in practice: the model is created with the connection
-        // and cleared only on teardown paths that also leave CONNECTED. Fail
-        // deterministic instead of stranding CONNECTING with no retry armed.
+        // Defensive: the model is created with the connection and cleared only
+        // on teardown paths that also leave CONNECTED, so this is unreachable
+        // in practice. Fail deterministic with full teardown (locks + route)
+        // instead of stranding wake locks and the route mode.
         if (mModelHandler == null) {
             Log.e(TAG, "onConnectionSynchronized: mModelHandler is null")
             mConnectionState = ConnectionState.DISCONNECTED
             setReconnecting(false)
+            val wakeLock = mWakeLock
+            if (wakeLock != null && wakeLock.isHeld) {
+                wakeLock.release()
+            }
+            releaseWifiLock()
+            route.onEvent(RouteEvent.SessionEnded)
             return
         }
 
@@ -832,10 +846,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         mCallbacks.onLogError(message)
     }
 
-    // No @Throws: these are private helpers whose requireNotNull hardening
-    // throws IllegalArgumentException, not the historical checked type.
+    // Binder boundary: translate the missing-connection IAE into
+    // IllegalStateException so disconnected-before-connect matches the
+    // connected-then-lost path (getters translate to ISE). App catches ISE.
     private fun requireConnection(): HumlaConnection {
-        return requireNotNull(mConnection) { "No active connection" }
+        return try {
+            requireNotNull(mConnection) { "No active connection" }
+        } catch (e: IllegalArgumentException) {
+            throw IllegalStateException(e.message, e)
+        }
     }
 
     private fun requireModelHandler(): ModelHandler {
@@ -910,7 +929,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
     }
 
-    open fun setReconnecting(reconnecting: Boolean) {
+    /** Internal reconnect driver; not part of `IHumlaService`. Tests use `setReconnectAttemptsForTest`. */
+    internal open fun setReconnecting(reconnecting: Boolean) {
         // One monitor for the whole method (register/unregister take the same
         // lock reentrantly): a true+true race must not launch two jobs or
         // register the network callback twice and orphan one of each.
@@ -936,16 +956,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             reconnectJob?.cancel()
             val launchedReconnect = lifecycleScope.launch {
-            delay(delayMs.toLong())
-            // Mirror the onAvailable CONNECTING guard: the timer can resume
-            // after onAvailable already connected (cancel is best-effort),
-            // and an unguarded connect() would double-increment attempts and
-            // tear down a just-started handshake.
-            if (mReconnecting && mConnectionState != ConnectionState.CONNECTING) {
-                mReconnectAttempts.incrementAndGet()
-                connect()
+                delay(delayMs.toLong())
+                // Mirror the onAvailable CONNECTING guard: the timer can resume
+                // after onAvailable already connected (cancel is best-effort),
+                // and an unguarded connect() would double-increment attempts and
+                // tear down a just-started handshake.
+                if (mReconnecting && mConnectionState != ConnectionState.CONNECTING) {
+                    mReconnectAttempts.incrementAndGet()
+                    connect()
+                }
             }
-        }
         launchedReconnect.invokeOnCompletion {
             synchronized(reconnectLock) {
                 if (reconnectJob === launchedReconnect) reconnectJob = null
@@ -1033,7 +1053,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /**
-     * Validates a trust-store path for {@link #apply}. The null
+     * Validates a trust-store path for [apply]. The null
      * (system store) common case always passes. Non-null paths must
      * canonical-resolve under the app files directory and must end in
      * '.bks'. Canonicalisation resolves any '..' segments, so a separate
@@ -1071,20 +1091,23 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * AudioException internally.
      * @param delta A one-shot configuration command.
      * @return true if a reconnect is required for changes to take effect.
-     * @see se.lublin.humla.HumlaService
+     * See also [HumlaService]
+     */
+    /**
+     * Must be called on the main thread: mutates `mAudioBuilder`, the route
+     * controller, and `mAudioHandler` gate without locking (see `InputModes`
+     * main-confinement). Binder callers hop via the service handler.
      */
     open fun apply(delta: ConfigDelta): Boolean {
+        check(Looper.getMainLooper() == Looper.myLooper()) { "apply must be called on main" }
         // Pure validation first: the throwing inputs (unknown transmit mode,
-        // non-finite knobs, sub-floor bitrate) must fail before any commit, so
-        // a bad delta cannot publish params/push tokens and then abort the
-        // audio/route steps.
+        // non-finite knobs, out-of-range bitrate/gain) must fail before any
+        // commit, so a bad delta cannot publish params/push tokens and then
+        // abort the audio/route steps. `applyAudioDelta` below re-validates
+        // for its direct callers; the double check here is intentional.
         inputModes.validateAudioDelta(delta)
         var reconnectNeeded = false
         var suppressReload = false
-        // 1. Merge connection params; serialized by applyLock below (the
-        // merge-plus-publish is read-modify-write: two interleaved applies
-        // must not lose each other's keys). Presence-based reconnect: any
-        // delta carrying a reconnect-relevant key returns true.
         // 1. Merge connection params under applyLock: the read-modify-write
         // must not lose keys when two applies interleave. Presence-based
         // reconnect: any delta carrying a reconnect-relevant key returns true.
@@ -1114,7 +1137,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 reconnectNeeded = true
             }
             if (delta.accessTokens != null) {
-                params = params.copy(accessTokens = delta.accessTokens?.toList())
+                params = params.copy(accessTokens = delta.accessTokens.toList())
             }
             val trustStore = delta.trustStore
             if (trustStore != null) {
@@ -1137,11 +1160,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 }
             }
             if (delta.localMuteHistory != null) {
-                params = params.copy(localMuteHistory = delta.localMuteHistory?.toList())
+                params = params.copy(localMuteHistory = delta.localMuteHistory.toList())
                 reconnectNeeded = true
             }
             if (delta.localIgnoreHistory != null) {
-                params = params.copy(localIgnoreHistory = delta.localIgnoreHistory?.toList())
+                params = params.copy(localIgnoreHistory = delta.localIgnoreHistory.toList())
                 reconnectNeeded = true
             }
             // Serialized publish of the locally-built snapshot; volatile
@@ -1224,14 +1247,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * Exposes the current connection. The current connection is set once an attempt to connect to
      * a server is made, and remains set until a subsequent connection. It remains available
      * after disconnection to provide information regarding the terminated connection.
-     * @return The active {@link HumlaConnection}.
+     * @return The active [HumlaConnection].
      */
     open fun getConnection(): HumlaConnection? {
         return mConnection
     }
 
     /**
-     * Return the current {@link AudioHandler}. An AudioHandler is instantiated upon connection
+     * Return the current [AudioHandler]. An AudioHandler is instantiated upon connection
      * to a server, and destroyed upon disconnection.
      * @return the active AudioHandler, or null if there is no active connection.
      */
@@ -1246,7 +1269,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /**
-     * Returns the current {@link ModelHandler}, containing the channel tree. A model handler is
+     * Returns the current [ModelHandler], containing the channel tree. A model handler is
      * valid for the lifetime of a connection.
      * @return the active ModelHandler, or null if there is no active connection.
      */
@@ -1305,10 +1328,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
     }
 
+    // Returns a copy: the published snapshot's Server travels by reference and
+    // is mutated by setResolved() on connect; handing out the live ref would
+    // let callers mutate host/port under an in-flight connect().
     open override fun getTargetServer(): Server? {
-        return connectionParams.server
+        val s = connectionParams.server ?: return null
+        return Server(s.id, s.name, s.host, s.port, s.username, s.password).also {
+            it.resolvedHost = s.resolvedHost
+            it.resolvedPort = s.resolvedPort
+        }
     }
 
+    // Upper-Camel is required by `IHumlaService.HumlaSession`; keep (API stability).
     @Throws(HumlaDisconnectedException::class)
     open override fun HumlaSession(): IHumlaSession {
         if (mConnectionState != ConnectionState.CONNECTED) {
@@ -1595,6 +1626,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         usb.session = session
         usb.mute = m
         usb.deaf = d
+        // Diverges from murmur/Messages.cpp (which leaves suppress untouched):
+        // an admin unmute must also clear a prior suppress, otherwise the
+        // target stays silently suppressed after unmute. Server permission-gates this.
         if (!m) usb.suppress = false
         requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
@@ -1622,17 +1656,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * unconditionally (no permission check; spoofed writes from others are
      * silently dropped), so no rollback is needed: TCP ordering guarantees
      * echoes arrive in request order and the state converges on the last
-     * request. Other users' mute (admin {@code mute}/{@code deaf}) stays
-     * pessimistic in {@link #setMuteDeafState}.
+     * request. Other users' mute (admin `mute`/`deaf`) stays
+     * pessimistic in [setMuteDeafState].
      *
-     * <p>Mirroring into the {@link User} object (rather than rebinding every
+     * Mirroring into the [User] object (rather than rebinding every
      * UI reader) fans the update out through the existing
-     * {@code onUserStateUpdated} path: menu icons, notification, settings
+     * `onUserStateUpdated` path: menu icons, notification, settings
      * persistence, and TTS suppression all follow with no UI edits. The echo
      * then becomes a no-op via the unchanged guard in
-     * {@link ModelHandler#messageUserState}.
+     * [ModelHandler.messageUserState].
      *
-     * <p>Accepted transients (both convergent via the echo): the capture gate
+     * Accepted transients (both convergent via the echo): the capture gate
      * is pushed before the model write, so if the session user is not yet
      * visible the mic follows desired state up to a round trip ahead of the
      * UI; and the chat log line is best-effort (dropped if a disconnect
@@ -1660,7 +1694,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
         // Same monitor as ModelHandler.messageUserState, which writes these
-        // fields on the TCP reader thread.
+        // fields on the TCP reader thread. Compute under lock, fan out
+        // after release: holding the model lock across observer callbacks
+        // would block the TCP reader on slow UI/TTS work.
+        val changedSelf: se.lublin.humla.model.User?
         synchronized(modelHandler) {
             val self = modelHandler.getUser(session)
             if (self == null)
@@ -1674,17 +1711,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 self.isSelfDeafened = deaf
                 changed = true
             }
-            if (changed) {
-                // Log here, at the toggle site like desktop's MainWindow: the
-                // echo's log is suppressed as unchanged (see ModelHandler).
-                if (mute && deaf)
-                    logInfo(getString(R.string.chat_notify_muted_deafened))
-                else if (mute)
-                    logInfo(getString(R.string.chat_notify_muted))
-                else
-                    logInfo(getString(R.string.chat_notify_unmuted))
-                mCallbacks.onUserStateUpdated(self)
-            }
+            changedSelf = if (changed) self else null
+        }
+        if (changedSelf != null) {
+            // Log here, at the toggle site like desktop's MainWindow: the
+            // echo's log is suppressed as unchanged (see ModelHandler).
+            if (mute && deaf)
+                logInfo(getString(R.string.chat_notify_muted_deafened))
+            else if (mute)
+                logInfo(getString(R.string.chat_notify_muted))
+            else
+                logInfo(getString(R.string.chat_notify_unmuted))
+            mCallbacks.onUserStateUpdated(changedSelf)
         }
     }
 
@@ -1805,6 +1843,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             usb.session = getSessionId()
         } catch (e: IllegalStateException) {
             return
+        } catch (e: IllegalArgumentException) {
+            // Racing onDestroy nulled mConnection after the isSynchronized
+            // check: requireConnection() throws IAE, fail closed like ISE.
+            return
         }
         if (listening) {
             usb.addListeningChannelAdd(channelId)
@@ -1820,6 +1862,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         try {
             usb.session = getSessionId()
         } catch (e: IllegalStateException) {
+            return
+        } catch (e: IllegalArgumentException) {
+            // Same TOCTOU as setListeningChannel: fail closed.
             return
         }
         val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
@@ -1860,8 +1905,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         /**
          * The connection was lost due to either a kick/ban or socket I/O error.
          * Humla may be reconnecting in this state.
-         * @see #isReconnecting()
-         * @see #cancelReconnect()
+         * See also [isReconnecting]
+         * See also [cancelReconnect]
          */
         CONNECTION_LOST
     }

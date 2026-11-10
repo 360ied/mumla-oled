@@ -80,6 +80,9 @@ import se.lublin.mumla.util.NotificationSanitizer
 open class MumlaService : HumlaService(),
     Settings.OnSettingChangedListener,
     MumlaConnectionNotification.OnActionListener, IMumlaService {
+    // Cached main handler for off-main observer hops (e.g. SCO failure Toast).
+    // Avoids allocating a Handler per rare failure.
+    private val mainHandler by lazy(LazyThreadSafetyMode.NONE) { Handler(Looper.getMainLooper()) }
 
     // Widened to public fields: Kotlin has no package visibility, and the
     // Robolectric suite reads/assigns these as fields from a Java subclass.
@@ -462,7 +465,7 @@ open class MumlaService : HumlaService(),
             if (Looper.myLooper() == Looper.getMainLooper()) {
                 Toast.makeText(this@MumlaService, message, Toast.LENGTH_LONG).show()
             } else {
-                Handler(Looper.getMainLooper()).post {
+                mainHandler.post {
                     Toast.makeText(this@MumlaService, message, Toast.LENGTH_LONG).show()
                 }
             }
@@ -1431,8 +1434,8 @@ open class MumlaService : HumlaService(),
          * Pure REASON_* to string-resource mapping for the SCO-failure Toast,
          * extracted so the bucketing is JVM-testable: only the permission
          * denial gets the permission string; every other reason (including
-         * null) shares the generic one. Internal: only the observer above
-         * and the same-module test use it.
+         * null) shares the generic one. Visible for the observer above and
+         * the same-module test; not part of the public API.
          */
         @StringRes
         internal fun scoFailureMessage(reason: String?): Int =
