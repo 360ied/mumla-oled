@@ -9,9 +9,10 @@ steps, the kill criteria, and the decisions this work reverses.
 - Each step runs in its own worktree (`./scripts/worktree.py add …`) and
   lands as atomic commits, each passing `./scripts/check.sh`.
 - A step is **done** when its done-when list holds, the allowlist has
-  shrunk as stated, its on-device checks pass (see
-  [testing](testing.md#on-device-checks)), and its row in `PROGRESS.md` is
-  filled in. Merging is a separate, user-requested action, as always.
+  shrunk as stated, and its row in `PROGRESS.md` is updated. On-device
+  testing is at the developer's discretion (see
+  [testing](testing.md#on-device-testing)). Merging is a separate,
+  user-requested action, as always.
 - Steps 2–5 are each worth landing alone. Step 6 needs steps 2 and 3.
   Step 7 needs all earlier steps.
 - Spikes run in throwaway worktrees before the step that depends on them,
@@ -140,8 +141,8 @@ sequence-lock tests pass; the native tripwire's step-5a rules are on;
 ## Step 5b — AAudio
 
 **Spikes first:** AAudio or Oboe; callback or blocking mode; echo
-cancellation through an AAudio session ID; AAudio voice routing with the
-legacy SCO path on Android 11–12 (see [open items](open-items.md)).
+cancellation through an AAudio session ID (see [open items](open-items.md)).
+Spikes run on the developer's device; Android 11–12 is not tested.
 
 1. Native capture and render threads (or AAudio callbacks), opening
    streams with the profile from `RouteState` and reopening on disconnect.
@@ -149,8 +150,9 @@ legacy SCO path on Android 11–12 (see [open items](open-items.md)).
 3. Delete `AudioInput` and `AudioOutput`; update the audio pipeline
    description in `AGENTS.md`.
 
-**Done when:** `AudioInput` and `AudioOutput` are deleted and the step 5b
-on-device checks match or beat the 5a baseline.
+**Done when:** `AudioInput` and `AudioOutput` are deleted and the AAudio
+path is in daily use without regressions the developer notices against
+5a.
 
 ## Step 6 — Screens on ViewModels
 
@@ -198,10 +200,11 @@ Delete `IHumlaObserver`, `HumlaCallbacks`, the live handles, `IUser`,
   [whales list](../README.md).
 - **Step 2's live-handle spike** shows screen behavior changes the tests
   did not catch. Fix the harness before continuing.
-- **Step 4's route sequence** fails the on-device SCO checks and cannot be
-  fixed within the readiness model. Rethink the sequence before step 5.
-- **Step 5b** regresses latency, glitch rate, echo cancellation, or routing
-  on device and cannot be fixed. Stop at 5a: keep `AudioRecord` and
+- **Step 4's route sequence** misbehaves with the Bluetooth headset in
+  daily use and cannot be fixed within the readiness model. Rethink the
+  sequence before step 5.
+- **Step 5b** regresses latency, glitches, echo cancellation, or routing in
+  daily use and cannot be fixed. Stop at 5a: keep `AudioRecord` and
   `AudioTrack`, which still leaves all transmit state on the native side.
 - **Any step:** if a file cannot leave the allowlist without new
   coordination machinery, treat it as a design problem and revisit the

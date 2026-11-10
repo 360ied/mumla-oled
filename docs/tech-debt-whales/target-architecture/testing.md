@@ -1,11 +1,11 @@
 # Testing and verification
 
 Part of the [target architecture](README.md). Specifies the test layers,
-the murmur interop harness, the native suite additions, the on-device
-checks, and how results are recorded.
+the murmur interop harness, the native suite additions, on-device testing,
+and progress tracking.
 
-Implementation is fast; verification is the bottleneck. Every migration
-step is paced by these checks, not by how quickly code can be written.
+Implementation is fast; automated verification is what makes it safe.
+Every migration step's done-when list is checked by the layers below.
 
 ## Test layers
 
@@ -15,7 +15,7 @@ step is paced by these checks, not by how quickly code can be written.
 | Virtual time | `testFossDebugUnitTest` | Fast | `HumlaClient`, `Session` with a fake transport, `RouteControl`, voice control with a fake native layer, the policy collector |
 | Native host suite | `check.sh` (existing `test_native_audio.sh`) | Medium | Engines, codec, OCB2, queues, loopback |
 | murmur interop | `check.sh` | Slow | Real TLS, real server, real reconnects |
-| On-device | Manual, recorded | Slowest | Audio devices, Bluetooth, Android service rules |
+| On-device | Manual, at the developer's discretion | Slowest | Audio devices, Bluetooth, Android service rules |
 
 ## State-transition tests
 
@@ -140,34 +140,38 @@ the result in `PROGRESS.md`. If no past race can be reproduced, the
 harness cannot vouch for the later steps (see
 [migration](migration.md#kill-criteria)).
 
-## On-device checks
+## On-device testing
 
-Run on at least one device on the oldest supported Android version (11)
-and one on the newest. Each step's checks come from the existing torture
-list (SCO flap, A2DP stagger, overlay drag and rotate, notification paths)
-plus:
+Mumla OLED is a one-developer hobby project, and the developer is the main
+user of the latest version and the only user of snapshot releases. On-device
+testing is therefore **at the developer's discretion**: anything from a
+careful pass to a quick smoke test, with snapshot releases in daily use as
+the field test. Nothing in this spec requires a device checklist.
 
-| Step | Checks |
-|---|---|
-| 2 Immutable state | Large server join (hundreds of users); channel list stays live while users move; comment and avatar fetch |
-| 3 Client and session | Network drop and reconnect with the app backgrounded; Wi-Fi to mobile handover; reconnect countdown in the notification |
-| 4 Voice control and route | SCO connect, flap, and failure at connect; A2DP stagger; mute during SCO settle; wired headset plug and unplug |
-| 5a Engine refactor and network threads | Voice both directions on UDP and in tunnel mode; crypt resync after a network change; glitch rate against today's baseline |
-| 5b AAudio | Latency and glitch rate against the 5a baseline; echo cancellation on speaker; SCO and wired routing on Android 11 and the newest version |
-| 6 Screens | Rotation and backgrounding on every connected screen; no updates after a screen closes |
-| 7 App cut-over | Connect from the UI on Android 14+; talk broadcast and notification actions while connected and while not; process death while connected |
+Because of that, the automated layers above carry the verification load.
+They are what every step's done-when list relies on.
+
+When testing on a device, the steps most likely to show problems only
+there are:
+- **step 4**, Bluetooth headset routing (connect, flap, failure at
+  connect, mute while the route settles);
+- **step 5b**, AAudio latency, glitches, and echo cancellation on the
+  speaker.
+
+Android 11–12 support (the minSdk 30 floor) is theoretical and stays
+untested; the spec does not plan device work for it.
 
 ## `PROGRESS.md`
 
-Created in step 1 next to this file. One row per step, updated in the
-step's final commit:
+Created in step 1 next to this file, as the `HumlaService` decomposition
+did. One row per step, updated in the step's final commit:
 
 ```markdown
-| Step | Status | Commits | Allowlist (files / matches) | On-device results |
+| Step | Status | Commits | Allowlist (files / matches) | Notes |
 |---|---|---|---|---|
-| 1 Harness and gate | done | abc1234..def5678 | 31 / 330 | n/a (harness validated against 2e2a067d) |
+| 1 Harness and gate | done | abc1234..def5678 | 31 / 330 | harness validated against 2e2a067d |
 | 2 Immutable state | in progress | | | |
 ```
 
-On-device results list the device, Android version, and pass or fail per
-check. A step is not done until its row is filled in.
+Notes are free-form (spike findings, deferred items, anything noticed on a
+device).

@@ -25,9 +25,11 @@ and thread placement are decided once, and ordinary code cannot get them
 wrong without visibly breaking the design.
 
 Implementation is not the bottleneck: the `HumlaService` decomposition took
-a day and the Java-to-Kotlin migration three. **Verification is.** The
-[migration](migration.md) is paced by what can be checked, not by what can
-be written.
+a day and the Java-to-Kotlin migration three. What makes fast changes safe
+is **automated verification**: architecture checks, state and virtual-time
+tests, the native suite, and the murmur harness (see
+[testing](testing.md)). On-device testing is at the developer's discretion,
+with snapshot releases as the field test.
 
 ## Specification
 
@@ -40,7 +42,7 @@ be written.
 | [route.md](route.md) | `RouteControl` states, route thread, session start sequence |
 | [app.md](app.md) | `AppContainer`, `ConnectionService`, features, screens and ViewModels, settings |
 | [enforcement.md](enforcement.md) | Architecture checks in `check.sh`, immutability test, remaining conventions |
-| [testing.md](testing.md) | Test layers, murmur interop harness, native suite additions, on-device checks, `PROGRESS.md` |
+| [testing.md](testing.md) | Test layers, murmur interop harness, native suite additions, on-device testing, `PROGRESS.md` |
 | [migration.md](migration.md) | Steps and commits, done-when lists, spikes, kill criteria, decisions reversed |
 | [open-items.md](open-items.md) | Underspecification tracker: open, gating, and resolved items |
 

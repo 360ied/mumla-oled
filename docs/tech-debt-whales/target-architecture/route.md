@@ -154,5 +154,5 @@ waits for the route decision.
   where `Host.recreatePipeline` did.
 - The controller's existing tests keep running against the same virtual
   scheduler; only the dispatcher they replace changes.
-- On-device checks for this step are listed in
-  [testing](testing.md#on-device-checks).
+- This is the step most likely to show problems only on a device (see
+  [testing](testing.md#on-device-testing)).

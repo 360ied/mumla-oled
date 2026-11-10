@@ -20,7 +20,6 @@ them.
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on two devices | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
-| AAudio routing with legacy SCO on Android 11–12 | Spike on an Android 11 device with a Bluetooth headset | Step 5b |
 
 ## Open (not gating)
 
@@ -67,6 +66,8 @@ them.
 | Module split | Packages inside `:libraries:humla`; Android-free packages enforced by the architecture check | [enforcement](enforcement.md#android-free-packages) |
 | Allowlist format and ratchet | Path plus count; counts may only fall | [enforcement](enforcement.md#concurrency-tripwire) |
 | murmur binary and harness | `pkgs.murmur` (`mumble-server`), per-class server, committed test certificate | [testing](testing.md#murmur-interop) |
-| Recording on-device results | `PROGRESS.md` row per step | [testing](testing.md#progressmd) |
+| On-device verification | At the developer's discretion; snapshot releases are the field test; no checklist | [testing](testing.md#on-device-testing) |
+| Android 11–12 | Support stays theoretical; no device testing or spikes | [testing](testing.md#on-device-testing) |
+| Progress tracking | `PROGRESS.md` row per step (status, commits, allowlist, notes) | [testing](testing.md#progressmd) |
 | Observer compatibility | `IHumlaObserver` deleted in step 8 | [migration](migration.md#step-8--clean-up) |
 | Microphone permission missing at voice start | The activity requests permissions before connecting, as today; if the stream still fails to open, the `VoiceEngine` reports `PipelineError` and the session stays connected without audio | [voice](voice.md#outputs) |
