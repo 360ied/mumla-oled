@@ -114,7 +114,7 @@ sequenceDiagram
 
     C->>R: SessionStarted
     C->>V: Start(address, keys, format)
-    Note over V: sockets and network threads start;<br/>capture and render wait
+    Note over V: sockets and network threads start,<br/>capture and render wait
     R-->>V: RouteState = Settling(VOICE_SCO)
     Note over R: SCO bring-up (up to the settle budget)
     R-->>V: RouteState = Ready(VOICE_SCO, VOICE)
