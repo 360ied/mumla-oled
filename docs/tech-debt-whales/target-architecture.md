@@ -196,28 +196,73 @@ The connection's TCP control channel. Owned by the session.
 The whole voice path, in C++, with a thin Kotlin facade. Application-scoped
 (see [spikes](#spikes) for the alternative).
 
-**Native side.**
-- **Capture.** An AAudio input stream (voice-communication preset) feeds
-  the existing DSP chain (RNNoise, filters, leveler), voice activity
-  detection, the pre-speech buffer, and the Opus encoder.
-- **Transmit.** One native component owns every piece of transmit state:
-  the gate decision, voice activity, the pre-speech buffer, frame numbers,
-  the end-of-transmission marker, and the whisper target. It frames packets
-  (both the protobuf `MumbleUDP.Audio` format and the legacy format, as
-  today's
+**The existing engine stays as it is.** Today's native engine does no I/O:
+[`AudioInputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h)
+takes PCM through `processFrame` and hands encoded packets to a callback;
+[`AudioOutputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.h)
+takes packets through `queuePacket` and produces mixed PCM from
+`renderMix`; the DSP, VAD, pre-speech buffer, Opus wrappers, jitter
+buffers, and OCB2 crypt are all bytes-in, bytes-out. It owns no threads,
+sockets, or audio devices, which is why the host suite can test it
+exhaustively. The native voice path is built **on top of** this engine,
+through its existing API. It does not move I/O into the engine.
+
+```mermaid
+flowchart TB
+    subgraph IO["Voice I/O layer (new, does I/O)"]
+        AA["AAudio streams<br/>(capture, playback)"]
+        UDP["UDP socket loop"]
+        POL["Policy application"]
+    end
+    subgraph Pure["No-I/O layer"]
+        ENG["Existing engine<br/>(AudioInputEngine, AudioOutputEngine,<br/>DSP, VAD, Opus, jitter, OCB2)<br/>unchanged"]
+        COD["Packet codec (new)<br/>framing and parsing, both formats"]
+    end
+    AA -->|PCM in, processFrame| ENG
+    ENG -->|renderMix, PCM out| AA
+    ENG -->|encoded frames| COD
+    COD -->|packets| UDP
+    UDP -->|packets| COD
+    COD -->|queuePacket| ENG
+    POL -->|existing setters| ENG
+    POL -->|whisper target| COD
+```
+
+**No-I/O layer.**
+- **The existing engine, unchanged.** Capture DSP (RNNoise, filters,
+  leveler), voice activity detection, the pre-speech buffer, and the Opus
+  encoder on the way out; jitter buffers, Opus decoders, and the mixer on
+  the way in; OCB2 encryption and decryption from
+  [`crypto`](../../libraries/humla/src/main/jni/crypto/). The engine already
+  owns frame numbers and emits the end-of-transmission marker itself when
+  an utterance ends, including when a mute cuts one short.
+- **A new packet codec**, written in the same no-I/O style beside the
+  engine, not inside it. It frames encoded frames into packets (both the
+  protobuf `MumbleUDP.Audio` format and the legacy format, as today's
   [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt)
-  does) and encrypts them with the existing OCB2 code from
-  [`crypto`](../../libraries/humla/src/main/jni/crypto/).
-- **UDP.** Native code owns the UDP socket. One native thread receives and
-  decrypts everything. Voice goes straight to the mixer; pings and other
-  non-voice packets are reported to Kotlin (a few per second at most). Sent
-  pings are requested by Kotlin.
-- **Playback.** The existing jitter buffers, Opus decoders, and mixer
-  ([`AudioOutputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp))
-  feed an AAudio output stream's data callback directly.
+  does), adds the whisper target, and parses inbound packets back into
+  (sender, frame number, payload, end-of-transmission) for `queuePacket`.
+
+**Voice I/O layer** (new). Owns every thread, socket, and audio device, and
+drives the no-I/O layer through its public API:
+- **Capture.** An AAudio input stream (voice-communication preset) calls
+  `processFrame` from its data callback. Encoded packets go through the
+  codec and OCB2 to the socket.
+- **Playback.** An AAudio output stream's data callback calls `renderMix`.
+- **UDP.** The I/O layer owns the UDP socket. One thread receives,
+  decrypts, and parses everything. Voice goes to `queuePacket`; pings and
+  other non-voice packets are reported to Kotlin (a few per second at
+  most). Sent pings are requested by Kotlin.
+- **Policy application.** Applies the latest `VoicePolicy` at frame
+  boundaries by calling the engine's existing setters (`setMuted`,
+  `setPttTalking`, `setInputMode`) and giving the codec the whisper target.
 - **Tunnel mode.** When UDP is unavailable, framed (unencrypted) packets go
   to Kotlin for the TCP tunnel, and tunnelled inbound packets come back the
   same way. This keeps one Kotlin crossing per frame, only in the fallback.
+
+If the I/O layer ever needs something the engine cannot do, the capability
+is added to the engine in its own no-I/O style, with host tests, and never
+by giving the engine a thread, socket, or device.
 
 **Kotlin facade.** Non-blocking control only:
 - `submit(VoiceCommand)` for start (socket address, crypt keys, codec
@@ -228,11 +273,11 @@ The whole voice path, in C++, with a thin Kotlin facade. Application-scoped
   statistics), talk-activity edges as their own flow, and an event flow for
   pipeline errors and resync requests.
 
-**Reused unchanged:** the DSP, VAD, pre-speech buffer, Opus wrappers,
-jitter buffers, mixer, and OCB2 crypt, with their host tests.
-**New native code:** AAudio stream handling (including reopening a stream
-when the device disconnects it), packet framing and parsing for both
-formats, and the UDP socket loop.
+**Reused unchanged:** the whole existing engine (DSP, VAD, pre-speech
+buffer, Opus wrappers, jitter buffers, mixer, OCB2 crypt) and its host
+tests. **New native code:** the packet codec (no-I/O) and the voice I/O
+layer (AAudio stream handling, including reopening a stream when the device
+disconnects it, the UDP socket loop, and policy application).
 
 ### Transmit and mute
 
@@ -243,7 +288,11 @@ end-of-transmission marker). That split exists in any design. What this
 design fixes is the other half of today's problem: the mechanics are
 currently spread across Kotlin and C++, with three crossings per outgoing
 frame (Kotlin capture → native encode → Kotlin framing → native encrypt →
-Kotlin send). With the native path there is one owner of transmit state.
+Kotlin send). With the native path, all transmit state lives on the native
+side and is touched only from the capture callback: the engine keeps voice
+activity, the pre-speech buffer, frame numbers, and the end-of-transmission
+marker, as it does today; the codec adds the whisper target; the I/O layer
+applies the policy.
 
 The session side is pushed, never pulled:
 
@@ -254,9 +303,10 @@ The session side is pushed, never pulled:
   control thread, which can block on stream changes), maps each new
   `SessionState` to a `VoicePolicy`, skips unchanged values, and pushes it
   into native code, which swaps it in atomically.
-- Native code applies the policy at the next frame boundary, so a mute
-  takes effect within one collector dispatch plus at most one frame. On a
-  transition mid-utterance it emits the end-of-transmission marker itself.
+- The I/O layer applies the policy at the next frame boundary through the
+  engine's existing setters, so a mute takes effect within one collector
+  dispatch plus at most one frame. On a transition mid-utterance the engine
+  emits the end-of-transmission marker itself, as it does today.
 
 `VoicePolicy` is the only path from session state into the voice path, so
 there is no second copy of mute state to keep in sync by hand.
@@ -455,6 +505,7 @@ update can reach a destroyed view.
 | Immutable `SessionState`, atomic updates | Half-updated reads, locks on model data, observers holding live objects |
 | One `Session` per connection | Late events reaching a newer connection; generation counters and stale-event checks |
 | Native voice path with pushed `VoicePolicy` | Transmit state split across two languages; per-frame Kotlin work on the realtime path |
+| No-I/O engine under a separate I/O layer | I/O creeping into the engine; engine behavior that only a device can test |
 | Command-only voice and route control | Main waiting on audio or route work; lock-order deadlocks between main and audio |
 | One-directional route → voice dependency | Route and voice waiting on each other |
 | `repeatOnLifecycle` collection | Updates on the wrong thread or after a view is destroyed |
@@ -500,6 +551,16 @@ state. Two additions cover the most likely gaps:
 - Review attention on any new `java.util.concurrent` import outside the
   allowlist.
 
+**Native tripwire.** The no-I/O property of the native engine gets the same
+treatment. The voice I/O layer lives in its own source directory, and the
+check fails if engine or codec sources include socket, audio-device, or
+thread headers (`<sys/socket.h>`, `<netinet/in.h>`, `<aaudio/AAudio.h>`,
+Oboe headers, `<thread>`, `<pthread.h>`, `<fcntl.h>`, `<unistd.h>`).
+`<mutex>` and `<atomic>` stay allowed: the engine's setters are already
+safe to call across threads. Two existing exceptions are allowlisted: the
+OCB2 key generation in `CryptStateOCB2.cpp` reads `/dev/urandom`, and
+`AudioOutputEngine.cpp` logs through `<android/log.h>`.
+
 ## How the whales map
 
 | Whale | Satisficing fix ([README](README.md)) | This architecture |
@@ -525,13 +586,15 @@ state. Two additions cover the most likely gaps:
   one channel.
 - **State-transition tests.** Message handling is (state, message) → new
   state, so each protocol handler is tested as a plain function.
-- **Native host suite (every `check.sh`).** The native path moves framing
-  and the UDP loop into code the existing host suite can reach. New tests:
-  packet framing and parsing in both formats, checked byte-for-byte against
-  the Java-generated protobuf classes; policy application at frame
-  boundaries, including the end-of-transmission marker; a loopback test
-  from capture input through encode, frame, encrypt, decrypt, decode, and
-  mix, with no Android audio involved.
+- **Native host suite (every `check.sh`).** The existing engine tests run
+  unchanged. Because the codec is no-I/O too, packet framing and parsing in
+  both formats get host tests checked byte-for-byte against the
+  Java-generated protobuf classes. A loopback test composes the no-I/O layer
+  end to end (PCM in → engine → codec → OCB2 → OCB2 → codec → engine → PCM
+  out) with no socket or audio device. The I/O layer's policy application
+  is tested by driving the real engine frame by frame from a fake stream
+  callback, including the end-of-transmission marker on a mid-utterance
+  mute.
 - **murmur interop (every `check.sh`).** The whales list's W6 suite: a
   throwaway `murmur` from the dev shell on loopback, with real TLS, UDP
   crypt, and connection code. Required, because fakes only test our idea of
@@ -610,11 +673,15 @@ on-device checks. Steps 2–5 are each worth landing on their own.
    `AudioHandler`, `AudioRouteController`, and `BluetoothScoManager` leave
    the allowlist.
 5. **Native voice path**, in two parts:
-   - **5a. Framing, crypt, and UDP in native code**, still fed by the
-     Kotlin `AudioRecord` and `AudioTrack` threads. This alone gives one
-     owner of transmit state and replaces the interim mute check with
-     `VoicePolicy`. Done when `HumlaUDP` and the Kotlin framing in
-     `AudioHandler` are deleted.
+   - **5a. Codec, crypt, and UDP in native code**, still fed by the
+     Kotlin `AudioRecord` and `AudioTrack` threads through the engine's
+     existing `processFrame` and `renderMix`. Adds the no-I/O packet codec
+     and the first part of the I/O layer (UDP loop, policy application).
+     This alone puts all transmit state on the native side and replaces the
+     interim mute check with `VoicePolicy`. Done when `HumlaUDP` and the
+     Kotlin framing in `AudioHandler` are deleted, the native tripwire is
+     green, and existing engine sources are unchanged apart from any no-I/O
+     additions with host tests.
    - **5b. AAudio capture and playback.** Done when `AudioInput` and
      `AudioOutput` are deleted and the step 5b on-device checks match or
      beat the 5a baseline.
@@ -643,7 +710,7 @@ Each criterion is about verification, not effort:
   fixed within the readiness model. Re-think the sequence before step 5.
 - **Step 5b** regresses latency, glitch rate, echo cancellation, or routing
   on device and cannot be fixed. Stop at 5a: keep `AudioRecord` and
-  `AudioTrack`, which still leaves one owner of transmit state.
+  `AudioTrack`, which still leaves all transmit state on the native side.
 
 Treat it as a design problem, not an implementation one, if a file cannot
 leave the allowlist without new coordination machinery.
@@ -654,9 +721,11 @@ When the relevant steps land, these records must be updated in the same
 branch:
 
 - The native **fence** in the [migration](../migration/README.md)
-  decisions ("C++ frozen, no behavior touch"). Step 5 extends the native
-  code deliberately; the existing DSP, codec, and crypt code is reused, not
-  rewritten, and the native suite remains the gate.
+  decisions ("C++ frozen, no behavior touch"). The fence stays for the
+  existing no-I/O engine, which step 5 uses through its current API. What
+  changes is that native code grows: a no-I/O codec beside the engine and
+  an I/O layer on top of it. The native suite remains the gate, and the
+  native tripwire keeps the engine free of I/O.
 - The "no Oboe/AAudio" description of the audio pipeline in
   [`AGENTS.md`](../../AGENTS.md) (step 5b).
 - The frozen binder surface (`IMumlaService`/`IHumlaService`/
@@ -676,8 +745,8 @@ branch:
 
 - Compose or any UI toolkit change. The views and their pixels stay; the
   [killed Compose rewrite](../migration/README.md) stays killed.
-- Rewriting the existing DSP, codec, or crypt C++, or moving any of it to
-  Rust. Step 5 builds around that code.
+- Changing the existing native engine into something that does I/O, or
+  rewriting any of it (in C++ or Rust). Step 5 builds on top of it.
 - Kotlin Multiplatform or an iOS port.
 - New features (see the
   [upstream feature gap audit](../upstream-feature-gap-audit/README.md)).
