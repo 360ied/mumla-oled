@@ -209,7 +209,7 @@ class BluetoothScoManager : ScoLink {
     /**
      * Begins SCO bring-up. No-op while starting or active. Every failure —
      * including pre-flight checks — reports through a posted
-     * {@link Listener#onScoFailed} (never `\1`), so
+     * {@link Listener#onScoFailed} (never throws), so
      * callers must not assume the link is up when this returns.
      */
     override fun start() {
@@ -736,8 +736,8 @@ class BluetoothScoManager : ScoLink {
                 releaseRouteModern()
             } else {
                 // Stop-then-clear: stopping first tears down the link, and
-                // clearing the routing flag second matches the documented
-                // start (ScoOn-then-start) in reverse.
+                // clearing the routing flag second mirrors start (start-then-
+                // flag) in reverse.
                 try {
                     audioManager.stopBluetoothSco()
                 } catch (ignored: Exception) {

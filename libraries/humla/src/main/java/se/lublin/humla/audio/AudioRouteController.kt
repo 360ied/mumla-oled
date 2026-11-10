@@ -45,6 +45,10 @@ import se.lublin.humla.exception.AudioException
 internal class AudioRouteController(
     private val platform: AudioPlatform,
     private val sco: ScoLink?,
+    // Main-confined funnel: pass lifecycleScope (Main/Main.immediate). A
+    // non-Main scope silently breaks the single-writer assumption (tests use
+    // TestScope only because it is serialised). Documented here so a future
+    // caller cannot wire IO/Default without seeing the contract.
     private val scope: CoroutineScope,
     private val host: Host,
 ) {
@@ -186,8 +190,9 @@ internal class AudioRouteController(
      */
     fun setHandsetStream(stream: Int) {
         if (stream != AudioManager.STREAM_MUSIC && stream != AudioManager.STREAM_VOICE_CALL) {
-            // Warn-and-coerce only: the pipeline still consumes the value
-            // verbatim; anything else maps to speakerphone/media downstream.
+            // Warn-and-store (verbatim): the pipeline still consumes the value
+            // as-is and anything else maps to speakerphone/media downstream
+            // (see AudioHandler field docs and AudioOutput usage mapping).
             Log.w(TAG, "Unexpected handset stream $stream; expected MUSIC or VOICE_CALL")
         }
         handsetStream = stream
@@ -212,9 +217,10 @@ internal class AudioRouteController(
     }
 
     fun retrySco(): Boolean {
-        // Copy to locals before IPC so a torn read is impossible; the copy
-        // is not group-atomic versus writers (post-start re-validation +
-        // manager idempotence absorb any tearing — that is the real guard).
+        // Copy to locals before IPC (Booleans/refs are atomically readable;
+        // only 64-bit Long/Double tear, which these are not). The copy is
+        // not group-atomic versus writers (post-start re-validation +
+        // manager idempotence absorb any staleness -- that is the real guard).
         val requested: Boolean = scoRequested
         val link: ScoLink? = sco
         val live = host.isLive
@@ -368,8 +374,12 @@ internal class AudioRouteController(
         settleAttempts = 0
     }
 
-    /** Bare teardown, no notify: observers detach in onDestroy. */
+    /** Bare teardown, no notify: observers detach in onDestroy. Idempotent:
+     * a second Destroyed is a no-op (destroy() runs once). */
     private fun onDestroyed() {
+        if (destroyed) {
+            return
+        }
         destroyed = true
         sco?.destroy()
         // Bare teardown, no builder touch: the next create pushes a fresh
@@ -472,6 +482,13 @@ internal class AudioRouteController(
      * re-confirm queued behind us.
      */
     private fun onScoLinkChanged(active: Boolean) {
+        // Null link (no BT hardware/manager): link events are impossible in
+        // production (nothing emits them); drop defensively instead of
+        // flipping route state on a phantom event (see null-sco test).
+        if (sco == null) {
+            Log.d(TAG, "SCO link event with null link; ignoring.")
+            return
+        }
         val unchanged: Boolean = active == scoRouteActive
         if (unchanged) {
             // Steady state for the normal STARTING→fail path; DEBUG so every
@@ -486,9 +503,9 @@ internal class AudioRouteController(
             "Bluetooth SCO disconnected, falling back to phone audio"
         }
         recompute(reason, forceReload = false, settle = false, firstCreate = false)
-        // Single-writer while funnel-confined (statically unreachable when
-        // the confinement holds); kept as cheap idempotence against a
-        // re-confirm queued behind us.
+        // Cheap idempotence: recompute above calls host.recreatePipeline()/
+        // onRouteChanged()/onPipelineError(), which may synchronously re-enter
+        // onScoLinkChanged; drop the stale tail instead of double-notifying.
         if (active != scoRouteActive) {
             return
         }
@@ -760,8 +777,9 @@ internal class AudioRouteController(
                 Log.e(TAG, "Route-change audio reload failed", e)
                 host.onPipelineError(e.message)
             } catch (e: AssertionError) {
-                // DEBUG-only not-connected assert racing a disconnect.
-                // Report via the pipeline error path, never crash Main.
+                // Belt-and-braces: createAudioHandler now throws ISE (caught
+                // above), but any future DEBUG assert must still report via
+                // the pipeline error path, never crash Main.
                 Log.e(TAG, "Route-change audio reload failed", e)
                 host.onPipelineError(e.message)
             }
