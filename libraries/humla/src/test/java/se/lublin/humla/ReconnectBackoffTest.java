@@ -12,27 +12,28 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.assertEquals;
 
-import java.lang.reflect.Field;
+import org.junit.Test;
 
 /**
- * Pins the reconnect-backoff truth table in {@link HumlaService}.
- * Slice 4 replaces the Handler postDelayed with delay() but keeps these
- * exact delays: 0-&gt;1000, 1-&gt;3000, 2-&gt;6000, 3-&gt;12000, &gt;=4-&gt;25000.
+ * Pins the reconnect-backoff truth table in [HumlaService].
+ * Delays: 0-&gt;1000, 1-&gt;3000, 2-&gt;6000, 3-&gt;12000, &gt;=4-&gt;25000.
  *
- * <p>The static table is pinned directly (mirrors AudioRoutePolicyTest);
+ *
+ * The static table is pinned directly (mirrors AudioRoutePolicyTest);
  * instance delegation is pinned via the mReconnectAttempts field so the
  * switch cannot drift behind the service state.
  */
-public class ReconnectBackoffTest extends TestCase {
+public class ReconnectBackoffTest {
 
-    public void testStaticBackoffTable() {
+    @Test
+    public void staticBackoffTable() {
         assertEquals(1000, HumlaService.getReconnectDelayForAttempts(0));
         assertEquals(3000, HumlaService.getReconnectDelayForAttempts(1));
         assertEquals(6000, HumlaService.getReconnectDelayForAttempts(2));
@@ -42,22 +43,39 @@ public class ReconnectBackoffTest extends TestCase {
         assertEquals(25000, HumlaService.getReconnectDelayForAttempts(100));
     }
 
-    public void testConstantsMatchTable() {
+    @Test
+    public void negativeAttemptsFailClosedToMax() {
+        // Unreachable in production (the counter resets to 0 and only
+        // increments): the pure function treats negatives as fail-closed to MAX.
+        // Pinned as a drift detector — a future fail-closed clamp must
+        // update this test deliberately, not silently.
+        assertEquals(25000, HumlaService.getReconnectDelayForAttempts(-1));
+        assertEquals(25000, HumlaService.getReconnectDelayForAttempts(Integer.MIN_VALUE));
+    }
+
+    @Test
+    public void namedConstantsMatchTable() {
         assertEquals(1000, HumlaService.RECONNECT_DELAY_INITIAL);
         assertEquals(25000, HumlaService.RECONNECT_DELAY_MAX);
     }
 
-    public void testInstanceDelegatesToStaticTable() throws Exception {
+    @Test
+    public void instanceDelegatesToStaticTable() {
+        // Fragile by design: constructs a full LifecycleService for a static-delegation
+        // pin (field initializers are currently pure). If Android-dependent
+        // initializers are added, switch to a Robolectric or static-only pin.
         HumlaService service = new HumlaService();
-        Field attempts = HumlaService.class.getDeclaredField("mReconnectAttempts");
-        attempts.setAccessible(true);
         int[] expected = {1000, 3000, 6000, 12000, 25000};
         for (int i = 0; i < expected.length; i++) {
-            attempts.setInt(service, i);
+            service.setReconnectAttemptsForTest(i);
             assertEquals("attempt " + i + " must map to " + expected[i],
                     expected[i], service.getReconnectDelay());
         }
-        attempts.setInt(service, 42);
+        service.setReconnectAttemptsForTest(42);
+        assertEquals(25000, service.getReconnectDelay());
+        service.setReconnectAttemptsForTest(Integer.MAX_VALUE);
+        assertEquals(25000, service.getReconnectDelay());
+        service.setReconnectAttemptsForTest(-1);
         assertEquals(25000, service.getReconnectDelay());
     }
 }

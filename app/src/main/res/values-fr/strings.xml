@@ -156,6 +156,10 @@
     <string name="shout_include_subchannels">Voix vers les sous-salons</string>
     <string name="grant_perm_draw_over_apps">Veuillez autoriser l\'affichage sur d\'autres applications.</string>
     <string name="grant_perm_microphone">Veuillez autoriser le microphone.</string>
+    <!-- SCO bring-up failure (default-locale `bluetooth_sco_failed`). -->
+    <string name="bluetooth_sco_failed">Casque Bluetooth indisponible, utilisation du haut-parleur du téléphone ou de l\'audio connecté.</string>
+    <!-- SCO permission failure (default-locale `bluetooth_sco_permission`). -->
+    <string name="bluetooth_sco_permission">Autorisation Bluetooth requise pour l\'audio du casque.</string>
     <string name="shout_configure">Configurer la cible vocale</string>
     <string name="shout_target">Destination vocale %s</string>
     <string name="shout_failed">Impossible de créer la cible vocale.</string>

@@ -83,6 +83,12 @@ open class HumlaObserver : IHumlaObserver {
     override fun onBluetoothScoChanged(active: Boolean) {
     }
 
+    // Explicit overrides of interface defaults (redundant but intentional):
+    // keeps the no-op contract visible here so future readers don't wonder
+    // whether the new route callbacks are abstract.
+    override fun onBluetoothScoFailed(reason: String?) {
+    }
+
     override fun onAudioRouteChanged() {
     }
 

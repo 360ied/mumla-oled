@@ -20,6 +20,7 @@ package se.lublin.humla.util
 import java.security.cert.X509Certificate
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import se.lublin.humla.BuildConfig
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
@@ -30,20 +31,30 @@ import se.lublin.humla.net.HandshakeFailure
  * A composite wrapper around Humla observers to easily broadcast to each observer.
  * Created by andrew on 12/07/14.
  *
- * <p>Fan-out isolates failures: a throwing observer is logged and the rest
- * still run. Only {@code RuntimeException} is caught — an {@code Error} still
- * aborts the broadcast. Registration rejects {@code null} fail-fast while
- * unregistration tolerates it for defensive call sites.
+ * Fan-out isolates failures: a throwing observer is logged and the rest
+ * still run. Only [RuntimeException] is caught — an [Error] still
+ * aborts the broadcast (callers must not throw checked; interface methods
+ * declare none). Registration rejects `null` fail-fast while
+ * unregistration tolerates it for defensive call sites. Delivery order over
+ * the concurrent set is nondeterministic and undocumented.
  */
 class HumlaCallbacks : IHumlaObserver {
+    companion object {
+        private const val TAG = "HumlaCallbacks"
+    }
+
     private val callbacks: MutableSet<IHumlaObserver> =
         Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
 
+    // Kotlin's intrinsic null check already rejects a null argument before
+    // the body runs, so no explicit check is needed here.
     fun registerObserver(observer: IHumlaObserver) {
-        java.util.Objects.requireNonNull(observer, "observer")
         callbacks.add(observer)
     }
 
+    // Nullable by design: defensive call sites pass possibly-null refs.
+    // IHumlaService.unregisterObserver stays non-null (fail-fast at the
+    // service boundary); the asymmetry is intentional, not a mismatch.
     fun unregisterObserver(observer: IHumlaObserver?) {
         if (observer == null) return
         callbacks.remove(observer)
@@ -121,6 +132,10 @@ class HumlaCallbacks : IHumlaObserver {
         broadcast { o -> o.onBluetoothScoChanged(active) }
     }
 
+    override fun onBluetoothScoFailed(reason: String?) {
+        broadcast { o -> o.onBluetoothScoFailed(reason) }
+    }
+
     override fun onAudioRouteChanged() {
         broadcast { it.onAudioRouteChanged() }
     }
@@ -137,7 +152,12 @@ class HumlaCallbacks : IHumlaObserver {
         broadcast { o -> o.onLogError(message) }
     }
 
-    /** Fan-out with per-observer isolation: a throwing observer is logged and the rest still run. */
+    /**
+     * Fan-out with per-observer isolation: a throwing observer is logged
+     * and the rest still run -- except [CancellationException], which
+     * propagates (structured concurrency must not be swallowed) and aborts
+     * the remaining fan-out by design.
+     */
     private fun interface ObserverCall {
         fun call(observer: IHumlaObserver)
     }
@@ -150,18 +170,22 @@ class HumlaCallbacks : IHumlaObserver {
                 // Never swallow coroutine cancellation as a mere observer
                 // failure (no in-tree observer throws it today; belt and
                 // braces for a future coroutine-based observer).
-                if (observerError is kotlinx.coroutines.CancellationException) {
+                if (observerError is CancellationException) {
                     throw observerError
                 }
                 // Full traces in debug only: a persistently-throwing observer
-                // on a high-frequency callback must not spam logcat.
+                // on a high-frequency callback must not spam release logcat.
+                // Release logs the observer class + message without the stack.
                 if (BuildConfig.DEBUG) {
-                    android.util.Log.w("HumlaCallbacks", "Observer threw, continuing fan-out", observerError)
+                    android.util.Log.w(
+                        TAG,
+                        "Observer ${observer.javaClass.name} threw, continuing fan-out",
+                        observerError
+                    )
                 } else {
                     android.util.Log.w(
-                        "HumlaCallbacks",
-                        "Observer " + observer.javaClass.name +
-                            " threw, continuing fan-out: " + observerError
+                        TAG,
+                        "Observer ${observer.javaClass.name} threw (${observerError.message}), continuing fan-out"
                     )
                 }
             }

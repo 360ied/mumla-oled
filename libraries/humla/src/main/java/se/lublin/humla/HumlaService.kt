@@ -20,20 +20,17 @@ package se.lublin.humla
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioDeviceCallback
-import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Binder
-import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
-import android.widget.Toast
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Job
@@ -42,11 +39,12 @@ import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AudioOutput
+import se.lublin.humla.audio.AndroidAudioPlatform
+import se.lublin.humla.audio.AppliedRoute
+import se.lublin.humla.audio.AudioRouteController
+import se.lublin.humla.audio.RouteEvent
 import se.lublin.humla.audio.BluetoothScoManager
-import se.lublin.humla.audio.inputmode.ActivityInputMode
-import se.lublin.humla.audio.inputmode.ContinuousInputMode
-import se.lublin.humla.audio.inputmode.IInputMode
-import se.lublin.humla.audio.inputmode.ToggleInputMode
+import se.lublin.humla.audio.ScoLink
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.NotConnectedException
 import se.lublin.humla.exception.NotSynchronizedException
@@ -66,51 +64,40 @@ import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protocol.AudioHandler
+import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.ModelHandler
-import se.lublin.humla.util.CertRef
+import se.lublin.humla.protocol.validateAudioDelta
 import se.lublin.humla.util.ConfigDelta
+import se.lublin.humla.util.ConnectionParams
 import se.lublin.humla.util.HumlaCallbacks
 import se.lublin.humla.util.HumlaDisconnectedException
 import se.lublin.humla.util.HumlaException
 import se.lublin.humla.util.HumlaLogger
 import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.util.TrustStoreRef
 import se.lublin.humla.util.VoiceTargetMode
 import java.io.File
 import java.io.IOException
 import java.security.cert.X509Certificate
-import java.util.ArrayList
+import java.util.concurrent.atomic.AtomicInteger
+import org.jetbrains.annotations.TestOnly
 
 open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     HumlaConnection.HumlaConnectionListener, HumlaLogger {
 
     companion object {
-        private val TAG = HumlaService::class.java.name
+        private val TAG = "HumlaService"
 
         /**
          * An action to immediately connect to a given Mumble server.
-         * Requires a server (see {@link #buildConnectDelta}).
+         * Requires a server (see [buildConnectDelta]).
          */
         const val ACTION_CONNECT = "se.lublin.humla.CONNECT"
 
         const val RECONNECT_DELAY_INITIAL = 1000
         const val RECONNECT_DELAY_MAX = 25000
 
-        /**
-         * One-shot settle recheck for voice-by-absence: BT profiles attach
-         * staggered (HFP/ACL first, A2DP sink seconds later), so the first
-         * device edge can see no media sink and slam the call onto
-         * speakerphone-voice. Entering voice without SCO arms delayed
-         * recomputes to catch the lagging A2DP edge even if it posts no second
-         * callback; still absent means a genuinely sink-less phone, correctly
-         * left on voice. Bounded to two extra checks (~3s, ~6s) per episode —
-         * never a loop — covering typical profile-stagger windows.
-         */
-        private const val ROUTE_SETTLE_RECHECK_MS = 3000L
-        private const val ROUTE_SETTLE_MAX_RECHECKS = 2
-
-        /** Debounce for device attach/detach flurries: one recompute per burst. */
-        private const val ROUTE_RECOMPUTE_DEBOUNCE_MS = 300L
+        /** Grace beyond a scheduled reconnect delay while the Doze shield is held. */
+        private const val WAKELOCK_GRACE_MS = 15000L
 
         @JvmStatic
         fun init(context: Context?) {
@@ -126,25 +113,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
 
         /**
-         * Route truth table: confirmed SCO forces the voice triple; otherwise a
-         * present media sink (BT A2DP / wired headset) selects media, and its
-         * absence keeps voice. Widened to public: Kotlin has no package
-         * visibility; the JVM truth-table test pins this, mirroring
-         * BluetoothScoManager.shouldRetryBringUp.
-         */
-        @JvmStatic
-        fun computeVoiceRoute(scoActive: Boolean, mediaDevicesPresent: Boolean): Boolean {
-            return scoActive || !mediaDevicesPresent
-        }
-
-        /**
          * Pure reconnect-backoff truth table behind [getReconnectDelay].
          * Static so the JVM test pins the switch without constructing a
-         * Service (mirrors computeVoiceRoute above). Slice 4 replaces the
-         * Handler postDelayed with delay() but keeps these exact delays.
+         * Service (mirrors AudioRouteController.computeVoiceRoute).
          */
         @JvmStatic
         fun getReconnectDelayForAttempts(attempts: Int): Int {
+            // Negative attempts are unreachable (mReconnectAttempts resets to 0
+            // and only increments); fail closed to MAX like any large value.
+            if (attempts < 0) return RECONNECT_DELAY_MAX
             return when (attempts) {
                 0 -> RECONNECT_DELAY_INITIAL
                 1 -> 3000
@@ -155,148 +132,96 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
     }
 
-    // Service settings
-    private var mServer: Server? = null
-    private var mCertificate: ByteArray? = null
-    private var mCertificatePassword: String? = null
-    private var mForceTcp: Boolean = false
-    private var mClientName: String? = null
-    private var mAccessTokens: List<String>? = null
-    private var mTrustStore: String? = null
-    private var mTrustStorePassword: String? = null
-    private var mTrustStoreFormat: String? = null
-    private var mLocalMuteHistory: List<Int>? = null
-    private var mLocalIgnoreHistory: List<Int>? = null
+    // Connection parameters (config track): one immutable snapshot, frozen at
+    // the apply() boundary under the service monitor and published through a
+    // single volatile. connect() and onConnectionEstablished() read one
+    // snapshot instead of eleven fields.
+    @Volatile
+    private var connectionParams = ConnectionParams()
     private lateinit var mAudioBuilder: AudioHandler.Builder
-    private var mTransmitMode: Int = 0
-    private var mHalfDuplex: Boolean = false
+    // Audio-knob holder: three mode instances plus transmit mode and half
+    // duplex in one field. Main-confined like apply(); the route controller
+    // never sees it (its SettingsChanged event carries only reload).
+    private val inputModes = InputModes()
+    // Route owner (slice 4): all route state and choreography live in the
+    // controller behind ports; this service owns one instance, feeds it
+    // lifecycle events, and forwards three API members to it. The route
+    // monitor group moved atomically into the controller (main-confined volatile
+    // fields, no lock) — no route field remains under applyLock.
+    private lateinit var route: AudioRouteController
 
-    // Volatile: written in apply, read across service threads in
-    // updateBluetoothScoRoute, retryBluetoothSco, and the route callbacks.
-    // (mHalfDuplex stays plain: it is only ever touched on the main thread.)
-    @Volatile
-    private var mScoRequested: Boolean = false
+    private val routeHost = object : AudioRouteController.Host {
+        override val isLive: Boolean
+            get() = mConnectionState == ConnectionState.CONNECTED
+        override val sessionToken: Int
+            get() = connectionGeneration.get()
+        override fun hasLivePipeline(): Boolean {
+            val handler = mAudioHandler
+            return handler != null && handler.isInitialized()
+        }
+        override fun recreatePipeline() {
+            createAudioHandler()
+        }
+        override fun onPipelineError(message: String?) {
+            onConnectionWarning(message)
+        }
+        override fun onRouteChanged() {
+            onAudioRouteChanged()
+            mCallbacks.onAudioRouteChanged()
+        }
+        override fun onScoChanged(active: Boolean) {
+            mCallbacks.onBluetoothScoChanged(active)
+        }
+        override fun onScoTeardown() {
+            onAudioRouteChanged()
+            mCallbacks.onBluetoothScoChanged(false)
+        }
+        override fun onBluetoothScoFailed(reason: String?) {
+            mCallbacks.onBluetoothScoFailed(reason)
+        }
+    }
+    // Service-scope Jobs replace Handler postDelayed chains. Disarm =
+    // job?.cancel(), replacing removeCallbacks one-for-one. mHandler stays
+    // only for AudioManager device-callback registration, which requires a
+    // Handler. Volatile: cancelReconnect()/disconnect() are
+    // binder-reachable off-main, matching every neighboring cross-thread
+    // flag in this file. The connection generation below is bumped on
+    // connect (main-confined today) and onDestroy; only
+    // onConnectionSynchronized arrives via a Main Handler post
+    // (HumlaConnection posts sync), while onConnectionDisconnected runs
+    // directly on connection threads, so atomicity (not just visibility) is
+    // required for the disconnect path, not belt-and-braces.
+    // Serializes reconnect timer + network-callback registration: setReconnecting
+    // runs from Main/binder (disconnect/cancelReconnect/onStartCommand) and from
+    // connection threads (onConnectionDisconnected), so cancel+assign and
+    // check-then-register must not interleave and orphan a job or double-register.
+    private val reconnectLock = Any()
 
-    // Assigned once in onCreate, never reassigned: safe to dereference from
-    // connection threads, but volatile to match this file's discipline for
-    // cross-thread route fields (a stale null is the only real hazard).
-    @Volatile
-    private var mScoManager: BluetoothScoManager? = null
+    // Serializes connect()'s generation-bump-to-CONNECTING section against
+    // binder-reachable disconnect(): without it a disconnect landing between
+    // the bump and the mConnection assignment reads null, takes the
+    // no-socket branch, and connect() then overwrites the synchronous
+    // DISCONNECTED with CONNECTING. Both sides hold this only for local
+    // teardown/state (socket close, never network wait); connection-thread
+    // callbacks never take it, so no lock-ordering hazard.
+    private val connectLock = Any()
 
-    // Written on the main thread (applyScoRoute) and in the disconnect path
-    // (stopScoWithNotify), which HumlaConnection invokes on TCP-reader
-    // threads; read on both. Volatile for visibility; confirmed-flag flips
-    // are serialized in fine-grained synchronized blocks (see applyScoRoute,
-    // stopScoWithNotify, updateRouteBuilderLocked), while the funnel, device
-    // query, IPC, and fan-out they trigger run outside the service monitor.
-    @Volatile
-    private var mScoRouteActive: Boolean = false
+    // Serializes apply()'s read-modify-write merge+publish: two interleaved
+    // applies must not lose each other's keys (see apply()).
+    private val applyLock = Any()
 
-    // VoIP mode ownership (one owner: this route policy — never the pipeline
-    // and never the SCO manager alone). Held for voice routes so capture-side
-    // effects attach into a coupled HAL loop, released for media routes and
-    // on disconnect/destroy. Claimed tracks whether WE set IN_COMM: a
-    // pre-held mode (phone call, concurrent SCO) is never cleared by us.
-    private var mAudioManager: AudioManager? = null
-
-    // Route/mode ownership fields below are touched on the main thread and
-    // in the disconnect path on connection threads: volatile for visibility,
-    // with ensure/release/apply serialized via synchronized methods so a
-    // device callback racing a disconnect cannot corrupt the restore baseline.
-    @Volatile
-    private var mSavedAudioMode: Int = AudioManager.MODE_NORMAL
-
-    @Volatile
-    private var mVoiceModeHeld: Boolean = false
-
-    @Volatile
-    private var mVoiceModeClaimed: Boolean = false
-
-    // Media-route selection (BT A2DP / BLE / wired-USB outputs, gated on
-    // SCO absence). Present sinks select the media triple; SCO and the bare
-    // phone stay voice (computeVoiceRoute). Listener is always registered
-    // (minSdk 30; audio-device APIs are API 23); no version gate remains. Named for what it stores (the gated decision, not raw
-    // presence): recomputed from the live query on every route application.
-    @Volatile
-    private var mMediaRouteSelected: Boolean = false
-
-    @Volatile
-    private var mAppliedVoiceRoute = true
-
-    // Default MUSIC means speakerphone-voice until settings arrive: the voice
-    // triple maps any non-VOICE_CALL stream to speakerphone (see AudioHandler
-    // init), so do not "fix" this to STREAM_VOICE_CALL (that would flip the
-    // default to earpiece).
-    @Volatile
-    private var mHandsetAudioStream: Int = AudioManager.STREAM_MUSIC
-    private var mDeviceCallback: AudioDeviceCallback? = null
-    // Slice 4: Handler postDelayed chains become cancellable Jobs in the
-    // service scope. Disarm = job?.cancel(), replacing removeCallbacks
-    // one-for-one. mHandler stays only for AudioManager device-callback
-    // registration, which requires a Handler. Volatile: cancelReconnect()/
-    // disconnect() are binder-reachable off-main, matching every
-    // neighboring cross-thread flag in this file. The connection generation
-    // below is bumped on main (connect is main-confined); the filtered
-    // callbacks arrive on Main via Handler posts, so volatile here is
-    // belt-and-braces visibility, not an IO-thread requirement.
-    @Volatile
-    private var connectionGeneration = 0
-    @Volatile
-    private var routeDebounceJob: Job? = null
-    @Volatile
-    private var routeSettleJob: Job? = null
+    // Bumped on connect (main-confined today) and onDestroy (main); read on
+    // connection threads via the listener stale filter. Atomic, not
+    // @Volatile++: volatile increment is read+write, so two racing connects
+    // could share a generation and the stale filter would fail.
+    private val connectionGeneration = AtomicInteger(0)
     @Volatile
     private var reconnectJob: Job? = null
 
     @Volatile
-    private var mSettleAttempts: Int = 0
-
-    @Volatile
-    private var mSettleFired: Boolean = false
-
-    // Whether a settle recheck is queued. Set only beside a launch, cleared
-    // on dispatch, reset, or teardown — never restored from a snapshot —
-    // so the flag can never claim protection no callback provides.
-    // Single writes only (volatile suffices).
-    @Volatile
-    private var mSettlePending: Boolean = false
-
-    private fun armRouteSettle() {
-        routeSettleJob?.cancel()
-        mSettlePending = true
-        val launchedSettle = lifecycleScope.launch {
-            delay(ROUTE_SETTLE_RECHECK_MS)
-            // Dispatch consumes the queued protection: clear the flag so a
-            // later fresh edge can arm anew (funnel top also clears fired).
-            mSettlePending = false
-            mSettleFired = true
-            applyAudioRoute("media settle recheck", false)
-        }
-        launchedSettle.invokeOnCompletion {
-            if (routeSettleJob === launchedSettle) routeSettleJob = null
-        }
-        routeSettleJob = launchedSettle
-    }
-
-    private fun cancelRouteSettle() {
-        routeSettleJob?.cancel()
-        routeSettleJob = null
-        mSettlePending = false
-    }
-
-    private fun cancelRouteDebounce() {
-        routeDebounceJob?.cancel()
-        routeDebounceJob = null
-    }
-
-    // Set in onDestroy: posted teardowns (SCO notify) check it before
-    // touching route audio on a dead service.
-    @Volatile
-    private var mDestroyed = false
-
-    @Volatile
     private var mVoiceTargetId: Byte = 0
     private lateinit var mWhisperTargetList: WhisperTargetList
+    private val whisperLock = Any()
 
     private var mWakeLock: PowerManager.WakeLock? = null
     private var mWifiLock: WifiManager.WifiLock? = null
@@ -313,25 +238,26 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // device-callback funnel started reading them off the main thread:
     // disconnect writes them on connection threads. Volatile for visibility
     // only, not atomic group transitions: readers pair them with the
-    // volatile mConnectionState gate (see applyAudioRoute), never a lock.
+    // volatile mConnectionState gate (see the route controller), never a lock.
     @Volatile
     private var mModelHandler: ModelHandler? = null
 
     @Volatile
     private var mAudioHandler: AudioHandler? = null
 
-    private lateinit var mActivityInputMode: ActivityInputMode
-    private lateinit var mToggleInputMode: ToggleInputMode
-    private lateinit var mContinuousInputMode: ContinuousInputMode
-
     // Written from main (start/connect UI) and connection threads
     // (disconnect path): volatile so reconnect UI never strands on stale state.
     @Volatile
     private var mReconnecting: Boolean = false
 
+    // Incremented on the main scope (timer/onAvailable), reset from Main and
+    // binder threads: atomic, not @Volatile++, so a reset can never tear an
+    // increment mid-flight (lost increment = wrong backoff; lost reset =
+    // inflated backoff after cancel).
+    private val mReconnectAttempts = AtomicInteger(0)
     @Volatile
-    private var mReconnectAttempts = 0
     private var mNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile
     private var mNetworkCallbackRegistered = false
 
     private val mAudioInputListener: AudioHandler.AudioEncodeListener =
@@ -383,6 +309,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     /**
      * Stops the service for a start request that was ignored, unless a
      * connection attempt or established connection is in progress.
+     * CONNECTION_LOST without reconnect is intentionally not stopped here:
+     * kick/ban idles with the UI still bound (settings/history visible), so
+     * the service lingers until an explicit disconnect or process death.
      */
     private fun stopSelfIfIdle(startId: Int) {
         if (mConnectionState == ConnectionState.DISCONNECTED) {
@@ -450,7 +379,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (delta == null || delta.server == null) {
                     // Malformed CONNECT: log and ignore. Never throw from
                     // onStartCommand (crash primitive) and never proceed to
-                    // apply/connect() on the malformed intent.
+                    // apply/connect() on the malformed intent. The prior
+                    // auto-reconnect schedule (if any) is intentionally preserved:
+                    // a malformed intent carries no new target, so it neither
+                    // connects nor disarms the stale timer.
                     Log.w(TAG, "$ACTION_CONNECT requires a server; ignoring.")
                     stopSelfIfIdle(startId)
                     return START_NOT_STICKY
@@ -467,6 +399,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             if (isConnect) {
                 // A user-initiated connect supersedes any scheduled automatic reconnect.
                 // Disarm it so a stale retry can't orphan this attempt once it succeeds.
+                // Consecutive-failure backoff is intentionally NOT reset here: a
+                // failing manual retry means the server is still down, so the
+                // next auto-retry keeps the grown delay instead of hammering
+                // at INITIAL. Success resets via onConnectionSynchronized.
                 setReconnecting(false)
                 connect()
             }
@@ -477,10 +413,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun onCreate() {
         super.onCreate()
+        // Null-tolerant like every neighboring manager (Wifi/Audio/BT): a
+        // missing PowerManager must degrade to no wake lock, never crash the
+        // service out of onCreate. All wake uses already null-check.
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager?
-        val wakeLock = requireNotNull(powerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService")
-        wakeLock.setReferenceCounted(false)
-        mWakeLock = wakeLock
+        if (powerManager != null) {
+            val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService")
+            wakeLock.setReferenceCounted(false)
+            mWakeLock = wakeLock
+        } else {
+            Log.w(TAG, "No PowerManager; running without wake lock")
+            mWakeLock = null
+        }
 
         // Doze shield: keep the WiFi radio out of firmware power-save for the
         // lifetime of the connection. Without a WifiLock (dumpsys wifi showed
@@ -489,9 +433,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // timeout. Created here, acquired in connect(), released on final
         // teardown. Uses the application context so the lock outlives config
         // changes; reference-counted false to mirror mWakeLock semantics.
-        // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): LOW_LATENCY needs
-        // API 30+ (at the minSdk 30 floor, so always available), and HIGH_PERF is the
-        // documented VoIP-compatible mode available on all supported devices.
+        // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): low-latency saves
+        // power but throttles throughput under load; high-perf is the
+        // documented VoIP-compatible mode that keeps keepalives flowing on
+        // battery + screen-off. Both need API 30+ (minSdk floor), so
+        // availability is not the discriminator -- power vs. voice latency is.
         try {
             val wifiManager = applicationContext
                 .getSystemService(WIFI_SERVICE) as WifiManager?
@@ -524,58 +470,37 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 }
             }
         mConnectionState = ConnectionState.DISCONNECTED
-        try {
-            mAudioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager?
+        val audioPlatform = try {
+            AndroidAudioPlatform(getSystemService(Context.AUDIO_SERVICE) as AudioManager?)
         } catch (e: Exception) {
             Log.w(TAG, "VoIP mode: no AudioManager", e)
-            mAudioManager = null
+            AndroidAudioPlatform(null)
         }
-        mScoManager = BluetoothScoManager(this, object : BluetoothScoManager.Listener {
-            override fun onScoConnected() {
-                applyScoRoute(true, "Bluetooth SCO connected")
-            }
-
-            override fun onScoDisconnected() {
-                applyScoRoute(false, "Bluetooth SCO disconnected, falling back to phone audio")
-            }
-
-            override fun onScoFailed(reason: String?) {
-                applyScoRoute(false, "Bluetooth SCO unavailable, falling back to phone audio")
-                // onScoFailed is posted to the main thread; connected and
-                // disconnected arrive on main-thread platform callbacks.
-                Toast.makeText(
-                    this@HumlaService,
-                    if (BluetoothScoManager.REASON_PERMISSION == reason)
-                        R.string.bluetooth_sco_permission
-                    else
-                        R.string.bluetooth_sco_failed,
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        })
-        try {
-            val deviceCallback = object : AudioDeviceCallback() {
-                override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>?) {
-                    logDeviceTypes("added", added)
-                    onRouteDevicesChanged()
-                    maybeStartRequestedSco(added)
+        // SCO callbacks forward to the route controller. They are posted
+        // async (manager scope Main.immediate), so `route` is initialized
+        // before any callback fires. Null-tolerant like the platform above:
+        // a missing AudioManager must not crash onCreate.
+        val scoLink: ScoLink? = try {
+            BluetoothScoManager(this, object : BluetoothScoManager.Listener {
+                override fun onScoConnected() {
+                    if (::route.isInitialized) route.onScoConnected()
                 }
 
-                override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>?) {
-                    logDeviceTypes("removed", removed)
-                    onRouteDevicesChanged()
+                override fun onScoDisconnected() {
+                    if (::route.isInitialized) route.onScoDisconnected()
                 }
-            }
-            mDeviceCallback = deviceCallback
-            mAudioManager?.registerAudioDeviceCallback(deviceCallback, mHandler)
+
+                override fun onScoFailed(reason: String?) {
+                    if (::route.isInitialized) route.onScoFailed(reason)
+                }
+            })
         } catch (e: Exception) {
-            Log.w(TAG, "Route device listener failed", e)
-            mDeviceCallback = null
+            Log.w(TAG, "SCO: no AudioManager", e)
+            null
         }
-        mMediaRouteSelected = queryMediaDevicesPresent()
-        mToggleInputMode = ToggleInputMode()
-        mActivityInputMode = ActivityInputMode(ActivityInputMode.DEFAULT_VAD_MAX)
-        mContinuousInputMode = ContinuousInputMode()
+        route = AudioRouteController(audioPlatform, scoLink, lifecycleScope, routeHost)
+        route.registerDeviceListener(mHandler)
+        route.onInit()
         mWhisperTargetList = WhisperTargetList()
 
         // initialize minidns dns lookup mechanisms
@@ -584,176 +509,232 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun onDestroy() {
         super.onDestroy()
-        mDestroyed = true
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
+        // Synchronous terminal state: a binder reader racing destroy must see
+        // DISCONNECTED on the dead service, never a stale CONNECTED/CONNECTING.
+        mConnectionState = ConnectionState.DISCONNECTED
+        // Invalidate the shared listener: the old connection's still-flying
+        // async posts must not mutate state or fan out observers after death.
+        // (Pipeline + route teardown below run synchronously, so nothing the
+        // stale callback would do is still needed.)
+        connectionGeneration.incrementAndGet()
         setReconnecting(false)
         val wakeLock = mWakeLock
         if (wakeLock != null && wakeLock.isHeld) {
             wakeLock.release()
         }
-        // Bare teardown, no notify: observers detach in onDestroy and posted
-        // UI work (SoundPool recreate, proximity lock) would revive audio on
-        // a dead service. destroy() stops the link and cancels the manager
-        // scope (slice 4: timeout child cancelled, no timer survives destroy).
-        mScoManager?.destroy()
-        // Same builder group as the funnel/teardown paths: clear under the
-        // monitor so a racing recompute cannot resurrect SCO after destroy.
-        // Media/applied resets ride along: all three are one route snapshot.
-        synchronized(this) {
-            mAudioBuilder.setScoEnabled(false)
-            mScoRouteActive = false
-            mMediaRouteSelected = false
-            mAppliedVoiceRoute = true
+        // Route teardown (link, mode, device listener, timers) lives in the
+        // controller; bare teardown, no notify by design.
+        route.onEvent(RouteEvent.Destroyed)
+        // Socket + mic teardown: disconnect() alone only drops the socket
+        // (pipeline shutdown rides the async disconnect callback, which may
+        // never run after destroy). Shut down synchronously so a destroyed
+        // service never leaks the connection or capture while the process
+        // lives on.
+        mAudioHandler?.let { oldHandler ->
+            mConnection?.removeTCPMessageHandler(oldHandler)
+            mConnection?.removeUDPMessageHandler(oldHandler)
+            oldHandler.shutdown()
         }
-        releaseVoiceMode()
-        val deviceCallback = mDeviceCallback
-        if (deviceCallback != null) {
-            try {
-                mAudioManager?.unregisterAudioDeviceCallback(deviceCallback)
-            } catch (e: Exception) {
-                Log.w(TAG, "Route device listener removal failed", e)
-            }
-            mDeviceCallback = null
-        }
-        // Unconditional: the funnel arms settle on any route edge, so teardown
-        // must clear it too.
-        cancelRouteDebounce()
-        cancelRouteSettle()
-        mSettleAttempts = 0
+        mModelHandler = null
+        mAudioHandler = null
+        mConnection?.disconnect()
+        mConnection = null
         releaseWifiLock()
     }
 
-    // Non-null Intent: matches Service.onBind's platform signature exactly; a
-    // nullable parameter does not override (the pre-image Java was non-null).
+    // Non-null Intent: matches Service.onBind's platform type (Intent!)
+    // exactly; both Intent and Intent? override. The pre-image Java was
+    // non-null, so this keeps the non-null form.
+    @Suppress("NullabilityMismatch")
     open override fun onBind(intent: Intent): IBinder {
         return HumlaBinder(this)
     }
 
     protected open fun connect() {
-        val server = mServer
-        if (server == null) {
-            Log.w(TAG, "connect() called with null mServer, cancelling reconnect")
-            setReconnecting(false)
-            return
-        }
-
-        try {
-            mConnectionState = ConnectionState.DISCONNECTED
-            mVoiceTargetId = 0
-            mWhisperTargetList.clear()
-
-            val wakeLock = mWakeLock
-            if (wakeLock != null) {
-                if (wakeLock.isHeld) {
-                    wakeLock.release()
-                }
-                wakeLock.acquire(15000)
+        synchronized(connectLock) {
+            // One atomic snapshot for the whole attempt; the server reference
+            // travels by reference (mutable, resolved in onConnectionEstablished).
+            val params = connectionParams
+            val server = params.server
+            if (server == null) {
+                Log.w(TAG, "connect() called with null server, cancelling reconnect")
+                setReconnecting(false)
+                return
             }
-            acquireWifiLock()
+            if (server.host == null) {
+                Log.w(TAG, "connect() called with null host, cancelling reconnect")
+                setReconnecting(false)
+                return
+            }
 
-            // Tear down any prior connection before overwriting: a second
-            // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
-            // NetworkCallback reconnect) must not orphan the old socket.
-            mConnection?.disconnect()
-            mConnection = null
-            // Generation-scoped listener: the old connection's TCP read-loop
-            // finally still posts onTCPConnectionDisconnect to the shared
-            // listener afterwards; without an identity check the dead
-            // connection's async post would wipe the live attempt's handlers
-            // (model/audio null, route reset, phantom observer disconnect).
-            // Interface delegation forwards every other callback untouched.
-            val generation = ++connectionGeneration
-            val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
-                // All five callbacks filter on generation: a stale connection's
-                // async posts (established/warning/handshake/disconnect/sync)
-                // must never drive the live attempt's state machine. The
-                // CONNECTING guards make stale established/handshake
-                // unreachable today, but the filter is airtight regardless.
-                private fun isStale(): Boolean {
-                    if (generation != connectionGeneration) {
-                        Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
-                        return true
+            try {
+                // Straight to CONNECTING: teardown below runs synchronously
+                // before the new attempt, so observers never see a transient
+                // CONNECTED -> DISCONNECTED -> CONNECTING flap on re-connect.
+                // Reset voice-target routing explicitly: a prior WHISPER session
+                // must not strand ChannelFragment's panel. NORMAL (0) matches
+                // setVoiceTargetId's emit, but connect() runs before observers
+                // expect callbacks, so only emit if previously non-normal.
+                // Id and list reset atomically: the id write rides the same
+                // monitor as the list clear (getWhisperTarget snapshots id then
+                // gets under lock), and the emit stays outside the lock --
+                // onVoiceTargetChanged fans out to observers that may re-enter
+                // getWhisperTarget, which would deadlock inside the monitor.
+                val prevVoiceTarget = synchronized(whisperLock) {
+                    val prev = mVoiceTargetId
+                    mVoiceTargetId = 0
+                    mWhisperTargetList.clear()
+                    prev
+                }
+                if (prevVoiceTarget.toInt() != 0) {
+                    mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+                }
+
+                val wakeLock = mWakeLock
+                if (wakeLock != null) {
+                    if (wakeLock.isHeld) {
+                        wakeLock.release()
                     }
-                    return false
+                    wakeLock.acquire(WAKELOCK_GRACE_MS)
                 }
+                acquireWifiLock()
 
-                override fun onConnectionEstablished() {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionEstablished()
+                // Invalidate first: the old connection's read loop may still be
+                // alive (silent disconnect posts async; a racing fatal error
+                // delivers synchronously on the IO thread). Bumping before any
+                // old-teardown work -- matching onDestroy -- closes the window
+                // where a stale post between disconnect() and the bump would
+                // slip the generation filter and drive the new attempt's state.
+                // The whole bump-to-CONNECTING section rides connectLock
+                // against binder disconnect() (see the lock's declaration).
+                val generation = connectionGeneration.incrementAndGet()
+                // Tear down any prior connection before overwriting: a second
+                // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
+                // NetworkCallback reconnect) must not orphan the old socket.
+                // End the old session explicitly: the old connection's async
+                // disconnect callback will be dropped as stale once generation
+                // moves below, so without this the old route teardown and the
+                // old pipeline shutdown would never run. Observers go straight
+                // to onConnecting with no onDisconnected (a spurious disconnect
+                // would flash the reconnect UI and TTS). The old pipeline must
+                // end here too — the route event alone would leave it capturing.
+                mAudioHandler?.let { oldHandler ->
+                    mConnection?.removeTCPMessageHandler(oldHandler)
+                    mConnection?.removeUDPMessageHandler(oldHandler)
+                    oldHandler.shutdown()
                 }
+                mModelHandler = null
+                mAudioHandler = null
+                route.onEvent(RouteEvent.SessionEnded)
+                mConnection?.disconnect()
+                mConnection = null
+                // Generation was bumped above (before teardown), so the old
+                // connection's async posts arrive stale and are filtered below.
+                // Interface delegation forwards every other callback untouched.
+                val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
+                    // All five callbacks filter on generation: a stale connection's
+                    // async posts (established/warning/handshake/disconnect/sync)
+                    // must never drive the live attempt's state machine. The
+                    // CONNECTING guards make stale established/handshake
+                    // unreachable today, but the filter is airtight regardless.
+                    private fun isStale(): Boolean {
+                        if (generation != connectionGeneration.get()) {
+                            Log.v(TAG, "Ignoring stale connection callback (gen $generation)")
+                            return true
+                        }
+                        return false
+                    }
 
-                override fun onConnectionWarning(warning: String?) {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionWarning(warning)
-                }
+                    override fun onConnectionEstablished() {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionEstablished()
+                    }
 
-                override fun onConnectionHandshakeFailed(
-                    chain: Array<X509Certificate>?,
-                    failure: HandshakeFailure,
-                    verifiedHost: String?
-                ) {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionHandshakeFailed(chain, failure, verifiedHost)
-                }
+                    override fun onConnectionWarning(warning: String?) {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionWarning(warning)
+                    }
 
-                override fun onConnectionDisconnected(e: HumlaException?) {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionDisconnected(e)
-                }
+                    override fun onConnectionHandshakeFailed(
+                        chain: Array<X509Certificate>?,
+                        failure: HandshakeFailure,
+                        verifiedHost: String?
+                    ) {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionHandshakeFailed(chain, failure, verifiedHost)
+                    }
 
-                override fun onConnectionSynchronized() {
-                    if (isStale()) return
-                    this@HumlaService.onConnectionSynchronized()
+                    override fun onConnectionDisconnected(e: HumlaException?) {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionDisconnected(e)
+                    }
+
+                    override fun onConnectionSynchronized() {
+                        if (isStale()) return
+                        this@HumlaService.onConnectionSynchronized()
+                    }
                 }
+                val connection = HumlaConnection(connectionListener)
+                mConnection = connection
+                connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
+                connection.setForceTCP(params.forceTcp)
+                connection.setKeys(params.certificate, params.certificatePassword)
+                connection.setTrustStore(params.trustStore, params.trustStorePassword, params.trustStoreFormat)
+
+                val modelHandler = ModelHandler(
+                    this, mCallbacks, this,
+                    params.localMuteHistory, params.localIgnoreHistory
+                )
+                mModelHandler = modelHandler
+                connection.addTCPMessageHandlers(modelHandler)
+
+                mConnectionState = ConnectionState.CONNECTING
+
+                mCallbacks.onConnecting()
+
+                connection.connect(requireNotNull(server.host), server.port)
+            } catch (e: HumlaException) {
+                Log.e(TAG, "Connect failed", e)
+                onConnectionDisconnected(e)
             }
-            val connection = HumlaConnection(connectionListener)
-            mConnection = connection
-            connection.setTargetFramesPerPacket(mAudioBuilder.getTargetFramesPerPacket())
-            connection.setForceTCP(mForceTcp)
-            connection.setKeys(mCertificate, mCertificatePassword)
-            connection.setTrustStore(mTrustStore, mTrustStorePassword, mTrustStoreFormat)
-
-            val modelHandler = ModelHandler(
-                this, mCallbacks, this,
-                mLocalMuteHistory, mLocalIgnoreHistory
-            )
-            mModelHandler = modelHandler
-            connection.addTCPMessageHandlers(modelHandler)
-
-            mConnectionState = ConnectionState.CONNECTING
-
-            mCallbacks.onConnecting()
-
-            connection.connect(requireNotNull(server.host), server.port)
-        } catch (e: HumlaException) {
-            Log.e(TAG, "Connect failed", e)
-            onConnectionDisconnected(e)
         }
     }
 
     open override fun disconnect() {
-        mReconnectAttempts = 0
-        setReconnecting(false)
-        // Synchronous state: the async read-loop finally still delivers the
-        // formal onConnectionDisconnected, but observers must see
-        // DISCONNECTED from the explicit call, not a lingering CONNECTING.
-        // Harmless under the generation + CONNECTING guards (a quick
-        // reconnect bumps generation; the stale post is filtered).
-        mConnectionState = ConnectionState.DISCONNECTED
-        val wakeLock = mWakeLock
-        if (wakeLock != null && wakeLock.isHeld) {
-            wakeLock.release()
+        synchronized(connectLock) {
+            mReconnectAttempts.set(0)
+            setReconnecting(false)
+            // Synchronous state: the async read-loop finally still delivers the
+            // formal onConnectionDisconnected, but observers must see
+            // DISCONNECTED from the explicit call, not a lingering CONNECTING.
+            // Serialized against connect() via connectLock: a disconnect
+            // landing mid-connect either runs fully before the bump (then
+            // connect proceeds to CONNECTING) or tears down the new attempt
+            // (final state DISCONNECTED) — never a null-read resurrection.
+            mConnectionState = ConnectionState.DISCONNECTED
+            val wakeLock = mWakeLock
+            if (wakeLock != null && wakeLock.isHeld) {
+                wakeLock.release()
+            }
+            releaseWifiLock()
+            // Tear down SCO synchronously: the async disconnect callback may lag,
+            // and a quick reconnect must not reuse a stale link or route flag.
+            route.stopScoWithNotify()
+            val connection = mConnection
+            if (connection != null) {
+                connection.disconnect()
+            } else {
+                // No socket, so no async callback will run the full teardown
+                // (mode/route/settle): run the route half explicitly. Posted to
+                // the funnel when off-main; idempotent with the callback path.
+                route.onEvent(RouteEvent.SessionEnded)
+            }
         }
-        releaseWifiLock()
-        // Tear down SCO synchronously: the async disconnect callback may lag,
-        // and a quick reconnect must not reuse a stale link or route flag.
-        stopScoWithNotify()
-        mConnection?.disconnect()
     }
 
     open override fun isBluetoothScoActive(): Boolean {
-        val scoManager = mScoManager
-        return scoManager != null && scoManager.isActive()
+        return route.isScoActive()
     }
 
     /**
@@ -764,41 +745,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * pipeline, cues, and volume observers never diverge mid-callback.
      */
     open override fun isMediaRouteActive(): Boolean {
-        return mMediaRouteSelected && !mScoRouteActive
+        return route.isMediaRouteActive
     }
 
     open override fun retryBluetoothSco(): Boolean {
-        // Copy to locals before IPC so a torn read is impossible; the copy
-        // is not group-atomic versus writers (post-start re-validation +
-        // manager idempotence absorb any tearing — that is the real guard).
-        val requested: Boolean
-        val state: ConnectionState
-        val scoManager: BluetoothScoManager?
-        val connection: HumlaConnection?
-        synchronized(this) {
-            requested = mScoRequested
-            state = mConnectionState
-            scoManager = mScoManager
-            connection = mConnection
-        }
-        if (requested && state == ConnectionState.CONNECTED &&
-            scoManager != null && scoManager.isIdle()
-        ) {
-            scoManager.start()
-            // Re-validate identity, state, and intent: a disable or a
-            // disconnect/reconnect cycle during bring-up must not leave
-            // a stray attempt running (stop() never callbacks, silent).
-            synchronized(this) {
-                if (mConnection !== connection || mConnectionState != ConnectionState.CONNECTED ||
-                    !mScoRequested
-                ) {
-                    scoManager.stop()
-                    return false
-                }
-            }
-            return true
-        }
-        return false
+        return route.retrySco()
     }
 
     open fun isConnectionEstablished(): Boolean {
@@ -806,7 +757,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /**
-     * @return true if Humla has received the ServerSync message, indicating synchronization with
+     * @return True if Humla has received the ServerSync message, indicating synchronization with
      * the server's model and settings. This is the main state of the service.
      */
     open fun isSynchronized(): Boolean {
@@ -814,14 +765,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun onConnectionEstablished() {
-        val server = mServer
+        val params = connectionParams
+        val server = params.server
         val connection = mConnection
         if (server != null && connection != null) {
             server.setResolved(connection.getHost(), connection.getPort())
         }
 
         // Send version information and authenticate.
-        val version = Constants.createVersionMessage(mClientName)
+        val version = Constants.createVersionMessage(params.clientName)
 
         val auth = Mumble.Authenticate.newBuilder()
         if (server != null) {
@@ -829,7 +781,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             auth.password = server.password
         }
         auth.opus = true
-        auth.addAllTokens(mAccessTokens ?: emptyList())
+        auth.addAllTokens(params.accessTokens ?: emptyList())
 
         // onConnectionEstablished is invoked by the connection itself, which
         // cannot be gone here; require it instead of silently dropping auth.
@@ -845,13 +797,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
 
-        // TODO hackish, but this seems to happen?!
+        // Defensive: the model is created with the connection and cleared only
+        // on teardown paths that also leave CONNECTED, so this is unreachable
+        // in practice. Fail deterministic with full teardown (locks + route)
+        // instead of stranding wake locks and the route mode.
         if (mModelHandler == null) {
             Log.e(TAG, "onConnectionSynchronized: mModelHandler is null")
+            mConnectionState = ConnectionState.DISCONNECTED
+            setReconnecting(false)
+            val wakeLock = mWakeLock
+            if (wakeLock != null && wakeLock.isHeld) {
+                wakeLock.release()
+            }
+            releaseWifiLock()
+            route.onEvent(RouteEvent.SessionEnded)
+            // Full teardown: the socket is still live here (guard above
+            // passed), so drop it and tell observers -- otherwise TCP/UDP
+            // threads and keepalives run on while the service reports
+            // DISCONNECTED and observers stall in CONNECTING.
+            mConnection?.disconnect()
+            mConnection = null
+            mCallbacks.onDisconnected(null)
             return
         }
 
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
         setReconnecting(false)
         mConnectionState = ConnectionState.CONNECTED
 
@@ -864,32 +834,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             wakeLock.acquire()
         }
 
-        try {
-            val voice = updateRouteBuilder()
-            // See funnel: only our own claimed hold implicates us in any
-            // system SCO raised during it.
-            val syncClaimedHold = mVoiceModeHeld && mVoiceModeClaimed
-            applyVoiceMode(voice)
-            createAudioHandler()
-            if (!voice) {
-                counterUnrequestedSystemSco(syncClaimedHold)
-            } else if (!mScoRouteActive && !mMediaRouteSelected) {
-                // Sync landed in voice-by-absence (A2DP still staggering):
-                // arm the same bounded recheck the funnel uses, coalescing
-                // with any funnel-armed one already queued.
-                mSettleAttempts = 0
-                armRouteSettle()
-            }
-        } catch (e: AudioException) {
-            Log.e(TAG, "Audio pipeline creation failed", e)
-            onConnectionWarning(e.message)
-        }
-        updateBluetoothScoRoute()
-        // First creation bypasses the funnel: push route-dependent audio
-        // (cues, proximity) explicitly so an A2DP-attached first connect
-        // does not leave them on the voice stream until the next flap.
-        onAudioRouteChanged()
-        mCallbacks.onAudioRouteChanged()
+        // Route application (mode, pipeline, SCO, cues) lives in the
+        // controller; pipeline errors are reported via onPipelineError.
+        // First creation runs through the funnel with firstCreate, which
+        // keeps the unconditional build plus route notify the sync path
+        // requires (see controller).
+        route.onEvent(RouteEvent.SessionStarted)
 
         mCallbacks.onConnected()
     }
@@ -926,25 +876,21 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
         mModelHandler = null
         mAudioHandler = null
-        mVoiceTargetId = 0
-        mWhisperTargetList.clear()
-        // Media decision goes stale here (teardown clears SCO only; the next
-        // funnel recomputes): refresh from a live query so gap observers see
-        // truth (A2DP still attached reads media) instead of a forced value.
-        // Under the group monitor like every other route write; the query
-        // itself (binder IPC) runs outside it.
-        val liveMedia = queryMediaDevicesPresent()
-        synchronized(this) {
-            mMediaRouteSelected = liveMedia
+        // Atomic id+list reset (same deadlock discipline as connect(): emit
+        // outside the monitor). Disconnect resets silently only when already
+        // NORMAL so the UI never strands in WHISPER across the gap.
+        val prevVoiceTarget = synchronized(whisperLock) {
+            val prev = mVoiceTargetId
+            mVoiceTargetId = 0
+            mWhisperTargetList.clear()
+            prev
         }
-
-        // Never leak the SCO link across disconnects: the next sync re-arms
-        // it via updateBluetoothScoRoute when still requested.
-        stopScoWithNotify()
-        releaseVoiceMode()
-        // No live call remains for a settle recheck to recover.
-        cancelRouteSettle()
-        mSettleAttempts = 0
+        if (prevVoiceTarget.toInt() != 0) {
+            mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+        }
+        // Route teardown (media refresh, SCO release, mode release, settle
+        // cancel) lives in the controller.
+        route.onEvent(RouteEvent.SessionEnded)
 
         mCallbacks.onDisconnected(e)
     }
@@ -968,10 +914,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         mCallbacks.onLogError(message)
     }
 
-    // No @Throws: these are private helpers whose requireNotNull hardening
-    // throws IllegalArgumentException, not the historical checked type.
+    // Binder boundary: translate the missing-connection IAE into
+    // IllegalStateException so disconnected-before-connect matches the
+    // connected-then-lost path (getters translate to ISE). App catches ISE.
     private fun requireConnection(): HumlaConnection {
-        return requireNotNull(mConnection) { "No active connection" }
+        return try {
+            requireNotNull(mConnection) { "No active connection" }
+        } catch (e: IllegalArgumentException) {
+            throw IllegalStateException(e.message, e)
+        }
     }
 
     private fun requireModelHandler(): ModelHandler {
@@ -979,11 +930,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getReconnectDelay(): Int {
-        return getReconnectDelayForAttempts(mReconnectAttempts)
+        return getReconnectDelayForAttempts(mReconnectAttempts.get())
     }
 
     private fun registerNetworkCallback() {
-        if (mNetworkCallbackRegistered) return
+        synchronized(reconnectLock) {
+            if (mNetworkCallbackRegistered) return
+        }
         try {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager?
             if (cm != null) {
@@ -1004,9 +957,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                                     mConnectionState != ConnectionState.CONNECTING
                                 ) {
                                     Log.v(TAG, "Network available, triggering immediate reconnect.")
-                                    reconnectJob?.cancel()
-                                    reconnectJob = null
-                                    mReconnectAttempts++
+                                    synchronized(reconnectLock) {
+                                        reconnectJob?.cancel()
+                                        reconnectJob = null
+                                    }
+                                    mReconnectAttempts.incrementAndGet()
                                     connect()
                                 }
                             }
@@ -1014,7 +969,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                     }
                 }
                 cm.registerDefaultNetworkCallback(requireNotNull(mNetworkCallback))
-                mNetworkCallbackRegistered = true
+                synchronized(reconnectLock) {
+                    mNetworkCallbackRegistered = true
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error registering network callback: " + e.message)
@@ -1022,7 +979,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     private fun unregisterNetworkCallback() {
-        if (!mNetworkCallbackRegistered) return
+        synchronized(reconnectLock) {
+            if (!mNetworkCallbackRegistered) return
+        }
         try {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager?
             val callback = mNetworkCallback
@@ -1032,92 +991,59 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering network callback: " + e.message)
         } finally {
-            mNetworkCallbackRegistered = false
+            synchronized(reconnectLock) {
+                mNetworkCallbackRegistered = false
+            }
         }
     }
 
-    open fun setReconnecting(reconnecting: Boolean) {
-        if (!reconnecting) {
-            mReconnecting = false
+    /** Internal reconnect driver; not part of `IHumlaService`. Tests use `setReconnectAttemptsForTest`. */
+    internal fun setReconnecting(reconnecting: Boolean) {
+        // One monitor for the whole method (register/unregister take the same
+        // lock reentrantly): a true+true race must not launch two jobs or
+        // register the network callback twice and orphan one of each.
+        synchronized(reconnectLock) {
+            if (!reconnecting) {
+                mReconnecting = false
+                reconnectJob?.cancel()
+                reconnectJob = null
+                unregisterNetworkCallback()
+                return
+            }
+
+            mReconnecting = true
+            registerNetworkCallback()
+            val delayMs = getReconnectDelay()
+            Log.v(TAG, "Scheduling reconnect in $delayMs ms (attempt ${mReconnectAttempts.get()})")
+            val wakeLock = mWakeLock
+            if (wakeLock != null) {
+                if (wakeLock.isHeld) {
+                    wakeLock.release()
+                }
+                wakeLock.acquire((delayMs + WAKELOCK_GRACE_MS).toLong())
+            }
             reconnectJob?.cancel()
-            reconnectJob = null
-            unregisterNetworkCallback()
-            return
-        }
-
-        mReconnecting = true
-        registerNetworkCallback()
-        val delayMs = getReconnectDelay()
-        Log.v(TAG, "Scheduling reconnect in $delayMs ms (attempt $mReconnectAttempts)")
-        val wakeLock = mWakeLock
-        if (wakeLock != null) {
-            if (wakeLock.isHeld) {
-                wakeLock.release()
+            val launchedReconnect = lifecycleScope.launch {
+                delay(delayMs.toLong())
+                // Mirror the onAvailable CONNECTING guard: the timer can resume
+                // after onAvailable already connected (cancel is best-effort),
+                // and an unguarded connect() would double-increment attempts and
+                // tear down a just-started handshake.
+                if (mReconnecting && mConnectionState != ConnectionState.CONNECTING) {
+                    mReconnectAttempts.incrementAndGet()
+                    connect()
+                }
             }
-            wakeLock.acquire((delayMs + 15000).toLong())
-        }
-        reconnectJob?.cancel()
-        val launchedReconnect = lifecycleScope.launch {
-            delay(delayMs.toLong())
-            // Mirror the onAvailable CONNECTING guard: the timer can resume
-            // after onAvailable already connected (cancel is best-effort),
-            // and an unguarded connect() would double-increment attempts and
-            // tear down a just-started handshake.
-            if (mReconnecting && mConnectionState != ConnectionState.CONNECTING) {
-                mReconnectAttempts++
-                connect()
-            }
-        }
         launchedReconnect.invokeOnCompletion {
-            if (reconnectJob === launchedReconnect) reconnectJob = null
-        }
-        reconnectJob = launchedReconnect
-    }
-
-    /**
-     * Stops SCO and clears the confirmed-route flag, emitting route-change
-     * notifications when a live link was up. stop() itself never callbacks,
-     * so synchronous teardowns must notify explicitly or volume, cues, and
-     * menu state strand on the voice route. Only the confirmed-flag/builder
-     * section holds the service monitor (serialized with applyScoRoute and
-     * the route builder group); manager IPC and the posted notify stay
-     * outside so the lock never pins across slow work. Media selection is
-     * left for the next funnel recompute, which owns it.
-     */
-    private fun stopScoWithNotify() {
-        val scoManager = mScoManager ?: return
-        val wasActive = scoManager.isActive()
-        scoManager.stop()
-        synchronized(this) {
-            mAudioBuilder.setScoEnabled(false)
-            mScoRouteActive = false
-        }
-        if (wasActive) {
-            // Posted: teardown callers (disconnect, destroy, mid-call disable)
-            // may run off the main thread, but hook and observers are
-            // main-thread confined. Posting also orders the event after the
-            // synchronous disable-path pipeline reload.
-            lifecycleScope.launch {
-                if (mDestroyed) {
-                    return@launch
-                }
-                if (mScoManager?.isActive() == true) {
-                    // Re-connected since teardown queued: fresh callbacks
-                    // own the UI; a stale false must not overwrite them.
-                    return@launch
-                }
-                if (mScoRouteActive) {
-                    // A newer link confirmed while this teardown was
-                    // queued (bring-up won the race after our flag flip):
-                    // its own connected-notify carries the truth.
-                    return@launch
-                }
-                onAudioRouteChanged()
-                mCallbacks.onBluetoothScoChanged(false)
+            synchronized(reconnectLock) {
+                if (reconnectJob === launchedReconnect) reconnectJob = null
             }
         }
+            reconnectJob = launchedReconnect
+        }
     }
 
+    
     /**
      * Invoked on the main thread after every confirmed audio-route change
      * (SCO or media-sink), after the pipeline reload. Subclasses override to
@@ -1129,486 +1055,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /**
-     * Holds MODE_IN_COMMUNICATION for the voice route. Called before every
-     * pipeline creation so capture-side effects attach into an already-coupled
-     * HAL loop, never while the pipeline runs. Recreate-safe: re-holding an
-     * already-held mode is idempotent and never re-saves. A pre-held mode
-     * (phone call, concurrent SCO bring-up) counts as held but unclaimed,
-     * so release below never clears someone else's mode.
-     */
-    @Synchronized
-    private fun ensureVoiceMode() {
-        val audioManager = mAudioManager
-        if (audioManager == null || mVoiceModeHeld) {
-            return
-        }
-        try {
-            val mode = audioManager.mode
-            // Externally held (phone call setup or another app): claim
-            // nothing and change nothing. Deliberately leaves mVoiceModeHeld
-            // unset so the next voice pass retries the claim — setting it
-            // here would starve the voice route of IN_COMM after the
-            // external holder lets go (no release path re-arms a marker
-            // that was never a real hold).
-            if (mode == AudioManager.MODE_IN_COMMUNICATION) {
-                Log.i(TAG, "VoIP mode already held, not claiming")
-                return
-            }
-            // A genuine cellular call owns the audio path: never steal
-            // MODE_IN_CALL either, for the same liveness reason.
-            if (mode == AudioManager.MODE_IN_CALL) {
-                Log.i(TAG, "Cellular call active, not claiming voice mode")
-                return
-            }
-            mSavedAudioMode = mode
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            mVoiceModeHeld = true
-            mVoiceModeClaimed = true
-            Log.i(TAG, "VoIP mode held (was $mSavedAudioMode)")
-        } catch (e: Exception) {
-            Log.w(TAG, "VoIP mode hold failed", e)
-        }
-    }
-
-    /**
-     * Releases a held voice mode, guarded like BluetoothScoManager: an
-     * unclaimed (pre-held) mode is never touched, and a claimed one is only
-     * restored while our IN_COMM is still current, so a phone call or another
-     * app that moved it since is never clobbered.
-     */
-    @Synchronized
-    private fun releaseVoiceMode() {
-        val audioManager = mAudioManager
-        if (audioManager == null || !mVoiceModeHeld) {
-            return
-        }
-        val claimed = mVoiceModeClaimed
-        mVoiceModeHeld = false
-        mVoiceModeClaimed = false
-        if (!claimed) {
-            return
-        }
-        try {
-            if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
-                audioManager.mode = mSavedAudioMode
-                Log.i(TAG, "VoIP mode released (restored $mSavedAudioMode)")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "VoIP mode release failed", e)
-        }
-    }
-
-    /**
-     * Applies a confirmed route to the pipeline, cue hook, and observers in
-     * that order. All route callbacks (SCO, media-sink) converge here via
-     * applyAudioRoute below; this entry keeps the SCO-specific observer push
-     * truthful while the route push carries output-routing state. Skips
-     * everything when the confirmed SCO state is unchanged (e.g. a failure
-     * that never went active); the failure toast is the caller's job.
-     * Only the confirmed-flag flip holds the service monitor (serialized
-     * with the teardown path); the funnel, IPC, and fan-out below run
-     * outside it so a slow HAL never pins the disconnect path.
-     */
-    private fun applyScoRoute(active: Boolean, reason: String) {
-        val logUnchanged: Boolean
-        synchronized(this) {
-            if (active == mScoRouteActive) {
-                // Log outside the block below: keep the critical section to
-                // the flip alone.
-                logUnchanged = true
-            } else {
-                mScoRouteActive = active
-                logUnchanged = false
-            }
-        }
-        if (logUnchanged) {
-            Log.i(TAG, "SCO route unchanged, skipping reload ($reason).")
-            return
-        }
-        applyAudioRoute(reason, false)
-        // Re-validate: a teardown racing this route may have flipped the
-        // flag while the funnel ran; its own notify carries the newer state.
-        synchronized(this) {
-            if (active != mScoRouteActive) {
-                return
-            }
-        }
-        mCallbacks.onBluetoothScoChanged(active)
-    }
-
-    /**
-     * Debounced device-listener entry: attach/detach flurries converge into
-     * one route application instead of one pipeline recreate per event.
-     */
-    private fun onRouteDevicesChanged() {
-        routeDebounceJob?.cancel()
-        val launchedDebounce = lifecycleScope.launch {
-            delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
-            applyAudioRoute("device route changed", false)
-        }
-        launchedDebounce.invokeOnCompletion {
-            if (routeDebounceJob === launchedDebounce) routeDebounceJob = null
-        }
-        routeDebounceJob = launchedDebounce
-    }
-
-    /**
-     * Synchronous media-sink presence: BT A2DP / BLE / wired-USB headset
-     * outputs currently attached (minSdk 30: audio-device APIs are API 23,
-     * always present).
-     * (voice). BLE/LE Audio and hearing aids ride the media path like A2DP
-     * per the echo-cancellation plan (accepted gap: no AEC there); only the
-     * SCO path ever selects voice over Bluetooth.
-     */
-    private fun queryMediaDevicesPresent(): Boolean {
-        val audioManager = mAudioManager ?: return false
-        try {
-            val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-                ?: return false
-            val seen = StringBuilder()
-            var found = false
-            for (device in outputs) {
-                if (device == null) {
-                    continue
-                }
-                val type = device.type
-                if (seen.isNotEmpty()) {
-                    seen.append(',')
-                }
-                seen.append(type)
-                when (type) {
-                    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                    AudioDeviceInfo.TYPE_BLE_HEADSET,
-                    AudioDeviceInfo.TYPE_BLE_SPEAKER,
-                    AudioDeviceInfo.TYPE_HEARING_AID,
-                    AudioDeviceInfo.TYPE_WIRED_HEADSET,
-                    AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-                    AudioDeviceInfo.TYPE_USB_HEADSET,
-                    AudioDeviceInfo.TYPE_USB_DEVICE ->
-                        found = true
-                    else -> {}
-                }
-            }
-            // INFO, not DEBUG: recomputes are rare (edges/settings/sync) and
-            // this line settles every "was A2DP visible?" question in the field.
-            Log.i(TAG, "Media-sink query: outputs=[$seen] media=$found")
-            return found
-        } catch (e: Exception) {
-            Log.w(TAG, "Media-sink query failed", e)
-        }
-        return false
-    }
-
-    /**
-     * Pushes the current route decision into the builder: voice flag, SCO
-     * flag, and effective source/stream. Voice keeps the handset-derived
-     * stream (earpiece vs speakerphone intent); media is always MIC/MUSIC.
-     * Returns the applied voice decision for mode handling by the caller.
-     * The device query runs outside the monitor (binder IPC); only the
-     * flag/builder group below holds it, mutually exclusive with the
-     * teardown write in stopScoWithNotify.
-     */
-    private fun updateRouteBuilder(): Boolean {
-        val mediaPresent = queryMediaDevicesPresent()
-        synchronized(this) {
-            return updateRouteBuilderLocked(mediaPresent)
-        }
-    }
-
-    /** Route decision + builder group; caller holds the service monitor. */
-    private fun updateRouteBuilderLocked(mediaPresent: Boolean): Boolean {
-        val sco = mScoRouteActive
-        val media = !sco && mediaPresent
-        mMediaRouteSelected = media
-        val voice = computeVoiceRoute(sco, media)
-        mAppliedVoiceRoute = voice
-        mAudioBuilder.setScoEnabled(sco)
-        mAudioBuilder.setVoiceRouteEnabled(voice)
-        if (voice) {
-            mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            mAudioBuilder.setAudioStream(if (sco) AudioManager.STREAM_VOICE_CALL else mHandsetAudioStream)
-        } else {
-            mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            mAudioBuilder.setAudioStream(AudioManager.STREAM_MUSIC)
-        }
-        return voice
-    }
-
-    private fun applyVoiceMode(voice: Boolean) {
-        if (voice) {
-            ensureVoiceMode()
-        } else {
-            releaseVoiceMode()
-        }
-    }
-
-    /**
-     * Single funnel for every live route change: recomputes the decision,
-     * holds or releases the voice mode around pipeline creation (mode first,
-     * capture after, per the HAL coupling requirement), then refreshes cues
-     * and observers. Skips the reload when the applied route is unchanged
-     * unless forceReload (settings path) demands it.
-     */
-    private fun applyAudioRoute(reason: String, forceReload: Boolean) {
-        // Snapshot outside the group lock: all funnel callers are main-Looper
-        // confined (device recompute, settings, SCO callbacks, posted sync),
-        // so no concurrent funnel rewrite is expected; a surprise concurrent
-        // rewrite would at worst cause one redundant idempotent reload.
-        val before = mAppliedVoiceRoute
-        // Settle bookkeeping: consume the fired flag. Fresh edges never
-        // cancel outstanding protection here — arming below re-posts when
-        // still uncovered — and nothing ever restores the pending flag
-        // without posting, so the flag can never claim protection no
-        // callback provides (no wedge). Volatile suffices: no
-        // read-modify-restore spans threads, only single writes.
-        val settle = mSettleFired
-        mSettleFired = false
-        val voice = updateRouteBuilder()
-        // Capture before applyVoiceMode clears it: did WE hold the mode for
-        // the episode now ending? Only our own claimed hold implicates us in
-        // any system SCO raised during it (see counter method below).
-        val wasClaimedHold = mVoiceModeHeld && mVoiceModeClaimed
-        if (mConnectionState == ConnectionState.CONNECTED) {
-            applyVoiceMode(voice)
-            if (!voice) {
-                // Media won: clear foreign SCO BEFORE (re)creating the
-                // pipeline so no media lifetime starts while HFP is up.
-                counterUnrequestedSystemSco(wasClaimedHold)
-            }
-        } else {
-            // Disconnected (or never connected): device attach/detach must
-            // not re-acquire global IN_COMM with no pipeline and no call.
-            // The next sync re-holds via onConnectionSynchronized.
-            releaseVoiceMode()
-        }
-        val audioHandler = mAudioHandler
-        if ((forceReload || voice != before) && audioHandler != null && audioHandler.isInitialized() &&
-            mConnectionState == ConnectionState.CONNECTED
-        ) {
-            try {
-                createAudioHandler()
-                Log.i(TAG, "$reason; audio pipeline recreated (" + (if (voice) "voice" else "media") + ").")
-            } catch (e: AudioException) {
-                Log.e(TAG, "Route-change audio reload failed", e)
-                onConnectionWarning(e.message)
-            }
-        }
-        val routeChanged = forceReload || voice != before
-        if (routeChanged) {
-            onAudioRouteChanged()
-            mCallbacks.onAudioRouteChanged()
-        }
-        // Else: unchanged route — observers query live state on demand and
-        // the SCO bit has its own direct emit, so skip the heavy cue rebuild
-        // (SoundPool/proximity) on every irrelevant device edge.
-        val voiceByAbsence = voice && !mScoRouteActive && !mMediaRouteSelected
-        val liveCall = mConnectionState == ConnectionState.CONNECTED
-        if (voiceByAbsence && liveCall && (!settle || mSettleAttempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
-            // Fresh edge (!settle, entering or already-voice) or budgeted
-            // settle follow-up: exactly one check queued. Fresh edges reset
-            // the budget — each real BT change deserves full cover; settle
-            // runs consume it. No blind restore anywhere: the flag is set
-            // only beside a post, cleared on dispatch/teardown/reset.
-            if (!settle) {
-                mSettleAttempts = 0
-            } else {
-                mSettleAttempts += 1
-            }
-            armRouteSettle()
-        } else if (!voiceByAbsence || !liveCall) {
-            cancelRouteSettle()
-            mSettleAttempts = 0
-        }
-        // Else (settle budget exhausted): the dispatched check already
-        // cleared the flag; rest without cover until a fresh edge re-arms.
-    }
-
-    /**
-     * Tears down system-raised SCO audio that our transient voice hold may
-     * have triggered. When HFP attaches during a voice-by-absence window,
-     * the platform auto-establishes SCO (IN_COMM reads as an active call)
-     * even though SCO was never requested — and that link persists after we
-     * release the mode and flip to media, stranding the user on HFP instead
-     * of A2DP. Runs only when leaving a claimed hold for media with SCO
-     * unrequested and system SCO currently on; never touches our own
-     * confirmed SCO, and never runs while disconnected. Skipped during a
-     * genuine cellular call (MODE_IN_CALL): carrier SCO is never ours to
-     * tear down. That check is racy in principle; accepted against the
-     * certain stranding it repairs.
-     */
-    private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean) {
-        val audioManager = mAudioManager ?: return
-        if (!wasClaimedHold || mScoRequested || mScoRouteActive) {
-            return
-        }
-        if (mConnectionState != ConnectionState.CONNECTED) {
-            return
-        }
-        try {
-            if (audioManager.mode == AudioManager.MODE_IN_CALL) {
-                return
-            }
-        } catch (e: Exception) {
-            return
-        }
-        if (!isSystemScoOn()) {
-            return
-        }
-        try {
-            // Mirror our manager's own release: the communication-device
-            // path on S+ (where legacy stop is unreliable against a
-            // device-path selection), legacy stop below on 30.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                audioManager.clearCommunicationDevice()
-            } else {
-                // Stop-then-clear, mirroring the manager's own release:
-                // stopping first tears down the link, clearing the routing
-                // flag second matches the documented start order in reverse.
-                try {
-                    audioManager.stopBluetoothSco()
-                } catch (ignored: Exception) {
-                    Log.w(TAG, "Unrequested SCO stop threw", ignored)
-                }
-                try {
-                    audioManager.isBluetoothScoOn = false
-                } catch (ignored: Exception) {
-                    Log.w(TAG, "Unrequested SCO routing clear threw", ignored)
-                }
-            }
-            Log.i(TAG, "Cleared unrequested system SCO after media flip")
-        } catch (e: Exception) {
-            Log.w(TAG, "Unrequested SCO clear failed", e)
-        }
-    }
-
-    /**
-     * Whether platform SCO audio is currently up, independent of our manager.
-     * S+ reads the communication device; 30 falls back to the legacy SCO flag.
-     */
-    private fun isSystemScoOn(): Boolean {
-        val audioManager = mAudioManager ?: return false
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val info = audioManager.communicationDevice
-                return info != null && info.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-            }
-            return audioManager.isBluetoothScoOn
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    /** One-line field diagnostic: which device types an edge carried. */
-    private fun logDeviceTypes(edge: String, devices: Array<AudioDeviceInfo>?) {
-        if (devices == null) {
-            Log.i(TAG, "Route devices $edge: none")
-            return
-        }
-        val types = StringBuilder()
-        for (device in devices) {
-            if (types.isNotEmpty()) {
-                types.append(',')
-            }
-            types.append(device?.type ?: -1)
-        }
-        Log.i(TAG, "Route devices $edge: [$types]")
-    }
-
-    /**
-     * Starts or stops SCO bring-up to match the requested toggle and the
-     * connection state. Safe to call redundantly: the manager ignores
-     * start requests while starting or active, and stop is idempotent.
-     */
-    private fun updateBluetoothScoRoute() {
-        val scoManager = mScoManager ?: return
-        if (mScoRequested && mConnectionState == ConnectionState.CONNECTED) {
-            scoManager.start()
-        } else if (!scoManager.isIdle()) {
-            // Skip the platform round-trip when already idle; stop() is safe
-            // but needlessly releases and bumps the callback generation.
-            scoManager.stop()
-        }
-    }
-
-    /**
-     * Starts a requested-but-idle SCO bring-up when an HFP device attaches
-     * mid-call. Bring-up otherwise only runs at sync and on toggle changes,
-     * so a headset powered on later (e.g. after an earlier NO_DEVICE
-     * failure) would never establish SCO until the next toggle. Runs only
-     * from IDLE while requested and connected; the manager itself drops
-     * duplicate starts, and failure still reports through the normal toast.
-     * Runs on the main Looper (device callback thread).
-     *
-     * <p>Trigger coverage: a classic-HFP SCO entry in the added array is
-     * the fast path. Some HALs surface HFP only via A2DP-then-nothing (or
-     * stagger it past the callback), so any Bluetooth output add also
-     * polls the manager's own availability query before giving up — the
-     * same query bring-up itself uses pre-audio. LE Audio rides the media
-     * path by design and needs no trigger. Device callbacks exist on all
-     * supported devices (minSdk 30): sync and toggle paths still cover those
-     * devices, late power-on does not.
-     *
-     * <p>Each triggering edge may re-toast on persistent failure
-     * (permission denied, no device): accepted as edge-driven feedback.
-     */
-    private fun maybeStartRequestedSco(added: Array<AudioDeviceInfo>?) {
-        // Main-serialized with the toggle path (both main-Looper) with
-        // volatile reads; unlike binder-originated retryBluetoothSco this
-        // needs no snapshot block, only the post-start re-validation below.
-        val scoManager = mScoManager
-        if (!mScoRequested || mConnectionState != ConnectionState.CONNECTED || scoManager == null) {
-            return
-        }
-        if (!scoManager.isIdle()) {
-            return
-        }
-        if (added == null) {
-            return
-        }
-        var scoInAdded = false
-        var anyBtInAdded = false
-        for (device in added) {
-            if (device == null) {
-                continue
-            }
-            when (device.type) {
-                AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
-                    scoInAdded = true
-                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-                AudioDeviceInfo.TYPE_BLE_HEADSET,
-                AudioDeviceInfo.TYPE_BLE_SPEAKER ->
-                    anyBtInAdded = true
-                else -> {}
-            }
-        }
-        // Fast path: HFP surfaced directly. Fallback: any BT add with an
-        // SCO device actually available (A2DP-first stagger, quiet HALs).
-        // Otherwise an A2DP-only sink would toast NO_DEVICE spuriously.
-        if (!scoInAdded && !(anyBtInAdded && scoManager.isScoDeviceAvailable())) {
-            return
-        }
-        Log.i(TAG, "Bluetooth headset attached with SCO requested; starting bring-up")
-        val connection = mConnection
-        updateBluetoothScoRoute()
-        // A disconnect may have raced us (state still reads CONNECTED
-        // until the async teardown flips it): mirror the retry
-        // re-validation so a stale start cannot outlive teardown.
-        if (mConnection !== connection || mConnectionState != ConnectionState.CONNECTED ||
-            !mScoRequested
-        ) {
-            scoManager.stop()
-        }
-    }
-
-    /**
      * Instantiates an audio handler with the current service settings, destroying any previous
      * handler. Requires synchronization with the server, as the maximum bandwidth and session must
      * be known.
      */
     @Throws(AudioException::class)
     private fun createAudioHandler() {
-        if (BuildConfig.DEBUG && mConnectionState != ConnectionState.CONNECTED) {
-            throw AssertionError("Attempted to instantiate audio handler when not connected!")
+        // Unconditional (was DEBUG-only): release and debug must share the
+        // same containment path. The funnel catches RuntimeException, and
+        // app callers translate binder ISE, so throwing here is contained.
+        if (mConnectionState != ConnectionState.CONNECTED) {
+            throw IllegalStateException("Attempted to instantiate audio handler when not connected!")
         }
 
         val existing = mAudioHandler
@@ -1618,6 +1075,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             existing.shutdown()
         }
 
+        // Route decides; the builder carries it: push the controller decision
+        // into the builder immediately before initialize, the only point
+        // these fields are consumed. The service re-reads the current voice
+        // target below (ordering: push decision, then init with live IDs).
+        val routeDecision = route.decision()
+        when (routeDecision) {
+            AppliedRoute.VOICE_SCO -> {
+                mAudioBuilder.setScoEnabled(true)
+                mAudioBuilder.setVoiceRouteEnabled(true)
+                mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                mAudioBuilder.setAudioStream(AudioManager.STREAM_VOICE_CALL)
+            }
+            AppliedRoute.VOICE_HANDSET -> {
+                mAudioBuilder.setScoEnabled(false)
+                mAudioBuilder.setVoiceRouteEnabled(true)
+                mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                mAudioBuilder.setAudioStream(route.handsetStream())
+            }
+            AppliedRoute.MEDIA -> {
+                mAudioBuilder.setScoEnabled(false)
+                mAudioBuilder.setVoiceRouteEnabled(false)
+                mAudioBuilder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                mAudioBuilder.setAudioStream(AudioManager.STREAM_MUSIC)
+            }
+        }
         try {
             val connection = requireConnection()
             val modelHandler = requireModelHandler()
@@ -1631,12 +1113,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             connection.addTCPMessageHandlers(handler)
             connection.addUDPMessageHandlers(handler)
         } catch (e: NotSynchronizedException) {
-            throw RuntimeException("Attempted to create audio handler when not synchronized!")
+            throw AudioException("Attempted to create audio handler when not synchronized!")
+        } catch (e: IllegalArgumentException) {
+            // TOCTOU: isLive (volatile mConnectionState) can flip between the
+            // funnel's gate and these requires when a disconnect lands on a
+            // connection thread. Contain as AudioException so the route
+            // funnel reports via onPipelineError instead of crashing Main.
+            throw AudioException("Audio pipeline torn down during recreate", e)
         }
     }
 
     /**
-     * Validates a trust-store path for {@link #apply}. The null
+     * Validates a trust-store path for [apply]. The null
      * (system store) common case always passes. Non-null paths must
      * canonical-resolve under the app files directory and must end in
      * '.bks'. Canonicalisation resolves any '..' segments, so a separate
@@ -1649,13 +1137,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         if (path == null) {
             return true
         }
-        if (!path.endsWith(".bks")) {
+        if (!path.endsWith(".bks", ignoreCase = true)) {
             return false
         }
+        // Known TOCTOU (check-then-open races a symlink swap) accepted for the
+        // app-private filesDir: the store opens immediately after in the same
+        // flow and a swapped link still resolves under filesDir or is rejected.
         try {
             val filesDir = filesDir ?: return false
             val base = filesDir.canonicalFile.path
-            val candidate = File(path).canonicalFile.path
+            // Resolve relative paths against the app files dir (the process
+            // CWD is not the files dir), then canonicalize to collapse '..'.
+            val raw = File(path)
+            val candidate = (if (raw.isAbsolute) raw else File(filesDir, path)).canonicalFile.path
             return candidate.startsWith(base + File.separator)
         } catch (e: IOException) {
             return false
@@ -1665,81 +1159,118 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     /**
      * Loads all defined settings from the given delta into the HumlaService.
      * Null fields are unchanged. Some settings may only take effect after a
-     * reconnect. Throws IllegalArgumentException on unknown transmit mode;
-     * the pipeline recreate funnels through applyAudioRoute, which handles
+     * reconnect. Throws IllegalArgumentException on invalid audio input
+     * (unknown transmit mode, non-finite knobs, sub-floor bitrate);
+     * the pipeline recreate funnels through the route controller, which handles
      * AudioException internally.
      * @param delta A one-shot configuration command.
      * @return true if a reconnect is required for changes to take effect.
-     * @see se.lublin.humla.HumlaService
+     * See also [HumlaService]
+     */
+    /**
+     * Must be called on the main thread: mutates `mAudioBuilder`, the route
+     * controller, and `mAudioHandler` gate without locking (see `InputModes`
+     * main-confinement). Binder callers hop via the service handler.
      */
     open fun apply(delta: ConfigDelta): Boolean {
+        check(Looper.getMainLooper() == Looper.myLooper()) { "apply must be called on main" }
+        // Pure validation first: the throwing inputs (unknown transmit mode,
+        // non-finite knobs, out-of-range bitrate/gain) must fail before any
+        // commit, so a bad delta cannot publish params/push tokens and then
+        // abort the audio/route steps. `applyAudioDelta` below re-validates
+        // for its direct callers; the double check here is intentional.
+        inputModes.validateAudioDelta(delta)
         var reconnectNeeded = false
         var suppressReload = false
-        if (delta.server != null) {
-            mServer = delta.server
-            reconnectNeeded = true
-        }
-        val certificate = delta.certificate
-        if (certificate != null) {
-            mCertificate = certificate.data.copyOf()
-            reconnectNeeded = true
-            // A null password keeps the previous one, mirroring the old
-            // bundle where an absent password key left it untouched.
-            if (certificate.password != null) {
-                mCertificatePassword = certificate.password
+        // 1. Merge connection params under applyLock: the read-modify-write
+        // must not lose keys when two applies interleave. Presence-based
+        // reconnect: any delta carrying a reconnect-relevant key returns true.
+        synchronized(applyLock) {
+            var params = connectionParams
+            if (delta.server != null) {
+                // Snapshot the app's Server: ConnectionParams stores the
+                // reference and onConnectionEstablished mutates it via
+                // setResolved() on the connection thread, so publishing the
+                // live ref would let the app mutate host/port/user under an
+                // in-flight connect (and leak resolved state back into the
+                // app's object). Copy field-for-field like getTargetServer.
+                val s = delta.server
+                val snapshot = Server(s.id, s.name, s.host, s.port, s.username, s.password).also {
+                    it.resolvedHost = s.resolvedHost
+                    it.resolvedPort = s.resolvedPort
+                }
+                params = params.copy(server = snapshot)
+                reconnectNeeded = true
             }
-        }
-        val detectionThreshold = delta.detectionThreshold
-        if (detectionThreshold != null) {
-            mActivityInputMode.setThreshold(detectionThreshold)
-            val audioHandler = mAudioHandler
-            if (audioHandler != null) {
-                audioHandler.setVadThresholds(
-                    mActivityInputMode.vadMax,
-                    mActivityInputMode.vadMin
+            val certificate = delta.certificate
+            if (certificate != null) {
+                params = params.copy(
+                    certificate = certificate.data.copyOf(),
+                    // A null password keeps the previous one, mirroring the old
+                    // bundle where an absent password key left it untouched.
+                    certificatePassword = certificate.password ?: params.certificatePassword,
                 )
+                reconnectNeeded = true
             }
-        }
-        val amplitudeBoost = delta.amplitudeBoost
-        if (amplitudeBoost != null) {
-            mAudioBuilder.setAmplitudeBoost(amplitudeBoost)
-        }
-        val transmitMode = delta.transmitMode
-        if (transmitMode != null) {
-            mTransmitMode = transmitMode
-            val inputMode: IInputMode
-            when (mTransmitMode) {
-                Constants.TRANSMIT_PUSH_TO_TALK ->
-                    inputMode = mToggleInputMode
-                Constants.TRANSMIT_CONTINUOUS ->
-                    inputMode = mContinuousInputMode
-                Constants.TRANSMIT_VOICE_ACTIVITY ->
-                    inputMode = mActivityInputMode
-                else ->
-                    throw IllegalArgumentException("Unknown transmit mode: $mTransmitMode")
+            val forceTcp = delta.forceTcp
+            if (forceTcp != null) {
+                params = params.copy(forceTcp = forceTcp)
+                reconnectNeeded = true
             }
-            mAudioBuilder.setInputMode(inputMode)
+            if (delta.clientName != null) {
+                params = params.copy(clientName = delta.clientName)
+                reconnectNeeded = true
+            }
+            if (delta.accessTokens != null) {
+                params = params.copy(accessTokens = delta.accessTokens.toList())
+            }
+            val trustStore = delta.trustStore
+            if (trustStore != null) {
+                val trustStorePath = trustStore.path
+                if (isTrustStorePathAllowed(trustStorePath)) {
+                    params = params.copy(
+                        trustStore = trustStorePath,
+                        // Password and format describe the store at this path, so
+                        // they are only applied together with an accepted path.
+                        trustStorePassword = trustStore.password ?: params.trustStorePassword,
+                        trustStoreFormat = trustStore.format ?: params.trustStoreFormat,
+                    )
+                    reconnectNeeded = true
+                } else {
+                    Log.w(
+                        TAG,
+                        "Rejected trust store path (must be a .bks file under the app files directory); " +
+                            "keeping previous trust store settings."
+                    )
+                }
+            }
+            if (delta.localMuteHistory != null) {
+                params = params.copy(localMuteHistory = delta.localMuteHistory.toList())
+                reconnectNeeded = true
+            }
+            if (delta.localIgnoreHistory != null) {
+                params = params.copy(localIgnoreHistory = delta.localIgnoreHistory.toList())
+                reconnectNeeded = true
+            }
+            // Serialized publish of the locally-built snapshot; volatile
+            // visibility is what cross-thread readers need once the lock
+            // guarantees a single writer at a time.
+            connectionParams = params
         }
-        val inputQuality = delta.inputQuality
-        if (inputQuality != null) {
-            mAudioBuilder.setTargetBitrate(inputQuality)
-        }
-        val forceTcp = delta.forceTcp
-        if (forceTcp != null) {
-            mForceTcp = forceTcp
-            reconnectNeeded = true
-        }
-        if (delta.clientName != null) {
-            mClientName = delta.clientName
-            reconnectNeeded = true
-        }
+        // 2. Push access tokens live. Post-sync only: pre-sync the snapshot
+        // already carries them into connect()'s Authenticate, and an early
+        // duplicate would race the handshake auth.
         if (delta.accessTokens != null) {
-            mAccessTokens = delta.accessTokens?.toList()
             val connection = mConnection
-            if (connection != null && connection.isConnected()) {
-                connection.sendAccessTokens(requireNotNull(mAccessTokens))
+            if (connection != null && connection.isSynchronized()) {
+                // Re-read the published snapshot (merged above): the local
+                // merge copy never escapes the applyLock region.
+                connection.sendAccessTokens(requireNotNull(connectionParams.accessTokens))
             }
         }
+        // 3. Apply audio settings (builder knobs, input modes, leveler).
+        inputModes.applyAudioDelta(delta, mAudioBuilder, mAudioHandler, mConnection)
+        // 4. Route inputs and toggle side effects.
         val audioStream = delta.audioStream
         if (audioStream != null) {
             // Handset-derived intent (earpiece vs speakerphone voice); the
@@ -1747,89 +1278,52 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // pipeline creation, so mid-call toggles apply on recreate.
             // Funnel-only: no direct builder write here (it would be
             // overwritten by the reload below anyway).
-            mHandsetAudioStream = audioStream
-        }
-        val framesPerPacket = delta.framesPerPacket
-        if (framesPerPacket != null) {
-            val fpp = framesPerPacket
-            mAudioBuilder.setTargetFramesPerPacket(fpp)
-            mConnection?.setTargetFramesPerPacket(fpp)
-        }
-        val trustStore = delta.trustStore
-        if (trustStore != null) {
-            val trustStorePath = trustStore.path
-            if (isTrustStorePathAllowed(trustStorePath)) {
-                mTrustStore = trustStorePath
-                reconnectNeeded = true
-                // Password and format describe the store at this path, so
-                // they are only applied together with an accepted path.
-                if (trustStore.password != null) {
-                    mTrustStorePassword = trustStore.password
-                }
-                if (trustStore.format != null) {
-                    mTrustStoreFormat = trustStore.format
-                }
-            } else {
-                Log.w(
-                    TAG,
-                    "Rejected trust store path (must be a .bks file under the app files directory); " +
-                        "keeping previous trust store settings."
-                )
-            }
-        }
-        val halfDuplex = delta.halfDuplex
-        if (halfDuplex != null) {
-            mHalfDuplex = halfDuplex
-        }
-        if (delta.halfDuplex != null || delta.transmitMode != null) {
-            mAudioBuilder.setHalfDuplexEnabled(
-                mTransmitMode == Constants.TRANSMIT_PUSH_TO_TALK && mHalfDuplex
-            )
+            route.setHandsetStream(audioStream)
         }
         val bluetoothSco = delta.bluetoothSco
         if (bluetoothSco != null) {
             val requested = bluetoothSco
+            // Read the previous request before overwriting: the enable rule
+            // below depends on old-vs-new, so name it explicitly.
+            val wasScoRequested = route.isScoRequested
             // A fresh enable skips the end-of-method reload only when the
             // bundle holds nothing else audio-affecting: the confirmed
             // callback then performs the single pipeline recreate on the
             // SCO route. Bundled audio changes reload immediately (and the
-            // callback reloads once more on confirm); the connect-time
-            // bundle never reloads here since no handler exists yet.
+            // callback reloads once more on confirm) — the immediate reload
+            // stays even for pure enables because the failure path
+            // early-returns without reloading, and stranding new audio
+            // settings on a failed bring-up would be worse than one extra
+            // recreate; the connect-time bundle never reloads here since no
+            // handler exists yet.
             suppressReload = !delta.hasOtherAudioKeys() &&
-                (requested || !mScoRequested)
-            mScoRequested = requested
+                (requested || !wasScoRequested)
+            route.setScoRequested(requested)
             if (!requested) {
                 // Synchronous teardown with notifications: stop() itself never
                 // callbacks, and the generic reload below only refreshes the
                 // pipeline, not observers or cue audio.
-                stopScoWithNotify()
+                route.stopScoWithNotify()
             }
-            updateBluetoothScoRoute()
-        }
-        if (delta.localMuteHistory != null) {
-            mLocalMuteHistory = delta.localMuteHistory?.toList()
-            reconnectNeeded = true
-        }
-        if (delta.localIgnoreHistory != null) {
-            mLocalIgnoreHistory = delta.localIgnoreHistory?.toList()
-            reconnectNeeded = true
-        }
-        val adaptiveLeveler = delta.adaptiveLeveler
-        if (adaptiveLeveler != null) {
-            mAudioBuilder.setAdaptiveLevelerEnabled(adaptiveLeveler)
+            route.updateScoRoute()
         }
 
-        // Reload audio subsystem if initialized. Guarded on CONNECTED as well
+        // 5. Reload audio subsystem if initialized. Guarded on CONNECTED as well
         // as initialization: a disconnect racing a settings change must not
         // resurrect the pipeline (or trip the DEBUG assertion inside).
-        // Routed through the single funnel so source/stream/mode follow the
-        // current route instead of the raw bundle values.
+        // The SCO-only suppressReload rule stays here (it reads the config
+        // delta): reload=false updates inputs only with no recreate, still
+        // re-evaluating notify; reload=true recreates even when unchanged.
+        // Connect-time (no pipeline) records the decision for the next
+        // create, never recreating.
         val audioHandler = mAudioHandler
-        if (!suppressReload && audioHandler != null && audioHandler.isInitialized() &&
+        if (audioHandler != null && audioHandler.isInitialized() &&
             mConnectionState == ConnectionState.CONNECTED
         ) {
-            applyAudioRoute("settings changed", true)
-            Log.i(TAG, "Audio subsystem reloaded after settings change.")
+            route.onEvent(RouteEvent.SettingsChanged(!suppressReload))
+            if (!suppressReload) {
+                Log.i(TAG, "Audio subsystem reloaded after settings change.")
+            }
         }
         return reconnectNeeded
     }
@@ -1838,14 +1332,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * Exposes the current connection. The current connection is set once an attempt to connect to
      * a server is made, and remains set until a subsequent connection. It remains available
      * after disconnection to provide information regarding the terminated connection.
-     * @return The active {@link HumlaConnection}.
+     * @return The active [HumlaConnection].
      */
     open fun getConnection(): HumlaConnection? {
         return mConnection
     }
 
     /**
-     * Return the current {@link AudioHandler}. An AudioHandler is instantiated upon connection
+     * Return the current [AudioHandler]. An AudioHandler is instantiated upon connection
      * to a server, and destroyed upon disconnection.
      * @return the active AudioHandler, or null if there is no active connection.
      */
@@ -1855,12 +1349,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             throw NotSynchronizedException()
         val handler = mAudioHandler
         if (handler == null)
-            throw RuntimeException("Audio handler should always be instantiated while connected!")
+            throw IllegalStateException("Audio handler should always be instantiated while connected!")
         return handler
     }
 
     /**
-     * Returns the current {@link ModelHandler}, containing the channel tree. A model handler is
+     * Returns the current [ModelHandler], containing the channel tree. A model handler is
      * valid for the lifetime of a connection.
      * @return the active ModelHandler, or null if there is no active connection.
      */
@@ -1870,7 +1364,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             throw NotSynchronizedException()
         val handler = mModelHandler
         if (handler == null)
-            throw RuntimeException("Model handler should always be instantiated while connected!")
+            throw IllegalStateException("Model handler should always be instantiated while connected!")
         return handler
     }
 
@@ -1888,11 +1382,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getReconnectAttempts(): Int {
-        return mReconnectAttempts
+        return mReconnectAttempts.get()
+    }
+
+    /**
+     * Test seam: the JVM suite cannot drive the Main timers that mutate the
+     * counter, so tests set it directly. Production never calls this.
+     */
+    @TestOnly
+    fun setReconnectAttemptsForTest(attempts: Int) {
+        mReconnectAttempts.set(attempts)
     }
 
     open override fun cancelReconnect() {
-        mReconnectAttempts = 0
+        mReconnectAttempts.set(0)
         setReconnecting(false)
         // Only release the Doze shield when no live or in-flight attempt holds
         // it: cancelling a future retry while CONNECTED must not drop the
@@ -1910,10 +1413,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
     }
 
+    // Returns a copy: the published snapshot's Server travels by reference and
+    // is mutated by setResolved() on connect; handing out the live ref would
+    // let callers mutate host/port under an in-flight connect().
     open override fun getTargetServer(): Server? {
-        return mServer
+        val s = connectionParams.server ?: return null
+        return Server(s.id, s.name, s.host, s.port, s.username, s.password).also {
+            it.resolvedHost = s.resolvedHost
+            it.resolvedPort = s.resolvedPort
+        }
     }
 
+    // Upper-Camel is required by `IHumlaService.HumlaSession`; keep (API stability).
+    @Suppress("FunctionName")
     @Throws(HumlaDisconnectedException::class)
     open override fun HumlaSession(): IHumlaSession {
         if (mConnectionState != ConnectionState.CONNECTED) {
@@ -2046,7 +1558,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getTransmitMode(): Int {
-        return mTransmitMode
+        return inputModes.transmitMode
     }
 
     open override fun getCodec(): HumlaUDPMessageType? {
@@ -2058,11 +1570,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun isTalking(): Boolean {
-        return mToggleInputMode.isTalkingOn
+        return inputModes.toggle.isTalkingOn
     }
 
     open override fun setTalkingState(talking: Boolean) {
-        mToggleInputMode.isTalkingOn = talking
+        inputModes.toggle.isTalkingOn = talking
         mAudioHandler?.setPttTalking(talking)
     }
 
@@ -2115,7 +1627,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun kickBanUser(session: Int, reason: String?, ban: Boolean) {
         val urb = Mumble.UserRemove.newBuilder()
         urb.session = session
-        urb.reason = reason
+        if (reason != null) {
+            urb.reason = reason
+        }
         urb.ban = ban
         requireConnection().sendTCPMessage(urb.build(), HumlaTCPMessageType.UserRemove)
     }
@@ -2127,15 +1641,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
             val tmb = Mumble.TextMessage.newBuilder()
             tmb.addSession(session)
-            tmb.message = message
+            if (message != null) {
+                tmb.message = message
+            }
             requireConnection().sendTCPMessage(tmb.build(), HumlaTCPMessageType.TextMessage)
 
             val modelHandler = getModelHandler()
             val self = modelHandler.getUser(getSessionId())
             val user = modelHandler.getUser(session)
-            val users = ArrayList<User>(1)
+            val users = mutableListOf<User>()
             if (user != null) users.add(user)
-            return Message(getSessionId(), self?.name, ArrayList(0), ArrayList(0), users, message)
+            return Message(getSessionId(), self?.name, emptyList(), emptyList(), users, message)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -2149,17 +1665,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             val tmb = Mumble.TextMessage.newBuilder()
             if (tree) tmb.addTreeId(channel)
             else tmb.addChannelId(channel)
-            tmb.message = message
+            if (message != null) {
+                tmb.message = message
+            }
             requireConnection().sendTCPMessage(tmb.build(), HumlaTCPMessageType.TextMessage)
 
             val modelHandler = getModelHandler()
             val self = modelHandler.getUser(getSessionId())
             val targetChannel = modelHandler.getChannel(channel)
-            val targetChannels = ArrayList<Channel>()
+            val targetChannels = mutableListOf<Channel>()
             if (targetChannel != null) targetChannels.add(targetChannel)
             return Message(
                 getSessionId(), self?.name, targetChannels,
-                if (tree) targetChannels else ArrayList(0), ArrayList(0), message
+                if (tree) targetChannels else emptyList(), emptyList(), message
             )
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
@@ -2169,7 +1687,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun setUserComment(session: Int, comment: String?) {
         val usb = Mumble.UserState.newBuilder()
         usb.session = session
-        usb.comment = comment
+        if (comment != null) {
+            usb.comment = comment
+        }
         requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
@@ -2181,11 +1701,21 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun setMuteDeafState(session: Int, mute: Boolean, deaf: Boolean) {
+        // Mirror self-path/murmur coercion (murmur/Messages.cpp): deaf
+        // implies mute, unmute implies undeafen, so the wire packet is
+        // canonical even though the server would canonicalise anyway.
+        var m = mute
+        var d = deaf
+        if (d) m = true
+        if (!m) d = false
         val usb = Mumble.UserState.newBuilder()
         usb.session = session
-        usb.mute = mute
-        usb.deaf = deaf
-        if (!mute) usb.suppress = false
+        usb.mute = m
+        usb.deaf = d
+        // Diverges from murmur/Messages.cpp (which leaves suppress untouched):
+        // an admin unmute must also clear a prior suppress, otherwise the
+        // target stays silently suppressed after unmute. Server permission-gates this.
+        if (!m) usb.suppress = false
         requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
@@ -2212,17 +1742,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * unconditionally (no permission check; spoofed writes from others are
      * silently dropped), so no rollback is needed: TCP ordering guarantees
      * echoes arrive in request order and the state converges on the last
-     * request. Other users' mute (admin {@code mute}/{@code deaf}) stays
-     * pessimistic in {@link #setMuteDeafState}.
+     * request. Other users' mute (admin `mute`/`deaf`) stays
+     * pessimistic in [setMuteDeafState].
      *
-     * <p>Mirroring into the {@link User} object (rather than rebinding every
+     * Mirroring into the [User] object (rather than rebinding every
      * UI reader) fans the update out through the existing
-     * {@code onUserStateUpdated} path: menu icons, notification, settings
+     * `onUserStateUpdated` path: menu icons, notification, settings
      * persistence, and TTS suppression all follow with no UI edits. The echo
      * then becomes a no-op via the unchanged guard in
-     * {@link ModelHandler#messageUserState}.
+     * [ModelHandler.messageUserState].
      *
-     * <p>Accepted transients (both convergent via the echo): the capture gate
+     * Accepted transients (both convergent via the echo): the capture gate
      * is pushed before the model write, so if the session user is not yet
      * visible the mic follows desired state up to a round trip ahead of the
      * UI; and the chat log line is best-effort (dropped if a disconnect
@@ -2250,7 +1780,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
         // Same monitor as ModelHandler.messageUserState, which writes these
-        // fields on the TCP reader thread.
+        // fields on the TCP reader thread. Compute under lock, fan out
+        // after release: holding the model lock across observer callbacks
+        // would block the TCP reader on slow UI/TTS work.
+        val changedSelf: se.lublin.humla.model.User?
         synchronized(modelHandler) {
             val self = modelHandler.getUser(session)
             if (self == null)
@@ -2264,17 +1797,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 self.isSelfDeafened = deaf
                 changed = true
             }
-            if (changed) {
-                // Log here, at the toggle site like desktop's MainWindow: the
-                // echo's log is suppressed as unchanged (see ModelHandler).
-                if (mute && deaf)
-                    logInfo(getString(R.string.chat_notify_muted_deafened))
-                else if (mute)
-                    logInfo(getString(R.string.chat_notify_muted))
-                else
-                    logInfo(getString(R.string.chat_notify_unmuted))
-                mCallbacks.onUserStateUpdated(self)
-            }
+            changedSelf = if (changed) self else null
+        }
+        if (changedSelf != null) {
+            // Log here, at the toggle site like desktop's MainWindow: the
+            // echo's log is suppressed as unchanged (see ModelHandler).
+            if (mute && deaf)
+                logInfo(getString(R.string.chat_notify_muted_deafened))
+            else if (mute)
+                logInfo(getString(R.string.chat_notify_muted))
+            else
+                logInfo(getString(R.string.chat_notify_unmuted))
+            mCallbacks.onUserStateUpdated(changedSelf)
         }
     }
 
@@ -2319,21 +1853,50 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun registerWhisperTarget(target: WhisperTarget?): Byte {
-        val id = mWhisperTargetList.append(target ?: throw NullPointerException("target"))
+        val t = target ?: throw NullPointerException("target")
+        // Resolve the live connection before allocating: the 5-bit ID space
+        // is exhaustible, and a disconnect between alloc and send would leak
+        // the slot. Fail fast with no side effect when offline.
+        val live = mConnection ?: throw IllegalArgumentException("No active connection")
+        // Liveness before alloc: sendTCPMessage silently drops when
+        // !mConnected, so allocating first would leak one of only 30 5-bit
+        // slots on every CONNECTING-phase call. Fail fast with no side
+        // effect when offline (ISE matches requireConnection's
+        // disconnected-before-connect contract; null stays IAE).
+        if (!live.isConnected()) {
+            throw IllegalStateException("No active connection")
+        }
+        val id = synchronized(whisperLock) { mWhisperTargetList.append(t) }
         if (id.toInt() < 0) {
             return (-1).toByte()
         }
 
-        val voiceTarget = (target ?: throw NullPointerException("target")).createTarget()
-        val vtb = Mumble.VoiceTarget.newBuilder()
-        vtb.id = id.toInt()
-        vtb.addTargets(voiceTarget)
-        requireConnection().sendTCPMessage(vtb.build(), HumlaTCPMessageType.VoiceTarget)
+        try {
+            val voiceTarget = t.createTarget()
+            val vtb = Mumble.VoiceTarget.newBuilder()
+            vtb.id = id.toInt()
+            vtb.addTargets(voiceTarget)
+            live.sendTCPMessage(vtb.build(), HumlaTCPMessageType.VoiceTarget)
+            // sendTCPMessage drops silently when disconnected (no throw):
+            // a disconnect racing the send would leak one of 30 slots.
+            // Re-validate under no lock (free is idempotent); freeing a
+            // just-sent target is harmless — the next connect clears all.
+            if (!live.isConnected()) {
+                synchronized(whisperLock) { mWhisperTargetList.free(id) }
+                throw IllegalStateException("No active connection")
+            }
+        } catch (e: RuntimeException) {
+            synchronized(whisperLock) { mWhisperTargetList.free(id) }
+            throw e
+        }
         return id
     }
 
     open override fun unregisterWhisperTarget(targetId: Byte) {
-        mWhisperTargetList.free(targetId)
+        if (targetId < WhisperTargetList.TARGET_MIN || targetId > WhisperTargetList.TARGET_MAX) {
+            return
+        }
+        synchronized(whisperLock) { mWhisperTargetList.free(targetId) }
     }
 
     open override fun setVoiceTargetId(targetId: Byte) {
@@ -2357,8 +1920,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getWhisperTarget(): WhisperTarget? {
-        if (VoiceTargetMode.fromId(mVoiceTargetId) == VoiceTargetMode.WHISPER) {
-            return mWhisperTargetList.get(mVoiceTargetId)
+        // Snapshot: the id is written from Main/binder while the list is
+        // guarded by whisperLock — check-then-get on the live field could
+        // return another target's entry after a mode flip.
+        val targetId = mVoiceTargetId
+        if (VoiceTargetMode.fromId(targetId) == VoiceTargetMode.WHISPER) {
+            return synchronized(whisperLock) { mWhisperTargetList.get(targetId) }
         }
         return null
     }
@@ -2374,29 +1941,45 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun setListeningChannel(channelId: Int, listening: Boolean) {
         if (!isSynchronized()) return
         val usb = Mumble.UserState.newBuilder()
-        usb.session = getSessionId()
-        if (listening) {
-            usb.addListeningChannelAdd(channelId)
-        } else {
-            usb.addListeningChannelRemove(channelId)
+        // Single TOCTOU-safe block: getSessionId() and the trailing send
+        // each re-read mConnection, so a racing onDestroy/disconnect between
+        // the isSynchronized check and the send must fail closed (return),
+        // never throw ISE to the binder caller. getSessionId() only throws
+        // ISE (requireConnection translates IAE->ISE; NotSynchronized->ISE).
+        try {
+            usb.session = getSessionId()
+            if (listening) {
+                usb.addListeningChannelAdd(channelId)
+            } else {
+                usb.addListeningChannelRemove(channelId)
+            }
+            requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
+        } catch (e: IllegalStateException) {
+            return
         }
-        requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
     open override fun setListeningVolume(channelId: Int, volumeAdjustment: Float) {
         if (!isSynchronized()) return
         val usb = Mumble.UserState.newBuilder()
-        usb.session = getSessionId()
-        val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
-        vab.listeningChannel = channelId
-        vab.volumeAdjustment = volumeAdjustment
-        usb.addListeningVolumeAdjustment(vab)
-        requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
+        // Same TOCTOU discipline as setListeningChannel: fail closed.
+        try {
+            usb.session = getSessionId()
+            val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
+            vab.listeningChannel = channelId
+            vab.volumeAdjustment = volumeAdjustment
+            usb.addListeningVolumeAdjustment(vab)
+            requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
+        } catch (e: IllegalStateException) {
+            return
+        }
     }
 
     open override fun isListeningToChannel(channelId: Int): Boolean {
-        // Fail closed when disconnected: no exception-driven control flow —
-        // requireModelHandler throws IAE on null, never NotSynchronizedException.
+        // Fail closed when disconnected: getModelHandler throws
+        // NotSynchronizedException when unsynchronized, IAE only on the
+        // unreachable synchronized-but-null case — so null-tolerate here
+        // instead of throwing on any binder thread.
         val handler = mModelHandler ?: return false
         val ch = handler.getChannels()[channelId]
         return ch != null && ch.isListening
@@ -2425,15 +2008,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         /**
          * The connection was lost due to either a kick/ban or socket I/O error.
          * Humla may be reconnecting in this state.
-         * @see #isReconnecting()
-         * @see #cancelReconnect()
+         * See also [isReconnecting]
+         * See also [cancelReconnect]
          */
         CONNECTION_LOST
     }
 
-    // Internal visibility restores the original's instantiate-only-in-onBind
-    // posture (a private constructor is not expressible for outer access in
-    // Kotlin); the class stays final with no in-repo subclasses.
+    // internal visibility keeps construction module-private (same-module
+    // tests and outer-class access allowed); onBind remains the sole
+    // production instantiation site.
     class HumlaBinder internal constructor(private val mService: IHumlaService) : Binder() {
         fun getService(): IHumlaService {
             return mService

@@ -64,19 +64,42 @@ interface IHumlaObserver {
     fun onVoiceTargetChanged(mode: VoiceTargetMode?)
 
     /**
-     * Called on the main thread when the Bluetooth SCO link transitions.
-     * @param active true if SCO is up and carrying call audio, false on
+     * Called when the Bluetooth SCO link transitions.
+     * In-tree route host calls on main; contract is caller-thread, so
+     * out-of-tree callers on any thread are legal -- do not assume a looper.
+     * @param active True if SCO is up and carrying call audio, false on
      *               teardown or failed bring-up (phone-audio fallback).
      */
     fun onBluetoothScoChanged(active: Boolean)
 
     /**
-     * Called on the main thread after every confirmed audio-route change
-     * (voice triple vs media path, SCO or media-sink driven), after the
-     * pipeline reload. Use it to follow output routing (e.g. volume stream);
-     * SCO-specific UI belongs in onBluetoothScoChanged.
+     * Called when Bluetooth SCO bring-up fails.
+     * Replaces the library-owned Toast: the app layer renders user-visible
+     * feedback. Edges stay coalesced by the existing route debounce; no
+     * extra throttle here. In-tree route host calls on main; contract is
+     * caller-thread (see above). In-tree observers should extend
+     * HumlaObserver (no-op default); out-of-tree direct implementors in
+     * Java inherit the default (humla compiles the interface with
+     * jvm-default=enable, so the implementor's own flags do not matter);
+     * no override needed (Kotlin observers inherit the default no-op).
+     * @param reason Failure reason (see `BluetoothScoManager` `REASON_*`), or
+     *               null when unknown.
      */
-    fun onAudioRouteChanged()
+    fun onBluetoothScoFailed(reason: String?) {
+    }
+
+    /**
+     * Called after every confirmed audio-route change
+     * (voice triple vs media path, SCO or media-sink driven), after the
+     * pipeline reload. In-tree route host calls on main; contract is
+     * caller-thread (see above). Use it to follow output routing (e.g. volume
+     * stream); SCO-specific UI belongs in onBluetoothScoChanged.
+     * In-tree observers should extend HumlaObserver (no-op default);
+     * out-of-tree direct implementors in Java inherit the default (humla
+     * compiles the interface with jvm-default=enable); no override needed.
+     */
+    fun onAudioRouteChanged() {
+    }
 
     fun onLogInfo(message: String?)
 

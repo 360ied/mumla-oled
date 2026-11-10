@@ -12,15 +12,20 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla;
 
-import junit.framework.TestCase;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
+import se.lublin.humla.audio.AudioRouteController;
 
 /**
- * Pins the pure audio-route truth table in {@link HumlaService}.
+ * Pins the pure audio-route truth table in {@link AudioRouteController}.
  * Confirmed SCO forces the voice triple (voice source/mode/usage for
  * platform AEC); otherwise a present media sink (BT A2DP / wired headset)
  * selects the media path, and its absence keeps voice.
@@ -28,27 +33,31 @@ import junit.framework.TestCase;
  * <p>The full service cannot be constructed on the JVM (it needs a platform
  * {@code Context} and main-looper {@code Handler}; this module is JUnit-only
  * with no Robolectric), so this truth table is the JVM-testable seam for the
- * route matrix, mirroring BluetoothScoManager.shouldRetryBringUp.
+ * route matrix, pinning AudioRouteController.computeVoiceRoute.
  */
-public class AudioRoutePolicyTest extends TestCase {
+public class AudioRoutePolicyTest {
 
-    public void testPhoneAloneStaysVoice() {
+    @Test
+    public void phoneAloneStaysVoice() {
         assertTrue("No SCO and no media sink must stay voice",
-                HumlaService.computeVoiceRoute(false, false));
+                AudioRouteController.computeVoiceRoute(false, false));
     }
 
-    public void testScoForcesVoiceWithoutMediaSink() {
+    @Test
+    public void scoForcesVoiceWithoutMediaSink() {
         assertTrue("Confirmed SCO must select voice",
-                HumlaService.computeVoiceRoute(true, false));
+                AudioRouteController.computeVoiceRoute(true, false));
     }
 
-    public void testScoForcesVoiceOverMediaSink() {
+    @Test
+    public void scoForcesVoiceOverMediaSink() {
         assertTrue("Confirmed SCO must win over a present media sink",
-                HumlaService.computeVoiceRoute(true, true));
+                AudioRouteController.computeVoiceRoute(true, true));
     }
 
-    public void testMediaSinkWithoutScoSelectsMedia() {
+    @Test
+    public void mediaSinkWithoutScoSelectsMedia() {
         assertFalse("A present media sink without SCO must select media",
-                HumlaService.computeVoiceRoute(false, true));
+                AudioRouteController.computeVoiceRoute(false, true));
     }
 }

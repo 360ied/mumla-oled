@@ -35,6 +35,7 @@ interface IChannel {
 
     val description: String?
 
+    /** Immutable view: mutation is only via the concrete `Channel` type (copy-on-access). */
     val descriptionHash: ByteArray?
 
     val subchannels: List<Channel>

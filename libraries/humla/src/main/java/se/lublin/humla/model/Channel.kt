@@ -23,14 +23,41 @@ import java.util.Collections
 import java.util.HashSet
 
 class Channel : IChannel, Comparable<Channel> {
+    companion object {
+        /** Iterative subchannelUserCount stops descending past this depth. */
+        private const val SUBCHANNEL_DEPTH_CAP = 64
+    }
+
+    // Immutable after construction (set once via the id constructor; the
+    // setter is private so the id-based equals/hashCode can never corrupt
+    // HashSet/Map membership). Volatile so binder/UI readers never see a
+    // default 0 on a constructed channel. (Stays `var`, not `val`: Java
+    // rejects final+volatile in the kapt stub, and the Java tests use it.)
+    @Volatile
     override var id: Int = 0
+        private set
+    // Written on the model thread, read on UI/binder: volatile for
+    // cross-thread visibility. In-place order-key mutation must re-sort via
+    // [resortInParent] (see ModelHandler).
+    @Volatile
     override var position: Int = 0
+    @Volatile
     override var isTemporary: Boolean = false
+    @Volatile
     override var parent: Channel? = null
+    // Written on the model thread, read on UI/binder: volatile for
+    // cross-thread visibility. In-place mutation must re-sort via
+    // [resortInParent] (see ModelHandler).
+    @Volatile
     override var name: String? = null
+    @Volatile
     override var description: String? = null
     // Copy-on-access like User's ByteString getters: holders of the getter
     // ref must not be able to mutate channel state through the array.
+    // Note: overrides an immutable `IChannel` val as a mutable concrete-only
+    // var (see `IChannel` KDoc); mutation is only via this concrete type.
+    // Volatile for cross-thread visibility like every neighboring scalar.
+    @Volatile
     override var descriptionHash: ByteArray? = null
         get() = field?.clone()
         set(value) {
@@ -39,11 +66,22 @@ class Channel : IChannel, Comparable<Channel> {
     private val subchannelList = ArrayList<Channel>()
     private val userList = ArrayList<User>()
     private val linkList = ArrayList<Channel>()
+    @Volatile
     override var permissions: Int = 0
+    @Volatile
     override var maxUsers: Int = 0
+    @Volatile
     override var isEnterRestricted: Boolean = false
+    // Written on the model thread, read on UI/binder: volatile for
+    // cross-thread visibility (same hazard as listening state below).
+    @Volatile
     private var canEnterField: Boolean = true
+    // Visible across threads: ModelHandler writers run on the TCP/model thread
+    // while isListeningToChannel reads off any binder thread. ConcurrentHashMap
+    // gives map safety, not field visibility.
+    @Volatile
     override var isListening: Boolean = false
+    @Volatile
     override var listeningVolume: Float = 1.0f
 
     constructor()
@@ -54,75 +92,99 @@ class Channel : IChannel, Comparable<Channel> {
     }
 
     /**
-     * @see User.channel
-     * Widened to public: Kotlin has no package visibility.
+     * See `User.channel`.
+     * Public (not `internal`): the Java unit tests call these directly,
+     * and Kotlin `internal` is name-mangled against Java callers.
      */
     fun addUser(user: User) {
-        for (i in userList.indices) {
-            val u = userList[i]
-            if (user.compareTo(u) <= 0) {
-                userList.add(i, user)
-                return
+        synchronized(userList) {
+            for (i in userList.indices) {
+                val u = userList[i]
+                if (user.compareTo(u) <= 0) {
+                    userList.add(i, user)
+                    return
+                }
             }
+            userList.add(user)
         }
-        userList.add(user)
     }
 
     /**
-     * @see User.channel
-     * Widened to public: Kotlin has no package visibility.
+     * See `User.channel`.
+     * Public (not `internal`): the Java unit tests call these directly,
+     * and Kotlin `internal` is name-mangled against Java callers.
      */
     fun removeUser(user: User) {
-        userList.remove(user)
+        synchronized(userList) {
+            userList.remove(user)
+        }
     }
 
     override val users: List<User>
-        get() = Collections.unmodifiableList(userList)
+        get() = synchronized(userList) { ArrayList(userList) }
 
     override val subchannels: List<Channel>
-        get() = Collections.unmodifiableList(subchannelList)
+        get() = synchronized(subchannelList) { ArrayList(subchannelList) }
 
+    // Nullable by contract: the Java suite pins null-tolerant ignore
+    // (ChannelLinksTest), so the signature stays nullable despite the
+    // non-null callers in ModelHandler.
     fun addSubchannel(channel: Channel?) {
-        if (channel == null || channel == this || subchannelList.contains(channel)) return
-        for (i in subchannelList.indices) {
-            val sc = subchannelList[i]
-            if (channel.compareTo(sc) <= 0) {
-                subchannelList.add(i, channel)
-                return
+        synchronized(subchannelList) {
+            if (channel == null || channel == this || subchannelList.contains(channel)) return
+            for (i in subchannelList.indices) {
+                val sc = subchannelList[i]
+                if (channel.compareTo(sc) <= 0) {
+                    subchannelList.add(i, channel)
+                    return
+                }
             }
+            subchannelList.add(channel)
         }
-        subchannelList.add(channel)
     }
 
+    // Nullable by contract: see addSubchannel.
     fun removeSubchannel(channel: Channel?) {
-        subchannelList.remove(channel)
+        synchronized(subchannelList) {
+            subchannelList.remove(channel)
+        }
+    }
+
+    /** Re-sorts an in-place mutated child (position/name) to preserve sorted-insertion order. */
+    fun resortInParent(child: Channel) {
+        synchronized(subchannelList) {
+            if (subchannelList.remove(child)) {
+                addSubchannel(child)
+            }
+        }
     }
 
     override val links: List<Channel>
-        get() = Collections.unmodifiableList(linkList)
+        get() = synchronized(linkList) { ArrayList(linkList) }
 
     /**
      * Returns the set of all channels transitively linked to this channel,
      * including this channel itself.
-     * Matches upstream Mumble's Channel::allLinks() traversal.
+     * Matches upstream Mumble's Channel::allLinks() traversal (depth-first
+     * via an explicit stack, like upstream QStack).
      * @return Set of all transitively linked channels.
      */
     fun getAllLinks(): Set<Channel> {
         val seen = HashSet<Channel>()
         seen.add(this)
-        if (linkList.isEmpty()) {
-            return Collections.unmodifiableSet(seen)
-        }
         val stack = ArrayDeque<Channel>()
         stack.push(this)
         while (!stack.isEmpty()) {
             val ch = stack.pop()
-            // Snapshot copy protects the traversal below, but the copy itself
-            // iterates the live (non-thread-safe) list: an off-monitor
-            // mutator racing here can still CME. Writers mutate under
-            // ModelHandler's monitor while readers (UI) call this freely —
-            // pre-existing parity arrangement, retained, not widened.
-            for (linked in ArrayList(ch.linkList)) {
+            // Snapshot under the channel leaf lock (see addLink): the copy
+            // used to iterate the live list, so an off-monitor mutator
+            // racing the traversal could CME. Writers take the ModelHandler
+            // monitor *then* this lock; readers take only this lock, one
+            // channel at a time — ordering is fixed, so no deadlock.
+            val snapshot: List<Channel> = synchronized(ch.linkList) {
+                ArrayList(ch.linkList)
+            }
+            for (linked in snapshot) {
                 // linkList's element type is non-null (addLink rejects null),
                 // so no null check: the pre-image Java guard is unreachable.
                 if (seen.add(linked)) {
@@ -133,38 +195,67 @@ class Channel : IChannel, Comparable<Channel> {
         return Collections.unmodifiableSet(seen)
     }
 
+    // Nullable by contract: see addSubchannel.
     fun addLink(channel: Channel?) {
-        if (channel == null || channel == this || linkList.contains(channel)) {
-            return
-        }
-        for (i in linkList.indices) {
-            val sc = linkList[i]
-            if (channel.compareTo(sc) <= 0) {
-                linkList.add(i, channel)
+        synchronized(linkList) {
+            if (channel == null || channel == this || linkList.contains(channel)) {
                 return
             }
+            for (i in linkList.indices) {
+                val sc = linkList[i]
+                if (channel.compareTo(sc) <= 0) {
+                    linkList.add(i, channel)
+                    return
+                }
+            }
+            linkList.add(channel)
         }
-        linkList.add(channel)
     }
 
+    // Nullable by contract: see addSubchannel.
     fun removeLink(channel: Channel?) {
-        linkList.remove(channel)
+        synchronized(linkList) {
+            linkList.remove(channel)
+        }
     }
 
     fun clearLinks() {
-        linkList.clear()
+        synchronized(linkList) {
+            linkList.clear()
+        }
     }
 
     /**
      * Recursively fetches the subchannel user count.
+     * Iterative with a depth cap: a hostile deep chain (no client-side
+     * nesting check; murmur caps at 10) must not overflow the stack on the
+     * UI bind path. Past the cap, deeper levels count as 0 and a warning
+     * is logged once per call.
      * FIXME: is it necessary to cache this?
      * @return The sum of users in this channel and its subchannel.
      */
     override val subchannelUserCount: Int
         get() {
-            var userCount = userList.size
-            for (subc in subchannelList) {
-                userCount += subc.subchannelUserCount
+            val usersSnapshot: List<User> = synchronized(userList) { ArrayList(userList) }
+            var userCount = usersSnapshot.size
+            val stack = ArrayDeque<Pair<Channel, Int>>()
+            synchronized(subchannelList) {
+                for (sub in subchannelList) stack.add(Pair(sub, 1))
+            }
+            var capped = false
+            while (stack.isNotEmpty()) {
+                val (node, depth) = stack.removeLast()
+                val users: List<User> = synchronized(node.userList) { ArrayList(node.userList) }
+                userCount += users.size
+                if (depth < SUBCHANNEL_DEPTH_CAP) {
+                    val subs: List<Channel> = synchronized(node.subchannelList) { ArrayList(node.subchannelList) }
+                    for (sub in subs) stack.add(Pair(sub, depth + 1))
+                } else {
+                    capped = true
+                }
+            }
+            if (capped) {
+                android.util.Log.w("Channel", "subchannelUserCount hit depth cap $SUBCHANNEL_DEPTH_CAP; deeper levels uncounted")
             }
             return userCount
         }
@@ -177,9 +268,7 @@ class Channel : IChannel, Comparable<Channel> {
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other == null || javaClass != other.javaClass) return false
-
-        other as Channel
+        if (other !is Channel) return false
 
         if (id != other.id) return false
 
@@ -190,6 +279,13 @@ class Channel : IChannel, Comparable<Channel> {
         return id
     }
 
+    // Total order for the sorted-insertion lists: position first, then name
+    // (nulls first: unseen stubs sort before named channels), then id.
+    // Intentionally NOT upstream Channel::lessThan (same-parent position
+    // compare + localeAwareCompare): addLink sorts cross-parent links where
+    // upstream has no order, and locale ordering would differ per device.
+    // Consistent with equals for ordering purposes (same id + different
+    // position/name still compares non-zero; lists are re-sorted on mutate).
     override fun compareTo(other: Channel): Int {
         if (position != other.position) {
             return Integer.compare(position, other.position)

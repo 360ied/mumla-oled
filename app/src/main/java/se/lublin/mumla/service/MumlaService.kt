@@ -30,11 +30,14 @@ import android.media.SoundPool
 import android.net.Uri
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
+import androidx.annotation.StringRes
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import org.jsoup.Jsoup
@@ -45,6 +48,7 @@ import java.util.LinkedHashMap
 import java.util.Optional
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaService
+import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
 import se.lublin.humla.model.IUser
@@ -76,6 +80,16 @@ import se.lublin.mumla.util.NotificationSanitizer
 open class MumlaService : HumlaService(),
     Settings.OnSettingChangedListener,
     MumlaConnectionNotification.OnActionListener, IMumlaService {
+    // Cached main handler for off-main observer hops (e.g. SCO failure Toast).
+    // Avoids allocating a Handler per rare failure. SYNCHRONIZED (default): the
+    // observer contract allows any caller thread, so first access may race
+    // off-main; NONE could publish two handlers.
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    // Set on the main thread in onDestroy; read on the main thread in the
+    // posted Toast block above. Guards a post that won the race and runs
+    // during teardown (Service has no isDestroyed like Activity does).
+    private var serviceDestroyed = false
 
     // Widened to public fields: Kotlin has no package visibility, and the
     // Robolectric suite reads/assigns these as fields from a Java subclass.
@@ -189,6 +203,10 @@ open class MumlaService : HumlaService(),
     private var mTalkReceiver: BroadcastReceiver? = null
     /** Tracks TALK receiver registration: registered once connected with the broadcast
      * allowed, unregistered on disconnect or opt-out, so toggles never double-register. */
+    /** Guard for the TALK-receiver check-then-act: register runs on Main
+     * while unregister also runs on the connection thread
+     * (onConnectionDisconnected), so the flag alone cannot serialize them. */
+    private val talkReceiverLock = Any()
     private var mTalkReceiverRegistered: Boolean = false
 
     private fun updateConnectedNotification() {
@@ -446,6 +464,28 @@ open class MumlaService : HumlaService(),
         override fun onUserTalkStateUpdated(user: IUser?) {
             handleUserTalkStateUpdated(user)
         }
+
+        override fun onBluetoothScoFailed(reason: String?) {
+            // Toast requires the main looper; the route host calls on main
+            // in-tree, but the observer contract allows any caller thread.
+            // applicationContext: the posted path may run after onDestroy,
+            // where a Service Toast would leak the dead Service. The posted
+            // block re-checks liveness (onDestroy drops pending posts) so a
+            // stale failure never toasts over the next session.
+            val messageRes = scoFailureMessage(reason)
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
+            } else {
+                mainHandler.post {
+                    // Service destroyed while queued: onDestroy already dropped
+                    // this post as a backstop; the flag covers a post that
+                    // won the race and runs during teardown.
+                    if (!serviceDestroyed) {
+                        Toast.makeText(applicationContext, messageRes, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
     // Widened to public: Kotlin has no package visibility (was package-visible
@@ -483,11 +523,15 @@ open class MumlaService : HumlaService(),
     /**
      * Refreshes route-dependent cue audio after a confirmed route change
      * (SCO or media-sink). The pipeline owns voice routing; this owns the
-     * PTT SoundPool.
+     * PTT SoundPool. Main-only after onCreate (route onInit never notifies
+     * synchronously, closing the super.onCreate-to-mSettings window); null
+     * mSettings is a programming error, surfaced fail-fast.
      */
     override fun onAudioRouteChanged() {
         initSoundPool()
-        val settings = mSettings ?: throw NullPointerException("mSettings")
+        // Null-tolerant: if a future controller ever notifies synchronously
+        // from onInit, skip instead of crashing the service out of onCreate.
+        val settings = mSettings ?: return
         setProximitySensorOn(shouldUseProximitySensor(settings))
     }
 
@@ -672,33 +716,44 @@ open class MumlaService : HumlaService(),
         if (messageNotification != null) {
             messageNotification.dismiss()
         }
+        // Drop queued main-hop callbacks (SCO failure Toast): a post landing
+        // after destroy would toast stale state over the next session. The
+        // posted block re-checks serviceDestroyed as a backstop for in-flight
+        // runs. Forcing the lazy init here is harmless (one Handler) and
+        // keeps the drain unconditional.
+        serviceDestroyed = true
+        mainHandler.removeCallbacksAndMessages(null)
         releaseSoundPool()
         mSelfTalking = false
         super.onDestroy()
     }
 
-    /** Registers the TALK broadcast receiver if not already registered. Main thread only. */
+    /** Registers the TALK broadcast receiver if not already registered. */
     private fun registerTalkReceiver() {
-        if (mTalkReceiverRegistered) {
-            return
+        synchronized(talkReceiverLock) {
+            if (mTalkReceiverRegistered) {
+                return
+            }
+            val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
+            ContextCompat.registerReceiver(
+                this, receiver,
+                IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            mTalkReceiverRegistered = true
         }
-        val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
-        ContextCompat.registerReceiver(
-            this, receiver,
-            IntentFilter(TalkBroadcastReceiver.BROADCAST_TALK),
-            ContextCompat.RECEIVER_EXPORTED
-        )
-        mTalkReceiverRegistered = true
     }
 
-    /** Unregisters the TALK broadcast receiver if registered. Main thread only. */
+    /** Unregisters the TALK broadcast receiver if registered. */
     private fun unregisterTalkReceiver() {
-        if (!mTalkReceiverRegistered) {
-            return
+        synchronized(talkReceiverLock) {
+            if (!mTalkReceiverRegistered) {
+                return
+            }
+            val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
+            unregisterReceiver(receiver)
+            mTalkReceiverRegistered = false
         }
-        val receiver = mTalkReceiver ?: throw NullPointerException("mTalkReceiver")
-        unregisterReceiver(receiver)
-        mTalkReceiverRegistered = false
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -1401,6 +1456,20 @@ open class MumlaService : HumlaService(),
         const val ACTION_DEAFEN = "se.lublin.mumla.action.DEAFEN"
         const val ACTION_TOGGLE_OVERLAY = "se.lublin.mumla.action.TOGGLE_OVERLAY"
         const val ACTION_CANCEL_RECONNECT = "se.lublin.mumla.action.CANCEL_RECONNECT"
+
+        /**
+         * Pure REASON_* to string-resource mapping for the SCO-failure Toast,
+         * extracted so the bucketing is JVM-testable: only the permission
+         * denial gets the permission string; every other reason (including
+         * null) shares the generic one. Visible for the observer above and
+         * the same-module test; not part of the public API.
+         */
+        @StringRes
+        internal fun scoFailureMessage(reason: String?): Int =
+            if (reason == BluetoothScoManager.REASON_PERMISSION)
+                R.string.bluetooth_sco_permission
+            else
+                R.string.bluetooth_sco_failed
 
         @JvmStatic
         fun getServerKey(server: Server?): String {

@@ -63,11 +63,11 @@
     <string name="audio_bandwidth">Audio bandwidth</string>
     <string name="server_info_protocol">Protocol %s.</string>
     <string name="server_info_version">%1$s (%2$s)</string>
-    <string name="server_info_latency">%.2f ms latency</string>
+    <string name="server_info_latency">%1$.2f ms latency</string>
     <string name="server_info_host">Remote host %1$s (port %2$d)</string>
     <string name="server_info_codec">Codec: %s</string>
-    <string name="server_info_max_bandwidth">Maximum %.1f kbit/s</string>
-    <string name="server_info_current_bandwidth">Current %.1f kbit/s</string>
+    <string name="server_info_max_bandwidth">Maximum %1$.1f kbit/s</string>
+    <string name="server_info_current_bandwidth">Current %1$.1f kbit/s</string>
 
     <!-- Common -->
     <string name="no_servers">Press \'Add\' from the action bar to add a server first.</string>
@@ -121,12 +121,13 @@
     <string name="name">Name</string>
     <string name="share">Share</string>
     <string name="description">Description</string>
-    <string name="shareMessage">Join this Mumble server with Mumla. %s</string>
+    <string name="shareMessage">Join this Mumble server with Mumla. %1$s</string>
     <string name="status_notify_muted_and_deafened">Muted and deafened.</string>
     <string name="status_notify_muted">Muted.</string>
     <string name="status_notify_deafened">Deafened.</string>
     <string name="notification_reconnecting_title">Reconnecting to %s…</string>
-    <string name="notification_reconnect_attempt">Attempt %d</string>
+    <string name="notification_reconnect_attempt">Attempt %1$d</string>
+    <!-- %2$d is the delay in seconds. -->
     <string name="notification_reconnect_attempt_delay">Attempt %1$d (%2$ds)</string>
     <string name="notification_reconnect_expanded">Error: %1$s\nAttempt %2$d (%3$ds) • %4$s</string>
     <string name="notification_connected_expanded">Channel: %1$s\n%2$s • %3$s</string>
@@ -188,6 +189,10 @@
     <string name="shout_configure">Configure Voice Target</string>
     <string name="grant_perm_microphone">Please grant microphone permission.</string>
     <string name="grant_perm_bluetooth">Please grant Bluetooth permission to use a headset.</string>
+    <!-- Shown when SCO bring-up fails for any non-permission reason. -->
+    <string name="bluetooth_sco_failed">Bluetooth headset unavailable, using phone speaker or connected audio.</string>
+    <!-- Shown when SCO bring-up fails for lack of the Bluetooth grant. -->
+    <string name="bluetooth_sco_permission">Bluetooth permission required for headset audio.</string>
     <string name="grant_perm_notifications">Please grant permission to send notifications.</string>
     <string name="grant_perm_draw_over_apps">Please grant permission to display over other apps.</string>
     <string name="default_">Default</string>
