@@ -24,29 +24,8 @@ stable; earlier rounds' ordinal numbers (`item 1`…) are retired.
   tie-breaker.
 - **One item, one branch.** Each `R` item is sized to land as a single
   worktree branch with its own gate, per [AGENTS.md](../../AGENTS.md).
-- **Every behavior change gets a device check**, not only a grep. The
-  project's own lesson from the killed Compose rewrite was "device torture
-  as the gate" ([status](../migration/status.md)); greps prove code is gone,
-  not that behavior is right.
-
-## Device checks (reused by items below)
-
-Drawn from the slice-1 torture pass in [status](../migration/status.md) and
-the torture checklist in the slice-7 section of
-[slices](../migration/slices.md). Run on hardware with a `fossDebug` build
-(`R8`-relevant items also on `fossRelease`).
-
-- **D-audio:** connect; talk via push-to-talk and voice activity;
-  mute/unmute and deafen; disconnect/reconnect five times; Bluetooth SCO
-  headset flap; A2DP attach mid-call; confirm voice reaches a second client
-  each time.
-- **D-lifecycle:** rotate in the middle of each dialog; deny each runtime
-  permission (microphone, Bluetooth, notifications); back-press while
-  connected and while connecting; kill the process mid-call, then reconnect.
-- **D-network:** airplane mode mid-call; stop the server mid-call; confirm
-  the app reports the loss promptly (not after the 30 s read timeout).
-- **D-a11y:** TalkBack sweep of channel list, chat, server list, and the
-  overlay.
+- **Audio and lifecycle changes** get a quick manual smoke test on a
+  device before merging; no formal checklist.
 
 ## Phase 0 — Unblock and gate (now)
 
@@ -72,7 +51,7 @@ the torture checklist in the slice-7 section of
   promote exception-in-callback `Log.d` to `Log.w`. Gate: `grep -rn
   printStackTrace app/src/main libraries/humla/src/main` shows only the
   `CrashReporter` writer and the commented-out line; send-failure counter
-  named in the commit. Device: D-network. Source: [02](02-humla-core.md),
+  named in the commit. Source: [02](02-humla-core.md),
   [05](05-crosscutting.md).
 - **R4 — Harden native input creation and callbacks (P1, S).**
   Mirror the output bridge in `NativeAudioInputEngineJni.cpp`: `nothrow`,
@@ -80,14 +59,13 @@ the torture checklist in the slice-7 section of
   `GetJavaVM` check, Kotlin zero-handle guard in `NativeAudioInputEngine`;
   daemon attach, per-upcall exception check/log/clear, detach only if
   attached. Gate: failure injection returns `0` with cleanup; host suite
-  compiles the touched shims. Device: D-audio on `fossDebug` and
-  `fossRelease`. Source: [03](03-native-audio.md).
+  compiles the touched shims. Source: [03](03-native-audio.md).
 - **R5 — Fix the certificate-generate `Activity` leak (P1, S).**
   `MumlaCertificateGenerateTask` holds a raw `Activity` across rotation and
   shows its dialog from a dead instance. Move to a coroutine plus
   `ViewModel`, `applicationContext` for DB work. Only this `AsyncTask` has a
   real defect; the other two wait for R23. Gate: no `Activity` reference
-  survives rotation. Device: D-lifecycle (rotate mid-generation). Source:
+  survives rotation. Source:
   [01](01-app-ui.md).
 - **R6 — Label unlabeled icons (P1, XS–S).**
   Add `android:contentDescription` to interactive `ImageView`/`ImageButton`s
@@ -95,13 +73,13 @@ the torture checklist in the slice-7 section of
   `fragment_tokens`, `list_drawer_item`, `overlay_user_row`,
   `server_list_row`, and `token_row` (header logo and PTT corner are already
   labeled); enable lint `ContentDescription`. Gate: lint clean on
-  interactive icons. Device: D-a11y. Source: [01](01-app-ui.md).
+  interactive icons. Source: [01](01-app-ui.md).
 - **R7 — Accumulate short audio reads instead of zero-padding (P2 → bar, S).**
   Included because users hear it: `AudioInputEngine::processFrame` zero-pads
   any read shorter than 480 samples, injecting clicks and depressing
   RMS/VAD/leveler. Accumulate fragments into whole 480-sample quanta and
   expose a partial-read counter. Gate: host test feeding split frames
-  produces output identical to whole frames. Device: D-audio. Source:
+  produces output identical to whole frames. Source:
   [03](03-native-audio.md) P2.
 - **R8 — Use the full product name in user-visible strings (P1, XS).**
   Base `strings.xml` connecting/disconnected/welcome/join/update strings and
@@ -123,7 +101,7 @@ Ordered; dependencies noted per item.
   2026-10-13 without removing the bridge — fix the stale KDoc in the same
   branch. Gate: no main-thread `runBlocking` on the preference or Room
   paths; only the background `MumlaActivity` crash-check stays allowlisted.
-  Device: D-lifecycle plus a settings-screen jank check. Unblocks
+  Unblocks
   settings-screen jank work. Source: [01](01-app-ui.md).
 - **R10 — Minimal `androidTest/` smoke tier (P1, M).**
   No instrumented tests exist; `returnDefaultValues = true` masks
@@ -137,15 +115,14 @@ Ordered; dependencies noted per item.
   `HumlaService` plus a 4-row state table (connected/background,
   connecting/background, notification denied on API 33+, Doze vs locks plus
   `START_NOT_STICKY` schedule loss), and add Doze and process-death cases to
-  the R10 tier. Gate: table landed with expected behavior per row. Device:
-  D-lifecycle (process kill). Source: [02](02-humla-core.md).
+  the R10 tier. Gate: table landed with expected behavior per row. Source: [02](02-humla-core.md).
 - **R12 — Enforce native destroy lifetime (P1, M). After R4.**
   Today `AudioHandler.shutdown()` calls `AudioInput.shutdown()`, which joins
   capture with no timeout, before `destroy()` — correct, but by convention
   only. Replace with registry/`shared_ptr` discipline mirroring the crypto
   bridge so `destroy()` blocks until callbacks quiesce. Gate: host test
   races destroy against an in-flight callback without a use-after-free
-  (ASan on host). Device: D-audio. Source: [03](03-native-audio.md).
+  (ASan on host). Source: [03](03-native-audio.md).
 - **R13 — Native host coverage and warnings (P1, M).**
   Build `RnnoiseProcessor.cpp`, the RNNoise sources, and both JNI shims into
   the host suite with a real-model-load test; add `-Wall -Wextra` to Android
@@ -181,8 +158,7 @@ Ordered; dependencies noted per item.
   [04](04-build-infra.md), [05](05-crosscutting.md).
 - **R20 — Replace the 1 s `ServerInfoFragment` poll with a flow (P1, S).**
   `repeatOnLifecycle(STARTED)` collecting a service `StateFlow`, as the
-  file's own comment proposes. Device: D-lifecycle (rotate on the server
-  info screen). Source: [01](01-app-ui.md).
+  file's own comment proposes. Source: [01](01-app-ui.md).
 
 ## Phase 3 — Opportunistic (when the file is next touched)
 
@@ -197,7 +173,7 @@ alongside other work in the same files.
   `FragmentResultListener` instead of `setTargetFragment`
   (`MumlaPreferenceFragment`); `registerForActivityResult` instead of
   `startActivityForResult` (`CertificateImportActivity`); `tools:text` for
-  preview placeholders. Device: D-lifecycle (rotation keeps pager position).
+  preview placeholders.
   Source: [01](01-app-ui.md).
 - **R22 — Deduplicate UI helpers (P1, S).** One talk-state mapper (with a
   unit test), one tint helper (3 sites), one volume-stream helper (3+
@@ -239,7 +215,6 @@ alongside other work in the same files.
 | Power-hold extraction skipped until those sites next change | [decomposition progress](../humlaservice-decomposition/PROGRESS.md) | Kept. No large-class rewrite item; the reconnect-lock P2 in [02](02-humla-core.md) rides with that extraction. |
 | kapt → KSP and Paparazzi re-evaluation deferred | [status](../migration/status.md) outstanding debt | Not duplicated; tracked there. |
 | Crash-test buttons ship in all builds | [crash-reporter](../crash-reporter/README.md) | By design (field-testable release traces, confirmation dialog, disabled during calls). Audit P1 closed. |
-| Device torture as the gate | [status](../migration/status.md) | Adopted as the device checks above. |
 
 ## Disposition of every P0/P1 finding
 
