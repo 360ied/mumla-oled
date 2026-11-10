@@ -127,7 +127,9 @@ remediation was feasible and justified, against `master` and upstream
 | Certificate hardening | Contradicted: upstream `src/SelfSignedCertificate.cpp` uses serial `1`, RSA-2048, 20-year validity, matching Humla; Mumble keys users by certificate hash; any PKCS#12 password is stored next to the blob | Dropped. Replaced by a P2 decision on `allowBackup="true"` exposing keys in backups |
 | `printStackTrace` census | Full grep: 12 active (5 app + 7 core), 1 commented-out, 1 intentional reporter | Round-1 "one app site unresolved" note closed |
 | `03` table formatting | Two rows were split across lines, which breaks GFM tables | Rows joined |
+| Native destroy race | Convention honored today: `AudioHandler.shutdown()` calls `AudioInput.shutdown()`, which loops `thread.join()` with no timeout, before `NativeAudioInputEngine.destroy()`; `AudioInput.startRecording` bails if a stale capture thread survives its 200 ms join. Latent, not live | Stays P1, roadmap item 7 (release hardening) |
+| Roadmap order follow-up | Item 4 bundled cheap input guards with the RNNoise pin, which only guards a deliberate submodule bump; icon labels and the key-backup decision were cheap but ranked last | Input guards stay item 4; RNNoise pin moved into item 7; RNNoise upstream fix, icon labels, and key-backup decision moved to quick-wins; Top-10 → Top-9 |
 
-Not re-checked in round 4: the destroy race, UI duplication counts,
+Not re-checked in round 4: UI duplication counts,
 timing-test notes, and build-infra P1/P2 rows other than CI. Their earlier
 verdicts stand.

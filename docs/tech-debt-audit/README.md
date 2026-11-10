@@ -44,7 +44,7 @@ reports will drift — search for the named symbol instead.
 | [04-build-infra.md](04-build-infra.md) | Build/infra | Gradle, Nix flake, scripts, signing, versioning, CI |
 | [05-crosscutting.md](05-crosscutting.md) | Cross-cutting | Tests, error handling, docs, licensing, naming, TODO backlog |
 | [06-validity-check.md](06-validity-check.md) | Validity check | Per-claim re-verification verdicts, corrections, downgrades |
-| [07-remediation-roadmap.md](07-remediation-roadmap.md) | Roadmap | Consolidated Top-10 paydown order plus quick-wins |
+| [07-remediation-roadmap.md](07-remediation-roadmap.md) | Roadmap | Consolidated Top-9 paydown order plus quick-wins |
 
 Severity vocabulary used throughout:
 
@@ -126,7 +126,8 @@ Each still has a roadmap item; the downgrade changes urgency, not validity.
   (symbol `RNNModel`). The submodule is gitlink-pinned, so drift needs a
   deliberate bump; the hazard is an unguarded bump, not shipped code. The
   upstream struct lives in `rnnoise/src/denoise.c`, not a header, so a
-  `static_assert` has nothing to compare against. See `07` item 4.
+  `static_assert` has nothing to compare against. See `07` item 7 and the
+  RNNoise quick-win.
 - `AsyncTask` in `app/` (deprecated API 30, still functional on API 36).
   Only [`MumlaCertificateGenerateTask.kt`](../../app/src/main/java/se/lublin/mumla/preference/MumlaCertificateGenerateTask.kt)
   (`mContext`) has a real defect (retained `Activity` across rotation, P1);
@@ -164,7 +165,7 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
 | Background / Doze | Partial wake + wifi locks, `WAKELOCK_GRACE_MS`, `START_NOT_STICKY` losing the reconnect schedule on process death | Partial (P2 note only) | 5-row lifecycle table mirroring the backoff-table style (killed-while-connected reposts notification and reschedules; killed-while-reconnecting resumes backoff or documents loss as expected; Doze holds locks only inside the grace window); Doze + process-death cases in the smoke tier |
 | Process death (connected vs reconnecting) | Disconnect-state resets; duplicate-connect guard; backoff truth table | Partial | Same lifecycle table; killed-while-connected vs killed-while-reconnecting rows |
 | Empty / error conditions | Server-grid `emptyView`; empty-channel hiding default; null/empty release fallback | Partial | Empty/denied/revoked rows in `01` P1/P2 |
-| Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` item 9); revoke-while-shown in `androidTest/` smoke tier |
+| Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` icon-label quick-win); revoke-while-shown in `androidTest/` smoke tier |
 | Adjacent tabs / concurrent workers | Poller firing while the ping pool shuts down; dual-tab observers of talk-state; `TalkBroadcastReceiver` vs media-session dispatch | Listed in isolation, not modeled jointly | One concurrent-service-callback row (`repeatOnLifecycle` + shared `Flow` criterion) |
 | Main-thread bridges (ANR surface) | `DataStorePreferenceDataStore` `read`/`write`, `SettingsRepository` `snapshotBlocking`/`updateBlocking`, `MumlaRoomDatabase` `io()`, `MumlaActivity` crash-check `runBlocking` (background thread) | Partial (P1 covers preference path plus Room) | `07` item 6 gate: zero main-thread `runBlocking` on the preference and Room paths; only the background crash-check stays allowlisted |
 
