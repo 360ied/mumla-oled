@@ -1,6 +1,6 @@
-# Target Architecture — Authorities, Not a Loop
+# Target Architecture — Make the Safe Path the Default
 
-Snapshot: `master` at `3bd75bd8`, 2026-11-10. Citations name files and
+Snapshot: `master` at `e3c43f9f`, 2026-11-10. Citations name files and
 symbols, not line numbers.
 
 Status: proposal. No code exists for any of this. Nothing here authorizes
@@ -10,260 +10,194 @@ work; each step below starts only on explicit request.
 
 The [whales list](README.md) is deliberately *satisficing*: for each family
 of symptoms it gives the smallest structural fix that removes the family.
-This document is the *optimizing* counterpart. It asks what end state makes
-W1, W2, and W3 (and most of W4 and W5) impossible to reintroduce, not just
-fixed. Both documents share the whales list's admission bar and its refusal
-to sweep krill.
+This document is the *optimizing* counterpart: an end state in which W1,
+W2, and W3 (and most of W4 and W5) cannot come back, not just a state in
+which they are fixed. Both documents share the whales list's admission bar
+and its refusal to sweep krill.
 
 ## Thesis
 
-W1 (no session object), W2 (shared mutable model), and W3 (audio control
-locks shared with the capture thread) share a root cause: **nothing owns
-ordering.** The main thread, the TCP read and send threads, the UDP
-coroutine, binder callers, and the audio threads all touch shared state, so
-every recent concurrency fix took the form "add the right guard here".
+Architecture should reduce how much discipline correct code requires. In
+Mumla OLED today, almost every part of the app can be touched by several
+threads at once, and staying correct means remembering rules: take this
+lock before that one, never call this from main, check the session is still
+current, check the view still exists. Forgetting one is how the shipped
+bugs happened, including the mute-tap ANR
+([mute-tap-deadlock](../mute-tap-deadlock/README.md)).
 
-The tempting fix is to give ordering one owner: a single control loop. That
-is the wrong model (see [rejected alternative](#rejected-alternative-a-single-control-loop)),
-because **there is no single ordering to own.** This client has several
-independent sources of truth, each with its own order, latency budget, and
-lifetime. Forcing them into one total order creates head-of-line blocking,
-and every patch for that blocking turns out to be one of those sources of
-truth trying to get back out.
+The spread is measurable. 31 Kotlin files under `app/src/main` and
+`libraries/humla/src/main` use raw concurrency tools (`@Volatile`,
+`@Synchronized`, `synchronized(`, `Thread(`, `Handler(`, `runBlocking`), at
+about 330 sites. Each one is a place where a reviewer has to get it right.
 
-Today's code shows the confusion in miniature:
-[`User`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.kt)
-holds server-decided state (`isMuted`, `isDeafened`, `isSuppressed`),
-user-decided state (`isSelfMuted`), and device-local state
-(`isLocalMuted`, `isLocalIgnored`) on one mutable object. Three authorities
-write it, so it needs locks.
+The goal is not zero care. Some code really does need careful thread
+handling. The goal is to **move the care from everywhere into a few clearly
+marked files, make the safe way the normal way everywhere else, and have the
+gate keep it that way.** Every mechanism below is described by what it
+makes *impossible*, not by what it asks people to remember.
 
-The target partitions state by **authority** (who decides what is true),
-gives each authority one confined owner, and makes the composition between
-authorities independent of order.
+All of it uses primitives the project already depends on (coroutines,
+`StateFlow`, lifecycle). Nothing here is exotic.
 
-## Authorities
+## Five mechanisms
 
-| Authority | Decides | Ordered by | Latency budget |
-|---|---|---|---|
-| **Server replica** | Channel/user tree, server mute/deafen/suppress, permissions, server settings, inbound text messages | The server's TCP message stream | Tolerant; bursty (join sync) |
-| **Local user** | Self-mute/deafen, PTT and VAD talk intent, whisper target, local mute/ignore, per-user volume; pending proposals awaiting server echo | User actions | Critical (privacy) |
-| **Platform route** | Communication device, SCO/A2DP state, mode hold, settle and debounce | Android callbacks | Slow, flaky effects |
-| **Transport** | TLS socket, TCP framing, UDP channel and crypt lifecycle, keepalive, ping statistics, TCP-tunnel fallback | The network plus timers | Moderate |
-| **Voice data plane** | Capture, DSP, encode, render, per-user talk activity | 20 ms audio frames | Realtime |
+### 1. Shared data is never edited in place
 
-Two non-authorities complete the picture:
+**Today.** [`Channel`](../../libraries/humla/src/main/java/se/lublin/humla/model/Channel.kt)
+and [`User`](../../libraries/humla/src/main/java/se/lublin/humla/model/User.kt)
+are mutable objects changed field by field on one thread and read on
+others. A reader can catch an object halfway through an update, so every
+field is `@Volatile`, child lists are copied under `synchronized`, and
+[`ModelHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.kt)
+writers keep `@Synchronized` "as defense-in-depth".
 
-- **Settings** is a published value (the DataStore flow), not an actor.
-  Each authority reads the keys it needs as a latest value.
-- **The session supervisor** owns lifetimes only (see
-  [rule 6](#6-the-supervisor-sequences-lifetimes-never-data)).
+**Instead.** Server state is one immutable value (`ServerState`: channels,
+users, permissions, server settings) held in a `MutableStateFlow`. A change
+makes a new copy and swaps it in atomically:
 
-Each authority is **one confined actor**: one thread or single-threaded
-dispatcher, one inbound queue, one writer for its state. Internally an
-actor can be a pure reducer, `step(state, input) → (state, outputs)`, which
-keeps it deterministic and testable in isolation.
-
-### Server replica
-
-- **Becomes:** [`ModelHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.kt),
-  moved off main.
-- **Inputs:** parsed control messages from transport, in server order.
-  Parsing happens on the transport side, not in the replica.
-- **Publishes:** `ReplicaState` (persistent maps; one snapshot per drained
-  batch, an internal optimization that affects nobody else).
-- **Emits events:** text message received, user joined/left/moved,
-  permission denied, server rejected.
-- **Does not own:** anything the local user decides. Local mute/ignore
-  history (today passed into `ModelHandler` as `mLocalMuteHistory` /
-  `mLocalIgnoreHistory`) moves to the local-user authority.
-
-A large join sync can only delay the replica's own snapshot. It cannot
-delay a mute, a route event, or voice.
-
-### Local user
-
-- **Becomes:** the self-mute/deafen, talk-intent, and whisper logic
-  currently spread across `HumlaService`, `AudioHandler`, `InputModes`, and
-  the app's PTT, hot-corner, media-key, and talk-broadcast paths.
-- **Inputs:** UI and hardware intents; the replica's echo of the
-  connected user's server state, for reconciliation.
-- **Publishes:** desired self state, talk intent, whisper target, local
-  mute/ignore set.
-- **Sends:** `UserState` proposals to transport (fire-and-forget).
-- **Reconciles:** optimistic self-mute/deafen with server echo as confirm,
-  preserving the desktop-parity rules from
-  [optimistic-self-mute](../optimistic-self-mute/README.md) (deafen implies
-  mute, server coercion wins).
-
-### Platform route
-
-- **Becomes:** [`AudioRouteController`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt)
-  plus `AudioPlatform`/`ScoLink`. Its main-confinement and single
-  `onEvent` funnel already make it the closest thing to an actor in
-  today's code.
-- **Publishes:** `RouteState` (applied route, input ready).
-- **Emits events:** SCO failed, route changed.
-- **Confinement:** see [open questions](#open-questions). Platform calls
-  such as `setCommunicationDevice` can block, which argues for a dedicated
-  looper instead of main.
-
-### Transport
-
-- **Becomes:** [`HumlaConnection`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.kt),
-  [`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt),
-  and [`HumlaUDP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt).
-- **Internals:** a blocking reader thread and a writer, coordinated by the
-  transport actor. A full outbound queue is a connection fault, not a stall
-  for anyone else.
-- **Outputs:** the inbound message log to the replica (FIFO, server
-  order), `TransportState` (phase, UDP available, RTT), and inbound voice
-  packets straight to the data plane.
-- **Reports failures** to the supervisor. Transport never reconnects
-  itself.
-
-### Voice data plane
-
-- **Becomes:** [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt),
-  `AudioInput`, `AudioOutput`, and the native engines (C++ unchanged).
-- **Not a coroutine actor.** It runs on realtime threads and reads
-  configuration only as latest values published by the other authorities
-  (one atomic reference per input).
-- **Owns the mic gate** (see [rule 3](#3-safety-outputs-are-conjunctions-of-permits)).
-- **Publishes:** per-user talk activity as its own high-frequency flow,
-  kept out of every other authority's state.
-- **Sends:** encoded, encrypted frames to transport through the existing
-  lock-free UDP send queue.
-
-## Composition rules
-
-These matter more than the actors themselves. Each has a mechanical check.
-
-### 1. One authority, one owner, one queue
-
-Every piece of state has exactly one writing authority. No queue is shared
-between authorities, so one authority's backlog cannot delay another.
-A queue may carry one authority's order *to* another (transport → replica
-carries server order); it never merges two orders.
-
-**Check:** no type is written from two actors. No actor drains a queue
-that another authority's inputs also enter.
-
-### 2. Cross-authority composition is order-insensitive
-
-Combining state from several authorities uses latest values (conflated
-flows, atomic snapshots) or operations that are commutative and
-idempotent. If correctness depends on how two authorities' updates
-interleave, the state is in the wrong place. **Re-partition it; do not add
-a coordination mechanism.**
-
-**Check:** the multi-actor simulation (see [testing](#testing)) passes
-under every explored interleaving of cross-authority deliveries.
-
-### 3. Safety outputs are conjunctions of permits
-
-The mic gate opens only while **every** relevant authority grants it:
-
-```mermaid
-flowchart LR
-    LU["Local user<br/>not self-muted,<br/>talk intent present"] --> G{"AND"}
-    SR["Server replica<br/>not server-muted,<br/>deafened, or suppressed"] --> G
-    PR["Platform route<br/>input ready"] --> G
-    TR["Transport<br/>session synchronized"] --> G
-    SV["Supervisor<br/>session live"] --> G
-    G --> CAP["Data plane:<br/>encode and send"]
+```kotlin
+serverState.update { s -> s.withUser(session) { it.copy(isMuted = true) } }
 ```
 
-The gate is evaluated where it is used, in the data plane, for each frame.
-Any authority closes it immediately by publishing a revoked permit. That
-needs no coordination: AND does not depend on order, and closing is always
-safe.
+Readers always see the old value or the new one, never a mix.
 
-The special cases from the single-loop design disappear:
-- **Mute close** is the local-user permit being revoked. No bypass is
-  needed.
-- **PTT press** is the local user granting talk intent. The gate opens
-  only if every other permit is already granted, so a stale press can
-  never transmit while server-suppressed or disconnected.
-- **Server mute** is the replica's permit being revoked. It arrives
-  whenever the replica gets to it, and a delay there is fail-closed.
+**Becomes impossible.**
+- Half-updated reads: values are immutable.
+- Deadlocks on model data: there is no lock (`update` is a compare-and-swap
+  retry loop).
+- Observers holding live objects that change under them: there is nothing
+  mutable to hand out.
 
-**Check:** simulation invariant — no frame is sent at a scheduler step
-where any permit is revoked.
+**It settles the "who writes `User`" question.** Server sync, self-mute,
+and local mute can all update the same immutable `User`. Each write is an
+atomic transform, so several writers need no coordination and no split of
+`User` into per-writer pieces.
 
-### 4. One-shot events come from their authority
+**Cost.** Copying on every change. After initial sync, updates are rare and
+the copy is small. During the initial sync burst, `ModelHandler` builds
+state privately and publishes once on `ServerSync`, the protocol's own
+end-of-initial-state marker, so the burst is not a copy per message.
 
-Chat messages come from the replica, SCO failures from route, pipeline
-errors from the data plane. Consumers (TTS, notifications, toasts) collect
-those event streams. Nobody reconstructs events by diffing snapshots, and
-conflated state flows are never relied on for delivery.
+**Remaining convention.** The lambda passed to `update {}` must not have
+side effects, because compare-and-swap may run it more than once. That is
+one narrow, well-known rule, replacing a lock order documented in comments.
 
-**Check:** no consumer compares consecutive snapshots to detect an event.
+### 2. Each connection is its own self-contained object
 
-### 5. Lifetimes are structured
+**Today.** Per-connection state (`mConnection`, `mModelHandler`,
+`mAudioHandler`, `mConnectionState`, `mReconnecting`, whisper targets)
+lives in nullable fields on the long-lived
+[`HumlaService`](../../libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt),
+cleared and reused across connections. A late callback from an old
+connection can reach the new one, so the code keeps `connectionGeneration`
+and the session-token check in `AudioRouteController.shouldDropStaleEvent`,
+plus four service locks.
 
-A session scope parents every per-connection actor: transport, replica, and
-the local user's pending proposals. Route and the data plane get
-session-start and session-end inputs. Teardown is cancelling the scope;
-a late input to a cancelled child is dropped by construction. W1 becomes
-the scope tree, not an object.
+**Instead.** `connect()` builds a `Session` holding everything for that
+connection as non-null `val`s, plus its own `CoroutineScope`. Every socket,
+audio, and timer callback is created by, and captures, the `Session` it
+belongs to. Ending the connection cancels the session's scope; the service
+holds a single reference to the current session.
 
-**Check:** no generation counters or stale-session checks exist anywhere.
+**Becomes impossible.**
+- A late callback affecting a newer connection: it holds the old,
+  cancelled `Session`, and work launched on a cancelled scope never runs.
+- Forgetting to reset a field on reconnect: there are no fields to reset.
 
-### 6. The supervisor sequences lifetimes, never data
+`connectionGeneration`, `shouldDropStaleEvent`, and the per-connection
+locks have nothing left to do and are deleted.
 
-The supervisor starts and stops children, applies reconnect backoff, and
-orders session start and end against route session hooks. It holds only
-"current attempt" and backoff state. Connect, reconnect, and teardown are
-the only places that coordinate several authorities, and they deal only in
-starting and stopping.
+### 3. Slow parts take requests; nobody waits on them
 
-**Check:** the supervisor's state type contains no protocol or model data.
+**Today.** The main thread can wait on slow things. The mute path holds
+`mMuteLock` across `startRecording`'s bounded join of the old capture
+thread (up to 200 ms), and Bluetooth/route calls such as
+`setCommunicationDevice` can run on main, because route control is
+main-confined and SCO bring-up runs on its caller's thread. When two such waits depend on each
+other, the app freezes.
 
-### 7. No actor waits on another
+**Instead.** Audio control (start, stop, mute, reconfigure) and route
+control each run in their own coroutine on their own thread, and expose
+only `submit(command)`: a non-blocking send into a queue they drain.
+Joining threads and slow platform calls happen inside that coroutine.
+Results come back as state (mechanism 1) or events.
 
-Interactions between authorities are fire-and-forget messages or reads of
-published values. There are no cross-actor request/response awaits. This is
-the general form of the `AudioHandler` ↔ native engine ABBA deadlock in
-[mute-tap-deadlock](../mute-tap-deadlock/README.md): two domains each
-blocking on the other.
+**Becomes impossible.**
+- Main blocking on audio or route work: main has no `join` or lock it
+  could take.
+- The mute-tap class of deadlock: there is no lock shared between main and
+  the audio threads to take in the wrong order.
 
-**Check:** no cross-actor `await`/`join`/blocking call. No `Thread.join` on
-main.
+The mic gate stays immediate: muting updates state that the capture thread
+reads on every frame (one atomic read), so muting never waits for the
+command queue to drain.
 
-## Shape
+### 4. Screens pull updates instead of being called
 
-```mermaid
-flowchart TB
-    subgraph Session["Session scope (supervisor)"]
-        TR["Transport"]
-        SR["Server replica"]
-    end
-    LU["Local user"]
-    PR["Platform route"]
-    DP["Voice data plane<br/>(realtime threads)"]
-    UI["UI and app features<br/>(ViewModels, TTS,<br/>notifications, overlay)"]
+**Today.** [`IHumlaObserver`](../../libraries/humla/src/main/java/se/lublin/humla/util/IHumlaObserver.kt)
+calls into screens from whatever thread the change happened on, including
+after a screen has closed. Every observer has to hop threads and check that
+its view still exists. Literal-port "NPE-exact" guards for that situation
+appear in 42 files.
 
-    TR -->|"inbound log (server order)"| SR
-    TR -->|inbound voice| DP
-    DP -->|encrypted frames| TR
-    LU -->|UserState proposals| TR
-    SR -.->|self echo| LU
-    LU -.->|permit, whisper target| DP
-    SR -.->|permit| DP
-    PR -.->|permit| DP
-    TR -.->|permit| DP
-    SR -.->|state, events| UI
-    LU -.->|state| UI
-    PR -.->|state, events| UI
-    DP -.->|talk activity| UI
-    UI -->|intents| LU
-```
+**Instead.** Screens collect state flows (and event flows, below) with
+`repeatOnLifecycle`. Collection runs on main while the screen is visible
+and stops automatically when it is not.
 
-Solid arrows are messages; dotted arrows are published latest values or
-event streams.
+**Becomes impossible.**
+- Updates arriving on the wrong thread: the receiver picks the thread, not
+  the sender.
+- Updates arriving after the screen is gone: collection has already
+  stopped. The observer NPE guards disappear because the case they guard
+  can no longer occur.
 
-### Removing the binding layer
+**State vs events.** `StateFlow` keeps only the latest value, which is
+right for anything a screen displays. Things that must never be dropped
+(chat messages, SCO failure, permission denied) use a `SharedFlow` or
+`Channel`. That is one distinction to learn, not a convention at every
+call site.
+
+### 5. The gate enforces it
+
+A small check in [`check.sh`](../../scripts/check.sh) fails if any of
+`@Volatile`, `@Synchronized`, `synchronized(`, `Thread(`, `Handler(`, or
+`runBlocking` appears in main sources outside an allowlist file.
+
+**The allowlist is a ratchet.** It starts as today's 31 files, so the gate
+is green on day one. Each migration step removes files from it, and the
+check also fails if the list contains a file that no longer needs to be on
+it. It can only shrink, so progress is mechanical and old habits cannot
+creep back in.
+
+**Becomes impossible.** Adding a lock, raw thread, or blocking bridge to
+ordinary code without the change visibly touching the allowlist in review.
+
+## What stays careful, on purpose
+
+Some code genuinely needs hand-written thread handling. The estimated
+final allowlist is about nine files:
+
+- [`CryptState`](../../libraries/humla/src/main/java/se/lublin/humla/net/CryptState.kt)
+  and the two native engine facades (`NativeAudioInputEngine`,
+  `NativeAudioOutputEngine`): JNI over thread-safe native code, already
+  covered by the native suite.
+- `AudioInput` and `AudioOutput`: the realtime capture and render threads.
+- `HumlaTCP` and `HumlaUDP`: blocking socket readers.
+- `HumlaSSLSocketFactory`: TLS trust callbacks on the socket thread.
+- `CrashReporter`: the uncaught-exception handler, which must work without
+  coroutines.
+
+The number is an estimate, and some may leave (the socket readers could
+move to coroutines on an I/O dispatcher). The point is the shape: **from
+31 files where care is needed to about nine, all at real boundaries, with
+the gate keeping it there.**
+
+## Beyond concurrency
+
+These parts are worth doing for their own sake, and they fit together with
+the mechanisms above.
+
+### Remove the service-binding layer
 
 `IHumlaService`/`IHumlaSession`, service binding, and
 [`HumlaServiceFragment`](../../app/src/main/java/se/lublin/mumla/util/HumlaServiceFragment.kt)
@@ -272,215 +206,165 @@ protocol service. Mumla OLED is one app in one process, and the app
 references `IHumlaService` at 44 sites through a surface that was frozen
 only for the duration of the migration.
 
-In the end state, the authorities live at application scope. The `Service`
-holds only the foreground lifetime, and screens combine the authorities'
-published values through ViewModels. The XML views and their pixels do not
-change; the [killed Compose rewrite](../migration/README.md) stays killed.
-`MumlaService`'s app features (TTS, PTT sounds, overlay, hot corner,
-proximity sensor, notifications, chat log) become collectors of the
-relevant state and event streams. They no longer override a library base
-class.
+Once screens collect flows (mechanism 4), nothing needs to bind the
+service. The session and its state live at application scope; the
+`Service` holds only the foreground lifetime. The XML views and their
+pixels do not change, and the [killed Compose rewrite](../migration/README.md)
+stays killed.
+
+### Replace inheritance with composition
+
+[`MumlaService`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.kt)
+extends the `open` `HumlaService` and overrides 48 members. Its app
+features (TTS, PTT sounds, overlay, hot corner, proximity sensor,
+notifications, chat log) become independent collectors of the session's
+state and event flows. `HumlaService` becomes `final`.
 
 ### Composition root, no DI framework
 
-Drop Hilt and kapt from both modules and use one hand-written composition
-root in `MumlaApplication`. At about 160 Kotlin files the app does not need
-a DI framework. Room and DataStore stay, behind suspend/`Flow` APIs
-consumed off-main.
+Drop Hilt and kapt from both modules (one `@Inject` exists today, and
+`:libraries:humla` applies both with zero use) and use one hand-written
+composition root in `MumlaApplication`. Room and DataStore stay, behind
+suspend/`Flow` APIs; the `runBlocking` bridges leave the allowlist with
+this step. This resolves whales W4 in the "revert" direction.
 
 ## How the whales map
 
-| Whale | Satisficing fix ([README](README.md)) | Authorities model |
+| Whale | Satisficing fix ([README](README.md)) | This document |
 |---|---|---|
-| W1 no session object | Per-connect `Session` object owning a scope | Dissolved: session scope tree under the supervisor (rules 5, 6) |
-| W2 shared mutable model | Single writer publishing snapshots | Dissolved: replica owns server state; self and local state leave `User` (rule 1) |
-| W3 audio control locks | Single audio-control thread | Dissolved: mic gate is a conjunction of permits read by the data plane (rules 3, 7) |
-| W4 half-finished data/DI | Finish *or* revert | Resolved by reverting: hand-written composition root, suspend storage APIs |
-| W5 app god objects | Composition plus ViewModel | Dissolved: binding layer removed; app features collect authority streams |
-| W6 no harness | murmur loopback suite in `check.sh` | Expanded: multi-actor deterministic simulation, trace replay, murmur |
+| W1 no session object | Per-connect `Session` object owning a scope | Same, plus callbacks capture their session (mechanism 2) |
+| W2 shared mutable model | Single writer publishing snapshots | Immutable `ServerState` with atomic updates; any number of writers (mechanism 1) |
+| W3 audio control locks | Single audio-control thread | Command-only audio and route control; main cannot wait (mechanism 3) |
+| W4 half-finished data/DI | Finish *or* revert | Revert: composition root, suspend storage APIs |
+| W5 app god objects | Composition plus ViewModel | Binding layer removed; features collect flows (mechanism 4) |
+| W6 no harness | murmur loopback suite in `check.sh` | Same, plus deterministic virtual-time tests (below) |
 
 ## Testing
 
-**Ring 1 — multi-actor simulation (every `check.sh`).** Each actor's
-reducer is pure, so a deterministic scheduler can run all of them on a
-virtual clock and choose, from a seed, the order in which cross-authority
-messages and published values are delivered. That explores interleavings
-*between* authorities, which is exactly where today's races live. Faults
-are injected from the same seed:
-- disconnect at every message boundary of the sync sequence,
-- UDP loss, duplication, and reordering,
-- crypt desync,
-- route flaps mid-connect,
-- intent storms (mute, deafen, PTT spam during connect and disconnect),
-- reconnect racing a user-initiated disconnect,
-- a large-server sync backlog while every other authority stays busy.
+**Deterministic tests (every `check.sh`).** Session lifetime, audio
+control, and route control are coroutines, so they run under
+`kotlinx-coroutines-test` virtual time against a fake transport, with no
+real threads or sleeps. [`AudioRouteControllerTest`](../../libraries/humla/src/test/java/se/lublin/humla/audio/AudioRouteControllerTest.kt)
+already works this way. Scenarios to cover:
+- disconnect at every message boundary of the sync sequence;
+- reconnect racing a user-initiated disconnect;
+- mute, deafen, and PTT spam during connect and disconnect;
+- route flaps mid-connect.
 
-Invariants, checked after every scheduler step:
-- no voice frame is sent while any permit is revoked;
-- a revoked permit closes the gate within one data-plane frame, whatever
-  the replica's backlog;
-- at most one live session scope; no input reaches a cancelled child;
-- every user is in exactly one channel, and every channel's parent exists;
-- local-user reconciliation converges to the server echo;
-- reconnect backoff stays within its bounds.
+Assertions to check throughout:
+- no voice frame is sent while muted;
+- at most one live session; no work runs for a cancelled one;
+- every user is in exactly one channel, and every channel's parent exists.
 
-**Ring 2 — trace replay (required).** Record inbound control streams from
-real servers, scrubbed with the rules in
-[`CrashReportScrubber`](../../app/src/main/java/se/lublin/mumla/util/CrashReportScrubber.kt)
-where they apply, and replay them through the replica as regression
-fixtures.
-
-**Ring 3 — murmur interop (required).** The whales list's W6 suite: a
+**murmur interop (every `check.sh`).** The whales list's W6 suite: a
 throwaway `murmur` from the dev shell on loopback, exercising real TLS,
-real UDP crypt, and the real Android-free parts of the shell.
+real UDP crypt, and the real connection code. This is required, not
+optional: the fake transport only tests our idea of the server.
 
-Rings 2 and 3 are **required**, not optional. Ring 1 only tests the fake
-server it is given; if that model of murmur is wrong, the invariants pass
-against a protocol that does not exist.
+**Trace replay (later).** Because `ModelHandler` becomes "message in, new
+`ServerState` out", recorded control streams from real servers can be
+replayed as regression fixtures.
 
 Native audio and crypto keep their existing host suite unchanged.
 
-## Why this is not the Compose rewrite again
+## Migration path
 
-The Compose rewrite was killed because its only acceptance oracle was
-pixel parity: subjective, expensive, and blessing whatever the new UI
-rendered. This design has **objective oracles**: upstream `murmur`
-behavior, recorded traces, machine-checked invariants, and a mechanical
-check per composition rule.
+Each step lands as atomic commits in a worktree under the usual
+`check.sh` gate. Each step's "done" includes removing files from the
+allowlist, so progress is visible in one place.
 
-It is also less of a rewrite than it looks. Rough versions of the seams
-already exist: the route controller is main-confined behind one funnel,
-`ModelHandler` is main-confined, and UDP runs in its own coroutine. What
-is missing is real confinement (they share threads and locks) and the
-composition rules.
+1. **Harness and gate.** murmur interop, the virtual-time scaffolding, and
+   the allowlist check seeded with today's 31 files. Done when a known past
+   race (e.g. disconnect during sync) is reproduced red.
+2. **Immutable server state.** `ServerState` in a `StateFlow`; `Channel`
+   and `User` become immutable; `ModelHandler` publishes on `ServerSync`
+   and per change afterwards. `IHumlaObserver` keeps working, delivering
+   snapshots, until step 5. Done when `Channel`, `User`, and
+   `ModelHandler` leave the allowlist.
+3. **Session object.** Per-connection state moves into `Session`; callbacks
+   capture it. Done when `connectionGeneration` and `shouldDropStaleEvent`
+   are deleted and `HumlaConnection` leaves the allowlist. Likely needs
+   splitting (connection code spans about 2,200 lines across
+   `HumlaConnection`, `HumlaTCP`, and `HumlaUDP`).
+4. **Command-only audio and route control.** Done when `mMuteLock` is
+   deleted, no `join` runs on main, and `AudioHandler`,
+   `AudioRouteController`, and `BluetoothScoManager` leave the allowlist.
+5. **Screens collect flows.** Replace `IHumlaObserver` use in fragments,
+   the activity, and the overlay. Done when no screen implements an
+   observer and the observer NPE guards are gone.
+6. **App cut-over.** Binding layer removed, `MumlaService` features as
+   collectors, `HumlaService` `final`, composition root, Hilt and kapt
+   removed, storage APIs suspend. Done when no app code binds the service
+   and `HumlaService`, `MumlaService`, `MumlaActivity`, and the storage
+   files leave the allowlist.
+7. **Clean up.** Delete `IHumlaObserver` and `HumlaCallbacks` if nothing
+   still needs them. Done when the allowlist is down to the boundary files.
 
-## Migration path (strangler, every step green)
-
-Each step lands as atomic commits in a worktree under the usual `check.sh`
-gate. Old and new paths coexist until the final step. Steps 2 onward are
-each independently valuable.
-
-1. **Harness.** Ring 3 (murmur) plus the multi-actor scheduler scaffolding
-   from Ring 1, run against the current code wherever possible. Done when
-   a known past race (e.g. disconnect during sync) is reproduced red.
-2. **Mic gate as a conjunction of permits.** Introduce the five permit
-   inputs to the data plane, published initially by the *existing* code
-   (`HumlaService`, `ModelHandler`, `AudioRouteController`,
-   `HumlaConnection`). This is the smallest step with the largest privacy
-   and ANR payoff. Done when `mMuteLock` and the documented
-   `AudioHandler` monitor order are deleted, and mute takes no lock
-   reachable from main.
-3. **Server replica.** Move `ModelHandler` into a confined actor off main,
-   publishing `ReplicaState` and events. TCP frames stop being posted to
-   the main looper. Done when `model/` has no locks or volatiles and
-   `User` carries only server-decided fields.
-4. **Local user.** Extract self state, talk intent, whisper target, local
-   mute/ignore, and reconciliation out of `HumlaService`, `AudioHandler`,
-   and the app's input paths. Done when no other actor writes those
-   fields.
-5. **Transport and supervisor.** `HumlaConnection` becomes the transport
-   actor; the supervisor owns the session scope and reconnect policy.
-   Likely needs splitting further (connection control spans about 2,200
-   lines across three files). Done when `connectionGeneration`,
-   `shouldDropStaleEvent`, and every connection-state lock are deleted.
-6. **Platform route.** Finish confining `AudioRouteController` as an actor
-   and, if the open question resolves that way, move platform calls off
-   main. Done when no route call can block main.
-7. **App cut-over.** Application-scoped authorities, ViewModels for the
-   connected screens, `MumlaService` features as collectors, Hilt and kapt
-   removed. Done when `HumlaService` is not `open` and no app code binds
-   the service.
-8. **Delete old paths.** Remove the binding surface, `HumlaCallbacks`
-   fan-out (if no collector still needs it), and compatibility
-   forwarders. Done when every rule's check passes.
+Steps 2–4 are each worth landing on their own. Stopping after any of them
+leaves the codebase strictly better.
 
 ## Kill criteria
 
 Stop and fall back to the satisficing whales list if:
 
-- **Step 1** cannot reproduce at least one known past race. The
-  simulation would then not buy the safety this plan depends on.
-- **Step 2** cannot delete `mMuteLock`. The permit model would then not fit
-  the data plane.
-- **Voice regresses.** Measured glitch rate or mouth-to-ear latency
-  regresses and cannot be fixed within the data-plane design.
+- **Step 1** cannot reproduce at least one known past race: the harness
+  would not buy the safety the later steps depend on.
+- **Step 2** causes measurable lag on a large server that publishing on
+  `ServerSync` does not fix. (A persistent-map structure is the fallback
+  before giving up.)
+- **Voice regresses** in glitch rate or mouth-to-ear latency after step 4
+  and cannot be fixed within this design.
 
-And treat this as a signal that the *model* is wrong, not the
-implementation:
+And treat this as a sign the design is wrong, not just the code:
 
-- **The epicycle check.** If the same state keeps needing a
-  cross-authority coordination mechanism (an exception to rules 2 or 7),
-  re-partition the authorities. Adding the mechanism is how the
-  single-loop design failed.
-- **Supervisor creep.** If the supervisor starts accumulating protocol or
-  model data (rule 6), an authority is missing.
+- **A file cannot leave the allowlist without a new special mechanism.**
+  If removing the locks from some code keeps requiring new coordination
+  machinery, the problem has been modeled wrong. Rethink it; do not add
+  the machinery.
 
-## Rejected alternative: a single control loop
+## Rejected alternatives
 
-The first draft of this document proposed one event loop owning all
-non-realtime state, with a pure `step(state, event) → (state, effects)`
-core. It was rejected because it imposes one total order where none
-exists, which causes head-of-line blocking: a large join sync queues ahead
-of mute taps, route events, and timers. (Today's code already has this
-problem on the main thread, where `HumlaTCP` posts every frame.)
+Earlier drafts of this document proposed heavier designs. They are
+recorded so nobody rebuilds them.
 
-Each patch needed to make the loop safe was an authority trying to get
-out:
-
-| Patch the loop needed | Authority it really was |
+| Alternative | Why rejected |
 |---|---|
-| Mic-close gate bypassing the loop | Local user's authority over the mic (rule 3) |
-| Priority lane for intents | Local user; intents need no order relative to server frames |
-| Route effects on their own threads | Platform route |
-| Separate flow for speaking indicators | Voice data plane's talk activity |
-| Batching sync to bound the stall | Server replica; its backlog should block nobody else |
-| Effect executors that must never block the loop | Rule 7 |
-
-The per-actor pure reducer survives from that draft. The single shared
-queue does not.
+| **One control loop** owning all non-realtime state, with a pure `step(state, event)` core | Forces one order on things that have none. A large join sync would queue ahead of mute taps and route events, and every fix for that was a piece of the system trying to get back out of the loop. |
+| **Authorities**: state split by who decides it (server, local user, platform route, transport, voice), with joined "views" for readers | Over-engineered for the size of the problem. It split `User` by writer even though every reader needs the joined value, then rebuilt the join with views and consistency classes. Immutable values with atomic updates (mechanism 1) let several writers share one `User` without any of that. |
+| **Rules only**: a short list of concurrency rules applied across the code | Just discipline written down. It changes nothing about how easy the wrong path is. The mechanisms above turn each rule into something the code structure or the gate enforces. |
 
 ## Parked: native voice hot path
 
-The biggest optional move is putting the entire voice path in C++:
-capture → DSP → Opus → OCB2 → `sendto`, and the reverse. Kotlin would
-then only publish permits and configuration. That removes per-frame JNI
-crossings and GC from the realtime path.
-
-It is parked because it breaks two deliberate decisions: the native
-[fence](../migration/README.md) and the `AudioRecord`/`AudioTrack` (no
-Oboe/AAudio) stance. The current native code is also recent and tested.
+The biggest optional move is putting the whole voice path in C++
+(capture → DSP → Opus → OCB2 → `sendto`, and the reverse), with Kotlin only
+publishing settings. That removes per-frame JNI crossings and garbage
+collection from the realtime path. It is parked because it breaks two
+deliberate decisions: the native [fence](../migration/README.md) and the
+`AudioRecord`/`AudioTrack` (no Oboe/AAudio) stance.
 
 **Revisit trigger:** measured glitches or jitter attributable to the
-JNI/Kotlin hop after step 2. The permit and latest-value inputs are
-designed so the data plane can move native without touching any other
-authority.
+JNI/Kotlin hop after step 4.
 
 ## Non-goals
 
 - **Compose, or any UI toolkit change.** The views and their pixels stay.
-- **Rust or other rewrites of the native audio and crypto code.** They stay
-  fenced.
+- **Rewriting the native audio and crypto code**, in Rust or otherwise.
+  They stay fenced.
 - **Kotlin Multiplatform or an iOS port.** There is no second consumer.
 - **New features.** The [upstream feature gap audit](../upstream-feature-gap-audit/README.md)
   gets cheaper after this, but it is out of scope.
 
 ## Open questions
 
-- **Route confinement:** main (Android delivers many audio callbacks
-  there) or a dedicated looper (keeps blocking platform calls off the UI).
-- **Actor implementation:** coroutines on single-threaded dispatchers
-  (`limitedParallelism(1)`) with a `Channel` each, or dedicated threads.
-  Either works as long as reducers never suspend and rule 7 holds.
-- **Text messages:** whether the chat log is replica-owned (server
-  messages) with the app's `mMessageLog` reduced to a view, or stays an
-  app-side collector of replica events.
-- **Persistent collections:** `kotlinx-collections-immutable` is still
-  pre-1.0; the alternative is a small purpose-built structure for the
-  replica.
-- **Module split:** a separate Android-free module for the reducers
-  (enforces purity at the build level) or packages inside
-  `:libraries:humla` (less build churn).
-- **Observer compatibility:** whether `IHumlaObserver` survives step 8 at
-  all, given that every in-tree consumer can move to streams.
-- **`check.sh` budget:** how much simulation volume and murmur time the
-  gate can absorb (see [check-sh-speed](../check-sh-speed/README.md)).
+- **Final allowlist:** whether the socket readers and
+  `HumlaSSLSocketFactory` can move to coroutines and leave it.
+- **Where `ServerState` lives:** inside `Session` (dies with the
+  connection; the UI sees an empty state between connections) or at
+  application scope (the UI can keep showing the last state during a
+  reconnect).
+- **Observer compatibility:** whether `IHumlaObserver` survives step 7,
+  given that every in-tree consumer can move to flows.
+- **Route thread:** a dedicated looper for route control, or main with all
+  blocking calls moved off it.
+- **`check.sh` budget:** how much murmur time the gate can absorb (see
+  [check-sh-speed](../check-sh-speed/README.md)).
