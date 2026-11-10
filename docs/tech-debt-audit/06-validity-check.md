@@ -82,7 +82,7 @@ wording tweaks below.
   DataStore, crash-thread, certificate-race, and native blocks.
 - Drop the `ChannelFragment` tint cite; soften volume routing to `3+`.
 - Correct the certificate path to `net/`; note both SRV timeouts are 800 ms.
-- Correct `getBitrate` wording (returns `0` on failure, not a cached value).
+- Correct `getBitrate` wording (cached `m_bitrate` when encoder null, otherwise unchecked `ctl` output).
 - Soften signing from `will mis-sign` to `unsupported pattern, harden`.
 - Soften foreground-service from definite kill to contract gap pending
   app-layer verification.

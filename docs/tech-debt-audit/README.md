@@ -1,6 +1,11 @@
 # Technical debt audit — Mumla OLED
 
-Snapshot: commit `b282a601`, 2026-11-10 (`master`).
+Snapshot: audit tree `b282a601`, 2026-11-10 (`master`; verify with
+`git log --oneline -1 b282a601`). Follow-up doc commits on `master` revise
+wording only; code citations refer to the audit tree — re-search symbols
+at `HEAD`.
+
+Status: audit-only, no code changes.
 
 This folder is a systematic technical debt audit of Mumla OLED on `master`.
 It records factual findings with file evidence, ranks them by severity, and
@@ -22,7 +27,8 @@ proposes a paydown order. It does not land any code changes itself.
 
 Five parallel read-only reviewer lanes (top reasoning tier), each sweeping
 its seam with exact `path` + symbol citations (no line pins; file paths are
-the stable part of each citation — use symbol search, not line pins), followed
+the stable part of each citation — prefer symbol search; historic lane
+`path:line` quotes are stale by design, so re-search the named symbol instead.
 by five independent read-only evidence-auditor lanes that re-read every P0/P1
 claim against primary sources and verdict it `VALID` / `PARTIAL` / `INVALID`.
 No tests were run for this audit; it is a code-reading audit, not a behavioral
@@ -52,6 +58,8 @@ Severity vocabulary used throughout:
 - **P3** — minor/report-only: dead paths, tuning notes, style debt.
 
 Effort (rough sizing only): `XS` ≤ half-day, `S` ≤ 2 days, `M` ≤ 1 week.
+Ranges (`S/M`) span the endpoints; severity spans (`P0/P1`) mean the slice
+touches both severities.
 
 ## Executive summary
 
@@ -63,8 +71,10 @@ sample-rate end to end, a hardened output JNI bridge, compliant license
 headers and no math blocks present (hence no GFM-math violation), and no
 absolute paths in docs.
 
-Debt concentrates in five P0 clusters (seven P0 table rows: one core, two
-native, four app — clustered by fix unit) plus 12-site logging silence
+Debt concentrates in five P0 clusters (eight P0 table rows across lanes,
+seven unique defects — `modelHash` counted in both [02](02-humla-core.md) and
+[04](04-build-infra.md): one core, two native, four app, one build-infra
+duplicate — clustered by fix unit) plus 12-site logging silence
 ([05](05-crosscutting.md)), missing CI workflows ([04](04-build-infra.md)),
 and JVM-masked device blind spots ([05](05-crosscutting.md)). No P0 was
 overturned by the validity check; softened items were the tint 4th cite
@@ -76,7 +86,8 @@ and timing-test scope (unbounded waits only), plus citation corrections (see
 ### The five P0 clusters (unordered — ship order is [07](07-remediation-roadmap.md))
 
 Do not implement from this summary; build order + done-criteria live in
-[07-remediation-roadmap.md](07-remediation-roadmap.md). Each cluster below
+[07-remediation-roadmap.md](07-remediation-roadmap.md), whose items plus the
+linked `01`–`05` tables are the normative slices. Each cluster below
 links its normative roadmap item.
 
 1. Cold-build crash: undefined `modelHash` in
@@ -106,7 +117,9 @@ digest rotations. User impact: none at runtime (dev-only build breakage).
    Detail in [01](01-app-ui.md); see `07` item 3.
 5. Synchronous DataStore (`runBlocking(Dispatchers.IO)`) on the UI thread in
    [`DataStorePreferenceDataStore.kt`](../../app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt)
-   (symbols `read` / `write`) — the only P0 ANR vector. User impact: settings
+   (symbols `read` / `write`) — the principal P0 ANR vector (other `runBlocking`
+   bridges exist in `SettingsRepository` snapshot/update helpers and the
+   database `io()` helper — same treatment or explicit allowlist; see appendix). User impact: settings
    binds block main; visible jank or ANR under disk pressure; after the fix
    settings load asynchronously with no main-thread block. Done when no
    `runBlocking` remains on the preference path. See `07` item 4.
@@ -127,8 +140,8 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
 
 | State | Implied code path | Audit coverage | Planned gate |
 |---|---|---|---|
-| Rotation (phone/tablet, pager position, poller generation) | `ChannelFragment` phone `ViewPager` vs tablet dual-pane branch; 2-page adapter titles; `ServerInfoFragment` 1 s poller surviving view destruction until `onDestroy` | Partial (rotation covered only for `AsyncTask` cert dialog) | Per-fragment rotation rows; `ViewPager2` remediation states adjacent-page retention (`07` item 10) |
-| Background / Doze | Partial wake + wifi locks, `WAKELOCK_GRACE_MS`, `START_NOT_STICKY` losing the reconnect schedule on process death | Partial (P2 note only) | 5-row lifecycle table mirroring the backoff-table style; Doze + process-death cases in the smoke tier |
+| Rotation (phone/tablet, pager position, poller generation) | `ChannelFragment` phone `ViewPager` vs tablet dual-pane branch; 2-page adapter titles; `ServerInfoFragment` 1 s poller surviving view destruction until `onDestroy` | Partial (rotation covered only for `AsyncTask` cert dialog) | Per-fragment rotation rows; `ViewPager2` remediation states adjacent-page retention and restores pager position plus cert-dialog state (`07` item 10) |
+| Background / Doze | Partial wake + wifi locks, `WAKELOCK_GRACE_MS`, `START_NOT_STICKY` losing the reconnect schedule on process death | Partial (P2 note only) | 5-row lifecycle table mirroring the backoff-table style (killed-while-connected reposts notification and reschedules; killed-while-reconnecting resumes backoff or documents loss as expected; Doze holds locks only inside the grace window); Doze + process-death cases in the smoke tier |
 | Process death (connected vs reconnecting) | Disconnect-state resets; duplicate-connect guard; backoff truth table | Partial | Same lifecycle table; killed-while-connected vs killed-while-reconnecting rows |
 | Empty / error conditions | Server-grid `emptyView`; empty-channel hiding default; null/empty release fallback | Partial | Empty/denied/revoked rows in `01` P1/P2 |
 | Permission denied / dismissed / revoked | `RECORD_AUDIO` / `BLUETOOTH_CONNECT` / `POST_NOTIFICATIONS` flows incl. dismissed-not-denied; overlay revoke-while-shown (`checkAndRequestOverlayPermission`, `updateOverlayVisibility`); Bluetooth SCO settle window | Partial (overlay P2 bullet only) | Permission-denied states gate icon-label work (`07` item 10); revoke-while-shown in `androidTest/` smoke tier |
@@ -144,9 +157,10 @@ backticks or path text; prose always uses the full `Mumla OLED` name.
   permission — hence the foreground item is a contract/state-table gap, not
   a definite kill.
 - `androidTest/`: `find app/src libraries/humla/src -path "*androidTest*"`
-  returns no files; `testInstrumentationRunner` still declared — zero
-  on-device coverage corroborated, needs no further proof for triage.
-- `printStackTrace`: 5 app sites (4 active + 1 commented-out) + 7 core
+  returns no files and neither `src` tree holds an `androidTest/` dir, while
+  `testInstrumentationRunner` is still declared in both modules — zero
+  on-device coverage corroborated by `find` + dir listing (no device run).
+- `printStackTrace`: 6 app lines (5 active + 1 commented-out) + 7 core
   sites = 12 active production sites, plus 1 intentional reporter use
   (`throwable.printStackTrace(pw)` to a report writer) — corrected total
   12+1.

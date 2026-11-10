@@ -13,21 +13,27 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
 ## Top-10
 
 1. **Fix `modelHash` → `modelVersionOrDigest` (P0, XS).**
-   One-line cold-build fix in `libraries/humla/build.gradle`. Unbreaks fresh
-   clones, cache evictions, and digest rotations. Gate: cold-cache gate run
-   passes. No dependency.
+   One-line cold-build fix in `libraries/humla/build.gradle`
+   (symbols `prepareRnnoiseModel` / `modelHash`). Unbreaks fresh
+   clones, cache evictions, and digest rotations. Gate: cold-cache run passes —
+   `rm -rf libraries/humla/build/model_cache build/test-native && ./scripts/check.sh`.
+   No dependency.
 2. **Harden input JNI creation plus callbacks (P0/P1, S).**
    Mirror the output bridge in `NativeAudioInputEngineJni.cpp`: `nothrow`,
    null checks, `ExceptionClear`, `delete ctx; return 0`, `GetJavaVM` check,
    Kotlin zero-handle guard; then daemon attach plus per-upcall
    exception check/log/clear plus detach-only-if-attached. Gate: input-bridge
    failure injection returns `0` with cleanup; host suite compiles the touched
-   shims. Blocks the next native-audio change (with item 8).
+   shims. Blocks the next native-audio change (with item 8). Files:
+   `audio_engine/NativeAudioInputEngineJni.cpp` (`nativeCreate`, both lambdas),
+   `audio/NativeAudioInputEngine.kt` (constructor zero-handle guard).
 3. **Retire `AsyncTask` plus the 50-thread ping pool (P0, S/M).**
    `ServerConnectTask`, certificate-generate task (also drops the retained
    `Activity` leak), `ServerInfoTask` pool. Replacement pattern already
    in-tree. Highest deprecation plus thread-leak density. Gate: zero
-   `AsyncTask` references; ping pool bounded (4–8) with `ViewModel` cache.
+   `AsyncTask` references (`grep -rn AsyncTask app/src` empty); ping pool bounded (4–8) with `ViewModel` cache. Files:
+   `app/ServerConnectTask.kt`, `preference/MumlaCertificateGenerateTask.kt`,
+   `servers/ServerInfoTask.kt`, `servers/ServerAdapter.kt` (`MAX_ACTIVE_PINGS`).
 4. **Move DataStore off the UI thread (P0, M).**
    Repository-as-source with `Flow` plus `lifecycleScope` collection. Gates
    all settings-screen jank fixes behind it. Gate: zero `runBlocking` on the
@@ -39,7 +45,9 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
    throwable to `Log.e(+e.message)` sites; promote exception-in-callback
    `Log.d` to `Log.w`. Makes the next three network/lifecycle bugs
    diagnosable instead of silent. Gate: zero production `printStackTrace`
-   (12 sites); send-failure counter present. No dependency.
+   (12 sites — 5 app active + 7 core; `grep -rn printStackTrace` shows only the
+   intentional reporter use); send-failure counter present (name, location, and
+   level stated in the fix). No dependency.
 6. **Harden client certificates (P1, S).**
    Random serials plus non-empty store password (or a documented threat
    model), larger keys and shorter validity on next rotation. Small,
@@ -61,21 +69,32 @@ the linked `01`–`05` tables are the normative slices, each with its gate.
    clamp every `opus_ctl` plus encode failures. Gate the next native-audio
    change (with item 2) and release (destroy race plus host coverage) on these.
    Gate: configure fails on layout/rev drift; `destroy()` blocks until
-   callbacks quiesce; host suite loads a real model fixture.
+   callbacks quiesce; host suite loads a real fixture. Revs: Opus `v1.6.1`
+   (`22244de5` per `CMakeLists.txt` comment), RNNoise `v0.2-14-gd983458` (per
+   processor header comment). Assert shape: `static_assert(sizeof/offsetof)`
+   on the mirrored layout. Files: `audio_engine/RnnoiseProcessor.cpp`,
+   `audio_engine/NativeAudio*Jni.cpp`, `CMakeLists.txt`, `.gitmodules`.
 9. **Add gates plus pin the toolchain (P1, S).**
    CI workflow (`check.sh` + `lintFossDebug` + `assembleFossDebug`); pin shell
    Gradle/`protoc` to wrapper/catalog with a `check.sh` assert; single-source
    the CMake pin like NDK; harden signing to `findByName` plus fail-closed
    plus example template; fail fast on tagless versions. Every other guard is
    advisory without CI. Gate: green CI on `check.sh` + `lintFossDebug` +
-   `assembleFossDebug`; toolchain assert present.
+   `assembleFossDebug`; toolchain assert present. Workflow path:
+   `.github/workflows/` (missing today — created by this item); assert snippet
+   compares wrapper/catalog versions (Gradle `9.1.0`, protobuf `4.36.2`).
 10. **Modernize channel navigation plus dedup plus accessibility (P1, S/M).**
     `ViewPager2` + `FragmentStateAdapter` + `MenuProvider` across channel and
     server-list fragments; one talk-state mapper, one tint helper, one volume
     helper (~60 duplicated lines deleted); label roughly a dozen icons and
     convert preview `android:text` to `tools:text`. Zero-risk lint-enforceable
     tail with an immediate assistive-technology win. Gate: zero missing
-    `contentDescription` on interactive icons; preview text uses `tools:text`;
+    `contentDescription` on interactive icons (11 layout files hold
+    `ImageView`/`ImageButton` today — `channel_row`, `channel_user_row`,
+    `fragment_channel`, `fragment_chat`, `fragment_tokens`,
+    `list_drawer_headerlogo`, `list_drawer_item`, `overlay_user_row`,
+    `ptt_corner`, `server_list_row`, `token_row`; only the header logo and PTT
+    corner are labeled); preview text uses `tools:text`;
     rotation rows state pager retention. No dependency on 1–9.
 
 ## Quick-wins (small, safe, independent)
