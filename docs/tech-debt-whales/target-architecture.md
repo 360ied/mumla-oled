@@ -196,73 +196,114 @@ The connection's TCP control channel. Owned by the session.
 The whole voice path, in C++, with a thin Kotlin facade. Application-scoped
 (see [spikes](#spikes) for the alternative).
 
-**The existing engine stays as it is.** Today's native engine does no I/O:
+**The invariant: I/O and no-I/O stay separate.** Today's native engine does
+no I/O:
 [`AudioInputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h)
-takes PCM through `processFrame` and hands encoded packets to a callback;
+takes PCM through `processFrame` and produces encoded packets;
 [`AudioOutputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.h)
 takes packets through `queuePacket` and produces mixed PCM from
 `renderMix`; the DSP, VAD, pre-speech buffer, Opus wrappers, jitter
 buffers, and OCB2 crypt are all bytes-in, bytes-out. It owns no threads,
 sockets, or audio devices, which is why the host suite can test it
-exhaustively. The native voice path is built **on top of** this engine,
-through its existing API. It does not move I/O into the engine.
+exhaustively. This separation is the one property of the native code the
+design does not trade away. Everything that touches a thread, socket, or
+audio device lives in a separate **voice I/O layer** on top.
+
+**The engine itself may be refactored.** Its current shape suits being
+called from several ordinary Java threads, but not realtime audio threads:
+- `AudioOutputEngine` guards both `queuePacket` and `renderMix` with one
+  mutex, so a network thread queuing packets competes with playback for
+  the same lock.
+- `AudioInputEngine` invokes its packet callback while holding its locks.
+- The first packet from a new user creates a decoder and inserts into a
+  map inside `queuePacket`, which allocates memory.
+
+Step 5a refactors the engine, still with no I/O, toward:
+- **Single-threaded by contract.** Each engine instance is driven by
+  exactly one thread and has no internal locks. Getting data to it from
+  other threads is the I/O layer's job.
+- **Outputs as return values.** `processFrame` writes packets into a
+  caller-provided buffer, and talk-activity edges are returned the same
+  way, instead of callbacks invoked under a lock.
+- **No allocation in steady state.** Buffers are preallocated. Per-user
+  resources (decoder, jitter buffer) are created off the realtime thread by
+  the I/O layer and handed to the engine with that user's first packet, or
+  drawn from a preallocated pool.
+- **Configuration as one value.** Settings and policy are applied with a
+  single call at a frame boundary.
+
+Golden-output tests recorded *before* the refactor (fixed input PCM and
+packets, captured outputs) check that the refactored engine behaves as
+today's does.
 
 ```mermaid
-flowchart TB
-    subgraph IO["Voice I/O layer (new, does I/O)"]
-        AA["AAudio streams<br/>(capture, playback)"]
-        UDP["UDP socket loop"]
-        POL["Policy application"]
-    end
-    subgraph Pure["No-I/O layer"]
-        ENG["Existing engine<br/>(AudioInputEngine, AudioOutputEngine,<br/>DSP, VAD, Opus, jitter, OCB2)<br/>unchanged"]
-        COD["Packet codec (new)<br/>framing and parsing, both formats"]
-    end
-    AA -->|PCM in, processFrame| ENG
-    ENG -->|renderMix, PCM out| AA
-    ENG -->|encoded frames| COD
-    COD -->|packets| UDP
-    UDP -->|packets| COD
-    COD -->|queuePacket| ENG
-    POL -->|existing setters| ENG
-    POL -->|whisper target| COD
+flowchart LR
+    MIC(["Microphone"]) --> CAPT["Capture thread"]
+    CAPT -->|"processFrame"| IN["Input engine<br/>(no I/O)"]
+    IN -->|"encoded frames"| CAPT
+    CAPT -->|"framed by codec"| QO[["Outbound queue"]]
+    QO --> SEND["Network send thread<br/>(OCB2 encrypt, sendto)"]
+    SEND --> NET(["UDP socket"])
+    NET --> RECV["Network receive thread<br/>(recvfrom, OCB2 decrypt,<br/>codec parse)"]
+    RECV --> QI[["Inbound queue"]]
+    QI --> RENT["Render thread"]
+    RENT -->|"queuePacket, renderMix"| OUT["Output engine<br/>(no I/O)"]
+    RENT --> SPK(["Speaker"])
 ```
 
+Threads and queues are the I/O layer. The engines, the packet codec, and
+OCB2 are the no-I/O layer, called by those threads.
+
 **No-I/O layer.**
-- **The existing engine, unchanged.** Capture DSP (RNNoise, filters,
-  leveler), voice activity detection, the pre-speech buffer, and the Opus
-  encoder on the way out; jitter buffers, Opus decoders, and the mixer on
-  the way in; OCB2 encryption and decryption from
-  [`crypto`](../../libraries/humla/src/main/jni/crypto/). The engine already
-  owns frame numbers and emits the end-of-transmission marker itself when
-  an utterance ends, including when a mute cuts one short.
-- **A new packet codec**, written in the same no-I/O style beside the
-  engine, not inside it. It frames encoded frames into packets (both the
-  protobuf `MumbleUDP.Audio` format and the legacy format, as today's
+- **Input and output engines.** Capture DSP (RNNoise, filters, leveler),
+  voice activity detection, the pre-speech buffer, and the Opus encoder on
+  the way out; jitter buffers, Opus decoders, and the mixer on the way in.
+  The input engine owns frame numbers and emits the end-of-transmission
+  marker itself when an utterance ends, including when a mute cuts one
+  short.
+- **Packet codec** (new), written in the same style beside the engines. It
+  frames encoded frames into packets (both the protobuf `MumbleUDP.Audio`
+  format and the legacy format, as today's
   [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt)
   does), adds the whisper target, and parses inbound packets back into
-  (sender, frame number, payload, end-of-transmission) for `queuePacket`.
+  (sender, frame number, payload, end-of-transmission).
+- **OCB2 crypt** from [`crypto`](../../libraries/humla/src/main/jni/crypto/),
+  unchanged. It already has separate encrypt and decrypt locks, and it is
+  used only by the two network threads, never on a realtime thread.
 
-**Voice I/O layer** (new). Owns every thread, socket, and audio device, and
-drives the no-I/O layer through its public API:
-- **Capture.** An AAudio input stream (voice-communication preset) calls
-  `processFrame` from its data callback. Encoded packets go through the
-  codec and OCB2 to the socket.
-- **Playback.** An AAudio output stream's data callback calls `renderMix`.
-- **UDP.** The I/O layer owns the UDP socket. One thread receives,
-  decrypts, and parses everything. Voice goes to `queuePacket`; pings and
-  other non-voice packets are reported to Kotlin (a few per second at
-  most). Sent pings are requested by Kotlin.
-- **Policy application.** Applies the latest `VoicePolicy` at frame
-  boundaries by calling the engine's existing setters (`setMuted`,
-  `setPttTalking`, `setInputMode`) and giving the codec the whisper target.
-- **Tunnel mode.** When UDP is unavailable, framed (unencrypted) packets go
-  to Kotlin for the TCP tunnel, and tunnelled inbound packets come back the
-  same way. This keeps one Kotlin crossing per frame, only in the fallback.
+**Voice I/O layer** (new). Owns every thread, socket, and audio device:
+- **Capture thread.** Reads the microphone through AAudio. At each frame
+  boundary it applies the latest `VoicePolicy`, calls `processFrame`, frames
+  the resulting packets with the codec, and pushes them to the outbound
+  queue.
+- **Network send thread.** Drains the outbound queue, encrypts, and sends.
+  Sends UDP pings when Kotlin asks.
+- **Network receive thread.** Receives, decrypts, and parses. Voice goes to
+  the inbound queue; for a sender it has not seen before, it first creates
+  that user's decoder and jitter buffer, off the realtime path. Pings and
+  other non-voice packets go to the notifier.
+- **Render thread.** Drains the inbound queue into the output engine, calls
+  `renderMix`, and writes to the device.
+- **Notifier thread.** The only native thread that calls into Kotlin. It
+  carries talk-activity edges, ping results, and errors.
+- **Tunnel mode.** When UDP is unavailable, the send thread hands framed
+  (unencrypted) packets to the notifier for Kotlin's TCP tunnel, and
+  Kotlin pushes tunnelled inbound packets into a second inbound queue. One
+  Kotlin crossing per frame, only in the fallback.
 
-If the I/O layer ever needs something the engine cannot do, the capability
-is added to the engine in its own no-I/O style, with host tests, and never
-by giving the engine a thread, socket, or device.
+### Realtime rules
+
+1. **The capture and render threads never wait on a lock, allocate, make a
+   system call other than the audio read or write, or call into Kotlin.**
+2. **Each engine instance is driven by one thread.** Every other thread
+   reaches it through a single-producer, single-consumer lock-free queue or
+   the atomically swapped `VoicePolicy`.
+3. **Only the notifier thread calls into Kotlin.**
+
+AAudio offers two ways to run a stream: a data callback on a thread AAudio
+owns, or blocking reads and writes on threads we own. Both satisfy these
+rules once the engine is refactored; the blocking mode is easier to debug.
+The choice is a [spike](#spikes).
 
 **Kotlin facade.** Non-blocking control only:
 - `submit(VoiceCommand)` for start (socket address, crypt keys, codec
@@ -273,11 +314,11 @@ by giving the engine a thread, socket, or device.
   statistics), talk-activity edges as their own flow, and an event flow for
   pipeline errors and resync requests.
 
-**Reused unchanged:** the whole existing engine (DSP, VAD, pre-speech
-buffer, Opus wrappers, jitter buffers, mixer, OCB2 crypt) and its host
-tests. **New native code:** the packet codec (no-I/O) and the voice I/O
-layer (AAudio stream handling, including reopening a stream when the device
-disconnects it, the UDP socket loop, and policy application).
+**Kept:** the I/O/no-I/O separation, the DSP, VAD, pre-speech buffer,
+Opus, jitter, and mixer algorithms, OCB2, and the host suite.
+**Refactored:** the engines' threading, output, and allocation shape
+(step 5a). **New:** the packet codec, and the I/O layer with its threads
+and queues.
 
 ### Transmit and mute
 
@@ -289,24 +330,30 @@ design fixes is the other half of today's problem: the mechanics are
 currently spread across Kotlin and C++, with three crossings per outgoing
 frame (Kotlin capture → native encode → Kotlin framing → native encrypt →
 Kotlin send). With the native path, all transmit state lives on the native
-side and is touched only from the capture callback: the engine keeps voice
-activity, the pre-speech buffer, frame numbers, and the end-of-transmission
-marker, as it does today; the codec adds the whisper target; the I/O layer
-applies the policy.
+side and is touched only on the capture thread: the input engine keeps
+voice activity, the pre-speech buffer, frame numbers, and the
+end-of-transmission marker; the codec adds the whisper target; the capture
+thread applies the policy.
 
 The session side is pushed, never pulled:
 
 - `VoicePolicy` is a small value computed from `SessionState`: transmit
   allowed (self mute, server mute or suppress, deafen), PTT pressed,
   whisper target, and the per-user playback table (local mute, volume).
+- **Self-mute and self-deafen use the desired value.** `SessionState` holds
+  both what the user asked for (pending) and what the server confirmed.
+  `VoicePolicy` takes self-mute and self-deafen from the desired value, so
+  a mute closes the gate immediately, not after a server round trip,
+  matching today's optimistic behavior. Server mute, deafen, and suppress
+  come from confirmed server state, since only the server decides them.
 - One collector, on its own single-thread dispatcher (never the voice
   control thread, which can block on stream changes), maps each new
   `SessionState` to a `VoicePolicy`, skips unchanged values, and pushes it
   into native code, which swaps it in atomically.
-- The I/O layer applies the policy at the next frame boundary through the
-  engine's existing setters, so a mute takes effect within one collector
-  dispatch plus at most one frame. On a transition mid-utterance the engine
-  emits the end-of-transmission marker itself, as it does today.
+- The capture thread applies the policy at the next frame boundary through
+  the engine's configuration call, so a mute takes effect within one
+  collector dispatch plus at most one frame. On a transition mid-utterance
+  the engine emits the end-of-transmission marker itself.
 
 `VoicePolicy` is the only path from session state into the voice path, so
 there is no second copy of mute state to keep in sync by hand.
@@ -408,8 +455,11 @@ This sequence needs on-device verification (see
 | I/O dispatcher | TCP writer, database, DataStore | On I/O only |
 | TCP reader (one per session) | Blocking socket reads and frame parsing | On the socket |
 | Voice control | Opening, closing, reconfiguring audio streams | Yes, off main |
-| Native capture and render callbacks | Realtime audio (AAudio) | Never |
-| Native UDP receive | Receive, decrypt, route voice to the mixer | On the socket |
+| Native capture | Microphone read, policy, encode, framing | On the audio device only |
+| Native render | Inbound queue, mix, playback | On the audio device only |
+| Native network send | Encrypt and send voice and pings | On the socket |
+| Native network receive | Receive, decrypt, parse; create decoders for new senders | On the socket |
+| Native notifier | Talk activity, ping results, errors to Kotlin | No |
 | Route | Platform audio-route calls and callbacks | Yes, off main |
 
 Nothing on main ever waits for another thread. Threads communicate by
@@ -468,11 +518,13 @@ than about what other users hear.
 
 ### Someone else talks
 
-The native UDP thread receives and decrypts the packet, checks the sender
-against the per-user playback table in the current `VoicePolicy` (local
-mute, volume), and queues it into that user's jitter buffer. The AAudio
-render callback mixes it into the output. Talk-activity edges go to Kotlin
-as their own flow, kept out of `SessionState`, which would otherwise change
+The native receive thread receives, decrypts, and parses the packet. If
+the sender is new, it first creates that user's decoder and jitter buffer.
+It then pushes the packet onto the inbound queue. The render thread drains
+the queue into the output engine, which applies the per-user playback table
+from the current `VoicePolicy` (local mute, volume), and mixes the result
+into the output. Talk-activity edges go to Kotlin through the notifier as
+their own flow, kept out of `SessionState`, which would otherwise change
 many times per second.
 
 ### A Bluetooth headset connects
@@ -506,6 +558,7 @@ update can reach a destroyed view.
 | One `Session` per connection | Late events reaching a newer connection; generation counters and stale-event checks |
 | Native voice path with pushed `VoicePolicy` | Transmit state split across two languages; per-frame Kotlin work on the realtime path |
 | No-I/O engine under a separate I/O layer | I/O creeping into the engine; engine behavior that only a device can test |
+| Single-threaded engine fed through lock-free queues | Locks, allocation, and Kotlin calls on realtime audio threads |
 | Command-only voice and route control | Main waiting on audio or route work; lock-order deadlocks between main and audio |
 | One-directional route → voice dependency | Route and voice waiting on each other |
 | `repeatOnLifecycle` collection | Updates on the wrong thread or after a view is destroyed |
@@ -551,15 +604,17 @@ state. Two additions cover the most likely gaps:
 - Review attention on any new `java.util.concurrent` import outside the
   allowlist.
 
-**Native tripwire.** The no-I/O property of the native engine gets the same
-treatment. The voice I/O layer lives in its own source directory, and the
-check fails if engine or codec sources include socket, audio-device, or
-thread headers (`<sys/socket.h>`, `<netinet/in.h>`, `<aaudio/AAudio.h>`,
-Oboe headers, `<thread>`, `<pthread.h>`, `<fcntl.h>`, `<unistd.h>`).
-`<mutex>` and `<atomic>` stay allowed: the engine's setters are already
-safe to call across threads. Two existing exceptions are allowlisted: the
-OCB2 key generation in `CryptStateOCB2.cpp` reads `/dev/urandom`, and
-`AudioOutputEngine.cpp` logs through `<android/log.h>`.
+**Native tripwire.** The no-I/O separation gets the same treatment. The
+voice I/O layer lives in its own source directory, and the check fails if
+engine or codec sources include socket, audio-device, or thread headers
+(`<sys/socket.h>`, `<netinet/in.h>`, `<aaudio/AAudio.h>`, Oboe headers,
+`<thread>`, `<pthread.h>`, `<fcntl.h>`, `<unistd.h>`). After step 5a's
+refactor, the engines are single-threaded, so `<mutex>`,
+`<condition_variable>`, and `<atomic>` are forbidden in `audio_engine` as
+well. OCB2 keeps its two locks, since two network threads share it. Two
+existing exceptions are allowlisted: OCB2 key generation in
+`CryptStateOCB2.cpp` reads `/dev/urandom`, and `AudioOutputEngine.cpp`
+logs through `<android/log.h>`.
 
 ## How the whales map
 
@@ -586,15 +641,22 @@ OCB2 key generation in `CryptStateOCB2.cpp` reads `/dev/urandom`, and
   one channel.
 - **State-transition tests.** Message handling is (state, message) → new
   state, so each protocol handler is tested as a plain function.
-- **Native host suite (every `check.sh`).** The existing engine tests run
-  unchanged. Because the codec is no-I/O too, packet framing and parsing in
-  both formats get host tests checked byte-for-byte against the
-  Java-generated protobuf classes. A loopback test composes the no-I/O layer
-  end to end (PCM in → engine → codec → OCB2 → OCB2 → codec → engine → PCM
-  out) with no socket or audio device. The I/O layer's policy application
-  is tested by driving the real engine frame by frame from a fake stream
-  callback, including the end-of-transmission marker on a mid-utterance
-  mute.
+- **Native host suite (every `check.sh`).** The no-I/O layer stays fully
+  host-testable:
+  - **Golden outputs**, recorded from today's engine before the step 5a
+    refactor, pin its behavior: fixed input PCM and packets, compared
+    against captured encoded packets and mixed PCM.
+  - **No allocation in steady state:** a test build counts allocations
+    while `processFrame` and `renderMix` run on warmed-up engines and fails
+    on any.
+  - **Codec:** framing and parsing in both formats, checked byte-for-byte
+    against the Java-generated protobuf classes.
+  - **Loopback:** PCM in → input engine → codec → OCB2 → OCB2 → codec →
+    output engine → PCM out, with no socket or audio device.
+  - **Policy application:** the real engine driven frame by frame,
+    including the end-of-transmission marker on a mid-utterance mute.
+  - **Queues:** the lock-free queues under a stress test with real threads
+    (the one place native tests use threads).
 - **murmur interop (every `check.sh`).** The whales list's W6 suite: a
   throwaway `murmur` from the dev shell on loopback, with real TLS, UDP
   crypt, and connection code. Required, because fakes only test our idea of
@@ -614,9 +676,16 @@ A2DP stagger, overlay drag and rotate, notification paths) plus:
 | 2 Immutable state | Large server join; channel list stays live while users move |
 | 3 Session and client | Network drop and reconnect in background; Wi-Fi to mobile handover |
 | 4 Voice control and route | SCO connect, flap, and failure at connect; A2DP stagger; mute during SCO settle |
-| 5a Native framing, crypt, UDP | Voice both directions on UDP and in tunnel mode; crypt resync after network change |
+| 5a Engine refactor, codec, crypt, UDP | Voice both directions on UDP and in tunnel mode; crypt resync after network change; glitch rate against today's baseline |
 | 5b AAudio streams | Latency and glitch rate against the step 5a baseline; echo cancellation on speaker; SCO and wired headset routing on the oldest and newest supported Android versions |
 | 7 App cut-over | Background connect rules on Android 14+; notification actions; talk broadcast |
+
+**Recording results.** On-device checks are the step most likely to be
+skipped when implementation is fast, so each one leaves a record. A
+`PROGRESS.md` beside this document, created in step 1, tracks each step's
+status, commits, allowlist count, and on-device results (device, Android
+version, pass or fail per check). A step is not done until its row is
+filled in, and the final commit of the step cites it.
 
 ### Spikes
 
@@ -628,6 +697,9 @@ step that depends on them, not by discussion:
 - **AAudio or Oboe:** AAudio directly (minSdk 30 makes it always available)
   or the Oboe wrapper (handles stream reopening and device quirks, at the
   cost of another native dependency).
+- **AAudio callback or blocking mode:** data callbacks on AAudio's threads,
+  or blocking reads and writes on our own high-priority threads. Measure
+  glitch rate and latency for both.
 - **Echo cancellation with AAudio:** today `AudioInput` attaches the
   platform `AcousticEchoCanceler` to the `AudioRecord` session ID. AAudio
   can allocate a session ID for the same purpose; confirm the effect
@@ -656,7 +728,9 @@ on-device checks. Steps 2–5 are each worth landing on their own.
    change), so swapping snapshots in behind those interfaces would compile
    and silently freeze screens. Instead, `IUser` and `IChannel` become
    **live handles**: an ID plus the state flow, where every property read
-   looks up the current value. Existing code keeps today's semantics; new
+   looks up the current value. When the user or channel has left the
+   state, the handle returns the last value it saw, as a departed `User`
+   object does today. Existing code keeps today's semantics; new
    code uses the snapshot types; the handles are deleted in step 8, and the
    compiler finds any remaining caller. Done when `Channel`, `User`, and
    `ModelHandler` leave the allowlist.
@@ -673,18 +747,22 @@ on-device checks. Steps 2–5 are each worth landing on their own.
    `AudioHandler`, `AudioRouteController`, and `BluetoothScoManager` leave
    the allowlist.
 5. **Native voice path**, in two parts:
-   - **5a. Codec, crypt, and UDP in native code**, still fed by the
-     Kotlin `AudioRecord` and `AudioTrack` threads through the engine's
-     existing `processFrame` and `renderMix`. Adds the no-I/O packet codec
-     and the first part of the I/O layer (UDP loop, policy application).
-     This alone puts all transmit state on the native side and replaces the
-     interim mute check with `VoicePolicy`. Done when `HumlaUDP` and the
-     Kotlin framing in `AudioHandler` are deleted, the native tripwire is
-     green, and existing engine sources are unchanged apart from any no-I/O
-     additions with host tests.
-   - **5b. AAudio capture and playback.** Done when `AudioInput` and
-     `AudioOutput` are deleted and the step 5b on-device checks match or
-     beat the 5a baseline.
+   - **5a. Engine refactor, codec, and network threads.** Record the
+     golden outputs first, then refactor the engines (single-threaded,
+     outputs as return values, no steady-state allocation). Add the packet
+     codec and the I/O layer's queues, network threads, and notifier. The
+     I/O layer exposes capture and render entry points (apply policy and
+     encode one frame; drain the inbound queue and mix one buffer). In 5a,
+     the Kotlin `AudioRecord` and `AudioTrack` threads call those entry
+     points. This alone puts all transmit state on the native side and
+     replaces the interim mute check with `VoicePolicy`. Done when the
+     golden-output and allocation tests pass, `HumlaUDP` and the Kotlin
+     framing in `AudioHandler` are deleted, and the native tripwire is
+     green.
+   - **5b. AAudio capture and playback.** Native capture and render threads
+     (or AAudio callbacks) call the same entry points, so 5b changes only
+     who calls them. Done when `AudioInput` and `AudioOutput` are deleted
+     and the step 5b on-device checks match or beat the 5a baseline.
 6. **Screens on ViewModels.** Replace `IHumlaObserver` in fragments, the
    activity, and the overlay with collected UI state. Done when no screen
    implements an observer.
@@ -721,11 +799,12 @@ When the relevant steps land, these records must be updated in the same
 branch:
 
 - The native **fence** in the [migration](../migration/README.md)
-  decisions ("C++ frozen, no behavior touch"). The fence stays for the
-  existing no-I/O engine, which step 5 uses through its current API. What
-  changes is that native code grows: a no-I/O codec beside the engine and
-  an I/O layer on top of it. The native suite remains the gate, and the
-  native tripwire keeps the engine free of I/O.
+  decisions ("C++ frozen, no behavior touch"). It is replaced by a
+  narrower, permanent rule: **the engine stays free of I/O.** Step 5a
+  refactors the engine for realtime use, pinned by golden outputs recorded
+  beforehand; native code grows by adding a no-I/O codec beside the engine
+  and an I/O layer on top. The native suite remains the gate, and the
+  native tripwire enforces the separation.
 - The "no Oboe/AAudio" description of the audio pipeline in
   [`AGENTS.md`](../../AGENTS.md) (step 5b).
 - The frozen binder surface (`IMumlaService`/`IHumlaService`/
@@ -745,8 +824,9 @@ branch:
 
 - Compose or any UI toolkit change. The views and their pixels stay; the
   [killed Compose rewrite](../migration/README.md) stays killed.
-- Changing the existing native engine into something that does I/O, or
-  rewriting any of it (in C++ or Rust). Step 5 builds on top of it.
+- Giving the native engine any I/O. Refactoring it is in scope (step 5a);
+  merging the I/O and no-I/O layers is not.
+- Rewriting the native audio or crypt code in Rust or another language.
 - Kotlin Multiplatform or an iOS port.
 - New features (see the
   [upstream feature gap audit](../upstream-feature-gap-audit/README.md)).
