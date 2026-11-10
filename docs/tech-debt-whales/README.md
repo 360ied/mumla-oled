@@ -29,11 +29,14 @@ caused regressions.
 
 ## Recommended order
 
-```
-W6 (harness + CI) ──► W1 (session) ──► W2 (model snapshots) ──► W5 (app layer)
-                           │
-                           └──► W3 (audio control actor)
-W4 (finish or revert the data/DI layer) — independent decision, any time
+```mermaid
+flowchart LR
+    W6["W6: harness + CI"] --> W1["W1: session object"]
+    W1 --> W2["W2: model snapshots"]
+    W2 --> W5["W5: app layer"]
+    W1 --> W3["W3: audio control actor"]
+    W6 --> W3
+    W4["W4: finish or revert data/DI layer<br/>(independent decision, any time)"]
 ```
 
 W6 comes first because W1–W3 rework concurrency. Without an end-to-end
