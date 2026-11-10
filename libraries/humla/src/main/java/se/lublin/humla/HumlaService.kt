@@ -300,6 +300,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     /**
      * Stops the service for a start request that was ignored, unless a
      * connection attempt or established connection is in progress.
+     * CONNECTION_LOST without reconnect is intentionally not stopped here:
+     * kick/ban idles with the UI still bound (settings/history visible), so
+     * the service lingers until an explicit disconnect or process death.
      */
     private fun stopSelfIfIdle(startId: Int) {
         if (mConnectionState == ConnectionState.DISCONNECTED) {
@@ -367,7 +370,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 if (delta == null || delta.server == null) {
                     // Malformed CONNECT: log and ignore. Never throw from
                     // onStartCommand (crash primitive) and never proceed to
-                    // apply/connect() on the malformed intent.
+                    // apply/connect() on the malformed intent. The prior
+                    // auto-reconnect schedule (if any) is intentionally preserved:
+                    // a malformed intent carries no new target, so it neither
+                    // connects nor disarms the stale timer.
                     Log.w(TAG, "$ACTION_CONNECT requires a server; ignoring.")
                     stopSelfIfIdle(startId)
                     return START_NOT_STICKY
@@ -394,10 +400,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun onCreate() {
         super.onCreate()
+        // Null-tolerant like every neighboring manager (Wifi/Audio/BT): a
+        // missing PowerManager must degrade to no wake lock, never crash the
+        // service out of onCreate. All wake uses already null-check.
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager?
-        val wakeLock = requireNotNull(powerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService")
-        wakeLock.setReferenceCounted(false)
-        mWakeLock = wakeLock
+        if (powerManager != null) {
+            val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Humla:HumlaService")
+            wakeLock.setReferenceCounted(false)
+            mWakeLock = wakeLock
+        } else {
+            Log.w(TAG, "No PowerManager; running without wake lock")
+            mWakeLock = null
+        }
 
         // Doze shield: keep the WiFi radio out of firmware power-save for the
         // lifetime of the connection. Without a WifiLock (dumpsys wifi showed
@@ -406,9 +420,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // timeout. Created here, acquired in connect(), released on final
         // teardown. Uses the application context so the lock outlives config
         // changes; reference-counted false to mirror mWakeLock semantics.
-        // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): LOW_LATENCY needs
-        // API 30+ (at the minSdk 30 floor, so always available), and HIGH_PERF is the
-        // documented VoIP-compatible mode available on all supported devices.
+        // WIFI_MODE_FULL_HIGH_PERF (not FULL_LOW_LATENCY): low-latency saves
+        // power but throttles throughput under load; high-perf is the
+        // documented VoIP-compatible mode that keeps keepalives flowing on
+        // battery + screen-off. Both need API 30+ (minSdk floor), so
+        // availability is not the discriminator -- power vs. voice latency is.
         try {
             val wifiManager = applicationContext
                 .getSystemService(WIFI_SERVICE) as WifiManager?
@@ -481,6 +497,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun onDestroy() {
         super.onDestroy()
         mReconnectAttempts.set(0)
+        // Synchronous terminal state: a binder reader racing destroy must see
+        // DISCONNECTED on the dead service, never a stale CONNECTED/CONNECTING.
+        mConnectionState = ConnectionState.DISCONNECTED
         // Invalidate the shared listener: the old connection's still-flying
         // async posts must not mutate state or fan out observers after death.
         // (Pipeline + route teardown below run synchronously, so nothing the
@@ -514,6 +533,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // Non-null Intent: matches Service.onBind's platform type (Intent!)
     // exactly; both Intent and Intent? override. The pre-image Java was
     // non-null, so this keeps the non-null form.
+    @Suppress("NullabilityMismatch")
     open override fun onBind(intent: Intent): IBinder {
         return HumlaBinder(this)
     }
@@ -542,13 +562,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             // must not strand ChannelFragment's panel. NORMAL (0) matches
             // setVoiceTargetId's emit, but connect() runs before observers
             // expect callbacks, so only emit if previously non-normal.
-            if (mVoiceTargetId.toInt() != 0) {
+            // Id and list reset atomically: the id write rides the same
+            // monitor as the list clear (getWhisperTarget snapshots id then
+            // gets under lock), and the emit stays outside the lock --
+            // onVoiceTargetChanged fans out to observers that may re-enter
+            // getWhisperTarget, which would deadlock inside the monitor.
+            val prevVoiceTarget = synchronized(whisperLock) {
+                val prev = mVoiceTargetId
                 mVoiceTargetId = 0
-                mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
-            } else {
-                mVoiceTargetId = 0
+                mWhisperTargetList.clear()
+                prev
             }
-            synchronized(whisperLock) { mWhisperTargetList.clear() }
+            if (prevVoiceTarget.toInt() != 0) {
+                mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+            }
 
             val wakeLock = mWakeLock
             if (wakeLock != null) {
@@ -559,6 +586,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             acquireWifiLock()
 
+            // Invalidate first: the old connection's read loop may still be
+            // alive (silent disconnect posts async; a racing fatal error
+            // delivers synchronously on the IO thread). Bumping before any
+            // old-teardown work -- matching onDestroy -- closes the window
+            // where a stale post between disconnect() and the bump would
+            // slip the generation filter and drive the new attempt's state.
+            val generation = connectionGeneration.incrementAndGet()
             // Tear down any prior connection before overwriting: a second
             // CONNECT while CONNECTED/CONNECTION_LOST (or a racing
             // NetworkCallback reconnect) must not orphan the old socket.
@@ -579,13 +613,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             route.onEvent(RouteEvent.SessionEnded)
             mConnection?.disconnect()
             mConnection = null
-            // Generation-scoped listener: the old connection's TCP read-loop
-            // finally still posts onTCPConnectionDisconnect to the shared
-            // listener afterwards; without an identity check the dead
-            // connection's async post would wipe the live attempt's handlers
-            // (model/audio null, route reset, phantom observer disconnect).
+            // Generation was bumped above (before teardown), so the old
+            // connection's async posts arrive stale and are filtered below.
             // Interface delegation forwards every other callback untouched.
-            val generation = connectionGeneration.incrementAndGet()
             val connectionListener = object : HumlaConnection.HumlaConnectionListener by this {
                 // All five callbacks filter on generation: a stale connection's
                 // async posts (established/warning/handshake/disconnect/sync)
@@ -760,6 +790,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             releaseWifiLock()
             route.onEvent(RouteEvent.SessionEnded)
+            // Full teardown: the socket is still live here (guard above
+            // passed), so drop it and tell observers -- otherwise TCP/UDP
+            // threads and keepalives run on while the service reports
+            // DISCONNECTED and observers stall in CONNECTING.
+            mConnection?.disconnect()
+            mConnection = null
+            mCallbacks.onDisconnected(null)
             return
         }
 
@@ -818,8 +855,18 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
         mModelHandler = null
         mAudioHandler = null
-        mVoiceTargetId = 0
-        synchronized(whisperLock) { mWhisperTargetList.clear() }
+        // Atomic id+list reset (same deadlock discipline as connect(): emit
+        // outside the monitor). Disconnect resets silently only when already
+        // NORMAL so the UI never strands in WHISPER across the gap.
+        val prevVoiceTarget = synchronized(whisperLock) {
+            val prev = mVoiceTargetId
+            mVoiceTargetId = 0
+            mWhisperTargetList.clear()
+            prev
+        }
+        if (prevVoiceTarget.toInt() != 0) {
+            mCallbacks.onVoiceTargetChanged(VoiceTargetMode.NORMAL)
+        }
         // Route teardown (media refresh, SCO release, mode release, settle
         // cancel) lives in the controller.
         route.onEvent(RouteEvent.SessionEnded)
@@ -993,8 +1040,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      */
     @Throws(AudioException::class)
     private fun createAudioHandler() {
+        // Fail with ISE (not AssertionError) so the route funnel's
+        // `catch (RuntimeException)` containment holds without a dedicated
+        // Error branch; app catches ISE on the binder boundary.
         if (BuildConfig.DEBUG && mConnectionState != ConnectionState.CONNECTED) {
-            throw AssertionError("Attempted to instantiate audio handler when not connected!")
+            throw IllegalStateException("Attempted to instantiate audio handler when not connected!")
         }
 
         val existing = mAudioHandler
@@ -1066,9 +1116,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         if (path == null) {
             return true
         }
-        if (!path.endsWith(".bks")) {
+        if (!path.endsWith(".bks", ignoreCase = true)) {
             return false
         }
+        // Known TOCTOU (check-then-open races a symlink swap) accepted for the
+        // app-private filesDir: the store opens immediately after in the same
+        // flow and a swapped link still resolves under filesDir or is rejected.
         try {
             val filesDir = filesDir ?: return false
             val base = filesDir.canonicalFile.path
@@ -1340,6 +1393,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     // Upper-Camel is required by `IHumlaService.HumlaSession`; keep (API stability).
+    @Suppress("FunctionName")
     @Throws(HumlaDisconnectedException::class)
     open override fun HumlaSession(): IHumlaSession {
         if (mConnectionState != ConnectionState.CONNECTED) {
@@ -1772,6 +1826,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         // is exhaustible, and a disconnect between alloc and send would leak
         // the slot. Fail fast with no side effect when offline.
         val live = mConnection ?: throw IllegalArgumentException("No active connection")
+        // Liveness before alloc: sendTCPMessage silently drops when
+        // !mConnected, so allocating first would leak one of only 30 5-bit
+        // slots on every CONNECTING-phase call. Fail fast with no side
+        // effect when offline (ISE matches requireConnection's
+        // disconnected-before-connect contract; null stays IAE).
+        if (!live.isConnected()) {
+            throw IllegalStateException("No active connection")
+        }
         val id = synchronized(whisperLock) { mWhisperTargetList.append(t) }
         if (id.toInt() < 0) {
             return (-1).toByte()
@@ -1839,39 +1901,38 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     open override fun setListeningChannel(channelId: Int, listening: Boolean) {
         if (!isSynchronized()) return
         val usb = Mumble.UserState.newBuilder()
+        // Single TOCTOU-safe block: getSessionId() and the trailing send
+        // each re-read mConnection, so a racing onDestroy/disconnect between
+        // the isSynchronized check and the send must fail closed (return),
+        // never throw ISE to the binder caller. getSessionId() only throws
+        // ISE (requireConnection translates IAE->ISE; NotSynchronized->ISE).
         try {
             usb.session = getSessionId()
+            if (listening) {
+                usb.addListeningChannelAdd(channelId)
+            } else {
+                usb.addListeningChannelRemove(channelId)
+            }
+            requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
         } catch (e: IllegalStateException) {
             return
-        } catch (e: IllegalArgumentException) {
-            // Racing onDestroy nulled mConnection after the isSynchronized
-            // check: requireConnection() throws IAE, fail closed like ISE.
-            return
         }
-        if (listening) {
-            usb.addListeningChannelAdd(channelId)
-        } else {
-            usb.addListeningChannelRemove(channelId)
-        }
-        requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
     open override fun setListeningVolume(channelId: Int, volumeAdjustment: Float) {
         if (!isSynchronized()) return
         val usb = Mumble.UserState.newBuilder()
+        // Same TOCTOU discipline as setListeningChannel: fail closed.
         try {
             usb.session = getSessionId()
+            val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
+            vab.listeningChannel = channelId
+            vab.volumeAdjustment = volumeAdjustment
+            usb.addListeningVolumeAdjustment(vab)
+            requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
         } catch (e: IllegalStateException) {
             return
-        } catch (e: IllegalArgumentException) {
-            // Same TOCTOU as setListeningChannel: fail closed.
-            return
         }
-        val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
-        vab.listeningChannel = channelId
-        vab.volumeAdjustment = volumeAdjustment
-        usb.addListeningVolumeAdjustment(vab)
-        requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
     }
 
     open override fun isListeningToChannel(channelId: Int): Boolean {

@@ -65,18 +65,21 @@ class ConnectionParams(
     val localIgnoreHistory: List<Int>?
         get() = localIgnoreHistoryBacking?.toList()
 
+    // Defaults read the backing fields directly (no defensive copy here): the
+    // constructor copies once, so copy() costs a single copy per field even
+    // for server-only deltas. Getters still return copies to outside holders.
     fun copy(
         server: Server? = this.server,
-        certificate: ByteArray? = this.certificate,
+        certificate: ByteArray? = this.certificateBacking,
         certificatePassword: String? = this.certificatePassword,
         forceTcp: Boolean = this.forceTcp,
         clientName: String? = this.clientName,
-        accessTokens: List<String>? = this.accessTokens,
+        accessTokens: List<String>? = this.accessTokensBacking,
         trustStore: String? = this.trustStore,
         trustStorePassword: String? = this.trustStorePassword,
         trustStoreFormat: String? = this.trustStoreFormat,
-        localMuteHistory: List<Int>? = this.localMuteHistory,
-        localIgnoreHistory: List<Int>? = this.localIgnoreHistory,
+        localMuteHistory: List<Int>? = this.localMuteHistoryBacking,
+        localIgnoreHistory: List<Int>? = this.localIgnoreHistoryBacking,
     ): ConnectionParams = ConnectionParams(
         server = server,
         certificate = certificate,
@@ -106,7 +109,7 @@ class ConnectionParams(
             trustStorePassword == other.trustStorePassword &&
             trustStoreFormat == other.trustStoreFormat &&
             localMuteHistoryBacking == other.localMuteHistoryBacking &&
-            localIgnoreHistoryBacking == other.localIgnoreHistory
+            localIgnoreHistoryBacking == other.localIgnoreHistoryBacking
     }
 
     override fun hashCode(): Int {
