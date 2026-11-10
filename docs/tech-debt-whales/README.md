@@ -8,7 +8,7 @@ replaces the deleted `docs/tech-debt-audit/` grab bag, which was a long list
 of low-severity items whose individual fixes caused more regressions than
 they removed.
 
-See also: [target architecture](target-architecture.md), the optimizing
+See also: [target architecture](target-architecture/README.md), the optimizing
 "go big" counterpart to this deliberately satisficing list.
 
 ## Admission bar (read before adding anything)

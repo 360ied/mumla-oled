@@ -8,7 +8,7 @@ work; each migration step starts only on explicit request.
 
 ## Relationship to the whales list
 
-The [whales list](README.md) is deliberately *satisficing*: the smallest
+The [whales list](../README.md) is deliberately *satisficing*: the smallest
 structural fix for each family of symptoms. This document is the
 *optimizing* counterpart: the architecture Mumla OLED would have if it were
 designed today, and a path to it. Both share the whales list's admission
@@ -123,7 +123,7 @@ Everything that exists for one connection, and nothing that outlives it.
   state flow, the event flow. Nothing is reset or reused.
 - Applies server messages to its state in arrival order, in one coroutine
   that drains the transport's inbound channel. The protocol handlers that
-  live in [`ModelHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.kt)
+  live in [`ModelHandler`](../../../libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.kt)
   today become functions from (state, message) to new state.
 - Exposes user intents as plain methods: `setSelfMute`, `setSelfDeafen`,
   `setPtt`, `joinChannel`, `sendText`, `setWhisperTarget`, `setLocalMute`,
@@ -198,9 +198,9 @@ The whole voice path, in C++, with a thin Kotlin facade. Application-scoped
 
 **The invariant: I/O and no-I/O stay separate.** Today's native engine does
 no I/O:
-[`AudioInputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h)
+[`AudioInputEngine`](../../../libraries/humla/src/main/jni/audio_engine/AudioInputEngine.h)
 takes PCM through `processFrame` and produces encoded packets;
-[`AudioOutputEngine`](../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.h)
+[`AudioOutputEngine`](../../../libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.h)
 takes packets through `queuePacket` and produces mixed PCM from
 `renderMix`; the DSP, VAD, pre-speech buffer, Opus wrappers, jitter
 buffers, and OCB2 crypt are all bytes-in, bytes-out. It owns no threads,
@@ -264,10 +264,10 @@ OCB2 are the no-I/O layer, called by those threads.
 - **Packet codec** (new), written in the same style beside the engines. It
   frames encoded frames into packets (both the protobuf `MumbleUDP.Audio`
   format and the legacy format, as today's
-  [`AudioHandler`](../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt)
+  [`AudioHandler`](../../../libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt)
   does), adds the whisper target, and parses inbound packets back into
   (sender, frame number, payload, end-of-transmission).
-- **OCB2 crypt** from [`crypto`](../../libraries/humla/src/main/jni/crypto/),
+- **OCB2 crypt** from [`crypto`](../../../libraries/humla/src/main/jni/crypto/),
   unchanged. It already has separate encrypt and decrypt locks, and it is
   used only by the two network threads, never on a realtime thread.
 
@@ -376,8 +376,8 @@ and debounce timing. Application-scoped.
   changed.
 - Publishes `StateFlow<RouteState>` and events (SCO failed).
 - Built from today's
-  [`AudioRouteController`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt),
-  [`BluetoothScoManager`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt),
+  [`AudioRouteController`](../../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt),
+  [`BluetoothScoManager`](../../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt),
   and `AudioPlatform`/`ScoLink`. Its decision logic and its tests (the
   settle budget, lagging-sink catch-up, debounce, mode claim and restore)
   carry over.
@@ -432,13 +432,13 @@ This sequence needs on-device verification (see
   cares about: connection notification, message notifications, TTS, chat
   log, PTT sounds, overlay, hot corner, proximity sensor, and the talk
   broadcast receiver. They replace the responsibilities currently piled into
-  [`MumlaService`](../../app/src/main/java/se/lublin/mumla/service/MumlaService.kt)
+  [`MumlaService`](../../../app/src/main/java/se/lublin/mumla/service/MumlaService.kt)
   by inheritance from `HumlaService`.
 - **Screens** keep their XML layouts. Each gets a ViewModel that turns
   client and session state into UI state, and calls client or session
   methods for user actions. Fragments and activities collect UI state with
   `repeatOnLifecycle`, so updates arrive on main and only while visible.
-  [`MumlaActivity`](../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)'s
+  [`MumlaActivity`](../../../app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt)'s
   connection, trust-prompt, and reconnect bookkeeping moves into its
   ViewModel.
 - **Settings** are a `Flow<Settings>` from the existing DataStore
@@ -510,7 +510,7 @@ sequenceDiagram
 
 The mute is optimistic, with the server echo as confirmation, preserving
 the desktop-parity rules recorded in
-[optimistic-self-mute](../optimistic-self-mute/README.md) (deafen implies
+[optimistic-self-mute](../../optimistic-self-mute/README.md) (deafen implies
 mute; the server's version wins). The server also enforces it: murmur
 drops voice from any user who is muted, suppressed, or self-muted, so the
 client-side gate is about privacy (audio never leaves the device) rather
@@ -579,7 +579,7 @@ Two rules remain, both narrow:
 
 ## Enforcement
 
-A **tripwire** in [`check.sh`](../../scripts/check.sh) fails if
+A **tripwire** in [`check.sh`](../../../scripts/check.sh) fails if
 `@Volatile`, `@Synchronized`, `synchronized(`, `Thread(`, `Handler(`,
 `runBlocking`, `ReentrantLock`, or `Executors.` appears in main sources
 outside an allowlist file.
@@ -618,7 +618,7 @@ logs through `<android/log.h>`.
 
 ## How the whales map
 
-| Whale | Satisficing fix ([README](README.md)) | This architecture |
+| Whale | Satisficing fix ([README](../README.md)) | This architecture |
 |---|---|---|
 | W1 no session object | Per-connect `Session` owning a scope | `Session` under `HumlaClient`, reconnect owned by the client |
 | W2 shared mutable model | Single writer publishing snapshots | Immutable `SessionState`; any writer, atomic updates |
@@ -632,7 +632,7 @@ logs through `<android/log.h>`.
 - **Virtual-time tests (every `check.sh`).** `Session`, `HumlaClient`,
   voice control, the policy collector, and `RouteControl` are coroutines,
   so they run under `kotlinx-coroutines-test` against fakes, as
-  [`AudioRouteControllerTest`](../../libraries/humla/src/test/java/se/lublin/humla/audio/AudioRouteControllerTest.kt)
+  [`AudioRouteControllerTest`](../../../libraries/humla/src/test/java/se/lublin/humla/audio/AudioRouteControllerTest.kt)
   already does. Cover: disconnect at every step of the sync sequence;
   reconnect racing a user disconnect; mute, deafen, and PTT spam during
   connect and disconnect; route flaps mid-connect; SCO failure during
@@ -798,7 +798,7 @@ leave the allowlist without new coordination machinery.
 When the relevant steps land, these records must be updated in the same
 branch:
 
-- The native **fence** in the [migration](../migration/README.md)
+- The native **fence** in the [migration](../../migration/README.md)
   decisions ("C++ frozen, no behavior touch"). It is replaced by a
   narrower, permanent rule: **the engine stays free of I/O.** Step 5a
   refactors the engine for realtime use, pinned by golden outputs recorded
@@ -806,7 +806,7 @@ branch:
   and an I/O layer on top. The native suite remains the gate, and the
   native tripwire enforces the separation.
 - The "no Oboe/AAudio" description of the audio pipeline in
-  [`AGENTS.md`](../../AGENTS.md) (step 5b).
+  [`AGENTS.md`](../../../AGENTS.md) (step 5b).
 - The frozen binder surface (`IMumlaService`/`IHumlaService`/
   `IHumlaSession`), which was frozen only for the migration and is removed
   in step 7.
@@ -823,13 +823,13 @@ branch:
 ## Non-goals
 
 - Compose or any UI toolkit change. The views and their pixels stay; the
-  [killed Compose rewrite](../migration/README.md) stays killed.
+  [killed Compose rewrite](../../migration/README.md) stays killed.
 - Giving the native engine any I/O. Refactoring it is in scope (step 5a);
   merging the I/O and no-I/O layers is not.
 - Rewriting the native audio or crypt code in Rust or another language.
 - Kotlin Multiplatform or an iOS port.
 - New features (see the
-  [upstream feature gap audit](../upstream-feature-gap-audit/README.md)).
+  [upstream feature gap audit](../../upstream-feature-gap-audit/README.md)).
 
 ## Open questions
 
@@ -841,4 +841,4 @@ non-design questions:
 - **Observer compatibility:** whether anything outside the app still needs
   `IHumlaObserver` after step 8.
 - **`check.sh` budget:** how much murmur time the gate can absorb (see
-  [check-sh-speed](../check-sh-speed/README.md)).
+  [check-sh-speed](../../check-sh-speed/README.md)).
