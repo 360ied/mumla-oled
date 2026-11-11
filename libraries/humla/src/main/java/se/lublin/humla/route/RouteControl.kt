@@ -288,6 +288,7 @@ internal class RouteControl(
 
     private fun onDestroyed() {
         destroyed.set(true)
+        hasSession = false
         cancelRouteDebounce()
         cancelRouteSettle()
         unregisterDeviceListener()
@@ -331,6 +332,7 @@ internal class RouteControl(
     }
 
     private fun onPrefsChanged(requested: Boolean, stream: Int) {
+        if (destroyed.get()) return
         val changed = (requested != scoRequested.get()) || (stream != handsetStream.get())
         scoRequested.set(requested)
         handsetStream.set(stream)

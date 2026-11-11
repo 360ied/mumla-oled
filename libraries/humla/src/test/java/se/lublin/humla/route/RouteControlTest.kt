@@ -117,6 +117,31 @@ class RouteControlTest {
     }
 
     @Test
+    fun backToBackStartThenEndSettlesIdle() = runTest {
+        val control = newControl(scope = this)
+        // No runCurrent between submits: Ended must not be epoch-dropped.
+        control.submit(RouteCommand.SessionStarted)
+        control.submit(RouteCommand.SessionEnded)
+        runCurrent()
+        assertTrue(control.state.value is RouteState.Idle)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun sessionStartedAfterCloseStaysIdle() = runTest {
+        val control = newControl(scope = this)
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        assertTrue(control.state.value is RouteState.Ready)
+        control.close()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        assertTrue(control.state.value is RouteState.Idle)
+    }
+
+    @Test
     fun sessionEndedReturnsToIdle() = runTest {
         val control = newControl(scope = this)
         control.submit(RouteCommand.SessionStarted)
