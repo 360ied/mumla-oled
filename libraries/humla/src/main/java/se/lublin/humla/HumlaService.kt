@@ -460,14 +460,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             BluetoothScoManager(this, object : BluetoothScoManager.Listener {
                 override fun onScoConnected() {
                     if (::route.isInitialized) route.onScoConnected()
+                    if (::routeControl.isInitialized) routeControl.onScoConnected()
                 }
 
                 override fun onScoDisconnected() {
                     if (::route.isInitialized) route.onScoDisconnected()
+                    if (::routeControl.isInitialized) routeControl.onScoDisconnected()
                 }
 
                 override fun onScoFailed(reason: String?) {
                     if (::route.isInitialized) route.onScoFailed(reason)
+                    if (::routeControl.isInitialized) routeControl.onScoFailed(reason)
                 }
             })
         } catch (e: Exception) {
@@ -589,11 +592,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceLifecycle = voiceLink,
             routeLifecycle = object : se.lublin.humla.client.RouteLifecycle {
                 override fun sessionStarted() {
-                    route.onEvent(RouteEvent.SessionStarted)
+                    try {
+                        route.onEvent(RouteEvent.SessionStarted)
+                    } catch (_: Exception) {
+                    }
+                    if (::routeControl.isInitialized) routeControl.sessionStarted()
                 }
 
                 override fun sessionEnded() {
-                    route.onEvent(RouteEvent.SessionEnded)
+                    try {
+                        route.onEvent(RouteEvent.SessionEnded)
+                    } catch (_: Exception) {
+                    }
+                    if (::routeControl.isInitialized) routeControl.sessionEnded()
                 }
             },
             voiceLink = voiceLink,
