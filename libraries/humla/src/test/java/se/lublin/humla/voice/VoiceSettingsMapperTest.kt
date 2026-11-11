@@ -1,0 +1,112 @@
+/*
+ * Copyright (C) 2026 Brian Zhu
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+package se.lublin.humla.voice
+
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import se.lublin.humla.Constants
+import se.lublin.humla.state.emptySessionState
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class VoiceSettingsMapperTest {
+    @Test
+    fun inputModeMappingMatchesConstants() {
+        assertEquals(InputMode.PUSH_TO_TALK, VoiceSettingsMapper.inputModeFor(Constants.TRANSMIT_PUSH_TO_TALK))
+        assertEquals(InputMode.CONTINUOUS, VoiceSettingsMapper.inputModeFor(Constants.TRANSMIT_CONTINUOUS))
+        assertEquals(InputMode.VOICE_ACTIVITY, VoiceSettingsMapper.inputModeFor(Constants.TRANSMIT_VOICE_ACTIVITY))
+    }
+
+    @Test
+    fun vadMappingFollowsActivityRule() {
+        val (max, min) = VoiceSettingsMapper.vadFor(1.0f)
+        assertEquals(1.0f, max)
+        assertEquals(0.7f, min, 0.001f)
+    }
+
+    @Test
+    fun halfDuplexOnlyInPtt() {
+        assertTrue(VoiceSettingsMapper.halfDuplexFor(Constants.TRANSMIT_PUSH_TO_TALK, true))
+        assertFalse(VoiceSettingsMapper.halfDuplexFor(Constants.TRANSMIT_VOICE_ACTIVITY, true))
+        assertFalse(VoiceSettingsMapper.halfDuplexFor(Constants.TRANSMIT_PUSH_TO_TALK, false))
+    }
+
+    @Test
+    fun updateAppliesDeltaFields() {
+        val base = VoiceSettings.initial()
+        val next = VoiceSettingsMapper.update(
+            base,
+            transmitMode = Constants.TRANSMIT_PUSH_TO_TALK,
+            inputQuality = 24000,
+            framesPerPacket = 4,
+            halfDuplex = true,
+            currentTransmitMode = Constants.TRANSMIT_VOICE_ACTIVITY,
+        )
+        assertEquals(InputMode.PUSH_TO_TALK, next.inputMode)
+        assertEquals(24000, next.targetBitrate)
+        assertEquals(4, next.targetFramesPerPacket)
+        assertTrue(next.halfDuplex)
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class PolicyCollectorTest {
+    @Test
+    fun publishesMutedFallbackWhenDisconnected() = runTest {
+        val states = MutableStateFlow<se.lublin.humla.state.SessionState?>(null)
+        val settings = MutableStateFlow(VoiceSettings.initial())
+        val collector = PolicyCollector(
+            sessionStates = PolicyCollector.FlowOfStates { states },
+            settings = settings,
+            appScope = this,
+            dispatcher = testScheduler.let {
+                @OptIn(ExperimentalCoroutinesApi::class)
+                kotlinx.coroutines.test.StandardTestDispatcher(it)
+            },
+        )
+        runCurrent()
+        assertFalse(collector.policy.value.transmitAllowed)
+        collector.close()
+        runCurrent()
+    }
+
+    @Test
+    fun updatesWhenSessionConnects() = runTest {
+        val states = MutableStateFlow<se.lublin.humla.state.SessionState?>(null)
+        val settings = MutableStateFlow(VoiceSettings.initial())
+        val collector = PolicyCollector(
+            sessionStates = PolicyCollector.FlowOfStates { states },
+            settings = settings,
+            appScope = this,
+            dispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
+        )
+        runCurrent()
+        assertFalse(collector.policy.value.transmitAllowed)
+        states.value = emptySessionState()
+        runCurrent()
+        // HANDSHAKING without self still fails closed.
+        assertFalse(collector.policy.value.transmitAllowed)
+        collector.close()
+        runCurrent()
+    }
+}
