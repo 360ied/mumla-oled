@@ -169,7 +169,6 @@ internal class RouteControl(
     }
 
     fun start() {
-        checkNotMainThread()
         scope.launch {
             registerDeviceListener()
             try {
