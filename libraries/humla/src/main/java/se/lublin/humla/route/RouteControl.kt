@@ -22,9 +22,9 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.Looper
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import se.lublin.humla.audio.AudioPlatform
 import se.lublin.humla.audio.ScoLink
@@ -93,7 +94,8 @@ internal class RouteControl(
             val handler = Handler(thread.looper)
             val executor = java.util.concurrent.Executor { r -> handler.post(r) }
             val dispatcher = executor.asCoroutineDispatcher()
-            val routeScope = CoroutineScope(appScope.coroutineContext + SupervisorJob() + dispatcher)
+            val parentJob = appScope.coroutineContext[Job]
+            val routeScope = CoroutineScope(SupervisorJob(parentJob) + dispatcher)
             return RouteControl(platform, sco, prefs, routeScope, handler, thread)
         }
     }
@@ -104,13 +106,13 @@ internal class RouteControl(
     private val _events = MutableSharedFlow<RouteEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<RouteEvent> = _events.asSharedFlow()
 
-    private var routeSessionCounter = 0
+    private val routeSessionCounter = java.util.concurrent.atomic.AtomicInteger(0)
     private var hasSession = false
 
-    private var scoRequested: Boolean = false
+    private val scoRequested = java.util.concurrent.atomic.AtomicBoolean(false)
     private var scoRouteActive: Boolean = false
-    private var appliedRoute: AppliedRoute = AppliedRoute.VOICE_HANDSET
-    private var handsetStream: Int = AudioManager.STREAM_MUSIC
+    private val appliedRoute = java.util.concurrent.atomic.AtomicReference(AppliedRoute.VOICE_HANDSET)
+    private val handsetStream = java.util.concurrent.atomic.AtomicInteger(AudioManager.STREAM_MUSIC)
     private var modeHold: ModeHold = ModeHold.Released
 
     private var settleAttempts: Int = 0
@@ -120,26 +122,14 @@ internal class RouteControl(
     private var destroyed = false
     private var deviceCallback: AudioDeviceCallback? = null
 
-    @VisibleForTesting
-    internal var routeThreadOverride: Boolean? = null
-
     private val prefsFlow: Flow<RoutePreferences> = prefs
 
-    private fun isRouteThread(): Boolean {
-        routeThreadOverride?.let { return it }
-        return try {
-            Looper.myLooper() == deviceHandler.looper
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     internal fun shouldDropStaleEvent(captured: Int): Boolean {
-        return destroyed || captured != routeSessionCounter
+        return destroyed || captured != routeSessionCounter.get()
     }
 
     fun submit(command: RouteCommand) {
-        val captured = routeSessionCounter
+        val captured = routeSessionCounter.get()
         scope.launch {
             if (shouldDropStaleEvent(captured) && command !is RouteCommand.SessionStarted) {
                 return@launch
@@ -175,23 +165,30 @@ internal class RouteControl(
                 prefsFlow.collect { p ->
                     onPrefsChanged(p.bluetoothSco, p.handsetStream)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
             }
         }
     }
 
     fun close() {
-        scope.launch { onDestroyed() }
-        try {
-            ownedThread?.quitSafely()
-        } catch (_: Exception) {
+        val teardown = scope.launch { onDestroyed() }
+        teardown.invokeOnCompletion {
+            try {
+                scope.cancel()
+            } catch (_: Exception) {
+            }
+            try {
+                ownedThread?.quitSafely()
+            } catch (_: Exception) {
+            }
         }
     }
 
     fun onInit() {
         scope.launch {
             val media = queryMediaDevicesPresent()
-            appliedRoute = if (!media) AppliedRoute.VOICE_HANDSET else AppliedRoute.MEDIA
+            appliedRoute.set(if (!media) AppliedRoute.VOICE_HANDSET else AppliedRoute.MEDIA)
         }
     }
 
@@ -203,7 +200,7 @@ internal class RouteControl(
             }
 
             override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>?) {
-                onDevicesChanged(null)
+                onDevicesChanged(removed)
             }
         }
         deviceCallback = callback
@@ -227,7 +224,7 @@ internal class RouteControl(
     }
 
     fun onScoConnected() {
-        val captured = routeSessionCounter
+        val captured = routeSessionCounter.get()
         scope.launch {
             if (shouldDropStaleEvent(captured)) return@launch
             onScoLinkChanged(true)
@@ -235,7 +232,7 @@ internal class RouteControl(
     }
 
     fun onScoDisconnected() {
-        val captured = routeSessionCounter
+        val captured = routeSessionCounter.get()
         scope.launch {
             if (shouldDropStaleEvent(captured)) return@launch
             onScoLinkChanged(false)
@@ -243,7 +240,7 @@ internal class RouteControl(
     }
 
     fun onScoFailed(reason: String?) {
-        val captured = routeSessionCounter
+        val captured = routeSessionCounter.get()
         scope.launch {
             if (shouldDropStaleEvent(captured)) return@launch
             handleScoFailed(reason)
@@ -252,11 +249,11 @@ internal class RouteControl(
 
     private fun onSessionStarted() {
         checkNotMainThread()
-        routeSessionCounter += 1
+        routeSessionCounter.incrementAndGet()
         hasSession = true
         scoRouteActive = false
         settleAttempts = 0
-        recompute("sync", forceReload = false, settle = false, firstCreate = true)
+        recompute("sync", forceReload = false, isRecheck = false, firstCreate = true)
         updateScoRoute()
     }
 
@@ -266,9 +263,9 @@ internal class RouteControl(
         cancelRouteDebounce()
         cancelRouteSettle()
         settleAttempts = 0
-        stopScoWithNotify()
+        stopScoAndClearFlag()
         val liveMedia = queryMediaDevicesPresent()
-        appliedRoute = if (liveMedia) AppliedRoute.MEDIA else AppliedRoute.VOICE_HANDSET
+        appliedRoute.set(if (liveMedia) AppliedRoute.MEDIA else AppliedRoute.VOICE_HANDSET)
         releaseVoiceMode()
         _state.value = RouteState.Idle
     }
@@ -282,6 +279,10 @@ internal class RouteControl(
             sco?.stop()
         } catch (_: Exception) {
         }
+        try {
+            sco?.destroy()
+        } catch (_: Exception) {
+        }
         releaseVoiceMode()
         _state.value = RouteState.Idle
     }
@@ -289,39 +290,38 @@ internal class RouteControl(
     private fun onRetrySco() {
         checkNotMainThread()
         val link = sco ?: return
-        if (!scoRequested || !hasSession) return
+        if (!scoRequested.get() || !hasSession) return
         if (!link.isIdle()) return
-        link.start()
-        if (!hasSession || !scoRequested) {
-            try {
-                link.stop()
-            } catch (_: Exception) {
-            }
-            return
+        try {
+            link.start()
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO retry start failed", e)
         }
     }
 
     fun setScoRequested(requested: Boolean) {
-        scope.launch { onPrefsChanged(requested, handsetStream) }
+        val stream = handsetStream.get()
+        scope.launch { onPrefsChanged(requested, stream) }
     }
 
     fun setHandsetStream(stream: Int) {
-        scope.launch { onPrefsChanged(scoRequested, stream) }
+        val requested = scoRequested.get()
+        scope.launch { onPrefsChanged(requested, stream) }
     }
 
     private fun onPrefsChanged(requested: Boolean, stream: Int) {
-        val changed = (requested != scoRequested) || (stream != handsetStream)
-        scoRequested = requested
-        handsetStream = stream
+        val changed = (requested != scoRequested.get()) || (stream != handsetStream.get())
+        scoRequested.set(requested)
+        handsetStream.set(stream)
         if (!hasSession) return
         if (changed) {
-            recompute("settings changed", forceReload = true, settle = false, firstCreate = false)
+            recompute("settings changed", forceReload = true, isRecheck = false, firstCreate = false)
             updateScoRoute()
         }
     }
 
     private fun onDevicesChanged(added: Array<AudioDeviceInfo>?) {
-        val captured = routeSessionCounter
+        val captured = routeSessionCounter.get()
         scope.launch {
             if (shouldDropStaleEvent(captured)) return@launch
             if (!hasSession) return@launch
@@ -330,7 +330,7 @@ internal class RouteControl(
             debounceJob = scope.launch {
                 delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
                 if (shouldDropStaleEvent(captured)) return@launch
-                recompute("devices changed", forceReload = false, settle = false, firstCreate = false)
+                recompute("devices changed", forceReload = false, isRecheck = false, firstCreate = false)
             }
         }
     }
@@ -339,22 +339,22 @@ internal class RouteControl(
         checkNotMainThread()
         val link = sco ?: return
         if (destroyed) return
-        if (scoRequested && hasSession) {
+        if (scoRequested.get() && hasSession) {
             try {
                 link.start()
             } catch (e: Exception) {
                 Log.w(TAG, "SCO start failed", e)
             }
-        } else if (!link.isIdle()) {
+        } else {
             try {
-                link.stop()
+                if (!link.isIdle()) link.stop()
             } catch (e: Exception) {
                 Log.w(TAG, "SCO stop failed", e)
             }
         }
     }
 
-    fun stopScoWithNotify() {
+    fun stopScoAndClearFlag() {
         checkNotMainThread()
         val link = sco ?: return
         try {
@@ -380,18 +380,19 @@ internal class RouteControl(
         scoRouteActive = active
         val reason = if (active) "Bluetooth SCO connected"
         else "Bluetooth SCO disconnected, falling back to phone audio"
-        recompute(reason, forceReload = false, settle = false, firstCreate = false)
-        _events.tryEmit(RouteEvent.RouteChanged)
+        recompute(reason, forceReload = false, isRecheck = false, firstCreate = false)
     }
 
     private fun handleScoFailed(reason: String?) {
         checkNotMainThread()
         if (destroyed) return
-        _events.tryEmit(RouteEvent.ScoFailed(reason))
-        recompute("SCO failed", forceReload = false, settle = false, firstCreate = false)
+        if (!_events.tryEmit(RouteEvent.ScoFailed(reason))) {
+            Log.w(TAG, "Route event buffer full; dropped ScoFailed")
+        }
+        recompute("SCO failed", forceReload = false, isRecheck = false, firstCreate = false)
     }
 
-    private fun recompute(reason: String, forceReload: Boolean, settle: Boolean, firstCreate: Boolean) {
+    private fun recompute(reason: String, forceReload: Boolean, isRecheck: Boolean, firstCreate: Boolean) {
         checkNotMainThread()
         val update = updateRoute()
         val voice = update.voice
@@ -408,8 +409,8 @@ internal class RouteControl(
         if (shouldPublish) {
             val profile = if (voice) StreamProfile.VOICE else StreamProfile.MEDIA
             val next: RouteState = if (!voice || !scoRouteActive) {
-                val isFallback = scoRequested && voice && !scoRouteActive &&
-                    (appliedRoute == AppliedRoute.VOICE_HANDSET || update.route == AppliedRoute.VOICE_HANDSET)
+                val isFallback = scoRequested.get() && voice && !scoRouteActive &&
+                    update.route == AppliedRoute.VOICE_HANDSET
                 if (isFallback && !firstCreate) {
                     RouteState.Fallback(update.route, profile, "SCO unavailable")
                 } else {
@@ -419,10 +420,12 @@ internal class RouteControl(
                 RouteState.Ready(update.route, profile)
             }
             val changedState = next != _state.value
-            if (firstCreate || forceReload || changedState || update.changed) {
+            if (changedState || update.changed) {
                 _state.value = next
-                if (!settle) {
-                    _events.tryEmit(RouteEvent.RouteChanged)
+                if (!isRecheck) {
+                    if (!_events.tryEmit(RouteEvent.RouteChanged)) {
+                        Log.w(TAG, "Route event buffer full; dropped RouteChanged")
+                    }
                 }
             }
             Log.i(TAG, "$reason; route now $next.")
@@ -434,8 +437,8 @@ internal class RouteControl(
         val voiceByAbsence = update.route == AppliedRoute.VOICE_HANDSET
         val liveCall = hasSession
         val attempts = settleAttempts
-        if (voiceByAbsence && liveCall && (!settle || attempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
-            if (!settle) {
+        if (voiceByAbsence && liveCall && (!isRecheck || attempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
+            if (!isRecheck) {
                 settleAttempts = 0
             } else {
                 settleAttempts += 1
@@ -461,8 +464,8 @@ internal class RouteControl(
             voice -> AppliedRoute.VOICE_HANDSET
             else -> AppliedRoute.MEDIA
         }
-        val changed = next != appliedRoute
-        appliedRoute = next
+        val changed = next != appliedRoute.get()
+        appliedRoute.set(next)
         return RouteUpdate(voice, next, changed)
     }
 
@@ -525,7 +528,7 @@ internal class RouteControl(
     }
 
     private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean) {
-        val requested = scoRequested
+        val requested = scoRequested.get()
         if (!wasClaimedHold || requested || scoRouteActive) return
         if (!hasSession) return
         try {
@@ -553,7 +556,7 @@ internal class RouteControl(
 
     private fun maybeStartRequestedSco(added: Array<AudioDeviceInfo>?) {
         val link = sco ?: return
-        if (!scoRequested || !hasSession) return
+        if (!scoRequested.get() || !hasSession) return
         if (!link.isIdle()) return
         if (added == null) return
         var scoInAdded = false
@@ -583,10 +586,17 @@ internal class RouteControl(
     }
 
     private fun armRouteSettle() {
+        val captured = routeSessionCounter.get()
         settleJob?.cancel()
         settleJob = scope.launch {
             delay(ROUTE_SETTLE_RECHECK_MS)
-            recompute("media settle recheck", forceReload = false, settle = true, firstCreate = false)
+            if (shouldDropStaleEvent(captured)) return@launch
+            if (settleAttempts >= ROUTE_SETTLE_MAX_RECHECKS - 1) {
+                settleJob = null
+                settleAttempts = 0
+                return@launch
+            }
+            recompute("media settle recheck", forceReload = false, isRecheck = true, firstCreate = false)
         }
     }
 
@@ -626,7 +636,7 @@ internal class RouteControl(
         }
     }
 
-    fun decision(): AppliedRoute = appliedRoute
+    fun decision(): AppliedRoute = appliedRoute.get()
 
     fun isScoActive(): Boolean {
         val link = sco ?: return false
@@ -637,10 +647,10 @@ internal class RouteControl(
         }
     }
 
-    val isScoRequested: Boolean get() = scoRequested
-    val isMediaRouteActive: Boolean get() = appliedRoute == AppliedRoute.MEDIA
+    val isScoRequested: Boolean get() = scoRequested.get()
+    val isMediaRouteActive: Boolean get() = appliedRoute.get() == AppliedRoute.MEDIA
 
-    fun handsetStream(): Int = handsetStream
+    fun handsetStream(): Int = handsetStream.get()
 }
 
 /**

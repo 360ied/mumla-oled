@@ -22,6 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import se.lublin.humla.audio.AudioOutput
@@ -37,12 +38,19 @@ class VoiceControlTest {
         route: MutableStateFlow<RouteState> = MutableStateFlow(RouteState.Idle),
         policy: MutableStateFlow<VoicePolicy> = MutableStateFlow(VoicePolicy.mutedFallback(VoiceSettings.initial())),
         settings: MutableStateFlow<VoiceSettings> = MutableStateFlow(VoiceSettings.initial()),
+        prefs: MutableStateFlow<se.lublin.humla.route.RoutePreferences> = MutableStateFlow(
+            se.lublin.humla.route.RoutePreferences(bluetoothSco = false, handsetStream = 3),
+        ),
     ): VoiceControl {
         val context = mock(Context::class.java)
         val logger = mock(HumlaLogger::class.java)
         val encode = mock(AudioHandler.AudioEncodeListener::class.java)
         val talking = mock(AudioOutput.AudioOutputListener::class.java)
         val link = mock(LegacyVoiceLink::class.java)
+        // Child scope: close() cancels only this child, never the TestScope.
+        val child = kotlinx.coroutines.CoroutineScope(
+            scope.coroutineContext + kotlinx.coroutines.SupervisorJob(),
+        )
         return VoiceControl(
             context = context,
             logger = logger,
@@ -51,8 +59,9 @@ class VoiceControlTest {
             routeStates = route,
             policies = policy,
             settings = settings,
+            prefs = prefs,
             voiceLink = link,
-            appScope = scope,
+            appScope = child,
             controlDispatcher = kotlinx.coroutines.test.StandardTestDispatcher(scope.testScheduler),
         )
     }
@@ -77,6 +86,18 @@ class VoiceControlTest {
     @Test
     fun closeCancelsWithoutPipeline() = runTest {
         val control = newControl(scope = this)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun settingsChangeWithoutSessionDoesNotCrash() = runTest {
+        val settings = MutableStateFlow(VoiceSettings.initial())
+        val control = newControl(scope = this, settings = settings)
+        // No session: settings changes must no-op, never crash or build.
+        settings.value = settings.value.copy(adaptiveLeveler = false)
+        runCurrent()
+        assertTrue(control.currentHandler() == null)
         control.close()
         runCurrent()
     }

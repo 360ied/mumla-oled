@@ -12,7 +12,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla.voice
@@ -69,6 +69,12 @@ data class VoicePolicy(
     val voiceTarget: Int,
     val bitrate: Int,
     val framesPerPacket: Int,
+    /**
+     * Output-side local mutes, published for step-5a output gating. The
+     * interim capture path ([AudioHandler.applyInterimPolicy]) consumes
+     * only transmitAllowed/pttPressed/bitrate/framesPerPacket/voiceTarget;
+     * render-side muting stays with the legacy AudioOutput model lookup.
+     */
     val locallyMuted: PersistentSet<Int>,
 ) {
     companion object {

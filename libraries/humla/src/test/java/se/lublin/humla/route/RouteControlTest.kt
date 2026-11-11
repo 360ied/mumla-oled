@@ -94,7 +94,11 @@ class RouteControlTest {
         scope: kotlinx.coroutines.CoroutineScope,
     ): RouteControl {
         val handler = mock(Handler::class.java)
-        return RouteControl(platform, sco, prefs, scope, handler, null)
+        // Child scope: close() cancels only this child, never the TestScope.
+        val child = kotlinx.coroutines.CoroutineScope(
+            scope.coroutineContext + kotlinx.coroutines.SupervisorJob(),
+        )
+        return RouteControl(platform, sco, prefs, child, handler, null)
     }
 
     @Test
@@ -171,7 +175,7 @@ class RouteControlTest {
         runCurrent()
         control.submit(RouteCommand.SessionStarted)
         runCurrent()
-        // An old SCO disconnect posted before the second start must nottrash the new session.
+        // An old SCO disconnect posted before the second start must not trash the new session.
         // Directly exercise the guard: a captured value from the prior
         // session no longer matches.
         assertTrue(control.shouldDropStaleEvent(0))
@@ -186,15 +190,18 @@ class RouteControlTest {
             RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
         )
         val control = newControl(sco = sco, prefs = prefs, scope = this)
+        // Load prefs (start collects the prefs flow onto the route scope).
+        control.start()
+        runCurrent()
         control.submit(RouteCommand.SessionStarted)
         runCurrent()
+        // SessionStarted already brought the link up once; force it back to
+        // idle and reset the counter so the retry has observable work.
+        sco.stop()
         val before = sco.startCount
         control.submit(RouteCommand.RetrySco)
         runCurrent()
-        // updateScoRoute on SessionStarted already started once; retry when
-        // idle starts again. If already starting, retry is a no-op but must
-        // not crash and must keep the session live.
-        assertTrue(sco.startCount >= before)
+        assertEquals(before + 1, sco.startCount)
         assertTrue(control.state.value !is RouteState.Idle)
         control.close()
         runCurrent()

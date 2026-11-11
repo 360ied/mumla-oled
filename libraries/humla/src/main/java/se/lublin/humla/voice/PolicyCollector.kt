@@ -12,14 +12,16 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla.voice
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
@@ -56,7 +58,7 @@ class PolicyCollector(
         fun states(): Flow<SessionState?>
     }
 
-    private val scope = CoroutineScope(appScope.coroutineContext + SupervisorJob() + dispatcher)
+    private val scope = CoroutineScope(SupervisorJob(appScope.coroutineContext[Job]) + dispatcher)
 
     private val _policy: MutableStateFlow<VoicePolicy> =
         MutableStateFlow(VoicePolicy.mutedFallback(settings.value))
@@ -64,16 +66,20 @@ class PolicyCollector(
 
     init {
         scope.launch {
-            combine(
-                sessionStates.states(),
-                settings,
-            ) { sessionState, voiceSettings ->
-                val base = sessionState ?: emptySessionState()
-                voicePolicy(base, voiceSettings)
-            }.collect { next ->
-                if (next != _policy.value) {
-                    _policy.value = next
+            try {
+                combine(
+                    sessionStates.states(),
+                    settings,
+                ) { sessionState, voiceSettings ->
+                    val base = sessionState ?: emptySessionState()
+                    voicePolicy(base, voiceSettings)
+                }.collect { next ->
+                    if (next != _policy.value) {
+                        _policy.value = next
+                    }
                 }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
             }
         }
     }

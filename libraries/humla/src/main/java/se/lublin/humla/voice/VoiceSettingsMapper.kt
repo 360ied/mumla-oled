@@ -12,12 +12,16 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla.voice
 
 import se.lublin.humla.Constants
+import se.lublin.humla.protocol.MAX_AMPLITUDE_BOOST
+import se.lublin.humla.protocol.MAX_INPUT_BITRATE
+import se.lublin.humla.protocol.MIN_AMPLITUDE_BOOST
+import se.lublin.humla.protocol.MIN_INPUT_BITRATE
 
 /**
  * Maps user and server knobs to [VoiceSettings]. Reuses the conversion
@@ -73,7 +77,7 @@ object VoiceSettingsMapper {
         framesPerPacket: Int? = null,
         halfDuplex: Boolean? = null,
         adaptiveLeveler: Boolean? = null,
-        currentTransmitMode: Int = Constants.TRANSMIT_VOICE_ACTIVITY,
+        currentTransmitMode: Int,
     ): VoiceSettings {
         var next = current
         val resolvedTransmit = transmitMode ?: currentTransmitMode
@@ -85,9 +89,16 @@ object VoiceSettingsMapper {
             next = next.copy(vadMax = vadMax, vadMin = vadMin)
         }
         if (amplitudeBoost != null) {
+            require(amplitudeBoost.isFinite()) { "amplitudeBoost must be finite" }
+            require(amplitudeBoost in MIN_AMPLITUDE_BOOST..MAX_AMPLITUDE_BOOST) {
+                "amplitudeBoost must be in $MIN_AMPLITUDE_BOOST..$MAX_AMPLITUDE_BOOST"
+            }
             next = next.copy(amplitudeBoost = amplitudeBoost)
         }
         if (inputQuality != null) {
+            require(inputQuality in MIN_INPUT_BITRATE..MAX_INPUT_BITRATE) {
+                "inputQuality must be in $MIN_INPUT_BITRATE..$MAX_INPUT_BITRATE"
+            }
             next = next.copy(targetBitrate = inputQuality)
         }
         if (framesPerPacket != null) {

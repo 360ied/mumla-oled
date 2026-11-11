@@ -12,7 +12,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla.voice
@@ -66,47 +66,5 @@ class VoiceSettingsMapperTest {
         assertEquals(24000, next.targetBitrate)
         assertEquals(4, next.targetFramesPerPacket)
         assertTrue(next.halfDuplex)
-    }
-}
-
-@OptIn(ExperimentalCoroutinesApi::class)
-class PolicyCollectorTest {
-    @Test
-    fun publishesMutedFallbackWhenDisconnected() = runTest {
-        val states = MutableStateFlow<se.lublin.humla.state.SessionState?>(null)
-        val settings = MutableStateFlow(VoiceSettings.initial())
-        val collector = PolicyCollector(
-            sessionStates = PolicyCollector.FlowOfStates { states },
-            settings = settings,
-            appScope = this,
-            dispatcher = testScheduler.let {
-                @OptIn(ExperimentalCoroutinesApi::class)
-                kotlinx.coroutines.test.StandardTestDispatcher(it)
-            },
-        )
-        runCurrent()
-        assertFalse(collector.policy.value.transmitAllowed)
-        collector.close()
-        runCurrent()
-    }
-
-    @Test
-    fun updatesWhenSessionConnects() = runTest {
-        val states = MutableStateFlow<se.lublin.humla.state.SessionState?>(null)
-        val settings = MutableStateFlow(VoiceSettings.initial())
-        val collector = PolicyCollector(
-            sessionStates = PolicyCollector.FlowOfStates { states },
-            settings = settings,
-            appScope = this,
-            dispatcher = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler),
-        )
-        runCurrent()
-        assertFalse(collector.policy.value.transmitAllowed)
-        states.value = emptySessionState()
-        runCurrent()
-        // HANDSHAKING without self still fails closed.
-        assertFalse(collector.policy.value.transmitAllowed)
-        collector.close()
-        runCurrent()
     }
 }
