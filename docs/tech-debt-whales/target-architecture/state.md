@@ -375,6 +375,16 @@ behind those interfaces would compile and silently freeze screens, so step
   (`var` properties and `set…` methods) in step 2; each app call site that
   writes through them becomes a `Session` intent, and the compiler finds
   them all.
+- Handles are ephemeral: every lookup constructs a new instance, so no
+  code may treat a handle as stable identity beyond ID equality. In
+  particular, `talkState` is voice-owned and defaults to passive on each
+  fresh handle — never dedup, cache, or branch on a handle's `talkState`
+  across calls. Transition ownership stays with the producer (today the
+  native engine's transition-only events; from step 5a
+  `VoiceEngine.talkActivity`, where absent means passive). Comparing a
+  fresh handle's `talkState` against a new event swallows the teardown edge
+  and sticks the indicator on; this regressed on `master` in step 2 and was
+  fixed by deleting the Java-side guard.
 
 Handle member sources:
 
