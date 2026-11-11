@@ -44,10 +44,10 @@ data class SessionStats(
     val remoteCrypt: CryptCounts,
 ) {
     companion object {
-        fun initial(): SessionStats = SessionStats(
+        fun initial(usingUdp: Boolean = true): SessionStats = SessionStats(
             tcpLatencyMicros = null,
             udpLatencyMicros = null,
-            usingUdp = true,
+            usingUdp = usingUdp,
             currentBandwidth = null,
             localCrypt = CryptCounts.zero(),
             remoteCrypt = CryptCounts.zero(),

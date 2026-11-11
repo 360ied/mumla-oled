@@ -58,24 +58,14 @@ class HumlaTCP(
         const val CONNECT_TIMEOUT = 10000
 
         /**
-         * IPv4-literal check replacing android.util.Patterns.IP_ADDRESS.
-         * Pure JVM so the net package stays android-free. Covers dotted
-         * quads; IPv6 literals contain ':' and are checked by the caller.
+         * IPv4-literal check. Delegates to [TlsHostnameVerifier.isIpLiteral]
+         * (superset: brackets, IPv6 colons, trailing dots); kept as the
+         * HumlaTCP-named entry point so call sites read locally. IPv6
+         * literals contain ':' and are additionally checked by the caller.
          */
         @JvmStatic
-        fun isIpLiteral(host: String): Boolean {
-            val parts = host.split(".")
-            if (parts.size != 4) return false
-            for (part in parts) {
-                if (part.isEmpty() || part.length > 3) return false
-                for (c in part) {
-                    if (c < '0' || c > '9') return false
-                }
-                val value = part.toIntOrNull() ?: return false
-                if (value > 255) return false
-            }
-            return true
-        }
+        fun isIpLiteral(host: String): Boolean =
+            TlsHostnameVerifier.isIpLiteral(host)
 
         /**
          * Read timeout for the established connection. The keepalive ping loop

@@ -87,6 +87,8 @@ interface VoiceLink {
     fun encryptIv(): ByteString
     fun submit(command: VoiceCommand)
     fun queueTunnelled(packet: ByteArray)
+    /** Server version for the UDP packet format (legacy vs protobuf). */
+    fun setServerVersion(v2: Long, v1: Int) {}
     val events: SharedFlow<VoiceEvent>
     val status: StateFlow<VoiceStatus>
 }
@@ -109,9 +111,16 @@ sealed interface VoiceEvent {
     data object UdpUnavailable : VoiceEvent
 }
 
-/** Voice-side status the transport merges into SessionStats. */
+/**
+ * Voice-side status the transport merges into SessionStats.
+ * Shape matches voice.md (bitrate/framesPerPacket are the current encoder
+ * settings); the interim link publishes its targets until the step-5a
+ * VoicePolicy drives real values.
+ */
 data class VoiceStatus(
     val localCrypt: CryptCounts,
+    val bitrate: Int = 40000,
+    val framesPerPacket: Int = 2,
 ) {
     companion object {
         fun initial(): VoiceStatus = VoiceStatus(localCrypt = CryptCounts.zero())

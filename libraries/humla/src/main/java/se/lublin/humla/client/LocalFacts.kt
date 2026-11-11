@@ -20,6 +20,8 @@ package se.lublin.humla.client
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Device-local facts loaded once per session attempt. See
@@ -48,6 +50,9 @@ data class LocalFacts(
 /**
  * Database/settings backing for [LocalFacts]. Writes run on the I/O
  * dispatcher in the session scope; the state update never waits for them.
+ *
+ * Mute/ignore lists are keyed by registered user ID per server; self
+ * mute/deafen is a global persisted setting, hence no serverId.
  */
 interface LocalFactsStore {
     suspend fun load(serverId: Long): LocalFacts
@@ -60,28 +65,35 @@ interface LocalFactsStore {
 class InMemoryLocalFactsStore(
     initial: LocalFacts = LocalFacts.empty(),
 ) : LocalFactsStore {
+    private val mutex = Mutex()
     private var current: LocalFacts = initial
 
-    override suspend fun load(serverId: Long): LocalFacts = current
+    override suspend fun load(serverId: Long): LocalFacts = mutex.withLock { current }
 
     override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
-        current = if (muted) {
-            current.copy(mutedUserIds = current.mutedUserIds.add(userId))
-        } else {
-            current.copy(mutedUserIds = current.mutedUserIds.remove(userId))
+        mutex.withLock {
+            current = if (muted) {
+                current.copy(mutedUserIds = current.mutedUserIds.add(userId))
+            } else {
+                current.copy(mutedUserIds = current.mutedUserIds.remove(userId))
+            }
         }
     }
 
     override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
-        current = if (ignored) {
-            current.copy(ignoredUserIds = current.ignoredUserIds.add(userId))
-        } else {
-            current.copy(ignoredUserIds = current.ignoredUserIds.remove(userId))
+        mutex.withLock {
+            current = if (ignored) {
+                current.copy(ignoredUserIds = current.ignoredUserIds.add(userId))
+            } else {
+                current.copy(ignoredUserIds = current.ignoredUserIds.remove(userId))
+            }
         }
     }
 
     override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) {
-        current = current.copy(selfMuted = muted, selfDeafened = deafened)
+        mutex.withLock {
+            current = current.copy(selfMuted = muted, selfDeafened = deafened)
+        }
     }
 }
 

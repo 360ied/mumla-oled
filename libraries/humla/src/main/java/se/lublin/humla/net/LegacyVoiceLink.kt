@@ -23,6 +23,8 @@ import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -55,6 +57,11 @@ class LegacyVoiceLink @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : VoiceLink, VoiceLifecycle, HumlaUDP.UDPConnectionListener {
+    companion object {
+        private val logger: java.util.logging.Logger =
+            java.util.logging.Logger.getLogger(LegacyVoiceLink::class.java.name)
+    }
+
     private val crypt = CryptState()
 
     private val _events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
@@ -69,32 +76,52 @@ class LegacyVoiceLink @JvmOverloads constructor(
     private val forceTcp = AtomicBoolean(false)
 
     private val serverVersion = AtomicInteger(0)
-    private val serverVersionV2 = java.util.concurrent.atomic.AtomicLong(0L)
+    private val serverVersionV2 = AtomicLong(0L)
 
-    private var udp: HumlaUDP? = null
+    private val udpRef = AtomicReference<HumlaUDP?>(null)
+    // Direct executor (no thread hop): UDP data callbacks run on the
+    // receiver coroutine per the HumlaUDP contract; resync/error posts
+    // execute inline for the same reason.
     private val udpExecutor = java.util.concurrent.Executor { r -> r.run() }
 
-    private var targetFramesPerPacket: Int = Constants.DEFAULT_FRAMES_PER_PACKET
+    private val targetFramesPerPacket = AtomicInteger(Constants.DEFAULT_FRAMES_PER_PACKET)
+    // Interim encoder target for SessionStats.currentBandwidth until the step-5a
+    // VoicePolicy carries real values. Seeded with the Settings default.
+    private val targetBitrate = AtomicInteger(40000)
 
-    fun setForceTcp(force: Boolean) {        forceTcp.set(force)
+    // Cached wire-type lookup: HumlaUDPMessageType order IS the legacy wire
+    // value; avoid values() allocation per received packet.
+    private val udpTypes = HumlaUDPMessageType.values()
+
+    override fun setForceTcp(force: Boolean) {
+        forceTcp.set(force)
         if (force) {
             usingUdp.set(false)
         }
     }
 
-    fun setServerVersion(v2: Long, v1: Int) {
+    override fun setServerVersion(v2: Long, v1: Int) {
         serverVersionV2.set(v2)
         serverVersion.set(v1)
     }
 
     fun setTargetFramesPerPacket(fpp: Int) {
-        targetFramesPerPacket = Constants.sanitizeFramesPerPacket(fpp)
-        udp?.setTargetFramesPerPacket(targetFramesPerPacket)
+        targetFramesPerPacket.set(Constants.sanitizeFramesPerPacket(fpp))
+        udpRef.get()?.setTargetFramesPerPacket(targetFramesPerPacket.get())
     }
 
-    fun getTargetFramesPerPacket(): Int = targetFramesPerPacket
+    fun getTargetFramesPerPacket(): Int = targetFramesPerPacket.get()
+
+    fun setTargetBitrate(bitrate: Int) {
+        targetBitrate.set(bitrate)
+        refreshStatus()
+    }
 
     override fun startVoice(host: String, port: Int) {
+        // Fresh session, fresh route: a previous session's tunnel decision
+        // must not pin the new one on TCP (or skip UDP when forced).
+        if (forceTcp.get()) return
+        usingUdp.set(true)
         connectUdp(host, port)
     }
 
@@ -104,18 +131,19 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     fun connectUdp(host: String, port: Int) {
         if (forceTcp.get() || !usingUdp.get()) return
-        val existing = udp
-        if (existing != null) return
-        val created = HumlaUDP(crypt, this, udpExecutor, targetFramesPerPacket)
-        udp = created
+        if (udpRef.get() != null) return
+        val created = HumlaUDP(crypt, this, udpExecutor, targetFramesPerPacket.get())
+        if (!udpRef.compareAndSet(null, created)) {
+            created.disconnect()
+            return
+        }
         created.connect(host, port)
         refreshStatus()
     }
 
     fun disconnectUdp() {
-        val existing = udp
-        udp = null
-        existing?.disconnect()
+        val existing = udpRef.getAndSet(null) ?: return
+        existing.disconnect()
     }
 
     fun addUdpHandler(handler: HumlaUDPMessageListener) {
@@ -137,17 +165,16 @@ class LegacyVoiceLink @JvmOverloads constructor(
             )
         }
         if (serverVersion.get() == 0x10202) applyLegacyCodecWorkaround(data)
-        if (!forceTcp.get() && usingUdp.get()) {
-            val current = udp
-            if (current != null) {
-                current.sendMessage(data, length)
-                refreshStatus()
-                return
-            }
+        if (forceTcp.get() || !usingUdp.get()) {
+            // Tunnel: hand the framed packet to the transport's UDPTunnel sender.
+            val copy = data.copyOf(length)
+            tunnelSink(copy)
+            refreshStatus()
+            return
         }
-        // Tunnel: hand the framed packet to the transport's UDPTunnel sender.
-        val copy = data.copyOf(length)
-        tunnelSink(copy)
+        // UDP mode: drop while the socket is not up yet, as before
+        // (HumlaConnection dropped when mUDP was null).
+        udpRef.get()?.sendMessage(data, length)
         refreshStatus()
     }
 
@@ -185,7 +212,7 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     private fun sendUdpPing(timestampMicros: Long) {
         if (forceTcp.get() || !usingUdp.get()) return
-        val current = udp ?: return
+        val current = udpRef.get() ?: return
         if (isProtobufUdpSupported()) {
             val ping = MumbleUDP.Ping.newBuilder().setTimestamp(timestampMicros).build().toByteArray()
             val packet = ByteArray(1 + ping.size)
@@ -219,8 +246,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
                         handler.messageProtobufAudio(audioMsg)
                     }
                 } catch (e: InvalidProtocolBufferException) {
-                    // Drop malformed voice, as before.
+                    logger.fine("Dropping malformed protobuf voice")
                 }
+                refreshStatus()
                 return
             } else if (msgType == 1) {
                 try {
@@ -232,16 +260,22 @@ class LegacyVoiceLink @JvmOverloads constructor(
                         handler.messageProtobufPing(pingMsg)
                     }
                     if (v2 != null) serverVersionV2.set(v2)
+                    refreshStatus()
                 } catch (e: InvalidProtocolBufferException) {
-                    // Drop malformed ping.
+                    logger.fine("Dropping malformed protobuf ping")
                 }
+                return
+            } else {
+                // Protobuf mode: any other lead byte is neither voice nor
+                // ping; drop instead of mis-decoding as legacy voice.
+                logger.fine("Dropping unknown protobuf-UDP lead byte")
                 return
             }
         }
         if (serverVersion.get() == 0x10202) applyLegacyCodecWorkaround(data)
         val dataType = data[0].toInt() shr 5 and 0x7
-        if (dataType < 0 || dataType > HumlaUDPMessageType.values().size - 1) return
-        val udpDataType = HumlaUDPMessageType.values()[dataType]
+        if (dataType < 0 || dataType > udpTypes.size - 1) return
+        val udpDataType = udpTypes[dataType]
         when (udpDataType) {
             HumlaUDPMessageType.UDPPing -> {
                 // Legacy ping: bytes 1..9 are the timestamp.
@@ -254,6 +288,8 @@ class LegacyVoiceLink @JvmOverloads constructor(
                         handler.messageUDPPing(data)
                     }
                 } catch (e: Exception) {
+                    // Bug-for-bug fallback (ported from HumlaConnection): the
+                    // varint timestamp above failed, so decode 8 fixed bytes.
                     if (data.size >= 9) {
                         val timedata = ByteArray(8)
                         System.arraycopy(data, 1, timedata, 0, 8)
@@ -281,11 +317,15 @@ class LegacyVoiceLink @JvmOverloads constructor(
     }
 
     override fun onUDPConnectionError(e: Exception) {
-        _events.tryEmit(VoiceEvent.UdpUnavailable)
+        if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
+            logger.fine("Dropping UdpUnavailable (event buffer full): $e")
+        }
     }
 
     override fun resyncCryptState() {
-        _events.tryEmit(VoiceEvent.CryptResyncRequested)
+        if (!_events.tryEmit(VoiceEvent.CryptResyncRequested)) {
+            logger.fine("Dropping CryptResyncRequested (event buffer full)")
+        }
     }
 
     fun refreshStatus() {
@@ -296,6 +336,8 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 lost = crypt.getLost(),
                 resync = crypt.getResync(),
             ),
+            bitrate = targetBitrate.get(),
+            framesPerPacket = targetFramesPerPacket.get(),
         )
     }
 
@@ -305,11 +347,13 @@ class LegacyVoiceLink @JvmOverloads constructor(
         scope.cancel()
     }
 
+    // Mutates the caller's buffer in place (1.2.2 codec-type swap); callers
+    // must not reuse it afterwards. Matches HumlaConnection parity.
     private fun applyLegacyCodecWorkaround(data: ByteArray) {
         if (data.isEmpty()) return
         val ordinal = data[0].toInt() shr 5 and 0x7
-        if (ordinal < 0 || ordinal >= HumlaUDPMessageType.values().size) return
-        var dataType = HumlaUDPMessageType.values()[ordinal]
+        if (ordinal < 0 || ordinal >= udpTypes.size) return
+        var dataType = udpTypes[ordinal]
         if (dataType == HumlaUDPMessageType.UDPVoiceCELTBeta) {
             dataType = HumlaUDPMessageType.UDPVoiceCELTAlpha
         } else if (dataType == HumlaUDPMessageType.UDPVoiceCELTAlpha) {

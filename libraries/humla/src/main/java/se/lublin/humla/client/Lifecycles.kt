@@ -17,7 +17,7 @@
 
 package se.lublin.humla.client
 
-import kotlinx.coroutines.flow.Flow
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Platform lifecycle boundaries the client sequences but never implements.
@@ -30,6 +30,8 @@ interface VoiceLifecycle {
     /** Start network voice with the session's UDP address and crypt keys. */
     fun startVoice(host: String, port: Int)
     fun stopVoice()
+    /** Forced-TCP targets never open a UDP socket. Defaults to tunnel-agnostic. */
+    fun setForceTcp(force: Boolean) {}
 }
 
 interface RouteLifecycle {
@@ -39,39 +41,38 @@ interface RouteLifecycle {
 
 /** No-op lifecycles for tests and for the interim HumlaService bridge. */
 class NoopVoiceLifecycle : VoiceLifecycle {
-    var starts: Int = 0
-        private set
-    var stops: Int = 0
-        private set
+    private val startsCount = AtomicInteger(0)
+    private val stopsCount = AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val stops: Int get() = stopsCount.get()
 
     override fun startVoice(host: String, port: Int) {
-        starts += 1
+        startsCount.incrementAndGet()
     }
 
     override fun stopVoice() {
-        stops += 1
+        stopsCount.incrementAndGet()
     }
 }
 
 class NoopRouteLifecycle : RouteLifecycle {
-    var starts: Int = 0
-        private set
-    var ends: Int = 0
-        private set
+    private val startsCount = AtomicInteger(0)
+    private val endsCount = AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val ends: Int get() = endsCount.get()
 
     override fun sessionStarted() {
-        starts += 1
+        startsCount.incrementAndGet()
     }
 
     override fun sessionEnded() {
-        ends += 1
+        endsCount.incrementAndGet()
     }
 }
 
 /**
  * Main-thread guard. From step 3 on, every method that may block starts
- * with this (see migration.md ground rules): throws in debug builds, logs
- * in release builds.
+ * with this (see migration.md ground rules).
  *
  * Android-free implementation: the JVM/Android main thread is named
  * "main". This deliberately avoids android.os.Looper so the client
@@ -79,8 +80,10 @@ class NoopRouteLifecycle : RouteLifecycle {
  * route/voice threads (step 4) assert off-main the same way.
  */
 fun checkNotMainThread() {
-    val name = Thread.currentThread().name
-    if (name == "main") {
-        throw IllegalStateException("must not block the main thread (called on $name)")
+    if (Thread.currentThread().name != "main") return
+    if (se.lublin.humla.BuildConfig.DEBUG) {
+        throw IllegalStateException("must not block the main thread")
     }
+    java.util.logging.Logger.getLogger("HumlaClient")
+        .warning("blocking call on the main thread")
 }

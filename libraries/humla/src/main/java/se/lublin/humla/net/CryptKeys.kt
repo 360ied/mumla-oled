@@ -33,7 +33,9 @@ data class CryptKeys(
     fun isWellFormed(): Boolean =
         key.size() == 16 && clientNonce.size() == 16 && serverNonce.size() == 16
 
-    override fun toString(): String = "CryptKeys(<redacted 16+16+16 bytes>)"
+    override fun toString(): String =
+        "CryptKeys(key=<${key.size()} bytes>, clientNonce=<${clientNonce.size()} bytes>, " +
+            "serverNonce=<${serverNonce.size()} bytes>)"
 }
 
 data class TransportStats(

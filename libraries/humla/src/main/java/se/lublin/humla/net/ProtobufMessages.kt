@@ -28,10 +28,15 @@ import se.lublin.humla.protobuf.Mumble
 object ProtobufMessages {
     /**
      * Calculates the bandwidth required to send audio with the given parameters.
-     * Includes packet overhead. Ported as-is from HumlaConnection.
+     * Overhead per packet: 20 (IP) + 8 (UDP) + 4 (crypt) + 1 (type) + 2 (session)
+     * + 12 (positional, worst case) + framesPerPacket (frame headers); packets
+     * per second are 800/framesPerPacket (10 ms frames). Ported as-is from
+     * HumlaConnection, including the single conditional +12 (upstream adds a
+     * second +12 for TCP mode; see the incidental note in HumlaService).
      */
     @JvmStatic
     fun calculateAudioBandwidth(bitrate: Int, framesPerPacket: Int): Int {
+        require(framesPerPacket > 0) { "framesPerPacket must be > 0" }
         var overhead = 20 + 8 + 4 + 1 + 2 + 12 + framesPerPacket
         overhead *= (800 / framesPerPacket)
         return overhead + bitrate
@@ -51,6 +56,9 @@ object ProtobufMessages {
             HumlaTCPMessageType.ServerSync -> return Mumble.ServerSync.parseFrom(data)
             HumlaTCPMessageType.ServerConfig -> return Mumble.ServerConfig.parseFrom(data)
             HumlaTCPMessageType.PermissionDenied -> return Mumble.PermissionDenied.parseFrom(data)
+            // The reader intercepts UDPTunnel as raw voice before parse();
+            // this branch only serves direct callers. Wire tunnel payloads are
+            // raw bytes (Mumble.proto: "Not used. Not even for tunneling").
             HumlaTCPMessageType.UDPTunnel -> return Mumble.UDPTunnel.parseFrom(data)
             HumlaTCPMessageType.UserState -> return Mumble.UserState.parseFrom(data)
             HumlaTCPMessageType.UserRemove -> return Mumble.UserRemove.parseFrom(data)
@@ -72,7 +80,7 @@ object ProtobufMessages {
             HumlaTCPMessageType.SuggestConfig -> return Mumble.SuggestConfig.parseFrom(data)
             HumlaTCPMessageType.VoiceTarget -> return Mumble.VoiceTarget.parseFrom(data)
             HumlaTCPMessageType.PluginDataTransmission -> return Mumble.PluginDataTransmission.parseFrom(data)
-            else -> throw InvalidProtocolBufferException("Unknown TCP data passed.")
+            else -> throw InvalidProtocolBufferException("Unknown TCP data passed for $messageType.")
         }
     }
 }

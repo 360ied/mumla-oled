@@ -23,9 +23,12 @@ import com.google.protobuf.MessageLite
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.IOException
 import java.security.KeyStore
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +49,7 @@ import kotlinx.coroutines.channels.trySendBlocking
 import org.minidns.hla.ResolverApi
 import org.minidns.util.SrvUtil
 import se.lublin.humla.Constants
+import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.protobuf.Mumble
@@ -108,7 +112,9 @@ class TransportImpl internal constructor(
         }
     }
 
-    private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(
+        parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) + Dispatchers.IO,
+    )
 
     private val inboundChannel = Channel<Inbound>(INBOUND_CAPACITY)
     override val inbound: ReceiveChannel<Inbound> = inboundChannel
@@ -124,7 +130,15 @@ class TransportImpl internal constructor(
 
     private sealed interface Outbound {
         data class Message(val message: MessageLite, val type: HumlaTCPMessageType) : Outbound
-        data class Tunnelled(val packet: ByteArray) : Outbound
+        data class Tunnelled(val packet: ByteArray) : Outbound {
+            override fun equals(other: Any?): Boolean {
+                if (this === other) return true
+                if (other !is Tunnelled) return false
+                return packet.contentEquals(other.packet)
+            }
+
+            override fun hashCode(): Int = packet.contentHashCode()
+        }
     }
 
     private val outbound = Channel<Outbound>(OUTBOUND_CAPACITY)
@@ -136,51 +150,72 @@ class TransportImpl internal constructor(
     private val startNanos = System.nanoTime()
     private val usingUdpRef = AtomicBoolean(!forceTcp)
 
-    private var readerThread: Thread? = null
-    private var writerJob: Job? = null
-    private var pingJob: Job? = null
-    private var voiceCollectJob: Job? = null
+    private val readerThreadRef = AtomicReference<Thread?>(null)
+    private val writerJobRef = AtomicReference<Job?>(null)
+    private val pingJobRef = AtomicReference<Job?>(null)
+    private val voiceCollectJobRef = AtomicReference<Job?>(null)
 
-    private var resolvedHost: String = host
-    private var resolvedPort: Int = port
+    private val resolvedHostRef = AtomicReference(host)
+    private val resolvedPortRef = AtomicInteger(port)
 
-    override val remoteHost: String get() = resolvedHost
-    override val remotePort: Int get() = resolvedPort
+    override val remoteHost: String get() = resolvedHostRef.get()
+    override val remotePort: Int get() = resolvedPortRef.get()
 
     fun elapsedMicros(): Long = (System.nanoTime() - startNanos) / 1000
 
     /** Connects (DNS + TLS + verify), then starts reader/writer. Throws TransportException. */
     suspend fun connect() {
+        checkNotMainThread()
         withContext(Dispatchers.IO) {
             resolveIfNeeded()
             val factory = createFactory()
+            val expectedHost = resolvedHostRef.get()
+            factory.setExpectedHost(expectedHost)
+            val created = factory.createSocket(expectedHost, resolvedPortRef.get(), CONNECT_TIMEOUT_MS)
             val socket = try {
-                factory.setExpectedHost(resolvedHost)
-                val created = factory.createSocket(resolvedHost, resolvedPort, CONNECT_TIMEOUT_MS)
                 created.keepAlive = true
                 created.tcpNoDelay = true
                 created.soTimeout = CONNECT_TIMEOUT_MS
-                created.startHandshake()
+                try {
+                    created.startHandshake()
+                } catch (e: javax.net.ssl.SSLHandshakeException) {
+                    // Handshake allocated the socket; close it before mapping
+                    // the failure (verifyIdentity path below already closes).
+                    try {
+                        created.close()
+                    } catch (ignored: Exception) {
+                    }
+                    throw e
+                }
                 created
             } catch (e: javax.net.ssl.SSLHandshakeException) {
                 val chain = factory.getServerChain()
                 if (chain != null) {
                     val recorded = factory.getLastHandshakeFailure()
-                    val failure = classifyFailure(factory, recorded, resolvedHost)
+                    val failure = classifyFailure(factory, recorded, expectedHost)
                     throw TransportException(
                         ClientError.Trust(
                             chain = kotlinx.collections.immutable.persistentListOf(*chain),
                             failure = failure,
-                            verifiedHost = resolvedHost,
+                            verifiedHost = expectedHost,
                         ),
                     )
                 }
                 throw TransportException(ClientError.Connection("TLS handshake failed: ${e.message}", e))
+            } catch (e: CancellationException) {
+                try {
+                    created.close()
+                } catch (ignored: Exception) {
+                }
+                throw e
             } catch (e: Exception) {
-                if (e is TransportException) throw e
+                try {
+                    created.close()
+                } catch (ignored: Exception) {
+                }
                 throw TransportException(ClientError.Connection("Connect failed: ${e.message}", e))
             }
-            if (!verifyIdentity(factory, socket, resolvedHost)) {
+            if (!verifyIdentity(factory, socket, expectedHost)) {
                 try {
                     socket.close()
                 } catch (ignored: Exception) {
@@ -195,27 +230,25 @@ class TransportImpl internal constructor(
                             kotlinx.collections.immutable.persistentListOf()
                         },
                         failure = failure,
-                        verifiedHost = resolvedHost,
+                        verifiedHost = expectedHost,
                     ),
                 )
             }
             socket.soTimeout = READ_TIMEOUT_MS
             socketRef.set(socket)
             startReaderWriter(socket)
-            if (forceTcp) {
-                _stats.update { it.copy(usingUdp = false) }
-                usingUdpRef.set(false)
-            }
+            // usingUdpRef and _stats were already seeded with !forceTcp at
+            // construction; no post-connect reset needed.
         }
     }
 
     private suspend fun resolveIfNeeded() {
-        if (resolvedPort != 0) return
-        val original = resolvedHost
+        if (resolvedPortRef.get() != 0) return
+        val original = resolvedHostRef.get()
         if (HumlaTCP.isIpLiteral(original) || original.contains(":") ||
             TlsHostnameVerifier.isOnionHost(original)
         ) {
-            resolvedPort = Constants.DEFAULT_PORT
+            resolvedPortRef.set(Constants.DEFAULT_PORT)
             return
         }
         try {
@@ -230,16 +263,20 @@ class TransportImpl internal constructor(
                     for (srv in srvs) {
                         var target = srv.target.toString()
                         if (target.endsWith(".")) target = target.substring(0, target.length - 1)
-                        resolvedHost = target
-                        resolvedPort = srv.port
+                        resolvedHostRef.set(target)
+                        resolvedPortRef.set(srv.port)
                         break
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            // Attempt cancelled (disconnect/new connect): propagate so the
+            // attempt tears down instead of connecting with a default port.
+            throw e
         } catch (e: Exception) {
             logger.warning("SRV resolution failed for $original: $e")
         }
-        if (resolvedPort == 0) resolvedPort = Constants.DEFAULT_PORT
+        if (resolvedPortRef.get() == 0) resolvedPortRef.set(Constants.DEFAULT_PORT)
     }
 
     private fun createFactory(): HumlaSSLSocketFactory {
@@ -255,8 +292,13 @@ class TransportImpl internal constructor(
                 keyStore, certificatePassword, trustStorePath,
                 trustStorePassword, trustStoreFormat,
             )
-        } catch (e: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
             throw TransportException(ClientError.Connection("Could not load certificate: ${e.message}", e))
+        } catch (e: Exception) {
+            // Platform/provider bugs fail loud instead of reconnect-looping.
+            throw e
         }
     }
 
@@ -311,10 +353,14 @@ class TransportImpl internal constructor(
         return HandshakeFailure.UNTRUSTED_ISSUER
     }
 
+    // Cached wire-type lookup: HumlaTCPMessageType order IS the wire value
+    // (frozen by the Mumble protocol); avoid values() allocation per frame.
+    private val tcpTypes = HumlaTCPMessageType.values()
+
     private fun startReaderWriter(socket: javax.net.ssl.SSLSocket) {
         val input = DataInputStream(socket.inputStream)
         val output = DataOutputStream(socket.outputStream)
-        writerJob = scope.launch {
+        writerJobRef.set(scope.launch {
             for (item in outbound) {
                 try {
                     when (item) {
@@ -331,13 +377,15 @@ class TransportImpl internal constructor(
                             output.flush()
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     failOnce(ClientError.Connection("TCP write failed: ${e.message}", e))
                     break
                 }
             }
-        }
-        voiceCollectJob = scope.launch {
+        })
+        voiceCollectJobRef.set(scope.launch {
             try {
                 voice.events.collect { event ->
                     when (event) {
@@ -349,15 +397,17 @@ class TransportImpl internal constructor(
                         is VoiceEvent.UdpUnavailable -> switchToTunnel("voice reported UDP unavailable")
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Scope cancelled; exit quietly.
             }
-        }
+        })
         val thread = Thread({
             readerLoop(input)
         }, "transport-reader")
         thread.isDaemon = true
-        readerThread = thread
+        readerThreadRef.set(thread)
         thread.start()
     }
 
@@ -387,7 +437,7 @@ class TransportImpl internal constructor(
                     failOnce(ClientError.Connection("TCP read failed: ${e.message}", e))
                     return
                 }
-                val tcpType = HumlaTCPMessageType.values()[messageType.toInt()]
+                val tcpType = tcpTypes[messageType.toInt()]
                 if (tcpType == HumlaTCPMessageType.UDPTunnel) {
                     inboundChannel.trySendBlocking(Inbound.Tunnelled(data))
                     continue
@@ -396,6 +446,7 @@ class TransportImpl internal constructor(
                 try {
                     parsed = ProtobufMessages.parse(data, tcpType)
                 } catch (e: InvalidProtocolBufferException) {
+                    logger.fine("Dropping malformed $tcpType frame")
                     continue
                 }
                 when (tcpType) {
@@ -428,7 +479,7 @@ class TransportImpl internal constructor(
         } else {
             return
         }
-        (voice as? LegacyVoiceLink)?.setServerVersion(v2, v1)
+        voice.setServerVersion(v2, v1)
     }
 
     private fun handleCryptSetup(msg: Mumble.CryptSetup) {
@@ -444,7 +495,6 @@ class TransportImpl internal constructor(
                     val keys = CryptKeys(key, clientNonce, serverNonce)
                     _cryptKeys.value = keys
                     voice.setKeys(keys)
-                    (voice as? LegacyVoiceLink)?.refreshStatus()
                 } else {
                     failOnce(ClientError.Connection("Invalid key or nonce size in CryptSetup", null))
                 }
@@ -452,7 +502,6 @@ class TransportImpl internal constructor(
                 val serverNonce = msg.serverNonce
                 if (serverNonce.size() == CryptState.AES_BLOCK_SIZE) {
                     voice.setDecryptIv(serverNonce)
-                    (voice as? LegacyVoiceLink)?.refreshStatus()
                 } else {
                     failOnce(ClientError.Connection("Invalid server nonce in CryptSetup", null))
                 }
@@ -501,19 +550,13 @@ class TransportImpl internal constructor(
         _stats.update { it.copy(usingUdp = false) }
         voice.submit(VoiceCommand.SetVoiceRoute(false))
         logger.info("Switching to TCP mode ($reason)")
+        // Single dummy in the protobuf form, matching enableForceTCP parity
+        // (HumlaConnection sent Mumble.UDPTunnel{packet=3 zeros}; raw voice
+        // frames always travel as raw UDPTunnel payloads, never protobuf).
         try {
-            val dummy = dummyTunnelPacket()
-            if (!outbound.trySend(Outbound.Tunnelled(dummy)).isSuccess) {
-                // Outbound full; the next send will fail the session. Send the
-                // dummy on the writer path via a direct try to avoid loss.
-            }
-            // Also send as a UDPTunnel control message carrying 3 zero bytes
-            // inside the raw payload, matching today's enableForceTCP.
             val utb = Mumble.UDPTunnel.newBuilder()
-                .setPacket(ByteString.copyFrom(dummy))
+                .setPacket(ByteString.copyFrom(dummyTunnelPacket()))
                 .build()
-            // Note: voice-over-TCP uses raw packets (see sendTunnelled);
-            // the dummy here is the protobuf form telling the server to tunnel.
             send(utb, HumlaTCPMessageType.UDPTunnel)
         } catch (e: Exception) {
             // Best effort; ping loop will retry the decision.
@@ -533,17 +576,19 @@ class TransportImpl internal constructor(
                 .build()
             send(utb, HumlaTCPMessageType.UDPTunnel)
         }
-        pingJob = scope.launch {
+        pingJobRef.set(scope.launch {
             // First ping at once, matching today's scheduleNextPing(0).
             while (isActive) {
                 try {
                     sendKeepalivePing()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     logger.warning("Keepalive ping failed: $e")
                 }
                 delay(nextPingDelaySeconds() * 1000L)
             }
-        }
+        })
     }
 
     private fun nextPingDelaySeconds(): Int {
@@ -589,18 +634,24 @@ class TransportImpl internal constructor(
     }
 
     private fun failOnce(error: ClientError) {
+        if (closed.get()) return
         failureDeferred.complete(error)
         // Unblock the reader promptly; its failure path exits quietly on close.
-        if (error is ClientError.Connection) {
-            try {
-                socketRef.get()?.close()
-            } catch (ignored: Exception) {
-            }
+        try {
+            socketRef.get()?.close()
+        } catch (ignored: Exception) {
         }
     }
 
     override fun close() {
+        checkNotMainThread()
         if (!closed.compareAndSet(false, true)) return
+        // Wake a reader parked in trySendBlocking on a full inbound channel;
+        // its finally block is what observes the close.
+        try {
+            inboundChannel.close()
+        } catch (ignored: Exception) {
+        }
         try {
             socketRef.getAndSet(null)?.close()
         } catch (ignored: Exception) {
@@ -608,7 +659,7 @@ class TransportImpl internal constructor(
         outbound.close()
         scope.cancel()
         try {
-            readerThread?.join(1000)
+            readerThreadRef.get()?.join(1000)
         } catch (ignored: Exception) {
         }
     }
@@ -651,13 +702,26 @@ class DefaultTransportFactory : TransportFactory {
             } catch (ignored: Exception) {
             }
             throw e
-        } catch (e: Exception) {
+        } catch (e: CancellationException) {
             try {
                 impl.close()
             } catch (ignored: Exception) {
             }
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            throw e
+        } catch (e: IOException) {
+            try {
+                impl.close()
+            } catch (ignored: Exception) {
+            }
             throw TransportException(ClientError.Connection("Connect failed: ${e.message}", e))
+        } catch (e: Exception) {
+            // Programming/config bugs fail loud (crash reporter) instead of
+            // looping reconnects forever on a deterministic failure.
+            try {
+                impl.close()
+            } catch (ignored: Exception) {
+            }
+            throw e
         }
         return impl
     }

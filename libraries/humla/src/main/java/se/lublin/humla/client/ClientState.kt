@@ -17,7 +17,6 @@
 
 package se.lublin.humla.client
 
-import com.google.protobuf.ByteString
 import java.security.cert.X509Certificate
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentListOf
@@ -36,7 +35,7 @@ import se.lublin.humla.state.ServerState
 sealed interface ClientState {
     data object Idle : ClientState
     data class Connecting(val target: ConnectTarget, val attempt: Int) : ClientState
-    data class Connected(val target: ConnectTarget, val session: se.lublin.humla.client.Session) : ClientState
+    data class Connected(val target: ConnectTarget, val session: Session) : ClientState
     data class Reconnecting(
         val target: ConnectTarget,
         val attempt: Int,
@@ -71,15 +70,12 @@ sealed interface ClientError {
     ) : ClientError
 }
 
-/** Convenience for tests: empty chain trust error. */
+/** Convenience for tests: empty chain trust error (host defaults to null). */
 fun trustError(
     failure: HandshakeFailure = HandshakeFailure.UNTRUSTED_ISSUER,
-    verifiedHost: String? = "127.0.0.1",
+    verifiedHost: String? = null,
 ): ClientError.Trust = ClientError.Trust(
     chain = persistentListOf(),
     failure = failure,
     verifiedHost = verifiedHost,
 )
-
-/** ByteString helper keeps ClientCertificate construction call-site clean. */
-fun ByteArray.toClientByteString(): ByteString = ByteString.copyFrom(this)
