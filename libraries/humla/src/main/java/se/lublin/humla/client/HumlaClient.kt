@@ -88,7 +88,6 @@ class HumlaClient(
     // readers go through state.value (which carries attempt/target/error).
     private var sessionIds = 0L
     private var attempt: Int = 0
-    private var currentTarget: ConnectTarget? = null
     // Attempt epoch: stamped at every doConnect/doDisconnect/cancelReconnect
     // and carried by each attempt. Staleness is identity on the epoch, not
     // value equality on the target: a manual retry to the same server
@@ -121,7 +120,6 @@ class HumlaClient(
             if (s is ClientState.Reconnecting) {
                 cancelJobs()
                 attempt = 0
-                currentTarget = null
                 connectEpoch += 1
                 _state.value = ClientState.Idle
             }
@@ -137,6 +135,9 @@ class HumlaClient(
     fun close(): Job {
         return scope.launch(clientDispatcher) {
             cancelJobs()
+            // Retire the epoch for symmetry with disconnect: a parked
+            // non-cooperative failure must not republish after close.
+            connectEpoch += 1
             teardownLiveSession()
             scope.cancel()
         }
@@ -188,7 +189,6 @@ class HumlaClient(
     private suspend fun doDisconnect() {
         cancelJobs()
         attempt = 0
-        currentTarget = null
         // Retire the epoch: a cancelled attempt whose factory ignores
         // cancellation must not resurrect Reconnecting after Idle.
         connectEpoch += 1
@@ -205,7 +205,6 @@ class HumlaClient(
         // retry after failures keeps the grown backoff (spec, client.md).
         cancelJobs()
         teardownLiveSession()
-        currentTarget = target
         // Stamp the new attempt: any failure arriving with an older epoch
         // belongs to a retired attempt and must be ignored.
         connectEpoch += 1
