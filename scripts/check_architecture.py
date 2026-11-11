@@ -44,6 +44,8 @@ SINGLE_THREADED_ENGINE = False
 BOUNDARY_FILES = (
     # TCP reader thread (step 3 keeps the file).
     "libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt",
+    # Transport reader thread (step 3 extracts the Transport).
+    "libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt",
     # TLS callbacks on the socket thread.
     "libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt",
     # Owns its HandlerThread + platform-callback handler (step 4).
