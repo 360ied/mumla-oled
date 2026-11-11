@@ -49,6 +49,11 @@ import se.lublin.humla.audio.AudioRouteController
 import se.lublin.humla.audio.RouteEvent
 import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.audio.ScoLink
+import se.lublin.humla.route.RouteControl
+import se.lublin.humla.route.RoutePreferences
+import se.lublin.humla.voice.PolicyCollector
+import se.lublin.humla.voice.VoiceControl
+import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.Constants
 import se.lublin.humla.client.ClientCertificate
 import se.lublin.humla.client.ClientState
@@ -185,6 +190,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     private lateinit var mAudioBuilder: AudioHandler.Builder
     private val inputModes = InputModes()
     private lateinit var route: AudioRouteController
+    private lateinit var routeControl: RouteControl
+    private lateinit var voiceControl: VoiceControl
+    private lateinit var policyCollector: PolicyCollector
+    private val voiceSettingsFlow = kotlinx.coroutines.flow.MutableStateFlow(VoiceSettings.initial())
+    private val routePrefsFlow = kotlinx.coroutines.flow.MutableStateFlow(
+        RoutePreferences(bluetoothSco = false, handsetStream = android.media.AudioManager.STREAM_MUSIC),
+    )
 
     private val routeHost = object : AudioRouteController.Host {
         override val isLive: Boolean
