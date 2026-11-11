@@ -108,7 +108,11 @@ class StateImmutabilityTest {
     fun stateRootsAreDeeplyImmutable() {
         // A new SessionEvent subtype must be walked: fail loudly if the
         // sealed family grows without updating sealedImplementations above.
-        assertEquals(11, sealedImplementations(SessionEvent::class).size)
+        // permittedSubclasses is authoritative (Kotlin sealed -> Java sealed).
+        assertEquals(
+            SessionEvent::class.java.permittedSubclasses.size,
+            sealedImplementations(SessionEvent::class).size,
+        )
         val roots: List<KClass<*>> = listOf(
             SessionState::class,
             ServerState::class,

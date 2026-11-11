@@ -61,11 +61,15 @@ class StateMessageHandler(
         if (!msg.hasChannelId()) return
         val id = msg.channelId
         // Decide inside update: a concurrent intent write between a read
-        // and a plain assign would be clobbered.
+        // and a plain assign would be clobbered. A refused transition
+        // (self-parent/cycle) leaves the channel absent, so fan out from
+        // the post-image, never the pre-image alone.
         var added = false
         state.update { current ->
-            added = !current.server.channels.containsKey(id)
-            applyChannelState(current, msg).state
+            val next = applyChannelState(current, msg).state
+            added = !current.server.channels.containsKey(id) &&
+                next.server.channels.containsKey(id)
+            next
         }
         val handle = ChannelHandle(id, state)
         // Touch to cache in case a later remove needs scalars.
@@ -77,6 +81,8 @@ class StateMessageHandler(
         val id = msg.channelId
         // Snapshot the detached infos inside the same atomic update that
         // removes them, then seed handles so callbacks read last values.
+        // Sorted children-first (depth descending): iteration order alone
+        // does not guarantee the old detached-subtree sequence.
         var removedInfos: List<ChannelInfo> = emptyList()
         var known = false
         state.update { current ->
@@ -84,12 +90,22 @@ class StateMessageHandler(
             if (id == 0 || !known) return@update current
             val next = applyChannelRemove(current, msg).state
             val removedIds = current.server.channels.keys - next.server.channels.keys
+            fun depthOf(start: Int): Int {
+                var depth = 0
+                var node: Int? = start
+                val seen = HashSet<Int>()
+                while (node != null && removedIds.contains(node) && seen.add(node)) {
+                    node = current.server.channels[node]?.parentId
+                    depth++
+                }
+                return depth
+            }
             removedInfos = removedIds.mapNotNull { current.server.channels[it] }
+                .sortedByDescending { depthOf(it.id) }
             next
         }
         if (id == 0 || !known) return
-        // Children-first, like the old detached-subtree order.
-        for (info in removedInfos.asReversed()) {
+        for (info in removedInfos) {
             observer.onChannelRemoved(ChannelHandle(info.id, state, seed = info))
         }
     }
@@ -102,6 +118,7 @@ class StateMessageHandler(
         var oldChannelId: Int? = null
         var newChannelId: Int? = null
         var outcomeEvents: List<SessionEvent> = emptyList()
+        lateinit var snap: SessionState
         state.update { current ->
             val oldUser = current.server.users[session]
             isNew = oldUser == null
@@ -109,9 +126,12 @@ class StateMessageHandler(
             val result = applyUserState(current, msg, mutedUserIds, ignoredUserIds)
             outcomeEvents = result.events
             newChannelId = result.state.server.users[session]?.channelId
-            result.state
+            snap = result.state
+            snap
         }
-        events.log(outcomeEvents, state.value)
+        // Gate the already-decided events against the transition snapshot,
+        // not a fresh read that a concurrent intent may have moved on.
+        events.log(outcomeEvents, snap)
         val handle = UserHandle(session, state)
         handle.name
         if (isNew) {
@@ -133,6 +153,7 @@ class StateMessageHandler(
         var selfRemoved = false
         var oldInfo: UserInfo? = null
         var outcomeEvents: List<SessionEvent> = emptyList()
+        lateinit var snap: SessionState
         state.update { current ->
             if (session == current.server.selfSession) {
                 selfRemoved = true
@@ -142,10 +163,11 @@ class StateMessageHandler(
             val actorName = if (msg.hasActor()) current.server.users[msg.actor]?.name else null
             val result = applyUserRemove(current, msg, oldInfo?.name, actorName)
             outcomeEvents = result.events
-            result.state
+            snap = result.state
+            snap
         }
         if (selfRemoved) return
-        events.log(outcomeEvents, state.value)
+        events.log(outcomeEvents, snap)
         val reason = outcomeEvents.filterIsInstance<SessionEvent.UserLeft>().firstOrNull()?.reason
         if (oldInfo != null) {
             observer.onUserRemoved(UserHandle(session, state, seed = oldInfo), reason)
@@ -167,12 +189,14 @@ class StateMessageHandler(
 
     override fun messageServerSync(msg: Mumble.ServerSync) {
         var outcomeEvents: List<SessionEvent> = emptyList()
+        lateinit var snap: SessionState
         state.update { current ->
             val result = applyServerSync(current, msg)
             outcomeEvents = result.events
-            result.state
+            snap = result.state
+            snap
         }
-        events.log(outcomeEvents, state.value)
+        events.log(outcomeEvents, snap)
     }
 
     override fun messageServerConfig(msg: Mumble.ServerConfig) {

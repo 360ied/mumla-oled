@@ -31,7 +31,6 @@ import java.util.Collections;
 
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IUser;
-import se.lublin.humla.model.TalkState;
 
 /**
  * Adapter over live-handle interfaces. Step-2 spike evidence: the adapter
@@ -49,10 +48,8 @@ public class ChannelAdapterTest extends TestCase {
         super.setUp();
         mUser1 = mock(IUser.class);
         when(mUser1.getSession()).thenReturn(101);
-        when(mUser1.getName()).thenReturn("Alice");
         mUser2 = mock(IUser.class);
         when(mUser2.getSession()).thenReturn(102);
-        when(mUser2.getName()).thenReturn("Bob");
         mChannel = mock(IChannel.class);
         when(mChannel.getUsers()).thenReturn(Arrays.asList(mUser1, mUser2));
         mAdapter = new ChannelAdapter(null, mChannel);
@@ -124,10 +121,7 @@ public class ChannelAdapterTest extends TestCase {
 
     public void testTalkStateReadsFollowHandle() {
         // Talk-state storage moved to UserHandle (see humla HandlesTest);
-        // the adapter reads whatever the handle reports. Identity is stable
-        // across talk-state changes; the stub below is observed directly.
-        when(mUser1.getTalkState()).thenReturn(TalkState.TALKING);
-        assertEquals(TalkState.TALKING, mUser1.getTalkState());
+        // adapter identity is stable across talk-state changes.
         assertEquals(101L, mAdapter.getItemId(0));
         assertNull(mAdapter.getTalkStateDrawable(mUser1));
     }

@@ -1775,7 +1775,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * then converges on the same value.
      *
      * Accepted transients (both convergent via the echo): the capture gate
-     * is pushed before the model write, so if the session user is not yet
+     * is pushed before fanning out, so if the session user is not yet
      * visible the mic follows desired state up to a round trip ahead of the
      * UI; and the chat log line is best-effort (dropped if a disconnect
      * interleaves, since logging re-gates on synchronization while the state

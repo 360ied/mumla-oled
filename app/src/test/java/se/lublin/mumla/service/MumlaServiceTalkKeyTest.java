@@ -248,7 +248,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(42);
-                when(user.getTalkState()).thenReturn(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Activation cue must play once on onset", 1, service.getPttOnCueCalls());
         assertEquals("Deactivation cue must not play on onset", 0, service.getPttOffCueCalls());
@@ -267,7 +267,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(42);
-                when(user.getTalkState()).thenReturn(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Consecutive talking states must not duplicate activation cue", 1, service.getPttOnCueCalls());
@@ -286,7 +286,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(42);
-                when(user.getTalkState()).thenReturn(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals(0, service.getPttOnCueCalls());
 
@@ -304,7 +304,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(42);
-                when(user.getTalkState()).thenReturn(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals(0, service.getPttOnCueCalls());
 
@@ -321,7 +321,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser otherUser = mock(IUser.class);
         when(otherUser.getSession()).thenReturn(99);
-                when(otherUser.getTalkState()).thenReturn(TalkState.TALKING);
+        when(otherUser.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(otherUser);
         assertEquals(0, service.getPttOnCueCalls());
 
@@ -338,7 +338,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(42);
-                when(user.getTalkState()).thenReturn(TalkState.SHOUTING);
+        when(user.getTalkState()).thenReturn(TalkState.SHOUTING);
         service.handleUserTalkStateUpdated(user);
         assertEquals("SHOUTING must trigger activation cue", 1, service.getPttOnCueCalls());
 
@@ -359,7 +359,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
 
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(42);
-                when(user.getTalkState()).thenReturn(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals(1, service.getPttOnCueCalls());
 

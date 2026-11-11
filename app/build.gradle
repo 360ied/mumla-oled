@@ -216,6 +216,6 @@ dependencies {
     testImplementation libs.room.testing
     // Listener-bridge unit test (TestDispatcher + setMain).
     testImplementation libs.coroutines.test
-    // Step-2 live handles: interface fakes in adapter/avatar/talk-key tests.
+    // Step-2 live handles: interface mocks in adapter/avatar/talk-key tests.
     testImplementation libs.mockito.core
 }

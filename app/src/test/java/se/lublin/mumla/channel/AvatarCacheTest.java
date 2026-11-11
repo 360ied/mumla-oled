@@ -63,8 +63,6 @@ public class AvatarCacheTest extends TestCase {
         when(user.hasTexture()).thenReturn(true);
         when(user.getTexture()).thenReturn(texture);
         when(user.getTextureCacheKey()).thenReturn(12345);
-        assertTrue(user.hasTexture());
-        assertTrue(user.getTextureCacheKey() != 0);
 
         // First call fails decode and puts negative entry
         assertNull(mCache.get(user));
