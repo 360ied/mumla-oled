@@ -101,12 +101,15 @@ public class MurmurConnectTest {
             }
             cert = cf.generateCertificate(in);
         }
-        KeyStore ks = KeyStore.getInstance("JKS");
+        KeyStore ks = KeyStore.getInstance(InteropClient.TRUST_FORMAT);
         ks.load(null, null);
         ks.setCertificateEntry("127.0.0.1", cert);
         Path store = Files.createTempFile("murmur-interop-trust-", ".jks");
         tempStores.add(store);
-        char[] pw = InteropClientKt.INTEROP_TRUST_PASSWORD.toCharArray();
+        // The password String constant itself stays in memory (as does
+        // TrustStoreRef's copy); zeroing only clears this transient array.
+        // Accepted as test hygiene, not a security boundary.
+        char[] pw = InteropClient.TRUST_PASSWORD.toCharArray();
         try (var out = Files.newOutputStream(store)) {
             ks.store(out, pw);
         } finally {

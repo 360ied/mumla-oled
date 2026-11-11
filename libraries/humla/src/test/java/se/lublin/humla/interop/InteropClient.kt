@@ -36,9 +36,6 @@ import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.util.IHumlaObserver
 
-const val INTEROP_TRUST_PASSWORD = "interop"
-const val INTEROP_TRUST_FORMAT = "JKS"
-const val INTEROP_CLIENT_NAME = "MumlaOLED-interop"
 private const val AWAIT_TIMEOUT_NANOS = 30_000_000_000L
 private const val POLL_MILLIS = 100L
 
@@ -47,6 +44,9 @@ private const val POLL_MILLIS = 100L
  * Hides PersistentList, Function1, CoroutineScope, and Flow construction from Java.
  */
 object InteropClient {
+    const val TRUST_PASSWORD = "interop"
+    const val TRUST_FORMAT = "JKS"
+    const val CLIENT_NAME = "MumlaOLED-interop"
     @JvmStatic
     fun target(
         host: String,
@@ -65,12 +65,12 @@ object InteropClient {
         ),
         certificate = null,
         trustStore = if (trustStorePath != null) {
-            TrustStoreRef(path = trustStorePath, password = INTEROP_TRUST_PASSWORD, format = INTEROP_TRUST_FORMAT)
+            TrustStoreRef(path = trustStorePath, password = TRUST_PASSWORD, format = TRUST_FORMAT)
         } else {
             null
         },
         forceTcp = true,
-        clientName = INTEROP_CLIENT_NAME,
+        clientName = CLIENT_NAME,
         accessTokens = persistentListOf(),
     )
 
@@ -168,7 +168,9 @@ class HumlaClientHandle(
     fun disconnectAndClose() {
         try {
             client.disconnect()
-        } catch (ignored: Exception) {
+        } catch (e: Exception) {
+            java.util.logging.Logger.getLogger("InteropClient")
+                .fine("Teardown disconnect dropped: $e")
         }
         // Async disconnect runs on the client dispatcher; poll for Idle
         // instead of a fixed sleep so teardown cannot race server stop.
@@ -176,12 +178,16 @@ class HumlaClientHandle(
             InteropClient.awaitIdle(client, "teardown disconnect")
         } catch (e: AssertionError) {
             // Best effort in teardown; the scope cancel below still reclaims.
+            java.util.logging.Logger.getLogger("InteropClient")
+                .fine("Teardown idle wait dropped: $e")
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }
         try {
             voice.close()
-        } catch (ignored: Exception) {
+        } catch (e: Exception) {
+            java.util.logging.Logger.getLogger("InteropClient")
+                .fine("Teardown voice close dropped: $e")
         }
         scope.cancel()
     }
