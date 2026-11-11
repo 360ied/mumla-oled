@@ -478,6 +478,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         route.registerDeviceListener(mHandler)
         route.onInit()
 
+        routeControl = RouteControl.create(audioPlatform, scoLink, routePrefsFlow, lifecycleScope)
+        routeControl.onInit()
+        routeControl.start()
+
         // Application-scoped voice link (survives reconnects). The tunnel sink
         // routes to the current session's transport (present only in tunnel mode).
         voiceLink = LegacyVoiceLink(
@@ -487,6 +491,23 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 } catch (ignored: Exception) {
                 }
             },
+        )
+
+        policyCollector = PolicyCollector(
+            sessionStates = PolicyCollector.FlowOfStates { _sessionState },
+            settings = voiceSettingsFlow,
+            appScope = lifecycleScope,
+        )
+        voiceControl = VoiceControl(
+            context = this,
+            logger = this,
+            encodeListener = mAudioInputListener,
+            talkingListener = mAudioOutputListener,
+            routeStates = routeControl.state,
+            policies = policyCollector.policy,
+            settings = voiceSettingsFlow,
+            voiceLink = voiceLink,
+            appScope = lifecycleScope,
         )
 
         // LocalFacts persistence division of labor (legacy parity): the app
