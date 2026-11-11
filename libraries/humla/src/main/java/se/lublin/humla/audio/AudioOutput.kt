@@ -546,12 +546,19 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             NativeAudioOutputEngine.TALK_WHISPERING -> TalkState.WHISPERING
             else -> {
                 Log.w(TAG, "Unknown talk state ordinal: " + talkStateOrdinal)
-                TalkState.PASSIVE
+                return
             }
         }
         mainHandler.post {
             val user = listener.getUser(session)
-            if (user != null && user.talkState != state) {
+            // No dedup against user.talkState: getUser() returns a fresh
+            // live handle per call (default PASSIVE), so a stale guard here
+            // swallows the PASSIVE that follows TALKING and sticks the
+            // indicator on. Native already emits transitions only
+            // (recordTalkLocked/lastReportedState in
+            // libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp);
+            // stamp and fan out.
+            if (user != null) {
                 user.talkState = state
                 listener.onUserTalkStateUpdated(user)
             }
