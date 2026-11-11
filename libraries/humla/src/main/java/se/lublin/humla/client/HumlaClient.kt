@@ -89,6 +89,12 @@ class HumlaClient(
     private var sessionIds = 0L
     private var attempt: Int = 0
     private var currentTarget: ConnectTarget? = null
+    // Attempt epoch: stamped at every doConnect/doDisconnect/cancelReconnect
+    // and carried by each attempt. Staleness is identity on the epoch, not
+    // value equality on the target: a manual retry to the same server
+    // yields an equal-but-distinct ConnectTarget, and only the epoch tells
+    // the stale attempt apart from the live one.
+    private var connectEpoch = 0L
     private var attemptJob: Job? = null
     private var reconnectDelayJob: Job? = null
     private var networkJob: Job? = null
@@ -116,6 +122,7 @@ class HumlaClient(
                 cancelJobs()
                 attempt = 0
                 currentTarget = null
+                connectEpoch += 1
                 _state.value = ClientState.Idle
             }
         }
@@ -182,6 +189,9 @@ class HumlaClient(
         cancelJobs()
         attempt = 0
         currentTarget = null
+        // Retire the epoch: a cancelled attempt whose factory ignores
+        // cancellation must not resurrect Reconnecting after Idle.
+        connectEpoch += 1
         teardownLiveSession()
         _state.value = ClientState.Idle
     }
@@ -196,17 +206,25 @@ class HumlaClient(
         cancelJobs()
         teardownLiveSession()
         currentTarget = target
+        // Stamp the new attempt: any failure arriving with an older epoch
+        // belongs to a retired attempt and must be ignored.
+        connectEpoch += 1
+        val epoch = connectEpoch
         // The attempt counter is intentionally NOT reset here. A manual
         // retry after failures keeps the grown backoff (spec, client.md).
         // Publishing Connecting here keeps the UI on Connecting through TLS.
         _state.value = ClientState.Connecting(target, attempt)
         val job = scope.launch(clientDispatcher) {
-            runAttempt(this, target)
+            runAttempt(this, target, epoch)
         }
         attemptJob = job
     }
 
-    private suspend fun runAttempt(attemptScope: CoroutineScope, target: ConnectTarget) {
+    private suspend fun runAttempt(
+        attemptScope: CoroutineScope,
+        target: ConnectTarget,
+        epoch: Long,
+    ) {
         // Load facts on IO; a DB problem never blocks connecting.
         val facts: LocalFacts = try {
             withContext(ioDispatcher) {
@@ -235,11 +253,12 @@ class HumlaClient(
         } catch (e: CancellationException) {
             throw e
         } catch (e: TransportException) {
-            onConnectFailed(target, e.error, lastState = null)
+            onConnectFailed(target, epoch, e.error, lastState = null)
             return
         } catch (e: IOException) {
             onConnectFailed(
                 target,
+                epoch,
                 ClientError.Connection("Connect failed: ${e.message}", e),
                 lastState = null,
             )
@@ -248,6 +267,9 @@ class HumlaClient(
             // Unexpected failures fail terminally without retry: deterministic
             // bugs must neither loop reconnects forever nor crash the process
             // via an uncaught coroutine exception. The error stays visible.
+            // Stale-attempt guard: a retired attempt surfacing a bug after
+            // takeover must not tear down the live session.
+            if (epoch != connectEpoch) return
             teardownLiveSession()
             _state.value = ClientState.Failed(
                 target,
@@ -355,14 +377,16 @@ class HumlaClient(
 
     private suspend fun onConnectFailed(
         target: ConnectTarget,
+        epoch: Long,
         error: ClientError,
         lastState: ServerState?,
     ) {
         // Stale-attempt guard (mirrors the liveSession checks in onSynced /
         // onSessionFailed): a cancelled attempt whose factory ignores
         // cancellation can still report failure after a newer attempt took
-        // over. Never tear down or republish for it.
-        if (currentTarget != target) return
+        // over. Never tear down or republish for it. Epoch identity, not
+        // target equality: a same-server retry carries an equal target.
+        if (epoch != connectEpoch) return
         // No session existed (DNS/TLS failure before Session). Teardown any
         // half-open voice/route (no-ops) for a clean state transition.
         teardownLiveSession()
@@ -408,12 +432,15 @@ class HumlaClient(
             System.currentTimeMillis() + delayMs
         }
         _state.value = ClientState.Reconnecting(target, attempt, retryAt, error, lastState)
+        // Staleness is epoch identity (see onConnectFailed): the state check
+        // alone cannot tell a same-target manual retry apart.
+        val epoch = connectEpoch
         // Delay job: backoff then automatic attempt (increments first).
         reconnectDelayJob?.cancel()
         reconnectDelayJob = scope.launch(clientDispatcher) {
             try {
                 delay(delayMs.toLong())
-                if (_state.value is ClientState.Reconnecting && currentTarget == target) {
+                if (_state.value is ClientState.Reconnecting && epoch == connectEpoch) {
                     attempt += 1
                     doConnect(target)
                 }
@@ -430,7 +457,7 @@ class HumlaClient(
             try {
                 network.available.collect {
                     val s = _state.value
-                    if (s is ClientState.Reconnecting && currentTarget == target) {
+                    if (s is ClientState.Reconnecting && epoch == connectEpoch) {
                         try {
                             reconnectDelayJob?.cancel()
                         } catch (ignored: Exception) {

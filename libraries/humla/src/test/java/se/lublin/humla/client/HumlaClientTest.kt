@@ -637,6 +637,90 @@ class HumlaClientTest {
     }
 
     @Test
+    fun staleEqualTargetFailureDoesNotClobberNewerAttempt() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        val factory = FakeFactory()
+        val voice = FakeVoice()
+        val route = FakeRoute(Collections.synchronizedList(ArrayList()))
+        val network = FakeNetwork()
+        val client = newClient(this, dispatcher, factory, voice, route, network)
+        runCurrent()
+        // Park attempt A in a non-cooperative factory that reports failure
+        // even after cancellation.
+        val gate = CompletableDeferred<Unit>()
+        factory.createGate = gate
+        factory.swallowGateCancel = true
+        factory.throwOnCreate = TransportException(ClientError.Connection("stale", null))
+        val targetA = testTarget()
+        client.connect(targetA)
+        runCurrent()
+        // Same-server manual retry: equal value, distinct instance. Value
+        // equality on the target cannot tell A apart from B; the epoch can.
+        val targetB = targetA.copy()
+        assertEquals(targetA, targetB)
+        assertTrue(targetA !== targetB)
+        client.connect(targetB)
+        runCurrent()
+        // A's stale failure must not touch B's pending attempt.
+        val connecting = client.state.value
+        assertTrue(connecting is ClientState.Connecting)
+        assertEquals(targetB, (connecting as ClientState.Connecting).target)
+        // Finish B normally; the stale A failure must not have torn it down.
+        factory.throwOnCreate = null
+        gate.complete(Unit)
+        runCurrent()
+        val liveB = client.currentSession.value!!
+        val fakeB = liveB.transport as FakeTransport
+        assertFalse(fakeB.closed)
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "alice", 0)))
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
+        runCurrent()
+        assertTrue(client.state.value is ClientState.Connected)
+        assertTrue(client.currentSession.value === liveB)
+        client.close().join()
+    }
+
+    @Test
+    fun staleBugFailureDoesNotClobberNewerAttempt() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        val factory = FakeFactory()
+        val voice = FakeVoice()
+        val route = FakeRoute(Collections.synchronizedList(ArrayList()))
+        val network = FakeNetwork()
+        val client = newClient(this, dispatcher, factory, voice, route, network)
+        runCurrent()
+        // Park attempt A in a non-cooperative factory whose stale error is
+        // a deterministic bug, not a transport failure.
+        val gate = CompletableDeferred<Unit>()
+        factory.createGate = gate
+        factory.swallowGateCancel = true
+        factory.throwOnCreate = IllegalStateException("stale-bug")
+        val targetA = testTarget()
+        client.connect(targetA)
+        runCurrent()
+        // Take over with an equal target while A is parked.
+        client.connect(targetA.copy())
+        runCurrent()
+        // The stale bug must neither tear down B nor publish Failed.
+        assertTrue(client.state.value is ClientState.Connecting)
+        // Finish B normally.
+        factory.throwOnCreate = null
+        gate.complete(Unit)
+        runCurrent()
+        val liveB = client.currentSession.value!!
+        val fakeB = liveB.transport as FakeTransport
+        assertFalse(fakeB.closed)
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "alice", 0)))
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
+        runCurrent()
+        assertTrue(client.state.value is ClientState.Connected)
+        assertTrue(client.currentSession.value === liveB)
+        client.close().join()
+    }
+
+    @Test
     fun ioErrorReconnectsButBugDoesNot() = runTest {
         val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
         // IOException (DNS/TLS I/O class) reconnects.
