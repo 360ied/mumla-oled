@@ -25,7 +25,8 @@ import se.lublin.humla.util.IHumlaObserver
 /**
  * A public interface for clients to communicate with a {@link HumlaService}.
  * The long-term goal for this class is to migrate of the complexity out of this class into a
- * HumlaProtocol class that is owned by a {@link se.lublin.humla.net.HumlaConnection}.
+ * HumlaProtocol class that is owned by a Transport (formerly HumlaConnection,
+ * removed in target-architecture step 3).
  * <br><br>
  * Calls that only read volatile route/connection state
  * ({@link #isConnected}, {@link #isBluetoothScoActive},

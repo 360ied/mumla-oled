@@ -54,7 +54,6 @@ import se.lublin.humla.client.ClientCertificate
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.HumlaClient
-import se.lublin.humla.client.InMemoryLocalFactsStore
 import se.lublin.humla.client.LocalFacts
 import se.lublin.humla.client.LocalFactsStore
 import se.lublin.humla.client.NetworkMonitor
@@ -74,7 +73,6 @@ import se.lublin.humla.model.WhisperTarget
 import se.lublin.humla.model.WhisperTargetList
 import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
-import se.lublin.humla.net.HandshakeFailure
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.protocol.AudioHandler
@@ -86,7 +84,6 @@ import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.UserHandle
 import se.lublin.humla.state.emptySessionState as emptyState
-import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.HumlaCallbacks
 import se.lublin.humla.util.HumlaDisconnectedException
@@ -96,7 +93,6 @@ import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.util.VoiceTargetMode
 import java.io.File
 import java.io.IOException
-import java.security.cert.X509Certificate
 import java.time.Clock
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -364,6 +360,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     open override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
             val isConnect = ACTION_CONNECT == intent.action
+            // Pre-onCreate commands cannot connect: lateinits (client, route,
+            // builder) are untouched, so stop idle instead of crashing.
+            if (isConnect && !::client.isInitialized) {
+                Log.w(TAG, "$ACTION_CONNECT before onCreate; ignoring.")
+                stopSelfIfIdle(startId)
+                return START_NOT_STICKY
+            }
             // Guard initialization (unit tests construct the service without
             // onCreate): without a client there is nothing to connect.
             if (isConnect && ::client.isInitialized && client.state.value is ClientState.Connecting) {
@@ -724,8 +727,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         init(this)
     }
 
-    private fun ClientState.isConnectedState(): Boolean = this is ClientState.Connected
-
     private fun se.lublin.humla.client.ClientError.toHumlaException(): HumlaException {
         return when (this) {
             is se.lublin.humla.client.ClientError.Connection ->
@@ -958,8 +959,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
         val existing = audioHandlerRef.get()
         if (existing != null) {
+            // Remove from the owning session (usually current, but a rotation
+            // between creation and retry would strand it otherwise).
+            val owning = pipelineSession.get() ?: session
             try {
-                session.removeTcpHandler(existing)
+                owning.removeTcpHandler(existing)
             } catch (ignored: Exception) {
             }
             try {
