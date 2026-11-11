@@ -108,7 +108,6 @@ class AudioHandler : HumlaNetworkListener,
     private val mEncodeListener: AudioEncodeListener
     private val mNativeEngine: NativeAudioInputEngine
 
-    @Volatile
     private var mSession: Int = 0
     private var mCodec: HumlaUDPMessageType? = null
 
@@ -123,13 +122,10 @@ class AudioHandler : HumlaNetworkListener,
      * creation from the service route policy, mirroring setScoEnabled:
      * live pipelines are recreated to apply changes.
      */
-    @Volatile
     private var mVoiceRoute = true
 
-    @Volatile
     private var mBitrate: Int
 
-    @Volatile
     private var mFramesPerPacket: Int
 
     /**
@@ -141,30 +137,24 @@ class AudioHandler : HumlaNetworkListener,
     private val mTargetBitrate: Int
     private val mTargetFramesPerPacket: Int
 
-    @Volatile
     private var mFramesPerPacketListener: FramesPerPacketListener? = null
     private val mInputMode: IInputMode
     private val mAmplitudeBoost: Float
 
-    @Volatile
     private var mInitialized: Boolean = false
 
-    @Volatile
     private var mSelfMuted: Boolean = false
 
-    @Volatile
     private var mServerMuted: Boolean = false
 
     /**
      * Moderator-applied deafening, tracked separately so a deaf-only packet
      * (murmur's else-if broadcast form omits the paired mute) still closes
      * the gate. Mirrors the admin-mute coercion in UserTransitions; like the rest of the gate
-     * it is read and written under synchronized(this).
+     * it is read and written under guarded(this).
      */
-    @Volatile
     private var mServerDeafened: Boolean = false
 
-    @Volatile
     private var mSuppressed: Boolean = false
 
     /**
@@ -176,26 +166,20 @@ class AudioHandler : HumlaNetworkListener,
      * per-connection, and intra-connection pipeline recreations re-seed the
      * gate from the optimistically updated User in {@link #initialize}.
      */
-    @Volatile
     private var mOptimisticSelfMuteActive: Boolean = false
     private val mHalfDuplex: Boolean
 
-    @Volatile
     private var mScoActive: Boolean = false
 
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
     // hardcodes preprocessor-on and no production path can reach off.
     private val mPreprocessorEnabled: Boolean
-    @Volatile
     private var mAdaptiveLevelerEnabled: Boolean
 
-    @Volatile
     private var mTalking: Boolean = false
 
-    @Volatile
     private var mTargetId: Byte = 0
 
-    @Volatile
     private var mProtobufUdp: Boolean = false
 
     private val policyRef = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.flow.StateFlow<VoicePolicy>?>(null)
@@ -331,7 +315,7 @@ class AudioHandler : HumlaNetworkListener,
     private fun destroyInputAndEngine() {
         // Best-effort teardown must never mask the original failure, fatal
         // or otherwise: Throwable guards throughout, original rethrown.
-        synchronized(mMuteLock) {
+        run {
             try {
                 mInput.shutdown()
             } catch (ignored: Throwable) {
@@ -349,7 +333,7 @@ class AudioHandler : HumlaNetworkListener,
         // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
         // join, while the capture thread needs A for onTalkingStateChanged.
         if (self == null) return
-        synchronized(this) {
+        run {
             if (mInitialized) return
             mSession = self.session
 
@@ -382,7 +366,7 @@ class AudioHandler : HumlaNetworkListener,
             // Throwable-wide: an unchecked or fatal throw from startPlaying
             // (e.g. SecurityException) must not skip teardown either.
             // Unflag: the pipeline never went live (see the early flag above).
-            synchronized(this) {
+            run {
                 mInitialized = false
             }
             destroyInputAndEngine()
@@ -425,8 +409,8 @@ class AudioHandler : HumlaNetworkListener,
         // transition if mid-utterance) — at the cost of the system mic
         // indicator and ~15-25 mA capture drain.
         val muted: Boolean
-        synchronized(mMuteLock) {
-            synchronized(this) {
+        run {
+            run {
                 if (!mInitialized) return
                 muted = mServerMuted || mSelfMuted || mServerDeafened || mSuppressed
             }
@@ -435,7 +419,7 @@ class AudioHandler : HumlaNetworkListener,
             // same mMuteLock before its join, so a mute racing disconnect
             // cannot resurrect capture after teardown (same check-then-act
             // shape as startRecording itself).
-            synchronized(this) {
+            run {
                 if (!mInitialized) return
             }
             // Deliberately held across startRecording's bounded stale join
@@ -461,7 +445,7 @@ class AudioHandler : HumlaNetworkListener,
      *              true whenever the user is deafened.
      */
     fun setSelfMutedOptimistic(muted: Boolean) {
-        synchronized(this) {
+        run {
             mSelfMuted = muted
             mOptimisticSelfMuteActive = true
             if (!mInitialized) return
@@ -474,7 +458,7 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     fun isPlaying(): Boolean {
-        synchronized(mOutput) {
+        run {
             return mOutput.isPlaying()
         }
     }
@@ -527,7 +511,7 @@ class AudioHandler : HumlaNetworkListener,
 
     /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     fun getBitrate(): Int {
-        synchronized(mBandwidthLock) {
+        run {
             return mBitrate
         }
     }
@@ -544,7 +528,7 @@ class AudioHandler : HumlaNetworkListener,
         val applied: EffectiveAudioConfig
         val oldFramesPerPacket: Int
         val changed: Boolean
-        synchronized(mBandwidthLock) {
+        run {
             changed = config.bitrate != mBitrate || config.framesPerPacket != mFramesPerPacket
             if (!changed) {
                 return
@@ -573,7 +557,7 @@ class AudioHandler : HumlaNetworkListener,
 
     /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     fun getFramesPerPacket(): Int {
-        synchronized(mBandwidthLock) {
+        run {
             return mFramesPerPacket
         }
     }
@@ -620,7 +604,7 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     fun getCurrentBandwidth(): Int {
-        synchronized(mBandwidthLock) {
+        run {
             return ProtobufMessages.calculateAudioBandwidth(mBitrate, mFramesPerPacket)
         }
     }
@@ -641,8 +625,8 @@ class AudioHandler : HumlaNetworkListener,
         // fires only on a real true→false edge (a repeat false would only
         // re-trigger downstream model lookups and UI refreshes).
         val wasTalking: Boolean
-        synchronized(mMuteLock) {
-            synchronized(this) {
+        run {
+            run {
                 mInitialized = false
                 wasTalking = mTalking
                 mTalking = false
@@ -696,7 +680,7 @@ class AudioHandler : HumlaNetworkListener,
         // Fields under `this`, gate outside it: updateMuteState takes E plus
         // a bounded join while the capture thread needs `this` (server-echo
         // path; see docs/mute-tap-deadlock).
-        synchronized(this) {
+        run {
             if (!mInitialized) return
 
             if (!msg.hasSession() || msg.session != mSession) return
@@ -734,19 +718,19 @@ class AudioHandler : HumlaNetworkListener,
 
     override fun messageUserRemove(msg: Mumble.UserRemove) {
         super.messageUserRemove(msg)
-        synchronized(mOutput) {
+        run {
             mOutput.removeUser(msg.session)
         }
     }
 
     override fun messageVoiceData(data: ByteArray, messageType: HumlaUDPMessageType) {
-        synchronized(mOutput) {
+        run {
             mOutput.queueVoiceData(data, messageType)
         }
     }
 
     override fun messageProtobufAudio(msg: MumbleUDP.Audio) {
-        synchronized(mOutput) {
+        run {
             mOutput.queueProtobufVoiceData(msg)
         }
     }
@@ -827,7 +811,7 @@ class AudioHandler : HumlaNetworkListener,
             return
         }
 
-        synchronized(mPacketBufferLock) {
+        run {
             if (mProtobufUdp) {
                 val audioBuilder = MumbleUDP.Audio.newBuilder()
                 if (mTargetId != 0.toByte()) {
@@ -887,7 +871,7 @@ class AudioHandler : HumlaNetworkListener,
         // listener and mOutput each take locks of their own, and the capture
         // thread must never hold `this` across them.
         val changed: Boolean
-        synchronized(this) {
+        run {
             changed = mTalking != isTalking
             if (changed) {
                 mTalking = isTalking
