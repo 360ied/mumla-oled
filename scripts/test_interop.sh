@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 Brian Zhu
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # scripts/test_interop.sh: Run the murmur interop suite against a local
 # mumble-server (see docs/tech-debt-whales/target-architecture/testing.md).
@@ -14,9 +28,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# The outer agent shell is often already in a nix dev shell from the root
-# flake (without pkgs.murmur). Re-exec once into this worktree's shell when
-# mumble-server is missing, so the binary (flake buildInputs) is on PATH.
+# Unlike check.sh (which skips re-exec when IN_NIX_SHELL is set), this script
+# must guarantee pkgs.murmur: the outer shell often comes from the root flake
+# without it. So re-exec purely on the missing binary, not on IN_NIX_SHELL.
 # The marker guards against an exec loop, mirroring check.sh's _CHECK_SH_REEXEC.
 if [ -z "${_TEST_INTEROP_REEXEC:-}" ] && ! command -v mumble-server >/dev/null 2>&1; then
   _TEST_INTEROP_REEXEC=1 exec nix develop --command "$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" "$@"
@@ -35,4 +49,4 @@ fi
 # Until step 3 the harness drives HumlaConnection under Robolectric; from
 # step 3 on it drives HumlaClient directly. The task includes only the
 # se.lublin.humla.interop suite; every default unit-test task excludes it.
-./gradlew :libraries:humla:murmurInteropTest "$@"
+"$ROOT_DIR/gradlew" :libraries:humla:murmurInteropTest "$@"

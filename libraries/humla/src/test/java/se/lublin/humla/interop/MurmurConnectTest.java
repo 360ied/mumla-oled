@@ -38,6 +38,10 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,11 +49,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import se.lublin.humla.Constants;
 import se.lublin.humla.net.HandshakeFailure;
 import se.lublin.humla.net.HumlaConnection;
+import se.lublin.humla.net.HumlaTCPMessageType;
 import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.protocol.HumlaTCPMessageListener;
-import se.lublin.humla.net.HumlaTCPMessageType;
 import se.lublin.humla.util.HumlaException;
-import java.security.cert.X509Certificate;
 
 /**
  * Step-1 murmur interop scenarios against today's {@link HumlaConnection}.
@@ -63,8 +66,8 @@ import java.security.cert.X509Certificate;
 @Category(MurmurInterop.class)
 public class MurmurConnectTest {
     private MurmurTestServer server;
-    private final java.util.List<HumlaConnection> open = new java.util.ArrayList<>();
-    private final java.util.List<Path> tempStores = new java.util.ArrayList<>();
+    private final List<HumlaConnection> open = new ArrayList<>();
+    private final List<Path> tempStores = new ArrayList<>();
 
     @Before
     public void startServer() throws Exception {
@@ -112,6 +115,8 @@ public class MurmurConnectTest {
         char[] pw = "interop".toCharArray();
         try (var out = Files.newOutputStream(store)) {
             ks.store(out, pw);
+        } finally {
+            Arrays.fill(pw, '\0');
         }
         tempStores.add(store);
         return store.toString();
@@ -132,7 +137,11 @@ public class MurmurConnectTest {
             @Override
             public void onConnectionEstablished() {
                 state.established.countDown();
-                // Mimic HumlaService.onConnectionEstablished: Version + Authenticate.
+                // Mimic HumlaService.onConnectionEstablished (Version +
+                // Authenticate with username, password, and opus; no access
+                // tokens are configured against the interop server).
+                // Diverges deliberately from the service in one way: the
+                // service also resolves the server row and forwards tokens.
                 HumlaConnection conn = slot.get();
                 if (conn != null) {
                     conn.sendTCPMessage(Constants.createVersionMessage("MumlaOLED-interop").build(),
@@ -177,22 +186,31 @@ public class MurmurConnectTest {
         return conn;
     }
 
-    private static void await(CountDownLatch latch, String what, ConnectionState state) throws Exception {
+    private static void await(CountDownLatch latch, String what, ConnectionState... states) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (latch.getCount() > 0) {
             Shadows.shadowOf(Looper.getMainLooper()).idle();
             if (latch.await(100, TimeUnit.MILLISECONDS)) {
                 return;
             }
-            if (state.handshakeFailure.get() != null) {
-                fail("handshake failed while waiting for " + what + ": " + state.handshakeFailure.get());
-            }
-            if (state.disconnected.getCount() == 0 && latch != state.disconnected) {
-                fail("disconnected while waiting for " + what + ": " + state.disconnectError.get());
+            // A peer-dependent latch (both clients' states) fails fast with
+            // whichever side broke, instead of burning the deadline and
+            // reporting the wrong connection's empty state.
+            for (ConnectionState s : states) {
+                if (s.handshakeFailure.get() != null) {
+                    fail("handshake failed while waiting for " + what + ": " + s.handshakeFailure.get());
+                }
+                if (s.disconnected.getCount() == 0 && latch != s.disconnected) {
+                    fail("disconnected while waiting for " + what + ": " + s.disconnectError.get());
+                }
             }
             if (System.nanoTime() > deadline) {
-                fail("timed out waiting for " + what + "; handshakeFailure="
-                        + state.handshakeFailure.get() + " disconnectError=" + state.disconnectError.get());
+                StringBuilder detail = new StringBuilder();
+                for (ConnectionState s : states) {
+                    detail.append("[handshakeFailure=").append(s.handshakeFailure.get())
+                            .append(" disconnectError=").append(s.disconnectError.get()).append("]");
+                }
+                fail("timed out waiting for " + what + "; " + detail);
             }
         }
     }
@@ -205,6 +223,7 @@ public class MurmurConnectTest {
         await(state.synced, "sync", state);
         assertTrue(conn.isSynchronized());
         conn.disconnect();
+        await(state.disconnected, "clean disconnect", state);
     }
 
     @Test
@@ -227,8 +246,8 @@ public class MurmurConnectTest {
 
         ConnectionState b = new ConnectionState();
         HumlaConnection bob = connect("InteropBob", null, b);
-        await(b.synced, "bob sync", b);
-        await(sawBob, "alice sees bob join", a);
+        await(b.synced, "bob sync", a, b);
+        await(sawBob, "alice sees bob join", a, b);
         assertEquals("InteropBob", seenName.get());
     }
 
@@ -260,8 +279,22 @@ public class MurmurConnectTest {
                 .setMessage("interop-hello")
                 .build();
         alice.sendTCPMessage(text, HumlaTCPMessageType.TextMessage);
-        await(gotText, "text message", a);
+        await(gotText, "text message", a, b);
         assertEquals("interop-hello", gotMessage.get());
+    }
+
+    @Test
+    public void connectWithServerPassword() throws Exception {
+        server.stop();
+        server = MurmurTestServer.start(true);
+
+        ConnectionState state = new ConnectionState();
+        HumlaConnection conn = connect("InteropAlice", server.serverPassword(), state);
+        await(state.established, "established", state);
+        await(state.synced, "sync", state);
+        assertTrue(conn.isSynchronized());
+        conn.disconnect();
+        await(state.disconnected, "clean disconnect", state);
     }
 
     @Test

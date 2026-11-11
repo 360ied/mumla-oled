@@ -264,12 +264,16 @@ tasks.matching { it.name == "check" }.configureEach {
 // still covers native via the check dependency above. Run via check.sh (or
 // run test_native_audio.sh first) for direct Gradle invocations: CryptState
 // tests load libhumlaaudio from build/test-native and fail without it.
+// Single site for the interop filter and the native-lib system property:
+// withType covers every Test task in :libraries:humla, including
+// murmurInteropTest below. The interop suite lives only in this module,
+// so :app tasks need no exclusion.
 tasks.withType(Test).configureEach {
     systemProperty "java.library.path", "${project.rootDir}/build/test-native"
     // Murmur interop tests are opt-in (scripts/test_interop.sh): they need a
     // live mumble-server and take a minute or more, so they never run in
-    // check.sh's fast gate. Default unit-test tasks exclude them; the
-    // dedicated murmurInteropTest task includes only them.
+    // check.sh's fast gate. Default unit-test tasks in :libraries:humla
+    // exclude them; the dedicated murmurInteropTest task includes only them.
     if (name == "murmurInteropTest") {
         filter {
             includeTestsMatching "se.lublin.humla.interop.*"
@@ -289,21 +293,21 @@ tasks.withType(Test).configureEach {
 tasks.register("murmurInteropTest", Test) {
     description = "Runs murmur interop tests against a local mumble-server (see scripts/test_interop.sh)"
     group = "verification"
-    systemProperty "java.library.path", "${project.rootDir}/build/test-native"
-    filter {
-        includeTestsMatching "se.lublin.humla.interop.*"
-    }
 }
 
 // Mirror the debug unit-test runtime: the interop task shares its compiled
 // classes and classpath once variants are finalized (afterEvaluate at
 // project level; calling it inside the task's configuration action is
-// illegal once variants are resolved).
+// illegal once variants are resolved). Fail loudly if either task is
+// missing: silently running zero tests would be a vacuous green.
 afterEvaluate {
     def debugTest = tasks.findByName("testDebugUnitTest")
     def interopTest = tasks.findByName("murmurInteropTest")
-    if (debugTest != null && interopTest != null) {
-        interopTest.testClassesDirs = debugTest.testClassesDirs
-        interopTest.classpath = debugTest.classpath
+    if (debugTest == null || interopTest == null) {
+        throw new GradleException(
+            "murmurInteropTest wiring failed: testDebugUnitTest=" + debugTest
+                + " murmurInteropTest=" + interopTest)
     }
+    interopTest.testClassesDirs = debugTest.testClassesDirs
+    interopTest.classpath = debugTest.classpath
 }

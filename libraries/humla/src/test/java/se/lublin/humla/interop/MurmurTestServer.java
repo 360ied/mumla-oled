@@ -17,6 +17,7 @@
 
 package se.lublin.humla.interop;
 
+import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 
 import java.io.IOException;
@@ -28,33 +29,37 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.EnumSet;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Manages one throwaway {@code mumble-server} for an interop test class.
+ * Manages one throwaway {@code mumble-server} per test method.
  *
- * <p>Each instance picks a free loopback port, writes a temporary
- * {@code murmur.ini}, copies the committed loopback test certificate and key
- * into the temp dir, sets the SuperUser password via {@code -readsupw}
- * (password on standard input, never on the command line), starts
- * {@code mumble-server -fg -ini}, and waits until the port accepts.
- * {@link #stop()} terminates the server. Callers should stop in a finally
- * (or JVM shutdown hook) so no server outlives its class.
+ * <p>Each instance picks a free loopback port (retrying on bind collisions),
+ * writes a temporary {@code murmur.ini}, copies the committed loopback test
+ * certificate and key into the temp dir, sets the SuperUser password via
+ * {@code -readsupw} (password on standard input, never on the command line),
+ * starts {@code mumble-server -fg -ini}, and waits until the port accepts.
+ * {@link #stop()} terminates the server and removes its shutdown hook.
  *
  * <p>When {@code mumble-server} is not on {@code PATH} the test is skipped
  * (assumption failure), so plain unit-test runs without the nix dev shell
- * stay green.
+ * stay green. A present-but-broken binary fails instead of skipping.
  */
 public final class MurmurTestServer {
     private static final String SUPERUSER_PASSWORD = "interop-superuser-pw";
     private static final String SERVER_PASSWORD = "interop-server-pw";
+    private static final int MAX_START_ATTEMPTS = 3;
 
     private final Path dir;
     private final int port;
     private final boolean withServerPassword;
     private Process process;
+    private Thread shutdownHook;
 
     private MurmurTestServer(Path dir, int port, boolean withServerPassword) {
         this.dir = dir;
@@ -69,14 +74,37 @@ public final class MurmurTestServer {
 
     /** Starts a server; when {@code withServerPassword} a password is required. */
     public static MurmurTestServer start(boolean withServerPassword) throws Exception {
-        Path dir = Files.createTempDirectory("murmur-interop-");
-        int port;
-        try (ServerSocket probe = new ServerSocket(0)) {
-            port = probe.getLocalPort();
+        IOException lastBindFailure = null;
+        for (int attempt = 1; attempt <= MAX_START_ATTEMPTS; attempt++) {
+            Path dir = Files.createTempDirectory("murmur-interop-");
+            int port;
+            try (ServerSocket probe = new ServerSocket(0)) {
+                port = probe.getLocalPort();
+            }
+            MurmurTestServer server = new MurmurTestServer(dir, port, withServerPassword);
+            try {
+                server.launch();
+                return server;
+            } catch (IOException e) {
+                // Bind collisions (stolen probe port, server gone before the
+                // port opens) are retried; anything else fails immediately.
+                if (!isBindCollision(e)) {
+                    server.stop();
+                    throw e;
+                }
+                lastBindFailure = e;
+                server.stop();
+            }
         }
-        MurmurTestServer server = new MurmurTestServer(dir, port, withServerPassword);
-        server.launch();
-        return server;
+        throw new IOException(
+                "mumble-server did not start after " + MAX_START_ATTEMPTS + " attempts",
+                lastBindFailure);
+    }
+
+    private static boolean isBindCollision(IOException e) {
+        String message = e.getMessage();
+        return message != null
+                && (message.contains("did not open port") || message.contains("exited during startup"));
     }
 
     public String host() {
@@ -93,7 +121,15 @@ public final class MurmurTestServer {
 
     private void launch() throws Exception {
         copyResource("/murmur/test-cert.pem", dir.resolve("test-cert.pem"));
-        copyResource("/murmur/test-key.pem", dir.resolve("test-key.pem"));
+        Path keyDest = dir.resolve("test-key.pem");
+        copyResource("/murmur/test-key.pem", keyDest);
+        // Test-only private key: keep it owner-readable where POSIX allows.
+        try {
+            Files.setPosixFilePermissions(
+                    keyDest, EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+        } catch (UnsupportedOperationException ignored) {
+            // Non-POSIX filesystem (e.g. Windows CI): default ACLs apply.
+        }
 
         Path db = dir.resolve("murmur.sqlite");
         Path ini = dir.resolve("murmur.ini");
@@ -124,9 +160,19 @@ public final class MurmurTestServer {
             stdin.write((SUPERUSER_PASSWORD + "\n").getBytes(StandardCharsets.UTF_8));
             stdin.flush();
         }
-        drain(p);
+        // Wait before draining: drain() blocks until the child closes stdout,
+        // so draining first would park here forever on a stuck child and the
+        // timeout below would never fire.
         boolean exited = p.waitFor(30, TimeUnit.SECONDS);
-        assumeTrue("mumble-server -readsupw must exit promptly", exited && p.exitValue() == 0);
+        if (!exited) {
+            p.destroyForcibly();
+            fail("mumble-server -readsupw did not exit within 30 s");
+        }
+        drain(p);
+        if (p.exitValue() != 0) {
+            fail("mumble-server -readsupw exited with " + p.exitValue()
+                    + "; run via scripts/test_interop.sh with pkgs.murmur");
+        }
 
         List<String> cmd = new ArrayList<>();
         cmd.add("mumble-server");
@@ -137,13 +183,16 @@ public final class MurmurTestServer {
         server.redirectErrorStream(true);
         process = server.start();
         // Do not block on the server's output; drain it on a daemon thread so
-        // a chatty server can never block on a full pipe.
-        Thread drainer = new Thread(() -> drain(process), "murmur-drain");
+        // a chatty server can never block on a full pipe. Capture the process
+        // in a local: stop() may null the field before the thread runs.
+        final Process live = process;
+        Thread drainer = new Thread(() -> drain(live), "murmur-drain");
         drainer.setDaemon(true);
         drainer.start();
 
         waitForPort();
-        Runtime.getRuntime().addShutdownHook(new Thread(this::stop));
+        shutdownHook = new Thread(this::stop);
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
     }
 
     private void waitForPort() throws Exception {
@@ -167,6 +216,15 @@ public final class MurmurTestServer {
     public void stop() {
         Process p = process;
         process = null;
+        Thread hook = shutdownHook;
+        shutdownHook = null;
+        if (hook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(hook);
+            } catch (IllegalStateException | IllegalArgumentException ignored) {
+                // Already shutting down (or never registered): nothing to remove.
+            }
+        }
         if (p != null && p.isAlive()) {
             p.destroy();
             try {
@@ -174,7 +232,9 @@ public final class MurmurTestServer {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            p.destroyForcibly();
+            if (p.isAlive()) {
+                p.destroyForcibly();
+            }
         }
         try {
             deleteRecursively(dir);
@@ -208,7 +268,7 @@ public final class MurmurTestServer {
             return;
         }
         try (var stream = Files.walk(dir)) {
-            for (Path p : stream.sorted(java.util.Comparator.reverseOrder()).toList()) {
+            for (Path p : stream.sorted(Comparator.reverseOrder()).toList()) {
                 Files.deleteIfExists(p);
             }
         }
