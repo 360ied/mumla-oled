@@ -60,11 +60,59 @@ class VoiceSettingsMapperTest {
             inputQuality = 24000,
             framesPerPacket = 4,
             halfDuplex = true,
-            currentTransmitMode = Constants.TRANSMIT_VOICE_ACTIVITY,
         )
         assertEquals(InputMode.PUSH_TO_TALK, next.inputMode)
         assertEquals(24000, next.targetBitrate)
         assertEquals(4, next.targetFramesPerPacket)
         assertTrue(next.halfDuplex)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun updateRejectsUnknownTransmitMode() {
+        VoiceSettingsMapper.update(VoiceSettings.initial(), transmitMode = 99)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun updateRejectsNonFiniteThreshold() {
+        VoiceSettingsMapper.update(VoiceSettings.initial(), detectionThreshold = Float.NaN)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun updateRejectsNonFiniteBoost() {
+        VoiceSettingsMapper.update(VoiceSettings.initial(), amplitudeBoost = Float.POSITIVE_INFINITY)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun updateRejectsOutOfRangeBitrate() {
+        VoiceSettingsMapper.update(VoiceSettings.initial(), inputQuality = 1000)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun updateRejectsOutOfRangeBoost() {
+        VoiceSettingsMapper.update(VoiceSettings.initial(), amplitudeBoost = 9.0f)
+    }
+
+    @Test
+    fun updateSanitizesFramesPerPacket() {
+        val next = VoiceSettingsMapper.update(VoiceSettings.initial(), framesPerPacket = 3)
+        assertEquals(2, next.targetFramesPerPacket)
+    }
+
+    @Test
+    fun halfDuplexPreferenceSurvivesModeRoundTrip() {
+        val ptt = VoiceSettingsMapper.initialFromDefaults(
+            transmitMode = Constants.TRANSMIT_PUSH_TO_TALK,
+            halfDuplex = true,
+        )
+        assertTrue(ptt.halfDuplex)
+        // Mode-only switch keeps the raw preference (builder gates).
+        val vad = VoiceSettingsMapper.update(ptt, transmitMode = Constants.TRANSMIT_VOICE_ACTIVITY)
+        assertEquals(InputMode.VOICE_ACTIVITY, vad.inputMode)
+        assertTrue(vad.halfDuplex)
+        val back = VoiceSettingsMapper.update(vad, transmitMode = Constants.TRANSMIT_PUSH_TO_TALK)
+        assertTrue(back.halfDuplex)
+        // Effective value in non-PTT modes is still false at the gate.
+        assertFalse(VoiceSettingsMapper.halfDuplexFor(Constants.TRANSMIT_VOICE_ACTIVITY, vad.halfDuplex))
+        assertTrue(VoiceSettingsMapper.halfDuplexFor(Constants.TRANSMIT_PUSH_TO_TALK, back.halfDuplex))
     }
 }

@@ -51,7 +51,6 @@ import se.lublin.humla.route.RouteControl
 import se.lublin.humla.route.RouteEvent
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
-import se.lublin.humla.voice.InputMode
 import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.VoiceControl
 import se.lublin.humla.voice.VoiceSettings
@@ -1117,11 +1116,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         // Fail-fast like the legacy holder: validation errors propagate to
         // the caller instead of landing a half-applied delta.
         val currentSettings = voiceSettingsFlow.value
-        val currentTransmit = when (currentSettings.inputMode) {
-            InputMode.PUSH_TO_TALK -> Constants.TRANSMIT_PUSH_TO_TALK
-            InputMode.CONTINUOUS -> Constants.TRANSMIT_CONTINUOUS
-            else -> Constants.TRANSMIT_VOICE_ACTIVITY
-        }
         val nextSettings = VoiceSettingsMapper.update(
             currentSettings,
             transmitMode = delta.transmitMode,
@@ -1131,7 +1125,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             framesPerPacket = delta.framesPerPacket,
             halfDuplex = delta.halfDuplex,
             adaptiveLeveler = delta.adaptiveLeveler,
-            currentTransmitMode = currentTransmit,
         )
         if (nextSettings != currentSettings) {
             voiceSettingsFlow.value = nextSettings

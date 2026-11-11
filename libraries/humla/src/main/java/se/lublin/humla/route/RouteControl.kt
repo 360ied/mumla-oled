@@ -129,11 +129,12 @@ internal class RouteControl(
     }
 
     fun submit(command: RouteCommand) {
-        val captured = routeSessionCounter.get()
         scope.launch {
-            if (shouldDropStaleEvent(captured) && command !is RouteCommand.SessionStarted) {
-                return@launch
-            }
+            // Commands are never epoch-gated: SessionStarted/SessionEnded
+            // sequence the session, and dropping Ended on a counter race
+            // strands Ready (spec any->Idle). Stale device/SCO/callback
+            // paths keep their own epoch guards; teardown is terminal.
+            if (destroyed.get()) return@launch
             handleCommand(command)
         }
     }
@@ -407,7 +408,7 @@ internal class RouteControl(
 
     private fun handleScoFailed(reason: String?) {
         checkNotMainThread()
-        if (destroyed.get()) return
+        if (destroyed.get() || !hasSession) return
         if (!_events.tryEmit(RouteEvent.ScoFailed(reason))) {
             Log.w(TAG, "Route event buffer full; dropped ScoFailed")
         }
@@ -592,9 +593,15 @@ internal class RouteControl(
     }
 
     private fun maybeStartRequestedSco(added: Array<AudioDeviceInfo>?) {
+        // Arrivals only (the caller skips removals): re-decide never starts.
         val link = sco ?: return
         if (!scoRequested.get() || !hasSession) return
-        if (!link.isIdle()) return
+        try {
+            if (!link.isIdle()) return
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO availability idle check failed", e)
+            return
+        }
         if (added == null) return
         var scoInAdded = false
         var anyBtInAdded = false

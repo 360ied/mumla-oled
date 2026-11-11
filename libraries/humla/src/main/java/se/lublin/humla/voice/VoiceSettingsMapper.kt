@@ -42,6 +42,13 @@ object VoiceSettingsMapper {
         return max to min
     }
 
+    /**
+     * Raw half-duplex preference (Settings.isHalfDuplex). Gating to the
+     * push-to-talk mode happens at pipeline build (legacy InputModes
+     * parity: the holder keeps the raw flag, the builder gates), so the
+     * preference survives transmit-mode round-trips; the spec effective
+     * value is `halfDuplex && inputMode == PUSH_TO_TALK`.
+     */
     fun halfDuplexFor(transmitMode: Int, halfDuplex: Boolean): Boolean {
         return halfDuplex && transmitMode == Constants.TRANSMIT_PUSH_TO_TALK
     }
@@ -71,7 +78,7 @@ object VoiceSettingsMapper {
             amplitudeBoost = amplitudeBoost,
             targetBitrate = inputQuality,
             targetFramesPerPacket = Constants.sanitizeFramesPerPacket(framesPerPacket),
-            halfDuplex = halfDuplexFor(transmitMode, halfDuplex),
+            halfDuplex = halfDuplex,
             adaptiveLeveler = adaptiveLeveler,
         )
     }
@@ -85,10 +92,8 @@ object VoiceSettingsMapper {
         framesPerPacket: Int? = null,
         halfDuplex: Boolean? = null,
         adaptiveLeveler: Boolean? = null,
-        currentTransmitMode: Int,
     ): VoiceSettings {
         var next = current
-        val resolvedTransmit = transmitMode ?: currentTransmitMode
         if (transmitMode != null) {
             next = next.copy(inputMode = inputModeFor(transmitMode))
         }
@@ -112,17 +117,11 @@ object VoiceSettingsMapper {
         if (framesPerPacket != null) {
             next = next.copy(targetFramesPerPacket = Constants.sanitizeFramesPerPacket(framesPerPacket))
         }
-        if (halfDuplex != null || transmitMode != null) {
-            // Preserve the stored flag across mode-only switches (legacy
-            // holder keeps the raw half-duplex and gates only at build):
-            // gating a carried-over true to false would lose the PTT+half
-            // preference on a VAD round-trip.
-            val nextHalf = if (halfDuplex == null) {
-                current.halfDuplex
-            } else {
-                halfDuplexFor(resolvedTransmit, halfDuplex)
-            }
-            next = next.copy(halfDuplex = nextHalf)
+        // Raw preference stored; the builder gates to push-to-talk (legacy
+        // holder parity), so mode-only switches preserve the PTT+half
+        // preference across a VAD round-trip.
+        if (halfDuplex != null) {
+            next = next.copy(halfDuplex = halfDuplex)
         }
         if (adaptiveLeveler != null) {
             next = next.copy(adaptiveLeveler = adaptiveLeveler)

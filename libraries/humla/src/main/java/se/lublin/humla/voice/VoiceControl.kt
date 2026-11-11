@@ -333,7 +333,11 @@ class VoiceControl(
             )
         }
         builder.setInputMode(inputMode)
-        builder.setHalfDuplexEnabled(currentSettings.halfDuplex)
+        // Effective half-duplex is raw preference gated to push-to-talk
+        // (legacy builder parity and spec voice.md derivation).
+        builder.setHalfDuplexEnabled(
+            currentSettings.inputMode == InputMode.PUSH_TO_TALK && currentSettings.halfDuplex,
+        )
 
         when (route) {
             AppliedRoute.VOICE_SCO -> {
