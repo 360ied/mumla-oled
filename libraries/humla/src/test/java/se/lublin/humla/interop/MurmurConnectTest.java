@@ -17,7 +17,6 @@
 
 package se.lublin.humla.interop;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.After;
@@ -107,7 +106,7 @@ public class MurmurConnectTest {
         ks.setCertificateEntry("127.0.0.1", cert);
         Path store = Files.createTempFile("murmur-interop-trust-", ".jks");
         tempStores.add(store);
-        char[] pw = "interop".toCharArray();
+        char[] pw = InteropClientKt.INTEROP_TRUST_PASSWORD.toCharArray();
         try (var out = Files.newOutputStream(store)) {
             ks.store(out, pw);
         } finally {

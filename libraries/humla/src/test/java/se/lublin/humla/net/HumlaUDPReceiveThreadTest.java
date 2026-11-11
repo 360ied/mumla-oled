@@ -204,8 +204,10 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
                 link.onUDPDataReceived(pingPacket);
             }
         }, "UDP-Worker-Thread");
-        workerThread.start();
-        workerThread.join(3000);
+        try {
+            workerThread.start();
+            workerThread.join(3000);
+            assertFalse("Worker must finish dispatch within timeout", workerThread.isAlive());
 
         // Verify audio was dispatched synchronously on the background worker thread
         assertSame("Audio should be dispatched on the background worker thread",
@@ -221,7 +223,9 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         assertEquals(testTimestamp, receivedPing.get().getTimestamp());
         assertEquals(testVersionV2, receivedPing.get().getServerVersionV2());
         assertEquals(testBandwidth, receivedPing.get().getMaxBandwidthPerUser());
-        link.close();
+        } finally {
+            link.close();
+        }
     }
 
     private DatagramPacket discoverClientAddress(HumlaUDP humlaUDP, DatagramSocket serverSocket) throws Exception {

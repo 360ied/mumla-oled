@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Unit tests verifying that the outgoing UDP datagram queue is dynamically bounded
@@ -365,8 +366,10 @@ public class HumlaUDPSendQueueTest extends TestCase {
         final CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch doneLatch = new CountDownLatch(threadCount);
         final AtomicInteger maxObservedQueueSize = new AtomicInteger(0);
+        final AtomicReference<Throwable> workerFailure = new AtomicReference<>();
 
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        try {
         for (int t = 0; t < threadCount; t++) {
             final int threadId = t;
             executor.submit(new Runnable() {
@@ -385,8 +388,11 @@ public class HumlaUDPSendQueueTest extends TestCase {
                                 if (currentSize <= prevMax) break;
                             } while (!maxObservedQueueSize.compareAndSet(prevMax, currentSize));
                         }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        workerFailure.compareAndSet(null, e);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        workerFailure.compareAndSet(null, e);
                     } finally {
                         doneLatch.countDown();
                     }
@@ -396,7 +402,11 @@ public class HumlaUDPSendQueueTest extends TestCase {
 
         startLatch.countDown();
         assertTrue("Concurrent senders must finish within timeout", doneLatch.await(5, TimeUnit.SECONDS));
-        executor.shutdown();
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+        assertNull("No sender worker may fail", workerFailure.get());
 
         assertTrue("Observed queue size (" + maxObservedQueueSize.get() + ") must never exceed capacity",
                 maxObservedQueueSize.get() <= humlaUDP.getSendQueueCapacity());

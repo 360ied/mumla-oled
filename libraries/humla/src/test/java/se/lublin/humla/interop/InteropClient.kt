@@ -22,6 +22,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.emptyFlow
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
@@ -34,6 +35,12 @@ import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.util.IHumlaObserver
+
+const val INTEROP_TRUST_PASSWORD = "interop"
+const val INTEROP_TRUST_FORMAT = "JKS"
+const val INTEROP_CLIENT_NAME = "MumlaOLED-interop"
+private const val AWAIT_TIMEOUT_NANOS = 30_000_000_000L
+private const val POLL_MILLIS = 100L
 
 /**
  * Java-friendly factory for murmur interop clients (step 3 drives HumlaClient).
@@ -58,12 +65,12 @@ object InteropClient {
         ),
         certificate = null,
         trustStore = if (trustStorePath != null) {
-            TrustStoreRef(path = trustStorePath, password = "interop", format = "JKS")
+            TrustStoreRef(path = trustStorePath, password = INTEROP_TRUST_PASSWORD, format = INTEROP_TRUST_FORMAT)
         } else {
             null
         },
         forceTcp = true,
-        clientName = "MumlaOLED-interop",
+        clientName = INTEROP_CLIENT_NAME,
         accessTokens = persistentListOf(),
     )
 
@@ -74,6 +81,8 @@ object InteropClient {
         voice.setForceTcp(true)
         val route = NoopRouteLifecycle()
         val network = object : NetworkMonitor {
+            // The network-available path is intentionally unexercised here;
+            // virtual-time client tests pin it instead.
             override val available = emptyFlow<Unit>()
         }
         val client = HumlaClient(
@@ -89,20 +98,23 @@ object InteropClient {
             mainPoster = { r -> r.run() },
             denyFormatter = { "denied" },
         )
-        return HumlaClientHandle(client, voice)
+        return HumlaClientHandle(client, voice, scope)
     }
+
+    private fun remainingNanos(startNanos: Long): Long =
+        (AWAIT_TIMEOUT_NANOS - (System.nanoTime() - startNanos)).coerceAtLeast(0L)
 
     /** Awaits a Connected session, failing with detail on Failed/timeout. */
     @JvmStatic
     fun awaitConnected(client: HumlaClient, what: String): se.lublin.humla.client.Session {
-        val deadline = System.nanoTime() + 30_000_000_000L
-        while (System.nanoTime() < deadline) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
             when (val s = client.state.value) {
                 is ClientState.Connected -> return s.session
                 is ClientState.Failed -> throw AssertionError(
                     "Failed while waiting for $what: ${s.error}",
                 )
-                else -> Thread.sleep(100)
+                else -> Thread.sleep(POLL_MILLIS)
             }
         }
         throw AssertionError("Timed out waiting for $what; state=${client.state.value}")
@@ -110,21 +122,21 @@ object InteropClient {
 
     @JvmStatic
     fun awaitIdle(client: HumlaClient, what: String) {
-        val deadline = System.nanoTime() + 30_000_000_000L
-        while (System.nanoTime() < deadline) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
             if (client.state.value is ClientState.Idle) return
-            Thread.sleep(100)
+            Thread.sleep(POLL_MILLIS)
         }
         throw AssertionError("Timed out waiting for $what; state=${client.state.value}")
     }
 
     @JvmStatic
     fun awaitFailed(client: HumlaClient, what: String): ClientState.Failed {
-        val deadline = System.nanoTime() + 30_000_000_000L
-        while (System.nanoTime() < deadline) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
             when (val s = client.state.value) {
                 is ClientState.Failed -> return s
-                else -> Thread.sleep(100)
+                else -> Thread.sleep(POLL_MILLIS)
             }
         }
         throw AssertionError("Timed out waiting for $what; state=${client.state.value}")
@@ -136,13 +148,13 @@ object InteropClient {
         name: String,
         what: String,
     ) {
-        val deadline = System.nanoTime() + 30_000_000_000L
-        while (System.nanoTime() < deadline) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
             val users = session.state.value.server.users.values
             for (u in users) {
                 if (u.name == name) return
             }
-            Thread.sleep(100)
+            Thread.sleep(POLL_MILLIS)
         }
         throw AssertionError("Timed out waiting for $what")
     }
@@ -151,19 +163,26 @@ object InteropClient {
 class HumlaClientHandle(
     val client: HumlaClient,
     val voice: LegacyVoiceLink,
+    private val scope: CoroutineScope,
 ) {
     fun disconnectAndClose() {
         try {
             client.disconnect()
         } catch (ignored: Exception) {
         }
+        // Async disconnect runs on the client dispatcher; poll for Idle
+        // instead of a fixed sleep so teardown cannot race server stop.
         try {
-            Thread.sleep(500)
-        } catch (ignored: InterruptedException) {
+            InteropClient.awaitIdle(client, "teardown disconnect")
+        } catch (e: AssertionError) {
+            // Best effort in teardown; the scope cancel below still reclaims.
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
         }
         try {
             voice.close()
         } catch (ignored: Exception) {
         }
+        scope.cancel()
     }
 }
