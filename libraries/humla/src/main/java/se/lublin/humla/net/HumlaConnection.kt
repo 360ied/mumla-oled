@@ -497,7 +497,7 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
         pingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         try {
-            val tcp = HumlaTCP(socketFactory)
+            val tcp = HumlaTCP(socketFactory, java.util.concurrent.Executor { r -> mMainHandler.post(r) })
             mTCP = tcp
             tcp.setTCPConnectionListener(this)
             tcp.connect(host, port)
@@ -869,7 +869,12 @@ class HumlaConnection(listener: HumlaConnectionListener?) :
             val host = mHost
             val port = mPort
             if (host != null) {
-                val udp = HumlaUDP(mCryptState, this, mMainHandler, mTargetFramesPerPacket)
+                val udp = HumlaUDP(
+                    mCryptState,
+                    this,
+                    java.util.concurrent.Executor { r -> mMainHandler.post(r) },
+                    mTargetFramesPerPacket,
+                )
                 mUDP = udp
                 udp.connect(host, port)
             } else {

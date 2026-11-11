@@ -17,10 +17,6 @@
 
 package se.lublin.humla.net
 
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import android.util.Patterns
 import com.google.protobuf.MessageLite
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -52,10 +48,34 @@ import javax.net.ssl.SSLSocket
  * Class to maintain and interface with the TCP connection to a Mumble server.
  * Parses Mumble protobuf packets according to the Mumble protocol specification.
  */
-class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
+class HumlaTCP(
+    private val mSocketFactory: HumlaSSLSocketFactory,
+    private val callbackExecutor: java.util.concurrent.Executor = java.util.concurrent.Executor { r -> r.run() },
+) {
     companion object {
-        private val TAG = HumlaTCP::class.java.name
+        private val logger: java.util.logging.Logger =
+            java.util.logging.Logger.getLogger(HumlaTCP::class.java.name)
         const val CONNECT_TIMEOUT = 10000
+
+        /**
+         * IPv4-literal check replacing android.util.Patterns.IP_ADDRESS.
+         * Pure JVM so the net package stays android-free. Covers dotted
+         * quads; IPv6 literals contain ':' and are checked by the caller.
+         */
+        @JvmStatic
+        fun isIpLiteral(host: String): Boolean {
+            val parts = host.split(".")
+            if (parts.size != 4) return false
+            for (part in parts) {
+                if (part.isEmpty() || part.length > 3) return false
+                for (c in part) {
+                    if (c < '0' || c > '9') return false
+                }
+                val value = part.toIntOrNull() ?: return false
+                if (value > 255) return false
+            }
+            return true
+        }
 
         /**
          * Read timeout for the established connection. The keepalive ping loop
@@ -116,10 +136,9 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     // connection object owns its own view.
     private val sendDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val writeMutex = Mutex()
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     private fun executeOnMainThread(r: Runnable) {
-        mainHandler.post(r)
+        callbackExecutor.execute(r)
     }
 
     private fun executeOnSendThread(r: Runnable) {
@@ -128,7 +147,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         // connection): the old executor lost these sends when its worker died on
         // the null output; drop with a log instead of crashing the scope child.
         if (!mRunning || mDataOutput == null) {
-            Log.d(TAG, "Dropping send on torn-down connection")
+            logger.fine("Dropping send on torn-down connection")
             return
         }
         scope.launch(sendDispatcher) {
@@ -168,7 +187,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         try {
             if (mPort == 0) {
                 val host = mHost
-                if (host != null && !Patterns.IP_ADDRESS.matcher(host).matches() && !host.contains(":") &&
+                if (host != null && !isIpLiteral(host) && !host.contains(":") &&
                     !TlsHostnameVerifier.isOnionHost(host)
                 ) {
                     try {
@@ -180,14 +199,14 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                             ResolverApi.INSTANCE.resolveSrv(lookup)
                         }
                         if (res == null) {
-                            Log.d(TAG, "SRV lookup timed out for $lookup")
+                            logger.fine("SRV lookup timed out for $lookup")
                         }
                         if (res != null && res.wasSuccessful()) {
                             val answers = res.getAnswersOrEmptySet()
                             if (answers != null && answers.isNotEmpty()) {
                                 val srvs = SrvUtil.sortSrvRecords(answers)
                                 for (srv in srvs) {
-                                    Log.d(TAG, "resolved $lookup SRV: $srv")
+                                    logger.fine("resolved $lookup SRV: $srv")
                                     var target = srv.target.toString()
                                     if (target.endsWith(".")) {
                                         target = target.substring(0, target.length - 1)
@@ -203,7 +222,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                         // our own cancellation as a resolution failure.
                         throw e
                     } catch (e: Exception) {
-                        Log.w(TAG, "SRV resolution failed for $mHost: $e")
+                        logger.warning("SRV resolution failed for $mHost: $e")
                     }
                 }
                 if (mPort == 0) {
@@ -211,7 +230,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                 }
             }
 
-            Log.i(TAG, "Connecting to $mHost:$mPort")
+            logger.info("Connecting to $mHost:$mPort")
 
             val host = mHost
             val port = mPort
@@ -227,7 +246,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
             tcpSocket.tcpNoDelay = true
             tcpSocket.soTimeout = CONNECT_TIMEOUT
             tcpSocket.startHandshake()
-            Log.v(TAG, "Handshake completed; verifying server identity")
+            logger.finest("Handshake completed; verifying server identity")
 
             if (!verifyServerIdentity()) {
                 return
@@ -238,7 +257,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
 
             tcpSocket.soTimeout = READ_TIMEOUT_MS
 
-            Log.v(TAG, "Now listening")
+            logger.finest("Now listening")
             mConnected = true
 
             val establishedListener = mListener
@@ -257,8 +276,10 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
                 // is mid-frame, so skipping would desync the parser.
                 val frameError = FrameValidator.validateFrame(messageType, messageLength)
                 if (frameError != FrameValidator.FrameError.NONE) {
-                    Log.w(TAG, "Dropping connection on invalid frame: type=$messageType" +
-                        " length=$messageLength error=$frameError")
+                    logger.warning(
+                        "Dropping connection on invalid frame: type=$messageType" +
+                            " length=$messageLength error=$frameError",
+                    )
                     error("Server sent an invalid protocol frame ($frameError)", null)
                     return
                 }
@@ -337,13 +358,13 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     fun sendMessage(message: MessageLite, messageType: HumlaTCPMessageType) {
         executeOnSendThread(Runnable {
             if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
-                Log.v(TAG, "OUT: $messageType")
+                logger.finest("OUT: $messageType")
             // Drop with a log, don't throw: this runs in a SupervisorJob
             // child where an uncaught throw routes to the uncaught handler.
             // Unreachable today (executeOnSendThread pre-checks the stream).
             val dataOutput = mDataOutput
             if (dataOutput == null) {
-                Log.d(TAG, "Dropping send on torn-down connection")
+                logger.fine("Dropping send on torn-down connection")
                 return@Runnable
             }
             try {
@@ -371,11 +392,11 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
         val copy = Arrays.copyOf(message, length)
         executeOnSendThread(Runnable {
             if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
-                Log.v(TAG, "OUT: $messageType")
+                logger.finest("OUT: $messageType")
             // Same fail-soft rationale as the MessageLite overload above.
             val dataOutput = mDataOutput
             if (dataOutput == null) {
-                Log.d(TAG, "Dropping send on torn-down connection")
+                logger.fine("Dropping send on torn-down connection")
                 return@Runnable
             }
             try {
@@ -455,7 +476,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
     private fun verifyServerIdentity(): Boolean {
         val leaf = presentedLeaf()
         if (leaf == null) {
-            Log.w(TAG, "No server certificate available; refusing connection")
+            logger.warning("No server certificate available; refusing connection")
             error("Could not verify server identity", null)
             closeSocket()
             return false
@@ -471,7 +492,7 @@ class HumlaTCP(private val mSocketFactory: HumlaSSLSocketFactory) {
             return true
         }
         mSocketFactory.setLastHandshakeFailure(HandshakeFailure.HOSTNAME_MISMATCH)
-        Log.w(TAG, "TLS hostname mismatch for $host; refusing connection")
+        logger.warning("TLS hostname mismatch for $host; refusing connection")
         closeSocket()
         val verifyListener = mListener
         if (verifyListener != null) {

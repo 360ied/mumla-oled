@@ -17,7 +17,7 @@
 
 package se.lublin.humla.net;
 
-import android.os.Handler;
+import java.util.concurrent.Executor;
 import com.google.protobuf.ByteString;
 import junit.framework.TestCase;
 
@@ -68,12 +68,9 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         final AtomicReference<byte[]> receivedBuffer = new AtomicReference<>();
         final AtomicInteger handlerPostCount = new AtomicInteger(0);
 
-        final Handler mockHandler = new Handler() {
-            @Override
-            public boolean sendMessageAtTime(android.os.Message msg, long uptimeMillis) {
-                handlerPostCount.incrementAndGet();
-                return true;
-            }
+        final Executor mockHandler = r -> {
+            handlerPostCount.incrementAndGet();
+            r.run();
         };
 
         // Client CryptState: encrypts with CLIENT_IV, decrypts with SERVER_IV

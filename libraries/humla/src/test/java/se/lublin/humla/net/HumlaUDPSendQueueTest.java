@@ -17,7 +17,7 @@
 
 package se.lublin.humla.net;
 
-import android.os.Handler;
+import java.util.concurrent.Executor;
 import junit.framework.TestCase;
 import se.lublin.humla.util.HumlaException;
 
@@ -56,7 +56,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
     private CryptState mClientCrypt;
     private CryptState mServerCrypt;
     private HumlaUDP.UDPConnectionListener mDummyListener;
-    private Handler mDummyHandler;
+    private Executor mDummyHandler;
 
     @Override
     protected void setUp() throws Exception {
@@ -78,7 +78,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
             public void resyncCryptState() {}
         };
 
-        mDummyHandler = new Handler();
+        mDummyHandler = Runnable::run;
     }
 
     /**

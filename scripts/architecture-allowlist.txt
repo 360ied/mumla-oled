@@ -29,7 +29,7 @@ libraries/humla/src/main/java/se/lublin/humla/model/Server.kt  5
 libraries/humla/src/main/java/se/lublin/humla/net/CryptState.kt  25
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.kt  19
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt  5
-libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt  4
+libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt  3
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt  7
 libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt  37
 libraries/humla/src/main/java/se/lublin/humla/protocol/InputModes.kt  2

@@ -17,8 +17,8 @@
 
 package se.lublin.humla.net
 
-import android.os.Handler
-import android.util.Log
+import java.util.logging.Logger
+
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +61,7 @@ import javax.crypto.ShortBufferException
  */
 class HumlaUDP {
     companion object {
+        private val logger: Logger = Logger.getLogger(HumlaUDP::class.java.name)
         private val TAG = HumlaUDP::class.java.name
 
         private const val BUFFER_SIZE = 2048
@@ -117,13 +118,13 @@ class HumlaUDP {
         fun createWithExplicitCapacity(
             cryptState: CryptState,
             listener: UDPConnectionListener,
-            callbackHandler: Handler,
+            callbackExecutor: java.util.concurrent.Executor,
             explicitCapacity: Int
         ): HumlaUDP {
             if (explicitCapacity <= 0) {
                 throw IllegalArgumentException("sendQueueCapacity must be > 0")
             }
-            val udp = HumlaUDP(cryptState, listener, callbackHandler)
+            val udp = HumlaUDP(cryptState, listener, callbackExecutor)
             udp.setSendQueueCapacity(explicitCapacity)
             return udp
         }
@@ -149,7 +150,7 @@ class HumlaUDP {
     private var mConnected: Boolean = false
 
     /** Handler to invoke listener callback invocations on. */
-    private val mCallbackHandler: Handler
+    private val mCallbackExecutor: java.util.concurrent.Executor
 
     /** Bounded head-drop channel of outgoing packets (slice 4: no explicit lock). */
     @Volatile
@@ -185,8 +186,8 @@ class HumlaUDP {
      *                 data callbacks are delivered directly on the UDP receive coroutine.
      * @param callbackHandler Handler to post listener invocations on.
      */
-    constructor(cryptState: CryptState, listener: UDPConnectionListener, callbackHandler: Handler) :
-        this(cryptState, listener, callbackHandler, DEFAULT_FRAMES_PER_PACKET)
+    constructor(cryptState: CryptState, listener: UDPConnectionListener, callbackExecutor: java.util.concurrent.Executor) :
+        this(cryptState, listener, callbackExecutor, DEFAULT_FRAMES_PER_PACKET)
 
     /**
      * Sets up a new UDP connection context with a specified frames-per-packet setting.
@@ -200,12 +201,12 @@ class HumlaUDP {
     constructor(
         cryptState: CryptState,
         listener: UDPConnectionListener,
-        callbackHandler: Handler,
+        callbackExecutor: java.util.concurrent.Executor,
         targetFramesPerPacket: Int
     ) {
         mCryptState = cryptState
         mListener = listener
-        mCallbackHandler = callbackHandler
+        mCallbackExecutor = callbackExecutor
         setTargetFramesPerPacket(targetFramesPerPacket)
     }
 
@@ -282,7 +283,7 @@ class HumlaUDP {
             val udpSocket = mUDPSocket ?: throw NullPointerException("UDP socket")
             val resolvedHost = mResolvedHost ?: throw NullPointerException("resolved host")
             udpSocket.connect(resolvedHost, mPort)
-            Log.d(TAG, "Created socket")
+            logger.fine( "Created socket")
 
             // Sender consumer: drains the head-drop channel (slice 4: IO loop
             // replaces the OutgoingConsumer thread). The live channel object is
@@ -309,7 +310,7 @@ class HumlaUDP {
                                 if (udpSocket.isClosed) {
                                     break
                                 }
-                                Log.w(TAG, "Failed to send outgoing datagram", e)
+                                logger.warning("Failed to send outgoing datagram" + ": " + e)
                             } finally {
                                 queuedCount.decrementAndGet()
                             }
@@ -320,9 +321,9 @@ class HumlaUDP {
                     }
                     if (sendChannel === channel) break
                 }
-                Log.d(TAG, "Datagram outbox consumer shutdown")
+                logger.fine( "Datagram outbox consumer shutdown")
             }
-            Log.d(TAG, "Datagram outbox consumer active")
+            logger.fine( "Datagram outbox consumer active")
 
             try {
                 val packet = DatagramPacket(ByteArray(BUFFER_SIZE), BUFFER_SIZE)
@@ -332,11 +333,11 @@ class HumlaUDP {
                     val length = packet.length
 
                     if (!mCryptState.isValid()) {
-                        Log.d(TAG, "CryptState invalid, discarding packet")
+                        logger.fine( "CryptState invalid, discarding packet")
                         continue
                     }
                     if (length < 5) {
-                        Log.d(TAG, "Packet too short, discarding")
+                        logger.fine( "Packet too short, discarding")
                         continue
                     }
 
@@ -350,19 +351,19 @@ class HumlaUDP {
                             mCryptState.getLastRequestElapsed() > 5000000
                         ) {
                             mCryptState.resetLastRequestTime()
-                            mCallbackHandler.post {
+                            mCallbackExecutor.execute {
                                 mListener.resyncCryptState()
                             }
-                            Log.d(TAG, "Packet failed to decrypt, discarding and requesting crypt state resync")
+                            logger.fine( "Packet failed to decrypt, discarding and requesting crypt state resync")
                         } else {
-                            Log.d(TAG, "Packet failed to decrypt, discarding")
+                            logger.fine( "Packet failed to decrypt, discarding")
                         }
                     } catch (e: BadPaddingException) {
-                        Log.d(TAG, "Discarding packet", e)
+                        logger.fine("Discarding packet" + ": " + e)
                     } catch (e: IllegalBlockSizeException) {
-                        Log.d(TAG, "Discarding packet", e)
+                        logger.fine("Discarding packet" + ": " + e)
                     } catch (e: ShortBufferException) {
-                        Log.d(TAG, "Discarding packet", e)
+                        logger.fine("Discarding packet" + ": " + e)
                     }
                 }
             } finally {
@@ -371,12 +372,12 @@ class HumlaUDP {
         } catch (e: IOException) {
             // If mConnected is false, then this is a user-triggered disconnection. Report no error.
             if (mConnected) {
-                Log.d(TAG, "UDP socket closed unexpectedly")
-                mCallbackHandler.post {
+                logger.fine( "UDP socket closed unexpectedly")
+                mCallbackExecutor.execute {
                     mListener.onUDPConnectionError(e)
                 }
             } else {
-                Log.d(TAG, "UDP socket closed in response to user disconnect")
+                logger.fine( "UDP socket closed in response to user disconnect")
             }
         } finally {
             mConnected = false
@@ -423,11 +424,11 @@ class HumlaUDP {
                 }
             }
         } catch (e: BadPaddingException) {
-            Log.w(TAG, "Failed to encrypt outgoing UDP packet", e)
+            logger.warning("Failed to encrypt outgoing UDP packet" + ": " + e)
         } catch (e: IllegalBlockSizeException) {
-            Log.w(TAG, "Failed to encrypt outgoing UDP packet", e)
+            logger.warning("Failed to encrypt outgoing UDP packet" + ": " + e)
         } catch (e: ShortBufferException) {
-            Log.w(TAG, "Failed to encrypt outgoing UDP packet", e)
+            logger.warning("Failed to encrypt outgoing UDP packet" + ": " + e)
         }
     }
 
@@ -451,7 +452,7 @@ class HumlaUDP {
         }
         // Rare event (connect, settings change, bandwidth degradation), so
         // debug logging here cannot spam logcat.
-        Log.d(TAG, "Rescaled send queue: " + (getTargetFramesPerPacket() * FRAME_DURATION_MS) +
+        logger.fine( "Rescaled send queue: " + (getTargetFramesPerPacket() * FRAME_DURATION_MS) +
             "ms packets, capacity=" + getSendQueueCapacity())
     }
 
