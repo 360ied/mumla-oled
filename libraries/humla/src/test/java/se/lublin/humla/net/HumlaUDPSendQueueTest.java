@@ -17,7 +17,7 @@
 
 package se.lublin.humla.net;
 
-import android.os.Handler;
+import java.util.concurrent.Executor;
 import junit.framework.TestCase;
 import se.lublin.humla.util.HumlaException;
 
@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Unit tests verifying that the outgoing UDP datagram queue is dynamically bounded
@@ -56,7 +57,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
     private CryptState mClientCrypt;
     private CryptState mServerCrypt;
     private HumlaUDP.UDPConnectionListener mDummyListener;
-    private Handler mDummyHandler;
+    private Executor mDummyHandler;
 
     @Override
     protected void setUp() throws Exception {
@@ -78,7 +79,7 @@ public class HumlaUDPSendQueueTest extends TestCase {
             public void resyncCryptState() {}
         };
 
-        mDummyHandler = new Handler();
+        mDummyHandler = Runnable::run;
     }
 
     /**
@@ -115,29 +116,17 @@ public class HumlaUDPSendQueueTest extends TestCase {
     }
 
     /**
-     * Verifies connection/UDP agreement (ODD-09 Step 4): HumlaConnection sanitizes
+     * Verifies voice-link/UDP agreement (ODD-09 Step 4): LegacyVoiceLink sanitizes
      * frames-per-packet on set, so an invalid value (3) is stored as the default (2)
      * instead of diverging from the UDP layer.
      */
     public void testConnectionSanitizesFramesPerPacket() {
-        HumlaConnection.HumlaConnectionListener listener = new HumlaConnection.HumlaConnectionListener() {
-            @Override
-            public void onConnectionEstablished() {}
-            @Override
-            public void onConnectionSynchronized() {}
-            @Override
-            public void onConnectionHandshakeFailed(java.security.cert.X509Certificate[] chain,
-                                                    HandshakeFailure failure, String verifiedHost) {}
-            @Override
-            public void onConnectionDisconnected(HumlaException e) {}
-            @Override
-            public void onConnectionWarning(String warning) {}
-        };
-        HumlaConnection connection = new HumlaConnection(listener);
-        connection.setTargetFramesPerPacket(3);
-        assertEquals("Invalid fpp must be sanitized to default", 2, connection.getTargetFramesPerPacket());
-        connection.setTargetFramesPerPacket(4);
-        assertEquals("Valid degraded fpp must pass through", 4, connection.getTargetFramesPerPacket());
+        LegacyVoiceLink link = new LegacyVoiceLink(packet -> kotlin.Unit.INSTANCE);
+        link.setTargetFramesPerPacket(3);
+        assertEquals("Invalid fpp must be sanitized to default", 2, link.getTargetFramesPerPacket());
+        link.setTargetFramesPerPacket(4);
+        assertEquals("Valid degraded fpp must pass through", 4, link.getTargetFramesPerPacket());
+        link.close();
     }
 
     /**
@@ -377,8 +366,10 @@ public class HumlaUDPSendQueueTest extends TestCase {
         final CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch doneLatch = new CountDownLatch(threadCount);
         final AtomicInteger maxObservedQueueSize = new AtomicInteger(0);
+        final AtomicReference<Throwable> workerFailure = new AtomicReference<>();
 
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        try {
         for (int t = 0; t < threadCount; t++) {
             final int threadId = t;
             executor.submit(new Runnable() {
@@ -397,8 +388,11 @@ public class HumlaUDPSendQueueTest extends TestCase {
                                 if (currentSize <= prevMax) break;
                             } while (!maxObservedQueueSize.compareAndSet(prevMax, currentSize));
                         }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        workerFailure.compareAndSet(null, e);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        workerFailure.compareAndSet(null, e);
                     } finally {
                         doneLatch.countDown();
                     }
@@ -408,7 +402,11 @@ public class HumlaUDPSendQueueTest extends TestCase {
 
         startLatch.countDown();
         assertTrue("Concurrent senders must finish within timeout", doneLatch.await(5, TimeUnit.SECONDS));
-        executor.shutdown();
+        } finally {
+            executor.shutdownNow();
+        }
+        assertTrue("Executor must terminate", executor.awaitTermination(5, TimeUnit.SECONDS));
+        assertNull("No sender worker may fail", workerFailure.get());
 
         assertTrue("Observed queue size (" + maxObservedQueueSize.get() + ") must never exceed capacity",
                 maxObservedQueueSize.get() <= humlaUDP.getSendQueueCapacity());

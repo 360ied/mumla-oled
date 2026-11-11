@@ -25,6 +25,17 @@ import org.junit.Assert.fail
 import java.net.InetAddress
 import java.security.cert.X509Certificate
 import kotlin.reflect.KClass
+import se.lublin.humla.client.ClientState
+import se.lublin.humla.client.ConnectTarget
+import se.lublin.humla.client.CryptCounts
+import se.lublin.humla.client.LocalFacts
+import se.lublin.humla.client.ServerEndpoint
+import se.lublin.humla.client.ClientCertificate
+import se.lublin.humla.client.SessionStats
+import se.lublin.humla.client.TrustStoreRef
+import se.lublin.humla.net.CryptKeys
+import se.lublin.humla.net.TransportStats
+import se.lublin.humla.net.VoiceStatus
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.primaryConstructor
@@ -125,6 +136,17 @@ class StateImmutabilityTest {
             SyncPhase::class,
             VoiceTargetMode::class,
             SessionEvent::class,
+            ClientState::class,
+            ConnectTarget::class,
+            ServerEndpoint::class,
+            ClientCertificate::class,
+            TrustStoreRef::class,
+            LocalFacts::class,
+            SessionStats::class,
+            CryptCounts::class,
+            TransportStats::class,
+            CryptKeys::class,
+            VoiceStatus::class,
         )
         val visited = mutableSetOf<String>()
         val failures = mutableListOf<String>()

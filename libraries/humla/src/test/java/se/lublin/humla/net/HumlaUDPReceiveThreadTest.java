@@ -17,7 +17,7 @@
 
 package se.lublin.humla.net;
 
-import android.os.Handler;
+import java.util.concurrent.Executor;
 import com.google.protobuf.ByteString;
 import junit.framework.TestCase;
 
@@ -68,12 +68,9 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         final AtomicReference<byte[]> receivedBuffer = new AtomicReference<>();
         final AtomicInteger handlerPostCount = new AtomicInteger(0);
 
-        final Handler mockHandler = new Handler() {
-            @Override
-            public boolean sendMessageAtTime(android.os.Message msg, long uptimeMillis) {
-                handlerPostCount.incrementAndGet();
-                return true;
-            }
+        final Executor mockHandler = r -> {
+            handlerPostCount.incrementAndGet();
+            r.run();
         };
 
         // Client CryptState: encrypts with CLIENT_IV, decrypts with SERVER_IV
@@ -145,30 +142,22 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
     }
 
     /**
-     * Verifies that HumlaConnection.onUDPDataReceived processes Protobuf Audio and Ping
-     * messages directly on the calling background thread without posting to Looper.getMainLooper(),
-     * and updates volatile connection fields atomically (ODD-02).
+     * Verifies that LegacyVoiceLink.onUDPDataReceived processes Protobuf Audio and Ping
+     * messages directly on the calling background thread (ODD-02, ported from HumlaConnection).
      */
     public void testHumlaConnectionUDPDispatchOnCallingThreadAndVolatileFields() throws Exception {
-        final HumlaConnection connection = new HumlaConnection(null);
+        final LegacyVoiceLink link = new LegacyVoiceLink(packet -> kotlin.Unit.INSTANCE);
 
         // Set server version to Mumble 1.5.0 so Protobuf UDP is supported
-        connection.onTCPMessageReceived(
-                HumlaTCPMessageType.Version,
-                0,
-                Mumble.Version.newBuilder()
-                        .setVersionV2(Constants.toVersionV2(1, 5, 0))
-                        .build()
-                        .toByteArray()
-        );
-        assertTrue("Protobuf UDP should be supported for 1.5.0", connection.isProtobufUdpSupported());
+        link.setServerVersion(Constants.toVersionV2(1, 5, 0), Constants.toLegacyVersion(Constants.toVersionV2(1, 5, 0)));
+        assertTrue("Protobuf UDP should be supported for 1.5.0", link.isProtobufUdpSupported());
 
         final AtomicReference<Thread> audioDispatchThread = new AtomicReference<>();
         final AtomicReference<MumbleUDP.Audio> receivedAudio = new AtomicReference<>();
         final AtomicReference<Thread> pingDispatchThread = new AtomicReference<>();
         final AtomicReference<MumbleUDP.Ping> receivedPing = new AtomicReference<>();
 
-        connection.addUDPMessageHandlers(new HumlaUDPMessageListener.Stub() {
+        link.addUdpHandler(new HumlaUDPMessageListener.Stub() {
             @Override
             public void messageProtobufAudio(MumbleUDP.Audio msg) {
                 audioDispatchThread.set(Thread.currentThread());
@@ -211,12 +200,14 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         Thread workerThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                connection.onUDPDataReceived(audioPacket);
-                connection.onUDPDataReceived(pingPacket);
+                link.onUDPDataReceived(audioPacket);
+                link.onUDPDataReceived(pingPacket);
             }
         }, "UDP-Worker-Thread");
-        workerThread.start();
-        workerThread.join(3000);
+        try {
+            workerThread.start();
+            workerThread.join(3000);
+            assertFalse("Worker must finish dispatch within timeout", workerThread.isAlive());
 
         // Verify audio was dispatched synchronously on the background worker thread
         assertSame("Audio should be dispatched on the background worker thread",
@@ -232,6 +223,9 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         assertEquals(testTimestamp, receivedPing.get().getTimestamp());
         assertEquals(testVersionV2, receivedPing.get().getServerVersionV2());
         assertEquals(testBandwidth, receivedPing.get().getMaxBandwidthPerUser());
+        } finally {
+            link.close();
+        }
     }
 
     private DatagramPacket discoverClientAddress(HumlaUDP humlaUDP, DatagramSocket serverSocket) throws Exception {

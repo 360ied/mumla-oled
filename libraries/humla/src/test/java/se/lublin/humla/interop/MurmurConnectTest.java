@@ -17,20 +17,12 @@
 
 package se.lublin.humla.interop;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
-import android.os.Looper;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
-import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.Shadows;
-import org.robolectric.annotation.Config;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -38,35 +30,38 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
-import se.lublin.humla.Constants;
+import se.lublin.humla.client.ClientError;
+import se.lublin.humla.client.ClientState;
+import se.lublin.humla.client.ConnectTarget;
+import se.lublin.humla.client.HumlaClient;
+import se.lublin.humla.client.Session;
+import se.lublin.humla.model.IChannel;
+import se.lublin.humla.model.IMessage;
+import se.lublin.humla.model.IUser;
 import se.lublin.humla.net.HandshakeFailure;
-import se.lublin.humla.net.HumlaConnection;
-import se.lublin.humla.net.HumlaTCPMessageType;
-import se.lublin.humla.protobuf.Mumble;
-import se.lublin.humla.protocol.HumlaTCPMessageListener;
 import se.lublin.humla.util.HumlaException;
+import se.lublin.humla.util.IHumlaObserver;
+import se.lublin.humla.util.VoiceTargetMode;
+
+import java.security.cert.X509Certificate;
 
 /**
- * Step-1 murmur interop scenarios against today's {@link HumlaConnection}.
+ * Step-3 murmur interop scenarios driving {@link HumlaClient} directly.
  *
- * <p>Runs under Robolectric's paused main looper: {@link HumlaConnection}
- * posts all callbacks through the main handler, so each wait pumps the
- * looper. From step 3 on this class drives {@code HumlaClient} directly.
+ * <p>Plain JVM (no Robolectric): the client runs on real dispatchers and
+ * polls StateFlows with timeouts. Forced TCP throughout, so no UDP voice
+ * is exercised here; voice between two clients arrives with step 5a.
  */
-@RunWith(RobolectricTestRunner.class)
-@Config(sdk = 34)
 @Category(MurmurInterop.class)
 public class MurmurConnectTest {
     private MurmurTestServer server;
-    private final List<HumlaConnection> open = new ArrayList<>();
+    private final List<HumlaClientHandle> open = new ArrayList<>();
     private final List<Path> tempStores = new ArrayList<>();
 
     @Before
@@ -76,9 +71,9 @@ public class MurmurConnectTest {
 
     @After
     public void tearDown() {
-        for (HumlaConnection c : open) {
+        for (HumlaClientHandle h : open) {
             try {
-                c.disconnect();
+                h.disconnectAndClose();
             } catch (Exception ignored) {
             }
         }
@@ -106,14 +101,15 @@ public class MurmurConnectTest {
             }
             cert = cf.generateCertificate(in);
         }
-        KeyStore ks = KeyStore.getInstance("JKS");
+        KeyStore ks = KeyStore.getInstance(InteropClient.TRUST_FORMAT);
         ks.load(null, null);
-        // The app trust store keys pins by hostname (alias = host), so the
-        // loopback cert must be stored under the host we connect to.
         ks.setCertificateEntry("127.0.0.1", cert);
         Path store = Files.createTempFile("murmur-interop-trust-", ".jks");
-        tempStores.add(store); // tracked before store(): a store() failure still cleans up.
-        char[] pw = "interop".toCharArray();
+        tempStores.add(store);
+        // The password String constant itself stays in memory (as does
+        // TrustStoreRef's copy); zeroing only clears this transient array.
+        // Accepted as test hygiene, not a security boundary.
+        char[] pw = InteropClient.TRUST_PASSWORD.toCharArray();
         try (var out = Files.newOutputStream(store)) {
             ks.store(out, pw);
         } finally {
@@ -122,165 +118,110 @@ public class MurmurConnectTest {
         return store.toString();
     }
 
-    private static final class ConnectionState {
-        final CountDownLatch established = new CountDownLatch(1);
-        final CountDownLatch synced = new CountDownLatch(1);
-        final CountDownLatch disconnected = new CountDownLatch(1);
-        final AtomicReference<HumlaException> disconnectError = new AtomicReference<>();
-        final AtomicReference<HandshakeFailure> handshakeFailure = new AtomicReference<>();
-    }
-
-    private HumlaConnection connect(String username, String password, ConnectionState state) throws Exception {
-        String trustStore = trustStoreForTestCert();
-        AtomicReference<HumlaConnection> slot = new AtomicReference<>();
-        HumlaConnection.HumlaConnectionListener listener = new HumlaConnection.HumlaConnectionListener() {
-            @Override
-            public void onConnectionEstablished() {
-                state.established.countDown();
-                // Mimic HumlaService.onConnectionEstablished (Version +
-                // Authenticate with username, password, and opus; no access
-                // tokens are configured against the interop server).
-                // Diverges deliberately from the service in one way: the
-                // service also resolves the server row and forwards tokens.
-                HumlaConnection conn = slot.get();
-                if (conn != null) {
-                    conn.sendTCPMessage(Constants.createVersionMessage("MumlaOLED-interop").build(),
-                            HumlaTCPMessageType.Version);
-                    Mumble.Authenticate.Builder auth = Mumble.Authenticate.newBuilder()
-                            .setUsername(username)
-                            .setOpus(true);
-                    if (password != null) {
-                        auth.setPassword(password);
-                    }
-                    conn.sendTCPMessage(auth.build(), HumlaTCPMessageType.Authenticate);
-                }
-            }
-
-            @Override
-            public void onConnectionSynchronized() {
-                state.synced.countDown();
-            }
-
-            @Override
-            public void onConnectionHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure,
-                    String verifiedHost) {
-                state.handshakeFailure.set(failure);
-            }
-
-            @Override
-            public void onConnectionDisconnected(HumlaException e) {
-                state.disconnectError.set(e);
-                state.disconnected.countDown();
-            }
-
-            @Override
-            public void onConnectionWarning(String warning) {
-            }
+    private static IHumlaObserver noopObserver() {
+        return new IHumlaObserver() {
+            @Override public void onConnected() {}
+            @Override public void onConnecting() {}
+            @Override public void onDisconnected(HumlaException e) {}
+            @Override public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {}
+            @Override public void onChannelAdded(IChannel channel) {}
+            @Override public void onChannelStateUpdated(IChannel channel) {}
+            @Override public void onChannelRemoved(IChannel channel) {}
+            @Override public void onChannelPermissionsUpdated(IChannel channel) {}
+            @Override public void onUserConnected(IUser user) {}
+            @Override public void onUserStateUpdated(IUser user) {}
+            @Override public void onUserTalkStateUpdated(IUser user) {}
+            @Override public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {}
+            @Override public void onUserRemoved(IUser user, String reason) {}
+            @Override public void onPermissionDenied(String reason) {}
+            @Override public void onMessageLogged(IMessage message) {}
+            @Override public void onVoiceTargetChanged(VoiceTargetMode mode) {}
+            @Override public void onBluetoothScoChanged(boolean active) {}
+            @Override public void onLogInfo(String message) {}
+            @Override public void onLogWarning(String message) {}
+            @Override public void onLogError(String message) {}
         };
-        HumlaConnection conn = new HumlaConnection(listener);
-        slot.set(conn);
-        conn.setTrustStore(trustStore, "interop", "JKS");
-        conn.setForceTCP(true);
-        open.add(conn);
-        conn.connect(server.host(), server.port());
-        return conn;
     }
 
-    private static void await(CountDownLatch latch, String what, ConnectionState... states) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-        while (latch.getCount() > 0) {
-            Shadows.shadowOf(Looper.getMainLooper()).idle();
-            if (latch.await(100, TimeUnit.MILLISECONDS)) {
-                return;
-            }
-            // A peer-dependent latch (both clients' states) fails fast with
-            // whichever side broke, instead of burning the deadline and
-            // reporting the wrong connection's empty state.
-            for (ConnectionState s : states) {
-                if (s.handshakeFailure.get() != null) {
-                    fail("handshake failed while waiting for " + what + ": " + s.handshakeFailure.get());
-                }
-                if (s.disconnected.getCount() == 0 && latch != s.disconnected) {
-                    fail("disconnected while waiting for " + what + ": " + s.disconnectError.get());
-                }
-            }
-            if (System.nanoTime() > deadline) {
-                StringBuilder detail = new StringBuilder();
-                for (ConnectionState s : states) {
-                    detail.append("[handshakeFailure=").append(s.handshakeFailure.get())
-                            .append(" disconnectError=").append(s.disconnectError.get()).append("]");
-                }
-                fail("timed out waiting for " + what + "; " + detail);
-            }
-        }
+    private HumlaClient connect(String username, String password) throws Exception {
+        String trustStore = trustStoreForTestCert();
+        ConnectTarget target = InteropClient.target(
+                server.host(), server.port(), username, password, trustStore);
+        HumlaClientHandle handle = InteropClient.create(noopObserver());
+        open.add(handle);
+        handle.getClient().connect(target);
+        return handle.getClient();
     }
 
     @Test
     public void connectSyncDisconnect() throws Exception {
-        ConnectionState state = new ConnectionState();
-        HumlaConnection conn = connect("InteropAlice", null, state);
-        await(state.established, "established", state);
-        await(state.synced, "sync", state);
-        assertTrue(conn.isSynchronized());
-        conn.disconnect();
-        await(state.disconnected, "clean disconnect", state);
+        HumlaClient client = connect("InteropAlice", null);
+        Session session = InteropClient.awaitConnected(client, "sync");
+        assertTrue(session.getState().getValue().getServer().getUsers().size() >= 1);
+        client.disconnect();
+        InteropClient.awaitIdle(client, "clean disconnect");
     }
 
     @Test
     public void twoClientsSeeEachOther() throws Exception {
-        ConnectionState a = new ConnectionState();
-        HumlaConnection alice = connect("InteropAlice", null, a);
-        await(a.synced, "alice sync", a);
+        HumlaClient alice = connect("InteropAlice", null);
+        Session aliceSession = InteropClient.awaitConnected(alice, "alice sync");
 
-        CountDownLatch sawBob = new CountDownLatch(1);
-        AtomicReference<String> seenName = new AtomicReference<>();
-        alice.addTCPMessageHandlers(new HumlaTCPMessageListener.Stub() {
-            @Override
-            public void messageUserState(Mumble.UserState msg) {
-                if (msg.hasName() && msg.getName().equals("InteropBob")) {
-                    seenName.set(msg.getName());
-                    sawBob.countDown();
-                }
-            }
-        });
-
-        ConnectionState b = new ConnectionState();
-        HumlaConnection bob = connect("InteropBob", null, b);
-        await(b.synced, "bob sync", a, b);
-        await(sawBob, "alice sees bob join", a, b);
-        assertEquals("InteropBob", seenName.get());
+        HumlaClient bob = connect("InteropBob", null);
+        InteropClient.awaitConnected(bob, "bob sync");
+        InteropClient.awaitUser(aliceSession, "InteropBob", "alice sees bob join");
     }
 
     @Test
     public void channelTextReachesOtherClient() throws Exception {
-        ConnectionState a = new ConnectionState();
-        HumlaConnection alice = connect("InteropAlice", null, a);
-        await(a.synced, "alice sync", a);
+        HumlaClient alice = connect("InteropAlice", null);
+        Session aliceSession = InteropClient.awaitConnected(alice, "alice sync");
 
-        ConnectionState b = new ConnectionState();
-        HumlaConnection bob = connect("InteropBob", null, b);
-        await(b.synced, "bob sync", a, b);
-
-        CountDownLatch gotText = new CountDownLatch(1);
-        AtomicReference<String> gotMessage = new AtomicReference<>();
-        bob.addTCPMessageHandlers(new HumlaTCPMessageListener.Stub() {
-            @Override
-            public void messageTextMessage(Mumble.TextMessage msg) {
-                if ("interop-hello".equals(msg.getMessage())) {
-                    gotMessage.set(msg.getMessage());
+        final CountDownLatch gotText = new CountDownLatch(1);
+        IHumlaObserver bobObserver = noopObserver();
+        // Wrap to capture text: delegate everything, count down on the hello.
+        IHumlaObserver capturing = new IHumlaObserver() {
+            @Override public void onConnected() { bobObserver.onConnected(); }
+            @Override public void onConnecting() { bobObserver.onConnecting(); }
+            @Override public void onDisconnected(HumlaException e) { bobObserver.onDisconnected(e); }
+            @Override public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) { bobObserver.onTLSHandshakeFailed(chain, failure, verifiedHost); }
+            @Override public void onChannelAdded(IChannel channel) { bobObserver.onChannelAdded(channel); }
+            @Override public void onChannelStateUpdated(IChannel channel) { bobObserver.onChannelStateUpdated(channel); }
+            @Override public void onChannelRemoved(IChannel channel) { bobObserver.onChannelRemoved(channel); }
+            @Override public void onChannelPermissionsUpdated(IChannel channel) { bobObserver.onChannelPermissionsUpdated(channel); }
+            @Override public void onUserConnected(IUser user) { bobObserver.onUserConnected(user); }
+            @Override public void onUserStateUpdated(IUser user) { bobObserver.onUserStateUpdated(user); }
+            @Override public void onUserTalkStateUpdated(IUser user) { bobObserver.onUserTalkStateUpdated(user); }
+            @Override public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) { bobObserver.onUserJoinedChannel(user, newChannel, oldChannel); }
+            @Override public void onUserRemoved(IUser user, String reason) { bobObserver.onUserRemoved(user, reason); }
+            @Override public void onPermissionDenied(String reason) { bobObserver.onPermissionDenied(reason); }
+            @Override public void onMessageLogged(IMessage message) {
+                if (message != null && "interop-hello".equals(message.getMessage())) {
                     gotText.countDown();
                 }
             }
-        });
+            @Override public void onVoiceTargetChanged(VoiceTargetMode mode) { bobObserver.onVoiceTargetChanged(mode); }
+            @Override public void onBluetoothScoChanged(boolean active) { bobObserver.onBluetoothScoChanged(active); }
+            @Override public void onLogInfo(String message) { bobObserver.onLogInfo(message); }
+            @Override public void onLogWarning(String message) { bobObserver.onLogWarning(message); }
+            @Override public void onLogError(String message) { bobObserver.onLogError(message); }
+        };
+        String trustStore = trustStoreForTestCert();
+        ConnectTarget bobTarget = InteropClient.target(
+                server.host(), server.port(), "InteropBob", null, trustStore);
+        HumlaClientHandle bobHandle = InteropClient.create(capturing);
+        open.add(bobHandle);
+        bobHandle.getClient().connect(bobTarget);
+        InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
 
         // Both clients land in the root channel (id 0) by default.
-        Mumble.TextMessage text = Mumble.TextMessage.newBuilder()
-                .addChannelId(0)
-                .setMessage("interop-hello")
-                .build();
-        alice.sendTCPMessage(text, HumlaTCPMessageType.TextMessage);
-        await(gotText, "text message", a, b);
-        assertEquals("interop-hello", gotMessage.get());
+        aliceSession.sendText(
+                java.util.Collections.singletonList(0),
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(),
+                "interop-hello");
+        assertTrue("timed out waiting for text message",
+                gotText.await(30, TimeUnit.SECONDS));
     }
 
     @Test
@@ -288,13 +229,10 @@ public class MurmurConnectTest {
         server.stop();
         server = MurmurTestServer.start(true);
 
-        ConnectionState state = new ConnectionState();
-        HumlaConnection conn = connect("InteropAlice", server.serverPassword(), state);
-        await(state.established, "established", state);
-        await(state.synced, "sync", state);
-        assertTrue(conn.isSynchronized());
-        conn.disconnect();
-        await(state.disconnected, "clean disconnect", state);
+        HumlaClient client = connect("InteropAlice", server.serverPassword());
+        InteropClient.awaitConnected(client, "sync");
+        client.disconnect();
+        InteropClient.awaitIdle(client, "clean disconnect");
     }
 
     @Test
@@ -302,11 +240,9 @@ public class MurmurConnectTest {
         server.stop();
         server = MurmurTestServer.start(true);
 
-        ConnectionState state = new ConnectionState();
-        connect("InteropAlice", "wrong-password", state);
-        await(state.disconnected, "reject disconnect", state);
-        HumlaException error = state.disconnectError.get();
-        assertTrue("expected a Reject failure, got " + error, error != null
-                && error.getReason() == HumlaException.HumlaDisconnectReason.REJECT);
+        HumlaClient client = connect("InteropAlice", "wrong-password");
+        ClientState.Failed failed = InteropClient.awaitFailed(client, "reject");
+        assertTrue("expected a Reject failure, got " + failed.getError(),
+                failed.getError() instanceof ClientError.Rejected);
     }
 }

@@ -20,59 +20,29 @@ package se.lublin.humla.net;
 import junit.framework.TestCase;
 
 /**
- * Pins the keepalive-interval decision in {@link HumlaConnection#getNextPingIntervalSeconds}.
- * Slice 4 replaces the ScheduledExecutorService self-chain with
- * while (isActive) { sendKeepalivePing(); delay(interval) } but keeps this
- * exact policy: elapsed &lt; 30s -&gt; 5s; else if (!forceTCP &amp;&amp; usingUDP
- * &amp;&amp; (uiRemoteGood &lt;= 3 || good &lt;= 3)) -&gt; 5s; else 10s.
- *
- * <p>Complements AdaptiveKeepaliveTest (constants + transitions) with the
- * slice-4 branch-level contract the coroutine loop depends on.
+ * Pins the keepalive-interval decision in {@link TransportImpl#nextPingDelaySeconds}.
+ * Ported from HumlaConnection: elapsed &lt; 30s -&gt; 5s; else if (!forceTCP &amp;&amp; usingUDP
+ * &amp;&amp; (remoteGood &lt;= 3 || localGood &lt;= 3)) -&gt; 5s; else 10s.
  */
 public class PingIntervalTest extends TestCase {
 
-    private static HumlaConnection freshConnection() {
-        return new HumlaConnection(null);
-    }
-
     public void testBootstrapWindowAlwaysFiveSeconds() {
-        HumlaConnection connection = freshConnection();
-        connection.mStartTimestamp = System.nanoTime() - 10_000_000_000L; // 10s
-        connection.mCryptState.mUiGood = 10;
-        connection.mCryptState.mUiRemoteGood = 10;
-        assertEquals(5, connection.getNextPingIntervalSeconds());
+        assertEquals(5, TransportImpl.nextPingDelaySeconds(10_000_000L, 10, 10, true, false));
     }
 
     public void testSteadyStateWhenHealthyAfterThirtySeconds() {
-        HumlaConnection connection = freshConnection();
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L; // 35s
-        connection.mCryptState.mUiGood = 4;
-        connection.mCryptState.mUiRemoteGood = 4;
-        assertEquals(10, connection.getNextPingIntervalSeconds());
+        assertEquals(10, TransportImpl.nextPingDelaySeconds(35_000_000L, 4, 4, true, false));
     }
 
     public void testDegradedRemoteGoodStaysBootstrap() {
-        HumlaConnection connection = freshConnection();
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L;
-        connection.mCryptState.mUiGood = 10;
-        connection.mCryptState.mUiRemoteGood = 3;
-        assertEquals(5, connection.getNextPingIntervalSeconds());
+        assertEquals(5, TransportImpl.nextPingDelaySeconds(35_000_000L, 3, 10, true, false));
     }
 
     public void testDegradedLocalGoodStaysBootstrap() {
-        HumlaConnection connection = freshConnection();
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L;
-        connection.mCryptState.mUiGood = 3;
-        connection.mCryptState.mUiRemoteGood = 10;
-        assertEquals(5, connection.getNextPingIntervalSeconds());
+        assertEquals(5, TransportImpl.nextPingDelaySeconds(35_000_000L, 10, 3, true, false));
     }
 
     public void testForceTcpSkipsHealthGateAfterThirtySeconds() {
-        HumlaConnection connection = freshConnection();
-        connection.setForceTCP(true);
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L;
-        connection.mCryptState.mUiGood = 0;
-        connection.mCryptState.mUiRemoteGood = 0;
-        assertEquals(10, connection.getNextPingIntervalSeconds());
+        assertEquals(10, TransportImpl.nextPingDelaySeconds(35_000_000L, 0, 0, true, true));
     }
 }

@@ -34,7 +34,7 @@ import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
-import se.lublin.humla.net.HumlaConnection
+import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.state.UserInfo
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.PacketBuffer
@@ -81,7 +81,7 @@ class AudioHandler : HumlaNetworkListener,
 
             // fpp==6 is already the largest packet: no growth branch applies by
             // design, so only the bitrate loop below degrades (pinned by test).
-            if (HumlaConnection.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth) {
+            if (ProtobufMessages.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth) {
                 if (degradedFpp <= 4 && maxBandwidth <= 32000) {
                     degradedFpp = 4
                 } else if (degradedFpp == 1 && maxBandwidth <= 64000) {
@@ -89,7 +89,7 @@ class AudioHandler : HumlaNetworkListener,
                 } else if (degradedFpp == 2 && maxBandwidth <= 48000) {
                     degradedFpp = 4
                 }
-                while (HumlaConnection.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth && degradedBitrate > 8000) {
+                while (ProtobufMessages.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth && degradedBitrate > 8000) {
                     degradedBitrate -= 1000
                 }
             }
@@ -614,7 +614,7 @@ class AudioHandler : HumlaNetworkListener,
 
     fun getCurrentBandwidth(): Int {
         synchronized(mBandwidthLock) {
-            return HumlaConnection.calculateAudioBandwidth(mBitrate, mFramesPerPacket)
+            return ProtobufMessages.calculateAudioBandwidth(mBitrate, mFramesPerPacket)
         }
     }
 
@@ -745,7 +745,7 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     override fun messageProtobufPing(msg: MumbleUDP.Ping) {
-        // Handled in HumlaConnection
+        // Handled in Transport (tunnelled voice bypasses the UDP path)
     }
 
     fun setProtobufUdp(protobufUdp: Boolean) {
