@@ -62,6 +62,7 @@ public final class MurmurTestServer {
     // for visibility (stop() is idempotent, so a race is benign either way).
     private volatile Process process;
     private volatile Thread shutdownHook;
+    private volatile Path serverLog;
 
     private MurmurTestServer(Path dir, int port, boolean withServerPassword) {
         this.dir = dir;
@@ -96,6 +97,12 @@ public final class MurmurTestServer {
                 }
                 lastBindFailure = e;
                 server.stop();
+            } catch (InterruptedException e) {
+                // External interruption (JUnit timeout, worker kill): don't
+                // leak the attempt dir, restore the flag, propagate.
+                Thread.currentThread().interrupt();
+                server.stop();
+                throw e;
             } catch (RuntimeException | Error e) {
                 // fail()/assumeTrue() from launch(): don't leak the attempt's
                 // temp dir, then propagate (skip stays a skip, failure a failure).
@@ -181,21 +188,20 @@ public final class MurmurTestServer {
                     + "; run via scripts/test_interop.sh with pkgs.murmur");
         }
 
+        // Server output goes straight to a file in the attempt dir: no drainer
+        // thread to race, no pipe that a chatty server can block on, and the
+        // log survives for triage when startup fails. The dir (and the log
+        // with it) is deleted by stop().
         List<String> cmd = new ArrayList<>();
         cmd.add("mumble-server");
         cmd.add("-fg");
         cmd.add("-ini");
         cmd.add(ini.toString());
         ProcessBuilder server = new ProcessBuilder(cmd);
+        serverLog = dir.resolve("mumble-server.log");
+        server.redirectOutput(serverLog.toFile());
         server.redirectErrorStream(true);
         process = server.start();
-        // Do not block on the server's output; drain it on a daemon thread so
-        // a chatty server can never block on a full pipe. Capture the process
-        // in a local: stop() may null the field before the thread runs.
-        final Process live = process;
-        Thread drainer = new Thread(() -> drain(live), "murmur-drain");
-        drainer.setDaemon(true);
-        drainer.start();
 
         waitForPort();
         shutdownHook = new Thread(this::stop);
@@ -206,17 +212,36 @@ public final class MurmurTestServer {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (true) {
             if (process != null && !process.isAlive()) {
-                throw new IOException("mumble-server exited during startup");
+                throw new IOException(
+                        "mumble-server exited during startup; log tail: " + logTail());
             }
             try {
                 new Socket(host(), port).close();
                 return;
             } catch (IOException expected) {
                 if (System.nanoTime() > deadline) {
-                    throw new IOException("mumble-server did not open port " + port, expected);
+                    throw new IOException(
+                            "mumble-server did not open port " + port + "; log tail: " + logTail(),
+                            expected);
                 }
                 Thread.sleep(200);
             }
+        }
+    }
+
+    /** Last ~2 KB of the server log, best effort, for failure triage. */
+    private String logTail() {
+        if (serverLog == null || !Files.exists(serverLog)) {
+            return "<no log>";
+        }
+        try {
+            byte[] all = Files.readAllBytes(serverLog);
+            int from = Math.max(0, all.length - 2048);
+            return new String(all, from, all.length - from, StandardCharsets.UTF_8)
+                    .replaceAll("\\s+", " ")
+                    .trim();
+        } catch (IOException e) {
+            return "<unreadable log>";
         }
     }
 

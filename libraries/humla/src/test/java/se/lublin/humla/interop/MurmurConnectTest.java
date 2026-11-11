@@ -112,13 +112,13 @@ public class MurmurConnectTest {
         // loopback cert must be stored under the host we connect to.
         ks.setCertificateEntry("127.0.0.1", cert);
         Path store = Files.createTempFile("murmur-interop-trust-", ".jks");
+        tempStores.add(store); // tracked before store(): a store() failure still cleans up.
         char[] pw = "interop".toCharArray();
         try (var out = Files.newOutputStream(store)) {
             ks.store(out, pw);
         } finally {
             Arrays.fill(pw, '\0');
         }
-        tempStores.add(store);
         return store.toString();
     }
 
