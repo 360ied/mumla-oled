@@ -18,6 +18,7 @@
 package se.lublin.humla.state
 
 import junit.framework.TestCase
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import org.junit.Test
@@ -114,6 +115,37 @@ class HandlesTest : TestCase() {
         assertEquals("other", handle.name)
         // userId was null -> -1 default, matching today's User.userId.
         assertEquals(-1, handle.userId)
+    }
+
+    @Test
+    fun testColdSeededHandleReadsLastValues() {
+        val flow = syncedFlow()
+        // Remove first: a handle constructed afterwards has no cache to warm.
+        flow.update { cur -> applyUserRemove(cur, Mumble.UserRemove.newBuilder().setSession(2).build()).state }
+        flow.update { cur -> applyChannelRemove(cur, Mumble.ChannelRemove.newBuilder().setChannelId(1).build()).state }
+        val removed = UserInfo(
+            session = 2, userId = 5, name = "gone", channelId = 1,
+            certHash = "h", comment = "c", commentHash = null, texture = null,
+            textureHash = null, muted = true, deafened = false, suppressed = false,
+            selfMuted = true, selfDeafened = false, prioritySpeaker = false,
+            recording = true,
+            listeningChannels = persistentSetOf(1),
+            localMuted = true, localIgnored = false,
+        )
+        val handle = UserHandle(2, flow, seed = removed)
+        assertEquals("gone", handle.name)
+        assertEquals(5, handle.userId)
+        assertTrue(handle.isMuted)
+        assertNull(handle.channel)
+        val chanSeed = ChannelInfo(
+            id = 1, parentId = 0, name = "A", position = 0, temporary = false,
+            description = "d", descriptionHash = null,
+            links = persistentSetOf(),
+            maxUsers = 0, enterRestricted = false, canEnter = true, permissions = 3,
+        )
+        val chan = ChannelHandle(1, flow, seed = chanSeed)
+        assertEquals("A", chan.name)
+        assertEquals(3, chan.permissions)
     }
 
     @Test

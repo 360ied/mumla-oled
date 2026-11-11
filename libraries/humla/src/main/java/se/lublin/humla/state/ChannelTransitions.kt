@@ -31,7 +31,7 @@ data class TransitionResult(
     val selfRemoved: Boolean = false,
 )
 
-/** Placeholder for forward-referenced ids. Shared with [stubChannelForUsers]. */
+/** Placeholder for forward-referenced ids. Shared with new-user creation in UserTransitions. */
 internal fun stubChannel(id: Int): ChannelInfo = ChannelInfo(
     id = id,
     parentId = null,
