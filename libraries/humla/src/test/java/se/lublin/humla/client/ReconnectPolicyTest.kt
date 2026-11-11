@@ -21,7 +21,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Pins the pure reconnect-backoff table (ported from ReconnectBackoffTest).
+ * Pins the pure reconnect-backoff table owned by ReconnectPolicy
+ * (HumlaService.getReconnectDelayForAttempts delegates to it).
  * Delays: 0->1000, 1->3000, 2->6000, 3->12000, >=4->25000.
  */
 class ReconnectPolicyTest {

@@ -63,8 +63,10 @@ import se.lublin.humla.util.VoiceTargetMode
 
 private class FakeVoice : VoiceLink, VoiceLifecycle {
     val order: MutableList<String> = Collections.synchronizedList(ArrayList())
-    var starts = 0
-    var stops = 0
+    private val startsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val stopsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val stops: Int get() = stopsCount.get()
 
     private val _events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
     override val events = _events.asSharedFlow()
@@ -72,12 +74,12 @@ private class FakeVoice : VoiceLink, VoiceLifecycle {
     override val status: StateFlow<VoiceStatus> = _status.asStateFlow()
 
     override fun startVoice(host: String, port: Int) {
-        starts += 1
+        startsCount.incrementAndGet()
         order.add("voice-start")
     }
 
     override fun stopVoice() {
-        stops += 1
+        stopsCount.incrementAndGet()
         order.add("voice-stop")
     }
 
@@ -113,7 +115,7 @@ private class FakeTransport(
     private val _keys = MutableStateFlow<CryptKeys?>(null)
     override val cryptKeys: StateFlow<CryptKeys?> = _keys.asStateFlow()
     private val done = CompletableDeferred<ClientError>()
-    override val failure get() = done
+    override val failure: kotlinx.coroutines.Deferred<ClientError> get() = done
     val sent = Collections.synchronizedList(ArrayList<Pair<HumlaTCPMessageType, MessageLite>>())
     var closed = false
     var keepaliveStarted = false
@@ -143,9 +145,17 @@ private class FakeTransport(
 private class FakeFactory(
     var transports: ArrayDeque<FakeTransport> = ArrayDeque(),
     var throwOnCreate: TransportException? = null,
-    val createdTargets: MutableList<ConnectTarget> = Collections.synchronizedList(ArrayList()),
+    val created: MutableList<CreateArgs> = Collections.synchronizedList(ArrayList()),
     val createdForceTcp: MutableList<Boolean> = Collections.synchronizedList(ArrayList()),
 ) : TransportFactory {
+    data class CreateArgs(
+        val host: String,
+        val port: Int,
+        val certSize: Int?,
+        val trustPath: String?,
+        val forceTcp: Boolean,
+    )
+
     override suspend fun create(
         parentScope: CoroutineScope,
         host: String,
@@ -159,6 +169,7 @@ private class FakeFactory(
         voice: VoiceLink,
     ): Transport {
         createdForceTcp.add(forceTcp)
+        created.add(CreateArgs(host, port, certificate?.size, trustStorePath, forceTcp))
         val ex = throwOnCreate
         if (ex != null) throw ex
         val t = if (transports.isNotEmpty()) transports.removeFirst() else FakeTransport(!forceTcp)
@@ -341,18 +352,18 @@ class HumlaClientTest {
         // FakeTransport created; handshake sent (Version + Authenticate).
         val session = client.currentSession.value
         assertTrue(session != null)
-        val transport = factory.let {
-            // The factory returns a fresh FakeTransport when empty.
-            null
-        }
         // Drive sync: channel + users then ServerSync through the live transport.
         // The live transport is reachable via the session.
         val live = session!!
-        live.transport.inbound.let { /* ReceiveChannel, send via the fake */ }
         // Reach the fake via the session's transport (must be FakeTransport).
         val fake = live.transport as FakeTransport
         assertTrue(fake.sent.any { it.first == HumlaTCPMessageType.Version })
         assertTrue(fake.sent.any { it.first == HumlaTCPMessageType.Authenticate })
+        // TransportFactory forwarding: host/port/forceTcp arrive intact.
+        assertEquals(1, factory.created.size)
+        assertEquals("127.0.0.1", factory.created[0].host)
+        assertEquals(64738, factory.created[0].port)
+        assertEquals(true, factory.created[0].forceTcp)
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "alice", 0)))
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
@@ -372,6 +383,7 @@ class HumlaClientTest {
         val endIdx = order.indexOf("route-end")
         assertTrue(stopIdx >= 0 && endIdx >= 0 && stopIdx < endIdx)
         assertEdges(seen)
+        client.close()
         collectJob.cancel()
     }
 
@@ -432,6 +444,7 @@ class HumlaClientTest {
         runCurrent()
         assertEquals(5, (client.state.value as ClientState.Connecting).attempt)
         assertEdges(seen)
+        client.close()
         collectJob.cancel()
     }
 
@@ -461,10 +474,14 @@ class HumlaClientTest {
         val s = client.state.value
         assertTrue(s is ClientState.Failed)
         assertTrue((s as ClientState.Failed).error is ClientError.Rejected)
+        // Rejected sessions never start voice or route.
+        assertEquals(0, voice.starts)
+        assertEquals(0, route.starts)
         // No reconnect after a long wait.
         advanceTimeBy(60_000)
         runCurrent()
         assertTrue(client.state.value is ClientState.Failed)
+        client.close()
     }
 
     @Test
@@ -487,6 +504,7 @@ class HumlaClientTest {
         runCurrent()
         assertTrue(client.state.value is ClientState.Connecting)
         assertEquals(1, (client.state.value as ClientState.Connecting).attempt)
+        client.close()
     }
 
     @Test
@@ -514,6 +532,7 @@ class HumlaClientTest {
         assertTrue(first !== second)
         assertTrue(firstFake.closed)
         assertTrue(client.state.value is ClientState.Connecting)
+        client.close()
     }
 
     @Test
@@ -543,5 +562,6 @@ class HumlaClientTest {
         live.setSelfMuteDeaf(true, false)
         live.setPtt(true)
         runCurrent()
+        client.close()
     }
 }

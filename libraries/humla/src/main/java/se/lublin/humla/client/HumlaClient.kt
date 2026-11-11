@@ -18,23 +18,25 @@
 package se.lublin.humla.client
 
 import java.time.Clock
-import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import se.lublin.humla.net.Transport
 import se.lublin.humla.net.TransportException
 import se.lublin.humla.net.TransportFactory
 import se.lublin.humla.net.VoiceLink
+import se.lublin.humla.state.ServerState
+import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.util.IHumlaObserver
 
@@ -62,13 +64,18 @@ class HumlaClient(
     private val clock: Clock,
     private val observer: IHumlaObserver,
     private val mainPoster: (Runnable) -> Unit,
-    private val denyFormatter: (se.lublin.humla.state.SessionEvent.PermissionDenied) -> String,
+    private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
     private val clientDispatcher: kotlinx.coroutines.CoroutineDispatcher =
         Dispatchers.Default.limitedParallelism(1),
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
     private val sessionDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default,
 ) {
-    private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob())
+    // Child of the parent scope: parent cancellation (service destroy,
+    // test scope) tears the client down with it. Teardown ordering still
+    // goes through teardownLiveSession (voice stop, route end, close).
+    private val scope = CoroutineScope(
+        parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]),
+    )
 
     private val _state: MutableStateFlow<ClientState> = MutableStateFlow(ClientState.Idle)
     val state: StateFlow<ClientState> = _state.asStateFlow()
@@ -76,10 +83,9 @@ class HumlaClient(
     private val _currentSession = MutableStateFlow<Session?>(null)
     val currentSession: StateFlow<Session?> = _currentSession.asStateFlow()
 
-    private val sessionIds = AtomicLong(0L)
-
-    // Dispatcher-confined lifecycle state. Reads from other threads go
-    // through state.value (which carries attempt/target/error).
+    // All lifecycle vars below are confined to clientDispatcher; cross-thread
+    // readers go through state.value (which carries attempt/target/error).
+    private var sessionIds = 0L
     private var attempt: Int = 0
     private var currentTarget: ConnectTarget? = null
     private var attemptJob: Job? = null
@@ -89,7 +95,7 @@ class HumlaClient(
 
     fun connect(target: ConnectTarget) {
         scope.launch(clientDispatcher) {
-            doConnect(target, automatic = false)
+            doConnect(target)
         }
     }
 
@@ -99,6 +105,12 @@ class HumlaClient(
         }
     }
 
+    // Matches legacy parity: only a pending Reconnecting is disarmed; a live
+    // Connecting attempt (even automatic) runs to outcome. Callers needing
+    // to stop everything use disconnect().
+    // Matches legacy parity: only a pending Reconnecting is disarmed; a live
+    // Connecting attempt (even automatic) runs to outcome. Callers needing
+    // to stop everything use disconnect().
     fun cancelReconnect() {
         scope.launch(clientDispatcher) {
             val s = _state.value
@@ -111,31 +123,44 @@ class HumlaClient(
         }
     }
 
-    /** Test seam: current attempt counter (dispatcher-confined, read via state in prod). */
-    fun testAttempt(): Int = attempt
+    /**
+     * Best-effort shutdown (tests, service destroy): disarms timers, tears
+     * down the live session, then cancels the scope. Fire-and-forget;
+     * teardown itself has no suspensions, so parent cancellation cannot
+     * interrupt it mid-flight.
+     */
+    fun close() {
+        scope.launch(clientDispatcher) {
+            cancelJobs()
+            teardownLiveSession()
+            scope.cancel()
+        }
+    }
+
+    /** Test seam: current attempt counter, read from published state. */
+    fun testAttempt(): Int = when (val s = _state.value) {
+        is ClientState.Connecting -> s.attempt
+        is ClientState.Reconnecting -> s.attempt
+        else -> attempt
+    }
 
     private fun cancelJobs() {
-        try {
-            attemptJob?.cancel()
-        } catch (ignored: Exception) {
-        }
+        // Snapshot-then-clear: invoked from within these very jobs
+        // (delay/network firing doConnect), where self-cancel is a harmless
+        // no-op. Job.cancel never throws; no catch needed.
+        val attemptJ = attemptJob
         attemptJob = null
-        try {
-            reconnectDelayJob?.cancel()
-        } catch (ignored: Exception) {
-        }
+        val delayJob = reconnectDelayJob
         reconnectDelayJob = null
-        try {
-            networkJob?.cancel()
-        } catch (ignored: Exception) {
-        }
+        val netJob = networkJob
         networkJob = null
+        attemptJ?.cancel()
+        delayJob?.cancel()
+        netJob?.cancel()
     }
 
     private suspend fun teardownLiveSession() {
         val session = liveSession
-        liveSession = null
-        _currentSession.value = null
         if (session == null) return
         try {
             voiceLifecycle.stopVoice()
@@ -149,6 +174,10 @@ class HumlaClient(
             session.close()
         } catch (ignored: Exception) {
         }
+        // Clear last: until now currentSession still resolves for in-flight
+        // readers; teardown itself runs sequentially on this dispatcher.
+        liveSession = null
+        _currentSession.value = null
     }
 
     private suspend fun doDisconnect() {
@@ -159,17 +188,19 @@ class HumlaClient(
         _state.value = ClientState.Idle
     }
 
-    private suspend fun doConnect(target: ConnectTarget, automatic: Boolean) {
+    private suspend fun doConnect(target: ConnectTarget) {
         // Cancel any in-flight attempt/session before starting the new one.
         // Voice Stop is submitted before Route Ended inside teardown, and the
         // next Start can only run after this teardown (same dispatcher order),
         // so the next session's Start follows this Stop.
+        // Note: the attempt counter is intentionally NOT reset here. A manual
+        // retry after failures keeps the grown backoff (spec, client.md).
         cancelJobs()
         teardownLiveSession()
         currentTarget = target
-        // Manual connects neither reset nor increment; automatic increments
-        // before starting (caller increments). Publishing Connecting here
-        // keeps the UI on Connecting through TLS (which suspends below).
+        // The attempt counter is intentionally NOT reset here. A manual
+        // retry after failures keeps the grown backoff (spec, client.md).
+        // Publishing Connecting here keeps the UI on Connecting through TLS.
         _state.value = ClientState.Connecting(target, attempt)
         val job = scope.launch(clientDispatcher) {
             runAttempt(this, target)
@@ -183,9 +214,12 @@ class HumlaClient(
             withContext(ioDispatcher) {
                 localFactsStore.load(target.server.serverId)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             LocalFacts.empty()
         }
+        attemptScope.ensureActive()
         // Create the transport (DNS + TLS). Cancellable via attemptJob cancel.
         val transport: Transport = try {
             transports.create(
@@ -200,21 +234,27 @@ class HumlaClient(
                 forceTcp = target.forceTcp,
                 voice = voiceLink,
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: TransportException) {
             onConnectFailed(target, e.error, lastState = null)
             return
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+        } catch (e: java.io.IOException) {
             onConnectFailed(
                 target,
                 ClientError.Connection("Connect failed: ${e.message}", e),
                 lastState = null,
             )
             return
+        } catch (e: Exception) {
+            // Programming/config bugs fail loud instead of looping
+            // reconnects forever on a deterministic failure.
+            throw e
         }
+        attemptScope.ensureActive()
         // Transport connected; create the session and publish it at once.
         val session = Session(
-            id = sessionIds.incrementAndGet(),
+            id = sessionIds++,
             target = target,
             parentScope = attemptScope,
             transport = transport,
@@ -226,21 +266,26 @@ class HumlaClient(
             denyFormatter = denyFormatter,
             workDispatcher = sessionDispatcher,
             ioDispatcher = ioDispatcher,
+            clock = clock,
         )
         liveSession = session
         _currentSession.value = session
         // Still Connecting (HANDSHAKING published at construction).
         _state.value = ClientState.Connecting(target, attempt)
-        // Watch for SYNCED -> Connected.
+        // Watch for SYNCED -> Connected. Cancelled once connected: the
+        // pre-sync burst would otherwise wake this dispatcher per emission.
         val syncWatcher = attemptScope.launch(clientDispatcher) {
             try {
-                var connected = false
                 session.state.collect { s ->
-                    if (!connected && s.server.phase == SyncPhase.SYNCED) {
-                        connected = true
+                    if (s.server.phase == SyncPhase.SYNCED) {
                         onSynced(target, session)
+                        throw WatcherDone()
                     }
                 }
+            } catch (e: WatcherDone) {
+                // Connected; watcher retired.
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
             }
         }
@@ -252,15 +297,24 @@ class HumlaClient(
             } catch (ignored: Exception) {
             }
             onSessionFailed(target, session, error)
+        } catch (e: CancellationException) {
+            // Attempt cancelled (disconnect/new connect); the canceller tore
+            // the session down. Propagate so the attempt job ends cancelled.
+            try {
+                syncWatcher.cancel()
+            } catch (ignored: Exception) {
+            }
+            throw e
         } catch (e: Exception) {
-            // Attempt cancelled (disconnect/new connect); session already torn
-            // down by the canceller. Nothing to publish here.
             try {
                 syncWatcher.cancel()
             } catch (ignored: Exception) {
             }
         }
     }
+
+    /** Control-flow signal: the sync watcher connected and retires. */
+    private class WatcherDone : Exception()
 
     private suspend fun onSynced(target: ConnectTarget, session: Session) {
         // Only the live session may publish Connected (a stale SYNCED after
@@ -271,6 +325,12 @@ class HumlaClient(
         _state.value = ClientState.Connected(target, session)
         try {
             routeLifecycle.sessionStarted()
+        } catch (ignored: Exception) {
+        }
+        // Push the route before opening UDP: startVoice skips the socket when
+        // forced (or when a previous session left the link tunnelled).
+        try {
+            voiceLifecycle.setForceTcp(target.forceTcp)
         } catch (ignored: Exception) {
         }
         try {
@@ -298,7 +358,7 @@ class HumlaClient(
     private suspend fun onConnectFailed(
         target: ConnectTarget,
         error: ClientError,
-        lastState: se.lublin.humla.state.ServerState?,
+        lastState: ServerState?,
     ) {
         // No session existed (DNS/TLS failure before Session). Teardown any
         // half-open voice/route (no-ops) for a clean state transition.
@@ -336,7 +396,7 @@ class HumlaClient(
     private suspend fun enterReconnecting(
         target: ConnectTarget,
         error: ClientError,
-        lastState: se.lublin.humla.state.ServerState?,
+        lastState: ServerState?,
     ) {
         val delayMs = ReconnectPolicy.delayForAttempts(attempt)
         val retryAt = try {
@@ -352,8 +412,10 @@ class HumlaClient(
                 delay(delayMs.toLong())
                 if (_state.value is ClientState.Reconnecting && currentTarget == target) {
                     attempt += 1
-                    doConnect(target, automatic = true)
+                    doConnect(target)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
             }
         }
@@ -371,9 +433,11 @@ class HumlaClient(
                         } catch (ignored: Exception) {
                         }
                         attempt += 1
-                        doConnect(target, automatic = true)
+                        doConnect(target)
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
             }
         }

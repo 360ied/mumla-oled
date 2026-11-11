@@ -18,10 +18,16 @@
 package se.lublin.humla.client
 
 import com.google.protobuf.MessageLite
-import kotlinx.collections.immutable.persistentListOf
+import java.time.Clock
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -37,11 +43,9 @@ import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IUser
 import se.lublin.humla.model.Message
 import se.lublin.humla.model.ServerSettings
-import se.lublin.humla.model.WhisperTarget
-import se.lublin.humla.model.WhisperTargetList
 import se.lublin.humla.net.HumlaTCPMessageType
-import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.Inbound
+import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.net.Transport
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.protobuf.Mumble
@@ -72,10 +76,10 @@ import se.lublin.humla.state.applyUserRemove
 import se.lublin.humla.state.applyUserState
 import se.lublin.humla.state.applyVersion
 import se.lublin.humla.state.applyVoiceTargetIntent
+import se.lublin.humla.state.WhisperTarget
 import se.lublin.humla.state.emptySessionState
-import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.state.VoiceTargetMode
+import se.lublin.humla.util.IHumlaObserver
 
 /**
  * One connection. Created by the client for each attempt and never reused.
@@ -97,16 +101,19 @@ class Session internal constructor(
     private val localFactsStore: LocalFactsStore,
     private val mainPoster: (Runnable) -> Unit,
     private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
-    private val workDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default,
-    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val clock: Clock = Clock.systemUTC(),
 ) {
     // Interim step-3 bridge (deleted in step 4 with VoicePolicy): the live
     // AudioHandler still needs CodecVersion/ServerConfig/UserState updates
     // for its mic gate and bandwidth degradation. Session broadcasts to
     // registered TCP handlers after applying each transition.
-    private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob() + workDispatcher)
+    private val scope = CoroutineScope(
+        parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) + workDispatcher,
+    )
 
-    private val tcpHandlers = java.util.concurrent.CopyOnWriteArrayList<HumlaTCPMessageListener>()
+    private val tcpHandlers = CopyOnWriteArrayList<HumlaTCPMessageListener>()
 
     fun addTcpHandler(handler: HumlaTCPMessageListener) {
         tcpHandlers.addIfAbsent(handler)
@@ -116,7 +123,7 @@ class Session internal constructor(
         tcpHandlers.remove(handler)
     }
 
-    private fun broadcastTcp(type: HumlaTCPMessageType, message: com.google.protobuf.MessageLite) {
+    private fun broadcastTcp(type: HumlaTCPMessageType, message: MessageLite) {
         for (handler in tcpHandlers) {
             try {
                 when (type) {
@@ -156,11 +163,17 @@ class Session internal constructor(
     private val _events = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 256)
     val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
-    private val _stats = MutableStateFlow(SessionStats.initial())
+    private val _stats = MutableStateFlow(SessionStats.initial(usingUdp = !target.forceTcp))
     val stats: StateFlow<SessionStats> = _stats.asStateFlow()
 
     private val failureDeferred = CompletableDeferred<ClientError>()
-    val failure get() = failureDeferred
+    val failure: Deferred<ClientError> get() = failureDeferred
+
+    // Session-local live mute/ignore sets, seeded from LocalFacts and kept
+    // current by the intents below. handleMessage reads these (not the frozen
+    // snapshot) so a rejoining registered user keeps a mid-session mute.
+    private val liveMutedIds = ConcurrentHashMap.newKeySet<Int>().apply { addAll(localFacts.mutedUserIds) }
+    private val liveIgnoredIds = ConcurrentHashMap.newKeySet<Int>().apply { addAll(localFacts.ignoredUserIds) }
 
     // Private sync builder: SYNCING applies here without publishing.
     // Published once on ServerSync, then every batch publishes once.
@@ -170,27 +183,41 @@ class Session internal constructor(
     init {
         scope.launch {
             try {
-                transport.failure.await()
+                failOnce(transport.failure.await())
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 return@launch
             }
-            val error = try {
-                transport.failure.getCompleted()
-            } catch (e: Exception) {
-                return@launch
-            }
-            failOnce(error)
         }
         scope.launch {
             try {
                 voiceLink.events.collect { event ->
                     when (event) {
+                        is se.lublin.humla.net.VoiceEvent.UdpPing -> {
+                            // Protobuf pings may carry the server version and
+                            // bandwidth cap: the single source is ServerState.info.
+                            if (event.serverVersionV2 != null || event.maxBandwidth != null) {
+                                _state.update { current ->
+                                    var info = current.server.info
+                                    if (event.serverVersionV2 != null) {
+                                        info = info.copy(versionV2 = event.serverVersionV2)
+                                    }
+                                    if (event.maxBandwidth != null) {
+                                        info = info.copy(maxBandwidth = event.maxBandwidth)
+                                    }
+                                    current.copy(server = current.server.copy(info = info))
+                                }
+                            }
+                        }
                         is se.lublin.humla.net.VoiceEvent.UdpUnavailable -> {
                             _events.emit(SessionEvent.ConnectionWarning("UDP unavailable, switched to TCP"))
                         }
                         else -> Unit
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Scope cancelled.
             }
@@ -198,29 +225,45 @@ class Session internal constructor(
         scope.launch {
             try {
                 transport.stats.collect { t ->
-                    val local = try {
-                        voiceLink.status.value.localCrypt
+                    val status = try {
+                        voiceLink.status.value
                     } catch (e: Exception) {
-                        CryptCounts.zero()
+                        se.lublin.humla.net.VoiceStatus.initial()
                     }
                     _stats.update {
                         it.copy(
                             tcpLatencyMicros = t.tcpLatencyMicros,
                             udpLatencyMicros = t.udpLatencyMicros,
                             usingUdp = t.usingUdp,
-                            localCrypt = local,
+                            currentBandwidth = ProtobufMessages.calculateAudioBandwidth(
+                                status.bitrate,
+                                status.framesPerPacket,
+                            ),
+                            localCrypt = status.localCrypt,
                             remoteCrypt = t.remoteCrypt,
                         )
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
             }
         }
         scope.launch {
             try {
                 voiceLink.status.collect { v ->
-                    _stats.update { it.copy(localCrypt = v.localCrypt) }
+                    _stats.update {
+                        it.copy(
+                            localCrypt = v.localCrypt,
+                            currentBandwidth = ProtobufMessages.calculateAudioBandwidth(
+                                v.bitrate,
+                                v.framesPerPacket,
+                            ),
+                        )
+                    }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
             }
         }
@@ -239,13 +282,15 @@ class Session internal constructor(
             val version = Constants.createVersionMessage(target.clientName).build()
             transport.send(version, HumlaTCPMessageType.Version)
             val auth = Mumble.Authenticate.newBuilder()
-                .setUsername(target.server.username)
+                .setUsername(target.server.username ?: "")
                 .setOpus(true)
             if (target.server.password != null) {
                 auth.password = target.server.password
             }
             auth.addAllTokens(target.accessTokens)
             transport.send(auth.build(), HumlaTCPMessageType.Authenticate)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             failOnce(ClientError.Connection("Failed to send handshake: ${e.message}", e))
             return
@@ -271,6 +316,8 @@ class Session internal constructor(
                     if (failureDeferred.isCompleted) return
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // Inbound closed on Transport.close (clean shutdown); failure
             // already completed for fatal transport errors.
@@ -298,12 +345,7 @@ class Session internal constructor(
                 if (!synced) {
                     syncingState = applyVersion(syncingState, msg).state
                 } else {
-                    var snap: SessionState? = null
-                    _state.update { current ->
-                        val next = applyVersion(current, msg).state
-                        snap = next
-                        next
-                    }
+                    _state.update { current -> applyVersion(current, msg).state }
                 }
             }
             HumlaTCPMessageType.CodecVersion -> {
@@ -319,22 +361,25 @@ class Session internal constructor(
                 if (!msg.hasChannelId()) return
                 val id = msg.channelId
                 if (!synced) {
-                    val before = syncingState.server.channels.containsKey(id)
                     syncingState = applyChannelState(syncingState, msg).state
-                    val after = syncingState.server.channels.containsKey(id)
-                    if (!before && after) {
-                        val handle = ChannelHandle(id, state)
-                        postObserver(Runnable { observer.onChannelAdded(handle) })
-                    }
+                    // No fanout pre-sync: handles read the published flow,
+                    // still the empty initial value; the dump fans out once
+                    // on ServerSync below.
                 } else {
-                    var added = false
+                    // Decided inside update (never a post-read): whether the
+                    // channel is new, plus the post-image seed so the posted
+                    // handle reads valid scalars even if removed first.
+                    var wasAbsent = false
+                    var addedInfo: ChannelInfo? = null
                     _state.update { current ->
                         val next = applyChannelState(current, msg).state
-                        added = !current.server.channels.containsKey(id) &&
-                            next.server.channels.containsKey(id)
+                        wasAbsent = !current.server.channels.containsKey(id)
+                        addedInfo = next.server.channels[id]
                         next
                     }
-                    val handle = ChannelHandle(id, state)
+                    val seed = addedInfo
+                    val handle = if (seed != null) ChannelHandle(id, state, seed = seed) else ChannelHandle(id, state)
+                    val added = wasAbsent && seed != null
                     postObserver(
                         Runnable {
                             if (added) observer.onChannelAdded(handle) else observer.onChannelStateUpdated(handle)
@@ -382,10 +427,9 @@ class Session internal constructor(
                 if (!msg.hasSession()) return
                 val session = msg.session
                 if (!synced) {
-                    val before = syncingState.server.users[session]
                     val result = applyUserState(
                         syncingState, msg,
-                        localFacts.mutedUserIds, localFacts.ignoredUserIds,
+                        liveMutedIds, liveIgnoredIds,
                     )
                     syncingState = result.state
                     // No observer fanout pre-sync (initial dump fanned on ServerSync).
@@ -394,24 +438,29 @@ class Session internal constructor(
                         emitAll(result.events)
                     }
                 } else {
-                    var isNew = false
+                    var createdInfo: UserInfo? = null
                     var oldChannelId: Int? = null
                     var newChannelId: Int? = null
                     var outcomeEvents: List<SessionEvent> = emptyList()
                     _state.update { current ->
-                        val oldUser = current.server.users[session]
-                        isNew = oldUser == null
-                        oldChannelId = oldUser?.channelId
                         val result = applyUserState(
                             current, msg,
-                            localFacts.mutedUserIds, localFacts.ignoredUserIds,
+                            liveMutedIds, liveIgnoredIds,
                         )
                         outcomeEvents = result.events
-                        newChannelId = result.state.server.users[session]?.channelId
+                        // A nameless packet for an unknown session creates
+                        // nothing (transition early-returns); only fan out
+                        // onUserConnected when the user actually exists now.
+                        val info = result.state.server.users[session]
+                        createdInfo = info?.takeIf { current.server.users[session] == null }
+                        oldChannelId = current.server.users[session]?.channelId
+                        newChannelId = info?.channelId
                         result.state
                     }
                     emitAll(outcomeEvents)
-                    val handle = UserHandle(session, state)
+                    val seed = createdInfo
+                    val handle = if (seed != null) UserHandle(session, state, seed = seed) else UserHandle(session, state)
+                    val isNew = seed != null
                     postObserver(
                         Runnable {
                             if (isNew) {
@@ -486,16 +535,24 @@ class Session internal constructor(
                 val msg = message as Mumble.ServerSync
                 if (!synced) {
                     val result = applyServerSync(syncingState, msg)
-                    syncingState = result.state
+                    // Preserve local-only intents that landed pre-sync (PTT,
+                    // voice target): the private builder would clobber them.
+                    val preSyncLocal = _state.value.local
+                    syncingState = result.state.copy(
+                        local = result.state.local.copy(
+                            pttPressed = preSyncLocal.pttPressed,
+                            voiceTargetId = preSyncLocal.voiceTargetId,
+                        ),
+                    )
                     synced = true
                     _state.value = syncingState
                     emitAll(result.events)
                     // Fan out the initial dump for screens still on observers.
-                    for ((id) in syncingState.server.channels) {
+                    for (id in syncingState.server.channels.keys) {
                         val handle = ChannelHandle(id, state)
                         postObserver(Runnable { observer.onChannelAdded(handle) })
                     }
-                    for ((sessionId) in syncingState.server.users) {
+                    for (sessionId in syncingState.server.users.keys) {
                         val handle = UserHandle(sessionId, state)
                         postObserver(Runnable { observer.onUserConnected(handle) })
                     }
@@ -571,13 +628,13 @@ class Session internal constructor(
                 val msg = message as Mumble.TextMessage
                 var received: SessionEvent.TextMessageReceived? = null
                 if (!synced) {
-                    val result = applyTextMessage(syncingState, msg, System.currentTimeMillis())
+                    val result = applyTextMessage(syncingState, msg, clock.millis())
                     syncingState = result.state
                     received = result.events.filterIsInstance<SessionEvent.TextMessageReceived>().firstOrNull()
                     if (received != null) emitAll(listOf(received))
                 } else {
                     _state.update { current ->
-                        val result = applyTextMessage(current, msg, System.currentTimeMillis())
+                        val result = applyTextMessage(current, msg, clock.millis())
                         received = result.events.filterIsInstance<SessionEvent.TextMessageReceived>().firstOrNull()
                         result.state
                     }
@@ -643,6 +700,7 @@ class Session internal constructor(
 
     /** Ends the session: cancels its scope; Transport.close stops socket/threads. */
     fun close() {
+        checkNotMainThread()
         try {
             transport.close()
         } catch (ignored: Exception) {
@@ -652,6 +710,8 @@ class Session internal constructor(
 
     // Intents. Each is one atomic update and/or one enqueued TCP message.
     // No-ops returning nothing (or -1) when not SYNCED, never throwing.
+    // setPtt/setVoiceTarget are local-only and valid pre-SYNCED; the
+    // ServerSync publish merges them back (see handleMessage).
 
     fun setSelfMuteDeaf(mute: Boolean, deaf: Boolean) {
         var events: List<SessionEvent> = emptyList()
@@ -697,6 +757,7 @@ class Session internal constructor(
         }
         val registered = userId
         if (registered != null) {
+            if (muted) liveMutedIds.add(registered) else liveMutedIds.remove(registered)
             val serverId = target.server.serverId
             scope.launch(ioDispatcher) {
                 try {
@@ -715,6 +776,7 @@ class Session internal constructor(
         }
         val registered = userId
         if (registered != null) {
+            if (ignored) liveIgnoredIds.add(registered) else liveIgnoredIds.remove(registered)
             val serverId = target.server.serverId
             scope.launch(ioDispatcher) {
                 try {
@@ -729,26 +791,20 @@ class Session internal constructor(
         _state.update { current -> applyVoiceTargetIntent(current, id).state }
     }
 
-    fun registerWhisperTarget(target: se.lublin.humla.state.WhisperTarget): Int {
+    fun registerWhisperTarget(target: WhisperTarget): Int {
+        // Decided inside update (never a post-read): the id and its outbound
+        // come from one atomic transition; the send below reads the capture.
         var allocated = -1
+        var outbound: Mumble.VoiceTarget? = null
         _state.update { current ->
             val result = applyRegisterWhisperIntent(current, target)
-            allocated = result.whisperId ?: -1
+            allocated = result.whisperId
+            outbound = result.voiceTargetOutbound
             result.state
         }
-        if (allocated < 0) return -1
+        val vtb = outbound
+        if (allocated < 0 || vtb == null) return -1
         try {
-            val vtbTarget = Mumble.VoiceTarget.Target.newBuilder()
-                .setChannelId(target.channelId)
-                .setLinks(target.includeLinked)
-                .setChildren(target.includeSubchannels)
-            if (target.group != null) {
-                vtbTarget.group = target.group
-            }
-            val vtb = Mumble.VoiceTarget.newBuilder()
-                .setId(allocated)
-                .addTargets(vtbTarget.build())
-                .build()
             transport.send(vtb, HumlaTCPMessageType.VoiceTarget)
         } catch (e: Exception) {
             _state.update { current -> applyUnregisterWhisperIntent(current, allocated).state }
@@ -958,7 +1014,7 @@ class Session internal constructor(
                     trees = trees,
                     users = users,
                     message = message,
-                    sentAtMillis = System.currentTimeMillis(),
+                    sentAtMillis = clock.millis(),
                 ),
             )
         }
@@ -1058,17 +1114,19 @@ class Session internal constructor(
         val selfName = s.server.users[selfSession]?.name
         val targetChannels = ArrayList<IChannel>()
         if (s.server.channels.containsKey(channel)) targetChannels.add(ChannelHandle(channel, state))
-        return Message(
-            selfSession, selfName, targetChannels,
-            if (tree) targetChannels else emptyList(), emptyList(), message,
-        )
+        // Mirror the wire split (tree ids vs channel ids), not both.
+        return if (tree) {
+            Message(selfSession, selfName, emptyList(), targetChannels, emptyList(), message)
+        } else {
+            Message(selfSession, selfName, targetChannels, emptyList(), emptyList(), message)
+        }
     }
 
     fun getVoiceTargetId(): Int = state.value.local.voiceTargetId
 
     fun getVoiceTargetMode(): VoiceTargetMode = VoiceTargetMode.fromInt(state.value.local.voiceTargetId)
 
-    fun getWhisperTarget(): se.lublin.humla.state.WhisperTarget? {
+    fun getWhisperTarget(): WhisperTarget? {
         val id = state.value.local.voiceTargetId
         if (id in 1..30) return state.value.local.whisperTargets[id]
         return null
