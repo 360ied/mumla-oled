@@ -1177,8 +1177,27 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 session.sendAccessTokens(requireNotNull(pendingConnection.get().accessTokens))
             }
         }
-        // 3. Audio settings.
+        // 3. Audio settings (old pipeline plus new VoiceSettings flow).
         inputModes.applyAudioDelta(delta, mAudioBuilder, audioHandlerRef.get(), voiceLink)
+        try {
+            val currentSettings = voiceSettingsFlow.value
+            val currentTransmit = inputModes.transmitMode
+            val nextSettings = se.lublin.humla.voice.VoiceSettingsMapper.update(
+                currentSettings,
+                transmitMode = delta.transmitMode,
+                detectionThreshold = delta.detectionThreshold,
+                amplitudeBoost = delta.amplitudeBoost,
+                inputQuality = delta.inputQuality,
+                framesPerPacket = delta.framesPerPacket,
+                halfDuplex = delta.halfDuplex,
+                adaptiveLeveler = delta.adaptiveLeveler,
+                currentTransmitMode = currentTransmit,
+            )
+            if (nextSettings != currentSettings) {
+                voiceSettingsFlow.value = nextSettings
+            }
+        } catch (_: Exception) {
+        }
         // Interim encoder target for SessionStats.currentBandwidth until the
         // step-5a VoicePolicy carries real values (see LegacyVoiceLink).
         if (delta.inputQuality != null) {
@@ -1187,10 +1206,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             } catch (ignored: Exception) {
             }
         }
-        // 4. Route inputs.
+        // 4. Route inputs (old controller plus new prefs flow).
         val audioStream = delta.audioStream
         if (audioStream != null) {
             route.setHandsetStream(audioStream)
+            try {
+                val cur = routePrefsFlow.value
+                if (cur.handsetStream != audioStream) {
+                    routePrefsFlow.value = cur.copy(handsetStream = audioStream)
+                }
+            } catch (_: Exception) {
+            }
         }
         val bluetoothSco = delta.bluetoothSco
         if (bluetoothSco != null) {
@@ -1203,6 +1229,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 route.stopScoWithNotify()
             }
             route.updateScoRoute()
+            try {
+                val cur = routePrefsFlow.value
+                if (cur.bluetoothSco != requested) {
+                    routePrefsFlow.value = cur.copy(bluetoothSco = requested)
+                }
+            } catch (_: Exception) {
+            }
+        }
+        if (delta.framesPerPacket != null) {
+            try {
+                voiceLink.setTargetFramesPerPacket(delta.framesPerPacket)
+            } catch (_: Exception) {
+            }
         }
 
         // 5. Reload audio subsystem if initialized and connected.
