@@ -285,7 +285,8 @@ class HumlaTCP(
                 val data = ByteArray(messageLength)
                 dataInput.readFully(data)
 
-                val tcpMessageType = HumlaTCPMessageType.values()[messageType.toInt()]
+                // entries (not values()) avoids a per-frame allocation.
+                val tcpMessageType = HumlaTCPMessageType.entries[messageType.toInt()]
                 val messageListener = mListener
                 if (messageListener != null) {
                     executeOnMainThread(Runnable {

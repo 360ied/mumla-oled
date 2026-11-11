@@ -403,7 +403,10 @@ class TransportImpl internal constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Scope cancelled; exit quietly.
+                // Collection only throws on genuine voice-side bugs now that
+                // cancellation is rethrown above; log instead of silently
+                // disabling UDP fallback for the rest of the session.
+                logger.fine("Voice collector dropped: $e")
             }
         })
         val thread = Thread({
@@ -561,6 +564,8 @@ class TransportImpl internal constructor(
         // Single dummy in the protobuf form, matching enableForceTCP parity
         // (HumlaConnection sent Mumble.UDPTunnel{packet=3 zeros}; raw voice
         // frames always travel as raw UDPTunnel payloads, never protobuf).
+        // The dummy is best-effort: an outbound-full channel already failed
+        // the session via failOnce, so reaching here means it was enqueued.
         try {
             val utb = Mumble.UDPTunnel.newBuilder()
                 .setPacket(ByteString.copyFrom(dummyTunnelPacket()))
@@ -569,7 +574,8 @@ class TransportImpl internal constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // Best effort; ping loop will retry the decision.
+            // Unreachable today (send is trySend-only); kept for symmetry
+            // with the surrounding best-effort handling.
         }
     }
 

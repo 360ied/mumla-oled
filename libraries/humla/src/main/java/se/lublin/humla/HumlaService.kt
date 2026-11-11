@@ -79,7 +79,6 @@ import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.StateEventLogger
 import se.lublin.humla.protocol.validateAudioDelta
-import se.lublin.humla.state.ChannelHandle
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.UserHandle
@@ -96,7 +95,6 @@ import java.io.IOException
 import java.time.Clock
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 
 private fun emptySessionState(): SessionState = emptyState()
@@ -637,6 +635,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             releaseWifiLock()
+                            // Clean disconnect ends the pipeline too (Reconnecting
+                            // and Failed do the same below); all three are
+                            // idempotent no-ops when already torn down.
+                            tearDownAudioPipeline()
+                            _sessionState.value = emptySessionState()
+                            resetVoiceTargetSilent()
                             onConnectionDisconnected(null)
                         }
                         is ClientState.Connecting -> {

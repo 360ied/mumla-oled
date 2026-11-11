@@ -404,8 +404,8 @@ public class HumlaUDPSendQueueTest extends TestCase {
         assertTrue("Concurrent senders must finish within timeout", doneLatch.await(5, TimeUnit.SECONDS));
         } finally {
             executor.shutdownNow();
-            assertTrue("Executor must terminate", executor.awaitTermination(5, TimeUnit.SECONDS));
         }
+        assertTrue("Executor must terminate", executor.awaitTermination(5, TimeUnit.SECONDS));
         assertNull("No sender worker may fail", workerFailure.get());
 
         assertTrue("Observed queue size (" + maxObservedQueueSize.get() + ") must never exceed capacity",
