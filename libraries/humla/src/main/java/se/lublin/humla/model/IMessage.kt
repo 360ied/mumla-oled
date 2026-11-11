@@ -22,11 +22,11 @@ interface IMessage {
 
     val actorName: String?
 
-    val targetChannels: List<Channel>
+    val targetChannels: List<IChannel>
 
-    val targetTrees: List<Channel>
+    val targetTrees: List<IChannel>
 
-    val targetUsers: List<User>
+    val targetUsers: List<IUser>
 
     val message: String?
 

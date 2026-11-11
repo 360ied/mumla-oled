@@ -17,11 +17,11 @@
 
 package se.lublin.humla.model
 
-// Narrowed to concrete types (pre-image used List<? extends IUser/IChannel>
-// and IChannel getParent): only Channel/User implement these interfaces,
-// and Kotlin List covariance keeps readers compiling.
+/**
+ * Live channel handle view. Read-only; navigation returns interfaces.
+ */
 interface IChannel {
-    val users: List<User>
+    val users: List<IUser>
 
     val id: Int
 
@@ -29,20 +29,20 @@ interface IChannel {
 
     val isTemporary: Boolean
 
-    var parent: Channel?
+    val parent: IChannel?
 
     val name: String?
 
     val description: String?
 
-    /** Immutable view: mutation is only via the concrete `Channel` type (copy-on-access). */
+    /** Immutable view of the description hash. */
     val descriptionHash: ByteArray?
 
-    val subchannels: List<Channel>
+    val subchannels: List<IChannel>
 
     val subchannelUserCount: Int
 
-    val links: List<Channel>
+    val links: List<IChannel>
 
     val permissions: Int
 

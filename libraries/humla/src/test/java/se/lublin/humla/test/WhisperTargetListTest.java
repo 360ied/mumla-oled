@@ -19,8 +19,9 @@ package se.lublin.humla.test;
 
 import junit.framework.TestCase;
 import static org.junit.Assert.assertThrows;
+import static org.mockito.Mockito.mock;
 
-import se.lublin.humla.model.Channel;
+import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.WhisperTarget;
 import se.lublin.humla.model.WhisperTargetChannel;
 import se.lublin.humla.model.WhisperTargetList;
@@ -32,7 +33,7 @@ public class WhisperTargetListTest extends TestCase {
 
     public void testWhisperTargetAddRemove() {
         // Initialisation.
-        Channel root = new Channel(0, false);
+        IChannel root = mock(IChannel.class);
         WhisperTarget expected, actual;
         WhisperTarget[] targets = new WhisperTarget[30];
         for (int i = 0; i < 30; i++) {

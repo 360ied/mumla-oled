@@ -17,62 +17,51 @@
 
 package se.lublin.humla.model
 
-import com.google.protobuf.ByteString
-
 /**
- * Created by andrew on 15/10/15.
- *
- * Kotlin widening note: setters are exposed for every flag (pre-image Java
- * had only getters plus setLocalMuted/setLocalIgnored) so the self-mute
- * coercion can live in property setters; `channel` narrows to the concrete
- * Channel type (only User implements this interface).
+ * Live user handle view. Read-only except [talkState], which stays
+ * voice-owned until the VoiceEngine arrives. All session writes are
+ * Session intents; navigation returns interfaces.
  */
 interface IUser {
     val session: Int
 
-    var channel: Channel?
+    val channel: IChannel?
 
-    var userId: Int
+    val userId: Int
 
-    var name: String?
+    val name: String?
 
-    var comment: String?
+    val comment: String?
 
     val commentHash: ByteArray?
 
-    fun setCommentHash(commentHash: ByteString?)
-
     val texture: ByteArray?
 
-    fun setTexture(texture: ByteString?)
-
     val textureHash: ByteArray?
-
-    fun setTextureHash(textureHash: ByteString?)
 
     fun hasTexture(): Boolean
 
     val textureCacheKey: Int
 
-    var hash: String?
+    val hash: String?
 
-    var isMuted: Boolean
+    val isMuted: Boolean
 
-    var isDeafened: Boolean
+    val isDeafened: Boolean
 
-    var isSuppressed: Boolean
+    val isSuppressed: Boolean
 
-    var isSelfMuted: Boolean
+    val isSelfMuted: Boolean
 
-    var isSelfDeafened: Boolean
+    val isSelfDeafened: Boolean
 
-    var isPrioritySpeaker: Boolean
+    val isPrioritySpeaker: Boolean
 
-    var isRecording: Boolean
+    val isRecording: Boolean
 
-    var isLocalMuted: Boolean
+    val isLocalMuted: Boolean
 
-    var isLocalIgnored: Boolean
+    val isLocalIgnored: Boolean
 
     var talkState: TalkState
 

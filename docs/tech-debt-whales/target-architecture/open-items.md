@@ -13,8 +13,6 @@ them.
 
 | Item | How it gets resolved | Gates |
 |---|---|---|
-| Live handles keep screens updating | Spike (see [migration](migration.md#step-2--immutable-state)) | Step 2 |
-| `kotlinx-collections-immutable` version | Pin the current release at step 2 start (pre-1.0 accepted); run the state tests against it | Step 2 |
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); not a prerequisite | Step 5a (done-when) |
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
@@ -41,6 +39,8 @@ Items resolved by the 2026-11-10 spec review are marked *(review)*.
 | Immutability walk scope *(review)* | Stops at `Session`; `ServerEndpoint` replaces the Room entity in `ClientState` | [enforcement](enforcement.md#state-immutability-test) |
 | Intermediate steps *(review)* | `ConfigDelta` bridge until step 7; container and features (step 6) before screens and service cut-over (step 7) | [migration](migration.md#ground-rules) |
 | Route session identity *(review)* | The controller keeps a private route-session counter for stale-event checks | [route](route.md#thread) |
+| Live handles keep screens updating | Spike passed: adapter-over-interfaces (`ChannelAdapterTest` over Mockito `IUser`/`IChannel`) + live handles (`HandlesTest`: live reads, cached scalars, equality, navigation) | Step 2 |
+| `kotlinx-collections-immutable` version | Pinned at 0.5.2 at step 2 start; state tests run against it | Step 2 |
 | App-layer coverage *(review)* | Port rule plus full settings and feature tables | [app](app.md#port-rule) |
 | Round 2 *(review)* | `CryptSetup` cases in today's order; links applied replace, remove, add; channel whisper targets only (user whispers unsupported today); one bandwidth source in `ServerInfo`; `currentBandwidth` from voice status; voice failure table; `ConnectionWarning` event; chat-log move and recording filters; handle member sources, narrowed navigation types, setters removed; `ClientCertificate` as `ByteString`; walk stop rules; native exceptions format and `SINGLE_THREADED_ENGINE` flag; `BOUNDARY_FILES` paths; interim owners, `LegacyVoiceLink`, `VoiceControl`; `checkNotMainThread()` | [state](state.md#server-message-transitions), [transport](transport.md#crypt-setup), [voice](voice.md#failures), [enforcement](enforcement.md#native-tripwire), [migration](migration.md#ground-rules) |
 | Single control loop vs alternatives | Rejected; immutable state with atomic updates, one session object, command-only slow components | [README](README.md#rejected-alternatives) |

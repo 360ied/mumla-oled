@@ -18,7 +18,7 @@
 package se.lublin.humla.audio;
 
 import junit.framework.TestCase;
-import se.lublin.humla.model.User;
+import se.lublin.humla.model.IUser;
 
 /**
  * Unit tests verifying AudioOutput defaults.
@@ -27,10 +27,10 @@ public class AudioOutputTest extends TestCase {
 
     private static class DummyListener implements AudioOutput.AudioOutputListener {
         @Override
-        public void onUserTalkStateUpdated(User user) {}
+        public void onUserTalkStateUpdated(IUser user) {}
 
         @Override
-        public User getUser(int session) {
+        public IUser getUser(int session) {
             return null;
         }
     }

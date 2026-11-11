@@ -12,16 +12,17 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package se.lublin.mumla.channel;
 
-import com.google.protobuf.ByteString;
-
 import junit.framework.TestCase;
 
-import se.lublin.humla.model.User;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import se.lublin.humla.model.IUser;
 
 public class AvatarCacheTest extends TestCase {
 
@@ -37,18 +38,31 @@ public class AvatarCacheTest extends TestCase {
         assertNull(mCache.get(null));
     }
 
-    public void testUserWithoutTextureReturnsNull() {
-        User user = new User(10, "TestUser");
-        assertFalse(user.hasTexture());
-        assertEquals(0, user.getTextureCacheKey());
+    public void testZeroCacheKeyReturnsNull() {
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(10);
+        when(user.getTextureCacheKey()).thenReturn(0);
+        // Zero key short-circuits before texture is read.
         assertNull(mCache.get(user));
     }
 
+    public void testUserWithoutTextureReturnsNull() {
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(11);
+        when(user.hasTexture()).thenReturn(false);
+        when(user.getTextureCacheKey()).thenReturn(4242);
+        assertNull(mCache.get(user));
+        // No-texture path evicts instead of recording a negative entry.
+        assertNull(mCache.getEntry(11));
+    }
+
     public void testNegativeCachingForUnparseableTexture() {
-        User user = new User(20, "CorruptUser");
-        user.setTexture(ByteString.copyFromUtf8("corrupt_png_stream"));
-        assertTrue(user.hasTexture());
-        assertTrue(user.getTextureCacheKey() != 0);
+        IUser user = mock(IUser.class);
+        byte[] texture = "corrupt_png_stream".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(user.getSession()).thenReturn(20);
+        when(user.hasTexture()).thenReturn(true);
+        when(user.getTexture()).thenReturn(texture);
+        when(user.getTextureCacheKey()).thenReturn(12345);
 
         // First call fails decode and puts negative entry
         assertNull(mCache.get(user));

@@ -34,8 +34,8 @@ import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
-import se.lublin.humla.model.User
 import se.lublin.humla.net.HumlaConnection
+import se.lublin.humla.state.UserInfo
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.PacketBuffer
 import se.lublin.humla.protobuf.Mumble
@@ -157,7 +157,7 @@ class AudioHandler : HumlaNetworkListener,
     /**
      * Moderator-applied deafening, tracked separately so a deaf-only packet
      * (murmur's else-if broadcast form omits the paired mute) still closes
-     * the gate. Mirrors User.setDeafened coercion; like the rest of the gate
+     * the gate. Mirrors the admin-mute coercion in UserTransitions; like the rest of the gate
      * it is read and written under synchronized(this).
      */
     @Volatile
@@ -337,7 +337,7 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     @Throws(AudioException::class)
-    fun initialize(self: User?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
+    fun initialize(self: UserInfo?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
         // Field setup under A; engine fan-out (bandwidth + mute) outside A:
         // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
         // join, while the capture thread needs A for onTalkingStateChanged.
@@ -347,10 +347,10 @@ class AudioHandler : HumlaNetworkListener,
             mSession = self.session
 
             setCodec(codec)
-            mSelfMuted = self.isSelfMuted
-            mServerMuted = self.isMuted
-            mServerDeafened = self.isDeafened
-            mSuppressed = self.isSuppressed
+            mSelfMuted = self.selfMuted
+            mServerMuted = self.muted
+            mServerDeafened = self.deafened
+            mSuppressed = self.suppressed
             // Flag before fan-out (previously after startPlaying): the mute
             // and bandwidth paths are thread-safe via their own locks and
             // re-application is idempotent, so a server message arriving
@@ -446,7 +446,7 @@ class AudioHandler : HumlaNetworkListener,
      * Desktop parity: Mumble's AudioInput reads the local desired-state
      * (Global::get().s.bMute) every frame, so the mic cuts on click rather
      * than after the server-echo RTT. The echo remains the model confirm
-     * (see ModelHandler); the gate echo in {@link #messageUserState} is
+     * (see UserTransitions); the gate echo in {@link #messageUserState} is
      * ignored once an optimistic value exists.
      *
      * @param muted the effective mute target after central deaf-implies-mute
@@ -1029,7 +1029,7 @@ class AudioHandler : HumlaNetworkListener,
 
         @Throws(AudioException::class)
         fun initialize(
-            self: User?,
+            self: UserInfo?,
             maxBandwidth: Int,
             codec: HumlaUDPMessageType?,
             targetId: Byte

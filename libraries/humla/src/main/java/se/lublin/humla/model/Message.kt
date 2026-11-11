@@ -35,9 +35,9 @@ class Message : IMessage {
         private set
     // Backed by immutable empties until a ctor assigns: the 6-arg form
     // always overwrites with defensive copies, so no throwaway allocation.
-    private var channelList: List<Channel> = emptyList()
-    private var treeList: List<Channel> = emptyList()
-    private var userList: List<User> = emptyList()
+    private var channelList: List<IChannel> = emptyList()
+    private var treeList: List<IChannel> = emptyList()
+    private var userList: List<IUser> = emptyList()
     override var message: String? = null
         private set
     override val receivedTime: Long
@@ -49,9 +49,9 @@ class Message : IMessage {
     constructor(
         actor: Int,
         actorName: String?,
-        channels: List<Channel>,
-        trees: List<Channel>,
-        users: List<User>,
+        channels: List<IChannel>,
+        trees: List<IChannel>,
+        users: List<IUser>,
         message: String?
     ) {
         this.message = message
@@ -66,13 +66,13 @@ class Message : IMessage {
         userList = ArrayList(users)
     }
 
-    override val targetChannels: List<Channel>
+    override val targetChannels: List<IChannel>
         get() = Collections.unmodifiableList(channelList)
 
-    override val targetTrees: List<Channel>
+    override val targetTrees: List<IChannel>
         get() = Collections.unmodifiableList(treeList)
 
-    override val targetUsers: List<User>
+    override val targetUsers: List<IUser>
         get() = Collections.unmodifiableList(userList)
 
     override fun equals(other: Any?): Boolean {

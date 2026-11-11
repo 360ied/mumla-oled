@@ -48,16 +48,35 @@ import se.lublin.humla.audio.ScoLink
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.NotConnectedException
 import se.lublin.humla.exception.NotSynchronizedException
-import se.lublin.humla.model.Channel
 import se.lublin.humla.model.IChannel
+import se.lublin.humla.model.IServerSettings
 import se.lublin.humla.model.IUser
 import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.model.ServerSettings
 import se.lublin.humla.model.TalkState
-import se.lublin.humla.model.User
 import se.lublin.humla.model.WhisperTarget
 import se.lublin.humla.model.WhisperTargetList
+import se.lublin.humla.state.ChannelHandle
+import se.lublin.humla.state.SessionState
+import se.lublin.humla.state.SyncPhase
+import se.lublin.humla.state.UserHandle
+import se.lublin.humla.state.applyChannelRemove
+import se.lublin.humla.state.applyChannelState
+import se.lublin.humla.state.applyCodecVersion
+import se.lublin.humla.state.applyListeningVolumeIntent
+import se.lublin.humla.state.applyPermissionDenied
+import se.lublin.humla.state.applyPermissionQuery
+import se.lublin.humla.state.applyRegisterWhisperIntent
+import se.lublin.humla.state.applySelfMuteDeafIntent
+import se.lublin.humla.state.applyServerConfig
+import se.lublin.humla.state.applyServerSync
+import se.lublin.humla.state.applyTextMessage
+import se.lublin.humla.state.applyUnregisterWhisperIntent
+import se.lublin.humla.state.applyUserRemove
+import se.lublin.humla.state.applyUserState
+import se.lublin.humla.state.applyVoiceTargetIntent
+import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.net.HandshakeFailure
 import se.lublin.humla.net.HumlaConnection
 import se.lublin.humla.net.HumlaTCPMessageType
@@ -65,7 +84,8 @@ import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
-import se.lublin.humla.protocol.ModelHandler
+import se.lublin.humla.protocol.StateEventLogger
+import se.lublin.humla.protocol.StateMessageHandler
 import se.lublin.humla.protocol.validateAudioDelta
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.ConnectionParams
@@ -79,6 +99,10 @@ import java.io.File
 import java.io.IOException
 import java.security.cert.X509Certificate
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.jetbrains.annotations.TestOnly
 
 open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
@@ -239,8 +263,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     // disconnect writes them on connection threads. Volatile for visibility
     // only, not atomic group transitions: readers pair them with the
     // volatile mConnectionState gate (see the route controller), never a lock.
-    @Volatile
-    private var mModelHandler: ModelHandler? = null
+    // Immutable session state. One value per connection; every server
+    // message and user intent is state.update { ... } with a pure
+    // transition. Live handles behind IUser/IChannel read this flow.
+    private val _sessionState = MutableStateFlow(emptySessionState())
+    val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
+
+    private var stateLogger: StateEventLogger? = null
 
     @Volatile
     private var mAudioHandler: AudioHandler? = null
@@ -277,13 +306,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                         if (!isSynchronized())
                             return@launch
 
-                        val modelHandler = mModelHandler
                         val connection = mConnection
-                        if (modelHandler == null || connection == null) {
+                        if (connection == null) {
                             return@launch
                         }
-                        val currentUser = modelHandler.getUser(connection.getSession())
-                            ?: return@launch
+                        val session = try {
+                            connection.getSession()
+                        } catch (e: NotSynchronizedException) {
+                            return@launch
+                        }
+                        val currentUser = UserHandle(session, sessionState)
+                        if (_sessionState.value.server.users[session] == null) return@launch
 
                         currentUser.talkState =
                             if (talking) TalkState.TALKING else TalkState.PASSIVE
@@ -297,12 +330,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     private val mAudioOutputListener: AudioOutput.AudioOutputListener =
         object : AudioOutput.AudioOutputListener {
-            override fun onUserTalkStateUpdated(user: User) {
+            override fun onUserTalkStateUpdated(user: IUser) {
                 mCallbacks.onUserTalkStateUpdated(user)
             }
 
-            override fun getUser(session: Int): User? {
-                return mModelHandler?.getUser(session)
+            override fun getUser(session: Int): IUser? {
+                if (_sessionState.value.server.users[session] == null) return null
+                return UserHandle(session, sessionState)
             }
         }
 
@@ -536,7 +570,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             mConnection?.removeUDPMessageHandler(oldHandler)
             oldHandler.shutdown()
         }
-        mModelHandler = null
+        _sessionState.value = emptySessionState()
         mAudioHandler = null
         mConnection?.disconnect()
         mConnection = null
@@ -624,7 +658,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                     mConnection?.removeUDPMessageHandler(oldHandler)
                     oldHandler.shutdown()
                 }
-                mModelHandler = null
+                _sessionState.value = emptySessionState()
                 mAudioHandler = null
                 route.onEvent(RouteEvent.SessionEnded)
                 mConnection?.disconnect()
@@ -682,12 +716,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
                 connection.setKeys(params.certificate, params.certificatePassword)
                 connection.setTrustStore(params.trustStore, params.trustStorePassword, params.trustStoreFormat)
 
-                val modelHandler = ModelHandler(
-                    this, mCallbacks, this,
-                    params.localMuteHistory, params.localIgnoreHistory
+                _sessionState.value = emptySessionState()
+                stateLogger = StateEventLogger(this, this)
+                val stateHandler = StateMessageHandler(
+                    this, _sessionState, mCallbacks, this,
+                    params.localMuteHistory?.toSet() ?: emptySet(),
+                    params.localIgnoreHistory?.toSet() ?: emptySet(),
                 )
-                mModelHandler = modelHandler
-                connection.addTCPMessageHandlers(modelHandler)
+                connection.addTCPMessageHandlers(stateHandler)
 
                 mConnectionState = ConnectionState.CONNECTING
 
@@ -797,30 +833,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
 
-        // Defensive: the model is created with the connection and cleared only
-        // on teardown paths that also leave CONNECTED, so this is unreachable
-        // in practice. Fail deterministic with full teardown (locks + route)
-        // instead of stranding wake locks and the route mode.
-        if (mModelHandler == null) {
-            Log.e(TAG, "onConnectionSynchronized: mModelHandler is null")
-            mConnectionState = ConnectionState.DISCONNECTED
-            setReconnecting(false)
-            val wakeLock = mWakeLock
-            if (wakeLock != null && wakeLock.isHeld) {
-                wakeLock.release()
-            }
-            releaseWifiLock()
-            route.onEvent(RouteEvent.SessionEnded)
-            // Full teardown: the socket is still live here (guard above
-            // passed), so drop it and tell observers -- otherwise TCP/UDP
-            // threads and keepalives run on while the service reports
-            // DISCONNECTED and observers stall in CONNECTING.
-            mConnection?.disconnect()
-            mConnection = null
-            mCallbacks.onDisconnected(null)
-            return
-        }
-
         mReconnectAttempts.set(0)
         setReconnecting(false)
         mConnectionState = ConnectionState.CONNECTED
@@ -874,7 +886,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
         mAudioHandler?.shutdown()
 
-        mModelHandler = null
+        _sessionState.value = emptySessionState()
         mAudioHandler = null
         // Atomic id+list reset (same deadlock discipline as connect(): emit
         // outside the monitor). Disconnect resets silently only when already
@@ -925,8 +937,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
     }
 
-    private fun requireModelHandler(): ModelHandler {
-        return requireNotNull(mModelHandler) { "No active model handler" }
+    private fun requireSynced(): SessionState {
+        val s = _sessionState.value
+        if (s.server.phase != SyncPhase.SYNCED) throw NotSynchronizedException()
+        return s
     }
 
     open override fun getReconnectDelay(): Int {
@@ -1102,9 +1116,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         }
         try {
             val connection = requireConnection()
-            val modelHandler = requireModelHandler()
+            val selfInfo = _sessionState.value.server.self
             mAudioHandler = mAudioBuilder.initialize(
-                modelHandler.getUser(connection.getSession()),
+                selfInfo,
                 connection.getMaxBandwidth(), connection.getCodec(),
                 mVoiceTargetId
             )
@@ -1354,18 +1368,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     /**
-     * Returns the current [ModelHandler], containing the channel tree. A model handler is
-     * valid for the lifetime of a connection.
-     * @return the active ModelHandler, or null if there is no active connection.
+     * Returns the current immutable session state. Valid once the session
+     * has synced; throws [NotSynchronizedException] before that.
      */
     @Throws(NotSynchronizedException::class)
-    private fun getModelHandler(): ModelHandler {
+    private fun getSessionState(): SessionState {
         if (!isSynchronized())
             throw NotSynchronizedException()
-        val handler = mModelHandler
-        if (handler == null)
-            throw IllegalStateException("Model handler should always be instantiated while connected!")
-        return handler
+        return _sessionState.value
     }
 
     open override fun getConnectionState(): ConnectionState {
@@ -1516,7 +1526,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun getSessionUser(): IUser? {
         try {
-            return requireModelHandler().getUser(getSessionId())
+            val s = getSessionState()
+            val session = s.server.selfSession ?: throw IllegalStateException("No self session post-synchronization!")
+            if (!s.server.users.containsKey(session)) return null
+            return UserHandle(session, sessionState)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1531,7 +1544,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun getUser(session: Int): IUser? {
         try {
-            return requireModelHandler().getUser(session)
+            val s = getSessionState()
+            if (!s.server.users.containsKey(session)) return null
+            return UserHandle(session, sessionState)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1539,7 +1554,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun getChannel(id: Int): IChannel? {
         try {
-            return requireModelHandler().getChannel(id)
+            val s = getSessionState()
+            if (!s.server.channels.containsKey(id)) return null
+            return ChannelHandle(id, sessionState)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1551,7 +1568,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun getPermissions(): Int {
         try {
-            return requireModelHandler().getPermissions()
+            return getSessionState().server.rootPermissions
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1646,12 +1663,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             requireConnection().sendTCPMessage(tmb.build(), HumlaTCPMessageType.TextMessage)
 
-            val modelHandler = getModelHandler()
-            val self = modelHandler.getUser(getSessionId())
-            val user = modelHandler.getUser(session)
-            val users = mutableListOf<User>()
-            if (user != null) users.add(user)
-            return Message(getSessionId(), self?.name, emptyList(), emptyList(), users, message)
+            val s = getSessionState()
+            val selfSession = getSessionId()
+            val selfName = s.server.users[selfSession]?.name
+            val users = mutableListOf<IUser>()
+            if (s.server.users.containsKey(session)) users.add(UserHandle(session, sessionState))
+            return Message(selfSession, selfName, emptyList(), emptyList(), users, message)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1670,13 +1687,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
             requireConnection().sendTCPMessage(tmb.build(), HumlaTCPMessageType.TextMessage)
 
-            val modelHandler = getModelHandler()
-            val self = modelHandler.getUser(getSessionId())
-            val targetChannel = modelHandler.getChannel(channel)
-            val targetChannels = mutableListOf<Channel>()
-            if (targetChannel != null) targetChannels.add(targetChannel)
+            val s = getSessionState()
+            val selfSession = getSessionId()
+            val selfName = s.server.users[selfSession]?.name
+            val targetChannels = mutableListOf<IChannel>()
+            if (s.server.channels.containsKey(channel)) targetChannels.add(ChannelHandle(channel, sessionState))
             return Message(
-                getSessionId(), self?.name, targetChannels,
+                selfSession, selfName, targetChannels,
                 if (tree) targetChannels else emptyList(), emptyList(), message
             )
         } catch (e: NotSynchronizedException) {
@@ -1720,19 +1737,26 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun setSelfMuteDeafState(mute: Boolean, deaf: Boolean) {
-        // Coerce centrally to mirror murmur (murmur/Messages.cpp) and
-        // desktop: deaf implies mute, unmute implies undeafen. The packet
-        // and the optimistic mirror below derive from the same pair so a
-        // coercion mismatch can never flap for one RTT.
-        var m = mute
-        var d = deaf
-        if (d) m = true
-        if (!m) d = false
-        val usb = Mumble.UserState.newBuilder()
-        usb.selfMute = m
-        usb.selfDeaf = d
-        requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
-        applyOptimisticSelfMuteDeaf(m, d)
+        // Intent transition coerces centrally (deaf implies mute, unmute
+        // implies undeafen); the outbound packet and the optimistic state
+        // derive from the same pair so no flap for one RTT.
+        val result = applySelfMuteDeafIntent(_sessionState.value, mute, deaf)
+        val outbound = result.userStateOutbound
+        if (outbound == null) {
+            // Not synced: preserve the old send-then-ignore shape (the
+            // message goes out, no model to update yet).
+            var m = mute
+            var d = deaf
+            if (d) m = true
+            if (!m) d = false
+            val usb = Mumble.UserState.newBuilder()
+            usb.selfMute = m
+            usb.selfDeaf = d
+            requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
+            return
+        }
+        requireConnection().sendTCPMessage(outbound, HumlaTCPMessageType.UserState)
+        applyOptimisticSelfMuteDeaf(mute, deaf)
     }
 
     /**
@@ -1745,15 +1769,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * request. Other users' mute (admin `mute`/`deaf`) stays
      * pessimistic in [setMuteDeafState].
      *
-     * Mirroring into the [User] object (rather than rebinding every
-     * UI reader) fans the update out through the existing
+     * Updating the immutable state fans the change out through the existing
      * `onUserStateUpdated` path: menu icons, notification, settings
      * persistence, and TTS suppression all follow with no UI edits. The echo
-     * then becomes a no-op via the unchanged guard in
-     * [ModelHandler.messageUserState].
+     * then converges on the same value.
      *
      * Accepted transients (both convergent via the echo): the capture gate
-     * is pushed before the model write, so if the session user is not yet
+     * is pushed before fanning out, so if the session user is not yet
      * visible the mic follows desired state up to a round trip ahead of the
      * UI; and the chat log line is best-effort (dropped if a disconnect
      * interleaves, since logging re-gates on synchronization while the state
@@ -1761,54 +1783,30 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      */
     private fun applyOptimisticSelfMuteDeaf(mute: Boolean, deaf: Boolean) {
         val connection = mConnection
-        val modelHandler = mModelHandler
-        // sendTCPMessage silently drops when disconnected; never show a
-        // state the server never saw.
-        if (connection == null || modelHandler == null || !connection.isSynchronized())
+        if (connection == null || !connection.isSynchronized())
             return
-        // Push the capture gate before the model: desired state is
+        // Recompute inside update so a server echo landing between the
+        // preview and the write is not clobbered; the intent is a pure
+        // function of (state, mute, deaf), so the outcome converges.
+        var events: List<se.lublin.humla.state.SessionEvent> = emptyList()
+        _sessionState.update { current ->
+            val fresh = applySelfMuteDeafIntent(current, mute, deaf)
+            events = fresh.events
+            fresh.state
+        }
+        val applied = _sessionState.value
+        val selfSession = applied.server.selfSession ?: return
+        val self = applied.server.users[selfSession]
+        // Push the capture gate before fanning out: desired state is
         // authoritative even when the model user isn't visible yet (e.g.
         // the reconnect restore racing the initial UserState dump). Snapshot
         // the handler: disconnect nulls the field from another thread.
         val audioHandler = mAudioHandler
-        if (audioHandler != null)
-            audioHandler.setSelfMutedOptimistic(mute)
-        val session: Int
-        try {
-            session = connection.getSession()
-        } catch (e: NotSynchronizedException) {
-            return
-        }
-        // Same monitor as ModelHandler.messageUserState, which writes these
-        // fields on the TCP reader thread. Compute under lock, fan out
-        // after release: holding the model lock across observer callbacks
-        // would block the TCP reader on slow UI/TTS work.
-        val changedSelf: se.lublin.humla.model.User?
-        synchronized(modelHandler) {
-            val self = modelHandler.getUser(session)
-            if (self == null)
-                return
-            var changed = false
-            if (self.isSelfMuted != mute) {
-                self.isSelfMuted = mute
-                changed = true
-            }
-            if (self.isSelfDeafened != deaf) {
-                self.isSelfDeafened = deaf
-                changed = true
-            }
-            changedSelf = if (changed) self else null
-        }
-        if (changedSelf != null) {
-            // Log here, at the toggle site like desktop's MainWindow: the
-            // echo's log is suppressed as unchanged (see ModelHandler).
-            if (mute && deaf)
-                logInfo(getString(R.string.chat_notify_muted_deafened))
-            else if (mute)
-                logInfo(getString(R.string.chat_notify_muted))
-            else
-                logInfo(getString(R.string.chat_notify_unmuted))
-            mCallbacks.onUserStateUpdated(changedSelf)
+        if (audioHandler != null && self != null)
+            audioHandler.setSelfMutedOptimistic(self.selfMuted)
+        stateLogger?.log(events, applied)
+        if (applied.server.users.containsKey(selfSession)) {
+            mCallbacks.onUserStateUpdated(UserHandle(selfSession, sessionState))
         }
     }
 
@@ -1852,6 +1850,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         requireConnection().sendTCPMessage(csb.build(), HumlaTCPMessageType.ChannelState)
     }
 
+    // Whisper allocation stays on the legacy list in step 2: model targets
+    // cannot convert to state targets (channel fields are opaque), so
+    // state.local.whisperTargets is mirrored only on unregister/free until
+    // step 3 moves allocation into Session. mWhisperTargetList is canonical.
     open override fun registerWhisperTarget(target: WhisperTarget?): Byte {
         val t = target ?: throw NullPointerException("target")
         // Resolve the live connection before allocating: the 5-bit ID space
@@ -1897,6 +1899,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
         synchronized(whisperLock) { mWhisperTargetList.free(targetId) }
+        _sessionState.update { current ->
+            applyUnregisterWhisperIntent(current, targetId.toInt() and 0xFF).state
+        }
     }
 
     open override fun setVoiceTargetId(targetId: Byte) {
@@ -1907,6 +1912,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             )
         }
         mVoiceTargetId = targetId
+        _sessionState.update { current ->
+            applyVoiceTargetIntent(current, targetId.toInt() and 0xFF).state
+        }
         mAudioHandler?.setVoiceTargetId(targetId)
         mCallbacks.onVoiceTargetChanged(VoiceTargetMode.fromId(targetId))
     }
@@ -1931,8 +1939,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
     }
 
     open override fun getServerSettings(): ServerSettings? {
+        // ServerSettings wraps a ServerConfig message; rebuild the same
+        // values from state (tests pin the field mapping, not the type).
+        // TODO(step6): IServerSettings becomes a state value with the container.
         try {
-            return getModelHandler().getServerSettings()
+            val settings = getSessionState().server.info.settings ?: return null
+            val msg = se.lublin.humla.protobuf.Mumble.ServerConfig.newBuilder()
+                .setAllowHtml(settings.allowHtml)
+                .setMessageLength(settings.messageLength)
+                .setImageMessageLength(settings.imageMessageLength)
+                .setMaxBandwidth(getSessionState().server.info.maxBandwidth ?: -1)
+                .setMaxUsers(settings.maxUsers)
+                .setWelcomeText(getSessionState().server.info.welcomeText ?: "")
+                .build()
+            return ServerSettings(msg)
         } catch (e: NotSynchronizedException) {
             throw IllegalStateException(e)
         }
@@ -1961,28 +1981,45 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
 
     open override fun setListeningVolume(channelId: Int, volumeAdjustment: Float) {
         if (!isSynchronized()) return
-        val usb = Mumble.UserState.newBuilder()
         // Same TOCTOU discipline as setListeningChannel: fail closed.
         try {
-            usb.session = getSessionId()
-            val vab = Mumble.UserState.VolumeAdjustment.newBuilder()
-            vab.listeningChannel = channelId
-            vab.volumeAdjustment = volumeAdjustment
-            usb.addListeningVolumeAdjustment(vab)
-            requireConnection().sendTCPMessage(usb.build(), HumlaTCPMessageType.UserState)
+            val preview = applyListeningVolumeIntent(_sessionState.value, channelId, volumeAdjustment)
+            val outbound = preview.userStateOutbound ?: return
+            val withSession = outbound.toBuilder().setSession(getSessionId()).build()
+            requireConnection().sendTCPMessage(withSession, HumlaTCPMessageType.UserState)
+            // Recompute inside update so concurrent volume intents for
+            // different channels do not lose each other's map entries.
+            _sessionState.update { current ->
+                applyListeningVolumeIntent(current, channelId, volumeAdjustment).state
+            }
         } catch (e: IllegalStateException) {
             return
         }
     }
 
     open override fun isListeningToChannel(channelId: Int): Boolean {
-        // Fail closed when disconnected: getModelHandler throws
-        // NotSynchronizedException when unsynchronized, IAE only on the
-        // unreachable synchronized-but-null case — so null-tolerate here
-        // instead of throwing on any binder thread.
-        val handler = mModelHandler ?: return false
-        val ch = handler.getChannels()[channelId]
-        return ch != null && ch.isListening
+        // Fail closed when disconnected.
+        val s = try {
+            getSessionState()
+        } catch (e: NotSynchronizedException) {
+            return false
+        } catch (e: IllegalStateException) {
+            return false
+        }
+        val self = s.server.self ?: return false
+        return self.listeningChannels.contains(channelId)
+    }
+
+    open override fun setLocalMute(session: Int, muted: Boolean) {
+        _sessionState.update { current ->
+            se.lublin.humla.state.applyLocalMuteIntent(current, session, muted).state
+        }
+    }
+
+    open override fun setLocalIgnore(session: Int, ignored: Boolean) {
+        _sessionState.update { current ->
+            se.lublin.humla.state.applyLocalIgnoreIntent(current, session, ignored).state
+        }
     }
 
     /**
