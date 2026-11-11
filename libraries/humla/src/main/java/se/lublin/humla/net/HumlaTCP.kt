@@ -86,6 +86,13 @@ class HumlaTCP(
          * stalls, or an overloaded server.
          */
         const val READ_TIMEOUT_MS = 30000
+
+        /** Message types excluded from verbose logging (noisy keepalive/tunnel). */
+        @JvmField
+        val UNLOGGED_MESSAGES: Set<HumlaTCPMessageType> = setOf(
+            HumlaTCPMessageType.UDPTunnel,
+            HumlaTCPMessageType.Ping,
+        )
     }
 
     private var mHost: String? = null
@@ -357,7 +364,7 @@ class HumlaTCP(
      */
     fun sendMessage(message: MessageLite, messageType: HumlaTCPMessageType) {
         executeOnSendThread(Runnable {
-            if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
+            if (!UNLOGGED_MESSAGES.contains(messageType))
                 logger.finest("OUT: $messageType")
             // Drop with a log, don't throw: this runs in a SupervisorJob
             // child where an uncaught throw routes to the uncaught handler.
@@ -391,7 +398,7 @@ class HumlaTCP(
     fun sendMessage(message: ByteArray, length: Int, messageType: HumlaTCPMessageType) {
         val copy = Arrays.copyOf(message, length)
         executeOnSendThread(Runnable {
-            if (!HumlaConnection.UNLOGGED_MESSAGES.contains(messageType))
+            if (!UNLOGGED_MESSAGES.contains(messageType))
                 logger.finest("OUT: $messageType")
             // Same fail-soft rationale as the MessageLite overload above.
             val dataOutput = mDataOutput

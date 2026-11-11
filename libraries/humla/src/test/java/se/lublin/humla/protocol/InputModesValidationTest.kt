@@ -33,7 +33,7 @@ import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.`when`
 import se.lublin.humla.Constants
 import se.lublin.humla.audio.inputmode.ActivityInputMode
-import se.lublin.humla.net.HumlaConnection
+import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.util.ConfigDelta
 
 /**
@@ -175,7 +175,7 @@ class InputModesValidationTest {
         `when`(builder.setHalfDuplexEnabled(anyBoolean())).thenReturn(builder)
         `when`(builder.setAdaptiveLevelerEnabled(anyBoolean())).thenReturn(builder)
         val liveHandler = mock(AudioHandler::class.java)
-        val liveConnection = mock(HumlaConnection::class.java)
+        val liveConnection = mock(LegacyVoiceLink::class.java)
         modes.applyAudioDelta(
             ConfigDelta(
                 transmitMode = Constants.TRANSMIT_PUSH_TO_TALK,

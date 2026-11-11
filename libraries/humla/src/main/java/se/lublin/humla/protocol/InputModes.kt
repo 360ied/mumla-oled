@@ -22,7 +22,7 @@ import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
 import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
-import se.lublin.humla.net.HumlaConnection
+import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.util.ConfigDelta
 
 /**
@@ -102,7 +102,7 @@ class InputModes(
         delta: ConfigDelta,
         builder: AudioHandler.Builder,
         liveHandler: AudioHandler?,
-        liveConnection: HumlaConnection?,
+        liveVoiceLink: LegacyVoiceLink?,
     ) {
         validateAudioDelta(delta)
         val detectionThreshold = delta.detectionThreshold
@@ -132,7 +132,7 @@ class InputModes(
         val framesPerPacket = delta.framesPerPacket
         if (framesPerPacket != null) {
             builder.setTargetFramesPerPacket(framesPerPacket)
-            liveConnection?.setTargetFramesPerPacket(framesPerPacket)
+            liveVoiceLink?.setTargetFramesPerPacket(framesPerPacket)
         }
         val halfDuplex = delta.halfDuplex
         if (halfDuplex != null) {

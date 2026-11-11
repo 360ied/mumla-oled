@@ -1283,7 +1283,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             }
         }
         // 3. Apply audio settings (builder knobs, input modes, leveler).
-        inputModes.applyAudioDelta(delta, mAudioBuilder, mAudioHandler, mConnection)
+        // TODO(step3-wiring): pass the voice link for live FPP rescaling; null keeps
+        // the gate green until HumlaService owns LegacyVoiceLink.
+        inputModes.applyAudioDelta(delta, mAudioBuilder, mAudioHandler, null)
         // 4. Route inputs and toggle side effects.
         val audioStream = delta.audioStream
         if (audioStream != null) {
