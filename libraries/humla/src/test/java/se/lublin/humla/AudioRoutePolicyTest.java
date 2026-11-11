@@ -22,10 +22,10 @@ import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
-import se.lublin.humla.audio.AudioRouteController;
+import se.lublin.humla.route.RouteControl;
 
 /**
- * Pins the pure audio-route truth table in {@link AudioRouteController}.
+ * Pins the pure audio-route truth table in {@link RouteControl}.
  * Confirmed SCO forces the voice triple (voice source/mode/usage for
  * platform AEC); otherwise a present media sink (BT A2DP / wired headset)
  * selects the media path, and its absence keeps voice.
@@ -33,31 +33,31 @@ import se.lublin.humla.audio.AudioRouteController;
  * <p>The full service cannot be constructed on the JVM (it needs a platform
  * {@code Context} and main-looper {@code Handler}; this module is JUnit-only
  * with no Robolectric), so this truth table is the JVM-testable seam for the
- * route matrix, pinning AudioRouteController.computeVoiceRoute.
+ * route matrix, pinning RouteControl.computeVoiceRoute.
  */
 public class AudioRoutePolicyTest {
 
     @Test
     public void phoneAloneStaysVoice() {
         assertTrue("No SCO and no media sink must stay voice",
-                AudioRouteController.computeVoiceRoute(false, false));
+                RouteControl.computeVoiceRoute(false, false));
     }
 
     @Test
     public void scoForcesVoiceWithoutMediaSink() {
         assertTrue("Confirmed SCO must select voice",
-                AudioRouteController.computeVoiceRoute(true, false));
+                RouteControl.computeVoiceRoute(true, false));
     }
 
     @Test
     public void scoForcesVoiceOverMediaSink() {
         assertTrue("Confirmed SCO must win over a present media sink",
-                AudioRouteController.computeVoiceRoute(true, true));
+                RouteControl.computeVoiceRoute(true, true));
     }
 
     @Test
     public void mediaSinkWithoutScoSelectsMedia() {
         assertFalse("A present media sink without SCO must select media",
-                AudioRouteController.computeVoiceRoute(false, true));
+                RouteControl.computeVoiceRoute(false, true));
     }
 }

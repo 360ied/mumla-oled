@@ -20,7 +20,6 @@ app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
 libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt  1
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt  14
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt  21
-libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt  8
 libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.kt  24
 libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioOutputEngine.kt  7
 libraries/humla/src/main/java/se/lublin/humla/audio/inputmode/ToggleInputMode.kt  1
