@@ -30,8 +30,8 @@ import android.util.Log
 import java.nio.BufferUnderflowException
 import java.util.Arrays
 import se.lublin.humla.exception.AudioInitializationException
+import se.lublin.humla.model.IUser
 import se.lublin.humla.model.TalkState
-import se.lublin.humla.model.User
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.PacketBuffer
 import se.lublin.humla.protobuf.MumbleUDP
@@ -683,12 +683,12 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
          * Called when a user's talking state is changed.
          * @param user The user whose talking state has been modified.
          */
-        fun onUserTalkStateUpdated(user: User)
+        fun onUserTalkStateUpdated(user: IUser)
 
         /**
          * Used to set audio-related user data.
          * @return The user for the associated session.
          */
-        fun getUser(session: Int): User?
+        fun getUser(session: Int): IUser?
     }
 }

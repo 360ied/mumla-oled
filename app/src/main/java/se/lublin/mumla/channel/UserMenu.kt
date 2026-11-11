@@ -141,10 +141,18 @@ class UserMenu(
         } else if (itemId == R.id.context_priority) {
             mService.setPrioritySpeaker(mUser.session, !mUser.isPrioritySpeaker)
         } else if (itemId == R.id.context_local_mute) {
-            mUser.isLocalMuted = !mUser.isLocalMuted
+            try {
+                mService.setLocalMute(mUser.session, !mUser.isLocalMuted)
+            } catch (e: IllegalStateException) {
+                Log.w("UserMenu", "local mute while disconnected", e)
+            }
             mStateListener.onLocalUserStateUpdated(mUser)
         } else if (itemId == R.id.context_ignore_messages) {
-            mUser.isLocalIgnored = !mUser.isLocalIgnored
+            try {
+                mService.setLocalIgnore(mUser.session, !mUser.isLocalIgnored)
+            } catch (e: IllegalStateException) {
+                Log.w("UserMenu", "local ignore while disconnected", e)
+            }
             mStateListener.onLocalUserStateUpdated(mUser)
         } else if (itemId == R.id.context_change_comment) {
             showUserComment(true)

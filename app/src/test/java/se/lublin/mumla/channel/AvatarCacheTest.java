@@ -12,16 +12,17 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package se.lublin.mumla.channel;
 
-import com.google.protobuf.ByteString;
-
 import junit.framework.TestCase;
 
-import se.lublin.humla.model.User;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import se.lublin.humla.model.IUser;
 
 public class AvatarCacheTest extends TestCase {
 
@@ -38,15 +39,23 @@ public class AvatarCacheTest extends TestCase {
     }
 
     public void testUserWithoutTextureReturnsNull() {
-        User user = new User(10, "TestUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(10);
+        when(user.hasTexture()).thenReturn(false);
+        when(user.getTexture()).thenReturn(null);
+        when(user.getTextureCacheKey()).thenReturn(0);
         assertFalse(user.hasTexture());
         assertEquals(0, user.getTextureCacheKey());
         assertNull(mCache.get(user));
     }
 
     public void testNegativeCachingForUnparseableTexture() {
-        User user = new User(20, "CorruptUser");
-        user.setTexture(ByteString.copyFromUtf8("corrupt_png_stream"));
+        IUser user = mock(IUser.class);
+        byte[] texture = "corrupt_png_stream".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(user.getSession()).thenReturn(20);
+        when(user.hasTexture()).thenReturn(true);
+        when(user.getTexture()).thenReturn(texture);
+        when(user.getTextureCacheKey()).thenReturn(12345);
         assertTrue(user.hasTexture());
         assertTrue(user.getTextureCacheKey() != 0);
 

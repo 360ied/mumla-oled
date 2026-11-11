@@ -244,4 +244,14 @@ interface IHumlaSession {
      * @return True if listening.
      */
     fun isListeningToChannel(channelId: Int): Boolean
+
+    /**
+     * Locally mute a user (device-local, persisted for registered users).
+     */
+    fun setLocalMute(session: Int, muted: Boolean)
+
+    /**
+     * Locally ignore a user's text (device-local, persisted for registered users).
+     */
+    fun setLocalIgnore(session: Int, ignored: Boolean)
 }

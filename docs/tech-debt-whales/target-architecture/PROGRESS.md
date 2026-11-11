@@ -6,7 +6,7 @@ See [testing](testing.md#progressmd) and [migration](migration.md).
 | Step | Status | Commits | Allowlist (files / matches) | Notes |
 |---|---|---|---|---|
 | 1 Harness and gate | done | fafa6126..51f67972 plus round-3 fixes (see log) | 34 / 336 | Gate + interop land; `check.sh` green. Interop 5/5 scenarios pass. Revert check: buggy `HumlaService` generation order still passes interop (harness drives `HumlaConnection`, insensitive by construction); deterministic lifecycle-race cover arrives with step-3 virtual-time client tests. Includes `KeyManagerFactory` default-algorithm compat fix and two pedantic-review rounds (gate strictness, interop robustness, fail-loud wiring, doc accuracy). |
-| 2 Immutable state | not started | | | gated by live-handle spike + immutable-collections pin |
+| 2 Immutable state | done | ac38e205..HEAD (see log) | 31 / 286 | Pure transitions (channel/user/sync/intent) with ported tests; live `UserHandle`/`ChannelHandle` behind `IUser`/`IChannel` (narrowed, read-only except voice-owned `talkState`); temporary `StateEventLogger` keeps chat log; `HumlaService` holds `StateFlow<SessionState>`; `Channel`/`User`/`ModelHandler` + ported-from tests deleted; `AudioHandler.initialize` takes `UserInfo`. Gating spikes resolved: adapter-over-handles proven by `ChannelAdapterTest` + `HandlesTest`; collections-immutable pinned at 0.5.2. `check.sh` green (net-package failures are the pre-existing native-loader set, absent under the gate's native build). |
 | 3 Client and session | not started | | | |
 | 4 Voice control and route | not started | | | |
 | 5a Engine refactor, codec, network threads | not started | | | pool size settled by stress test |

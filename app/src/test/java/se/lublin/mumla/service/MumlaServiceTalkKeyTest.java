@@ -21,7 +21,9 @@ import junit.framework.TestCase;
 
 import se.lublin.humla.Constants;
 import se.lublin.humla.model.TalkState;
-import se.lublin.humla.model.User;
+import se.lublin.humla.model.IUser;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import se.lublin.mumla.TestDataStores;
 import androidx.datastore.core.DataStore;
 import androidx.datastore.preferences.core.Preferences;
@@ -244,14 +246,16 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
-        User user = new User(42, "localUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(42);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        user.setTalkState(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Activation cue must play once on onset", 1, service.getPttOnCueCalls());
         assertEquals("Deactivation cue must not play on onset", 0, service.getPttOffCueCalls());
 
-        user.setTalkState(TalkState.PASSIVE);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Activation cue count preserved", 1, service.getPttOnCueCalls());
         assertEquals("Deactivation cue must play once on release", 1, service.getPttOffCueCalls());
@@ -263,14 +267,16 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
-        User user = new User(42, "localUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(42);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        user.setTalkState(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Consecutive talking states must not duplicate activation cue", 1, service.getPttOnCueCalls());
 
-        user.setTalkState(TalkState.PASSIVE);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
         service.handleUserTalkStateUpdated(user);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Consecutive passive states must not duplicate deactivation cue", 1, service.getPttOffCueCalls());
@@ -282,13 +288,15 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = false;
 
-        User user = new User(42, "localUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(42);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        user.setTalkState(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals(0, service.getPttOnCueCalls());
 
-        user.setTalkState(TalkState.PASSIVE);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
         service.handleUserTalkStateUpdated(user);
         assertEquals(0, service.getPttOffCueCalls());
     }
@@ -300,13 +308,15 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         service.mPTTSoundEnabled = true;
         service.setTransmitMode(Constants.TRANSMIT_VOICE_ACTIVITY);
 
-        User user = new User(42, "localUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(42);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        user.setTalkState(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals(0, service.getPttOnCueCalls());
 
-        user.setTalkState(TalkState.PASSIVE);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
         service.handleUserTalkStateUpdated(user);
         assertEquals(0, service.getPttOffCueCalls());
     }
@@ -317,13 +327,15 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
-        User otherUser = new User(99, "remoteUser");
+        IUser otherUser = mock(IUser.class);
+        when(otherUser.getSession()).thenReturn(99);
+        when(otherUser.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        otherUser.setTalkState(TalkState.TALKING);
+        when(otherUser.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(otherUser);
         assertEquals(0, service.getPttOnCueCalls());
 
-        otherUser.setTalkState(TalkState.PASSIVE);
+        when(otherUser.getTalkState()).thenReturn(TalkState.PASSIVE);
         service.handleUserTalkStateUpdated(otherUser);
         assertEquals(0, service.getPttOffCueCalls());
     }
@@ -334,17 +346,19 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
-        User user = new User(42, "localUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(42);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        user.setTalkState(TalkState.SHOUTING);
+        when(user.getTalkState()).thenReturn(TalkState.SHOUTING);
         service.handleUserTalkStateUpdated(user);
         assertEquals("SHOUTING must trigger activation cue", 1, service.getPttOnCueCalls());
 
-        user.setTalkState(TalkState.PASSIVE);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
         service.handleUserTalkStateUpdated(user);
         assertEquals("PASSIVE after SHOUTING must trigger deactivation cue", 1, service.getPttOffCueCalls());
 
-        user.setTalkState(TalkState.WHISPERING);
+        when(user.getTalkState()).thenReturn(TalkState.WHISPERING);
         service.handleUserTalkStateUpdated(user);
         assertEquals("WHISPERING must trigger activation cue", 2, service.getPttOnCueCalls());
     }
@@ -355,9 +369,11 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         TestTalkKeyService service = new TestTalkKeyService(settings);
         service.mPTTSoundEnabled = true;
 
-        User user = new User(42, "localUser");
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(42);
+        when(user.getTalkState()).thenReturn(TalkState.PASSIVE);
 
-        user.setTalkState(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals(1, service.getPttOnCueCalls());
 
@@ -365,7 +381,7 @@ public class MumlaServiceTalkKeyTest extends TestCase {
         service.mSelfTalking = false;
 
         // Reconnect and start talking again
-        user.setTalkState(TalkState.TALKING);
+        when(user.getTalkState()).thenReturn(TalkState.TALKING);
         service.handleUserTalkStateUpdated(user);
         assertEquals("Reconnecting and talking must trigger activation cue again", 2, service.getPttOnCueCalls());
     }

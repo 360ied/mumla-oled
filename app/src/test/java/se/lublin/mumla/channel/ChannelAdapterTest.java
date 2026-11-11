@@ -21,28 +21,42 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import junit.framework.TestCase;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 
-import se.lublin.humla.model.Channel;
+import se.lublin.humla.model.IChannel;
+import se.lublin.humla.model.IUser;
 import se.lublin.humla.model.TalkState;
-import se.lublin.humla.model.User;
 
+/**
+ * Adapter over live-handle interfaces. Step-2 spike evidence: the adapter
+ * renders from IUser/IChannel reads (backed by handles in production).
+ */
 public class ChannelAdapterTest extends TestCase {
 
-    private Channel mChannel;
-    private User mUser1;
-    private User mUser2;
+    private IChannel mChannel;
+    private IUser mUser1;
+    private IUser mUser2;
     private ChannelAdapter mAdapter;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        mChannel = new Channel(1, false);
-        mUser1 = new User(101, "Alice");
-        mUser2 = new User(102, "Bob");
-        mUser1.setChannel(mChannel);
-        mUser2.setChannel(mChannel);
+        mUser1 = mock(IUser.class);
+        when(mUser1.getSession()).thenReturn(101);
+        when(mUser1.getName()).thenReturn("Alice");
+        when(mUser1.getTalkState()).thenReturn(TalkState.PASSIVE);
+        mUser2 = mock(IUser.class);
+        when(mUser2.getSession()).thenReturn(102);
+        when(mUser2.getName()).thenReturn("Bob");
+        when(mUser2.getTalkState()).thenReturn(TalkState.PASSIVE);
+        mChannel = mock(IChannel.class);
+        when(mChannel.getUsers()).thenReturn(Arrays.asList(mUser1, mUser2));
         mAdapter = new ChannelAdapter(null, mChannel);
         initObservable(mAdapter);
     }
@@ -77,7 +91,8 @@ public class ChannelAdapterTest extends TestCase {
         assertEquals(0, mAdapter.getItemCount());
         assertEquals(RecyclerView.NO_ID, mAdapter.getItemId(0));
 
-        Channel emptyChannel = new Channel(2, false);
+        IChannel emptyChannel = mock(IChannel.class);
+        when(emptyChannel.getUsers()).thenReturn(Collections.emptyList());
         mAdapter.setChannel(emptyChannel);
         assertEquals(0, mAdapter.getItemCount());
     }
@@ -88,7 +103,8 @@ public class ChannelAdapterTest extends TestCase {
         mAdapter.updateUserState(mUser1, null);
 
         // User not in channel should not throw
-        User stranger = new User(999, "Stranger");
+        IUser stranger = mock(IUser.class);
+        when(stranger.getSession()).thenReturn(999);
         mAdapter.updateUserState(stranger, null);
 
         // Adapter with null channel should handle updateUserState safely
@@ -100,19 +116,20 @@ public class ChannelAdapterTest extends TestCase {
         mAdapter.notifyUserChanged(null);
         mAdapter.notifyUserChanged(mUser1);
 
-        User stranger = new User(999, "Stranger");
+        IUser stranger = mock(IUser.class);
+        when(stranger.getSession()).thenReturn(999);
         mAdapter.notifyUserChanged(stranger);
 
         mAdapter.setChannel(null);
         mAdapter.notifyUserChanged(mUser1);
     }
 
-    public void testTalkStateTransitions() {
-        assertEquals(TalkState.PASSIVE, mUser1.getTalkState());
-        mUser1.setTalkState(TalkState.TALKING);
-        assertEquals(TalkState.TALKING, mUser1.getTalkState());
-        mUser1.setTalkState(TalkState.PASSIVE);
-        assertEquals(TalkState.PASSIVE, mUser1.getTalkState());
+    public void testTalkStateReadsFollowHandle() {
+        // Handle storage moved to UserHandle (see humla HandlesTest);
+        // the adapter reads whatever the handle reports.
+        when(mUser1.getTalkState()).thenReturn(TalkState.TALKING);
+        assertEquals(101L, mAdapter.getItemId(0));
+        assertNull(mAdapter.getTalkStateDrawable(mUser1));
     }
 
     public void testTalkStateDrawableWithNullContext() {

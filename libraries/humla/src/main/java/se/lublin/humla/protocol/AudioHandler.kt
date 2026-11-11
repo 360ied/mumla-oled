@@ -34,8 +34,8 @@ import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
-import se.lublin.humla.model.User
 import se.lublin.humla.net.HumlaConnection
+import se.lublin.humla.state.UserInfo
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.PacketBuffer
 import se.lublin.humla.protobuf.Mumble
@@ -337,7 +337,7 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     @Throws(AudioException::class)
-    fun initialize(self: User?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
+    fun initialize(self: UserInfo?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
         // Field setup under A; engine fan-out (bandwidth + mute) outside A:
         // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
         // join, while the capture thread needs A for onTalkingStateChanged.
@@ -347,10 +347,10 @@ class AudioHandler : HumlaNetworkListener,
             mSession = self.session
 
             setCodec(codec)
-            mSelfMuted = self.isSelfMuted
-            mServerMuted = self.isMuted
-            mServerDeafened = self.isDeafened
-            mSuppressed = self.isSuppressed
+            mSelfMuted = self.selfMuted
+            mServerMuted = self.muted
+            mServerDeafened = self.deafened
+            mSuppressed = self.suppressed
             // Flag before fan-out (previously after startPlaying): the mute
             // and bandwidth paths are thread-safe via their own locks and
             // re-application is idempotent, so a server message arriving
@@ -1029,7 +1029,7 @@ class AudioHandler : HumlaNetworkListener,
 
         @Throws(AudioException::class)
         fun initialize(
-            self: User?,
+            self: UserInfo?,
             maxBandwidth: Int,
             codec: HumlaUDPMessageType?,
             targetId: Byte

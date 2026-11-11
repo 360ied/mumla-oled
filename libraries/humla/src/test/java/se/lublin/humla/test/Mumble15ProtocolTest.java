@@ -21,8 +21,6 @@ import com.google.protobuf.ByteString;
 import junit.framework.TestCase;
 
 import se.lublin.humla.Constants;
-import se.lublin.humla.model.Channel;
-import se.lublin.humla.model.User;
 import se.lublin.humla.net.Permissions;
 import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.protobuf.MumbleUDP;
@@ -60,47 +58,8 @@ public class Mumble15ProtocolTest extends TestCase {
         assertFalse(Constants.isProtobufUdpSupported(0, (1 << 16) | (4 << 8)));
     }
 
-    public void testChannelModelMumble15Fields() {
-        Channel ch = new Channel(10, false);
-        assertEquals(0, ch.getMaxUsers());
-        assertFalse(ch.isEnterRestricted());
-        assertTrue(ch.canEnter());
-        assertFalse(ch.isListening());
-        assertEquals(1.0f, ch.getListeningVolume(), 0.001f);
-
-        ch.setMaxUsers(25);
-        assertEquals(25, ch.getMaxUsers());
-
-        ch.setEnterRestricted(true);
-        assertTrue(ch.isEnterRestricted());
-
-        ch.setCanEnter(false);
-        assertFalse(ch.canEnter());
-
-        ch.setListening(true);
-        assertTrue(ch.isListening());
-
-        ch.setListeningVolume(0.75f);
-        assertEquals(0.75f, ch.getListeningVolume(), 0.001f);
-    }
-
-    public void testUserListeningChannels() {
-        User user = new User(1, "Alice");
-        assertTrue(user.getListeningChannels().isEmpty());
-        assertFalse(user.isListeningTo(10));
-
-        user.addListeningChannel(10);
-        user.addListeningChannel(20);
-        assertEquals(2, user.getListeningChannels().size());
-        assertTrue(user.isListeningTo(10));
-        assertTrue(user.isListeningTo(20));
-        assertFalse(user.isListeningTo(30));
-
-        user.removeListeningChannel(10);
-        assertEquals(1, user.getListeningChannels().size());
-        assertFalse(user.isListeningTo(10));
-        assertTrue(user.isListeningTo(20));
-    }
+    // Channel/user listening state moved to immutable SessionState (step 2):
+    // covered by ChannelTransitionsTest/UserTransitionsTest/StateTest.
 
     public void testPermissionsConstants() {
         assertEquals(0x800, Permissions.Listen);
