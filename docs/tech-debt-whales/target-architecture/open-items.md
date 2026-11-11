@@ -13,16 +13,15 @@ them.
 
 | Item | How it gets resolved | Gates |
 |---|---|---|
-| Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); not a prerequisite | Step 5a (done-when) |
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
-| Talk-state bridge between 5a and step 7 | Specified in the step-5a switchover plan: the bridge carries no transition memory — `talkActivity` levels are the sole state (passive when absent), observer callbacks are repaint hints only, and every consumer re-reads the level on use (e.g. `UserHandle.talkState` reads `talkActivity.value` live). No dedup store, no edge forwarding; the step-2 fresh-handle regression must not return as a bridge | Step 5a |
 
 ## Open (not gating)
 
 | Item | Notes |
 |---|---|
+| Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8 |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
 
@@ -82,4 +81,6 @@ Items resolved by the 2026-11-10 spec review are marked *(review)*.
 | Android 11–12 | Support stays theoretical; no device testing or spikes | [testing](testing.md#on-device-testing) |
 | Progress tracking | `PROGRESS.md` row per step (status, commits, allowlist, notes) | [testing](testing.md#progressmd) |
 | Observer compatibility | `IHumlaObserver` deleted in step 8 | [migration](migration.md#step-8--clean-up) |
+| Talk-state bridge between 5a and step 7 | The bridge carries no transition memory: `talkActivity` levels are the sole state (passive when absent), observer callbacks are repaint hints only, and every consumer re-reads the level on use (`UserHandle.talkState` reads `talkActivity.value` live). No dedup store, no edge forwarding; the step-2 fresh-handle regression must not return as a bridge | 
+|
 | Microphone permission missing at voice start | The activity requests permissions before connecting, as today; if the stream still fails to open, the `VoiceEngine` reports `PipelineError` and the session stays connected without audio | [voice](voice.md#failures) |
