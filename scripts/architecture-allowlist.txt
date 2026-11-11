@@ -33,6 +33,7 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt  7
 libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt  1
 libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt  37
 libraries/humla/src/main/java/se/lublin/humla/protocol/InputModes.kt  2
+libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt  2
 
 [native]
 libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <fcntl.h>
