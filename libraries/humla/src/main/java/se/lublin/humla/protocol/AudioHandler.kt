@@ -34,6 +34,7 @@ import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
+import se.lublin.humla.voice.VoicePolicy
 import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.state.UserInfo
 import se.lublin.humla.net.HumlaUDPMessageType
@@ -196,6 +197,12 @@ class AudioHandler : HumlaNetworkListener,
 
     @Volatile
     private var mProtobufUdp: Boolean = false
+
+    private val policyRef = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.flow.StateFlow<VoicePolicy>?>(null)
+    private var lastPolicyTransmit: Boolean? = null
+    private var lastPolicyPtt: Boolean? = null
+    private var lastPolicyBitrate: Int? = null
+    private var lastPolicyFpp: Int? = null
 
     // Pre-allocated packet buffers for zero heap allocation on audio path
     private val mPacketBufferLock = Any()
@@ -756,8 +763,48 @@ class AudioHandler : HumlaNetworkListener,
         return mProtobufUdp
     }
 
+    fun setPolicyFlow(flow: kotlinx.coroutines.flow.StateFlow<VoicePolicy>) {
+        policyRef.set(flow)
+    }
+
     override fun onAudioInputReceived(frame: ShortArray?, frameSize: Int) {
+        applyInterimPolicy()
         mNativeEngine.processFrame(frame, 0, frameSize)
+    }
+
+    private fun applyInterimPolicy() {
+        val flow = policyRef.get() ?: return
+        val policy = try {
+            flow.value
+        } catch (_: Exception) {
+            return
+        }
+        if (lastPolicyTransmit != policy.transmitAllowed) {
+            lastPolicyTransmit = policy.transmitAllowed
+            try {
+                mNativeEngine.setMuted(!policy.transmitAllowed)
+            } catch (_: Exception) {
+            }
+        }
+        if (lastPolicyPtt != policy.pttPressed) {
+            lastPolicyPtt = policy.pttPressed
+            try {
+                mNativeEngine.setPttTalking(policy.pttPressed)
+            } catch (_: Exception) {
+            }
+        }
+        if (lastPolicyBitrate != policy.bitrate || lastPolicyFpp != policy.framesPerPacket) {
+            lastPolicyBitrate = policy.bitrate
+            lastPolicyFpp = policy.framesPerPacket
+            try {
+                mNativeEngine.setBitrate(policy.bitrate)
+            } catch (_: Exception) {
+            }
+            try {
+                mNativeEngine.setFramesPerPacket(policy.framesPerPacket)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun onAudioPacketEncoded(
