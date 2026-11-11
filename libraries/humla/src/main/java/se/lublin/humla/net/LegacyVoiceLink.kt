@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
 import se.lublin.humla.client.CryptCounts
+import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.protocol.HumlaUDPMessageListener
 import se.lublin.humla.protobuf.MumbleUDP
 
@@ -53,7 +54,7 @@ import se.lublin.humla.protobuf.MumbleUDP
 class LegacyVoiceLink(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-) : VoiceLink, HumlaUDP.UDPConnectionListener {
+) : VoiceLink, VoiceLifecycle, HumlaUDP.UDPConnectionListener {
     private val crypt = CryptState()
 
     private val _events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
@@ -75,8 +76,7 @@ class LegacyVoiceLink(
 
     private var targetFramesPerPacket: Int = Constants.DEFAULT_FRAMES_PER_PACKET
 
-    fun setForceTcp(force: Boolean) {
-        forceTcp.set(force)
+    fun setForceTcp(force: Boolean) {        forceTcp.set(force)
         if (force) {
             usingUdp.set(false)
         }
@@ -90,6 +90,14 @@ class LegacyVoiceLink(
     fun setTargetFramesPerPacket(fpp: Int) {
         targetFramesPerPacket = Constants.sanitizeFramesPerPacket(fpp)
         udp?.setTargetFramesPerPacket(targetFramesPerPacket)
+    }
+
+    override fun startVoice(host: String, port: Int) {
+        connectUdp(host, port)
+    }
+
+    override fun stopVoice() {
+        disconnectUdp()
     }
 
     fun connectUdp(host: String, port: Int) {

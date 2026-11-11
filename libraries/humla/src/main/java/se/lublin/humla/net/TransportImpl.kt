@@ -125,6 +125,9 @@ class TransportImpl internal constructor(
     private var resolvedHost: String = host
     private var resolvedPort: Int = port
 
+    override val remoteHost: String get() = resolvedHost
+    override val remotePort: Int get() = resolvedPort
+
     fun elapsedMicros(): Long = (System.nanoTime() - startNanos) / 1000
 
     /** Connects (DNS + TLS + verify), then starts reader/writer. Throws TransportException. */
@@ -499,7 +502,7 @@ class TransportImpl internal constructor(
     }
 
     /** Starts the keepalive ping loop; called once by Session on ServerSync. */
-    fun startKeepalive() {
+    override fun startKeepalive() {
         if (!pingStarted.compareAndSet(false, true)) return
         if (forceTcp) {
             // Forced TCP: send the dummy tunnel now, never use UDP.
@@ -599,6 +602,7 @@ class TransportException(val error: ClientError) : Exception(error.toString())
 /** Default factory doing DNS + TLS on the IO dispatcher. */
 class DefaultTransportFactory : TransportFactory {
     override suspend fun create(
+        parentScope: CoroutineScope,
         host: String,
         port: Int,
         certificate: ByteArray?,
@@ -609,7 +613,6 @@ class DefaultTransportFactory : TransportFactory {
         forceTcp: Boolean,
         voice: VoiceLink,
     ): Transport {
-        val parent = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val impl = TransportImpl(
             host = host,
             port = port,
@@ -620,7 +623,7 @@ class DefaultTransportFactory : TransportFactory {
             trustStoreFormat = trustStoreFormat,
             forceTcp = forceTcp,
             voice = voice,
-            parentScope = parent,
+            parentScope = parentScope,
         )
         try {
             impl.connect()

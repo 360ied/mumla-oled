@@ -53,6 +53,13 @@ interface Transport {
 
     /** Close the socket and fail with Connection (idempotent). */
     fun close()
+
+    /** Starts the keepalive ping loop; called once by Session on ServerSync. */
+    fun startKeepalive()
+
+    /** Resolved remote host/port for voice start (SRV resolved). */
+    val remoteHost: String
+    val remotePort: Int
 }
 
 /** Inbound control-channel items, server order. */
@@ -114,6 +121,7 @@ data class VoiceStatus(
 /** Creates a Transport for one session attempt. */
 interface TransportFactory {
     suspend fun create(
+        parentScope: kotlinx.coroutines.CoroutineScope,
         host: String,
         port: Int,
         certificate: ByteArray?,
