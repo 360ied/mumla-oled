@@ -55,6 +55,14 @@ object VoiceSettingsMapper {
         halfDuplex: Boolean = false,
         adaptiveLeveler: Boolean = true,
     ): VoiceSettings {
+        require(detectionThreshold.isFinite()) { "detectionThreshold must be finite" }
+        require(amplitudeBoost.isFinite()) { "amplitudeBoost must be finite" }
+        require(amplitudeBoost in MIN_AMPLITUDE_BOOST..MAX_AMPLITUDE_BOOST) {
+            "amplitudeBoost must be in $MIN_AMPLITUDE_BOOST..$MAX_AMPLITUDE_BOOST"
+        }
+        require(inputQuality in MIN_INPUT_BITRATE..MAX_INPUT_BITRATE) {
+            "inputQuality must be in $MIN_INPUT_BITRATE..$MAX_INPUT_BITRATE"
+        }
         val (vadMax, vadMin) = vadFor(detectionThreshold)
         return VoiceSettings(
             inputMode = inputModeFor(transmitMode),
@@ -105,8 +113,16 @@ object VoiceSettingsMapper {
             next = next.copy(targetFramesPerPacket = Constants.sanitizeFramesPerPacket(framesPerPacket))
         }
         if (halfDuplex != null || transmitMode != null) {
-            val half = halfDuplex ?: current.halfDuplex
-            next = next.copy(halfDuplex = halfDuplexFor(resolvedTransmit, half))
+            // Preserve the stored flag across mode-only switches (legacy
+            // holder keeps the raw half-duplex and gates only at build):
+            // gating a carried-over true to false would lose the PTT+half
+            // preference on a VAD round-trip.
+            val nextHalf = if (halfDuplex == null) {
+                current.halfDuplex
+            } else {
+                halfDuplexFor(resolvedTransmit, halfDuplex)
+            }
+            next = next.copy(halfDuplex = nextHalf)
         }
         if (adaptiveLeveler != null) {
             next = next.copy(adaptiveLeveler = adaptiveLeveler)

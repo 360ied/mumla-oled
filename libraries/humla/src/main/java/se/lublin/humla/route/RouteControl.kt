@@ -27,6 +27,7 @@ import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -38,7 +39,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import se.lublin.humla.audio.AudioPlatform
 import se.lublin.humla.audio.ScoLink
@@ -119,13 +119,13 @@ internal class RouteControl(
     private var debounceJob: Job? = null
     private var settleJob: Job? = null
 
-    private var destroyed = false
+    private val destroyed = java.util.concurrent.atomic.AtomicBoolean(false)
     private var deviceCallback: AudioDeviceCallback? = null
 
     private val prefsFlow: Flow<RoutePreferences> = prefs
 
     internal fun shouldDropStaleEvent(captured: Int): Boolean {
-        return destroyed || captured != routeSessionCounter.get()
+        return destroyed.get() || captured != routeSessionCounter.get()
     }
 
     fun submit(command: RouteCommand) {
@@ -167,12 +167,15 @@ internal class RouteControl(
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                Log.w(TAG, "Route prefs collection ended", e)
             }
         }
     }
 
-    fun close() {
-        val teardown = scope.launch { onDestroyed() }
+    fun close(): Job {
+        // NonCancellable: Service.onDestroy cancels the parent scope right
+        // after this call; the teardown must still run to release SCO/mode.
+        val teardown = scope.launch(NonCancellable) { onDestroyed() }
         teardown.invokeOnCompletion {
             try {
                 scope.cancel()
@@ -183,6 +186,7 @@ internal class RouteControl(
             } catch (_: Exception) {
             }
         }
+        return teardown
     }
 
     fun onInit() {
@@ -196,11 +200,11 @@ internal class RouteControl(
         if (deviceCallback != null) return
         val callback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>?) {
-                onDevicesChanged(added)
+                onDevicesChanged(added, forRemoval = false)
             }
 
             override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>?) {
-                onDevicesChanged(removed)
+                onDevicesChanged(removed, forRemoval = true)
             }
         }
         deviceCallback = callback
@@ -250,15 +254,26 @@ internal class RouteControl(
     private fun onSessionStarted() {
         checkNotMainThread()
         routeSessionCounter.incrementAndGet()
-        hasSession = true
+        hasSession = false
         scoRouteActive = false
         settleAttempts = 0
+        // Spec Idle->Settling: publish the pending target first so observers
+        // see the settle; recompute below resolves to Ready/Fallback.
+        val mediaPresent = queryMediaDevicesPresent()
+        val target = when {
+            scoRequested.get() -> AppliedRoute.VOICE_SCO
+            !mediaPresent -> AppliedRoute.VOICE_HANDSET
+            else -> AppliedRoute.MEDIA
+        }
+        _state.value = RouteState.Settling(target)
+        hasSession = true
         recompute("sync", forceReload = false, isRecheck = false, firstCreate = true)
         updateScoRoute()
     }
 
     private fun onSessionEnded() {
         checkNotMainThread()
+        routeSessionCounter.incrementAndGet()
         hasSession = false
         cancelRouteDebounce()
         cancelRouteSettle()
@@ -271,7 +286,7 @@ internal class RouteControl(
     }
 
     private fun onDestroyed() {
-        destroyed = true
+        destroyed.set(true)
         cancelRouteDebounce()
         cancelRouteSettle()
         unregisterDeviceListener()
@@ -291,7 +306,12 @@ internal class RouteControl(
         checkNotMainThread()
         val link = sco ?: return
         if (!scoRequested.get() || !hasSession) return
-        if (!link.isIdle()) return
+        try {
+            if (!link.isIdle()) return
+        } catch (e: Exception) {
+            Log.w(TAG, "SCO retry idle check failed", e)
+            return
+        }
         try {
             link.start()
         } catch (e: Exception) {
@@ -320,25 +340,27 @@ internal class RouteControl(
         }
     }
 
-    private fun onDevicesChanged(added: Array<AudioDeviceInfo>?) {
+    private fun onDevicesChanged(added: Array<AudioDeviceInfo>?, forRemoval: Boolean = false) {
         val captured = routeSessionCounter.get()
         scope.launch {
             if (shouldDropStaleEvent(captured)) return@launch
             if (!hasSession) return@launch
-            maybeStartRequestedSco(added)
+            // Only arrivals may trigger SCO bring-up; removals just re-decide.
+            if (!forRemoval) maybeStartRequestedSco(added)
             debounceJob?.cancel()
             debounceJob = scope.launch {
                 delay(ROUTE_RECOMPUTE_DEBOUNCE_MS)
                 if (shouldDropStaleEvent(captured)) return@launch
+                if (!hasSession) return@launch
                 recompute("devices changed", forceReload = false, isRecheck = false, firstCreate = false)
             }
         }
     }
 
-    fun updateScoRoute() {
+    private fun updateScoRoute() {
         checkNotMainThread()
         val link = sco ?: return
-        if (destroyed) return
+        if (destroyed.get()) return
         if (scoRequested.get() && hasSession) {
             try {
                 link.start()
@@ -354,7 +376,7 @@ internal class RouteControl(
         }
     }
 
-    fun stopScoAndClearFlag() {
+    private fun stopScoAndClearFlag() {
         checkNotMainThread()
         val link = sco ?: return
         try {
@@ -385,11 +407,13 @@ internal class RouteControl(
 
     private fun handleScoFailed(reason: String?) {
         checkNotMainThread()
-        if (destroyed) return
+        if (destroyed.get()) return
         if (!_events.tryEmit(RouteEvent.ScoFailed(reason))) {
             Log.w(TAG, "Route event buffer full; dropped ScoFailed")
         }
-        recompute("SCO failed", forceReload = false, isRecheck = false, firstCreate = false)
+        // Force publish: the route may be unchanged (voice handset before
+        // and after), but the status must flip Ready->Fallback per spec.
+        recompute("SCO failed", forceReload = true, isRecheck = false, firstCreate = false)
     }
 
     private fun recompute(reason: String, forceReload: Boolean, isRecheck: Boolean, firstCreate: Boolean) {
@@ -408,8 +432,8 @@ internal class RouteControl(
         val shouldPublish = hasSession && (firstCreate || forceReload || update.changed)
         if (shouldPublish) {
             val profile = if (voice) StreamProfile.VOICE else StreamProfile.MEDIA
-            val next: RouteState = if (!voice || !scoRouteActive) {
-                val isFallback = scoRequested.get() && voice && !scoRouteActive &&
+            val next: RouteState = if (!scoRouteActive) {
+                val isFallback = scoRequested.get() && voice &&
                     update.route == AppliedRoute.VOICE_HANDSET
                 if (isFallback && !firstCreate) {
                     RouteState.Fallback(update.route, profile, "SCO unavailable")
@@ -437,14 +461,27 @@ internal class RouteControl(
         val voiceByAbsence = update.route == AppliedRoute.VOICE_HANDSET
         val liveCall = hasSession
         val attempts = settleAttempts
-        if (voiceByAbsence && liveCall && (!isRecheck || attempts < ROUTE_SETTLE_MAX_RECHECKS - 1)) {
+        // At most ROUTE_SETTLE_MAX_RECHECKS settle rechecks: the initial pass
+        // opens the budget, each recheck consumes one; exhaustion cancels
+        // and resets (the final recheck already published Ready/Fallback, so
+        // SCO-pending sessions land in Fallback per the emit gate above).
+        if (voiceByAbsence && liveCall) {
             if (!isRecheck) {
                 settleAttempts = 0
+                armRouteSettle()
+            } else if (attempts < ROUTE_SETTLE_MAX_RECHECKS) {
+                settleAttempts = attempts + 1
+                if (settleAttempts < ROUTE_SETTLE_MAX_RECHECKS) {
+                    armRouteSettle()
+                } else {
+                    cancelRouteSettle()
+                    settleAttempts = 0
+                }
             } else {
-                settleAttempts += 1
+                cancelRouteSettle()
+                settleAttempts = 0
             }
-            armRouteSettle()
-        } else if (!voiceByAbsence || !liveCall) {
+        } else {
             cancelRouteSettle()
             settleAttempts = 0
         }
@@ -591,11 +628,7 @@ internal class RouteControl(
         settleJob = scope.launch {
             delay(ROUTE_SETTLE_RECHECK_MS)
             if (shouldDropStaleEvent(captured)) return@launch
-            if (settleAttempts >= ROUTE_SETTLE_MAX_RECHECKS - 1) {
-                settleJob = null
-                settleAttempts = 0
-                return@launch
-            }
+            if (!hasSession) return@launch
             recompute("media settle recheck", forceReload = false, isRecheck = true, firstCreate = false)
         }
     }

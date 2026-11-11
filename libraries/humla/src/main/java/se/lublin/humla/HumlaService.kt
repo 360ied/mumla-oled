@@ -58,6 +58,7 @@ import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
 import se.lublin.humla.Constants
 import se.lublin.humla.client.ClientCertificate
+import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.HumlaClient
@@ -248,6 +249,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             if (talking) TalkState.TALKING else TalkState.PASSIVE
                         mCallbacks.onUserTalkStateUpdated(currentUser)
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         Log.w(TAG, "Talking-state update after unsync", e)
                     }
                 }
@@ -501,8 +503,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                                 mCallbacks.onBluetoothScoFailed(ev.reason)
                             is RouteEvent.RouteChanged -> {
                                 // State collector already fanned out for every
-                                // publish (RouteControl emits RouteChanged only
-                                // alongside a state change); no-op.
+                                // publish. Intentionally lossy: StateFlow
+                                // conflates rapid Ready(A)->Ready(B) flips to
+                                // B for late collectors, while this event bus
+                                // preserves each edge. UI/telemetry needing
+                                // every edge should consume events here.
                             }
                         }
                     } catch (e: Exception) {
@@ -757,7 +762,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             resetVoiceTargetSilent()
                             // Trust failures surface via onTLSHandshakeFailed below;
                             // still fan out the terminal disconnect for UI.
-                            if (s.error is se.lublin.humla.client.ClientError.Trust) {
+                            if (s.error is ClientError.Trust) {
                                 val trust = s.error
                                 mCallbacks.onTLSHandshakeFailed(
                                     trust.chain.toTypedArray(),
@@ -777,22 +782,22 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         init(this)
     }
 
-    private fun se.lublin.humla.client.ClientError.toHumlaException(): HumlaException {
+    private fun ClientError.toHumlaException(): HumlaException {
         return when (this) {
-            is se.lublin.humla.client.ClientError.Connection ->
+            is ClientError.Connection ->
                 HumlaException(message ?: "Connection error", cause, HumlaException.HumlaDisconnectReason.CONNECTION_ERROR)
-            is se.lublin.humla.client.ClientError.Rejected ->
+            is ClientError.Rejected ->
                 HumlaException("Rejected: $reason", null, HumlaException.HumlaDisconnectReason.REJECT)
-            is se.lublin.humla.client.ClientError.Removed ->
+            is ClientError.Removed ->
                 HumlaException(reason ?: "Removed", null, HumlaException.HumlaDisconnectReason.USER_REMOVE)
-            is se.lublin.humla.client.ClientError.Trust ->
+            is ClientError.Trust ->
                 HumlaException("TLS trust failure", null, HumlaException.HumlaDisconnectReason.OTHER_ERROR)
         }
     }
 
-    private fun se.lublin.humla.client.ClientError.toHumlaExceptionOrNull(): HumlaException? {
+    private fun ClientError.toHumlaExceptionOrNull(): HumlaException? {
         return when (this) {
-            is se.lublin.humla.client.ClientError.Trust -> null
+            is ClientError.Trust -> null
             else -> toHumlaException()
         }
     }
@@ -806,8 +811,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     open override fun onDestroy() {
         // Order matters: disconnect first (async teardown onto the client
-        // dispatcher), synchronous releases next, super.onDestroy() last so
-        // the parented client scope survives until teardown is launched.
+        // dispatcher), owned teardowns next (each close launches a
+        // NonCancellable child so parent-scope cancellation in
+        // super.onDestroy() cannot truncate SCO/mode/mic release), then
+        // synchronous releases, super.onDestroy() last.
         try {
             if (::client.isInitialized) client.disconnect()
         } catch (ignored: Exception) {
@@ -1011,6 +1018,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         // 1. Merge pending connection parts (lock-free AtomicReference;
         // main-confined writes, atomic reads for connect). Presence-based
         // reconnect: any delta carrying a reconnect-relevant key returns true.
+        // Single-server snapshot: histories are keyed to the staged server;
+        // switching servers without fresh history fields clears the prior
+        // server's lists instead of leaking them across servers.
         run {
             var updated: PendingConnection
             do {
@@ -1066,10 +1076,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 if (delta.localMuteHistory != null) {
                     next = next.copy(localMuteHistory = delta.localMuteHistory.toList())
                     reconnectNeeded = true
+                } else if (delta.server != null && delta.server.id != current.server?.id) {
+                    // Server switch without fresh histories: drop the prior
+                    // server's lists (see the single-server note above).
+                    next = next.copy(localMuteHistory = emptyList())
                 }
                 if (delta.localIgnoreHistory != null) {
                     next = next.copy(localIgnoreHistory = delta.localIgnoreHistory.toList())
                     reconnectNeeded = true
+                } else if (delta.server != null && delta.server.id != current.server?.id) {
+                    next = next.copy(localIgnoreHistory = emptyList())
                 }
                 updated = next
             } while (!pendingConnection.compareAndSet(current, updated))
@@ -1098,28 +1114,27 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
         // 3. Audio settings (VoiceSettings flow plus interim voice-link targets).
-        try {
-            val currentSettings = voiceSettingsFlow.value
-            val currentTransmit = when (currentSettings.inputMode) {
-                InputMode.PUSH_TO_TALK -> Constants.TRANSMIT_PUSH_TO_TALK
-                InputMode.CONTINUOUS -> Constants.TRANSMIT_CONTINUOUS
-                else -> Constants.TRANSMIT_VOICE_ACTIVITY
-            }
-            val nextSettings = VoiceSettingsMapper.update(
-                currentSettings,
-                transmitMode = delta.transmitMode,
-                detectionThreshold = delta.detectionThreshold,
-                amplitudeBoost = delta.amplitudeBoost,
-                inputQuality = delta.inputQuality,
-                framesPerPacket = delta.framesPerPacket,
-                halfDuplex = delta.halfDuplex,
-                adaptiveLeveler = delta.adaptiveLeveler,
-                currentTransmitMode = currentTransmit,
-            )
-            if (nextSettings != currentSettings) {
-                voiceSettingsFlow.value = nextSettings
-            }
-        } catch (_: Exception) {
+        // Fail-fast like the legacy holder: validation errors propagate to
+        // the caller instead of landing a half-applied delta.
+        val currentSettings = voiceSettingsFlow.value
+        val currentTransmit = when (currentSettings.inputMode) {
+            InputMode.PUSH_TO_TALK -> Constants.TRANSMIT_PUSH_TO_TALK
+            InputMode.CONTINUOUS -> Constants.TRANSMIT_CONTINUOUS
+            else -> Constants.TRANSMIT_VOICE_ACTIVITY
+        }
+        val nextSettings = VoiceSettingsMapper.update(
+            currentSettings,
+            transmitMode = delta.transmitMode,
+            detectionThreshold = delta.detectionThreshold,
+            amplitudeBoost = delta.amplitudeBoost,
+            inputQuality = delta.inputQuality,
+            framesPerPacket = delta.framesPerPacket,
+            halfDuplex = delta.halfDuplex,
+            adaptiveLeveler = delta.adaptiveLeveler,
+            currentTransmitMode = currentTransmit,
+        )
+        if (nextSettings != currentSettings) {
+            voiceSettingsFlow.value = nextSettings
         }
         // Interim encoder target for SessionStats.currentBandwidth until the
         // step-5a VoicePolicy carries real values (see LegacyVoiceLink).
@@ -1229,19 +1244,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun getTCPLatency(): Long {
-        try {
-            return requireSession().getTCPLatency()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getTCPLatency()
     }
 
     open override fun getUDPLatency(): Long {
-        try {
-            return requireSession().getUDPLatency()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getUDPLatency()
     }
 
     open override fun getMaxBandwidth(): Int {
@@ -1257,57 +1264,34 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         try {
             val handler = if (::voiceControl.isInitialized) voiceControl.currentHandler() else null
             if (handler != null) return handler.getCurrentBandwidth()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
         }
         return -1
     }
 
     open override fun getServerVersion(): Int {
-        try {
-            return requireSession().getServerVersion()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getServerVersion()
     }
 
     open override fun getServerVersionV2(): Long {
-        try {
-            return requireSession().getServerVersionV2()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getServerVersionV2()
     }
 
     open override fun getServerRelease(): String? {
-        try {
-            return requireSession().getServerRelease()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getServerRelease()
     }
 
     open override fun getServerOSName(): String? {
-        try {
-            return requireSession().getServerOSName()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getServerOSName()
     }
 
     open override fun getServerOSVersion(): String? {
-        try {
-            return requireSession().getServerOSVersion()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getServerOSVersion()
     }
 
     open override fun getSessionId(): Int {
-        try {
-            return requireSession().getSessionId()
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
+        return requireSession().getSessionId()
     }
 
     open override fun getSessionUser(): IUser? {

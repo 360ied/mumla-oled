@@ -23,6 +23,7 @@ import android.media.AudioManager
 import android.os.Handler
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -179,6 +180,56 @@ class RouteControlTest {
         // Directly exercise the guard: a captured value from the prior
         // session no longer matches.
         assertTrue(control.shouldDropStaleEvent(0))
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun scoFailedPublishesFallback() = runTest {
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        control.onScoFailed("timeout")
+        runCurrent()
+        val state = control.state.value
+        assertTrue(state is RouteState.Fallback)
+        assertEquals(AppliedRoute.VOICE_HANDSET, (state as RouteState.Fallback).route)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun deviceRemovalDoesNotStartSco() = runTest {
+        val platform = FakePlatform()
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        // Force the link back to idle, then deliver a removal containing an
+        // SCO device: removals must re-decide only, never bring-up.
+        sco.stop()
+        val before = sco.startCount
+        val callback = platform.capturedCallback
+        assertTrue(callback != null)
+        val removed = arrayOf(mock(AudioDeviceInfo::class.java).apply {
+            org.mockito.Mockito.`when`(type).thenReturn(AudioDeviceInfo.TYPE_BLUETOOTH_SCO)
+        })
+        callback!!.onAudioDevicesRemoved(removed)
+        runCurrent()
+        advanceTimeBy(500L)
+        runCurrent()
+        assertEquals(before, sco.startCount)
         control.close()
         runCurrent()
     }

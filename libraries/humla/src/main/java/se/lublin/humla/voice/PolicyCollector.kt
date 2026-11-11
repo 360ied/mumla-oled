@@ -79,6 +79,10 @@ class PolicyCollector(
                     }
                 }
             } catch (e: Exception) {
+                // Only CancellationException is expected (scope.cancel);
+                // voicePolicy/combine are pure and StateFlow reads cannot
+                // fail, so anything else is a programming bug. Rethrow
+                // cancellation, drop anything else to stay fail-closed.
                 if (e is CancellationException) throw e
             }
         }

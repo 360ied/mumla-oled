@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
@@ -119,8 +120,10 @@ class VoiceControl(
 
     fun currentHandler(): AudioHandler? = handlerRef.get()
 
-    fun close() {
-        val teardown = scope.launch {
+    fun close(): Job {
+        // NonCancellable: see RouteControl.close; the mic/native teardown
+        // must survive parent-scope cancellation during Service.onDestroy.
+        val teardown = scope.launch(NonCancellable) {
             tearDown()
         }
         teardown.invokeOnCompletion {
@@ -129,6 +132,7 @@ class VoiceControl(
             } catch (_: Exception) {
             }
         }
+        return teardown
     }
 
     private fun onRouteState(state: RouteState) {
@@ -263,7 +267,11 @@ class VoiceControl(
         created.setFramesPerPacketListener { fpp ->
             try {
                 voiceLink.setTargetFramesPerPacket(fpp)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // Must never throw off the audio thread; counting on the
+                // target setter to be non-blocking (see LegacyVoiceLink).
+                if (e is CancellationException) throw e
+                logger.logWarning("VoiceControl FPP forward failed: $e")
             }
         }
         created.setPolicyFlow(policies)
@@ -312,7 +320,6 @@ class VoiceControl(
             .setEncodeListener(encodeListener)
             .setTalkingListener(talkingListener)
 
-        val currentSettings = settings.value
         builder.setTargetBitrate(currentSettings.targetBitrate)
         builder.setTargetFramesPerPacket(currentSettings.targetFramesPerPacket)
         builder.setAmplitudeBoost(currentSettings.amplitudeBoost)
