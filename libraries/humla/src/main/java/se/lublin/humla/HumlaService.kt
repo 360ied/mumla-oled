@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
@@ -104,7 +105,12 @@ import kotlinx.collections.immutable.toPersistentList
 
 private fun emptySessionState(): SessionState = emptyState()
 
-/** Immutable pending connection parts for the next connect (main-confined writes, atomic reads). */
+/**
+ * Immutable pending connection parts for the next connect (main-confined
+ * writes via apply, atomic reads for connect). ByteArray needs content
+ * equality (see CertRef): the generated data-class equals would compare
+ * certificate references, so equals/hashCode are manual.
+ */
 private data class PendingConnection(
     val server: Server? = null,
     val certificate: ByteArray? = null,
@@ -117,7 +123,40 @@ private data class PendingConnection(
     val trustStoreFormat: String? = null,
     val localMuteHistory: List<Int>? = null,
     val localIgnoreHistory: List<Int>? = null,
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is PendingConnection) return false
+        return server === other.server &&
+            ((certificate === other.certificate) ||
+                (certificate != null && other.certificate != null &&
+                    certificate.contentEquals(other.certificate))) &&
+            certificatePassword == other.certificatePassword &&
+            forceTcp == other.forceTcp &&
+            clientName == other.clientName &&
+            accessTokens == other.accessTokens &&
+            trustStore == other.trustStore &&
+            trustStorePassword == other.trustStorePassword &&
+            trustStoreFormat == other.trustStoreFormat &&
+            localMuteHistory == other.localMuteHistory &&
+            localIgnoreHistory == other.localIgnoreHistory
+    }
+
+    override fun hashCode(): Int {
+        var result = System.identityHashCode(server)
+        result = 31 * result + (certificate?.contentHashCode() ?: 0)
+        result = 31 * result + (certificatePassword?.hashCode() ?: 0)
+        result = 31 * result + forceTcp.hashCode()
+        result = 31 * result + (clientName?.hashCode() ?: 0)
+        result = 31 * result + (accessTokens?.hashCode() ?: 0)
+        result = 31 * result + (trustStore?.hashCode() ?: 0)
+        result = 31 * result + (trustStorePassword?.hashCode() ?: 0)
+        result = 31 * result + (trustStoreFormat?.hashCode() ?: 0)
+        result = 31 * result + (localMuteHistory?.hashCode() ?: 0)
+        result = 31 * result + (localIgnoreHistory?.hashCode() ?: 0)
+        return result
+    }
+}
 
 open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, HumlaLogger {
 
@@ -201,6 +240,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     private lateinit var voiceLink: LegacyVoiceLink
     private lateinit var client: HumlaClient
     private val networkFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var connectivityManager: ConnectivityManager? = null
 
     private val pendingConnection = AtomicReference(PendingConnection())
     private val pendingVoiceTarget = AtomicInteger(0)
@@ -276,11 +317,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
     }
 
+    // Binder contract: throws IllegalStateException (unchecked) when there is
+    // no live synced session, never the checked NotSynchronizedException, so
+    // Java/Kotlin callers only ever see the documented ISE.
     private fun requireSession(): Session {
         val session = currentSession()
             ?: throw IllegalStateException("No active connection")
         if (session.state.value.server.phase != SyncPhase.SYNCED) {
-            throw se.lublin.humla.exception.NotSynchronizedException()
+            throw IllegalStateException("Not synchronized")
         }
         return session
     }
@@ -320,7 +364,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     open override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
             val isConnect = ACTION_CONNECT == intent.action
-            if (isConnect && client.state.value is ClientState.Connecting) {
+            // Guard initialization (unit tests construct the service without
+            // onCreate): without a client there is nothing to connect.
+            if (isConnect && ::client.isInitialized && client.state.value is ClientState.Connecting) {
                 Log.v(TAG, "Ignoring duplicate connect request while already connecting")
                 return START_NOT_STICKY
             }
@@ -430,6 +476,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             },
         )
 
+        // LocalFacts persistence division of labor (legacy parity): the app
+        // adapter writes mute/ignore straight to the database on toggle and
+        // ConfigDelta reloads them at the next connect; the writes below
+        // additionally keep the pending snapshot current so a reconnect in
+        // this process picks them up even before the next apply(). Self
+        // mute/deafen stays app-owned (settings, re-pushed post-sync).
         val localFactsStore = object : LocalFactsStore {
             override suspend fun load(serverId: Long): LocalFacts {
                 val pending = pendingConnection.get()
@@ -443,8 +495,34 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 )
             }
 
-            override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) = Unit
-            override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) = Unit
+            override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
+                var current = pendingConnection.get()
+                while (true) {
+                    val list = current.localMuteHistory?.toMutableList() ?: mutableListOf()
+                    if (muted) {
+                        if (!list.contains(userId)) list.add(userId)
+                    } else {
+                        list.remove(userId)
+                    }
+                    val next = current.copy(localMuteHistory = list.toList())
+                    if (pendingConnection.compareAndSet(current, next)) return
+                    current = pendingConnection.get()
+                }
+            }
+            override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
+                var current = pendingConnection.get()
+                while (true) {
+                    val list = current.localIgnoreHistory?.toMutableList() ?: mutableListOf()
+                    if (ignored) {
+                        if (!list.contains(userId)) list.add(userId)
+                    } else {
+                        list.remove(userId)
+                    }
+                    val next = current.copy(localIgnoreHistory = list.toList())
+                    if (pendingConnection.compareAndSet(current, next)) return
+                    current = pendingConnection.get()
+                }
+            }
             override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) = Unit
         }
 
@@ -454,14 +532,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
         // Always-registered network callback (Client collects only while
         // Reconnecting; repeated events while Connecting are ignored there).
+        // Retained for unregister in onDestroy; the system holds binder refs.
         try {
             val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager?
+            connectivityManager = cm
             if (cm != null) {
                 val callback = object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
                         networkFlow.tryEmit(Unit)
                     }
                 }
+                networkCallback = callback
                 cm.registerDefaultNetworkCallback(callback)
             }
         } catch (e: Exception) {
@@ -497,10 +578,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         )
 
         // Mirror the current session's state into the single service flow so
-        // live handles survive reconnects. Clear on disconnect.
+        // live handles survive reconnects. Clear on disconnect. collectLatest:
+        // the inner collection suspends forever, so a nested collect would
+        // pin the first session and stall every reconnect after it.
         lifecycleScope.launch {
             try {
-                client.currentSession.collect { session ->
+                client.currentSession.collectLatest { session ->
                     if (session == null) {
                         _sessionState.value = emptySessionState()
                     } else {
@@ -517,11 +600,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
 
         // Chat-log adapter: semantic events to today's logger strings.
+        // collectLatest for the same reason: each session's event stream
+        // ends with its scope, and the next session must be observed.
         lifecycleScope.launch {
             try {
-                var lastSession: Session? = null
-                client.currentSession.collect { session ->
-                    lastSession = session
+                client.currentSession.collectLatest { session ->
                     if (session != null) {
                         try {
                             session.events.collect { event ->
@@ -663,10 +746,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
     }
 
+    // The session that owns the live pipeline (captured at creation).
+    // teardownLiveSession-style races (teardown after the client swapped
+    // sessions) must remove handlers from THIS session, not the current one.
+    private val pipelineSession = AtomicReference<Session?>(null)
+
     private fun tearDownAudioPipeline() {
         val handler = audioHandlerRef.getAndSet(null) ?: return
+        val owning = pipelineSession.getAndSet(null)
         try {
-            currentSession()?.removeTcpHandler(handler)
+            owning?.removeTcpHandler(handler)
         } catch (ignored: Exception) {
         }
         try {
@@ -687,9 +776,23 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun onDestroy() {
-        super.onDestroy()
+        // Order matters: disconnect first (async teardown onto the client
+        // dispatcher), synchronous releases next, super.onDestroy() last so
+        // the parented client scope survives until teardown is launched.
         try {
             if (::client.isInitialized) client.disconnect()
+        } catch (ignored: Exception) {
+        }
+        try {
+            val callback = networkCallback
+            networkCallback = null
+            if (callback != null) {
+                try {
+                    connectivityManager?.unregisterNetworkCallback(callback)
+                } catch (ignored: Exception) {
+                }
+            }
+            connectivityManager = null
         } catch (ignored: Exception) {
         }
         try {
@@ -709,6 +812,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceLink.close()
         } catch (ignored: Exception) {
         }
+        super.onDestroy()
     }
 
     open override fun onBind(intent: Intent): IBinder {
@@ -795,6 +899,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         return clientStateIsConnected()
     }
 
+    // Equivalent to isConnectionEstablished: Connected is published on
+    // ServerSync, so a connected client is always synced. Kept as a separate
+    // name for the app-layer call sites that distinguish the two phases.
     open fun isSynchronized(): Boolean {
         return clientStateIsConnected()
     }
@@ -903,6 +1010,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceLink.addUdpHandler(created)
             voiceLink.setTargetFramesPerPacket(created.getFramesPerPacket())
             audioHandlerRef.set(created)
+            pipelineSession.set(session)
         } catch (e: AudioException) {
             throw e
         } catch (e: IllegalArgumentException) {
@@ -1019,6 +1127,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
         // 3. Audio settings.
         inputModes.applyAudioDelta(delta, mAudioBuilder, audioHandlerRef.get(), voiceLink)
+        // Interim encoder target for SessionStats.currentBandwidth until the
+        // step-5a VoicePolicy carries real values (see LegacyVoiceLink).
+        if (delta.inputQuality != null) {
+            try {
+                voiceLink.setTargetBitrate(delta.inputQuality)
+            } catch (ignored: Exception) {
+            }
+        }
         // 4. Route inputs.
         val audioStream = delta.audioStream
         if (audioStream != null) {
