@@ -11,7 +11,8 @@ trusted by production code and must never be used outside `127.0.0.1`.
   test key is compromised by design — reuse outside loopback is a finding,
   not a use case.
 
-Regenerate both together with:
+Regenerate both together, from this directory
+(`libraries/humla/src/test/resources/murmur`), with:
 
 ```bash
 nix run nixpkgs#openssl -- req -x509 -newkey rsa:2048 \

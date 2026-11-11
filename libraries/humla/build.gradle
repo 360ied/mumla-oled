@@ -300,6 +300,10 @@ tasks.register("murmurInteropTest", Test) {
 // project level; calling it inside the task's configuration action is
 // illegal once variants are resolved). Fail loudly if either task is
 // missing: silently running zero tests would be a vacuous green.
+// Ordering note: AGP registers its task-creation hooks at plugin-apply
+// time, this afterEvaluate at script-evaluation time, so AGP's hooks run
+// first and both tasks exist here (verified by green interop runs). If AGP
+// ever changes that, the throw below fires instead of going quiet.
 afterEvaluate {
     def debugTest = tasks.findByName("testDebugUnitTest")
     def interopTest = tasks.findByName("murmurInteropTest")

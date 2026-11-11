@@ -259,7 +259,7 @@ public class MurmurConnectTest {
 
         ConnectionState b = new ConnectionState();
         HumlaConnection bob = connect("InteropBob", null, b);
-        await(b.synced, "bob sync", b);
+        await(b.synced, "bob sync", a, b);
 
         CountDownLatch gotText = new CountDownLatch(1);
         AtomicReference<String> gotMessage = new AtomicReference<>();

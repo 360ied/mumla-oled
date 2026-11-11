@@ -58,8 +58,10 @@ public final class MurmurTestServer {
     private final Path dir;
     private final int port;
     private final boolean withServerPassword;
-    private Process process;
-    private Thread shutdownHook;
+    // Written on the test thread, read on the shutdown-hook thread: volatile
+    // for visibility (stop() is idempotent, so a race is benign either way).
+    private volatile Process process;
+    private volatile Thread shutdownHook;
 
     private MurmurTestServer(Path dir, int port, boolean withServerPassword) {
         this.dir = dir;
@@ -94,6 +96,11 @@ public final class MurmurTestServer {
                 }
                 lastBindFailure = e;
                 server.stop();
+            } catch (RuntimeException | Error e) {
+                // fail()/assumeTrue() from launch(): don't leak the attempt's
+                // temp dir, then propagate (skip stays a skip, failure a failure).
+                server.stop();
+                throw e;
             }
         }
         throw new IOException(
