@@ -20,8 +20,6 @@ app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
 libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt  1
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt  14
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt  21
-libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt  8
-libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt  24
 libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.kt  24
 libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioOutputEngine.kt  7
 libraries/humla/src/main/java/se/lublin/humla/audio/inputmode/ToggleInputMode.kt  1
@@ -31,8 +29,8 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt  5
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt  3
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt  7
 libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt  1
-libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt  37
 libraries/humla/src/main/java/se/lublin/humla/protocol/InputModes.kt  2
+libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt  2
 
 [native]
 libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <fcntl.h>

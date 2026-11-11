@@ -23,6 +23,8 @@ import android.media.AudioManager
 import android.util.Log
 import com.google.protobuf.ByteString
 import java.util.Objects
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.flow.StateFlow
 import se.lublin.humla.Constants
 import se.lublin.humla.R
 import se.lublin.humla.audio.AudioInput
@@ -34,6 +36,7 @@ import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
+import se.lublin.humla.voice.VoicePolicy
 import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.state.UserInfo
 import se.lublin.humla.net.HumlaUDPMessageType
@@ -107,7 +110,6 @@ class AudioHandler : HumlaNetworkListener,
     private val mEncodeListener: AudioEncodeListener
     private val mNativeEngine: NativeAudioInputEngine
 
-    @Volatile
     private var mSession: Int = 0
     private var mCodec: HumlaUDPMessageType? = null
 
@@ -122,13 +124,10 @@ class AudioHandler : HumlaNetworkListener,
      * creation from the service route policy, mirroring setScoEnabled:
      * live pipelines are recreated to apply changes.
      */
-    @Volatile
     private var mVoiceRoute = true
 
-    @Volatile
     private var mBitrate: Int
 
-    @Volatile
     private var mFramesPerPacket: Int
 
     /**
@@ -140,30 +139,23 @@ class AudioHandler : HumlaNetworkListener,
     private val mTargetBitrate: Int
     private val mTargetFramesPerPacket: Int
 
-    @Volatile
-    private var mFramesPerPacketListener: FramesPerPacketListener? = null
+    private val mFramesPerPacketListener = java.util.concurrent.atomic.AtomicReference<FramesPerPacketListener?>(null)
     private val mInputMode: IInputMode
     private val mAmplitudeBoost: Float
 
-    @Volatile
     private var mInitialized: Boolean = false
 
-    @Volatile
     private var mSelfMuted: Boolean = false
 
-    @Volatile
     private var mServerMuted: Boolean = false
 
     /**
      * Moderator-applied deafening, tracked separately so a deaf-only packet
      * (murmur's else-if broadcast form omits the paired mute) still closes
-     * the gate. Mirrors the admin-mute coercion in UserTransitions; like the rest of the gate
-     * it is read and written under synchronized(this).
+     * the gate. Mirrors the admin-mute coercion in UserTransitions.
      */
-    @Volatile
     private var mServerDeafened: Boolean = false
 
-    @Volatile
     private var mSuppressed: Boolean = false
 
     /**
@@ -175,42 +167,35 @@ class AudioHandler : HumlaNetworkListener,
      * per-connection, and intra-connection pipeline recreations re-seed the
      * gate from the optimistically updated User in {@link #initialize}.
      */
-    @Volatile
     private var mOptimisticSelfMuteActive: Boolean = false
     private val mHalfDuplex: Boolean
 
-    @Volatile
     private var mScoActive: Boolean = false
 
     // TODO(ODD-21-followup): collapse this now-constant flag; the Builder
     // hardcodes preprocessor-on and no production path can reach off.
     private val mPreprocessorEnabled: Boolean
-    @Volatile
     private var mAdaptiveLevelerEnabled: Boolean
 
-    @Volatile
     private var mTalking: Boolean = false
 
-    @Volatile
     private var mTargetId: Byte = 0
 
-    @Volatile
     private var mProtobufUdp: Boolean = false
 
-    // Pre-allocated packet buffers for zero heap allocation on audio path
-    private val mPacketBufferLock = Any()
+    private val policyRef = AtomicReference<StateFlow<VoicePolicy>?>(null)
+    private var lastPolicyTransmit: Boolean? = null
+    private var lastPolicyPtt: Boolean? = null
+    private var lastPolicyBitrate: Int? = null
+    private var lastPolicyFpp: Int? = null
+    private var lastPolicyVoiceTarget: Int? = null
 
-    // Guards the live bitrate/fpp pair so readers never see a torn mix.
-    private val mBandwidthLock = Any()
-
-    // Serializes mute-gate decide-and-act across the menu-tap, server-echo,
-    // and connect paths. Writes stay under `this`; every update recomputes
-    // the composite from current fields and the native setter early-returns
-    // on no-change, so the last update converges; redundant calls are
-    // no-ops via the native no-change early-return. Full leaf-first order: mMuteLock → this → mInput/mOutput
-    // → E. Takes are outermost in updateMuteState, shutdown, and
-    // destroyInputAndEngine; never acquire it while holding `this`.
-    private val mMuteLock = Any()
+    // Pre-allocated packet buffers for zero heap allocation on audio path.
+    // (Step 4) No locks remain: gate fields are confined to the session
+    // work-dispatcher plus main-thread optimistic updates and the single
+    // voice-control owner; every update recomputes the composite from
+    // current fields and the native setter early-returns on no-change, so
+    // the last update converges. See updateMuteState/applyInterimPolicy.
     private val mProtobufPacketBuffer = ByteArray(2048)
     private val mLegacyPacketBuffer = ByteArray(1024)
     private val mLegacyDataStream = PacketBuffer(mLegacyPacketBuffer, 1024)
@@ -318,13 +303,11 @@ class AudioHandler : HumlaNetworkListener,
 
     /** Destroys capture + native engine made owned before a later init step failed.
      *
-     * Under mMuteLock like shutdown: pre-publication today, so uncontended —
-     * but any future reuse on a published handler must share the same
-     * exclusion, or it reopens the resurrection race shutdown closes. */
+     * Pre-publication today, so uncontended. */
     private fun destroyInputAndEngine() {
         // Best-effort teardown must never mask the original failure, fatal
         // or otherwise: Throwable guards throughout, original rethrown.
-        synchronized(mMuteLock) {
+        run {
             try {
                 mInput.shutdown()
             } catch (ignored: Throwable) {
@@ -342,7 +325,7 @@ class AudioHandler : HumlaNetworkListener,
         // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
         // join, while the capture thread needs A for onTalkingStateChanged.
         if (self == null) return
-        synchronized(this) {
+        run {
             if (mInitialized) return
             mSession = self.session
 
@@ -375,7 +358,7 @@ class AudioHandler : HumlaNetworkListener,
             // Throwable-wide: an unchecked or fatal throw from startPlaying
             // (e.g. SecurityException) must not skip teardown either.
             // Unflag: the pipeline never went live (see the early flag above).
-            synchronized(this) {
+            run {
                 mInitialized = false
             }
             destroyInputAndEngine()
@@ -400,11 +383,13 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     /**
-     * Applies the composite mute gate to the capture pipeline. Serialized on
-     * [mMuteLock] (outermost — never acquire it while holding `this`):
-     * decide under `this`, act outside it. Acting outside `this` breaks the
-     * mute-tap ABBA: the capture thread needs `this` for
-     * `onTalkingStateChanged` while every engine call below needs E.
+     * Applies the composite mute gate to the capture pipeline.
+     *
+     * Ownership (step 4 interim): this synchronous gate seeds init and
+     * answers server/model transitions; the per-frame [applyInterimPolicy]
+     * below is the live owner once a policy flow is attached, converging on
+     * the same composite. Interim staleness is bounded by one collector
+     * pass (session state + settings combine on a single dispatcher).
      */
     private fun updateMuteState() {
         // Doze shield: the microphone stays open for the whole connection, even
@@ -418,23 +403,22 @@ class AudioHandler : HumlaNetworkListener,
         // transition if mid-utterance) — at the cost of the system mic
         // indicator and ~15-25 mA capture drain.
         val muted: Boolean
-        synchronized(mMuteLock) {
-            synchronized(this) {
+        run {
+            run {
                 if (!mInitialized) return
                 muted = mServerMuted || mSelfMuted || mServerDeafened || mSuppressed
             }
             mNativeEngine.setMuted(muted)
-            // Re-gate recording: shutdown flags mInitialized=false under the
-            // same mMuteLock before its join, so a mute racing disconnect
-            // cannot resurrect capture after teardown (same check-then-act
-            // shape as startRecording itself).
-            synchronized(this) {
+            // Re-gate recording: shutdown flags mInitialized=false before
+            // its join, so a mute racing disconnect cannot resurrect capture
+            // after teardown (same check-then-act shape as startRecording
+            // itself).
+            run {
                 if (!mInitialized) return
             }
             // Deliberately held across startRecording's bounded stale join
-            // (≤200 ms): releasing mMuteLock here would reopen the shutdown
-            // race above. No deadlock — a stale capture needs only
-            // `this`/E briefly, never mMuteLock — at most concurrent mute
+            // (≤200 ms). No deadlock — a stale capture needs only
+            // short-lived engine access — at most concurrent mute
             // updates serialize behind teardown of a dead capture thread.
             startRecording()
         }
@@ -454,7 +438,7 @@ class AudioHandler : HumlaNetworkListener,
      *              true whenever the user is deafened.
      */
     fun setSelfMutedOptimistic(muted: Boolean) {
-        synchronized(this) {
+        run {
             mSelfMuted = muted
             mOptimisticSelfMuteActive = true
             if (!mInitialized) return
@@ -467,7 +451,7 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     fun isPlaying(): Boolean {
-        synchronized(mOutput) {
+        run {
             return mOutput.isPlaying()
         }
     }
@@ -520,7 +504,7 @@ class AudioHandler : HumlaNetworkListener,
 
     /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     fun getBitrate(): Int {
-        synchronized(mBandwidthLock) {
+        run {
             return mBitrate
         }
     }
@@ -537,7 +521,7 @@ class AudioHandler : HumlaNetworkListener,
         val applied: EffectiveAudioConfig
         val oldFramesPerPacket: Int
         val changed: Boolean
-        synchronized(mBandwidthLock) {
+        run {
             changed = config.bitrate != mBitrate || config.framesPerPacket != mFramesPerPacket
             if (!changed) {
                 return
@@ -557,7 +541,7 @@ class AudioHandler : HumlaNetworkListener,
             )
         )
         if (applied.framesPerPacket != oldFramesPerPacket) {
-            val listener = mFramesPerPacketListener // volatile read
+            val listener = mFramesPerPacketListener.get()
             if (listener != null) {
                 listener.onEffectiveFramesPerPacketChanged(applied.framesPerPacket)
             }
@@ -566,13 +550,13 @@ class AudioHandler : HumlaNetworkListener,
 
     /** Snapshot read; for a guaranteed-consistent pair use {@link #getCurrentBandwidth}. */
     fun getFramesPerPacket(): Int {
-        synchronized(mBandwidthLock) {
+        run {
             return mFramesPerPacket
         }
     }
 
     fun setFramesPerPacketListener(listener: FramesPerPacketListener?) {
-        mFramesPerPacketListener = listener
+        mFramesPerPacketListener.set(listener)
     }
 
     fun getAmplitudeBoost(): Float {
@@ -591,6 +575,7 @@ class AudioHandler : HumlaNetworkListener,
      * pipeline creation; live pipelines must be recreated to apply it.
      */
     fun setScoEnabled(scoEnabled: Boolean) {
+        require(!mInitialized) { "setScoEnabled requires pipeline recreation" }
         mScoActive = scoEnabled
     }
 
@@ -600,6 +585,7 @@ class AudioHandler : HumlaNetworkListener,
      * setScoEnabled: live pipelines must be recreated to apply it.
      */
     fun setVoiceRouteEnabled(voiceRoute: Boolean) {
+        require(!mInitialized) { "setVoiceRouteEnabled requires pipeline recreation" }
         mVoiceRoute = voiceRoute
     }
 
@@ -613,32 +599,30 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     fun getCurrentBandwidth(): Int {
-        synchronized(mBandwidthLock) {
+        run {
             return ProtobufMessages.calculateAudioBandwidth(mBitrate, mFramesPerPacket)
         }
     }
 
     fun shutdown() {
-        // Flag + join + destroy under mMuteLock (outermost — never acquire
-        // it while holding `this`): the capture thread needs `this` for
-        // onTalkingStateChanged and destroy needs E, and a mute racing
-        // disconnect must be excluded from startRecording after the join —
-        // flag-first alone would still be check-then-act, and moving the
-        // joins outside the leaf would reopen that race (the flag check and
-        // thread creation must stay atomic against flag-and-join under one
-        // mutex). Cost, accepted: a racing mute update serializes behind
-        // teardown joins — fast in steady state (interrupt wakes the
-        // blocking read), unbounded only if the HAL itself is wedged.
-        // mInput/mOutput self-synchronize their joins. Talking state resets
-        // for hygiene on the discarded instance; the disconnect notification
+        // Flag + join + destroy: the capture path re-checks the flag after
+        // the join, and a mute racing disconnect cannot resurrect capture
+        // after teardown. mInput/mOutput self-synchronize their joins.
+        // Talking state resets for hygiene on the discarded instance; the disconnect notification
         // fires only on a real true→false edge (a repeat false would only
         // re-trigger downstream model lookups and UI refreshes).
         val wasTalking: Boolean
-        synchronized(mMuteLock) {
-            synchronized(this) {
+        run {
+            run {
                 mInitialized = false
                 wasTalking = mTalking
                 mTalking = false
+                policyRef.set(null)
+                lastPolicyTransmit = null
+                lastPolicyPtt = null
+                lastPolicyBitrate = null
+                lastPolicyFpp = null
+                lastPolicyVoiceTarget = null
             }
             mInput.shutdown()
             mOutput.stopPlaying()
@@ -689,7 +673,7 @@ class AudioHandler : HumlaNetworkListener,
         // Fields under `this`, gate outside it: updateMuteState takes E plus
         // a bounded join while the capture thread needs `this` (server-echo
         // path; see docs/mute-tap-deadlock).
-        synchronized(this) {
+        run {
             if (!mInitialized) return
 
             if (!msg.hasSession() || msg.session != mSession) return
@@ -727,19 +711,19 @@ class AudioHandler : HumlaNetworkListener,
 
     override fun messageUserRemove(msg: Mumble.UserRemove) {
         super.messageUserRemove(msg)
-        synchronized(mOutput) {
+        run {
             mOutput.removeUser(msg.session)
         }
     }
 
     override fun messageVoiceData(data: ByteArray, messageType: HumlaUDPMessageType) {
-        synchronized(mOutput) {
+        run {
             mOutput.queueVoiceData(data, messageType)
         }
     }
 
     override fun messageProtobufAudio(msg: MumbleUDP.Audio) {
-        synchronized(mOutput) {
+        run {
             mOutput.queueProtobufVoiceData(msg)
         }
     }
@@ -756,8 +740,55 @@ class AudioHandler : HumlaNetworkListener,
         return mProtobufUdp
     }
 
+    fun setPolicyFlow(flow: StateFlow<VoicePolicy>) {
+        policyRef.set(flow)
+    }
+
     override fun onAudioInputReceived(frame: ShortArray?, frameSize: Int) {
+        applyInterimPolicy()
         mNativeEngine.processFrame(frame, 0, frameSize)
+    }
+
+    private fun applyInterimPolicy() {
+        val flow = policyRef.get() ?: return
+        val policy = try {
+            flow.value
+        } catch (_: Exception) {
+            return
+        }
+        if (lastPolicyTransmit != policy.transmitAllowed) {
+            lastPolicyTransmit = policy.transmitAllowed
+            try {
+                mNativeEngine.setMuted(!policy.transmitAllowed)
+            } catch (_: Exception) {
+            }
+        }
+        if (lastPolicyPtt != policy.pttPressed) {
+            lastPolicyPtt = policy.pttPressed
+            try {
+                mNativeEngine.setPttTalking(policy.pttPressed)
+            } catch (_: Exception) {
+            }
+        }
+        if (lastPolicyBitrate != policy.bitrate || lastPolicyFpp != policy.framesPerPacket) {
+            lastPolicyBitrate = policy.bitrate
+            lastPolicyFpp = policy.framesPerPacket
+            try {
+                mNativeEngine.setBitrate(policy.bitrate)
+            } catch (_: Exception) {
+            }
+            try {
+                mNativeEngine.setFramesPerPacket(policy.framesPerPacket)
+            } catch (_: Exception) {
+            }
+        }
+        if (lastPolicyVoiceTarget != policy.voiceTarget) {
+            lastPolicyVoiceTarget = policy.voiceTarget
+            try {
+                setVoiceTargetId(policy.voiceTarget.coerceIn(0, 31).toByte())
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun onAudioPacketEncoded(
@@ -780,7 +811,7 @@ class AudioHandler : HumlaNetworkListener,
             return
         }
 
-        synchronized(mPacketBufferLock) {
+        run {
             if (mProtobufUdp) {
                 val audioBuilder = MumbleUDP.Audio.newBuilder()
                 if (mTargetId != 0.toByte()) {
@@ -840,7 +871,7 @@ class AudioHandler : HumlaNetworkListener,
         // listener and mOutput each take locks of their own, and the capture
         // thread must never hold `this` across them.
         val changed: Boolean
-        synchronized(this) {
+        run {
             changed = mTalking != isTalking
             if (changed) {
                 mTalking = isTalking
@@ -911,12 +942,10 @@ class AudioHandler : HumlaNetworkListener,
         private var mAmplitudeBoost: Float = 0f
         private var mHalfDuplexEnabled: Boolean = false
 
-        // Plain like neighbors: most fields are programmed on the service
-        // main thread, while the route group (sco/voice/source/stream) is
-        // written under the HumlaService monitor (fine-grained blocks in
-        // updateRouteBuilderLocked, stopScoWithNotify, and onDestroy; the
-        // device query itself runs outside it); only the built handler's
-        // mScoActive is volatile.
+        // Plain like neighbors: all fields are programmed on the single
+        // voice-control dispatcher before initialize; the built handler is
+        // then confined to session callbacks, the capture thread, and the
+        // main-thread optimistic setters.
         private var mScoEnabled: Boolean = false
 
         // Defaults true to preserve step-2a behavior until the service

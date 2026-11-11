@@ -36,6 +36,9 @@ import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.TransportStats
 import se.lublin.humla.net.VoiceStatus
+import se.lublin.humla.route.RouteState
+import se.lublin.humla.voice.VoicePolicy
+import se.lublin.humla.voice.VoiceSettings
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.primaryConstructor
@@ -106,6 +109,21 @@ class StateImmutabilityTest {
             SessionEvent.TextMessageSent::class,
             SessionEvent.PermissionDenied::class,
         )
+        se.lublin.humla.route.RouteState::class -> listOf(
+            se.lublin.humla.route.RouteState.Idle::class,
+            se.lublin.humla.route.RouteState.Settling::class,
+            se.lublin.humla.route.RouteState.Ready::class,
+            se.lublin.humla.route.RouteState.Fallback::class,
+        )
+        se.lublin.humla.route.RouteEvent::class -> listOf(
+            se.lublin.humla.route.RouteEvent.ScoFailed::class,
+            se.lublin.humla.route.RouteEvent.RouteChanged::class,
+        )
+        se.lublin.humla.route.RouteCommand::class -> listOf(
+            se.lublin.humla.route.RouteCommand.SessionStarted::class,
+            se.lublin.humla.route.RouteCommand.SessionEnded::class,
+            se.lublin.humla.route.RouteCommand.RetrySco::class,
+        )
         else -> cls.java.classes.mapNotNull { nested ->
             // Fallback: nested classes are the only other sealed children in state.
             runCatching { nested.kotlin }.getOrNull()
@@ -124,6 +142,16 @@ class StateImmutabilityTest {
             SessionEvent::class.java.permittedSubclasses.size,
             sealedImplementations(SessionEvent::class).size,
         )
+        for (sealed in listOf(
+            se.lublin.humla.route.RouteState::class,
+            se.lublin.humla.route.RouteEvent::class,
+            se.lublin.humla.route.RouteCommand::class,
+        )) {
+            assertEquals(
+                sealed.java.permittedSubclasses.size,
+                sealedImplementations(sealed).size,
+            )
+        }
         val roots: List<KClass<*>> = listOf(
             SessionState::class,
             ServerState::class,
@@ -147,6 +175,14 @@ class StateImmutabilityTest {
             TransportStats::class,
             CryptKeys::class,
             VoiceStatus::class,
+            VoicePolicy::class,
+            VoiceSettings::class,
+            RouteState::class,
+            se.lublin.humla.route.RouteEvent::class,
+            se.lublin.humla.route.RouteCommand::class,
+            se.lublin.humla.route.RoutePreferences::class,
+            se.lublin.humla.route.AppliedRoute::class,
+            se.lublin.humla.route.StreamProfile::class,
         )
         val visited = mutableSetOf<String>()
         val failures = mutableListOf<String>()
