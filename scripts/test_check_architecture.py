@@ -67,6 +67,19 @@ class TestParseAllowlist(unittest.TestCase):
         _, _, errors = ca.parse_allowlist("a.kt 1\na.kt 2\n")
         self.assertTrue(any("duplicate" in e for e in errors))
 
+    def test_duplicate_native_is_error(self):
+        _, _, errors = ca.parse_allowlist(
+            "[native]\na.cpp: <jni.h>\na.cpp: <jni.h>\n"
+        )
+        self.assertTrue(any("duplicate" in e for e in errors))
+
+    def test_same_path_different_header_is_fine(self):
+        _, native, errors = ca.parse_allowlist(
+            "[native]\na.cpp: <fcntl.h>\na.cpp: <unistd.h>\n"
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(len(native), 2)
+
 
 class TestConcurrencyCheck(unittest.TestCase):
     def test_unknown_file_fails(self):
@@ -212,6 +225,17 @@ class TestNative(unittest.TestCase):
                 ("libraries/humla/src/main/jni/audio_engine/C.cpp", "<oboe/...>"), found
             )
 
+    def test_oboe_does_not_hide_later_headers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = self._jni_root(tmp) / "audio_engine"
+            d.mkdir(parents=True)
+            (d / "D.cpp").write_text(
+                '#include <oboe/Oboe.h>\n#include <jni.h>\n', encoding="utf-8"
+            )
+            found = ca.scan_native(Path(tmp))
+            headers = sorted(h for _, h in found)
+            self.assertEqual(headers, ["<jni.h>", "<oboe/...>"])
+
     def test_single_threaded_engine_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = self._jni_root(tmp) / "audio_engine"
@@ -257,6 +281,21 @@ class TestNative(unittest.TestCase):
             _, native, errors = ca.parse_allowlist(path.read_text(encoding="utf-8"))
             self.assertEqual(errors, [])
             self.assertEqual(native, [])
+
+    def test_write_allowlist_refuses_raised_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "app/src/main"
+            src.mkdir(parents=True)
+            path = root / "allowlist.txt"
+            path.write_text("app/src/main/x.kt  1\n\n[native]\n", encoding="utf-8")
+            (src / "x.kt").write_text(
+                "@Volatile var a = 1\n@Volatile var b = 2\n", encoding="utf-8"
+            )
+            rc = ca.write_allowlist(root, path)
+            self.assertEqual(rc, 1)
+            # Count left untouched on refusal.
+            self.assertIn("x.kt  1", path.read_text(encoding="utf-8"))
 
     def test_write_allowlist_refuses_non_boundary_newcomer(self):
         with tempfile.TemporaryDirectory() as tmp:

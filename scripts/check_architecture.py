@@ -185,6 +185,9 @@ def parse_allowlist(text):
             if not path or not header:
                 errors.append(f"allowlist:{lineno}: native entry with empty path or header")
                 continue
+            if (path, header) in native:
+                errors.append(f"allowlist:{lineno}: duplicate native entry for {path}: {header}")
+                continue
             native.append((path, header))
         else:
             parts = line.split()
@@ -311,8 +314,10 @@ def scan_native(root: Path):
                         continue
                     inc = m.group(1)
                     if inc.startswith("oboe/"):
+                        # Report and keep scanning: a file can mix oboe with
+                        # other forbidden headers, and each must be listed.
                         found.append((rel, "<oboe/...>"))
-                        break
+                        continue
                     for header in forbidden:
                         if header == "<oboe/":
                             continue
@@ -403,11 +408,18 @@ def write_allowlist(root=ROOT_DIR, path=ALLOWLIST_PATH):
     actual = scan_concurrency(root)
     newcomers = sorted(set(actual) - set(existing))
     illegal = [p for p in newcomers if p not in BOUNDARY_FILES]
-    if illegal:
-        print("refusing to auto-legalize new violations outside BOUNDARY_FILES:", file=sys.stderr)
-        for p in illegal:
-            print(f"  {p}  {actual[p]}", file=sys.stderr)
-        print("Remove the patterns, or add the path to BOUNDARY_FILES in a reviewed change.", file=sys.stderr)
+    raised = sorted(p for p in set(actual) & set(existing) if actual[p] > existing[p])
+    if illegal or raised:
+        if illegal:
+            print("refusing to auto-legalize new violations outside BOUNDARY_FILES:", file=sys.stderr)
+            for p in illegal:
+                print(f"  {p}  {actual[p]}", file=sys.stderr)
+            print("Remove the patterns, or add the path to BOUNDARY_FILES in a reviewed change.", file=sys.stderr)
+        if raised:
+            print("refusing to raise counts for already-listed files (counts may only fall):", file=sys.stderr)
+            for p in raised:
+                print(f"  {p}  {existing[p]} -> {actual[p]}", file=sys.stderr)
+            print("Remove patterns until the count falls, then lower it in the same commit.", file=sys.stderr)
         return 1
     lines = [
         "# Architecture allowlist: path + matching-line count (grep -cE).",
