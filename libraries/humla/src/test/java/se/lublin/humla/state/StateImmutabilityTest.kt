@@ -36,6 +36,9 @@ import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.TransportStats
 import se.lublin.humla.net.VoiceStatus
+import se.lublin.humla.route.RouteState
+import se.lublin.humla.voice.VoicePolicy
+import se.lublin.humla.voice.VoiceSettings
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.primaryConstructor
@@ -147,6 +150,9 @@ class StateImmutabilityTest {
             TransportStats::class,
             CryptKeys::class,
             VoiceStatus::class,
+            VoicePolicy::class,
+            VoiceSettings::class,
+            RouteState::class,
         )
         val visited = mutableSetOf<String>()
         val failures = mutableListOf<String>()
