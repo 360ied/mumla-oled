@@ -19,16 +19,21 @@ step 1 and only ever gets stricter.
 `se/lublin/humla/protobuf/`.
 
 **Forbidden patterns** (regular expressions):
-`@Volatile`, `@Synchronized`, `\bsynchronized\(`, `\bThread\s*[({]`,
-`\bHandlerThread\(`, `\bHandler\(`, `runBlocking`, `ReentrantLock`,
-`ReentrantReadWriteLock`, `Executors\.`, `CountDownLatch`,
-`java\.util\.concurrent\.locks`.
+`@Volatile`, `@Synchronized`, `\bsynchronized\s*\(`, `\bThread\s*[({]`,
+`\bHandlerThread\s*\(`, `\bHandler\s*\(`, `\brunBlocking\b`,
+`\bReentrantLock\b`, `\bReentrantReadWriteLock\b`, `\bExecutors\.`,
+`\bCountDownLatch\b`, `\bjava\.util\.concurrent\.locks\b`,
+`\bkotlin\.concurrent\.thread\b`.
 
 `\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`.
 The word boundaries keep `currentThread(` from matching the `Thread`
-pattern and `createAudioHandler(` from matching the `Handler` pattern.
-Comments are not stripped: a pattern named in a comment counts, which keeps
-the script simple and the comments honest.
+pattern and `createAudioHandler(` from matching the `Handler` pattern;
+`Thread.sleep`, `Thread.currentThread`, and friends are deliberately not
+matched (they are not thread creation). Java-style `synchronized (lock)`
+with a space matches, as does `Handler (`; only the import-qualified
+`kotlin.concurrent.thread` is matched, because bare prose (`render thread (`
+in comments) is too noisy. Comments are not stripped: a pattern named in
+a comment counts, which keeps the script simple and the comments honest.
 
 **Allowlist:** `scripts/architecture-allowlist.txt`, one entry per line:
 
@@ -121,6 +126,12 @@ The check fails if any file in these packages imports `android.*`,
 
 This keeps state, transitions, the client state machine, and the reconnect
 policy runnable in plain JVM tests with virtual time.
+
+**Step-1 staging:** today's `HumlaConnection.kt`, `HumlaTCP.kt`, and
+`HumlaUDP.kt` still use `Handler`/`Looper`/`Log`, so the script grandfathers
+those three files until step 3 extracts the `Transport`. Only the TLS
+socket factory exclusion above is permanent; the grandfathering is removed
+in step 3, which is a strictness increase, not a relaxation.
 
 ## Native tripwire
 

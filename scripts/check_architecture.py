@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Mumla OLED Contributors
+# Copyright (C) 2026 Brian Zhu
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -12,7 +12,7 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 scripts/check_architecture.py: Tripwires for the target architecture.
 
@@ -58,16 +58,22 @@ BOUNDARY_FILES = (
 CONCURRENCY_PATTERNS = (
     r"@Volatile",
     r"@Synchronized",
-    r"\bsynchronized\(",
+    r"\bsynchronized\s*\(",
     r"\bThread\s*[({]",
-    r"\bHandlerThread\(",
-    r"\bHandler\(",
-    r"runBlocking",
-    r"ReentrantLock",
-    r"ReentrantReadWriteLock",
-    r"Executors\.",
-    r"CountDownLatch",
-    r"java\.util\.concurrent\.locks",
+    r"\bHandlerThread\s*\(",
+    r"\bHandler\s*\(",
+    r"\brunBlocking\b",
+    r"\bReentrantLock\b",
+    r"\bReentrantReadWriteLock\b",
+    r"\bExecutors\.",
+    r"\bCountDownLatch\b",
+    r"\bjava\.util\.concurrent\.locks\b",
+    # Lowercase thread creation (kotlin.concurrent.thread { }): the bare word
+    # is too noisy in prose ("render thread (" appears in comments, and
+    # comments count by design), so only the import-qualified form is
+    # enforced. Deliberately NOT Thread.* statics (sleep, currentThread,
+    # getDefaultUncaughtExceptionHandler, ...): those are not thread creation.
+    r"\bkotlin\.concurrent\.thread\b",
 )
 RE_CONCURRENCY = re.compile("|".join(f"(?:{p})" for p in CONCURRENCY_PATTERNS))
 
@@ -78,7 +84,8 @@ CONCURRENCY_ROOTS = (
 CONCURRENCY_EXTS = (".kt", ".java")
 GENERATED_MARKER = "se/lublin/humla/protobuf/"
 
-# package -> source dir (repo-relative). Missing dirs pass trivially.
+# package -> source dir (repo-relative). Missing package dirs pass trivially:
+# state/client do not exist yet, and voice_codec arrives in step 5a.
 ANDROID_FREE_PACKAGES = {
     "se.lublin.humla.state": "libraries/humla/src/main/java/se/lublin/humla/state",
     "se.lublin.humla.client": "libraries/humla/src/main/java/se/lublin/humla/client",
@@ -90,6 +97,7 @@ ANDROID_FREE_NET_EXCLUDE = {"HumlaSSLSocketFactory.kt"}
 # extraction makes net Android-free (except the factory above); remove this
 # grandfathering then. Starting without it would fail the gate on master,
 # and the script may only ever get stricter (removing exclusions is stricter).
+# Staging documented in enforcement.md (Android-free packages section).
 ANDROID_FREE_NET_LEGACY_EXCLUDE = {
     "HumlaConnection.kt",
     "HumlaTCP.kt",
@@ -98,10 +106,11 @@ ANDROID_FREE_NET_LEGACY_EXCLUDE = {
 
 RE_ANDROID_IMPORT = re.compile(r"^\s*import\s+android\.")
 RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
-RE_R_IMPORT = re.compile(r"^\s*import\s+[\w.]+\.R\b")
+RE_R_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?[\w.]+\.R\b")
 
 NATIVE_ROOT = "libraries/humla/src/main/jni"
 NATIVE_DIRS = ("audio_engine", "voice_codec", "crypto")
+NATIVE_EXTS = (".c", ".h", ".cpp", ".hpp", ".cc", ".cxx")
 NATIVE_FORBIDDEN_ALL = (
     "<sys/socket.h>",
     "<netinet/in.h>",
@@ -122,10 +131,6 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
     "<atomic>",
 )
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
-
-
-def repo_root() -> Path:
-    return ROOT_DIR
 
 
 def scan_concurrency(root: Path):
@@ -154,33 +159,58 @@ def scan_concurrency(root: Path):
 
 
 def parse_allowlist(text):
-    """Parse allowlist text -> (plain dict path->count, native list of (path, header))."""
+    """Parse allowlist text -> (plain dict, native list, error list).
+
+    Malformed lines are errors (fail closed), not silent skips: a typo'd
+    entry must surface as a parse error instead of a confusing
+    "not on the allowlist" failure downstream.
+    """
     plain = {}
     native = []
+    errors = []
     in_native = False
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
-            if line.strip() == "[native]":
-                pass
             continue
         if line == "[native]":
             in_native = True
             continue
         if in_native:
             if ":" not in line:
+                errors.append(f"allowlist:{lineno}: native entry without ':' (expected 'path: <header>')")
                 continue
             path, _, header = line.partition(":")
-            native.append((path.strip(), header.strip()))
+            path, header = path.strip(), header.strip()
+            if not path or not header:
+                errors.append(f"allowlist:{lineno}: native entry with empty path or header")
+                continue
+            native.append((path, header))
         else:
             parts = line.split()
             if len(parts) != 2:
+                errors.append(f"allowlist:{lineno}: expected 'path count', got {len(parts)} field(s)")
+                continue
+            path, count_s = parts
+            if path in plain:
+                errors.append(f"allowlist:{lineno}: duplicate entry for {path}")
                 continue
             try:
-                plain[parts[0]] = int(parts[1])
+                count = int(count_s)
             except ValueError:
+                errors.append(f"allowlist:{lineno}: count is not an integer: {count_s!r}")
                 continue
-    return plain, native
+            if count < 0:
+                errors.append(f"allowlist:{lineno}: negative count for {path}")
+                continue
+            if count == 0:
+                errors.append(f"allowlist:{lineno}: zero count for {path} (remove the entry instead)")
+                continue
+            if path.startswith("/"):
+                errors.append(f"allowlist:{lineno}: absolute path {path} (use repo-relative)")
+                continue
+            plain[path] = count
+    return plain, native, errors
 
 
 def check_concurrency(actual, allowed):
@@ -267,6 +297,8 @@ def scan_native(root: Path):
         forbidden = native_forbidden_for(dirname)
         for dirpath, _, filenames in os.walk(d):
             for name in filenames:
+                if not name.endswith(NATIVE_EXTS):
+                    continue
                 full = Path(dirpath) / name
                 rel = full.relative_to(root).as_posix()
                 try:
@@ -278,16 +310,15 @@ def scan_native(root: Path):
                     if not m:
                         continue
                     inc = m.group(1)
-                    token = f"<{inc}>" if line.strip().endswith(">") or "<" in line else inc
+                    if inc.startswith("oboe/"):
+                        found.append((rel, "<oboe/...>"))
+                        break
                     for header in forbidden:
                         if header == "<oboe/":
-                            if inc.startswith("oboe/"):
-                                found.append((rel, "<oboe/...>"))
-                                break
-                        elif header in line:
+                            continue
+                        if inc == header[1:-1]:
                             found.append((rel, header))
                             break
-                    _ = token
     return found
 
 
@@ -295,16 +326,14 @@ def check_native(found, allowed_native):
     errors = []
     allowed_set = set(allowed_native)
     for path, header in found:
-        # Normalize oboe bucket: allowlist stores the concrete include.
+        # Oboe bucket entries compare loosely; the allowlist stores the concrete include.
         if header == "<oboe/...>":
-            match = any(p == path and h.startswith("<oboe/") for p, h in allowed_set)
-            if not match:
+            if not any(p == path and h.startswith("<oboe/") for p, h in allowed_set):
                 errors.append(f"native: {path} includes oboe (not in allowlist exceptions)")
             continue
         if (path, header) not in allowed_set:
             errors.append(f"native: {path} includes {header} (not in allowlist exceptions)")
     found_set = set(found)
-    # Oboe bucket entries compare loosely; skip exact stale-check for them.
     for path, header in allowed_native:
         if header.startswith("<oboe/"):
             if not any(p == path and h == "<oboe/...>" for p, h in found_set):
@@ -323,21 +352,26 @@ def load_allowlist(path=ALLOWLIST_PATH):
     if not path.exists():
         return None, None, f"allowlist not found: {path}"
     text = path.read_text(encoding="utf-8")
-    plain, native = parse_allowlist(text)
+    plain, native, errors = parse_allowlist(text)
+    if errors:
+        return None, None, "; ".join(errors)
     return plain, native, None
 
 
 def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     errors = []
+    for base in CONCURRENCY_ROOTS:
+        if not (root / base).is_dir():
+            errors.append(f"source root missing: {base} (run from the repository root)")
     plain, native_allowed, err = load_allowlist(allowlist_path)
     if err:
-        return [err]
+        return errors + [err], {}
     actual = scan_concurrency(root)
     errors.extend(check_concurrency(actual, plain))
     for rel, lineno, line in scan_android_free(root):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
-    return errors
+    return errors, actual
 
 
 DEFAULT_NATIVE_EXCEPTIONS = [
@@ -351,14 +385,30 @@ DEFAULT_NATIVE_EXCEPTIONS = [
 
 
 def write_allowlist(root=ROOT_DIR, path=ALLOWLIST_PATH):
-    """Regenerate the plain section from the current scan, keep [native]."""
+    """Regenerate the plain section from the current scan, keep [native].
+
+    Returns 0 on success, 1 when new violations appear outside
+    BOUNDARY_FILES: those must be removed from the code (or the path added
+    to BOUNDARY_FILES in a reviewed change), never auto-legalized here.
+    """
     if path.exists():
-        _, native_allowed, _ = load_allowlist(path)
+        existing, native_allowed, err = load_allowlist(path)
+        if err:
+            print(f"cannot update allowlist: {err}", file=sys.stderr)
+            return 1
     else:
-        native_allowed = None
-    if not native_allowed:
+        existing, native_allowed = {}, None
+    if native_allowed is None:
         native_allowed = list(DEFAULT_NATIVE_EXCEPTIONS)
     actual = scan_concurrency(root)
+    newcomers = sorted(set(actual) - set(existing))
+    illegal = [p for p in newcomers if p not in BOUNDARY_FILES]
+    if illegal:
+        print("refusing to auto-legalize new violations outside BOUNDARY_FILES:", file=sys.stderr)
+        for p in illegal:
+            print(f"  {p}  {actual[p]}", file=sys.stderr)
+        print("Remove the patterns, or add the path to BOUNDARY_FILES in a reviewed change.", file=sys.stderr)
+        return 1
     lines = [
         "# Architecture allowlist: path + matching-line count (grep -cE).",
         "# Counts may only fall; a file with zero matches must be removed.",
@@ -372,15 +422,16 @@ def write_allowlist(root=ROOT_DIR, path=ALLOWLIST_PATH):
     for p, h in native_allowed:
         lines.append(f"{p}: {h}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return actual
+    return 0
 
 
 def main(argv):
     if "--write-allowlist" in argv:
-        actual = write_allowlist()
-        print(f"Wrote {ALLOWLIST_PATH} ({len(actual)} files).")
-        return 0
-    errors = run_all()
+        rc = write_allowlist()
+        if rc == 0:
+            print(f"Wrote {ALLOWLIST_PATH}.")
+        return rc
+    errors, actual = run_all()
     if errors:
         print("Architecture check FAILED:", file=sys.stderr)
         for e in errors:
@@ -391,8 +442,7 @@ def main(argv):
             file=sys.stderr,
         )
         return 1
-    files = len(scan_concurrency(ROOT_DIR))
-    print(f"Architecture check passed ({files} files on allowlist).")
+    print(f"Architecture check passed ({len(actual)} files on allowlist).")
     return 0
 
 
