@@ -208,6 +208,57 @@ class TestNative(unittest.TestCase):
                 ("libraries/humla/src/main/jni/crypto/B.cpp", "<jni.h>"), found
             )
 
+    def test_include_interior_whitespace_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = self._jni_root(tmp) / "crypto"
+            d.mkdir(parents=True)
+            (d / "W.cpp").write_text('#include < jni.h >\n', encoding="utf-8")
+            found = ca.scan_native(Path(tmp))
+            self.assertIn(
+                ("libraries/humla/src/main/jni/crypto/W.cpp", "<jni.h>"), found
+            )
+
+    def test_absolute_native_path_rejected(self):
+        _, _, errors = ca.parse_allowlist("[native]\n/crypto/A.cpp: <jni.h>\n")
+        self.assertTrue(any("absolute path" in e for e in errors))
+
+    def test_positive_boundary_newcomer_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "app/src/main"
+            src.mkdir(parents=True)
+            newcomer = ca.BOUNDARY_FILES[0]
+            target = root / newcomer
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("@Volatile var f = 1\n", encoding="utf-8")
+            path = root / "allowlist.txt"
+            path.write_text("", encoding="utf-8")
+            rc = ca.write_allowlist(root, path)
+            self.assertEqual(rc, 0)
+            self.assertIn(newcomer, path.read_text(encoding="utf-8"))
+
+    def test_single_threaded_engine_voice_codec_and_crypto(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            v = self._jni_root(tmp) / "voice_codec"
+            v.mkdir(parents=True)
+            (v / "V.cpp").write_text('#include <mutex>\n', encoding="utf-8")
+            c = self._jni_root(tmp) / "crypto"
+            c.mkdir(parents=True)
+            (c / "C.cpp").write_text('#include <mutex>\n#include <jni.h>\n', encoding="utf-8")
+            old = ca.SINGLE_THREADED_ENGINE
+            try:
+                ca.SINGLE_THREADED_ENGINE = True
+                found = ca.scan_native(Path(tmp))
+                headers = sorted(h for _, h in found)
+                self.assertIn("<mutex>", headers)  # voice_codec flagged
+                self.assertIn("<jni.h>", headers)  # crypto flags JNI, not mutex
+                self.assertNotIn(
+                    ("libraries/humla/src/main/jni/crypto/C.cpp", "<mutex>"),
+                    found,  # crypto keeps its locks
+                )
+            finally:
+                ca.SINGLE_THREADED_ENGINE = old
+
     def test_non_source_files_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = self._jni_root(tmp) / "crypto"

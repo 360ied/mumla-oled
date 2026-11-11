@@ -50,8 +50,10 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
   **fewer** (the count must be lowered in the same commit). A file with
   zero matching lines must be removed from the list.
 - Step 1 seeds the list with today's numbers. On `master` at `c988bbfe`,
-  the patterns above match 335 lines in 34 files; step 1 recomputes the
-  exact counts from the script itself when it lands.
+  the pre-review patterns match 335 lines in 34 files; the whitespace
+  variants closed in review add one honestly counted comment line, so the
+  landed list holds 336 lines in 34 files. Step 1 recomputes the exact
+  counts from the script itself when it lands.
 - **Adding a boundary file.** New code that genuinely needs a thread or a
   handler (the transport reader, `RouteControl`, the `VoiceEngine`
   facade) may add itself to the list, but only if its path is in the
@@ -111,8 +113,9 @@ transport messages (`Inbound.Tunnelled`) and commands, which are not state
 roots.
 
 Adding a new state type adds it to the walk automatically, because the
-walk follows property types. Step 1 adds the test with an empty root list;
-each later step adds its roots when the types exist.
+walk follows property types. Step 1 adds the test as a scaffold that walks
+nothing (marked `TODO(step2)`); each later step adds its roots when the
+types exist.
 
 ## Android-free packages
 

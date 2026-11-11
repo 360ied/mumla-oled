@@ -185,6 +185,9 @@ def parse_allowlist(text):
             if not path or not header:
                 errors.append(f"allowlist:{lineno}: native entry with empty path or header")
                 continue
+            if path.startswith("/"):
+                errors.append(f"allowlist:{lineno}: absolute path {path} (use repo-relative)")
+                continue
             if (path, header) in native:
                 errors.append(f"allowlist:{lineno}: duplicate native entry for {path}: {header}")
                 continue
@@ -312,7 +315,7 @@ def scan_native(root: Path):
                     m = RE_INCLUDE.search(line)
                     if not m:
                         continue
-                    inc = m.group(1)
+                    inc = m.group(1).strip()
                     if inc.startswith("oboe/"):
                         # Report and keep scanning: a file can mix oboe with
                         # other forbidden headers, and each must be listed.
