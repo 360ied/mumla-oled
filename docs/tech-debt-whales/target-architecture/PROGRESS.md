@@ -5,7 +5,7 @@ See [testing](testing.md#progresstrack) and [migration](migration.md).
 
 | Step | Status | Commits | Allowlist (files / matches) | Notes |
 |---|---|---|---|---|
-| 1 Harness and gate | done | fafa6126..16c488a1 (+ scaffold commit) | 34 / 335 | Gate + interop land; `check.sh` green. Interop 4/4 scenarios pass 3 full runs. Revert check: buggy `HumlaService` generation order still passes interop (harness drives `HumlaConnection`, insensitive by construction); deterministic lifecycle-race cover arrives with step-3 virtual-time client tests. Includes `KeyManagerFactory` default-algorithm compat fix. |
+| 1 Harness and gate | done | fafa6126..e57f2229 (+ progress commit) | 34 / 336 | Gate + interop land; `check.sh` green. Interop 5/5 scenarios pass. Revert check: buggy `HumlaService` generation order still passes interop (harness drives `HumlaConnection`, insensitive by construction); deterministic lifecycle-race cover arrives with step-3 virtual-time client tests. Includes `KeyManagerFactory` default-algorithm compat fix and pedantic-review hardening (gate strictness, interop robustness, fail-loud wiring). |
 | 2 Immutable state | not started | | | gated by live-handle spike + immutable-collections pin |
 | 3 Client and session | not started | | | |
 | 4 Voice control and route | not started | | | |
