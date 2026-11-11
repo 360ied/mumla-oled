@@ -62,7 +62,11 @@ fun applyServerSync(state: SessionState, msg: Mumble.ServerSync): TransitionResu
     return TransitionResult(state.copy(server = server), events)
 }
 
-/** ServerConfig. Settings, welcome text, and bandwidth cap. */
+/** ServerConfig. Settings, welcome text, and bandwidth cap.
+ *
+ * Field reads are unguarded: murmur always sends the full config, so a
+ * partial message is a protocol violation we do not defend against.
+ */
 fun applyServerConfig(state: SessionState, msg: Mumble.ServerConfig): TransitionResult {
     var info = state.server.info
     info = info.copy(
@@ -100,11 +104,15 @@ fun applyCodecVersion(state: SessionState, msg: Mumble.CodecVersion): Transition
     )
 }
 
-/** TextMessage. Drops ignored senders; history is an app feature, not state. */
+/** TextMessage. Drops ignored senders; history is an app feature, not state.
+ *
+ * [nowMillis] is a required parameter (no default clock) so transitions
+ * stay pure and tests stay deterministic; callers pass wall-clock time.
+ */
 fun applyTextMessage(
     state: SessionState,
     msg: Mumble.TextMessage,
-    nowMillis: Long = System.currentTimeMillis(),
+    nowMillis: Long,
 ): TransitionResult {
     val sender = if (msg.hasActor()) state.server.users[msg.actor] else null
     if (sender != null && sender.localIgnored) return TransitionResult(state)

@@ -58,8 +58,10 @@ public class Mumble15ProtocolTest extends TestCase {
         assertFalse(Constants.isProtobufUdpSupported(0, (1 << 16) | (4 << 8)));
     }
 
-    // Channel/user listening state moved to immutable SessionState (step 2):
-    // covered by ChannelTransitionsTest/UserTransitionsTest/StateTest.
+    // Channel/user listening state moved to immutable SessionState (step 2).
+    // Field mapping is pinned in ChannelTransitionsTest.testChannelFieldMapping
+    // (maxUsers/enterRestricted/canEnter) and
+    // UserTransitionsTest.testListeningAddRemoveRoundTrip (listening add/remove).
 
     public void testPermissionsConstants() {
         assertEquals(0x800, Permissions.Listen);

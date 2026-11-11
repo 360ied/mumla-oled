@@ -191,6 +191,41 @@ class UserTransitionsTest : TestCase() {
     }
 
     @Test
+    fun testListeningAddRemoveRoundTrip() {
+        var s = syncedStateWith(userIn(1, "self", 0), selfSession = 1)
+        var r = applyUserState(
+            s,
+            Mumble.UserState.newBuilder().setSession(1).addListeningChannelAdd(3).addListeningChannelAdd(4).build(),
+        )
+        assertEquals(setOf(3, 4), r.state.server.users[1]?.listeningChannels)
+        s = r.state
+        r = applyUserState(
+            s,
+            Mumble.UserState.newBuilder().setSession(1).addListeningChannelRemove(3).build(),
+        )
+        assertEquals(setOf(4), r.state.server.users[1]?.listeningChannels)
+    }
+
+    @Test
+    fun testUnknownChannelFallsBackToRoot() {
+        var s = syncedStateWith(userIn(1, "self", 0), selfSession = 1)
+        // User moved to an unknown channel falls back to root; already
+        // there, so no move event.
+        var r = applyUserState(s, Mumble.UserState.newBuilder().setSession(1).setChannelId(99).build())
+        assertEquals(0, r.state.server.users[1]?.channelId)
+        assertTrue(r.events.filterIsInstance<SessionEvent.UserMoved>().isEmpty())
+        // From another channel the fallback is a real move to root.
+        s = applyChannelState(r.state, Mumble.ChannelState.newBuilder().setChannelId(1).setName("A").setParent(0).build()).state
+        s = applyUserState(s, Mumble.UserState.newBuilder().setSession(1).setChannelId(1).build()).state
+        r = applyUserState(s, Mumble.UserState.newBuilder().setSession(1).setChannelId(99).build())
+        assertEquals(0, r.state.server.users[1]?.channelId)
+        val moves = r.events.filterIsInstance<SessionEvent.UserMoved>()
+        assertEquals(1, moves.size)
+        assertEquals(1, moves[0].from)
+        assertEquals(0, moves[0].to)
+    }
+
+    @Test
     fun testLocalMuteRestoredFromHistory() {
         val s = syncedStateWith()
         val r = applyUserState(

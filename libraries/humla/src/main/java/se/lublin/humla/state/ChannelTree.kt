@@ -25,7 +25,6 @@ package se.lublin.humla.state
  * are left out of the tree until the parent arrives.
  */
 class ChannelTree private constructor(
-    private val channels: Map<Int, ChannelInfo>,
     private val usersByChannel: Map<Int, List<UserInfo>>,
     private val children: Map<Int, List<ChannelInfo>>,
     private val links: Map<Int, Set<Int>>,
@@ -114,10 +113,10 @@ class ChannelTree private constructor(
                 val parentId = ch.parentId
                 if (parentId != null && parentId != id && channels.containsKey(parentId)) {
                     childrenMut.getOrPut(parentId) { ArrayList() }.add(ch)
-                } else if (id == 0 && parentId == null) {
-                    // Root stays reachable even with no parent.
                 }
-                // Channels whose parent is missing are left out until it arrives.
+                // Channels whose parent is missing (or which are the parentless
+                // root) stay out of the children map until the parent arrives;
+                // root reachability comes from querying children(0)/users(0).
             }
             for (list in childrenMut.values) list.sortWith(channelCmp)
             val children: Map<Int, List<ChannelInfo>> = childrenMut.mapValues { it.value.toList() }
@@ -144,7 +143,7 @@ class ChannelTree private constructor(
             val links: Map<Int, Set<Int>> = channels.mapValues { (id, ch) ->
                 ch.links.filter { it != id && channels.containsKey(it) }.toSet()
             }
-            return ChannelTree(channels, usersByChannel, children, links)
+            return ChannelTree(usersByChannel, children, links)
         }
     }
 }

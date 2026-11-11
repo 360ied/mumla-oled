@@ -19,21 +19,6 @@ package se.lublin.humla.state
 
 import se.lublin.humla.protobuf.Mumble
 
-private fun stubChannelForUsers(id: Int): ChannelInfo = ChannelInfo(
-    id = id,
-    parentId = null,
-    name = null,
-    position = 0,
-    temporary = false,
-    description = null,
-    descriptionHash = null,
-    links = kotlinx.collections.immutable.persistentSetOf(),
-    maxUsers = 0,
-    enterRestricted = false,
-    canEnter = true,
-    permissions = 0,
-)
-
 private fun newUserInfo(session: Int, name: String): UserInfo = UserInfo(
     session = session,
     userId = null,
@@ -83,7 +68,7 @@ fun applyUserState(
     if (user == null) {
         if (!msg.hasName()) return TransitionResult(state.copy(server = server))
         if (!channels.containsKey(0)) {
-            channels = channels.putting(0, stubChannelForUsers(0))
+            channels = channels.putting(0, stubChannel(0))
         }
         user = newUserInfo(msg.session, msg.name)
         users = users.putting(msg.session, user)

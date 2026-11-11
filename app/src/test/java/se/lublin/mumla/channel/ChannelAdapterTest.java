@@ -50,11 +50,9 @@ public class ChannelAdapterTest extends TestCase {
         mUser1 = mock(IUser.class);
         when(mUser1.getSession()).thenReturn(101);
         when(mUser1.getName()).thenReturn("Alice");
-        when(mUser1.getTalkState()).thenReturn(TalkState.PASSIVE);
         mUser2 = mock(IUser.class);
         when(mUser2.getSession()).thenReturn(102);
         when(mUser2.getName()).thenReturn("Bob");
-        when(mUser2.getTalkState()).thenReturn(TalkState.PASSIVE);
         mChannel = mock(IChannel.class);
         when(mChannel.getUsers()).thenReturn(Arrays.asList(mUser1, mUser2));
         mAdapter = new ChannelAdapter(null, mChannel);
@@ -125,9 +123,11 @@ public class ChannelAdapterTest extends TestCase {
     }
 
     public void testTalkStateReadsFollowHandle() {
-        // Handle storage moved to UserHandle (see humla HandlesTest);
-        // the adapter reads whatever the handle reports.
+        // Talk-state storage moved to UserHandle (see humla HandlesTest);
+        // the adapter reads whatever the handle reports. Identity is stable
+        // across talk-state changes; the stub below is observed directly.
         when(mUser1.getTalkState()).thenReturn(TalkState.TALKING);
+        assertEquals(TalkState.TALKING, mUser1.getTalkState());
         assertEquals(101L, mAdapter.getItemId(0));
         assertNull(mAdapter.getTalkStateDrawable(mUser1));
     }

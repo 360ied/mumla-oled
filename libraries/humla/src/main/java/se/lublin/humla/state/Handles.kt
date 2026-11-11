@@ -37,6 +37,7 @@ import se.lublin.humla.model.TalkState
 class UserHandle(
     private val sessionId: Int,
     private val state: StateFlow<SessionState>,
+    seed: UserInfo? = null,
 ) : IUser {
     override val session: Int get() = sessionId
 
@@ -44,7 +45,7 @@ class UserHandle(
     // the tripwire clean and races benign (main-thread today).
     override var talkState: TalkState = TalkState.PASSIVE
 
-    private var cached: UserInfo? = null
+    private var cached: UserInfo? = seed
 
     private fun current(): UserInfo? {
         val found = state.value.server.users[sessionId]
@@ -118,10 +119,11 @@ class UserHandle(
 class ChannelHandle(
     private val channelId: Int,
     private val state: StateFlow<SessionState>,
+    seed: ChannelInfo? = null,
 ) : IChannel {
     override val id: Int get() = channelId
 
-    private var cached: ChannelInfo? = null
+    private var cached: ChannelInfo? = seed
 
     private fun current(): ChannelInfo? {
         val found = state.value.server.channels[channelId]
@@ -142,7 +144,8 @@ class ChannelHandle(
         }
     override val name: String? get() = current()?.name
     override val description: String? get() = current()?.description
-    override val descriptionHash: ByteArray? get() = current()?.descriptionHash?.toByteArray()?.clone()
+    // toByteArray() already returns a fresh copy; no extra clone needed.
+    override val descriptionHash: ByteArray? get() = current()?.descriptionHash?.toByteArray()
 
     override val users: List<IUser>
         get() {

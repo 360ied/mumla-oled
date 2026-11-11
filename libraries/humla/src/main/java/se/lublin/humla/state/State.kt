@@ -18,12 +18,9 @@
 package se.lublin.humla.state
 
 import com.google.protobuf.ByteString
-import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.PersistentSet
-import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.collections.immutable.persistentSetOf
 
 /**
  * Immutable session state. See
@@ -181,8 +178,6 @@ fun emptySessionState(): SessionState = SessionState(
     ),
 )
 
-fun emptyServerInfo(): ServerInfo = emptySessionState().server.info
-
 /** Today's getVoiceTargetMode equivalent: derive the mode from local state. */
 fun LocalState.voiceTargetMode(): VoiceTargetMode =
     VoiceTargetMode.fromInt(voiceTargetId)
@@ -204,8 +199,7 @@ fun effectiveSelfMute(s: SessionState): Boolean {
 // Channel-view helpers mirroring today's Channel/User derived reads.
 fun ChannelInfo.isListening(state: SessionState): Boolean {
     val self = state.server.self ?: return false
-    val selfUser = state.server.users[self.session] ?: return false
-    return selfUser.listeningChannels.contains(id)
+    return self.listeningChannels.contains(id)
 }
 
 fun ChannelInfo.listeningVolume(state: SessionState): Float =
@@ -215,40 +209,4 @@ fun ChannelInfo.listeningVolume(state: SessionState): Float =
 fun SessionState.whisperTargetName(id: Int): String? {
     val target = local.whisperTargets[id] ?: return null
     return server.channels[target.channelId]?.name
-}
-
-fun persistentChannelLinksOf(vararg ids: Int): PersistentSet<Int> {
-    var out: PersistentSet<Int> = persistentSetOf()
-    for (id in ids) out = out.adding(id)
-    return out
-}
-
-fun persistentWhisperTargetsOf(vararg pairs: Pair<Int, WhisperTarget>): PersistentMap<Int, WhisperTarget> {
-    var out: PersistentMap<Int, WhisperTarget> = persistentMapOf()
-    for ((k, v) in pairs) out = out.putting(k, v)
-    return out
-}
-
-fun persistentVolumesOf(vararg pairs: Pair<Int, Float>): PersistentMap<Int, Float> {
-    var out: PersistentMap<Int, Float> = persistentMapOf()
-    for ((k, v) in pairs) out = out.putting(k, v)
-    return out
-}
-
-fun persistentChannelsOf(vararg channels: ChannelInfo): PersistentMap<Int, ChannelInfo> {
-    var out: PersistentMap<Int, ChannelInfo> = persistentMapOf()
-    for (c in channels) out = out.putting(c.id, c)
-    return out
-}
-
-fun persistentUsersOf(vararg users: UserInfo): PersistentMap<Int, UserInfo> {
-    var out: PersistentMap<Int, UserInfo> = persistentMapOf()
-    for (u in users) out = out.putting(u.session, u)
-    return out
-}
-
-fun persistentStringsOf(vararg values: String): PersistentList<String> {
-    var out: PersistentList<String> = persistentListOf()
-    for (v in values) out = out.adding(v)
-    return out
 }

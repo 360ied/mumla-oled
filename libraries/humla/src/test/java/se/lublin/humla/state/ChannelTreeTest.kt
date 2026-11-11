@@ -138,6 +138,16 @@ class ChannelTreeTest : TestCase() {
     }
 
     @Test
+    fun testUnknownChannelWithoutRootDropsUser() {
+        // No root to fall back to: the user stays out of every list.
+        val channels = persistentMapOf(1 to channel(1, parentId = null, name = "Lone"))
+        val users = persistentMapOf(7 to user(7, "u", 99))
+        val tree = ChannelTree.build(channels, users)
+        assertTrue(tree.users(1).isEmpty())
+        assertTrue(tree.allLinks(99).contains(99))
+    }
+
+    @Test
     fun testAllLinksTransitiveAndCycleSafe() {
         val channels = persistentMapOf(
             1 to channel(1, name = "a", links = setOf(2)),

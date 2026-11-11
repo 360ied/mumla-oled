@@ -19,6 +19,7 @@ package se.lublin.humla.state
 
 import com.google.protobuf.ByteString
 import org.junit.Test
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import java.net.InetAddress
@@ -105,6 +106,9 @@ class StateImmutabilityTest {
 
     @Test
     fun stateRootsAreDeeplyImmutable() {
+        // A new SessionEvent subtype must be walked: fail loudly if the
+        // sealed family grows without updating sealedImplementations above.
+        assertEquals(11, sealedImplementations(SessionEvent::class).size)
         val roots: List<KClass<*>> = listOf(
             SessionState::class,
             ServerState::class,

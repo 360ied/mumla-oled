@@ -104,6 +104,19 @@ class HandlesTest : TestCase() {
     }
 
     @Test
+    fun testRemovedUserKeepsScalars() {
+        val flow = syncedFlow()
+        // Warm the cache before removal, as StateMessageHandler does.
+        val handle = UserHandle(2, flow)
+        assertEquals("other", handle.name)
+        flow.update { cur -> applyUserRemove(cur, Mumble.UserRemove.newBuilder().setSession(2).build()).state }
+        assertNull(handle.channel)
+        assertEquals("other", handle.name)
+        // userId was null -> -1 default, matching today's User.userId.
+        assertEquals(-1, handle.userId)
+    }
+
+    @Test
     fun testDerivedReads() {
         val flow = syncedFlow()
         // Self (session 1) listens? No: listening set empty.

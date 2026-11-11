@@ -22,9 +22,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.state.ChannelHandle
+import se.lublin.humla.state.ChannelInfo
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.UserHandle
+import se.lublin.humla.state.UserInfo
 import se.lublin.humla.state.applyChannelRemove
 import se.lublin.humla.state.applyChannelState
 import se.lublin.humla.state.applyCodecVersion
@@ -58,61 +60,64 @@ class StateMessageHandler(
     override fun messageChannelState(msg: Mumble.ChannelState) {
         if (!msg.hasChannelId()) return
         val id = msg.channelId
-        val had = state.value.server.channels.containsKey(id)
-        state.update { current -> applyChannelState(current, msg).state }
+        // Decide inside update: a concurrent intent write between a read
+        // and a plain assign would be clobbered.
+        var added = false
+        state.update { current ->
+            added = !current.server.channels.containsKey(id)
+            applyChannelState(current, msg).state
+        }
         val handle = ChannelHandle(id, state)
         // Touch to cache in case a later remove needs scalars.
         handle.name
-        if (!had) observer.onChannelAdded(handle) else observer.onChannelStateUpdated(handle)
+        if (added) observer.onChannelAdded(handle) else observer.onChannelStateUpdated(handle)
     }
 
     override fun messageChannelRemove(msg: Mumble.ChannelRemove) {
         val id = msg.channelId
-        if (id == 0 || !state.value.server.channels.containsKey(id)) return
-        // Cache scalars before the update detaches them.
-        val ordered = collectSubtree(id)
-        val handles = ordered.map { ChannelHandle(it, state).also { h -> h.name } }
-        state.update { current -> applyChannelRemove(current, msg).state }
-        for (handle in handles.asReversed()) observer.onChannelRemoved(handle)
-    }
-
-    private fun collectSubtree(root: Int): List<Int> {
-        val channels = state.value.server.channels
-        if (!channels.containsKey(root)) return emptyList()
-        val out = ArrayList<Int>()
-        val visited = HashSet<Int>()
-        val stack = ArrayDeque<Int>()
-        stack.add(root)
-        while (stack.isNotEmpty()) {
-            val node = stack.removeLast()
-            if (!visited.add(node)) continue
-            if (!channels.containsKey(node)) continue
-            out.add(node)
-            for ((childId, child) in channels) {
-                if (child.parentId == node && childId != node && !visited.contains(childId)) {
-                    stack.add(childId)
-                }
-            }
+        // Snapshot the detached infos inside the same atomic update that
+        // removes them, then seed handles so callbacks read last values.
+        var removedInfos: List<ChannelInfo> = emptyList()
+        var known = false
+        state.update { current ->
+            known = current.server.channels.containsKey(id)
+            if (id == 0 || !known) return@update current
+            val next = applyChannelRemove(current, msg).state
+            val removedIds = current.server.channels.keys - next.server.channels.keys
+            removedInfos = removedIds.mapNotNull { current.server.channels[it] }
+            next
         }
-        return out
+        if (id == 0 || !known) return
+        // Children-first, like the old detached-subtree order.
+        for (info in removedInfos.asReversed()) {
+            observer.onChannelRemoved(ChannelHandle(info.id, state, seed = info))
+        }
     }
 
     override fun messageUserState(msg: Mumble.UserState) {
         val session = if (msg.hasSession()) msg.session else return
-        // Cache names for the joined-channel callback before the update.
-        val oldUser = state.value.server.users[session]
-        val oldChannelId = oldUser?.channelId
-        val isNew = oldUser == null
-        val result = applyUserState(state.value, msg, mutedUserIds, ignoredUserIds)
-        state.value = result.state
-        events.log(result.events, result.state)
+        // Everything decided inside one atomic update; callbacks use the
+        // captured outcome, never a re-read that raced an intent.
+        var isNew = false
+        var oldChannelId: Int? = null
+        var newChannelId: Int? = null
+        var outcomeEvents: List<SessionEvent> = emptyList()
+        state.update { current ->
+            val oldUser = current.server.users[session]
+            isNew = oldUser == null
+            oldChannelId = oldUser?.channelId
+            val result = applyUserState(current, msg, mutedUserIds, ignoredUserIds)
+            outcomeEvents = result.events
+            newChannelId = result.state.server.users[session]?.channelId
+            result.state
+        }
+        events.log(outcomeEvents, state.value)
         val handle = UserHandle(session, state)
         handle.name
         if (isNew) {
             observer.onUserConnected(handle)
         } else {
             observer.onUserStateUpdated(handle)
-            val newChannelId = result.state.server.users[session]?.channelId
             if (newChannelId != oldChannelId) {
                 val newChannel = if (newChannelId != null) ChannelHandle(newChannelId, state) else null
                 val oldChannel = if (oldChannelId != null) ChannelHandle(oldChannelId, state) else null
@@ -123,39 +128,51 @@ class StateMessageHandler(
 
     override fun messageUserRemove(msg: Mumble.UserRemove) {
         val session = msg.session
-        val selfSession = state.value.server.selfSession
-        if (session == selfSession) {
-            state.update { current -> applyUserRemove(current, msg).state }
-            return
+        // Self removal is owned by the connection layer (HumlaConnection
+        // fails the session with no reconnect); state needs no change.
+        var selfRemoved = false
+        var oldInfo: UserInfo? = null
+        var outcomeEvents: List<SessionEvent> = emptyList()
+        state.update { current ->
+            if (session == current.server.selfSession) {
+                selfRemoved = true
+                return@update applyUserRemove(current, msg).state
+            }
+            oldInfo = current.server.users[session]
+            val actorName = if (msg.hasActor()) current.server.users[msg.actor]?.name else null
+            val result = applyUserRemove(current, msg, oldInfo?.name, actorName)
+            outcomeEvents = result.events
+            result.state
         }
-        val known = state.value.server.users.containsKey(session)
-        val userName = state.value.server.users[session]?.name
-        val actorName = if (msg.hasActor()) state.value.server.users[msg.actor]?.name else null
-        val result = applyUserRemove(state.value, msg, userName, actorName)
-        state.value = result.state
-        events.log(result.events, result.state)
-        if (known) {
-            val handle = UserHandle(session, state)
-            handle.name
-            val reason = result.events.filterIsInstance<SessionEvent.UserLeft>().firstOrNull()?.reason
-            observer.onUserRemoved(handle, reason)
+        if (selfRemoved) return
+        events.log(outcomeEvents, state.value)
+        val reason = outcomeEvents.filterIsInstance<SessionEvent.UserLeft>().firstOrNull()?.reason
+        if (oldInfo != null) {
+            observer.onUserRemoved(UserHandle(session, state, seed = oldInfo), reason)
         } else {
-            val reason = result.events.filterIsInstance<SessionEvent.UserLeft>().firstOrNull()?.reason
             observer.onUserRemoved(null, reason)
         }
     }
 
     override fun messagePermissionQuery(msg: Mumble.PermissionQuery) {
-        state.update { current -> applyPermissionQuery(current, msg).state }
-        if (state.value.server.channels.containsKey(msg.channelId)) {
+        var known = false
+        state.update { current ->
+            known = current.server.channels.containsKey(msg.channelId)
+            applyPermissionQuery(current, msg).state
+        }
+        if (known) {
             observer.onChannelPermissionsUpdated(ChannelHandle(msg.channelId, state))
         }
     }
 
     override fun messageServerSync(msg: Mumble.ServerSync) {
-        val result = applyServerSync(state.value, msg)
-        state.value = result.state
-        events.log(result.events, result.state)
+        var outcomeEvents: List<SessionEvent> = emptyList()
+        state.update { current ->
+            val result = applyServerSync(current, msg)
+            outcomeEvents = result.events
+            result.state
+        }
+        events.log(outcomeEvents, state.value)
     }
 
     override fun messageServerConfig(msg: Mumble.ServerConfig) {
@@ -171,19 +188,24 @@ class StateMessageHandler(
     }
 
     override fun messageTextMessage(msg: Mumble.TextMessage) {
-        val result = applyTextMessage(state.value, msg)
-        state.value = result.state
-        for (event in result.events) {
-            if (event is SessionEvent.TextMessageReceived) {
-                observer.onMessageLogged(events.toMessage(event, state))
-            }
+        var received: SessionEvent.TextMessageReceived? = null
+        state.update { current ->
+            val result = applyTextMessage(current, msg, System.currentTimeMillis())
+            received = result.events.filterIsInstance<SessionEvent.TextMessageReceived>().firstOrNull()
+            result.state
         }
+        val event = received ?: return
+        observer.onMessageLogged(events.toMessage(event, state))
     }
 
     override fun messagePermissionDenied(msg: Mumble.PermissionDenied) {
-        val result = applyPermissionDenied(state.value, msg)
-        val event = result.events.filterIsInstance<SessionEvent.PermissionDenied>().firstOrNull()
-            ?: return
+        var denied: SessionEvent.PermissionDenied? = null
+        state.update { current ->
+            val result = applyPermissionDenied(current, msg)
+            denied = result.events.filterIsInstance<SessionEvent.PermissionDenied>().firstOrNull()
+            result.state
+        }
+        val event = denied ?: return
         observer.onPermissionDenied(events.denyReason(event))
     }
 }

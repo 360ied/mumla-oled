@@ -99,4 +99,43 @@ class IntentTransitionsTest : TestCase() {
         assertEquals(7, applyVoiceTargetIntent(s, 7).state.local.voiceTargetId)
         assertEquals(s, applyVoiceTargetIntent(s, 32).state)
     }
+
+    @Test
+    fun testPttAndLocalIntents() {
+        val s = syncedSelf()
+        assertTrue(applyPttIntent(s, true).state.local.pttPressed)
+        assertFalse(applyPttIntent(applyPttIntent(s, true).state, false).state.local.pttPressed)
+        // PTT is local-only: works pre-SYNCED too.
+        assertTrue(applyPttIntent(emptySessionState(), true).state.local.pttPressed)
+        var r = applyLocalMuteIntent(s, 1, true)
+        assertTrue(r.state.server.users[1]?.localMuted == true)
+        r = applyLocalIgnoreIntent(r.state, 1, true)
+        assertTrue(r.state.server.users[1]?.localIgnored == true)
+        // Unknown session is a no-op.
+        assertEquals(s, applyLocalMuteIntent(s, 99, true).state)
+    }
+
+    @Test
+    fun testOutboundPayloads() {
+        val s = syncedSelf()
+        val mute = applySelfMuteDeafIntent(s, false, true)
+        assertTrue(mute.userStateOutbound?.selfMute == true)
+        assertTrue(mute.userStateOutbound?.selfDeaf == true)
+        val reg = applyRegisterWhisperIntent(s, WhisperTarget(9, true, true, "g"))
+        assertEquals(1, reg.whisperId)
+        assertEquals(1, reg.voiceTargetOutbound?.id)
+        val target = reg.voiceTargetOutbound?.getTargets(0)
+        assertEquals(9, target?.channelId)
+        assertTrue(target?.links == true)
+        assertTrue(target?.children == true)
+        assertEquals("g", target?.group)
+        val vol = applyListeningVolumeIntent(s, 3, 0.25f)
+        val adj = vol.userStateOutbound?.getListeningVolumeAdjustment(0)
+        assertEquals(3, adj?.listeningChannel)
+        assertEquals(0.25f, adj?.volumeAdjustment)
+        // Register while unsynced returns -1 with no outbound.
+        val unsynced = applyRegisterWhisperIntent(emptySessionState(), WhisperTarget(9, false, false, null))
+        assertEquals(-1, unsynced.whisperId)
+        assertNull(unsynced.voiceTargetOutbound)
+    }
 }

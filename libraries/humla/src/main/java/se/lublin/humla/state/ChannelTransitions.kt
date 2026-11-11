@@ -31,7 +31,8 @@ data class TransitionResult(
     val selfRemoved: Boolean = false,
 )
 
-private fun stubChannel(id: Int): ChannelInfo = ChannelInfo(
+/** Placeholder for forward-referenced ids. Shared with [stubChannelForUsers]. */
+internal fun stubChannel(id: Int): ChannelInfo = ChannelInfo(
     id = id,
     parentId = null,
     name = null,
@@ -65,21 +66,9 @@ fun applyChannelState(state: SessionState, msg: Mumble.ChannelState): Transition
     }
 
     val existing = channels[id]
-    val isNew = existing == null
-    var updated: ChannelInfo = existing ?: ChannelInfo(
-        id = id,
-        parentId = null,
-        name = null,
-        position = 0,
-        temporary = msg.temporary,
-        description = null,
-        descriptionHash = null,
-        links = kotlinx.collections.immutable.persistentSetOf(),
-        maxUsers = 0,
-        enterRestricted = false,
-        canEnter = true,
-        permissions = 0,
-    )
+    // temporary is create-only (no hasTemporary branch below), matching
+    // the old model where it was set once at construction.
+    var updated: ChannelInfo = existing ?: stubChannel(id).copy(temporary = msg.temporary)
 
     // Cycle guard before any mutation: refuse moves into self or a descendant.
     if (msg.hasParent() && id != 0) {
@@ -175,7 +164,7 @@ fun applyChannelState(state: SessionState, msg: Mumble.ChannelState): Transition
                 links = links.adding(linkId)
                 val linked = channels[linkId]
                 if (linked != null && !linked.links.contains(id)) {
-                    channels = channels.putting(linkId, linked.copy(links = linked.links.removing(id).adding(id)))
+                    channels = channels.putting(linkId, linked.copy(links = linked.links.adding(id)))
                 }
             } else {
                 val linked = channels[linkId]
@@ -192,11 +181,8 @@ fun applyChannelState(state: SessionState, msg: Mumble.ChannelState): Transition
     if (msg.hasCanEnter()) updated = updated.copy(canEnter = msg.canEnter)
 
     channels = channels.putting(id, updated)
-    voidUnused(isNew)
     return TransitionResult(state.copy(server = state.server.copy(channels = channels)))
 }
-
-private fun voidUnused(@Suppress("UNUSED_PARAMETER") vararg values: Any?) = Unit
 
 /** ChannelRemove with whole-subtree delete. Drops every removed id from links and listeners. */
 fun applyChannelRemove(state: SessionState, msg: Mumble.ChannelRemove): TransitionResult {
@@ -205,7 +191,8 @@ fun applyChannelRemove(state: SessionState, msg: Mumble.ChannelRemove): Transiti
     val target = channels[id] ?: return TransitionResult(state)
     if (id == 0) return TransitionResult(state)
 
-    // Iterative subtree collect, cycle-safe.
+    // Iterative subtree collect, cycle-safe. Quadratic in pathological
+    // trees; accepted at Mumble scale (channels number in the dozens).
     val removed = ArrayList<Int>()
     val visited = HashSet<Int>()
     val stack = ArrayDeque<Int>()
@@ -213,14 +200,13 @@ fun applyChannelRemove(state: SessionState, msg: Mumble.ChannelRemove): Transiti
     while (stack.isNotEmpty()) {
         val nodeId = stack.removeLast()
         if (!visited.add(nodeId)) continue
-        val node = channels[nodeId] ?: continue
+        if (!channels.containsKey(nodeId)) continue
         removed.add(nodeId)
         for ((childId, child) in channels) {
             if (child.parentId == nodeId && childId != nodeId) {
                 if (!visited.contains(childId)) stack.add(childId)
             }
         }
-        voidUnused(node)
     }
     val removedIds = removed.toSet()
 

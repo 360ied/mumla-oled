@@ -157,7 +157,7 @@ class AudioHandler : HumlaNetworkListener,
     /**
      * Moderator-applied deafening, tracked separately so a deaf-only packet
      * (murmur's else-if broadcast form omits the paired mute) still closes
-     * the gate. Mirrors User.setDeafened coercion; like the rest of the gate
+     * the gate. Mirrors the admin-mute coercion in UserTransitions; like the rest of the gate
      * it is read and written under synchronized(this).
      */
     @Volatile
@@ -446,7 +446,7 @@ class AudioHandler : HumlaNetworkListener,
      * Desktop parity: Mumble's AudioInput reads the local desired-state
      * (Global::get().s.bMute) every frame, so the mic cuts on click rather
      * than after the server-echo RTT. The echo remains the model confirm
-     * (see ModelHandler); the gate echo in {@link #messageUserState} is
+     * (see UserTransitions); the gate echo in {@link #messageUserState} is
      * ignored once an optimistic value exists.
      *
      * @param muted the effective mute target after central deaf-implies-mute

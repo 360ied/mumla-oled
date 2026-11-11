@@ -38,15 +38,22 @@ public class AvatarCacheTest extends TestCase {
         assertNull(mCache.get(null));
     }
 
-    public void testUserWithoutTextureReturnsNull() {
+    public void testZeroCacheKeyReturnsNull() {
         IUser user = mock(IUser.class);
         when(user.getSession()).thenReturn(10);
-        when(user.hasTexture()).thenReturn(false);
-        when(user.getTexture()).thenReturn(null);
         when(user.getTextureCacheKey()).thenReturn(0);
-        assertFalse(user.hasTexture());
-        assertEquals(0, user.getTextureCacheKey());
+        // Zero key short-circuits before texture is read.
         assertNull(mCache.get(user));
+    }
+
+    public void testUserWithoutTextureReturnsNull() {
+        IUser user = mock(IUser.class);
+        when(user.getSession()).thenReturn(11);
+        when(user.hasTexture()).thenReturn(false);
+        when(user.getTextureCacheKey()).thenReturn(4242);
+        assertNull(mCache.get(user));
+        // No-texture path evicts instead of recording a negative entry.
+        assertNull(mCache.getEntry(11));
     }
 
     public void testNegativeCachingForUnparseableTexture() {

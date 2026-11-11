@@ -167,4 +167,17 @@ class ChannelTransitionsTest : TestCase() {
         val out = applyChannelState(s, Mumble.ChannelState.newBuilder().setName("x").build())
         assertEquals(s, out.state)
     }
+
+    @Test
+    fun testChannelFieldMapping() {
+        var s = emptySessionState()
+        s = applyChannelState(
+            s,
+            Mumble.ChannelState.newBuilder().setChannelId(1).setName("A")
+                .setMaxUsers(25).setIsEnterRestricted(true).setCanEnter(false).build(),
+        ).state
+        assertEquals(25, s.server.channels[1]?.maxUsers)
+        assertTrue(s.server.channels[1]?.enterRestricted == true)
+        assertFalse(s.server.channels[1]?.canEnter == true)
+    }
 }

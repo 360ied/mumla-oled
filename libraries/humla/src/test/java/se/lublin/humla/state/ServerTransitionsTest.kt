@@ -112,6 +112,31 @@ class ServerTransitionsTest : TestCase() {
     }
 
     @Test
+    fun testTextFiltersUnknownIds() {
+        var s = syncedStateWithHeard(9)
+        s = applyChannelState(s, Mumble.ChannelState.newBuilder().setChannelId(0).setName("R").build()).state
+        val r = applyTextMessage(
+            s,
+            Mumble.TextMessage.newBuilder().setActor(9).setMessage("hi")
+                .addChannelId(0).addChannelId(77).addTreeId(78).addSession(9).addSession(78).build(),
+            1L,
+        )
+        val e = r.events.filterIsInstance<SessionEvent.TextMessageReceived>()[0]
+        assertEquals(listOf(0), e.channels)
+        assertEquals(emptyList<Int>(), e.trees)
+        assertEquals(listOf(9), e.users)
+        assertEquals(9, e.actor)
+        assertEquals(1L, e.receivedAtMillis)
+    }
+
+    @Test
+    fun testCodecNullPreservesTrue() {
+        var s = emptySessionState()
+        s = applyCodecVersion(s, Mumble.CodecVersion.newBuilder().setAlpha(1).setBeta(2).setPreferAlpha(true).setOpus(true).build()).state
+        assertTrue(applyCodecVersion(s, Mumble.CodecVersion.newBuilder().setAlpha(1).setBeta(2).setPreferAlpha(true).build()).state.server.info.opus)
+    }
+
+    @Test
     fun testPermissionDeniedEmitsRawFields() {
         val s = emptySessionState()
         val r = applyPermissionDenied(
@@ -125,6 +150,17 @@ class ServerTransitionsTest : TestCase() {
         assertEquals("full", e.reason)
         assertEquals("n", e.name)
         assertNull(e.channel)
+        val r2 = applyPermissionDenied(
+            s,
+            Mumble.PermissionDenied.newBuilder()
+                .setType(Mumble.PermissionDenied.DenyType.Permission)
+                .setPermission(4).setChannelId(7).setSession(9).build(),
+        )
+        val e2 = r2.events.filterIsInstance<SessionEvent.PermissionDenied>()[0]
+        assertEquals(4, e2.permission)
+        assertEquals(7, e2.channel)
+        assertEquals(9, e2.session)
+        assertNull(e2.reason)
     }
 
     private fun syncedStateWithIgnored(session: Int): SessionState {

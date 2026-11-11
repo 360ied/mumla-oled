@@ -1756,7 +1756,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
             return
         }
         requireConnection().sendTCPMessage(outbound, HumlaTCPMessageType.UserState)
-        applyOptimisticSelfMuteDeaf(result)
+        applyOptimisticSelfMuteDeaf(mute, deaf)
     }
 
     /**
@@ -1781,22 +1781,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
      * interleaves, since logging re-gates on synchronization while the state
      * change itself does not).
      */
-    private fun applyOptimisticSelfMuteDeaf(result: se.lublin.humla.state.IntentResult) {
+    private fun applyOptimisticSelfMuteDeaf(mute: Boolean, deaf: Boolean) {
         val connection = mConnection
         if (connection == null || !connection.isSynchronized())
             return
-        // Push the capture gate before the model: desired state is
+        // Recompute inside update so a server echo landing between the
+        // preview and the write is not clobbered; the intent is a pure
+        // function of (state, mute, deaf), so the outcome converges.
+        var events: List<se.lublin.humla.state.SessionEvent> = emptyList()
+        _sessionState.update { current ->
+            val fresh = applySelfMuteDeafIntent(current, mute, deaf)
+            events = fresh.events
+            fresh.state
+        }
+        val applied = _sessionState.value
+        val selfSession = applied.server.selfSession ?: return
+        val self = applied.server.users[selfSession]
+        // Push the capture gate before fanning out: desired state is
         // authoritative even when the model user isn't visible yet (e.g.
         // the reconnect restore racing the initial UserState dump). Snapshot
         // the handler: disconnect nulls the field from another thread.
         val audioHandler = mAudioHandler
-        val selfSession = result.state.server.selfSession ?: return
-        val self = result.state.server.users[selfSession]
         if (audioHandler != null && self != null)
             audioHandler.setSelfMutedOptimistic(self.selfMuted)
-        _sessionState.value = result.state
-        stateLogger?.log(result.events, result.state)
-        if (result.state.server.users.containsKey(selfSession)) {
+        stateLogger?.log(events, applied)
+        if (applied.server.users.containsKey(selfSession)) {
             mCallbacks.onUserStateUpdated(UserHandle(selfSession, sessionState))
         }
     }
@@ -1841,6 +1850,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         requireConnection().sendTCPMessage(csb.build(), HumlaTCPMessageType.ChannelState)
     }
 
+    // Whisper allocation stays on the legacy list in step 2: model targets
+    // cannot convert to state targets (channel fields are opaque), so
+    // state.local.whisperTargets is mirrored only on unregister/free until
+    // step 3 moves allocation into Session. mWhisperTargetList is canonical.
     open override fun registerWhisperTarget(target: WhisperTarget?): Byte {
         val t = target ?: throw NullPointerException("target")
         // Resolve the live connection before allocating: the 5-bit ID space
@@ -1970,11 +1983,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession,
         if (!isSynchronized()) return
         // Same TOCTOU discipline as setListeningChannel: fail closed.
         try {
-            val result = applyListeningVolumeIntent(_sessionState.value, channelId, volumeAdjustment)
-            val outbound = result.userStateOutbound ?: return
+            val preview = applyListeningVolumeIntent(_sessionState.value, channelId, volumeAdjustment)
+            val outbound = preview.userStateOutbound ?: return
             val withSession = outbound.toBuilder().setSession(getSessionId()).build()
             requireConnection().sendTCPMessage(withSession, HumlaTCPMessageType.UserState)
-            _sessionState.value = result.state
+            // Recompute inside update so concurrent volume intents for
+            // different channels do not lose each other's map entries.
+            _sessionState.update { current ->
+                applyListeningVolumeIntent(current, channelId, volumeAdjustment).state
+            }
         } catch (e: IllegalStateException) {
             return
         }

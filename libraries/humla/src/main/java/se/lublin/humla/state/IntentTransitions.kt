@@ -88,7 +88,7 @@ fun applyLocalIgnoreIntent(state: SessionState, session: Int, ignored: Boolean):
     )
 }
 
-/** setVoiceTarget: 0..31, no outbound. No-op outside the range when not SYNCED. */
+/** setVoiceTarget: 0..31, no outbound. No-op outside 0..31; local-only and valid pre-SYNCED. */
 fun applyVoiceTargetIntent(state: SessionState, id: Int): IntentResult {
     if (id !in 0..31) return IntentResult(state)
     if (state.local.voiceTargetId == id) return IntentResult(state)
