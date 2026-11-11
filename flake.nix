@@ -70,6 +70,14 @@
               pkgs.markdownlint-cli
               pkgs.cmark
               pkgs.cmark-gfm
+              # Target-architecture murmur interop harness (step 1):
+              # provides `mumble-server` for scripts/test_interop.sh.
+              # Linux-only: mumble-server is not verified on darwin, so the
+              # dev shell stays evaluable there without it (test_interop.sh
+              # fail-closes with a clear message when the binary is missing).
+            ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+              pkgs.murmur
+            ] ++ [
               androidSdk
             ];
 

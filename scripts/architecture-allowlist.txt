@@ -1,0 +1,46 @@
+# Architecture allowlist: path + matching-line count (grep -cE).
+# Counts may only fall; a file with zero matches must be removed.
+# Boundary files may join only via BOUNDARY_FILES in check_architecture.py.
+# [native] exceptions follow the same ratchet (removals only).
+app/src/main/java/se/lublin/mumla/AppDataStore.kt  2
+app/src/main/java/se/lublin/mumla/SettingsRepository.kt  8
+app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt  5
+app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.kt  1
+app/src/main/java/se/lublin/mumla/channel/ServerInfoFragment.kt  2
+app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt  5
+app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.kt  1
+app/src/main/java/se/lublin/mumla/preference/CrashReportsFragment.kt  2
+app/src/main/java/se/lublin/mumla/preference/DataStorePreferenceDataStore.kt  3
+app/src/main/java/se/lublin/mumla/servers/ServerAdapter.kt  1
+app/src/main/java/se/lublin/mumla/service/MumlaConnectionNotification.kt  1
+app/src/main/java/se/lublin/mumla/service/MumlaMessageNotification.kt  1
+app/src/main/java/se/lublin/mumla/service/MumlaService.kt  12
+app/src/main/java/se/lublin/mumla/util/CrashReporter.kt  6
+app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
+libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt  31
+libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt  14
+libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt  21
+libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt  8
+libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt  24
+libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioInputEngine.kt  24
+libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioOutputEngine.kt  7
+libraries/humla/src/main/java/se/lublin/humla/audio/inputmode/ToggleInputMode.kt  1
+libraries/humla/src/main/java/se/lublin/humla/model/Channel.kt  29
+libraries/humla/src/main/java/se/lublin/humla/model/Server.kt  5
+libraries/humla/src/main/java/se/lublin/humla/model/User.kt  8
+libraries/humla/src/main/java/se/lublin/humla/net/CryptState.kt  25
+libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.kt  19
+libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt  5
+libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt  4
+libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt  7
+libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt  37
+libraries/humla/src/main/java/se/lublin/humla/protocol/InputModes.kt  2
+libraries/humla/src/main/java/se/lublin/humla/protocol/ModelHandler.kt  11
+
+[native]
+libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <fcntl.h>
+libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <unistd.h>
+libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp: <jni.h>
+libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp: <jni.h>
+libraries/humla/src/main/jni/audio_engine/NativeCrashTestJni.cpp: <jni.h>
+libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>

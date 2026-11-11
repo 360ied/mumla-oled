@@ -19,16 +19,21 @@ step 1 and only ever gets stricter.
 `se/lublin/humla/protobuf/`.
 
 **Forbidden patterns** (regular expressions):
-`@Volatile`, `@Synchronized`, `\bsynchronized\(`, `\bThread\s*[({]`,
-`\bHandlerThread\(`, `\bHandler\(`, `runBlocking`, `ReentrantLock`,
-`ReentrantReadWriteLock`, `Executors\.`, `CountDownLatch`,
-`java\.util\.concurrent\.locks`.
+`@Volatile`, `@Synchronized`, `\bsynchronized\s*\(`, `\bThread\s*[({]`,
+`\bHandlerThread\s*\(`, `\bHandler\s*\(`, `\brunBlocking\b`,
+`\bReentrantLock\b`, `\bReentrantReadWriteLock\b`, `\bExecutors\.`,
+`\bCountDownLatch\b`, `\bjava\.util\.concurrent\.locks\b`,
+`\bkotlin\.concurrent\.thread\b`.
 
 `\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`.
 The word boundaries keep `currentThread(` from matching the `Thread`
-pattern and `createAudioHandler(` from matching the `Handler` pattern.
-Comments are not stripped: a pattern named in a comment counts, which keeps
-the script simple and the comments honest.
+pattern and `createAudioHandler(` from matching the `Handler` pattern;
+`Thread.sleep`, `Thread.currentThread`, and friends are deliberately not
+matched (they are not thread creation). Java-style `synchronized (lock)`
+with a space matches, as does `Handler (`; only the import-qualified
+`kotlin.concurrent.thread` is matched, because bare prose (`render thread (`
+in comments) is too noisy. Comments are not stripped: a pattern named in
+a comment counts, which keeps the script simple and the comments honest.
 
 **Allowlist:** `scripts/architecture-allowlist.txt`, one entry per line:
 
@@ -45,8 +50,10 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
   **fewer** (the count must be lowered in the same commit). A file with
   zero matching lines must be removed from the list.
 - Step 1 seeds the list with today's numbers. On `master` at `c988bbfe`,
-  the patterns above match 335 lines in 34 files; step 1 recomputes the
-  exact counts from the script itself when it lands.
+  the pre-review patterns match 335 lines in 34 files; the whitespace
+  variants closed in review add one honestly counted comment line, so the
+  landed list holds 336 lines in 34 files. Step 1 recomputes the exact
+  counts from the script itself when it lands.
 - **Adding a boundary file.** New code that genuinely needs a thread or a
   handler (the transport reader, `RouteControl`, the `VoiceEngine`
   facade) may add itself to the list, but only if its path is in the
@@ -106,8 +113,9 @@ transport messages (`Inbound.Tunnelled`) and commands, which are not state
 roots.
 
 Adding a new state type adds it to the walk automatically, because the
-walk follows property types. Step 1 adds the test with an empty root list;
-each later step adds its roots when the types exist.
+walk follows property types. Step 1 adds the test as a scaffold that walks
+nothing (marked `TODO(step2)`); each later step adds its roots when the
+types exist.
 
 ## Android-free packages
 
@@ -121,6 +129,12 @@ The check fails if any file in these packages imports `android.*`,
 
 This keeps state, transitions, the client state machine, and the reconnect
 policy runnable in plain JVM tests with virtual time.
+
+**Step-1 staging:** today's `HumlaConnection.kt`, `HumlaTCP.kt`, and
+`HumlaUDP.kt` still use `Handler`/`Looper`/`Log`, so the script grandfathers
+those three files until step 3 extracts the `Transport`. Only the TLS
+socket factory exclusion above is permanent; the grandfathering is removed
+in step 3, which is a strictness increase, not a relaxation.
 
 ## Native tripwire
 
