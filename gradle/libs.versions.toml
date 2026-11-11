@@ -72,6 +72,7 @@ robolectric = "4.15.1"
 protobuf = "4.36.2"
 annotations = "26.1.0"
 minidns = "1.0.5"
+collections-immutable = "0.5.2"
 # Paparazzi fork (RESOLVED 2026-10-12: disqualified on AGP 8 AND AGP 9,
 # deferred to slice 6): on AGP 8 it breaks resource merging build-wide
 # (`MergedResourceWriterRequest` NoSuchMethodError); on AGP 9 it configures and
@@ -117,6 +118,8 @@ junit = { module = "junit:junit", version.ref = "junit" }
 mockito-core = { module = "org.mockito:mockito-core", version.ref = "mockito" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
+collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "collections-immutable" }
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
 annotations = { module = "org.jetbrains:annotations", version.ref = "annotations" }
 minidns-hla = { module = "org.minidns:minidns-hla", version.ref = "minidns" }
 minidns-android21 = { module = "org.minidns:minidns-android21", version.ref = "minidns" }

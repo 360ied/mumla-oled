@@ -53,11 +53,15 @@ dependencies {
     api libs.lifecycle.service
     api libs.lifecycle.runtime.ktx
     implementation libs.coroutines.core
+    // Target-architecture step 2: persistent collections for SessionState.
+    // Pre-1.0 library: any upgrade is re-verified against the state tests.
+    implementation libs.collections.immutable
     // Migration Slice 5: Server is the Room entity (the @Database lives in
     // :app); the annotations must resolve on this module's classpath too.
     implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation libs.junit
+    testImplementation libs.kotlin.reflect
     // AudioDeviceInfo/Builder doubles for the route + input-modes JVM tests.
     testImplementation libs.mockito.core
     // Target-architecture murmur interop harness (step 1): drives
