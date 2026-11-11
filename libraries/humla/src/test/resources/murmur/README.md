@@ -23,3 +23,11 @@ nix run nixpkgs#openssl -- req -x509 -newkey rsa:2048 \
 
 Rotation = regenerate, replace both files, keep this note accurate.
 Secret scanners will flag `test-key.pem`; that is expected — see above.
+
+Audit note: a sensitive-data scan flags the committed private key
+and the loopback address strings in this directory. Both are
+intentional test fixtures: the key is self-signed for loopback only
+and compromised by design, and the test-server credentials in
+`MurmurTestServer` are ephemeral values for the throwaway per-test
+server only. No production secrets, personal data, or hardware
+identifiers are committed here.
