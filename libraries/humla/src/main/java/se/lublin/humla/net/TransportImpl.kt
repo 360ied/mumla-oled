@@ -248,6 +248,8 @@ class TransportImpl internal constructor(
         if (HumlaTCP.isIpLiteral(original) || original.contains(":") ||
             TlsHostnameVerifier.isOnionHost(original)
         ) {
+            // contains(":") is subsumed by isIpLiteral (true for IPv6) but
+            // kept explicit at the call site for readability.
             resolvedPortRef.set(Constants.DEFAULT_PORT)
             return
         }
@@ -355,7 +357,8 @@ class TransportImpl internal constructor(
 
     // Cached wire-type lookup: HumlaTCPMessageType order IS the wire value
     // (frozen by the Mumble protocol); avoid values() allocation per frame.
-    private val tcpTypes = HumlaTCPMessageType.values()
+    // entries (not values()) matches FrameValidator.MESSAGE_TYPE_COUNT.
+    private val tcpTypes = HumlaTCPMessageType.entries.toTypedArray()
 
     private fun startReaderWriter(socket: javax.net.ssl.SSLSocket) {
         val input = DataInputStream(socket.inputStream)
@@ -526,11 +529,16 @@ class TransportImpl internal constructor(
             resync = msg.resync,
         )
         val localGood = voice.status.value.localCrypt.good
-        val usingUdp = usingUdpRef.get()
-        if ((remote.good == 0 || localGood == 0) && usingUdp && elapsed > UDP_GIVEUP_MICROS) {
+        if ((remote.good == 0 || localGood == 0) && usingUdpRef.get() && elapsed > UDP_GIVEUP_MICROS) {
             switchToTunnel("no good packets (remote=${remote.good} local=$localGood)")
-        } else if (!usingUdp && !forceTcp && remote.good > 3 && localGood > 3) {
-            usingUdpRef.set(true)
+        } else if (!forceTcp && !usingUdpRef.get() && remote.good > 3 && localGood > 3) {
+            // Guarded both directions with CAS: a concurrent switchToTunnel
+            // (voice-collector thread) may interleave on a stale read. The
+            // loser self-heals on the next ping round either way.
+            if (!usingUdpRef.compareAndSet(false, true)) {
+                _stats.update { it.copy(tcpLatencyMicros = tcpLatency, remoteCrypt = remote) }
+                return
+            }
             _stats.update { it.copy(usingUdp = true, tcpLatencyMicros = tcpLatency, remoteCrypt = remote) }
             voice.submit(VoiceCommand.SetVoiceRoute(true))
             logger.fine("Switching back to UDP mode")
@@ -558,6 +566,8 @@ class TransportImpl internal constructor(
                 .setPacket(ByteString.copyFrom(dummyTunnelPacket()))
                 .build()
             send(utb, HumlaTCPMessageType.UDPTunnel)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // Best effort; ping loop will retry the decision.
         }
@@ -635,7 +645,9 @@ class TransportImpl internal constructor(
 
     private fun failOnce(error: ClientError) {
         if (closed.get()) return
-        failureDeferred.complete(error)
+        // complete() is the once-gate: concurrent callers converge here and
+        // exactly one proceeds to close the socket.
+        if (!failureDeferred.complete(error)) return
         // Unblock the reader promptly; its failure path exits quietly on close.
         try {
             socketRef.get()?.close()
@@ -715,8 +727,9 @@ class DefaultTransportFactory : TransportFactory {
             }
             throw TransportException(ClientError.Connection("Connect failed: ${e.message}", e))
         } catch (e: Exception) {
-            // Programming/config bugs fail loud (crash reporter) instead of
-            // looping reconnects forever on a deterministic failure.
+            // Unexpected failures propagate to the client, which fails the
+            // attempt terminally (no retry, no crash): deterministic bugs
+            // stay visible instead of looping reconnects forever.
             try {
                 impl.close()
             } catch (ignored: Exception) {

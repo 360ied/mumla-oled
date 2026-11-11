@@ -61,7 +61,8 @@ interface LocalFactsStore {
     suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean)
 }
 
-/** In-memory store for tests and for the interim HumlaService bridge. */
+/** Test-only single-server store (also the interim HumlaService bridge).
+ * serverId is intentionally ignored: one instance holds one server's facts. */
 class InMemoryLocalFactsStore(
     initial: LocalFacts = LocalFacts.empty(),
 ) : LocalFactsStore {

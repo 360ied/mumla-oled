@@ -184,6 +184,8 @@ class HumlaTCP(
         try {
             if (mPort == 0) {
                 val host = mHost
+                // contains(":") is subsumed by isIpLiteral (true for IPv6)
+                // but kept explicit at the call site for readability.
                 if (host != null && !isIpLiteral(host) && !host.contains(":") &&
                     !TlsHostnameVerifier.isOnionHost(host)
                 ) {
