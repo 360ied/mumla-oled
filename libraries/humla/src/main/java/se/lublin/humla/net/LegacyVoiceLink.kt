@@ -51,7 +51,7 @@ import se.lublin.humla.protobuf.MumbleUDP
  * Android-free: no android.* imports. No tripwire patterns: uses
  * AtomicBoolean/AtomicInteger and coroutines, never synchronized/Volatile.
  */
-class LegacyVoiceLink(
+class LegacyVoiceLink @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : VoiceLink, VoiceLifecycle, HumlaUDP.UDPConnectionListener {
@@ -92,6 +92,8 @@ class LegacyVoiceLink(
         udp?.setTargetFramesPerPacket(targetFramesPerPacket)
     }
 
+    fun getTargetFramesPerPacket(): Int = targetFramesPerPacket
+
     override fun startVoice(host: String, port: Int) {
         connectUdp(host, port)
     }
@@ -101,7 +103,7 @@ class LegacyVoiceLink(
     }
 
     fun connectUdp(host: String, port: Int) {
-        if (forceTcp.get()) return
+        if (forceTcp.get() || !usingUdp.get()) return
         val existing = udp
         if (existing != null) return
         val created = HumlaUDP(crypt, this, udpExecutor, targetFramesPerPacket)

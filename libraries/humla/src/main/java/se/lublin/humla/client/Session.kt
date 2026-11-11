@@ -45,6 +45,7 @@ import se.lublin.humla.net.Inbound
 import se.lublin.humla.net.Transport
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.protobuf.Mumble
+import se.lublin.humla.protocol.HumlaTCPMessageListener
 import se.lublin.humla.state.ChannelHandle
 import se.lublin.humla.state.ChannelInfo
 import se.lublin.humla.state.SessionEvent
@@ -99,7 +100,42 @@ class Session internal constructor(
     private val workDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
 ) {
+    // Interim step-3 bridge (deleted in step 4 with VoicePolicy): the live
+    // AudioHandler still needs CodecVersion/ServerConfig/UserState updates
+    // for its mic gate and bandwidth degradation. Session broadcasts to
+    // registered TCP handlers after applying each transition.
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob() + workDispatcher)
+
+    private val tcpHandlers = java.util.concurrent.CopyOnWriteArrayList<HumlaTCPMessageListener>()
+
+    fun addTcpHandler(handler: HumlaTCPMessageListener) {
+        tcpHandlers.addIfAbsent(handler)
+    }
+
+    fun removeTcpHandler(handler: HumlaTCPMessageListener) {
+        tcpHandlers.remove(handler)
+    }
+
+    private fun broadcastTcp(type: HumlaTCPMessageType, message: com.google.protobuf.MessageLite) {
+        for (handler in tcpHandlers) {
+            try {
+                when (type) {
+                    HumlaTCPMessageType.CodecVersion ->
+                        handler.messageCodecVersion(message as Mumble.CodecVersion)
+                    HumlaTCPMessageType.ServerSync ->
+                        handler.messageServerSync(message as Mumble.ServerSync)
+                    HumlaTCPMessageType.ServerConfig ->
+                        handler.messageServerConfig(message as Mumble.ServerConfig)
+                    HumlaTCPMessageType.UserState ->
+                        handler.messageUserState(message as Mumble.UserState)
+                    HumlaTCPMessageType.UserRemove ->
+                        handler.messageUserRemove(message as Mumble.UserRemove)
+                    else -> Unit
+                }
+            } catch (ignored: Exception) {
+            }
+        }
+    }
 
     private val initialState: SessionState = run {
         var s = emptySessionState()
@@ -564,6 +600,15 @@ class Session internal constructor(
                 // Owned by the Transport (intercepted in the reader); never forwarded.
             }
             else -> Unit
+        }
+        // Interim AudioHandler bridge (step 4 deletes with VoicePolicy).
+        if (type == HumlaTCPMessageType.CodecVersion ||
+            type == HumlaTCPMessageType.ServerSync ||
+            type == HumlaTCPMessageType.ServerConfig ||
+            type == HumlaTCPMessageType.UserState ||
+            type == HumlaTCPMessageType.UserRemove
+        ) {
+            broadcastTcp(type, message)
         }
     }
 

@@ -87,6 +87,25 @@ class TransportImpl internal constructor(
 
         /** Dummy UDPTunnel payload telling the server to tunnel (3 zero bytes). */
         fun dummyTunnelPacket(): ByteArray = ByteArray(3)
+
+        /**
+         * Pure ping-interval policy (see transport.md keepalive). Extracted
+         * for JVM pinning (ported from HumlaConnection.getNextPingIntervalSeconds).
+         */
+        @JvmStatic
+        fun nextPingDelaySeconds(
+            elapsedMicros: Long,
+            remoteGood: Int,
+            localGood: Int,
+            usingUdp: Boolean,
+            forceTcp: Boolean,
+        ): Int {
+            if (elapsedMicros < BOOTSTRAP_DURATION_MICROS) return BOOTSTRAP_PING_SECONDS
+            if (!forceTcp && usingUdp) {
+                if (remoteGood <= 3 || localGood <= 3) return BOOTSTRAP_PING_SECONDS
+            }
+            return STEADY_PING_SECONDS
+        }
     }
 
     private val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob() + Dispatchers.IO)
@@ -528,14 +547,13 @@ class TransportImpl internal constructor(
     }
 
     private fun nextPingDelaySeconds(): Int {
-        val elapsed = elapsedMicros()
-        if (elapsed < BOOTSTRAP_DURATION_MICROS) return BOOTSTRAP_PING_SECONDS
-        if (!forceTcp && usingUdpRef.get()) {
-            val remoteGood = _stats.value.remoteCrypt.good
-            val localGood = voice.status.value.localCrypt.good
-            if (remoteGood <= 3 || localGood <= 3) return BOOTSTRAP_PING_SECONDS
-        }
-        return STEADY_PING_SECONDS
+        return nextPingDelaySeconds(
+            elapsedMicros(),
+            _stats.value.remoteCrypt.good,
+            voice.status.value.localCrypt.good,
+            usingUdpRef.get(),
+            forceTcp,
+        )
     }
 
     private fun sendKeepalivePing() {

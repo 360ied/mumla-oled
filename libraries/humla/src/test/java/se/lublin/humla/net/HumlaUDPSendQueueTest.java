@@ -115,29 +115,17 @@ public class HumlaUDPSendQueueTest extends TestCase {
     }
 
     /**
-     * Verifies connection/UDP agreement (ODD-09 Step 4): HumlaConnection sanitizes
+     * Verifies voice-link/UDP agreement (ODD-09 Step 4): LegacyVoiceLink sanitizes
      * frames-per-packet on set, so an invalid value (3) is stored as the default (2)
      * instead of diverging from the UDP layer.
      */
     public void testConnectionSanitizesFramesPerPacket() {
-        HumlaConnection.HumlaConnectionListener listener = new HumlaConnection.HumlaConnectionListener() {
-            @Override
-            public void onConnectionEstablished() {}
-            @Override
-            public void onConnectionSynchronized() {}
-            @Override
-            public void onConnectionHandshakeFailed(java.security.cert.X509Certificate[] chain,
-                                                    HandshakeFailure failure, String verifiedHost) {}
-            @Override
-            public void onConnectionDisconnected(HumlaException e) {}
-            @Override
-            public void onConnectionWarning(String warning) {}
-        };
-        HumlaConnection connection = new HumlaConnection(listener);
-        connection.setTargetFramesPerPacket(3);
-        assertEquals("Invalid fpp must be sanitized to default", 2, connection.getTargetFramesPerPacket());
-        connection.setTargetFramesPerPacket(4);
-        assertEquals("Valid degraded fpp must pass through", 4, connection.getTargetFramesPerPacket());
+        LegacyVoiceLink link = new LegacyVoiceLink(packet -> kotlin.Unit.INSTANCE);
+        link.setTargetFramesPerPacket(3);
+        assertEquals("Invalid fpp must be sanitized to default", 2, link.getTargetFramesPerPacket());
+        link.setTargetFramesPerPacket(4);
+        assertEquals("Valid degraded fpp must pass through", 4, link.getTargetFramesPerPacket());
+        link.close();
     }
 
     /**

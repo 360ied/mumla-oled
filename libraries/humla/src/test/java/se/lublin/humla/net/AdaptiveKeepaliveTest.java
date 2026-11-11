@@ -12,7 +12,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 package se.lublin.humla.net;
@@ -21,64 +21,42 @@ import junit.framework.TestCase;
 
 /**
  * Unit tests verifying adaptive keepalive ping intervals and state transitions.
+ * Ported from HumlaConnection to TransportImpl (same constants and policy).
  */
 public class AdaptiveKeepaliveTest extends TestCase {
 
     public void testKeepaliveConstants() {
-        assertEquals(5, HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS);
-        assertEquals(10, HumlaConnection.STEADY_STATE_PING_INTERVAL_SECONDS);
-        assertEquals(30_000_000L, HumlaConnection.BOOTSTRAP_DURATION_MICROS);
+        assertEquals(5, TransportImpl.BOOTSTRAP_PING_SECONDS);
+        assertEquals(10, TransportImpl.STEADY_PING_SECONDS);
+        assertEquals(30_000_000L, TransportImpl.BOOTSTRAP_DURATION_MICROS);
     }
 
     public void testInitialBootstrapIntervalIsFiveSeconds() {
-        HumlaConnection connection = new HumlaConnection(null);
-        connection.mStartTimestamp = System.nanoTime();
-        // At start (elapsed = 0, good = 0), interval must be bootstrap (5s)
-        assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+        assertEquals(TransportImpl.BOOTSTRAP_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(0L, 0, 0, true, false));
     }
 
     public void testBootstrapIntervalDuringFirstThirtySecondsEvenWithGoodPackets() {
-        HumlaConnection connection = new HumlaConnection(null);
-        connection.mStartTimestamp = System.nanoTime() - 10_000_000_000L; // 10s elapsed (< 30s)
-        connection.mCryptState.mUiGood = 10;
-        connection.mCryptState.mUiRemoteGood = 10;
-        assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+        assertEquals(TransportImpl.BOOTSTRAP_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(10_000_000L, 10, 10, true, false));
     }
 
     public void testBootstrapIntervalAfterThirtySecondsIfPacketsNotConfirmed() {
-        HumlaConnection connection = new HumlaConnection(null);
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L; // 35s elapsed (> 30s)
-
-        // Remote good not confirmed
-        connection.mCryptState.mUiGood = 10;
-        connection.mCryptState.mUiRemoteGood = 2;
-        assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
-
-        // Local good not confirmed
-        connection.mCryptState.mUiGood = 2;
-        connection.mCryptState.mUiRemoteGood = 10;
-        assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+        assertEquals(TransportImpl.BOOTSTRAP_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(35_000_000L, 2, 10, true, false));
+        assertEquals(TransportImpl.BOOTSTRAP_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(35_000_000L, 10, 2, true, false));
     }
 
     public void testSteadyStateTransitionAfterBootstrapAndConfirmation() {
-        HumlaConnection connection = new HumlaConnection(null);
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L; // 35s elapsed (> 30s)
-        connection.mCryptState.mUiGood = 4;
-        connection.mCryptState.mUiRemoteGood = 4;
-        assertEquals(HumlaConnection.STEADY_STATE_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+        assertEquals(TransportImpl.STEADY_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(35_000_000L, 4, 4, true, false));
     }
 
     public void testForceTcpModeTransitionsToSteadyStateAfterThirtySeconds() {
-        HumlaConnection connection = new HumlaConnection(null);
-        connection.setForceTCP(true);
-
-        // Before 30 seconds: bootstrap 5s
-        connection.mStartTimestamp = System.nanoTime() - 10_000_000_000L;
-        assertEquals(HumlaConnection.BOOTSTRAP_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
-
-        // After 30 seconds: even with 0 good crypt packets (UDP is disabled), transition to steady state 10s
-        connection.mStartTimestamp = System.nanoTime() - 35_000_000_000L;
-        assertEquals(HumlaConnection.STEADY_STATE_PING_INTERVAL_SECONDS, connection.getNextPingIntervalSeconds());
+        assertEquals(TransportImpl.BOOTSTRAP_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(10_000_000L, 10, 10, true, true));
+        assertEquals(TransportImpl.STEADY_PING_SECONDS,
+                TransportImpl.nextPingDelaySeconds(35_000_000L, 0, 0, true, true));
     }
-
 }

@@ -87,7 +87,7 @@ CONCURRENCY_EXTS = (".kt", ".java")
 GENERATED_MARKER = "se/lublin/humla/protobuf/"
 
 # package -> source dir (repo-relative). Missing package dirs pass trivially:
-# state/client do not exist yet, and voice_codec arrives in step 5a.
+# Missing package dirs pass trivially; voice_codec arrives in step 5a.
 ANDROID_FREE_PACKAGES = {
     "se.lublin.humla.state": "libraries/humla/src/main/java/se/lublin/humla/state",
     "se.lublin.humla.client": "libraries/humla/src/main/java/se/lublin/humla/client",
@@ -95,16 +95,8 @@ ANDROID_FREE_PACKAGES = {
 }
 # The TLS socket factory uses Android trust-store APIs by design.
 ANDROID_FREE_NET_EXCLUDE = {"HumlaSSLSocketFactory.kt"}
-# TODO(step3): legacy net files use Handler/Looper/Log today. The Transport
-# extraction makes net Android-free (except the factory above); remove this
-# grandfathering then. Starting without it would fail the gate on master,
-# and the script may only ever get stricter (removing exclusions is stricter).
-# Staging documented in enforcement.md (Android-free packages section).
-ANDROID_FREE_NET_LEGACY_EXCLUDE = {
-    "HumlaConnection.kt",
-    "HumlaTCP.kt",
-    "HumlaUDP.kt",
-}
+# Step 3 removed the legacy grandfathering (HumlaConnection deleted;
+# HumlaTCP and HumlaUDP are android-free via Executor/java-logging).
 
 RE_ANDROID_IMPORT = re.compile(r"^\s*import\s+android\.")
 RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
@@ -267,10 +259,7 @@ def scan_android_free(root: Path):
             for name in filenames:
                 if not name.endswith(CONCURRENCY_EXTS):
                     continue
-                if pkg == "se.lublin.humla.net" and (
-                    name in ANDROID_FREE_NET_EXCLUDE
-                    or name in ANDROID_FREE_NET_LEGACY_EXCLUDE
-                ):
+                if pkg == "se.lublin.humla.net" and name in ANDROID_FREE_NET_EXCLUDE:
                     continue
                 full = Path(dirpath) / name
                 rel = full.relative_to(root).as_posix()

@@ -17,7 +17,7 @@ app/src/main/java/se/lublin/mumla/service/MumlaMessageNotification.kt  1
 app/src/main/java/se/lublin/mumla/service/MumlaService.kt  12
 app/src/main/java/se/lublin/mumla/util/CrashReporter.kt  6
 app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
-libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt  29
+libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt  1
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt  14
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt  21
 libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt  8
@@ -27,7 +27,6 @@ libraries/humla/src/main/java/se/lublin/humla/audio/NativeAudioOutputEngine.kt  
 libraries/humla/src/main/java/se/lublin/humla/audio/inputmode/ToggleInputMode.kt  1
 libraries/humla/src/main/java/se/lublin/humla/model/Server.kt  5
 libraries/humla/src/main/java/se/lublin/humla/net/CryptState.kt  25
-libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.kt  19
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt  5
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt  3
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt  7
