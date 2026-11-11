@@ -17,7 +17,7 @@ them.
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
-| Talk-state bridge between 5a and step 7 | Specified in the step-5a switchover plan: level-based (`talkActivity` drives observer callbacks or handle reads, passive when absent), so no lost edge can stick an indicator — the step-2 fresh-handle regression must not be reintroduced as an edge-based bridge | Step 5a |
+| Talk-state bridge between 5a and step 7 | Specified in the step-5a switchover plan: the bridge carries no transition memory — `talkActivity` levels are the sole state (passive when absent), observer callbacks are repaint hints only, and every consumer re-reads the level on use (e.g. `UserHandle.talkState` reads `talkActivity.value` live). No dedup store, no edge forwarding; the step-2 fresh-handle regression must not return as a bridge | Step 5a |
 
 ## Open (not gating)
 
