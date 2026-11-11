@@ -139,6 +139,8 @@ class Session internal constructor(
                         handler.messageUserRemove(message as Mumble.UserRemove)
                     else -> Unit
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (ignored: Exception) {
             }
         }
@@ -161,6 +163,9 @@ class Session internal constructor(
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
     private val _events = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 256)
+    // Ordering: inbound events emit in message order, but intent events
+    // (self-mute, sent text) emit from session-scope launches and may
+    // overtake them. Consumers order by sentAt/receivedAtMillis.
     val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
     private val _stats = MutableStateFlow(SessionStats.initial(usingUdp = !target.forceTcp))
@@ -231,14 +236,21 @@ class Session internal constructor(
                         se.lublin.humla.net.VoiceStatus.initial()
                     }
                     _stats.update {
+                        val bandwidth = try {
+                            ProtobufMessages.calculateAudioBandwidth(
+                                status.bitrate,
+                                status.framesPerPacket,
+                            )
+                        } catch (e: Exception) {
+                            // Never let a bad encoder tuple kill this collector
+                            // (frozen stats); keep the previous value instead.
+                            it.currentBandwidth
+                        }
                         it.copy(
                             tcpLatencyMicros = t.tcpLatencyMicros,
                             udpLatencyMicros = t.udpLatencyMicros,
                             usingUdp = t.usingUdp,
-                            currentBandwidth = ProtobufMessages.calculateAudioBandwidth(
-                                status.bitrate,
-                                status.framesPerPacket,
-                            ),
+                            currentBandwidth = bandwidth,
                             localCrypt = status.localCrypt,
                             remoteCrypt = t.remoteCrypt,
                         )
@@ -253,12 +265,17 @@ class Session internal constructor(
             try {
                 voiceLink.status.collect { v ->
                     _stats.update {
-                        it.copy(
-                            localCrypt = v.localCrypt,
-                            currentBandwidth = ProtobufMessages.calculateAudioBandwidth(
+                        val bandwidth = try {
+                            ProtobufMessages.calculateAudioBandwidth(
                                 v.bitrate,
                                 v.framesPerPacket,
-                            ),
+                            )
+                        } catch (e: Exception) {
+                            it.currentBandwidth
+                        }
+                        it.copy(
+                            localCrypt = v.localCrypt,
+                            currentBandwidth = bandwidth,
                         )
                     }
                 }
@@ -536,16 +553,18 @@ class Session internal constructor(
                 if (!synced) {
                     val result = applyServerSync(syncingState, msg)
                     // Preserve local-only intents that landed pre-sync (PTT,
-                    // voice target): the private builder would clobber them.
-                    val preSyncLocal = _state.value.local
-                    syncingState = result.state.copy(
-                        local = result.state.local.copy(
-                            pttPressed = preSyncLocal.pttPressed,
-                            voiceTargetId = preSyncLocal.voiceTargetId,
-                        ),
-                    )
-                    synced = true
-                    _state.value = syncingState
+                    // voice target) atomically: read-then-publish would drop
+                    // a press racing this block, so merge inside update.
+                    _state.update { current ->
+                        syncingState = result.state.copy(
+                            local = result.state.local.copy(
+                                pttPressed = current.local.pttPressed,
+                                voiceTargetId = current.local.voiceTargetId,
+                            ),
+                        )
+                        synced = true
+                        syncingState
+                    }
                     emitAll(result.events)
                     // Fan out the initial dump for screens still on observers.
                     for (id in syncingState.server.channels.keys) {
@@ -750,14 +769,18 @@ class Session internal constructor(
     }
 
     fun setLocalMute(session: Int, muted: Boolean) {
-        var userId: Int? = null
+        // Live set first: a rejoin UserState racing this intent must observe
+        // the mute (the transition reads the set inside update). userId is
+        // immutable per user, so a stale pre-read only persists intent.
+        val userId = _state.value.server.users[session]?.userId
+        if (userId != null) {
+            if (muted) liveMutedIds.add(userId) else liveMutedIds.remove(userId)
+        }
         _state.update { current ->
-            userId = current.server.users[session]?.userId
             applyLocalMuteIntent(current, session, muted).state
         }
         val registered = userId
         if (registered != null) {
-            if (muted) liveMutedIds.add(registered) else liveMutedIds.remove(registered)
             val serverId = target.server.serverId
             scope.launch(ioDispatcher) {
                 try {
@@ -769,14 +792,16 @@ class Session internal constructor(
     }
 
     fun setLocalIgnore(session: Int, ignored: Boolean) {
-        var userId: Int? = null
+        // Same ordering rationale as setLocalMute above.
+        val userId = _state.value.server.users[session]?.userId
+        if (userId != null) {
+            if (ignored) liveIgnoredIds.add(userId) else liveIgnoredIds.remove(userId)
+        }
         _state.update { current ->
-            userId = current.server.users[session]?.userId
             applyLocalIgnoreIntent(current, session, ignored).state
         }
         val registered = userId
         if (registered != null) {
-            if (ignored) liveIgnoredIds.add(registered) else liveIgnoredIds.remove(registered)
             val serverId = target.server.serverId
             scope.launch(ioDispatcher) {
                 try {

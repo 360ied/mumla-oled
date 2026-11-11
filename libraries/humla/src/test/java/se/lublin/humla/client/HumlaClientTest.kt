@@ -39,6 +39,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.model.IChannel
@@ -81,6 +82,10 @@ private class FakeVoice : VoiceLink, VoiceLifecycle {
     override fun stopVoice() {
         stopsCount.incrementAndGet()
         order.add("voice-stop")
+    }
+
+    override fun setForceTcp(force: Boolean) {
+        order.add("voice-setforcetcp")
     }
 
     override fun setKeys(keys: CryptKeys) = Unit
@@ -144,15 +149,18 @@ private class FakeTransport(
 
 private class FakeFactory(
     var transports: ArrayDeque<FakeTransport> = ArrayDeque(),
-    var throwOnCreate: TransportException? = null,
+    var throwOnCreate: Throwable? = null,
+    var createGate: CompletableDeferred<Unit>? = null,
+    var swallowGateCancel: Boolean = false,
     val created: MutableList<CreateArgs> = Collections.synchronizedList(ArrayList()),
-    val createdForceTcp: MutableList<Boolean> = Collections.synchronizedList(ArrayList()),
 ) : TransportFactory {
     data class CreateArgs(
         val host: String,
         val port: Int,
         val certSize: Int?,
         val trustPath: String?,
+        val trustPassword: String?,
+        val trustFormat: String?,
         val forceTcp: Boolean,
     )
 
@@ -168,8 +176,20 @@ private class FakeFactory(
         forceTcp: Boolean,
         voice: VoiceLink,
     ): Transport {
-        createdForceTcp.add(forceTcp)
-        created.add(CreateArgs(host, port, certificate?.size, trustStorePath, forceTcp))
+        created.add(
+            CreateArgs(
+                host, port, certificate?.size, trustStorePath,
+                trustStorePassword, trustStoreFormat, forceTcp,
+            ),
+        )
+        val gate = createGate
+        if (gate != null) {
+            try {
+                gate.await()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (!swallowGateCancel) throw e
+            }
+        }
         val ex = throwOnCreate
         if (ex != null) throw ex
         val t = if (transports.isNotEmpty()) transports.removeFirst() else FakeTransport(!forceTcp)
@@ -321,6 +341,11 @@ class HumlaClientTest {
                 voice.stopVoice()
                 order.add("voice-stop")
             }
+
+            override fun setForceTcp(force: Boolean) {
+                voice.setForceTcp(force)
+                order.add("voice-setforcetcp")
+            }
         }
         val route = FakeRoute(order)
         val network = FakeNetwork()
@@ -364,6 +389,8 @@ class HumlaClientTest {
         assertEquals("127.0.0.1", factory.created[0].host)
         assertEquals(64738, factory.created[0].port)
         assertEquals(true, factory.created[0].forceTcp)
+        assertEquals(null, factory.created[0].certSize)
+        assertEquals(null, factory.created[0].trustPath)
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "alice", 0)))
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
@@ -372,6 +399,8 @@ class HumlaClientTest {
         assertTrue(client.state.value is ClientState.Connected)
         assertEquals(1, route.starts)
         assertEquals(1, voice.starts)
+        // Route pushed before the socket opened.
+        assertTrue(order.indexOf("voice-setforcetcp") < order.indexOf("voice-start"))
 
         client.disconnect()
         runCurrent()
@@ -383,7 +412,7 @@ class HumlaClientTest {
         val endIdx = order.indexOf("route-end")
         assertTrue(stopIdx >= 0 && endIdx >= 0 && stopIdx < endIdx)
         assertEdges(seen)
-        client.close()
+        client.close().join()
         collectJob.cancel()
     }
 
@@ -444,7 +473,7 @@ class HumlaClientTest {
         runCurrent()
         assertEquals(5, (client.state.value as ClientState.Connecting).attempt)
         assertEdges(seen)
-        client.close()
+        client.close().join()
         collectJob.cancel()
     }
 
@@ -481,7 +510,7 @@ class HumlaClientTest {
         advanceTimeBy(60_000)
         runCurrent()
         assertTrue(client.state.value is ClientState.Failed)
-        client.close()
+        client.close().join()
     }
 
     @Test
@@ -504,7 +533,7 @@ class HumlaClientTest {
         runCurrent()
         assertTrue(client.state.value is ClientState.Connecting)
         assertEquals(1, (client.state.value as ClientState.Connecting).attempt)
-        client.close()
+        client.close().join()
     }
 
     @Test
@@ -532,7 +561,7 @@ class HumlaClientTest {
         assertTrue(first !== second)
         assertTrue(firstFake.closed)
         assertTrue(client.state.value is ClientState.Connecting)
-        client.close()
+        client.close().join()
     }
 
     @Test
@@ -562,6 +591,86 @@ class HumlaClientTest {
         live.setSelfMuteDeaf(true, false)
         live.setPtt(true)
         runCurrent()
-        client.close()
+        client.close().join()
+    }
+
+    @Test
+    fun staleConnectFailureDoesNotClobberNewerAttempt() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        val factory = FakeFactory()
+        val voice = FakeVoice()
+        val route = FakeRoute(Collections.synchronizedList(ArrayList()))
+        val network = FakeNetwork()
+        val client = newClient(this, dispatcher, factory, voice, route, network)
+        runCurrent()
+        // Park attempt A in a non-cooperative factory that reports failure
+        // even after cancellation.
+        val gate = CompletableDeferred<Unit>()
+        factory.createGate = gate
+        factory.swallowGateCancel = true
+        factory.throwOnCreate = TransportException(ClientError.Connection("stale", null))
+        val targetA = testTarget()
+        client.connect(targetA)
+        runCurrent()
+        // Take over with B while A is parked; B parks behind the same gate.
+        val targetB = targetA.copy(server = targetA.server.copy(username = "InteropBob"))
+        client.connect(targetB)
+        runCurrent()
+        // A's stale failure must not touch B's pending attempt.
+        val connecting = client.state.value
+        assertTrue(connecting is ClientState.Connecting)
+        assertEquals("InteropBob", (connecting as ClientState.Connecting).target.server.username)
+        // Finish B normally; the stale A failure must not have torn it down.
+        factory.throwOnCreate = null
+        gate.complete(Unit)
+        runCurrent()
+        val liveB = client.currentSession.value!!
+        val fakeB = liveB.transport as FakeTransport
+        assertFalse(fakeB.closed)
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "InteropBob", 0)))
+        fakeB.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
+        runCurrent()
+        assertTrue(client.state.value is ClientState.Connected)
+        assertTrue(client.currentSession.value === liveB)
+        client.close().join()
+    }
+
+    @Test
+    fun ioErrorReconnectsButBugDoesNot() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        // IOException (DNS/TLS I/O class) reconnects.
+        run {
+            val factory = FakeFactory()
+            val voice = FakeVoice()
+            val route = FakeRoute(Collections.synchronizedList(ArrayList()))
+            val network = FakeNetwork()
+            val client = newClient(this, dispatcher, factory, voice, route, network)
+            runCurrent()
+            factory.throwOnCreate = java.io.IOException("dns")
+            client.connect(testTarget())
+            runCurrent()
+            assertTrue(client.state.value is ClientState.Reconnecting)
+            client.close().join()
+        }
+        // Programming bugs fail terminally instead of looping reconnects
+        // forever (and without crashing the process).
+        run {
+            val factory = FakeFactory()
+            val voice = FakeVoice()
+            val route = FakeRoute(Collections.synchronizedList(ArrayList()))
+            val network = FakeNetwork()
+            val client = newClient(this, dispatcher, factory, voice, route, network)
+            runCurrent()
+            factory.throwOnCreate = IllegalStateException("bug")
+            client.connect(testTarget())
+            runCurrent()
+            val failed = client.state.value
+            assertTrue(failed is ClientState.Failed)
+            val error = (failed as ClientState.Failed).error
+            assertTrue(error is ClientError.Connection)
+            assertTrue((error as ClientError.Connection).cause is IllegalStateException)
+            client.close().join()
+        }
     }
 }

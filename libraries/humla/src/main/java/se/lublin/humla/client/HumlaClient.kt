@@ -17,6 +17,7 @@
 
 package se.lublin.humla.client
 
+import java.io.IOException
 import java.time.Clock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -108,9 +109,6 @@ class HumlaClient(
     // Matches legacy parity: only a pending Reconnecting is disarmed; a live
     // Connecting attempt (even automatic) runs to outcome. Callers needing
     // to stop everything use disconnect().
-    // Matches legacy parity: only a pending Reconnecting is disarmed; a live
-    // Connecting attempt (even automatic) runs to outcome. Callers needing
-    // to stop everything use disconnect().
     fun cancelReconnect() {
         scope.launch(clientDispatcher) {
             val s = _state.value
@@ -125,12 +123,12 @@ class HumlaClient(
 
     /**
      * Best-effort shutdown (tests, service destroy): disarms timers, tears
-     * down the live session, then cancels the scope. Fire-and-forget;
-     * teardown itself has no suspensions, so parent cancellation cannot
-     * interrupt it mid-flight.
+     * down the live session, then cancels the scope. Returns the teardown
+     * job so tests can join it; teardown itself has no suspensions, so
+     * parent cancellation cannot interrupt it mid-flight.
      */
-    fun close() {
-        scope.launch(clientDispatcher) {
+    fun close(): Job {
+        return scope.launch(clientDispatcher) {
             cancelJobs()
             teardownLiveSession()
             scope.cancel()
@@ -159,7 +157,7 @@ class HumlaClient(
         netJob?.cancel()
     }
 
-    private suspend fun teardownLiveSession() {
+    private fun teardownLiveSession() {
         val session = liveSession
         if (session == null) return
         try {
@@ -239,7 +237,7 @@ class HumlaClient(
         } catch (e: TransportException) {
             onConnectFailed(target, e.error, lastState = null)
             return
-        } catch (e: java.io.IOException) {
+        } catch (e: IOException) {
             onConnectFailed(
                 target,
                 ClientError.Connection("Connect failed: ${e.message}", e),
@@ -247,9 +245,15 @@ class HumlaClient(
             )
             return
         } catch (e: Exception) {
-            // Programming/config bugs fail loud instead of looping
-            // reconnects forever on a deterministic failure.
-            throw e
+            // Unexpected failures fail terminally without retry: deterministic
+            // bugs must neither loop reconnects forever nor crash the process
+            // via an uncaught coroutine exception. The error stays visible.
+            teardownLiveSession()
+            _state.value = ClientState.Failed(
+                target,
+                ClientError.Connection("Connect failed: ${e.message}", e),
+            )
+            return
         }
         attemptScope.ensureActive()
         // Transport connected; create the session and publish it at once.
@@ -287,34 +291,28 @@ class HumlaClient(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                java.util.logging.Logger.getLogger("HumlaClient")
+                    .fine("Sync watcher dropped: $e")
             }
         }
         // Watch for failure -> Reconnecting/Failed.
         try {
             val error = session.failure.await()
-            try {
-                syncWatcher.cancel()
-            } catch (ignored: Exception) {
-            }
+            syncWatcher.cancel()
             onSessionFailed(target, session, error)
         } catch (e: CancellationException) {
             // Attempt cancelled (disconnect/new connect); the canceller tore
             // the session down. Propagate so the attempt job ends cancelled.
-            try {
-                syncWatcher.cancel()
-            } catch (ignored: Exception) {
-            }
+            syncWatcher.cancel()
             throw e
-        } catch (e: Exception) {
-            try {
-                syncWatcher.cancel()
-            } catch (ignored: Exception) {
-            }
         }
     }
 
     /** Control-flow signal: the sync watcher connected and retires. */
-    private class WatcherDone : Exception()
+    private class WatcherDone : Exception() {
+        // Thrown once per connection; no stack needed.
+        override fun fillInStackTrace(): Throwable = this
+    }
 
     private suspend fun onSynced(target: ConnectTarget, session: Session) {
         // Only the live session may publish Connected (a stale SYNCED after
@@ -360,6 +358,11 @@ class HumlaClient(
         error: ClientError,
         lastState: ServerState?,
     ) {
+        // Stale-attempt guard (mirrors the liveSession checks in onSynced /
+        // onSessionFailed): a cancelled attempt whose factory ignores
+        // cancellation can still report failure after a newer attempt took
+        // over. Never tear down or republish for it.
+        if (currentTarget != target) return
         // No session existed (DNS/TLS failure before Session). Teardown any
         // half-open voice/route (no-ops) for a clean state transition.
         teardownLiveSession()
