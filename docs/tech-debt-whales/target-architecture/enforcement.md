@@ -63,6 +63,7 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
 
   ```text
   libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt            # TCP reader thread (step 3 keeps the file)
+  libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt      # Transport reader thread (step 3 extracts the Transport)
   libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt
   libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt      # step 4
   libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt       # step 5a (step 4 uses voice/VoiceControl.kt, removed in 5a)

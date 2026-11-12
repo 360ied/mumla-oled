@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Documented as an interim in `migration.md` (ground rules, "Other recorded interims"). Choosing one source remains. |
 | Category | Undocumented interim |
 | Severity | Low (a display value from a second source) |
 | Verified | Yes |

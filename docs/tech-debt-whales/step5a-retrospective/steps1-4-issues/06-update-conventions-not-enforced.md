@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Partly resolved on `master`: both rules added to the pedantic review skill. The `ServerSync` lambda violation and the rule-2 sweep remain. |
 | Category | Verification gap (with one confirmed violation) |
 | Severity | Harmful (no defense against read-then-act races in state code) |
 | Verified | Yes |

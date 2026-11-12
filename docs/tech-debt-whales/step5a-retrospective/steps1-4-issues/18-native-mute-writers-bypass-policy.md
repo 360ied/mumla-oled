@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Documented as an interim in `migration.md` (ground rules, "Other recorded interims"). The single-writer fix remains (or ends with 5a.4). |
 | Category | Undocumented interim (documented in code, not in the spec) |
 | Severity | Moderate (two owners of the transmit gate; possible latched divergence) |
 | Verified | Code paths verified; a concrete latching sequence was not constructed |

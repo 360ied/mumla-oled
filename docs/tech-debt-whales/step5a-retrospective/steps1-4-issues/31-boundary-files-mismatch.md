@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Resolved on `master`: `enforcement.md` lists `TransportImpl.kt`. Whether `HumlaTCP.kt` stays a boundary file remains open. |
 | Category | Spec drift (enforcement record) |
 | Severity | Benign |
 | Verified | Yes |

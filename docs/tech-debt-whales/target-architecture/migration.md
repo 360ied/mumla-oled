@@ -45,6 +45,20 @@ steps, the kill criteria, and the decisions this work reverses.
   take `IHumlaObserver`, a main-thread poster, and the deny formatter so
   today's screens keep working. Step 7 removes them along with
   `IHumlaObserver`.
+- **Other recorded interims** (found by the
+  [steps 1–4 audit](../step5a-retrospective/steps1-4-issues/README.md)):
+  - Until step 6, the self-mute/deafen half of the interim
+    `LocalFactsStore` in `HumlaService` is a stub (loads unset, drops
+    writes); `MumlaService` restores self-mute after sync and persists it,
+    as before the migration. Step 6 moves both into the session and
+    `LocalFactsStore` in one change, so there is never zero or two owners.
+  - Until step 5a, `IHumlaService.getCurrentBandwidth` reads the current
+    `AudioHandler`, not `SessionStats.currentBandwidth`.
+  - Until step 5a.4, `AudioHandler.updateMuteState` and
+    `HumlaService.setTalkingState` also write the native mute/PTT gates,
+    alongside the per-frame `VoicePolicy` path described in
+    [voice](voice.md#interim-mute-step-4-before-5a); the two writers can
+    disagree until the policy next changes.
 - **Main-thread assertion.** From step 3 on, every method that may block
   (stream start and stop, platform route calls, thread joins) starts with
   `checkNotMainThread()`, a small helper that throws in debug builds and

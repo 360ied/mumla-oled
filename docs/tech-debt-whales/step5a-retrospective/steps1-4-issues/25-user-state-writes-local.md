@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Resolved on `master`: `state.md` names the self-echo exception in the intents rule, the `listeningVolumes` comment, and the `UserState` row. Optional test remains. |
 | Category | Spec inconsistency (code follows upstream; two spec statements conflict) |
 | Severity | Benign |
 | Verified | Yes |

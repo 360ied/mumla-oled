@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Documented as an interim in `migration.md` (ground rules, "Other recorded interims"). The step-6 fix remains. |
 | Category | Undocumented interim (behavior preserved from before the migration) |
 | Severity | Moderate: not a regression, but a spec mechanism that looks wired is dead in production, and a trap for steps 6/7 |
 | Verified | Yes |

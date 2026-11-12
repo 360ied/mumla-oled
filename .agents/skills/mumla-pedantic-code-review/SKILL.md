@@ -56,6 +56,8 @@ Instructions:
 - "See something, say something": if you stumble upon pre-existing defects, latent bugs, or hazards in surrounding code (even if not caused by the current changes), flag them as incidental findings.
 - Check both committed changes (`git diff master...HEAD`) and untracked/modified working tree files.
 - For Mumble protocol, audio pipeline, or connection changes, verify behavioral parity against upstream reference code in `../mumble` (or `../../mumble` from within a worktree).
+- Check the two state-update conventions (docs/tech-debt-whales/target-architecture/enforcement.md, "Remaining conventions") on every `MutableStateFlow.update {}` / `updateAndGet {}` / `getAndUpdate {}` in or near the change, and report violations as [DEFECT]: (1) no side effects inside the lambda (no assignments to fields or outer vars, no I/O, no emits or posts; the lambda may run more than once and only computes the new value); (2) decide inside the lambda, not after reading (code that reads `state.value` and then acts on what it read can act on a stale value; decisions that depend on current state are made inside `update`, and effects follow from its result; hold IDs across time, never `UserInfo`/`ChannelInfo` values).
+- If the change implements a migration step, check it against that step's spec sections, not just against itself. Report as [DEFECT] any code that diverges from the spec's threads, ownership, invariants, or realtime rules, and any edit in the branch to the step's own spec sections (migration ground rule: those land on `master` first).
 - This is a strictly read-only review: do not edit files, stage commits, or attempt fixes; your sole purpose is to identify and report issues.
 - Do not fabricate issues or report false positives. If no issues exist within a category, explicitly state that none were identified.
 
@@ -90,6 +92,22 @@ Instructions:
 - For Mumble protocol, audio pipeline, or connection changes, verify
   behavioral parity against upstream reference code in `../mumble`
   (or `../../mumble` from within a worktree).
+- Check the two state-update conventions
+  (docs/tech-debt-whales/target-architecture/enforcement.md, "Remaining
+  conventions") on every `MutableStateFlow.update {}` / `updateAndGet {}` /
+  `getAndUpdate {}` in or near your slice, and report violations as
+  [DEFECT]: (1) no side effects inside the lambda (no assignments to fields
+  or outer vars, no I/O, no emits or posts; the lambda may run more than
+  once and only computes the new value); (2) decide inside the lambda, not
+  after reading (code that reads `state.value` and then acts on what it read
+  can act on a stale value; decisions that depend on current state are made
+  inside `update`, and effects follow from its result; hold IDs across
+  time, never `UserInfo`/`ChannelInfo` values).
+- If the change implements a migration step, check your slice against that
+  step's spec sections, not just against itself. Report as [DEFECT] any code
+  that diverges from the spec's threads, ownership, invariants, or realtime
+  rules, and any edit in the branch to the step's own spec sections
+  (migration ground rule: those land on `master` first).
 - This is a strictly read-only review: do not edit files, stage commits, or
   attempt fixes; your sole purpose is to identify and report issues.
 - Do not fabricate issues or report false positives. If no issues exist

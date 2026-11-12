@@ -106,7 +106,7 @@ data class LocalState(
     val pttPressed: Boolean,
     val voiceTargetId: Int,                   // 0 = normal talking
     val whisperTargets: PersistentMap<Int, WhisperTarget>,   // registered VoiceTarget IDs 1..30
-    val listeningVolumes: PersistentMap<Int, Float>,         // per channel, as last sent
+    val listeningVolumes: PersistentMap<Int, Float>,         // per channel, as last sent or echoed for self
 )
 
 data class WhisperTarget(                     // today's WhisperTargetChannel
@@ -203,7 +203,7 @@ transitions in the state package; the others are handled where noted.
 | `CodecVersion` | State | `info.opus`. Today's code also records a CELT fallback, but nothing reads it: voice is Opus-only today and stays so |
 | `ChannelState` | State | Create or update `ChannelInfo`. Links are applied in today's order, each step only when its field is present: replace with `links`, then remove `links_remove`, then add `links_add` |
 | `ChannelRemove` | State | Remove the channel and its whole subtree (never the root); drop them from other channels' links; users inside lose their `channelId` until the server moves them, as `ModelHandler` does today. Also drop every removed ID from every user's `listeningChannels`: **an intentional fix**, since today's code only drops the top removed channel and leaks listeners on its subchannels |
-| `UserState` | State, [events](#events) | Create or update `UserInfo` (see [self-mute](#self-mute-and-deafen)); emit join, move, recording, and other users' self-mute events |
+| `UserState` | State, [events](#events) | Create or update `UserInfo` (see [self-mute](#self-mute-and-deafen)); for the local user, apply `listening_volume_adjustment` to `local.listeningVolumes`; emit join, move, recording, and other users' self-mute events |
 | `UserRemove` | State, client | Other user: remove and emit `UserLeft`. Self: the session fails with reason `USER_REMOVE` (no reconnect) |
 | `ServerSync` | State, transport, client | `selfSession`, `rootPermissions`, `maxBandwidth`, `welcomeText`; phase `SYNCED`; emit `WelcomeText` when present; transport starts pings; client publishes `Connected` |
 | `ServerConfig` | State | `info.settings`, `welcomeText`; `max_bandwidth` updates `info.maxBandwidth`, which lowers the encoder settings (see [voice](voice.md#voicepolicy)) |
@@ -264,7 +264,10 @@ fun effectiveSelfMute(s: SessionState): Boolean {
 ## User intents
 
 Intent methods on `Session` (see [client](client.md#intents)) are the only
-writers of `local` and of device-local `UserInfo` fields. Each is one
+writers of `local` and of device-local `UserInfo` fields, with one
+exception: a `UserState` echo for the local user carrying
+`listening_volume_adjustment` updates `local.listeningVolumes` (upstream
+`MainWindow::msgUserState` parity). Each is one
 `update` plus, where the protocol needs it, one outbound message:
 
 | Intent | State change | Outbound |
@@ -362,8 +365,12 @@ behind those interfaces would compile and silently freeze screens, so step
   `ChannelHandle(id, state) : IChannel`.
 - Every property read looks up the current value in `state.value`.
 - Each handle caches the last value it saw. When the user or channel is
-  gone from state, reads return that cached value, as a departed `User`
-  object does today.
+  gone from state, scalar reads return that cached value; navigation reads
+  (`channel`, `parent`, `users`, `subchannels`, `links`,
+  `subchannelUserCount`) return null, empty, or zero. This matches a
+  departed `User`/`Channel` before step 2, which kept its fields but was
+  detached (`ModelHandler` nulled `user.channel` and unlinked removed
+  channel subtrees).
 - Navigation properties return handles, not snapshots. Today they are
   typed as the concrete classes (`IUser.channel: Channel?`,
   `IChannel.parent: Channel?`, `users: List<User>`,
