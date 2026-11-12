@@ -5,6 +5,14 @@ of steps 1–4 against the [target architecture](../target-architecture/README.m
 at `71f96f81`, prompted by the 5a failure. Method: code read against the
 spec, plus `scripts/check_architecture.py`; no tests were run.
 
+> **Superseded in detail** by the deeper
+> [steps 1–4 audit](steps1-4-issues/README.md), which found two confirmed
+> regressions (SCO manager threading, transport leak on service destroy),
+> larger verification gaps than listed below, and route-state semantics
+> the spec describes but the code (like the pre-migration code) never
+> implemented. The verdict below still holds; "conform" should be read as
+> "conform in structure".
+
 ## Verdict
 
 Steps 1–4 conform to the design. Field evidence agrees: `v0.27.3`
