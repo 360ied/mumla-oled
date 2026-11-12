@@ -157,7 +157,21 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - server stopped and restarted on the same port → `Reconnecting` with the
   expected delays, then `Connected`;
 - forced TCP; UDP pings and the switch to tunnel mode when UDP is blocked;
-- from step 5a: voice between two clients over UDP and over the tunnel.
+- from step 5a: voice between two clients over UDP and over the tunnel
+  (tunnel from 5a.2, inbound UDP from 5a.3, both directions from 5a.4;
+  see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).
+
+**Voice scenarios run the real native path.** From step 5a.2, the host
+build of `libhumlaaudio` (crypto JNI only today) also carries the codec
+and voice JNI, and the interop test loads it and drives the real
+`VoiceEngine` (with synthetic PCM in place of `AudioRecord` and
+`AudioTrack`) against murmur. A stub voice link is acceptable only for
+scenarios that do not claim to cover voice, and must say so in its
+name.
+
+**Native loading on Android.** A debug build fails loudly at startup if
+`HumlaNative.ensureLoaded()` fails, so daily use of any snapshot catches a
+missing library immediately.
 
 **Harness validation (step 1's done-when).** The harness must catch a
 real past race. Take the stale-callback race fixed in `2e2a067d` ("bump
@@ -167,6 +181,13 @@ the first connection is still tearing down), and confirm it fails. Record
 the result in `PROGRESS.md`. If no past race can be reproduced, the
 harness cannot vouch for the later steps (see
 [migration](migration.md#kill-criteria)).
+
+Step 1 could not reproduce the race against `HumlaConnection` and deferred
+the check to step 3's virtual-time tests; it has not yet been run. The
+literal `2e2a067d` revert is no longer possible (that code is gone): the
+equivalent is to break `HumlaClient`'s stale-attempt guard and confirm
+`HumlaClientTest`'s stale-callback tests fail. Tracked in
+[open items](open-items.md#open-gating); it gates step 5a.
 
 ## On-device testing
 

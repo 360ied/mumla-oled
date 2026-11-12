@@ -15,7 +15,7 @@ changes proposed before 5a is attempted again.
 |---|---|
 | [what-went-wrong.md](what-went-wrong.md) | Post-mortem of the 5a attempt: how it failed, why no automated layer caught it, and how the design drifted |
 | [whats-still-fine.md](whats-still-fine.md) | Design-conformance audit of steps 1–4 against the spec, and the small gaps it found |
-| [proposed-spec-edits.md](proposed-spec-edits.md) | Proposed (not yet applied) edits to `migration.md`, `testing.md`, `open-items.md`, and `PROGRESS.md` |
+| [proposed-spec-edits.md](proposed-spec-edits.md) | Edits to `migration.md`, `testing.md`, `open-items.md`, and `PROGRESS.md` (applied) |
 
 ## Where the attempt lives
 

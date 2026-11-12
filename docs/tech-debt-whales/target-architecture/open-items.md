@@ -16,6 +16,9 @@ them.
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
+| Step 1 harness validation | Break `HumlaClient`'s stale-attempt guard in a throwaway worktree; `HumlaClientTest`'s stale-callback tests must fail 10 of 10, and pass 10 of 10 on `master`. Record in `PROGRESS.md` (see [testing](testing.md#murmur-interop)) | Step 5a |
+| Missing interop scenarios | Add kick → `Removed`, server restart → `Reconnecting` → `Connected`, self-mute/deafen echo, channel join and move, forced TCP and UDP → tunnel to `MurmurConnectTest` | Step 5a |
+| Voice interop harness | Host `libhumlaaudio` extended beyond crypto and loaded by the JVM interop test, driving `VoiceEngine` with synthetic PCM (see [testing](testing.md#murmur-interop)) | Step 5a.2 |
 
 ## Open (not gating)
 
@@ -24,8 +27,17 @@ them.
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8 |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
+| `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling) once the step-1 validation can catch a regression |
+| Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3 (remote) and 5a.4 (self) via `VoiceEngine.talkActivity` |
+| Upstream-parity codec changes | Found during the first 5a attempt, deferred out of 5a (no behavior changes inside the step): honor `volume_adjustment`; drop the 1.2.2 CELT workaround; empty `opus_data` terminator handling; legacy chaining tolerance. Land after 5a.4 as their own commits |
 
 ## Resolved
+
+Items resolved by the [step 5a retrospective](../step5a-retrospective/README.md):
+
+| Item | Resolution | Where |
+|---|---|---|
+| 5a sub-step order | Receive first (5a.3), then send (5a.4): verifiable by ear, and keeps the policy push out of the first native I/O slice | [migration](migration.md#step-5a--engine-refactor-codec-network-threads) |
 
 Items resolved by the 2026-11-10 spec review are marked *(review)*.
 

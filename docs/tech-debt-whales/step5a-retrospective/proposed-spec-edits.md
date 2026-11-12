@@ -1,8 +1,9 @@
 # Proposed Spec Edits
 
-Part of the [step 5a retrospective](README.md). **Proposals only: none of
-this is applied.** Each section names the target file and gives the
-proposed text. Rationale is in [what went wrong](what-went-wrong.md) and
+Part of the [step 5a retrospective](README.md). **Applied** to the spec on
+2026-11-12 as proposed, with receive first for 5a.3/5a.4; the spec files
+are now authoritative and this page is kept as the record of what changed
+and why. Each section names the target file and gives the proposed text. Rationale is in [what went wrong](what-went-wrong.md) and
 [what's still fine](whats-still-fine.md).
 
 `voice.md` needs no edit: the reset restored the original I/O-layer design
