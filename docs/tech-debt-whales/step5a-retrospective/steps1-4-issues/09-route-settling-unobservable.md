@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Decided 2026-11-12: spec follows code (option 1). `route.md` rewritten; no code change required beyond a `RouteControl` test pinning session start (first state `Ready` on the non-SCO route, then `Ready(VOICE_SCO)`). |
 | Category | Spec/behavior mismatch (behavior preserved from before the migration; the spec describes something never implemented) |
 | Severity | Harmful **for step 5a.3's design**, not a regression: daily behavior is unchanged from pre-migration |
 | Verified | Yes, against the current tree and the pre-step-4 tree |

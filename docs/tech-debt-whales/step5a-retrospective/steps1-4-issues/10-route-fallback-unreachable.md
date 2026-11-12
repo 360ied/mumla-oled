@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Decided 2026-11-12: option 1, `Fallback` defined by intent (SCO requested, not active, and a bring-up failed or the link dropped in this route session). `route.md` updated. **Code change remains**: `RouteControl.recompute` must publish `Fallback` on that condition for any decided route (track "SCO failed this route session"), not only for `VOICE_HANDSET`; the media-sink settle recheck must no longer produce `Fallback` by itself. |
 | Category | Spec/behavior mismatch (route decisions preserved from before the migration; the new state labels are mis-mapped) |
 | Severity | Harmful for the `RouteState` contract (state cannot express "SCO failed, degraded voice" in the common case); no change in audio behavior |
 | Verified | Yes |

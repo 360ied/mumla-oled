@@ -20,9 +20,11 @@ changes proposed before 5a is attempted again.
 
 ## Where the attempt lives
 
-The reset removed the attempt from local `master`. At the time of writing
-it is still reachable on `origin/master` and on the
-`bugfix/voice-load-library` branch (tip `db0733c4`). Key commits:
+The reset removed the attempt from `master`, and `origin/master` was
+force-pushed to match. The commits remain reachable only through the local
+`bugfix/voice-load-library` (tip `db0733c4`) and
+`bugfix/voice-jni-attach-ndk` branches, unless an archive tag is created
+(for example `git tag archive/step5a-attempt1 db0733c4`). Key commits:
 
 | Commit | What |
 |---|---|
@@ -34,5 +36,3 @@ it is still reachable on `origin/master` and on the
 | `2f4c09e2` | Merge of `target-arch-step5a-engine-codec-net` |
 | `ad666579` | Merge of the NDK `AttachCurrentThread` build fix |
 
-If `origin/master` is force-pushed, only the branch keeps these hashes
-alive.

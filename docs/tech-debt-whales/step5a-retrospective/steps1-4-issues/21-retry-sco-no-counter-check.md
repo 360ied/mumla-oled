@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Partly resolved on `master`: `route.md` now says `RetrySco` leaves the state `Fallback` until the link comes up or fails again (matches the code). The truthful `retryBluetoothSco()` result remains. |
 | Category | Spec drift |
 | Severity | Benign (downgraded from the audit's "harmful"; see Impact) |
 | Verified | Yes, against the current tree and the pre-step-4 tree |

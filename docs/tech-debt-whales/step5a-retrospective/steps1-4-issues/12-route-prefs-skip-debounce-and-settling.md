@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Resolved on `master` (spec follows code): `route.md` now says preference changes apply at once and re-decisions publish `Ready`/`Fallback` directly. |
 | Category | Spec drift |
 | Severity | Benign (no user-visible problem known) |
 | Verified | Yes (code read) |

@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Decided 2026-11-12: add `ClientError.Internal`. `client.md` updated (error type, diagram, reconnect policy, start sequence). **Code change remains**: add the type, use it in `HumlaClient.runAttempt`'s unexpected-exception branch, update `HumlaClientTest.ioErrorReconnectsButBugDoesNot`, and check app code that switches on `ClientError`. |
 | Category | Spec drift (deliberate in code, undocumented in spec) |
 | Severity | Benign |
 | Verified | Yes (code read) |

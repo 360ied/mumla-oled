@@ -120,6 +120,7 @@ sealed interface ClientError {
     data class Removed(val actor: Int?, val reason: String?, val ban: Boolean) : ClientError
     data class Trust(val chain: PersistentList<X509Certificate>, val failure: HandshakeFailure,
         val verifiedHost: String?) : ClientError                                    // TLS verification
+    data class Internal(val message: String, val cause: Throwable?) : ClientError    // unexpected failure (a bug); no reconnect
 }
 ```
 
@@ -137,7 +138,7 @@ stateDiagram-v2
     Connecting --> Reconnecting: Connection error
     Connected --> Reconnecting: Connection error
     Reconnecting --> Connecting: backoff elapsed or network available
-    Connecting --> Failed: Rejected, Removed, Trust
+    Connecting --> Failed: Rejected, Removed, Trust, Internal
     Connected --> Failed: Rejected, Removed
     Failed --> Connecting: connect
     Connecting --> Idle: disconnect
@@ -155,12 +156,18 @@ object tested by the existing `ReconnectBackoffTest` truth table:
 - **Which errors reconnect:** only `ClientError.Connection` (today's
   `CONNECTION_ERROR`). `Rejected`, `Removed`, and `Trust` go to `Failed`,
   because the user has to act (a trust prompt, a changed password, a ban).
+  `Internal` (an unexpected exception during connect, which indicates a
+  bug) also goes to `Failed`, so a deterministic bug cannot loop
+  reconnects; the error stays visible.
 - **Delays** by attempt number: 1 s, 3 s, 6 s, 12 s, then 25 s for every
   later attempt.
 - **Attempt counter:** incremented by each automatic attempt; reset when a
-  session reaches `Connected` and when the user disconnects. A manual
-  `connect` does *not* reset it: if a manual retry fails, the server is
-  still down, so the next automatic attempt keeps the grown delay.
+  session reaches `Connected`, when the user disconnects, and on
+  `cancelReconnect` (as today; the app's "cancel and connect now" goes
+  through `cancelReconnect`, so an explicit retry starts the delays fresh).
+  A bare manual `connect` does *not* reset it: if a manual retry fails, the
+  server is still down, so the next automatic attempt keeps the grown
+  delay.
 - **Network available:** while `Reconnecting`, a `NetworkMonitor`
   availability event cancels the timer and starts the next attempt
   immediately (incrementing the counter), as today's network callback does.
@@ -218,8 +225,9 @@ class Session internal constructor(
    dispatcher inside the attempt's scope, so `disconnect` or a new
    `connect` cancels it; cancellation closes any socket already opened. A
    verification failure completes `failure` with `ClientError.Trust`; any
-   other error before the session exists (DNS, connect, TLS I/O) is
-   `ClientError.Connection` and reconnects.
+   other I/O error before the session exists (DNS, connect, TLS I/O) is
+   `ClientError.Connection` and reconnects. Any other exception is
+   `ClientError.Internal` and ends in `Failed` without reconnecting.
 3. The client creates the `Session` with phase `HANDSHAKING` and publishes
    `Connecting`.
 4. The session sends `Version` and `Authenticate` (username, password,

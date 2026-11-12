@@ -223,11 +223,14 @@ many times per second.
 
 ### A Bluetooth headset connects
 
-The platform callback arrives on the route thread. `RouteControl` moves to
-`Settling`, then `Ready` with the headset. The voice control thread,
-following `RouteState`, keeps the current streams until `Ready`, then
-reopens them on the new device. The engines keep their state. Screens
-showing the route update from the same state.
+The platform callback arrives on the route thread. After the 300 ms
+debounce, `RouteControl` re-decides: with SCO requested it starts the SCO
+link and publishes `Ready` on the media route the headset exposes, then
+`Ready(VOICE_SCO)` once the link is up (or `Fallback` if bring-up fails).
+The voice control thread, following `RouteState`, reopens its streams on
+each change of route or profile. The engines keep their state. Screens
+showing the route update from the same state (see
+[route](route.md#routestate)).
 
 ### The network drops
 

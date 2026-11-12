@@ -60,7 +60,7 @@ Scenarios:
 - the reconnect delay sequence and counter rules (from
   `ReconnectBackoffTest`);
 - mute, deafen, and PTT spam during connect and disconnect;
-- route flaps mid-connect, SCO failure while `Settling`, `RetrySco`;
+- route flaps mid-connect, SCO failure during the first bring-up (`Ready` → `Fallback`), `RetrySco` from `Fallback`;
 - `Reject`, removal of self, and a trust failure each ending in `Failed`
   with no reconnect;
 - forced TCP from `ServerSync`, the UDP-to-tunnel switch and back, and a

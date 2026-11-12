@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Decided 2026-11-12: `route.md` now requires `RouteChanged` whenever the published state changes, including rechecks. **Code change remains** (drop the `isRecheck` suppression). |
 | Category | Spec drift |
 | Severity | Benign today (the only subscriber ignores `RouteChanged`); a trap for future consumers |
 | Verified | Yes (code read) |

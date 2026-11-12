@@ -18,7 +18,6 @@ them.
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
 | Step 1 harness validation | Break `HumlaClient`'s stale-attempt guard in a throwaway worktree; `HumlaClientTest`'s stale-callback tests must fail 10 of 10, and pass 10 of 10 on `master`. Record in `PROGRESS.md` (see [testing](testing.md#murmur-interop)) | Step 5a |
 | Missing interop scenarios | Add kick → `Removed`, server restart → `Reconnecting` → `Connected`, self-mute/deafen echo, channel join and move, forced TCP and UDP → tunnel to `MurmurConnectTest` | Step 5a |
-| Route-state semantics | `Settling` is never observable and `Fallback` is unreachable when a media sink exists (pre-migration behavior, mislabeled by step 4). Decide: correct `route.md` to match, or implement the spec. See [issues 09–12](../step5a-retrospective/steps1-4-issues/README.md) | Step 5a.3 |
 | `VoiceLink` contract as implemented | Transport does not push the initial `SetVoiceRoute`; UDP format is re-decided per packet in the link. Make the transport the sole owner, as `transport.md` says, before the native engine implements the contract. See [issues 16–17](../step5a-retrospective/steps1-4-issues/README.md) | Step 5a.3 |
 | `Session`/`TransportImpl` virtual-time tests | Most specified scenarios and all five per-step invariants are missing; no `Session` or `TransportImpl` tests. See [issues 04–05](../step5a-retrospective/steps1-4-issues/README.md) | Step 5a.3 |
 | SCO manager confinement | `BluetoothScoManager` runs on main while `RouteControl` calls it from the route thread. Confine it to the route thread per `route.md`. See [issue 01](../step5a-retrospective/steps1-4-issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3 |
@@ -41,6 +40,7 @@ Items resolved by the [step 5a retrospective](../step5a-retrospective/README.md)
 
 | Item | Resolution | Where |
 |---|---|---|
+| Route-state semantics | Spec follows code (2026-11-12): `Ready` means decided, not confirmed; `Settling` is never observed; voice opens at once and restarts when SCO comes up. `Fallback` is redefined by intent (SCO requested, not active, a bring-up failed), reachable with a media sink; `RouteChanged` on every published change. Code follow-ups: [issues 10, 11](../step5a-retrospective/steps1-4-issues/README.md) | [route](route.md#routestate) |
 | 5a sub-step order | Receive first (5a.3), then send (5a.4): verifiable by ear, and keeps the policy push out of the first native I/O slice | [migration](migration.md#step-5a--engine-refactor-codec-network-threads) |
 
 Items resolved by the 2026-11-10 spec review are marked *(review)*.

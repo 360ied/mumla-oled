@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Resolved on `master` (spec follows code): `client.md` lists `cancelReconnect` among the counter resets. A `HumlaClientTest` case pinning it remains. |
 | Category | Spec/behavior mismatch (behavior preserved from before the migration) |
 | Severity | Benign as a regression question (none); the spec's rule and the code disagree |
 | Verified | Yes, against the current tree and the pre-step-3 tree |

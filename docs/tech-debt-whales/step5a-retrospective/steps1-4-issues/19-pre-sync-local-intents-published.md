@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Decided 2026-11-12: allow and document (option 2). `state.md` describes the pre-sync carry-over of `pttPressed`/`voiceTargetId`. **Code change remains**: move the `syncingState`/`synced` assignments out of the `update` lambda (also closes the issue-06 violation), and add the PTT-during-sync test. |
 | Category | Undocumented interim |
 | Severity | Low-to-moderate (works today; fragile, and the merge lambda breaks a convention) |
 | Verified | Yes (code read) |

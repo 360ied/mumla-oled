@@ -61,7 +61,7 @@ class RouteControl(platform: AudioPlatform, sco: ScoLink?, prefs: Flow<RoutePref
 sealed interface RouteCommand {
     data object SessionStarted : RouteCommand
     data object SessionEnded : RouteCommand
-    data object RetrySco : RouteCommand       // today's retryBluetoothSco; its boolean result becomes the next RouteState
+    data object RetrySco : RouteCommand       // today's retryBluetoothSco; state stays Fallback until the link comes up or fails again
 }
 
 data class RoutePreferences(
@@ -102,20 +102,51 @@ enum class StreamProfile {
 travel with the profile as they do today (see
 [echo cancellation](../../echo-cancellation/README.md)).
 
+**What each state means.** These semantics describe the behavior the
+pre-migration controller already had; they were settled on 2026-11-12
+(see the [step 5a retrospective](../step5a-retrospective/steps1-4-issues/09-route-settling-unobservable.md))
+in preference to holding voice until SCO is confirmed, which would add a
+short silence at every Bluetooth connect.
+
+- `Settling(target)` is written at `SessionStarted` and replaced by the
+  first decision in the same route-thread step. Collectors may never
+  observe it, and nothing may depend on seeing it; voice treats it as
+  "keep whatever streams are open".
+- `Ready(route, profile)` means a route has been **decided**, not that it
+  is confirmed: `VOICE_SCO` when the SCO link is active; otherwise
+  `VOICE_HANDSET` when no media output device is present ("voice by
+  absence"); otherwise `MEDIA`. While an SCO bring-up is in progress the
+  decision is the non-SCO route, and it changes to `VOICE_SCO` when the
+  link comes up.
+- `Fallback(route, profile, reason)` means SCO is requested in preferences
+  and not active, **and** a bring-up has failed (or the link dropped) in
+  this route session. `route` is whatever was decided (`VOICE_HANDSET` or
+  `MEDIA`). It is defined by intent, not by route, so it is reachable with
+  a media sink present.
+
 | Transition | When |
 |---|---|
-| `Idle` → `Settling` | `SessionStarted` |
-| `Settling` → `Ready` | The decided route is confirmed (SCO link up, or no SCO wanted) |
-| `Settling` → `Fallback` | SCO fails, or the settle budget runs out (today's 3 s recheck, at most 2 rechecks) |
-| `Ready`/`Fallback` → `Settling` | A device change or preference change produces a different decision (after today's 300 ms debounce) |
-| `Fallback` → `Settling` | `RetrySco`, only when today's `retrySco` preconditions hold (SCO requested in preferences, a session is live, the SCO link exists and is idle, and the route-session counter has not moved); otherwise the command does nothing |
+| `Idle` → `Settling` → first decision | `SessionStarted` (one step; see above) |
+| `Ready` ↔ `Ready` (different route) | A device change (after today's 300 ms debounce), a preference change (applied at once, as today), the SCO link coming up or going down, or a media-sink settle recheck changes the decision |
+| `Ready` → `Fallback` | SCO bring-up fails (the SCO manager's per-attempt connect timeout plus one retry), or an active SCO link drops while SCO is still requested |
+| `Fallback` → `Ready(VOICE_SCO)` | The SCO link comes up (after `RetrySco` or a device change) |
+| `Fallback` → `Ready` (non-SCO) | SCO is no longer requested |
+| `Fallback`, `RetrySco` | When SCO is requested, a session is live, and the SCO link exists and is idle: start the link; the state stays `Fallback` until the link comes up or fails again. Otherwise the command does nothing |
 | any → `Idle` | `SessionEnded` (SCO released, mode restored) |
 
-**Events:** `ScoFailed(reason)` when entering `Fallback` because of SCO,
-and `RouteChanged` on every entry to `Ready` or `Fallback`. A feature shows
-the SCO failure message (today's `scoFailureMessage` bucketing in
-`MumlaService`); screens
-and features read the current route from `state`.
+**Two timers, two owners.** The SCO bring-up budget (per-attempt connect
+timeout plus one retry) belongs to the SCO manager and is what leads to
+`Fallback`. The **media-sink settle recheck** (3 s, at most 2 rechecks)
+belongs to `RouteControl`: while the decision is `VOICE_HANDSET` by
+absence, it re-checks whether a media sink has appeared (late A2DP
+enumeration). It never produces `Fallback` by itself.
+
+**Events:** `ScoFailed(reason)` whenever an SCO bring-up fails (which,
+under the definition above, always coincides with entering or staying in
+`Fallback`), and `RouteChanged` whenever the published state changes,
+including changes made by a settle recheck. A feature shows the SCO
+failure message (today's `scoFailureMessage` bucketing in `MumlaService`);
+screens and features read the current route from `state`.
 
 ## Session start
 
@@ -127,11 +158,12 @@ sequenceDiagram
 
     C->>R: SessionStarted
     C->>V: Start(address, keys, format)
-    Note over V: sockets and network threads start,<br/>capture and render wait
-    R-->>V: RouteState = Settling(VOICE_SCO)
-    Note over R: SCO bring-up (up to the settle budget)
+    Note over V: sockets and network threads start
+    R-->>V: RouteState = Ready(MEDIA or VOICE_HANDSET)
+    Note over V: open capture and render with that profile
+    Note over R: SCO bring-up starts (SCO requested)
     R-->>V: RouteState = Ready(VOICE_SCO, VOICE)
-    Note over V: open capture and render with the VOICE profile
+    Note over V: restart capture and render with the VOICE profile
     C->>V: Stop (on teardown)
     C->>R: SessionEnded
     R-->>V: RouteState = Idle
@@ -143,20 +175,21 @@ Rules:
   then `Start` to voice. Teardown: `Stop` to voice, then `SessionEnded` to
   route.
 - **Voice follows route state.** The `VoiceEngine` control thread collects
-  `RouteState`. It opens capture and render only in `Ready` or `Fallback`,
-  using that state's profile. While `Settling`, it keeps whatever streams
-  are open (none at session start). On a new `Ready`/`Fallback` with a
-  different route or profile, it restarts the streams. On `Idle`, it stops
-  them.
+  `RouteState`. It opens capture and render in `Ready` or `Fallback`, using
+  that state's profile. While `Settling` (never observed in practice), it
+  keeps whatever streams are open. On a new `Ready`/`Fallback` with a
+  different route or profile, it restarts the streams; a change between
+  `Ready` and `Fallback` with the same route and profile does not restart
+  them. On `Idle`, it stops them.
 - **Route never waits for voice, and voice never calls route.** The
   dependency is one-way, so they cannot deadlock or loop.
 - **Network voice starts immediately.** Sockets, crypt, and the network
   threads start on `Start`, so inbound voice is buffered (and pings flow)
-  while the route settles; only the audio device waits.
+  from the first moment.
 
-The cost is a short silence at connect while SCO settles, bounded by the
-existing settle budget. This matches today, where pipeline creation also
-waits for the route decision.
+The cost is one extra stream restart when SCO comes up after the first
+decision (a short audible route switch at Bluetooth connect). This is
+today's behavior and was kept deliberately over connect-time silence.
 
 ## Migration notes
 
