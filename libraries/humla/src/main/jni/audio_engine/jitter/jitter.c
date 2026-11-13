@@ -155,6 +155,9 @@ struct JitterBuffer_ {
    spx_uint32_t arrival[SPEEX_JITTER_MAX_BUFFER_SIZE];         /**< Packet arrival time (0 means it was late, even though it's a valid timestamp) */
    
    void (*destroy) (void *);                                   /**< Callback for destroying a packet */
+   void *packet_alloc_ctx;                                     /**< Context for the packet store hooks */
+   void *(*packet_alloc) (void *ctx, spx_uint32_t len);         /**< Packet byte allocator (NULL: calloc) */
+   void (*packet_free) (void *ctx, void *data);                /**< Packet byte releaser (NULL: free) */
 
    spx_int32_t delay_step;                                     /**< Size of the steps when adjusting buffering (timestamp units) */
    spx_int32_t concealment_size;                               /**< Size of the packet loss concealment "units" */
@@ -277,6 +280,43 @@ static spx_int16_t compute_opt_delay(JitterBuffer *jitter)
 }
 
 
+/** Hand packet storage to a shared pool instead of the C heap. */
+EXPORT void jitter_buffer_set_packet_allocator(JitterBuffer *jitter,
+                                               void *(*alloc_fn)(void *ctx, spx_uint32_t len),
+                                               void (*free_fn)(void *ctx, void *data),
+                                               void *ctx)
+{
+   jitter->packet_alloc = alloc_fn;
+   jitter->packet_free = free_fn;
+   jitter->packet_alloc_ctx = ctx;
+}
+
+/** Releases one packet's bytes through whichever owner applies. */
+static void jitter_packet_release(JitterBuffer *jitter, char *data)
+{
+   if (data == NULL)
+      return;
+   if (jitter->destroy)
+   {
+      jitter->destroy(data);
+      return;
+   }
+   if (jitter->packet_free)
+   {
+      jitter->packet_free(jitter->packet_alloc_ctx, data);
+      return;
+   }
+   speex_free(data);
+}
+
+/** Acquires storage for one packet's bytes, or NULL when the pool is full. */
+static char *jitter_packet_acquire(JitterBuffer *jitter, spx_uint32_t len)
+{
+   if (jitter->packet_alloc)
+      return (char*)jitter->packet_alloc(jitter->packet_alloc_ctx, len);
+   return (char*)speex_alloc(len);
+}
+
 /** Initialise jitter buffer */
 EXPORT JitterBuffer *jitter_buffer_init(int step_size)
 {
@@ -293,6 +333,9 @@ EXPORT JitterBuffer *jitter_buffer_init(int step_size)
       jitter->buffer_margin = 0;
       jitter->late_cutoff = 50;
       jitter->destroy = NULL;
+      jitter->packet_alloc = NULL;
+      jitter->packet_free = NULL;
+      jitter->packet_alloc_ctx = NULL;
       jitter->latency_tradeoff = 0;
       jitter->auto_adjust = 1;
       tmp = 4;
@@ -310,10 +353,7 @@ EXPORT void jitter_buffer_reset(JitterBuffer *jitter)
    {
       if (jitter->packets[i].data)
       {
-         if (jitter->destroy)
-            jitter->destroy(jitter->packets[i].data);
-         else
-            speex_free(jitter->packets[i].data);
+         jitter_packet_release(jitter, jitter->packets[i].data);
          jitter->packets[i].data = NULL;
       }
    }
@@ -373,8 +413,10 @@ static void shift_timings(JitterBuffer *jitter, spx_int16_t amount)
 }
 
 
-/** Put one packet into the jitter buffer */
-EXPORT void jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *packet)
+/** Put one packet into the jitter buffer. Returns JITTER_BUFFER_OK, or
+ *  JITTER_BUFFER_POOL_EXHAUSTED when the packet store could not supply bytes
+ *  (the packet is dropped). */
+EXPORT int jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *packet)
 {
    int i,j;
    int late;
@@ -389,10 +431,7 @@ EXPORT void jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *pa
          if (jitter->packets[i].data && LE32(jitter->packets[i].timestamp + jitter->packets[i].span, jitter->pointer_timestamp))
          {
             /*fprintf (stderr, "cleaned (not played)\n");*/
-            if (jitter->destroy)
-               jitter->destroy(jitter->packets[i].data);
-            else
-               speex_free(jitter->packets[i].data);
+            jitter_packet_release(jitter, jitter->packets[i].data);
             jitter->packets[i].data = NULL;
          }
       }
@@ -439,10 +478,7 @@ EXPORT void jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *pa
                i=j;
             }
          }
-         if (jitter->destroy)
-            jitter->destroy(jitter->packets[i].data);
-         else
-            speex_free(jitter->packets[i].data);
+         jitter_packet_release(jitter, jitter->packets[i].data);
          jitter->packets[i].data=NULL;
          /*fprintf (stderr, "Buffer is full, discarding earliest frame %d (currently at %d)\n", timestamp, jitter->pointer_timestamp);*/      
       }
@@ -452,8 +488,15 @@ EXPORT void jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *pa
       {
          jitter->packets[i].data = packet->data;
       } else {
-         jitter->packets[i].data=(char*)speex_alloc(packet->len);
-         for (j=0;j<packet->len;j++)
+         char *bytes = jitter_packet_acquire(jitter, packet->len);
+         if (bytes == NULL)
+         {
+            /* The shared packet store is full: drop this packet instead of
+             * squeezing it into a slot that belongs to another voice. */
+            return JITTER_BUFFER_POOL_EXHAUSTED;
+         }
+         jitter->packets[i].data = bytes;
+         for (j=0;j<(int)packet->len;j++)
             jitter->packets[i].data[j]=packet->data[j];
       }
       jitter->packets[i].timestamp=packet->timestamp;
@@ -466,8 +509,8 @@ EXPORT void jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *pa
       else
          jitter->arrival[i] = jitter->next_stop;
    }
-   
-   
+
+   return JITTER_BUFFER_OK;
 }
 
 /** Get one packet from the jitter buffer */
@@ -615,7 +658,7 @@ EXPORT int jitter_buffer_get(JitterBuffer *jitter, JitterBufferPacket *packet, s
          for (j=0;j<packet->len;j++)
             packet->data[j] = jitter->packets[i].data[j];
          /* Remove packet */
-         speex_free(jitter->packets[i].data);
+         jitter_packet_release(jitter, jitter->packets[i].data);
       }
       jitter->packets[i].data = NULL;
       /* Set timestamp and span (if requested) */
@@ -705,7 +748,7 @@ EXPORT int jitter_buffer_get_another(JitterBuffer *jitter, JitterBufferPacket *p
          for (j=0;j<packet->len;j++)
             packet->data[j] = jitter->packets[i].data[j];
          /* Remove packet */
-         speex_free(jitter->packets[i].data);
+         jitter_packet_release(jitter, jitter->packets[i].data);
       }
       jitter->packets[i].data = NULL;
       packet->timestamp = jitter->packets[i].timestamp;

@@ -223,6 +223,7 @@ public:
         RenderResult result;
         m_engine.render(out, samples, &result);
         deliver(result);
+        m_lastDroppedPackets = result.droppedPackets;
         return result.samples;
     }
 
@@ -232,6 +233,8 @@ public:
         m_engine.setJitterMarginFrames(frames);
     }
     size_t activeUserCount() const { return m_engine.activeUserCount(); }
+    size_t jitterSlotsInUse() const { return m_engine.jitterSlotsInUse(); }
+    uint32_t lastDroppedPackets() const { return m_lastDroppedPackets; }
 
 private:
     void deliver(const RenderResult& result) {
@@ -246,6 +249,7 @@ private:
 
     AudioOutputEngine m_engine;
     TalkCallback m_callback;
+    uint32_t m_lastDroppedPackets = 0;
 };
 
 std::unique_ptr<TestEngine> makeEngine(float level,
@@ -1020,6 +1024,114 @@ void testGateArithmeticSurvivesSequenceWrap() {
               << std::endl;
 }
 
+
+// The shared packet store is bounded: once every slot is held, further
+// packets are dropped and counted rather than growing the heap.
+void testJitterPoolExhaustionDropsAndCounts() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+
+    // Eight voices queueing 200 packets each: 1600 attempts against 1024
+    // slots. No render runs in between, so nothing is consumed.
+    const int voices = 8;
+    const uint32_t perVoice = 200;
+    for (int32_t s = 1; s <= voices; ++s) {
+        for (uint32_t p = 0; p < perVoice; ++p) {
+            queueOne(*engine, s, p);
+        }
+    }
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(),
+                   AudioOutputEngine::JITTER_SLOT_COUNT);
+
+    std::vector<int16_t> out(kFrame, 0);
+    engine->renderMix(out.data(), out.size());
+    const uint32_t expectedDrops =
+        static_cast<uint32_t>(voices) * perVoice -
+        static_cast<uint32_t>(AudioOutputEngine::JITTER_SLOT_COUNT);
+    TEST_ASSERT_EQ(engine->lastDroppedPackets(), expectedDrops);
+
+    // Drops are reported once, for the render that followed them.
+    engine->renderMix(out.data(), out.size());
+    TEST_ASSERT_EQ(engine->lastDroppedPackets(), 0u);
+
+    // Rendering returns slots to the store, so new packets are accepted again.
+    TEST_ASSERT_TRUE(engine->jitterSlotsInUse() <
+                     AudioOutputEngine::JITTER_SLOT_COUNT);
+    queueOne(*engine, 99, 0);
+    TEST_ASSERT_TRUE(engine->activeUserCount() >= 1u);
+    std::cout << "  [PASS] testJitterPoolExhaustionDropsAndCounts (" 
+              << expectedDrops << " dropped)" << std::endl;
+}
+
+// Pool sizing evidence: 32 voices under heavy jitter adaptation for 60
+// simulated seconds must never exhaust the store. The peak is printed so the
+// slot count can be set from data rather than guessed.
+void testJitterPoolStress() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    // The production margin (4 frames) is kept: the buffer holds the promised
+    // cushion, which is what the store must cover per voice.
+
+    constexpr int kVoices = AudioOutputEngine::MAX_VOICES;
+    constexpr int kFrames = 6000; // 60 s of 10 ms frames
+    uint32_t rng = 0x9E3779B9u;
+    auto next = [&rng]() {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return rng;
+    };
+
+    size_t peakSlots = 0;
+    uint32_t drops = 0;
+    std::vector<int16_t> out(kFrame, 0);
+    // One 10 ms packet per voice per 20 ms on average, with deterministic
+    // loss, reordering and compression bursts: a burst delivers the next few
+    // packets at once and the following rounds are skipped, so the mean rate
+    // matches consumption while the buffers repeatedly fill and drain under
+    // adaptation.
+    uint32_t sequence[kVoices] = {};
+    int skipRounds[kVoices] = {};
+    for (int frame = 0; frame < kFrames; ++frame) {
+        if (frame % 2 == 0) {
+            for (int v = 0; v < kVoices; ++v) {
+                if (skipRounds[v] > 0) {
+                    --skipRounds[v];
+                    continue;
+                }
+                const int burst = (next() % 4 == 0) ? 3 : 1;
+                skipRounds[v] = burst - 1;
+                for (int k = 0; k < burst; ++k) {
+                    const uint32_t roll = next() % 100;
+                    if (roll < 3) {
+                        sequence[v] += 1; // lost packet: leave a hole
+                    }
+                    const uint32_t seq = sequence[v];
+                    sequence[v] += 1;
+                    if (roll >= 3 && roll < 8) {
+                        // Reordered: send the next packet first, then this one.
+                        queueOne(*engine, 1000 + v, seq + 1);
+                    }
+                    queueOne(*engine, 1000 + v, seq);
+                }
+            }
+        }
+        engine->renderMix(out.data(), out.size());
+        drops += engine->lastDroppedPackets();
+        peakSlots = std::max(peakSlots, engine->jitterSlotsInUse());
+    }
+
+    TEST_ASSERT_EQ(drops, 0u);
+    TEST_ASSERT_TRUE(peakSlots <= AudioOutputEngine::JITTER_SLOT_COUNT);
+    TEST_ASSERT_TRUE(peakSlots > 0u);
+    std::cout << "  [PASS] testJitterPoolStress (peak " << peakSlots
+              << " of " << AudioOutputEngine::JITTER_SLOT_COUNT << " slots)"
+              << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -1053,4 +1165,6 @@ void run_audio_output_engine_tests() {
     testUnrecoverableLossConcealsSilently();
     testLossBoundaryCrossfadeSmoothsStep();
     testLosslessMixHasNoCrossfade();
+    testJitterPoolExhaustionDropsAndCounts();
+    testJitterPoolStress();
 }

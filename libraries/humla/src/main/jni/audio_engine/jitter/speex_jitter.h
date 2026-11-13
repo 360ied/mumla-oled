@@ -67,6 +67,8 @@ struct _JitterBufferPacket {
 #define JITTER_BUFFER_INSERTION 2
 /** There was an error in the jitter buffer */
 #define JITTER_BUFFER_INTERNAL_ERROR -1
+/** The packet store could not supply bytes; the packet was dropped */
+#define JITTER_BUFFER_POOL_EXHAUSTED -3
 /** Invalid argument */
 #define JITTER_BUFFER_BAD_ARGUMENT -2
 
@@ -109,7 +111,20 @@ void jitter_buffer_reset(JitterBuffer *jitter);
 void jitter_buffer_destroy(JitterBuffer *jitter);
 
 /** Put one packet into the jitter buffer */
-void jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *packet);
+int jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *packet);
+
+/**
+ * Route packet-byte storage through a shared pool instead of the C heap.
+ * The allocator receives the packet length and returns storage for it (NULL
+ * when the pool is exhausted); the releaser gets that pointer back. A pool is
+ * per jitter buffer instance but may be shared by many of them. Setting the
+ * destroy callback instead transfers byte ownership to the caller and takes
+ * precedence over these hooks.
+ */
+void jitter_buffer_set_packet_allocator(JitterBuffer *jitter,
+                                        void *(*alloc_fn)(void *ctx, spx_uint32_t len),
+                                        void (*free_fn)(void *ctx, void *data),
+                                        void *ctx);
 
 /** Get one packet from the jitter buffer */
 int jitter_buffer_get(JitterBuffer *jitter, JitterBufferPacket *packet, int desired_span, spx_int32_t *start_offset);

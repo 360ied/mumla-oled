@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <new>
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -156,6 +157,19 @@ AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory,
         m_xfadeOut[i] = std::cos(static_cast<float>(i) * xmul);
     }
 
+    // The shared packet store: one allocation for the whole engine, and the
+    // free list that hands its slots out. If the store cannot be allocated,
+    // the free list stays empty and every packet is dropped (and counted)
+    // rather than falling back to per-packet heap traffic.
+    m_jitterPool = new (std::nothrow)
+        uint8_t[JITTER_SLOT_COUNT * MAX_PACKET_BYTES];
+    if (m_jitterPool != nullptr) {
+        for (size_t i = 0; i < JITTER_SLOT_COUNT; ++i) {
+            m_jitterFree[i] = static_cast<int32_t>(i);
+        }
+        m_jitterFreeCount = JITTER_SLOT_COUNT;
+    }
+
     for (int i = 0; i < MAX_VOICES; ++i) {
         auto voice = std::make_unique<Voice>();
         if (!m_decoderFactory) {
@@ -169,6 +183,8 @@ AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory,
         if (voice->jitter == nullptr) {
             continue;
         }
+        jitter_buffer_set_packet_allocator(voice->jitter, &AudioOutputEngine::jitterPoolAlloc,
+                                           &AudioOutputEngine::jitterPoolFree, this);
         voice->usable = true;
         m_pool[i] = voice.release();
     }
@@ -187,6 +203,9 @@ AudioOutputEngine::~AudioOutputEngine() {
             m_pool[i] = nullptr;
         }
     }
+    delete[] m_jitterPool;
+    m_jitterPool = nullptr;
+    m_jitterFreeCount = 0;
 }
 
 void AudioOutputEngine::setJitterMarginFrames(int frames) {
@@ -364,6 +383,39 @@ int AudioOutputEngine::jitterBufferedCount(JitterBuffer* jitter) const {
     return count;
 }
 
+void* AudioOutputEngine::jitterPoolAlloc(void* ctx, uint32_t length) {
+    auto* self = static_cast<AudioOutputEngine*>(ctx);
+    if (length == 0 || length > MAX_PACKET_BYTES || self->m_jitterFreeCount == 0) {
+        return nullptr;
+    }
+    const int32_t slot = self->m_jitterFree[--self->m_jitterFreeCount];
+    return self->m_jitterPool +
+           static_cast<size_t>(slot) * MAX_PACKET_BYTES;
+}
+
+void AudioOutputEngine::jitterPoolFree(void* ctx, void* data) {
+    auto* self = static_cast<AudioOutputEngine*>(ctx);
+    if (data == nullptr || self->m_jitterPool == nullptr) {
+        return;
+    }
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    const std::ptrdiff_t offset = bytes - self->m_jitterPool;
+    if (offset < 0 ||
+        offset % static_cast<std::ptrdiff_t>(MAX_PACKET_BYTES) != 0) {
+        return; // Not ours; nothing sensible to recycle.
+    }
+    const size_t slot =
+        static_cast<size_t>(offset) / static_cast<size_t>(MAX_PACKET_BYTES);
+    if (slot >= JITTER_SLOT_COUNT || self->m_jitterFreeCount >= JITTER_SLOT_COUNT) {
+        return;
+    }
+    self->m_jitterFree[self->m_jitterFreeCount++] = static_cast<int32_t>(slot);
+}
+
+size_t AudioOutputEngine::jitterSlotsInUse() const {
+    return JITTER_SLOT_COUNT - m_jitterFreeCount;
+}
+
 int AudioOutputEngine::findLookupIndex(int32_t session) const {
     for (size_t i = 0; i < m_lookupCount; ++i) {
         if (m_lookup[i].session == session) {
@@ -509,8 +561,15 @@ void AudioOutputEngine::queuePacket(const InboundPacket& packet) {
     jitterPacket.sequence = static_cast<uint16_t>(packet.sequence & 0xFFFFu);
     jitterPacket.user_data =
         (packet.flags & 0xFF) | (packet.isTerminator ? kTerminatorFlagBit : 0);
-    // The jitter buffer copies packet bytes.
-    jitter_buffer_put(voice->jitter, &jitterPacket);
+    // The jitter buffer copies packet bytes into the shared slot pool.
+    if (jitter_buffer_put(voice->jitter, &jitterPacket) != JITTER_BUFFER_OK) {
+        // Pool exhausted: the packet is dropped and counted. The gate must not
+        // credit audio that never arrived, so nothing below runs.
+        if (m_droppedPackets < UINT32_MAX) {
+            ++m_droppedPackets;
+        }
+        return;
+    }
     // Grow the startup gate's queued-audio union: only newly covered audio
     // counts, so a sequence gap (in-transit loss) never inflates the
     // measured cushion the way a wall-clock span would. Signed diffs keep
@@ -549,7 +608,8 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
     }
     result->samples = 0;
     result->talkEventCount = 0;
-    result->droppedPackets = 0;
+    result->droppedPackets = m_droppedPackets;
+    m_droppedPackets = 0;
 
     // Deliver the transitions accumulated since the previous call (queue-time
     // evictions, removals, clears) first; mix-time transitions join the same

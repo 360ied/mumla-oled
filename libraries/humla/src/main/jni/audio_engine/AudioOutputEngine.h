@@ -123,6 +123,10 @@ public:
     static constexpr int MAX_PENDING_TALK_EVENTS = MAX_VOICES * 4;
     static constexpr int MAX_CONSECUTIVE_DECODE_ERRORS = 5;
     static constexpr int DEFAULT_JITTER_MARGIN_FRAMES = 4;
+    // Shared packet store for every voice's jitter buffer: 1024 slots of
+    // MAX_PACKET_BYTES (2 MiB). The count is settled by the pool stress test
+    // (32 voices under heavy jitter adaptation for 60 simulated seconds).
+    static constexpr size_t JITTER_SLOT_COUNT = 1024;
     // Equal-power crossfade applied at real<->concealment boundaries so loss
     // gaps do not click: 96 samples = 2 ms at 48 kHz.
     static constexpr int XFADE_SAMPLES = 96;
@@ -183,6 +187,9 @@ public:
     void removeUser(int32_t session);
     void clear();
     size_t activeUserCount() const;
+    // Packet-store occupancy, for the pool stress test: slots currently held
+    // by queued packets across all voices.
+    size_t jitterSlotsInUse() const;
 
 private:
     struct Voice;
@@ -211,6 +218,9 @@ private:
     // Soft-knee bus saturation, documented in the .cpp.
     static float saturateSample(float m);
     int jitterBufferedCount(JitterBuffer* jitter) const;
+    // Packet store hooks handed to every jitter buffer in the pool.
+    static void* jitterPoolAlloc(void* ctx, uint32_t length);
+    static void jitterPoolFree(void* ctx, void* data);
 
     // Session lookup: a fixed array of (session, pool slot) pairs kept sorted
     // by session id, so the render loop visits voices in the same ascending
@@ -247,6 +257,13 @@ private:
     float m_xfadeOut[XFADE_SAMPLES] = {};
     int32_t m_deadSessions[MAX_VOICES] = {};
     size_t m_deadSessionCount = 0;
+
+    // Shared Jitter slot pool: a fixed byte store plus a slot free list.
+    uint8_t* m_jitterPool = nullptr;
+    int32_t m_jitterFree[JITTER_SLOT_COUNT] = {};
+    size_t m_jitterFreeCount = 0;
+    // Packets dropped because the store was full since the last render.
+    uint32_t m_droppedPackets = 0;
 };
 
 } // namespace audio
