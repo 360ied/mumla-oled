@@ -17,6 +17,8 @@
 
 package se.lublin.humla.audio
 
+import se.lublin.humla.HumlaNative
+
 /**
  * Minimal JNI hook exercising the native crash capture path (REASON_CRASH_NATIVE).
  * Test-only: never invoked during normal operation — reachable only via the
@@ -27,21 +29,14 @@ package se.lublin.humla.audio
  * Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash.
  */
 object NativeCrashTest {
-    private val loadError: Throwable? = try {
-        System.loadLibrary("humlaaudio")
-        null
-    } catch (e: Throwable) {
-        e
-    }
-
     /**
      * True when the native library loaded and the crash hook is callable.
-     * The existing ensureLoaded() helpers are private to their owners and
-     * split across two patterns, so :app cannot probe them.
+     * Reported through [HumlaNative], the single load owner, so any caller
+     * (including :app) can probe it.
      */
     @JvmStatic
     fun isAvailable(): Boolean {
-        return loadError == null
+        return HumlaNative.isAvailable()
     }
 
     @JvmStatic

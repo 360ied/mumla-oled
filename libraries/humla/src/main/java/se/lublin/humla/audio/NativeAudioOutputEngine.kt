@@ -17,6 +17,8 @@
 
 package se.lublin.humla.audio
 
+import se.lublin.humla.HumlaNative
+
 /**
  * Java interface for the native C++ Audio Output Engine (libhumlaaudio.so).
  *
@@ -34,23 +36,6 @@ class NativeAudioOutputEngine {
         const val TALK_SHOUTING = 1
         const val TALK_PASSIVE = 2
         const val TALK_WHISPERING = 3
-
-        private val loadError: Throwable? = try {
-            System.loadLibrary("humlaaudio")
-            null
-        } catch (t: Throwable) {
-            t
-        }
-
-        private fun ensureLoaded() {
-            val error = loadError
-            if (error != null) {
-                throw IllegalStateException(
-                    "Native audio libraries failed to load",
-                    error
-                )
-            }
-        }
 
         @JvmStatic
         private external fun nativeCreate(listener: Any?): Long
@@ -89,7 +74,7 @@ class NativeAudioOutputEngine {
     private val listener: AudioOutputEngineListener?
 
     constructor(listener: AudioOutputEngineListener?) {
-        ensureLoaded()
+        HumlaNative.ensureLoaded()
         this.listener = listener
         nativeHandle = nativeCreate(listener)
         if (nativeHandle == 0L) {

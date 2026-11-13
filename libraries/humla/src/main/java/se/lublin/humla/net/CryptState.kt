@@ -18,6 +18,8 @@
 
 package se.lublin.humla.net
 
+import se.lublin.humla.HumlaNative
+
 import java.security.InvalidKeyException
 import java.util.Arrays
 import javax.crypto.BadPaddingException
@@ -45,7 +47,7 @@ class CryptState {
         private val sLoadError: Throwable? = run {
             var error: Throwable? = null
             try {
-                System.loadLibrary("humlaaudio")
+                HumlaNative.ensureLoaded()
                 if (!nativeIsSupported()) {
                     error = UnsupportedOperationException("Native CryptState is not supported")
                 }
