@@ -18,6 +18,7 @@
 package se.lublin.humla.state
 
 import junit.framework.TestCase
+import com.google.protobuf.ByteString
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.persistentSetOf
 import org.junit.Test
@@ -205,5 +206,55 @@ class ChannelTransitionsTest : TestCase() {
         assertEquals(25, s.server.channels[1]?.maxUsers)
         assertTrue(s.server.channels[1]?.enterRestricted == true)
         assertFalse(s.server.channels[1]?.canEnter == true)
+    }
+
+    // Hash-driven clearing: a *_hash replaces the cached description with
+    // null, and content replaces the hash.
+
+    @Test
+    fun testDescriptionHashClearsDescription() {
+        var s = applyChannelState(
+            emptySessionState(),
+            Mumble.ChannelState.newBuilder().setChannelId(1).setName("A")
+                .setDescription("hello").build(),
+        ).state
+        assertEquals("hello", s.server.channels[1]?.description)
+        val bytes = ByteString.copyFromUtf8("hash")
+        s = applyChannelState(
+            s,
+            Mumble.ChannelState.newBuilder().setChannelId(1).setDescriptionHash(bytes).build(),
+        ).state
+        assertEquals(null, s.server.channels[1]?.description)
+        assertEquals(bytes, s.server.channels[1]?.descriptionHash)
+    }
+
+    @Test
+    fun testDescriptionClearsDescriptionHash() {
+        val bytes = ByteString.copyFromUtf8("hash")
+        var s = applyChannelState(
+            emptySessionState(),
+            Mumble.ChannelState.newBuilder().setChannelId(1).setName("A")
+                .setDescriptionHash(bytes).build(),
+        ).state
+        assertEquals(bytes, s.server.channels[1]?.descriptionHash)
+        s = applyChannelState(
+            s,
+            Mumble.ChannelState.newBuilder().setChannelId(1).setDescription("hello").build(),
+        ).state
+        assertEquals("hello", s.server.channels[1]?.description)
+        assertEquals(null, s.server.channels[1]?.descriptionHash)
+    }
+
+    @Test
+    fun testChannelHashAndContentInOneMessageKeepsContent() {
+        val s = applyChannelState(
+            emptySessionState(),
+            Mumble.ChannelState.newBuilder().setChannelId(1).setName("A")
+                .setDescriptionHash(ByteString.copyFromUtf8("hash"))
+                .setDescription("hello")
+                .build(),
+        ).state
+        assertEquals("hello", s.server.channels[1]?.description)
+        assertEquals(null, s.server.channels[1]?.descriptionHash)
     }
 }
