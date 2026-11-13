@@ -31,9 +31,12 @@ import se.lublin.humla.client.InMemoryLocalFactsStore
 import se.lublin.humla.client.NetworkMonitor
 import se.lublin.humla.client.NoopRouteLifecycle
 import se.lublin.humla.client.ServerEndpoint
+import se.lublin.humla.client.Session
 import se.lublin.humla.client.TrustStoreRef
+import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.LegacyVoiceLink
+import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.util.IHumlaObserver
 
 private const val AWAIT_TIMEOUT_NANOS = 30_000_000_000L
@@ -88,10 +91,22 @@ object InteropClient {
     fun create(observer: IHumlaObserver): HumlaClientHandle = create(observer, forceTcp = true)
 
     @JvmStatic
-    fun create(observer: IHumlaObserver, forceTcp: Boolean): HumlaClientHandle {
+    fun create(observer: IHumlaObserver, forceTcp: Boolean): HumlaClientHandle =
+        create(observer, forceTcp, udpEnabled = true)
+
+    @JvmStatic
+    fun create(observer: IHumlaObserver, forceTcp: Boolean, udpEnabled: Boolean): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val voice = LegacyVoiceLink(tunnelSink = {})
-        voice.setForceTcp(forceTcp)
+        val link = LegacyVoiceLink(tunnelSink = {})
+        link.setForceTcp(forceTcp)
+        // udpEnabled=false emulates fully-blocked UDP with working TCP: the
+        // voice layer never opens its socket, so both cumulative good
+        // counters stay zero and the transport must give up UDP for the
+        // tunnel ~20 s after creation. Never-working UDP is the only case
+        // the giveup covers, matching upstream parity.
+        val noUdp: NoUdpVoice? = if (udpEnabled) null else NoUdpVoice(link)
+        val voiceLink: VoiceLink = noUdp ?: link
+        val voiceLifecycle: VoiceLifecycle = noUdp ?: link
         val route = NoopRouteLifecycle()
         val network = object : NetworkMonitor {
             // The network-available path is intentionally unexercised here;
@@ -101,9 +116,9 @@ object InteropClient {
         val client = HumlaClient(
             parentScope = scope,
             transports = DefaultTransportFactory(),
-            voiceLifecycle = voice,
+            voiceLifecycle = voiceLifecycle,
             routeLifecycle = route,
-            voiceLink = voice,
+            voiceLink = voiceLink,
             network = network,
             localFactsStore = InMemoryLocalFactsStore(),
             clock = Clock.systemUTC(),
@@ -111,7 +126,7 @@ object InteropClient {
             mainPoster = { r -> r.run() },
             denyFormatter = { "denied" },
         )
-        return HumlaClientHandle(client, voice, scope)
+        return HumlaClientHandle(client, link, scope)
     }
 
     private fun remainingNanos(startNanos: Long): Long =
@@ -119,7 +134,7 @@ object InteropClient {
 
     /** Awaits a Connected session, failing with detail on Failed/timeout. */
     @JvmStatic
-    fun awaitConnected(client: HumlaClient, what: String): se.lublin.humla.client.Session {
+    fun awaitConnected(client: HumlaClient, what: String): Session {
         val start = System.nanoTime()
         while (remainingNanos(start) > 0) {
             when (val s = client.state.value) {
@@ -157,7 +172,7 @@ object InteropClient {
 
     @JvmStatic
     fun awaitUser(
-        session: se.lublin.humla.client.Session,
+        session: Session,
         name: String,
         what: String,
     ) {
@@ -184,7 +199,7 @@ object InteropClient {
 
     @JvmStatic
     fun awaitChannel(
-        session: se.lublin.humla.client.Session,
+        session: Session,
         channelId: Int,
         what: String,
     ) {
@@ -198,7 +213,7 @@ object InteropClient {
 
     @JvmStatic
     fun awaitUserInChannel(
-        session: se.lublin.humla.client.Session,
+        session: Session,
         name: String,
         channelId: Int,
         what: String,
@@ -216,7 +231,7 @@ object InteropClient {
 
     @JvmStatic
     fun awaitSelfMute(
-        session: se.lublin.humla.client.Session,
+        session: Session,
         name: String,
         mute: Boolean,
         deaf: Boolean,
@@ -235,12 +250,21 @@ object InteropClient {
 
     @JvmStatic
     fun awaitUsingUdp(
-        session: se.lublin.humla.client.Session,
+        session: Session,
         expected: Boolean,
         what: String,
+    ) = awaitUsingUdp(session, expected, what, 30L)
+
+    @JvmStatic
+    fun awaitUsingUdp(
+        session: Session,
+        expected: Boolean,
+        what: String,
+        timeoutSeconds: Long,
     ) {
         val start = System.nanoTime()
-        while (remainingNanos(start) > 0) {
+        val budgetNanos = timeoutSeconds * 1_000_000_000L
+        while (System.nanoTime() - start < budgetNanos) {
             if (session.stats.value.usingUdp == expected) return
             Thread.sleep(POLL_MILLIS)
         }
@@ -251,7 +275,7 @@ object InteropClient {
 
     @JvmStatic
     fun awaitUdpLatency(
-        session: se.lublin.humla.client.Session,
+        session: Session,
         what: String,
     ) {
         val start = System.nanoTime()
@@ -260,6 +284,21 @@ object InteropClient {
             Thread.sleep(POLL_MILLIS)
         }
         throw AssertionError("Timed out waiting for $what")
+    }
+}
+
+/**
+ * Test-only voice that never opens UDP, emulating a network where UDP is
+ * entirely blocked while TCP works. Keys, the ping sink, and teardown
+ * delegate to the wrapped link; only socket creation is suppressed. The
+ * transport observes identical conditions to wire-level blocking (both
+ * cumulative good counters stay zero) and must fall back to the tunnel.
+ */
+private class NoUdpVoice(private val delegate: LegacyVoiceLink) :
+    VoiceLink by delegate,
+    VoiceLifecycle by delegate {
+    override fun startVoice(host: String, port: Int) {
+        // UDP stays closed for the session.
     }
 }
 

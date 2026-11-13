@@ -149,14 +149,22 @@ public class MurmurConnectTest {
         return connect(username, password, true);
     }
 
-    private HumlaClient connect(String username, String password, boolean forceTcp) throws Exception {
+    private HumlaClientHandle connectHandle(String username, String password, boolean forceTcp) throws Exception {
+        return connectHandle(username, password, forceTcp, true);
+    }
+
+    private HumlaClientHandle connectHandle(String username, String password, boolean forceTcp, boolean udpEnabled) throws Exception {
         String trustStore = trustStoreForTestCert();
         ConnectTarget target = InteropClient.target(
                 server.host(), server.port(), username, password, trustStore, forceTcp);
-        HumlaClientHandle handle = InteropClient.create(noopObserver(), forceTcp);
+        HumlaClientHandle handle = InteropClient.create(noopObserver(), forceTcp, udpEnabled);
         open.add(handle);
         handle.getClient().connect(target);
-        return handle.getClient();
+        return handle;
+    }
+
+    private HumlaClient connect(String username, String password, boolean forceTcp) throws Exception {
+        return connectHandle(username, password, forceTcp).getClient();
     }
 
     @Test
@@ -392,5 +400,70 @@ public class MurmurConnectTest {
         InteropClient.awaitUsingUdp(session, true, "UDP enabled");
         // A measured UDP latency proves real ping round-trips, not just the seed.
         InteropClient.awaitUdpLatency(session, "UDP pings flow");
+    }
+
+    @Test
+    public void udpBlockedFallsBackToTunnel() throws Exception {
+        // Alice's voice never opens UDP: identical transport-observable
+        // conditions to fully-blocked UDP with working TCP (both cumulative
+        // good counters stay zero from session start, the only case the
+        // giveup covers). Loopback offers no firewall seam and murmur binds
+        // UDP on the TCP port, so a client-side closed socket is the
+        // hermetic equivalent of wire-level blocking.
+        HumlaClientHandle aliceHandle = connectHandle("InteropAlice", null, false, false);
+        HumlaClient alice = aliceHandle.getClient();
+        Session session = InteropClient.awaitConnected(alice, "alice sync");
+
+        final CountDownLatch gotText = new CountDownLatch(1);
+        IHumlaObserver bobObserver = noopObserver();
+        IHumlaObserver capturing = new IHumlaObserver() {
+            @Override public void onConnected() { bobObserver.onConnected(); }
+            @Override public void onConnecting() { bobObserver.onConnecting(); }
+            @Override public void onDisconnected(HumlaException e) { bobObserver.onDisconnected(e); }
+            @Override public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) { bobObserver.onTLSHandshakeFailed(chain, failure, verifiedHost); }
+            @Override public void onChannelAdded(IChannel channel) { bobObserver.onChannelAdded(channel); }
+            @Override public void onChannelStateUpdated(IChannel channel) { bobObserver.onChannelStateUpdated(channel); }
+            @Override public void onChannelRemoved(IChannel channel) { bobObserver.onChannelRemoved(channel); }
+            @Override public void onChannelPermissionsUpdated(IChannel channel) { bobObserver.onChannelPermissionsUpdated(channel); }
+            @Override public void onUserConnected(IUser user) { bobObserver.onUserConnected(user); }
+            @Override public void onUserStateUpdated(IUser user) { bobObserver.onUserStateUpdated(user); }
+            @Override public void onUserTalkStateUpdated(IUser user) { bobObserver.onUserTalkStateUpdated(user); }
+            @Override public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) { bobObserver.onUserJoinedChannel(user, newChannel, oldChannel); }
+            @Override public void onUserRemoved(IUser user, String reason) { bobObserver.onUserRemoved(user, reason); }
+            @Override public void onPermissionDenied(String reason) { bobObserver.onPermissionDenied(reason); }
+            @Override public void onMessageLogged(IMessage message) {
+                if (message != null && "tunnel-hello".equals(message.getMessage())) {
+                    gotText.countDown();
+                }
+            }
+            @Override public void onVoiceTargetChanged(VoiceTargetMode mode) { bobObserver.onVoiceTargetChanged(mode); }
+            @Override public void onBluetoothScoChanged(boolean active) { bobObserver.onBluetoothScoChanged(active); }
+            @Override public void onLogInfo(String message) { bobObserver.onLogInfo(message); }
+            @Override public void onLogWarning(String message) { bobObserver.onLogWarning(message); }
+            @Override public void onLogError(String message) { bobObserver.onLogError(message); }
+        };
+        String trustStore = trustStoreForTestCert();
+        ConnectTarget bobTarget = InteropClient.target(
+                server.host(), server.port(), "InteropBob", null, trustStore, false);
+        HumlaClientHandle bobHandle = InteropClient.create(capturing, false);
+        open.add(bobHandle);
+        bobHandle.getClient().connect(bobTarget);
+        InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
+
+        // Baseline: the transport still presumes UDP (seed) with zero traffic;
+        // the true-then-false pair below is the transition assertion.
+        InteropClient.awaitUsingUdp(session, true, "UDP presumed");
+        // With no good packets the transport must give up UDP (~20 s after
+        // creation) and switch to tunnel mode; the session survives on the tunnel.
+        InteropClient.awaitUsingUdp(session, false, "tunnel fallback", 60L);
+        assertTrue(alice.getState().getValue() instanceof ClientState.Connected);
+        // Data still flows post-fallback.
+        session.sendText(
+                java.util.Collections.singletonList(0),
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(),
+                "tunnel-hello");
+        assertTrue("timed out waiting for post-fallback text",
+                gotText.await(30, TimeUnit.SECONDS));
     }
 }
