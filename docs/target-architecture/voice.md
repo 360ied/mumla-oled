@@ -110,11 +110,21 @@ public:
 - Talking-state changes are returned in `out` instead of through
   `TalkingStateCallback`.
 - Configuration is sampled once per frame: the capture thread hands over
-  the current view, and the engine compares it with the previous frame's.
-  A push-to-talk press and release that both fall between two frames is
-  therefore not observable and transmits nothing, and a mute takes effect
-  on the next frame (the interim bridge forwards it within one 10 ms frame,
-  so the user-visible behavior is unchanged).
+  the current view and the engine compares it with the previous frame's, so
+  every transition lands on a frame boundary. Both consequences are bounded
+  by that one 10 ms frame:
+  - A mute takes effect on the next frame. Transition handling runs before
+    that frame's PCM is touched, so no muted audio is transmitted; only the
+    terminator's emission point moves. The capture loop keeps feeding frames
+    while muted (the microphone stays open for the whole connection), so the
+    deferred flush is never stranded.
+  - A push-to-talk press and release that both arrive inside one frame
+    interval is not observable and transmits nothing, where the pre-refactor
+    engine held its 150 ms hangover for it. That needs a tap of 10 ms or
+    less, and only through the direct UI path
+    (`HumlaService.setTalkingState`); the `VoicePolicy` path already samples
+    per frame. A press that any single frame observes arms the full hangover,
+    however brief.
 
 ### Output engine
 
