@@ -23,6 +23,7 @@
 #include <android/log.h>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 
 #define LOG_TAG "NativeAudioInputEngine"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -30,18 +31,46 @@
 
 using namespace mumla::audio;
 
+// Interim JNI seam (deleted in step 5a.4 with the Kotlin audio path). The
+// engine itself is single-threaded by contract and holds no lock; this bridge
+// serializes the Kotlin capture thread against the control thread and keeps
+// the latest InputConfig the capture thread hands to processFrame. Callbacks
+// into Java run after the bridge mutex is released.
 struct EngineContext {
     std::unique_ptr<AudioInputEngine> engine;
+    // Bridge mutex. The tripwire's <mutex> ban covers the engine, not this
+    // seam: the allowlist records the exception until 5a.4 deletes the file.
+    std::mutex engineMutex;
+    InputConfig config;
     JavaVM* jvm;
     jobject listenerGlobalRef;
     jbyteArray cachedBufferGlobalRef;
     jmethodID onPacketMethod;
     jmethodID onTalkingMethod;
-    std::mutex callbackMutex;
 };
 
 static EngineContext* getContext(jlong handle) {
     return reinterpret_cast<EngineContext*>(handle);
+}
+
+// Attaches the calling native thread to the JVM when it is not already
+// attached. Returns the usable env (or nullptr) and reports whether this scope
+// attached, so the caller can detach again.
+static JNIEnv* attachForCallback(EngineContext* ctx, bool* attached) {
+    *attached = false;
+    if (ctx->jvm == nullptr) {
+        return nullptr;
+    }
+    JNIEnv* env = nullptr;
+    const jint res =
+        ctx->jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (res == JNI_EDETACHED) {
+        if (ctx->jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            return nullptr;
+        }
+        *attached = true;
+    }
+    return res == JNI_OK || *attached ? env : nullptr;
 }
 
 extern "C" {
@@ -79,72 +108,28 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
         ctx->onTalkingMethod = nullptr;
     }
 
-    auto mode = static_cast<InputMode>(inputMode);
+    ctx->config.mode = static_cast<InputMode>(inputMode);
+    ctx->config.bitrate = bitrate;
+    ctx->config.framesPerPacket = framesPerPacket;
+    ctx->config.amplitudeBoost = amplitudeBoost;
+    ctx->config.rnnoiseEnabled = rnnoiseEnabled != JNI_FALSE;
+    ctx->config.adaptiveLevelerEnabled = adaptiveLevelerEnabled != JNI_FALSE;
+    ctx->config.transmitAllowed = true;
+    ctx->config.pttPressed = false;
+
     auto encoder = makeOpusVoiceEncoder(bitrate);
     std::unique_ptr<IDenoiser> denoiser;
     if (rnnoiseModelData != nullptr) {
         jsize modelLen = env->GetArrayLength(rnnoiseModelData);
         jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
-        denoiser = makeRnnoiseProcessor(rnnoiseEnabled,
+        denoiser = makeRnnoiseProcessor(ctx->config.rnnoiseEnabled,
                                         reinterpret_cast<const uint8_t*>(modelBytes),
                                         static_cast<size_t>(modelLen));
         env->ReleaseByteArrayElements(rnnoiseModelData, modelBytes, JNI_ABORT);
     } else {
-        denoiser = makeRnnoiseProcessor(rnnoiseEnabled, nullptr, 0);
+        denoiser = makeRnnoiseProcessor(ctx->config.rnnoiseEnabled, nullptr, 0);
     }
-    ctx->engine = std::make_unique<AudioInputEngine>(
-            std::move(encoder), std::move(denoiser),
-            framesPerPacket, amplitudeBoost, adaptiveLevelerEnabled, mode);
-
-    ctx->engine->setPacketCallback([ctx](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
-        std::lock_guard<std::mutex> lock(ctx->callbackMutex);
-        if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr ||
-            ctx->onPacketMethod == nullptr || ctx->cachedBufferGlobalRef == nullptr) {
-            return;
-        }
-        JNIEnv* env = nullptr;
-        jint res = ctx->jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
-        bool attached = false;
-        if (res == JNI_EDETACHED) {
-            if (ctx->jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
-                return;
-            }
-            attached = true;
-        }
-
-        if (size > 0 && data != nullptr) {
-            env->SetByteArrayRegion(ctx->cachedBufferGlobalRef, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte*>(data));
-        }
-        env->CallVoidMethod(ctx->listenerGlobalRef, ctx->onPacketMethod,
-                            ctx->cachedBufferGlobalRef, static_cast<jint>(size), static_cast<jint>(frames),
-                            static_cast<jboolean>(isTerminator), static_cast<jlong>(frameNumber));
-
-        if (attached) {
-            ctx->jvm->DetachCurrentThread();
-        }
-    });
-
-    ctx->engine->setTalkingCallback([ctx](bool isTalking, float peakEnergy) {
-        if (ctx->jvm == nullptr || ctx->listenerGlobalRef == nullptr || ctx->onTalkingMethod == nullptr) {
-            return;
-        }
-        JNIEnv* env = nullptr;
-        jint res = ctx->jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
-        bool attached = false;
-        if (res == JNI_EDETACHED) {
-            if (ctx->jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
-                return;
-            }
-            attached = true;
-        }
-
-        env->CallVoidMethod(ctx->listenerGlobalRef, ctx->onTalkingMethod,
-                            static_cast<jboolean>(isTalking), static_cast<jfloat>(peakEnergy));
-
-        if (attached) {
-            ctx->jvm->DetachCurrentThread();
-        }
-    });
+    ctx->engine = std::make_unique<AudioInputEngine>(std::move(encoder), std::move(denoiser));
 
     return reinterpret_cast<jlong>(ctx);
 }
@@ -189,9 +174,60 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeProcessFrame(
     if (end > static_cast<int64_t>(arrayLen)) return;
 
     jshort* pcmPtr = env->GetShortArrayElements(pcmArray, nullptr);
-    if (pcmPtr != nullptr) {
-        ctx->engine->processFrame(pcmPtr + offset, static_cast<size_t>(length));
-        env->ReleaseShortArrayElements(pcmArray, pcmPtr, JNI_ABORT);
+    if (pcmPtr == nullptr) {
+        return;
+    }
+    InputFrameResult result;
+    {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->engine->processFrame(pcmPtr + offset, static_cast<size_t>(length),
+                                  ctx->config, &result);
+    }
+    env->ReleaseShortArrayElements(pcmArray, pcmPtr, JNI_ABORT);
+
+    if (ctx->listenerGlobalRef == nullptr || ctx->jvm == nullptr) {
+        return;
+    }
+    const bool hasTalking = result.talkingChanged && ctx->onTalkingMethod != nullptr;
+    const bool hasPackets = result.packetCount > 0 && ctx->onPacketMethod != nullptr &&
+                            ctx->cachedBufferGlobalRef != nullptr;
+    if (!hasTalking && !hasPackets) {
+        return;
+    }
+    bool attached = false;
+    JNIEnv* cbEnv = attachForCallback(ctx, &attached);
+    if (cbEnv == nullptr) {
+        return;
+    }
+    // Historical event order: the talking transition first, then the packets
+    // the same frame produced.
+    if (hasTalking) {
+        cbEnv->CallVoidMethod(ctx->listenerGlobalRef, ctx->onTalkingMethod,
+                              static_cast<jboolean>(result.talking),
+                              static_cast<jfloat>(result.peakEnergy));
+        if (cbEnv->ExceptionCheck()) {
+            cbEnv->ExceptionClear();
+        }
+    }
+    for (size_t i = 0; hasPackets && i < result.packetCount; ++i) {
+        const EncodedPacket& packet = result.packets[i];
+        if (packet.size > 0) {
+            cbEnv->SetByteArrayRegion(ctx->cachedBufferGlobalRef, 0,
+                                      static_cast<jsize>(packet.size),
+                                      reinterpret_cast<const jbyte*>(packet.data));
+        }
+        cbEnv->CallVoidMethod(ctx->listenerGlobalRef, ctx->onPacketMethod,
+                              ctx->cachedBufferGlobalRef,
+                              static_cast<jint>(packet.size),
+                              static_cast<jint>(packet.frames),
+                              static_cast<jboolean>(packet.isTerminator),
+                              static_cast<jlong>(packet.frameNumber));
+        if (cbEnv->ExceptionCheck()) {
+            cbEnv->ExceptionClear();
+        }
+    }
+    if (attached) {
+        ctx->jvm->DetachCurrentThread();
     }
 }
 
@@ -203,7 +239,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetInputMode(
         jint inputMode) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setInputMode(static_cast<InputMode>(inputMode));
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.mode = static_cast<InputMode>(inputMode);
     }
 }
 
@@ -215,7 +252,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetPttTalking(
         jboolean talking) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setPttTalking(talking);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.pttPressed = talking != JNI_FALSE;
     }
 }
 
@@ -227,7 +265,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetMuted(
         jboolean muted) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setMuted(muted);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.transmitAllowed = muted == JNI_FALSE;
     }
 }
 
@@ -239,7 +278,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetBitrate(
         jint bitrate) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setBitrate(bitrate);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.bitrate = bitrate;
     }
 }
 
@@ -250,7 +290,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeGetBitrate(
         jlong handle) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        return ctx->engine->getBitrate();
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        return ctx->config.bitrate;
     }
     return 0;
 }
@@ -263,7 +304,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetFramesPerPacket(
         jint framesPerPacket) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setFramesPerPacket(framesPerPacket);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.framesPerPacket = framesPerPacket;
     }
 }
 
@@ -275,7 +317,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetAmplitudeBoost(
         jfloat boost) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setAmplitudeBoost(boost);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.amplitudeBoost = boost;
     }
 }
 
@@ -287,7 +330,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetRnnoiseEnabled(
         jboolean enabled) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setRnnoiseEnabled(enabled);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.rnnoiseEnabled = enabled != JNI_FALSE;
     }
 }
 
@@ -298,9 +342,10 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeIsRnnoiseEnabled(
         jlong handle) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        return ctx->engine->isRnnoiseEnabled();
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        return ctx->config.rnnoiseEnabled ? JNI_TRUE : JNI_FALSE;
     }
-    return false;
+    return JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
@@ -311,7 +356,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetAdaptiveLevelerEnable
         jboolean enabled) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setAdaptiveLevelerEnabled(enabled);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.adaptiveLevelerEnabled = enabled != JNI_FALSE;
     }
 }
 
@@ -322,9 +368,10 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeIsAdaptiveLevelerEnabled
         jlong handle) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        return ctx->engine->isAdaptiveLevelerEnabled();
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        return ctx->config.adaptiveLevelerEnabled ? JNI_TRUE : JNI_FALSE;
     }
-    return false;
+    return JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
@@ -335,6 +382,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetRnnoiseModel(
         jbyteArray rnnoiseModelData) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
         if (rnnoiseModelData != nullptr) {
             jsize modelLen = env->GetArrayLength(rnnoiseModelData);
             jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
@@ -353,9 +401,10 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeHasRnnoiseModel(
         jlong handle) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        return ctx->engine->hasRnnoiseModel();
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        return ctx->engine->hasRnnoiseModel() ? JNI_TRUE : JNI_FALSE;
     }
-    return false;
+    return JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
@@ -367,7 +416,9 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetVadThresholds(
         jfloat vadMin) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setVadThresholds(vadMax, vadMin);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.vadMax = vadMax;
+        ctx->config.vadMin = vadMin;
     }
 }
 
@@ -379,7 +430,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetVadHoldFrames(
         jint holdFrames) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setVadHoldFrames(static_cast<uint32_t>(holdFrames));
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.vadHoldFrames = static_cast<uint32_t>(holdFrames);
     }
 }
 
@@ -391,7 +443,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetVadSquelchFloor(
         jfloat minDb) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        ctx->engine->setVadSquelchFloor(minDb);
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->config.vadSquelchFloorDb = minDb;
     }
 }
 
@@ -402,7 +455,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeGetVadSquelchFloor(
         jlong handle) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
-        return ctx->engine->getVadSquelchFloor();
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        return ctx->config.vadSquelchFloorDb;
     }
     return -65.0f;
 }
@@ -414,6 +468,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeReset(
         jlong handle) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
         ctx->engine->reset();
     }
 }

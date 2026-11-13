@@ -754,43 +754,22 @@ std::vector<uint8_t> loadRnnoiseModel() {
 // Input engine driver
 // ---------------------------------------------------------------------------
 
-// Applies one control snapshot through today's setter surface. Only changes
-// are pushed, mirroring a control thread, in a fixed field order.
-void applyInputControl(AudioInputEngine* engine, const InputControl& previous,
-                       const InputControl& next) {
-    if (next.mode != previous.mode) {
-        engine->setInputMode(next.mode);
-    }
-    if (next.muted != previous.muted) {
-        engine->setMuted(next.muted);
-    }
-    if (next.ptt != previous.ptt) {
-        engine->setPttTalking(next.ptt);
-    }
-    if (next.bitrate != previous.bitrate) {
-        engine->setBitrate(next.bitrate);
-    }
-    if (next.framesPerPacket != previous.framesPerPacket) {
-        engine->setFramesPerPacket(next.framesPerPacket);
-    }
-    if (next.amplitudeBoost != previous.amplitudeBoost) {
-        engine->setAmplitudeBoost(next.amplitudeBoost);
-    }
-    if (next.rnnoise != previous.rnnoise) {
-        engine->setRnnoiseEnabled(next.rnnoise);
-    }
-    if (next.leveler != previous.leveler) {
-        engine->setAdaptiveLevelerEnabled(next.leveler);
-    }
-    if (next.vadMax != previous.vadMax || next.vadMin != previous.vadMin) {
-        engine->setVadThresholds(next.vadMax, next.vadMin);
-    }
-    if (next.vadHold != previous.vadHold) {
-        engine->setVadHoldFrames(next.vadHold);
-    }
-    if (next.squelchDb != previous.squelchDb) {
-        engine->setVadSquelchFloor(next.squelchDb);
-    }
+// Maps a scenario control snapshot onto the engine's per-frame configuration.
+mumla::audio::InputConfig toInputConfig(const InputControl& control) {
+    mumla::audio::InputConfig config;
+    config.mode = control.mode;
+    config.transmitAllowed = !control.muted;
+    config.pttPressed = control.ptt;
+    config.bitrate = control.bitrate;
+    config.framesPerPacket = control.framesPerPacket;
+    config.amplitudeBoost = control.amplitudeBoost;
+    config.rnnoiseEnabled = control.rnnoise;
+    config.adaptiveLevelerEnabled = control.leveler;
+    config.vadMax = control.vadMax;
+    config.vadMin = control.vadMin;
+    config.vadHoldFrames = control.vadHold;
+    config.vadSquelchFloorDb = control.squelchDb;
+    return config;
 }
 
 void runInputScenario(const InputScenario& scenario, InputResult* result) {
@@ -805,38 +784,30 @@ void runInputScenario(const InputScenario& scenario, InputResult* result) {
     auto encoder = mumla::audio::makeOpusVoiceEncoder(initial.bitrate);
     auto denoiser = mumla::audio::makeRnnoiseProcessor(
         initial.rnnoise, model.data(), model.size());
-    AudioInputEngine engine(std::move(encoder), std::move(denoiser),
-                            initial.framesPerPacket, initial.amplitudeBoost,
-                            initial.leveler, initial.mode);
+    AudioInputEngine engine(std::move(encoder), std::move(denoiser));
 
-    uint32_t currentFrame = 0;
-    engine.setPacketCallback([&](const uint8_t* data, size_t size, int frames,
-                                 bool isTerminator, uint64_t frameNumber) {
-        RecordedPacket packet;
-        packet.frameIndex = currentFrame;
-        packet.frames = frames;
-        packet.terminator = isTerminator;
-        packet.frameNumber = frameNumber;
-        packet.data.assign(data, data + size);
-        result->packets.push_back(std::move(packet));
-    });
-    engine.setTalkingCallback([&](bool talking, float peakEnergy) {
-        RecordedTalk talk;
-        talk.frameIndex = currentFrame;
-        talk.talking = talking;
-        talk.peakEnergy = peakEnergy;
-        result->talks.push_back(talk);
-    });
-
-    InputControl previous = initial;
+    mumla::audio::InputFrameResult frameResult;
     for (size_t frame = 0; frame < scenario.frames.size(); ++frame) {
-        currentFrame = static_cast<uint32_t>(frame);
-        if (frame > 0) {
-            applyInputControl(&engine, previous, scenario.frames[frame].control);
+        const InputFrame& input = scenario.frames[frame];
+        engine.processFrame(input.pcm.data(), input.pcm.size(),
+                            toInputConfig(input.control), &frameResult);
+        if (frameResult.talkingChanged) {
+            RecordedTalk talk;
+            talk.frameIndex = static_cast<uint32_t>(frame);
+            talk.talking = frameResult.talking;
+            talk.peakEnergy = frameResult.peakEnergy;
+            result->talks.push_back(talk);
         }
-        engine.processFrame(scenario.frames[frame].pcm.data(),
-                            scenario.frames[frame].pcm.size());
-        previous = scenario.frames[frame].control;
+        for (size_t i = 0; i < frameResult.packetCount; ++i) {
+            const auto& packet = frameResult.packets[i];
+            RecordedPacket record;
+            record.frameIndex = static_cast<uint32_t>(frame);
+            record.frames = packet.frames;
+            record.terminator = packet.isTerminator;
+            record.frameNumber = packet.frameNumber;
+            record.data.assign(packet.data, packet.data + packet.size);
+            result->packets.push_back(std::move(record));
+        }
     }
 }
 

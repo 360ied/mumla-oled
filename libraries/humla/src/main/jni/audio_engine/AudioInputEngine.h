@@ -26,10 +26,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
-#include <mutex>
-#include <vector>
 
 namespace mumla {
 namespace audio {
@@ -42,16 +39,52 @@ enum class InputMode {
 
 constexpr size_t kMaxOpusBufferBytes = 1024;
 
-struct DispatchedPacket {
-    uint8_t data[kMaxOpusBufferBytes];
-    size_t size;
-    int frames;
-    bool isTerminator;
-    uint64_t frameNumber;
+/**
+ * Engine configuration for one 10 ms frame, assembled by the capture thread
+ * from `VoicePolicy` and `VoiceSettings` (the engine never sees either type).
+ * The engine compares it with the previous frame's and applies the
+ * transitions itself, so no control-thread setters exist.
+ */
+struct InputConfig {
+    InputMode mode = InputMode::VOICE_ACTIVITY;
+    bool transmitAllowed = true; // from VoicePolicy; false = muted/deafened
+    bool pttPressed = false;     // from VoicePolicy
+    int bitrate = 40000;
+    int framesPerPacket = 2;
+    float amplitudeBoost = 1.0f;
+    bool rnnoiseEnabled = true;
+    bool adaptiveLevelerEnabled = true;
+    float vadMax = HysteresisVad::DEFAULT_VAD_MAX;
+    float vadMin = HysteresisVad::DEFAULT_VAD_MIN;
+    uint32_t vadHoldFrames = HysteresisVad::DEFAULT_HOLD_FRAMES;
+    float vadSquelchFloorDb = HysteresisVad::DEFAULT_SQUELCH_MIN_DB;
 };
 
-using AudioPacketCallback = std::function<void(const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber)>;
-using TalkingStateCallback = std::function<void(bool isTalking, float peakEnergy)>;
+struct EncodedPacket {
+    uint8_t data[kMaxOpusBufferBytes];
+    size_t size = 0;
+    int frames = 0;
+    bool isTerminator = false;
+    uint64_t frameNumber = 0;
+};
+
+// A talk start releases the whole pre-speech ring buffer at one frame per
+// packet, plus the current frame.
+constexpr size_t kMaxPacketsPerFrame =
+    PreSpeechRingBuffer::DEFAULT_CAPACITY_FRAMES + 1;
+
+/**
+ * Per-frame outputs. Everything the engine produces for one frame lands
+ * here: no callbacks, so the caller decides what runs where.
+ */
+struct InputFrameResult {
+    size_t packetCount = 0;
+    EncodedPacket packets[kMaxPacketsPerFrame];
+    bool talkingChanged = false;
+    bool talking = false;
+    // Valid when talkingChanged; zero for an externally forced stop (mute).
+    float peakEnergy = 0.0f;
+};
 
 /**
  * Abstract voice encoder interface.
@@ -82,10 +115,13 @@ public:
 };
 
 /**
- * Modern High-Performance Native Audio Input Engine.
+ * Native audio input engine: pre-speech lookahead buffering, neural RNNoise
+ * DSP, dual-threshold hysteresis VAD, soft-knee saturation and CBR Opus
+ * encoding.
  *
- * Coordinates Pre-Speech Lookahead Buffering, Neural RNNoise DSP,
- * Dual-Threshold Hysteresis VAD, Soft-Knee Saturation, and Mandatory Hard CBR Opus Encoding.
+ * Single-threaded by contract: one capture thread drives the instance. There
+ * are no locks, no atomics and no callbacks, and nothing allocates after
+ * construction. Configuration arrives with every frame (see InputConfig).
  */
 class AudioInputEngine {
 public:
@@ -93,76 +129,42 @@ public:
     static constexpr size_t MAX_OPUS_BUFFER_BYTES = kMaxOpusBufferBytes;
     static constexpr uint32_t PTT_HOLD_FRAMES = 15; // 15 frames = 150ms fixed hangover
     static constexpr int DEFAULT_FRAMES_PER_PACKET = 2; // 2 frames @ 10ms = 20ms audio per packet
+    // Frames an accumulator may hold before flushing: the largest packet (6
+    // frames) plus one frame of slack, as today.
+    static constexpr size_t MAX_ACCUMULATED_FRAMES = 12;
 
     explicit AudioInputEngine(std::unique_ptr<IVoiceEncoder> encoder = nullptr,
-                              std::unique_ptr<IDenoiser> denoiser = nullptr,
-                              int framesPerPacket = DEFAULT_FRAMES_PER_PACKET,
-                              float amplitudeBoost = 1.0f,
-                              bool adaptiveLevelerEnabled = true,
-                              InputMode mode = InputMode::VOICE_ACTIVITY);
-    ~AudioInputEngine() = default;
+                              std::unique_ptr<IDenoiser> denoiser = nullptr);
 
     // Non-copyable
     AudioInputEngine(const AudioInputEngine&) = delete;
     AudioInputEngine& operator=(const AudioInputEngine&) = delete;
 
     /**
-     * Ingests a 10ms PCM audio frame from the capture device.
+     * Ingests one 10 ms PCM frame from the capture device.
+     *
+     * Realtime: no locks, no allocation, no calls out. Applies the
+     * configuration transitions first (see the .cpp for the order), then runs
+     * the frame. `out` may be the same struct on every call; it is reset on
+     * entry.
      */
-    void processFrame(const int16_t* pcm, size_t sampleCount);
+    void processFrame(const int16_t* pcm, size_t samples,
+                      const InputConfig& config, InputFrameResult* out);
 
-    void setPacketCallback(AudioPacketCallback callback);
-    void setTalkingCallback(TalkingStateCallback callback);
-
-    void setInputMode(InputMode mode);
-    InputMode getInputMode() const;
-
-    void setPttTalking(bool talking);
-    bool isPttTalking() const;
-
-    void setMuted(bool muted);
-    bool isMuted() const;
-
-    void setBitrate(int bitrate);
-    int getBitrate() const;
-
-    void setFramesPerPacket(int framesPerPacket);
-    int getFramesPerPacket() const;
-
-    void setAmplitudeBoost(float boost);
-    float getAmplitudeBoost() const;
-
-    void setRnnoiseEnabled(bool enabled);
-    bool isRnnoiseEnabled() const;
-
-    void setAdaptiveLevelerEnabled(bool enabled);
-    bool isAdaptiveLevelerEnabled() const;
-
+    // Control thread only, while stopped.
     void setRnnoiseModel(const uint8_t* modelData, size_t modelSize);
     bool hasRnnoiseModel() const;
-
-    void setVadThresholds(float vadMax, float vadMin);
-    void setVadHoldFrames(uint32_t holdFrames);
-    void setVadSquelchFloor(float minDb);
-    float getVadSquelchFloor() const;
-
     void reset();
 
 private:
-    void flushAccumulatorLocked(bool isTerminator);
-
-    mutable std::mutex m_mutex;
-    std::mutex m_callbackMutex;
+    void applyConfig(const InputConfig& config, InputFrameResult* out);
+    void flushAccumulator(bool isTerminator, InputFrameResult* out);
 
     std::unique_ptr<IVoiceEncoder> m_encoder;
     std::unique_ptr<IDenoiser> m_denoiser;
-    int m_bitrate;
-    int m_framesPerPacket;
-    float m_amplitudeBoost;
-    InputMode m_inputMode;
-    bool m_pttTalking;
+    // Everything the last frame applied; the source of truth for transitions.
+    InputConfig m_config;
     uint32_t m_pttHoldFramesRemaining;
-    bool m_muted;
     bool m_talking;
     uint64_t m_frameCounter;
 
@@ -172,16 +174,12 @@ private:
     AdaptiveLeveler m_leveler;
     HysteresisVad m_vad;
 
-    // Pre-allocated Buffers
-    std::vector<int16_t> m_processedFrame;
-    std::vector<int16_t> m_accumulatedPcm;
+    // Pre-allocated buffers: nothing allocates after construction.
+    int16_t m_processedFrame[SAMPLES_PER_10MS];
+    int16_t m_accumulatedPcm[MAX_ACCUMULATED_FRAMES * SAMPLES_PER_10MS];
+    int16_t m_silenceDiscardBuffer[SAMPLES_PER_10MS];
+    uint8_t m_opusBuffer[MAX_OPUS_BUFFER_BYTES];
     size_t m_accumulatedFrames;
-    std::vector<int16_t> m_silenceDiscardBuffer;
-    std::vector<uint8_t> m_opusBuffer;
-    std::vector<DispatchedPacket> m_packetsToDispatch;
-
-    AudioPacketCallback m_packetCallback;
-    TalkingStateCallback m_talkingCallback;
 };
 
 } // namespace audio
