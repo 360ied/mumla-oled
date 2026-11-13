@@ -126,12 +126,13 @@ class NativeAudioOutputEngine {
     }
 
     /**
-     * Renders mixed PCM. Only the handle copy is guarded; the native call
-     * runs unsynchronized so network-thread queuePacket never blocks behind
-     * a 60 ms decode+mix quantum. Thread safety below comes from the native
-     * engine mutex plus the single-render-thread discipline. destroy() must only
-     * run after the render thread is joined (AudioOutput.stopPlaying guarantees
-     * this); it stays synchronized against queuePacket/removeUser.
+     * Renders mixed PCM. Only the handle copy is guarded here; the native
+     * call itself runs outside this monitor. Thread safety below comes from the
+     * JNI bridge mutex (the engine itself is single-threaded by contract) plus
+     * the single-render-thread discipline: network-thread queuePacket waits at
+     * most one quantum. destroy() must only run after the render thread is
+     * joined (AudioOutput.stopPlaying guarantees this); it stays synchronized
+     * against queuePacket/removeUser.
      */
     fun render(out: ShortArray?, offset: Int, length: Int): Int {
         val handle: Long = synchronized(this) {

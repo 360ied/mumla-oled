@@ -817,41 +817,35 @@ void runInputScenario(const InputScenario& scenario, InputResult* result) {
 
 void runOutputScenario(const OutputScenario& scenario, OutputResult* result) {
     AudioOutputEngine engine([] { return mumla::audio::makeOpusOutputDecoder(); });
-    std::vector<RecordedEvent> pendingEvents;
-    engine.setTalkCallback([&](int32_t session, int stateOrdinal) {
-        pendingEvents.push_back({session, stateOrdinal});
-    });
-    auto drainEvents = [&]() {
-        for (const auto& event : pendingEvents) {
-            result->events.push_back(event);
-        }
-        pendingEvents.clear();
-    };
-
     std::vector<int16_t> pcm;
     for (const auto& op : scenario.ops) {
         if (op.type == OutputOp::Type::QUEUE) {
-            const auto& packets = scenario.voices[op.voice].packets;
-            if (op.emptyPayload) {
-                engine.queuePacket(op.session, nullptr, 0, op.sequence,
-                                   op.flags, true);
-            } else {
-                const auto& packet = packets[op.packet];
-                engine.queuePacket(op.session, packet.data(), packet.size(),
-                                   op.sequence, op.flags, op.terminator);
+            mumla::audio::InboundPacket packet;
+            packet.session = op.session;
+            packet.sequence = op.sequence;
+            packet.flags = op.flags;
+            packet.isTerminator = op.terminator;
+            if (!op.emptyPayload) {
+                const auto& bytes = scenario.voices[op.voice].packets[op.packet];
+                std::memcpy(packet.data, bytes.data(), bytes.size());
+                packet.length = static_cast<uint16_t>(bytes.size());
             }
-            drainEvents();
+            engine.queuePacket(packet);
         } else {
             pcm.assign(op.samples, 0);
+            mumla::audio::RenderResult renderResult;
+            engine.render(pcm.data(), op.samples, &renderResult);
             RecordedRender render;
-            render.returned = static_cast<uint32_t>(
-                engine.renderMix(pcm.data(), op.samples));
+            render.returned = static_cast<uint32_t>(renderResult.samples);
             render.samples.assign(pcm.begin(), pcm.begin() + render.returned);
             result->renders.push_back(std::move(render));
-            drainEvents();
+            for (size_t i = 0; i < renderResult.talkEventCount; ++i) {
+                result->events.push_back(
+                    {renderResult.talkEvents[i].session,
+                     static_cast<int32_t>(renderResult.talkEvents[i].state)});
+            }
         }
     }
-    drainEvents();
 }
 
 // ---------------------------------------------------------------------------

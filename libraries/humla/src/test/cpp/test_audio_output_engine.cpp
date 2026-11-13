@@ -21,14 +21,19 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using mumla::audio::AudioOutputEngine;
+using mumla::audio::InboundPacket;
 using mumla::audio::IOutputDecoder;
+using mumla::audio::RenderResult;
 
 constexpr int kFrame = AudioOutputEngine::FRAME_SIZE;
 
@@ -180,53 +185,112 @@ struct TalkEvent {
     int state;
 };
 
-std::unique_ptr<AudioOutputEngine> makeEngine(float level,
-                                              std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<AudioOutputEngine>(
+/**
+ * Test adapter over the single-threaded engine, mirroring the interim JNI
+ * seam: it forwards talk transitions returned by render to a callback, and
+ * accepts the byte-pointer queuePacket shape the tests were written against.
+ * Events produced by queuePacket, removeUser or clear surface on the next
+ * render, exactly as the engine's RenderResult contract specifies.
+ */
+class TestEngine {
+public:
+    using TalkCallback = std::function<void(int32_t session, int state)>;
+
+    explicit TestEngine(
+        AudioOutputEngine::DecoderFactory factory,
+        int marginFrames = AudioOutputEngine::DEFAULT_JITTER_MARGIN_FRAMES)
+        : m_engine(std::move(factory), marginFrames) {}
+
+    void setTalkCallback(TalkCallback callback) {
+        m_callback = std::move(callback);
+    }
+
+    void queuePacket(int32_t session, const uint8_t* data, size_t len,
+                     uint32_t sequence, int flags, bool isTerminator) {
+        InboundPacket packet;
+        packet.session = session;
+        packet.sequence = sequence;
+        packet.flags = flags;
+        packet.isTerminator = isTerminator;
+        if (data != nullptr && len > 0 && len <= AudioOutputEngine::MAX_PACKET_BYTES) {
+            std::memcpy(packet.data, data, len);
+            packet.length = static_cast<uint16_t>(len);
+        }
+        m_engine.queuePacket(packet);
+    }
+
+    size_t renderMix(int16_t* out, size_t samples) {
+        RenderResult result;
+        m_engine.render(out, samples, &result);
+        deliver(result);
+        return result.samples;
+    }
+
+    void removeUser(int32_t session) { m_engine.removeUser(session); }
+    void clear() { m_engine.clear(); }
+    void setJitterMarginFrames(int frames) {
+        m_engine.setJitterMarginFrames(frames);
+    }
+    size_t activeUserCount() const { return m_engine.activeUserCount(); }
+
+private:
+    void deliver(const RenderResult& result) {
+        if (!m_callback) {
+            return;
+        }
+        for (size_t i = 0; i < result.talkEventCount; ++i) {
+            m_callback(result.talkEvents[i].session,
+                       static_cast<int>(result.talkEvents[i].state));
+        }
+    }
+
+    AudioOutputEngine m_engine;
+    TalkCallback m_callback;
+};
+
+std::unique_ptr<TestEngine> makeEngine(float level,
+                                       std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>(
         [level] { return std::make_unique<FakeDecoder>(level); });
-    engine->setTalkCallback(
-        [events](int32_t session, int state) {
-            if (events != nullptr) {
-                events->push_back({session, state});
-            }
-        });
+    engine->setTalkCallback([events](int32_t session, int state) {
+        if (events != nullptr) {
+            events->push_back({session, state});
+        }
+    });
     return engine;
 }
 
-std::unique_ptr<AudioOutputEngine> makeSpanEngine(int spanSamples, float level,
-                                                  std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<AudioOutputEngine>(
+std::unique_ptr<TestEngine> makeSpanEngine(int spanSamples, float level,
+                                           std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>(
         [spanSamples, level] {
             return std::make_unique<VariableSpanDecoder>(spanSamples, level);
         });
-    engine->setTalkCallback(
-        [events](int32_t session, int state) {
-            if (events != nullptr) {
-                events->push_back({session, state});
-            }
-        });
+    engine->setTalkCallback([events](int32_t session, int state) {
+        if (events != nullptr) {
+            events->push_back({session, state});
+        }
+    });
     return engine;
 }
 
-std::unique_ptr<AudioOutputEngine> makeFecEngine(float real, float fec,
-                                                float plc, bool fecFails,
-                                                int* fecAttempts,
-                                                std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<AudioOutputEngine>(
+std::unique_ptr<TestEngine> makeFecEngine(float real, float fec, float plc,
+                                          bool fecFails, int* fecAttempts,
+                                          std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>(
         [real, fec, plc, fecFails, fecAttempts] {
             return std::make_unique<FecAwareDecoder>(real, fec, plc, fecFails,
                                                      fecAttempts);
         });
-    engine->setTalkCallback(
-        [events](int32_t session, int state) {
-            if (events != nullptr) {
-                events->push_back({session, state});
-            }
-        });
+    engine->setTalkCallback([events](int32_t session, int state) {
+        if (events != nullptr) {
+            events->push_back({session, state});
+        }
+    });
     return engine;
 }
 
-void queueOne(AudioOutputEngine& engine, int32_t session, uint32_t seq,
+void queueOne(TestEngine& engine, int32_t session, uint32_t seq,
               int flags = 0, bool terminator = false) {
     uint8_t payload[8] = {0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68};
     engine.queuePacket(session, payload, sizeof(payload), seq, flags,
@@ -244,7 +308,7 @@ int peakAbs(const std::vector<int16_t>& out) {
 // Zero jitter margin: the startup gate opens on the first queued frame, so
 // tests exercise post-gate decode/mix/fade behavior without first filling
 // the default (margin+1)-frame gate span.
-void openGateOnFirstFrame(AudioOutputEngine& engine) {
+void openGateOnFirstFrame(TestEngine& engine) {
     engine.setJitterMarginFrames(0);
 }
 
@@ -369,6 +433,8 @@ void testRemoveUserSilencesAndEmitsPassive() {
     TEST_ASSERT_EQ(engine->activeUserCount(), 2u);
     engine->removeUser(11);
     TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    // The removal's PASSIVE arrives with the next render, never inline.
+    engine->renderMix(out.data(), out.size());
     TEST_ASSERT_EQ(events.back().session, 11);
     TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
     // Removing a session that was never queued is a no-op, not a crash.
@@ -619,7 +685,8 @@ void testEvictionEmitsPassiveForTalker() {
     g_testCount++;
     // An evicted voice must be reported PASSIVE like removeUser; without
     // that, the UI keeps a talking state for a voice that no longer exists.
-    // Regression test: eviction previously freed the voice silently.
+    // Eviction happens in queuePacket, so the PASSIVE is queued there and
+    // delivered by the next render, ahead of that render's own transitions.
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
     openGateOnFirstFrame(*engine);
@@ -631,18 +698,34 @@ void testEvictionEmitsPassiveForTalker() {
     // One quantum made every buffered voice talk.
     TEST_ASSERT_EQ(events.size(),
                    static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
-    // The 33rd voice evicts session 32 (highest id). Its PASSIVE arrives
-    // synchronously from queuePacket on the calling thread.
+
+    // The 33rd voice evicts session 32 (highest id): PASSIVE(32) is queued and
+    // arrives with the next render, followed by the new voice's TALKING.
     queueOne(*engine, AudioOutputEngine::MAX_VOICES + 1, 0);
     TEST_ASSERT_EQ(events.size(),
-                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 1));
-    TEST_ASSERT_EQ(events.back().session, AudioOutputEngine::MAX_VOICES);
-    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
-    // The replacement voice (33) never rendered, so evicting it in turn
-    // emits nothing: only voices with a reported state can transition.
-    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 2, 0);
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    engine->renderMix(out.data(), out.size());
     TEST_ASSERT_EQ(events.size(),
-                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 1));
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 2));
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES].session,
+                   AudioOutputEngine::MAX_VOICES);
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES].state, 2); // PASSIVE
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES + 1].session,
+                   AudioOutputEngine::MAX_VOICES + 1);
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES + 1].state, 0); // TALKING
+
+    // A voice evicted before it ever rendered emits nothing: only voices with
+    // a reported state can transition. Queue 35 (evicting 34) and 36
+    // (evicting the never-rendered 35) back to back, then render.
+    const size_t before = events.size();
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 2, 0);
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 3, 0);
+    engine->renderMix(out.data(), out.size());
+    TEST_ASSERT_EQ(events.size(), before + 2);
+    TEST_ASSERT_EQ(events[before].session, AudioOutputEngine::MAX_VOICES + 1);
+    TEST_ASSERT_EQ(events[before].state, 2); // PASSIVE for the rendered voice
+    TEST_ASSERT_EQ(events[before + 1].session,
+                   AudioOutputEngine::MAX_VOICES + 3);
     TEST_ASSERT_EQ(engine->activeUserCount(),
                    static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
     std::cout << "  [PASS] testEvictionEmitsPassiveForTalker" << std::endl;

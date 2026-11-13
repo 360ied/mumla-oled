@@ -19,6 +19,7 @@
 #include "speex_jitter.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -38,6 +39,7 @@ constexpr int kTerminatorFlagBit = 0x100;
 constexpr float kQuietGateLevel = 0.1f;
 // Saturation knee at -6 dB; linear below. See saturateSample.
 constexpr float kSaturationKnee = 0.5f;
+constexpr size_t kRenderEventCapacity = AudioOutputEngine::MAX_VOICES * 2;
 
 } // namespace
 
@@ -46,6 +48,9 @@ struct AudioOutputEngine::Voice {
     int32_t session = 0;
     std::unique_ptr<IOutputDecoder> decoder;
     JitterBuffer* jitter = nullptr;
+    // False when the decoder or jitter buffer could not be created at
+    // construction; such a slot is never handed to a session.
+    bool usable = false;
     int lastFlags = 0;
     int lastReportedState = -1;
     bool started = false;
@@ -70,7 +75,9 @@ struct AudioOutputEngine::Voice {
     int consecutiveErrors = 0;
     // Decoded tail that did not fit the previous quantum, plus how much of
     // it was already consumed. Served before touching the jitter buffer.
-    std::vector<float> carry;
+    // Fixed storage: at most one decode chunk (MAX_DECODE_SAMPLES).
+    float carry[MAX_DECODE_SAMPLES] = {};
+    size_t carrySize = 0;
     size_t carryPos = 0;
     // Whether the carried-over tail is concealment (vs real decode); served
     // chunks blend at real<->concealment boundaries like any other chunk.
@@ -94,6 +101,30 @@ struct AudioOutputEngine::Voice {
     // one-shot queue-to-first-audio delay log below. Zero until set.
     int64_t firstPacketNs = 0;
     bool delayLogged = false;
+
+    // Resets every per-burst field. Called when a slot is handed out.
+    void resetForReuse() {
+        lastFlags = 0;
+        lastReportedState = -1;
+        started = false;
+        hasTerminator = false;
+        gateWaitedFrames = 0;
+        gateQueuedSamples = 0;
+        gateMaxEndTs = 0;
+        gateAnchored = false;
+        gateTerminatorQueued = false;
+        missCount = 0;
+        consecutiveErrors = 0;
+        carrySize = 0;
+        carryPos = 0;
+        carryConcealed = false;
+        hasPrevChunk = false;
+        prevChunkConcealed = false;
+        hasXfadeTail = false;
+        fecDebtPos = kNoDebt;
+        firstPacketNs = 0;
+        delayLogged = false;
+    }
 };
 
 // Monotonic nanoseconds for latency diagnostics. std::chrono keeps this
@@ -104,19 +135,14 @@ inline int64_t steadyNanos() {
         .count();
 }
 
-AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
-    : m_decoderFactory(std::move(decoderFactory)) {
-    // Preallocate every scratch buffer so the audio thread never grows one:
-    // worst-case quantum for the mix/voice buffers, worst-case 120 ms Opus
-    // bundle for the decode scratch.
-    m_mix.assign(MAX_QUANTUM_SAMPLES, 0.0f);
-    m_voiceScratch.assign(MAX_QUANTUM_SAMPLES, 0.0f);
-    m_frameScratch.assign(MAX_DECODE_SAMPLES, 0.0f);
-    m_deadSessions.reserve(MAX_VOICES);
-    m_pendingTalks.reserve(MAX_VOICES);
+AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory,
+                                     int jitterMarginFrames)
+    : m_decoderFactory(std::move(decoderFactory)),
+      m_jitterMarginFrames(
+          jitterMarginFrames < 0 ? 0 : jitterMarginFrames) {
+    // Every table and pool slot is built here: nothing allocates once the
+    // render thread starts.
     const float mul = static_cast<float>(kPi) / (2.0f * FRAME_SIZE);
-    m_fadeIn.resize(FRAME_SIZE);
-    m_fadeOut.resize(FRAME_SIZE);
     for (int i = 0; i < FRAME_SIZE; ++i) {
         const float v = std::sin(static_cast<float>(i) * mul);
         m_fadeIn[i] = v;
@@ -125,34 +151,45 @@ AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory)
     // Equal-power crossfade: cos^2 + sin^2 == 1 holds perceived loudness
     // flat across the blend, unlike a linear crossfade which dips mid-way.
     const float xmul = static_cast<float>(kPi) / (2.0f * XFADE_SAMPLES);
-    m_xfadeIn.resize(XFADE_SAMPLES);
-    m_xfadeOut.resize(XFADE_SAMPLES);
     for (int i = 0; i < XFADE_SAMPLES; ++i) {
         m_xfadeIn[i] = std::sin(static_cast<float>(i) * xmul);
         m_xfadeOut[i] = std::cos(static_cast<float>(i) * xmul);
     }
+
+    for (int i = 0; i < MAX_VOICES; ++i) {
+        auto voice = std::make_unique<Voice>();
+        if (!m_decoderFactory) {
+            break;
+        }
+        voice->decoder = m_decoderFactory();
+        if (!voice->decoder || !voice->decoder->isValid()) {
+            continue;
+        }
+        voice->jitter = jitter_buffer_init(FRAME_SIZE);
+        if (voice->jitter == nullptr) {
+            continue;
+        }
+        voice->usable = true;
+        m_pool[i] = voice.release();
+    }
 }
 
 AudioOutputEngine::~AudioOutputEngine() {
-    // Locked teardown; callers must have quiesced renderMix/queuePacket (and
-    // any talk callback in flight) before destruction runs. No talk
-    // callbacks are emitted from the destructor: reporting PASSIVE for dying
-    // voices would run listener code on a half-destroyed object.
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto& entry : m_voices) {
-        jitter_buffer_destroy(entry.second->jitter);
-        entry.second->jitter = nullptr;
+    // Callers must have quiesced the render thread (and any listener running
+    // on it) before destruction. No talk transitions are emitted from the
+    // destructor: reporting PASSIVE for dying voices would run listener code
+    // on a half-destroyed object.
+    for (int i = 0; i < MAX_VOICES; ++i) {
+        if (m_pool[i] != nullptr) {
+            jitter_buffer_destroy(m_pool[i]->jitter);
+            m_pool[i]->jitter = nullptr;
+            delete m_pool[i];
+            m_pool[i] = nullptr;
+        }
     }
-    m_voices.clear();
-}
-
-void AudioOutputEngine::setTalkCallback(OutputTalkCallback callback) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_talkCallback = std::move(callback);
 }
 
 void AudioOutputEngine::setJitterMarginFrames(int frames) {
-    std::lock_guard<std::mutex> lock(m_mutex);
     m_jitterMarginFrames = frames < 0 ? 0 : frames;
 }
 
@@ -179,15 +216,18 @@ OutputTalkState AudioOutputEngine::talkStateForFlags(int flags) {
     }
 }
 
-void AudioOutputEngine::recordTalkLocked(
-    Voice* voice, int32_t session, OutputTalkState state,
-    std::vector<std::pair<int32_t, int>>* pendingEvents) {
+void AudioOutputEngine::recordTalk(Voice* voice, int32_t session,
+                                   OutputTalkState state) {
     const int ordinal = static_cast<int>(state);
     if (voice->lastReportedState == ordinal) {
         return;
     }
     voice->lastReportedState = ordinal;
-    pendingEvents->emplace_back(session, ordinal);
+    if (m_pendingTalkCount < MAX_PENDING_TALK_EVENTS) {
+        m_pendingTalks[m_pendingTalkCount].session = session;
+        m_pendingTalks[m_pendingTalkCount].state = state;
+        m_pendingTalkCount++;
+    }
 }
 
 // Soft-knee bus saturation with a 1.0 asymptote. A tail with value 1 and
@@ -267,7 +307,8 @@ void AudioOutputEngine::appendVoiceChunk(Voice* voice, const float* src,
         // empty here: the fill loop serves it before touching the jitter
         // buffer, so reaching a decode implies it drained.
         const size_t tail = static_cast<size_t>(count) - copy;
-        voice->carry.assign(src + copy, src + copy + tail);
+        std::memcpy(voice->carry, src + copy, tail * sizeof(float));
+        voice->carrySize = tail;
         voice->carryPos = 0;
         voice->carryConcealed = concealed;
     }
@@ -323,96 +364,131 @@ int AudioOutputEngine::jitterBufferedCount(JitterBuffer* jitter) const {
     return count;
 }
 
-void AudioOutputEngine::queuePacket(int32_t session, const uint8_t* data,
-                                    size_t len, uint32_t sequence, int flags,
-                                    bool isTerminator) {
-    if (len > MAX_PACKET_BYTES) {
+int AudioOutputEngine::findLookupIndex(int32_t session) const {
+    for (size_t i = 0; i < m_lookupCount; ++i) {
+        if (m_lookup[i].session == session) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+AudioOutputEngine::Voice* AudioOutputEngine::acquireVoice(int32_t session) {
+    if (m_lookupCount >= static_cast<size_t>(MAX_VOICES)) {
+        // Evict the highest session id as the newest-voice approximation: the
+        // lookup is session-ordered, so long-connected speakers keep their
+        // jitter history, and a join flood cannot push out the whole channel.
+        // The evicted speaker is reported PASSIVE like removeUser so the UI
+        // never keeps a talk state for a voice that no longer exists.
+        const SessionSlot victim = m_lookup[m_lookupCount - 1];
+        Voice* victimVoice = m_pool[victim.slot];
+        if (victimVoice->lastReportedState != -1 &&
+            victimVoice->lastReportedState !=
+                static_cast<int>(OutputTalkState::PASSIVE)) {
+            recordTalk(victimVoice, victim.session, OutputTalkState::PASSIVE);
+        }
+        releaseVoice(victim.session);
+    }
+    int slot = -1;
+    for (int i = 0; i < MAX_VOICES; ++i) {
+        if (m_pool[i] == nullptr || !m_pool[i]->usable) {
+            continue;
+        }
+        bool taken = false;
+        for (size_t j = 0; j < m_lookupCount; ++j) {
+            if (m_lookup[j].slot == i) {
+                taken = true;
+                break;
+            }
+        }
+        if (!taken) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return nullptr;
+    }
+    Voice* voice = m_pool[slot];
+    voice->resetForReuse();
+    voice->session = session;
+    if (voice->decoder) {
+        voice->decoder->reset();
+    }
+    jitter_buffer_reset(voice->jitter);
+    int margin = FRAME_SIZE * m_jitterMarginFrames;
+    jitter_buffer_ctl(voice->jitter, JITTER_BUFFER_SET_MARGIN, &margin);
+
+    // Keep the lookup sorted by session id: the render loop then visits
+    // voices in ascending session order, as the session map used to.
+    size_t pos = m_lookupCount;
+    while (pos > 0 && m_lookup[pos - 1].session > session) {
+        m_lookup[pos] = m_lookup[pos - 1];
+        --pos;
+    }
+    m_lookup[pos].session = session;
+    m_lookup[pos].slot = slot;
+    m_lookupCount++;
+    voice->firstPacketNs = steadyNanos();
+    return voice;
+}
+
+void AudioOutputEngine::releaseVoice(int32_t session) {
+    const int index = findLookupIndex(session);
+    if (index < 0) {
         return;
     }
-    if (data == nullptr || len == 0) {
+    const size_t idx = static_cast<size_t>(index);
+    if (m_pool[m_lookup[idx].slot] != nullptr) {
+        m_pool[m_lookup[idx].slot]->session = 0;
+    }
+    for (size_t i = idx + 1; i < m_lookupCount; ++i) {
+        m_lookup[i - 1] = m_lookup[i];
+    }
+    m_lookupCount--;
+}
+
+void AudioOutputEngine::queuePacket(const InboundPacket& packet) {
+    if (packet.length > MAX_PACKET_BYTES) {
+        return;
+    }
+    if (packet.length == 0) {
         // Empty end-of-speech marker (terminator with no Opus payload): no
-        // bytes to buffer, just flag the voice so renderMix drains instead
-        // of running the miss-expiry. Unknown sessions have nothing to end.
-        if (!isTerminator) {
+        // bytes to buffer, just flag the voice so render drains instead of
+        // running the miss-expiry. Unknown sessions have nothing to end.
+        if (!packet.isTerminator) {
             return;
         }
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto found = m_voices.find(session);
-        if (found != m_voices.end()) {
-            found->second->hasTerminator = true;
-            // This path never reaches queuePacketLocked, so the gate's
+        const int index = findLookupIndex(packet.session);
+        if (index >= 0) {
+            Voice* voice = m_pool[m_lookup[index].slot];
+            voice->hasTerminator = true;
+            // This path never reaches the packet insert below, so the gate's
             // own bypass latch must be set here too: a short final burst
             // that never filled the gate still drains.
-            found->second->gateTerminatorQueued = true;
+            voice->gateTerminatorQueued = true;
         }
         return;
     }
     if (!m_decoderFactory) {
         return;
     }
-    // An evicted voice's PASSIVE (if any) is recorded under the lock and
-    // emitted after release, mirroring removeUser/clear: listener code must
-    // never run with m_mutex held.
-    OutputTalkCallback callback;
-    std::vector<std::pair<int32_t, int>> pending;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        queuePacketLocked(session, data, len, sequence, flags, isTerminator,
-                          &pending);
-        if (!pending.empty()) {
-            callback = m_talkCallback;
-        }
-    }
-    if (callback) {
-        for (const auto& event : pending) {
-            callback(event.first, event.second);
-        }
-    }
-}
 
-void AudioOutputEngine::queuePacketLocked(
-    int32_t session, const uint8_t* data, size_t len, uint32_t sequence,
-    int flags, bool isTerminator,
-    std::vector<std::pair<int32_t, int>>* pendingEvents) {
-    auto it = m_voices.find(session);
-    if (it == m_voices.end()) {
-        if (m_voices.size() >= static_cast<size_t>(MAX_VOICES)) {
-            // No insertion-order tracking on the session map, so evict the
-            // highest session id as the newest-voice approximation: long-
-            // connected speakers keep their jitter history, and a join flood
-            // cannot push out the whole channel. The evicted speaker is
-            // reported PASSIVE like removeUser so the UI never keeps a talk
-            // state for a voice that no longer exists.
-            auto newest = std::prev(m_voices.end());
-            if (newest->second->lastReportedState != -1 &&
-                newest->second->lastReportedState !=
-                    static_cast<int>(OutputTalkState::PASSIVE)) {
-                recordTalkLocked(newest->second.get(), newest->first,
-                                 OutputTalkState::PASSIVE, pendingEvents);
-            }
-            jitter_buffer_destroy(newest->second->jitter);
-            m_voices.erase(newest);
-        }
-        auto voice = std::make_unique<Voice>();
-        voice->session = session;
-        voice->decoder = m_decoderFactory();
-        if (!voice->decoder || !voice->decoder->isValid()) {
-            return;
-        }
-        voice->jitter = jitter_buffer_init(FRAME_SIZE);
-        if (!voice->jitter) {
-            return;
-        }
-        int margin = FRAME_SIZE * m_jitterMarginFrames;
-        jitter_buffer_ctl(voice->jitter, JITTER_BUFFER_SET_MARGIN, &margin);
-        it = m_voices.emplace(session, std::move(voice)).first;
-        it->second->firstPacketNs = steadyNanos();
+    Voice* voice = nullptr;
+    const int existing = findLookupIndex(packet.session);
+    if (existing >= 0) {
+        voice = m_pool[m_lookup[existing].slot];
+    } else {
+        voice = acquireVoice(packet.session);
     }
-    Voice* voice = it->second.get();
+    if (voice == nullptr || voice->decoder == nullptr) {
+        return;
+    }
 
     // Drop packets the decoder cannot size: a fabricated span corrupts
     // jitter timing for the whole voice.
-    const int span = voice->decoder->packetSampleCount(data, len);
+    const int span = voice->decoder->packetSampleCount(packet.data,
+                                                       packet.length);
     if (span <= 0) {
         return;
     }
@@ -420,76 +496,102 @@ void AudioOutputEngine::queuePacketLocked(
     // so bundled datagrams imply consecutive seq (seq+i per chained frame)
     // on the Java side. Wrap-around of either is benign: the jitter buffer
     // only compares differences.
-    const auto timestamp = static_cast<uint32_t>(FRAME_SIZE * sequence);
+    const auto timestamp = static_cast<uint32_t>(FRAME_SIZE * packet.sequence);
 
-    JitterBufferPacket packet;
-    packet.data = reinterpret_cast<char*>(const_cast<uint8_t*>(data));
-    packet.len = static_cast<uint32_t>(len);
-    packet.timestamp = timestamp;
-    packet.span = static_cast<uint32_t>(span);
+    JitterBufferPacket jitterPacket;
+    jitterPacket.data = reinterpret_cast<char*>(
+        const_cast<uint8_t*>(packet.data));
+    jitterPacket.len = static_cast<uint32_t>(packet.length);
+    jitterPacket.timestamp = timestamp;
+    jitterPacket.span = static_cast<uint32_t>(span);
     // JitterBufferPacket.sequence is 16 bit; mask explicitly so the
     // truncation is visible here rather than buried in a narrowing cast.
-    packet.sequence = static_cast<uint16_t>(sequence & 0xFFFFu);
-    packet.user_data = (flags & 0xFF) | (isTerminator ? kTerminatorFlagBit : 0);
-    // The jitter buffer copies packet bytes when no destroy callback is set.
-    jitter_buffer_put(voice->jitter, &packet);
+    jitterPacket.sequence = static_cast<uint16_t>(packet.sequence & 0xFFFFu);
+    jitterPacket.user_data =
+        (packet.flags & 0xFF) | (packet.isTerminator ? kTerminatorFlagBit : 0);
+    // The jitter buffer copies packet bytes.
+    jitter_buffer_put(voice->jitter, &jitterPacket);
     // Grow the startup gate's queued-audio union: only newly covered audio
     // counts, so a sequence gap (in-transit loss) never inflates the
     // measured cushion the way a wall-clock span would. Signed diffs keep
     // the comparisons wrap-safe across the uint32 timestamp rollover,
     // speex-style.
     if (!voice->gateAnchored) {
-        voice->gateMaxEndTs = timestamp + packet.span;
-        voice->gateQueuedSamples = packet.span;
+        voice->gateMaxEndTs = timestamp + jitterPacket.span;
+        voice->gateQueuedSamples = jitterPacket.span;
         voice->gateAnchored = true;
     } else if (static_cast<int32_t>(timestamp - voice->gateMaxEndTs) >= 0) {
         // Entirely past the current end (a normal in-order arrival, gap or
         // not): all of it is new audio.
-        voice->gateQueuedSamples += packet.span;
-        voice->gateMaxEndTs = timestamp + packet.span;
-    } else if (static_cast<int32_t>(timestamp + packet.span -
+        voice->gateQueuedSamples += jitterPacket.span;
+        voice->gateMaxEndTs = timestamp + jitterPacket.span;
+    } else if (static_cast<int32_t>(timestamp + jitterPacket.span -
                                     voice->gateMaxEndTs) > 0) {
         // Overlaps the covered interval and extends it: only the extension
         // counts (late, out-of-order fills of an earlier hole add nothing).
         voice->gateQueuedSamples += static_cast<uint32_t>(
-            static_cast<int32_t>(timestamp + packet.span -
+            static_cast<int32_t>(timestamp + jitterPacket.span -
                                  voice->gateMaxEndTs));
-        voice->gateMaxEndTs = timestamp + packet.span;
+        voice->gateMaxEndTs = timestamp + jitterPacket.span;
     }
     // Latch the gate's terminator bypass at queue time: a payload-carrying
     // terminator as the first packet of a burst must skip the gate, and the
     // dequeue-time hasTerminator latch never runs while gated.
-    if (isTerminator) {
+    if (packet.isTerminator) {
         voice->gateTerminatorQueued = true;
     }
 }
 
-size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
-    if (out == nullptr || numSamples == 0) {
-        return 0;
+void AudioOutputEngine::render(int16_t* out, size_t samples,
+                               RenderResult* result) {
+    if (result == nullptr) {
+        return;
     }
-    std::unique_lock<std::mutex> lock(m_mutex);
-    if (m_voices.empty()) {
-        return 0;
+    result->samples = 0;
+    result->talkEventCount = 0;
+    result->droppedPackets = 0;
+
+    // Deliver the transitions accumulated since the previous call (queue-time
+    // evictions, removals, clears) first; mix-time transitions join the same
+    // result below, once this quantum has produced them. Whatever does not
+    // fit in the result stays pending for the next render (bounded by
+    // MAX_PENDING_TALK_EVENTS).
+    auto drainPending = [this, result]() {
+        const size_t room = kRenderEventCapacity - result->talkEventCount;
+        const size_t drain = std::min(m_pendingTalkCount, room);
+        for (size_t i = 0; i < drain; ++i) {
+            result->talkEvents[result->talkEventCount++] = m_pendingTalks[i];
+        }
+        if (drain > 0) {
+            for (size_t i = drain; i < m_pendingTalkCount; ++i) {
+                m_pendingTalks[i - drain] = m_pendingTalks[i];
+            }
+            m_pendingTalkCount -= drain;
+        }
+    };
+    drainPending();
+
+    if (out == nullptr || samples == 0) {
+        return;
+    }
+    assert(samples <= MAX_QUANTUM_SAMPLES);
+    if (samples > MAX_QUANTUM_SAMPLES) {
+        samples = MAX_QUANTUM_SAMPLES;
+    }
+    if (m_lookupCount == 0) {
+        return;
     }
 
-    // Reuse the preallocated scratch; only a quantum beyond the design
-    // maximum takes the slow-path resize.
-    if (m_mix.size() < numSamples) {
-        m_mix.resize(numSamples);
-    }
-    std::fill(m_mix.begin(), m_mix.begin() + numSamples, 0.0f);
-    if (m_voiceScratch.size() < numSamples) {
-        m_voiceScratch.resize(numSamples);
-    }
+    std::fill(m_mix, m_mix + samples, 0.0f);
 
-    m_deadSessions.clear();
-    m_pendingTalks.clear();
+    m_deadSessionCount = 0;
     bool anyMixed = false;
     bool anyGating = false;
 
-    for (auto& entry : m_voices) {
-        Voice* voice = entry.second.get();
+    // Ascending session order, as the session map supplied before the pool.
+    for (size_t sessionIndex = 0; sessionIndex < m_lookupCount;
+         ++sessionIndex) {
+        Voice* voice = m_pool[m_lookup[sessionIndex].slot];
         // Captured before the gate: a gate-timeout force-start must still
         // count as this voice's first audio, so its onset fades in.
         const bool startedAtEntry = voice->started;
@@ -514,7 +616,7 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 static_cast<uint32_t>((m_jitterMarginFrames + 1) *
                                       FRAME_SIZE)) {
             voice->gateWaitedFrames +=
-                static_cast<int>(numSamples / FRAME_SIZE);
+                static_cast<int>(samples / FRAME_SIZE);
             if (voice->gateWaitedFrames < GATE_TIMEOUT_FRAMES) {
                 anyGating = true;
                 continue;
@@ -525,25 +627,23 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             // parking it silent forever.
             voice->started = true;
         }
-        std::fill(m_voiceScratch.begin(), m_voiceScratch.begin() + numSamples,
-                  0.0f);
+        std::fill(m_voiceScratch, m_voiceScratch + samples, 0.0f);
         size_t filled = 0;
         bool producedAudio = false;
 
-        while (filled < numSamples) {
+        while (filled < samples) {
             // Serve decoded carryover before touching the jitter buffer.
-            if (voice->carryPos < voice->carry.size()) {
-                const size_t avail = voice->carry.size() - voice->carryPos;
-                const size_t count = std::min(avail, numSamples - filled);
-                appendVoiceChunk(voice, voice->carry.data() + voice->carryPos,
-                                 static_cast<int>(count),
-                                 m_voiceScratch.data(), numSamples, filled,
-                                 voice->carryConcealed, m_xfadeIn.data(),
-                                 m_xfadeOut.data());
+            if (voice->carryPos < voice->carrySize) {
+                const size_t avail = voice->carrySize - voice->carryPos;
+                const size_t count = std::min(avail, samples - filled);
+                appendVoiceChunk(voice, voice->carry + voice->carryPos,
+                                 static_cast<int>(count), m_voiceScratch,
+                                 samples, filled, voice->carryConcealed,
+                                 m_xfadeIn, m_xfadeOut);
                 voice->carryPos += count;
                 producedAudio = true;
-                if (voice->carryPos >= voice->carry.size()) {
-                    voice->carry.clear();
+                if (voice->carryPos >= voice->carrySize) {
+                    voice->carrySize = 0;
                     voice->carryPos = 0;
                     voice->carryConcealed = false;
                 }
@@ -555,9 +655,9 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             packet.data = packetBytes;
             packet.len = sizeof(packetBytes);
             int32_t startOffset = 0;
-            const int result =
-                jitter_buffer_get(voice->jitter, &packet, FRAME_SIZE, &startOffset);
-            if (result == JITTER_BUFFER_OK) {
+            const int getResult = jitter_buffer_get(voice->jitter, &packet,
+                                                    FRAME_SIZE, &startOffset);
+            if (getResult == JITTER_BUFFER_OK) {
                 voice->missCount = 0;
                 voice->lastFlags = packet.user_data & 0xFF;
                 if (packet.user_data & kTerminatorFlagBit) {
@@ -578,21 +678,22 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                     if (startOffset == 0) {
                         const int fec = voice->decoder->decodeFloat(
                             reinterpret_cast<uint8_t*>(packet.data),
-                            packet.len, m_frameScratch.data(), FRAME_SIZE, 1);
+                            packet.len, m_frameScratch, FRAME_SIZE, 1);
                         if (fec == FRAME_SIZE) {
-                            writeChunkAt(voice, m_voiceScratch.data(), debtPos,
-                                         m_frameScratch.data(), fec, false,
-                                         m_xfadeIn.data(), m_xfadeOut.data());
+                            writeChunkAt(voice, m_voiceScratch, debtPos,
+                                         m_frameScratch, fec, false, m_xfadeIn,
+                                         m_xfadeOut);
                             recovered = true;
                         }
                     }
                     if (!recovered) {
-                        const int debtPlc = voice->decoder->decodeConcealment(
-                            m_frameScratch.data(), FRAME_SIZE);
+                        const int debtPlc =
+                            voice->decoder->decodeConcealment(m_frameScratch,
+                                                              FRAME_SIZE);
                         if (debtPlc > 0) {
-                            writeChunkAt(voice, m_voiceScratch.data(), debtPos,
-                                         m_frameScratch.data(), debtPlc, true,
-                                         m_xfadeIn.data(), m_xfadeOut.data());
+                            writeChunkAt(voice, m_voiceScratch, debtPos,
+                                         m_frameScratch, debtPlc, true,
+                                         m_xfadeIn, m_xfadeOut);
                         }
                         // debtPlc <= 0: wedged decoder; the slot stays the
                         // reserved silence and expiry advances regardless.
@@ -600,7 +701,7 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 }
                 const int decoded = voice->decoder->decodeFloat(
                     reinterpret_cast<uint8_t*>(packet.data), packet.len,
-                    m_frameScratch.data(), MAX_DECODE_SAMPLES, 0);
+                    m_frameScratch, MAX_DECODE_SAMPLES, 0);
                 if (decoded > 0) {
                     voice->consecutiveErrors = 0;
                     float peak = 0.0f;
@@ -611,10 +712,9 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                         jitter_buffer_update_delay(voice->jitter, nullptr,
                                                    nullptr);
                     }
-                    appendVoiceChunk(voice, m_frameScratch.data(), decoded,
-                                     m_voiceScratch.data(), numSamples, filled,
-                                     false, m_xfadeIn.data(),
-                                     m_xfadeOut.data());
+                    appendVoiceChunk(voice, m_frameScratch, decoded,
+                                     m_voiceScratch, samples, filled, false,
+                                     m_xfadeIn, m_xfadeOut);
                     // Round ticks up: a bundle covering a partial frame still
                     // advances past the whole frame.
                     const int ticks = (decoded + FRAME_SIZE - 1) / FRAME_SIZE;
@@ -630,14 +730,13 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                         voice->consecutiveErrors = 0;
                     }
                     const int concealed = voice->decoder->decodeConcealment(
-                        m_frameScratch.data(), FRAME_SIZE);
+                        m_frameScratch, FRAME_SIZE);
                     jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
                     jitter_buffer_tick(voice->jitter);
                     if (concealed > 0) {
-                        appendVoiceChunk(voice, m_frameScratch.data(),
-                                         concealed, m_voiceScratch.data(),
-                                         numSamples, filled, true,
-                                         m_xfadeIn.data(), m_xfadeOut.data());
+                        appendVoiceChunk(voice, m_frameScratch, concealed,
+                                         m_voiceScratch, samples, filled, true,
+                                         m_xfadeIn, m_xfadeOut);
                     }
                     // concealed <= 0: wedged decoder; this slot stays scratch
                     // silence and expiry still advances via the tick above.
@@ -662,14 +761,13 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 const size_t debtPos = voice->fecDebtPos;
                 voice->fecDebtPos = Voice::kNoDebt;
                 const int debtPlc = voice->decoder->decodeConcealment(
-                    m_frameScratch.data(), FRAME_SIZE);
+                    m_frameScratch, FRAME_SIZE);
                 if (debtPlc > 0) {
-                    writeChunkAt(voice, m_voiceScratch.data(), debtPos,
-                                 m_frameScratch.data(), debtPlc, true,
-                                 m_xfadeIn.data(), m_xfadeOut.data());
+                    writeChunkAt(voice, m_voiceScratch, debtPos, m_frameScratch,
+                                 debtPlc, true, m_xfadeIn, m_xfadeOut);
                 }
             }
-            if (filled + FRAME_SIZE <= numSamples) {
+            if (filled + FRAME_SIZE <= samples) {
                 // Scratch is zeroed beyond filled, so the slot starts silent
                 // without a fill; a failed recovery keeps it that way.
                 voice->fecDebtPos = filled;
@@ -683,13 +781,13 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                 continue;
             }
             const int concealed = voice->decoder->decodeConcealment(
-                m_frameScratch.data(), FRAME_SIZE);
+                m_frameScratch, FRAME_SIZE);
             jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
             jitter_buffer_tick(voice->jitter);
             if (concealed > 0) {
-                appendVoiceChunk(voice, m_frameScratch.data(), concealed,
-                                 m_voiceScratch.data(), numSamples, filled,
-                                 true, m_xfadeIn.data(), m_xfadeOut.data());
+                appendVoiceChunk(voice, m_frameScratch, concealed,
+                                 m_voiceScratch, samples, filled, true,
+                                 m_xfadeIn, m_xfadeOut);
             }
             // concealed <= 0: keep this slot silent; missCount below still
             // expires the voice so a wedged decoder cannot spin forever.
@@ -705,20 +803,18 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
         if (voice->fecDebtPos != Voice::kNoDebt) {
             const size_t debtPos = voice->fecDebtPos;
             voice->fecDebtPos = Voice::kNoDebt;
-            const int debtPlc = voice->decoder->decodeConcealment(
-                m_frameScratch.data(), FRAME_SIZE);
+            const int debtPlc =
+                voice->decoder->decodeConcealment(m_frameScratch, FRAME_SIZE);
             if (debtPlc > 0) {
-                writeChunkAt(voice, m_voiceScratch.data(), debtPos,
-                             m_frameScratch.data(), debtPlc, true,
-                             m_xfadeIn.data(), m_xfadeOut.data());
+                writeChunkAt(voice, m_voiceScratch, debtPos, m_frameScratch,
+                             debtPlc, true, m_xfadeIn, m_xfadeOut);
             }
         }
         // A terminator drains instead of cutting: the voice lives until its
         // buffered packets (peeked via the available count) and any decoded
         // carryover are played out. Only then does this quantum carry the
-        // fade-out and the voice earns PASSIVE.
-        const bool carryDrained =
-            voice->carryPos >= voice->carry.size();
+        // fade-out and the voice earn PASSIVE.
+        const bool carryDrained = voice->carryPos >= voice->carrySize;
         const bool drained = voice->hasTerminator && carryDrained &&
                              jitterBufferedCount(voice->jitter) == 0;
         const bool finishing =
@@ -742,7 +838,7 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
             }
             // Snapshot the emitted (post-fade) tail so the next quantum can
             // blend a boundary chunk against it.
-            snapshotTail(voice, m_voiceScratch.data(), filled);
+            snapshotTail(voice, m_voiceScratch, filled);
             // One-shot queue-to-first-audio diagnostic: arrival-to-mix delay
             // for the voice lifetime (jitter fill + pre-roll + batching; the
             // AudioTrack sink depth adds on top). Host builds skip the sink.
@@ -758,120 +854,81 @@ size_t AudioOutputEngine::renderMix(int16_t* out, size_t numSamples) {
                     jitterBufferedCount(voice->jitter));
 #endif
             }
-            recordTalkLocked(voice, voice->session,
-                             talkStateForFlags(voice->lastFlags), &m_pendingTalks);
+            recordTalk(voice, voice->session, talkStateForFlags(voice->lastFlags));
             anyMixed = true;
         }
 
         if (finishing) {
-            m_deadSessions.push_back(voice->session);
+            if (m_deadSessionCount < static_cast<size_t>(MAX_VOICES)) {
+                m_deadSessions[m_deadSessionCount++] = voice->session;
+            }
         }
     }
 
-    for (int32_t session : m_deadSessions) {
-        auto it = m_voices.find(session);
-        if (it != m_voices.end()) {
-            recordTalkLocked(it->second.get(), session,
-                             OutputTalkState::PASSIVE, &m_pendingTalks);
-            jitter_buffer_destroy(it->second->jitter);
-            m_voices.erase(it);
+    for (size_t i = 0; i < m_deadSessionCount; ++i) {
+        const int32_t session = m_deadSessions[i];
+        const int index = findLookupIndex(session);
+        if (index >= 0) {
+            Voice* voice = m_pool[m_lookup[index].slot];
+            recordTalk(voice, session, OutputTalkState::PASSIVE);
+            releaseVoice(session);
         }
     }
 
-    for (size_t i = 0; i < numSamples; ++i) {
+    // Mix-time transitions recorded above join this result right behind the
+    // queue-time ones.
+    drainPending();
+
+    for (size_t i = 0; i < samples; ++i) {
         const float sample = saturateSample(m_mix[i]) * 32767.0f;
         if (!std::isfinite(sample)) {
             out[i] = 0;
             continue;
         }
         const long rounded = std::lroundf(sample);
-        const long clamped =
-            std::clamp<long>(rounded, -32768L, 32767L);
+        const long clamped = std::clamp<long>(rounded, -32768L, 32767L);
         out[i] = static_cast<int16_t>(clamped);
     }
 
-    // Copy the callback and detach the events only when events exist: with
-    // a callback installed for the engine's lifetime the std::function copy
-    // allocates, and the audio thread stays allocation-free in the common
-    // eventless quantum.
-    OutputTalkCallback callback;
-    std::vector<std::pair<int32_t, int>> events;
-    if (!m_pendingTalks.empty()) {
-        callback = m_talkCallback;
-        events.swap(m_pendingTalks);
-    }
-    lock.unlock();
-    if (callback) {
-        for (const auto& event : events) {
-            callback(event.first, event.second);
-        }
-    }
     if (!anyMixed && !anyGating) {
         // Nothing audible this quantum: report silence so Java idles
         // instead of writing zeros. Gated quanta are deliberately emitted
         // as zero PCM — the caller keeps the AudioTrack fed, so its write
         // backpressure paces the render loop while the jitter buffer
         // fills and the first real quantum lands behind a primed track.
-        return 0;
+        return;
     }
-    return numSamples;
+    result->samples = samples;
 }
 
 void AudioOutputEngine::removeUser(int32_t session) {
-    std::vector<std::pair<int32_t, int>> pending;
-    OutputTalkCallback callback;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto it = m_voices.find(session);
-        if (it == m_voices.end()) {
-            return;
-        }
-        callback = m_talkCallback;
-        if (it->second->lastReportedState != -1 &&
-            it->second->lastReportedState !=
-                static_cast<int>(OutputTalkState::PASSIVE)) {
-            recordTalkLocked(it->second.get(), session,
-                             OutputTalkState::PASSIVE, &pending);
-        }
-        jitter_buffer_destroy(it->second->jitter);
-        m_voices.erase(it);
+    const int index = findLookupIndex(session);
+    if (index < 0) {
+        return;
     }
-    if (callback) {
-        for (const auto& event : pending) {
-            callback(event.first, event.second);
-        }
+    Voice* voice = m_pool[m_lookup[index].slot];
+    if (voice->lastReportedState != -1 &&
+        voice->lastReportedState != static_cast<int>(OutputTalkState::PASSIVE)) {
+        recordTalk(voice, session, OutputTalkState::PASSIVE);
     }
+    releaseVoice(session);
 }
 
 void AudioOutputEngine::clear() {
-    std::vector<std::pair<int32_t, int>> pending;
-    OutputTalkCallback callback;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        callback = m_talkCallback;
-        for (auto& entry : m_voices) {
-            Voice* voice = entry.second.get();
-            if (voice->lastReportedState != -1 &&
-                voice->lastReportedState !=
-                    static_cast<int>(OutputTalkState::PASSIVE)) {
-                recordTalkLocked(voice, entry.first, OutputTalkState::PASSIVE,
-                                 &pending);
-            }
-            jitter_buffer_destroy(voice->jitter);
-            voice->jitter = nullptr;
+    while (m_lookupCount > 0) {
+        const int32_t session = m_lookup[0].session;
+        Voice* voice = m_pool[m_lookup[0].slot];
+        if (voice->lastReportedState != -1 &&
+            voice->lastReportedState !=
+                static_cast<int>(OutputTalkState::PASSIVE)) {
+            recordTalk(voice, session, OutputTalkState::PASSIVE);
         }
-        m_voices.clear();
-    }
-    if (callback) {
-        for (const auto& event : pending) {
-            callback(event.first, event.second);
-        }
+        releaseVoice(session);
     }
 }
 
 size_t AudioOutputEngine::activeUserCount() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_voices.size();
+    return m_lookupCount;
 }
 
 } // namespace audio
