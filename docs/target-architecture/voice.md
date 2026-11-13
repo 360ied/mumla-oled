@@ -191,8 +191,12 @@ public:
   `removeUser`, `clear`, and `render` go into a fixed internal array and are
   returned by the next `RenderResult`, queue-time events before that
   quantum's own. A render with no samples, or one where nothing is audible,
-  still delivers them, so nothing depends on a listener running. Whatever
-  does not fit in one result stays pending for the following render.
+  still delivers them, so nothing depends on a listener running. The arrays
+  are sized from the contract, not guessed: one result carries at most one
+  queue-time transition plus one mix-time transition per voice, so
+  `2 * MAX_VOICES` entries is exactly enough and the pending array holds the
+  same again as headroom (no transition spills into the next render, and a
+  full array would leave the transition retryable rather than lost).
 
 ### Allocation sites removed
 

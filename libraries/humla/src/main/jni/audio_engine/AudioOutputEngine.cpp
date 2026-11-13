@@ -241,12 +241,16 @@ void AudioOutputEngine::recordTalk(Voice* voice, int32_t session,
     if (voice->lastReportedState == ordinal) {
         return;
     }
-    voice->lastReportedState = ordinal;
-    if (m_pendingTalkCount < MAX_PENDING_TALK_EVENTS) {
-        m_pendingTalks[m_pendingTalkCount].session = session;
-        m_pendingTalks[m_pendingTalkCount].state = state;
-        m_pendingTalkCount++;
+    if (m_pendingTalkCount >= MAX_PENDING_TALK_EVENTS) {
+        // The array sizes make this unreachable (see the header), but a full
+        // array must not lose the transition *and* claim it was reported:
+        // leaving lastReportedState alone lets the next opportunity report it.
+        return;
     }
+    voice->lastReportedState = ordinal;
+    m_pendingTalks[m_pendingTalkCount].session = session;
+    m_pendingTalks[m_pendingTalkCount].state = state;
+    m_pendingTalkCount++;
 }
 
 // Soft-knee bus saturation with a 1.0 asymptote. A tail with value 1 and

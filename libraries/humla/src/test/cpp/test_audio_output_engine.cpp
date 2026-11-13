@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -1132,6 +1133,54 @@ void testJitterPoolStress() {
               << std::endl;
 }
 
+
+// Capacity contract for talk events: one queue-time plus one mix-time
+// transition per voice must fit one result, so nothing ever spills or is
+// dropped. Pinned by arithmetic and behaviorally: a clear of all voices
+// followed by a full re-population delivers all 64 transitions in a single
+// render's result, queue-time ones first.
+void testTalkEventCapacityContract() {
+    g_testCount++;
+    RenderResult sizing;
+    TEST_ASSERT_TRUE(std::size(sizing.talkEvents) >=
+                     static_cast<size_t>(2 * AudioOutputEngine::MAX_VOICES));
+    TEST_ASSERT_TRUE(static_cast<size_t>(AudioOutputEngine::MAX_PENDING_TALK_EVENTS) >=
+                     static_cast<size_t>(2 * AudioOutputEngine::MAX_VOICES));
+
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+    for (int32_t s = 1; s <= AudioOutputEngine::MAX_VOICES; ++s) {
+        queueOne(*engine, s, 0);
+    }
+    std::vector<int16_t> out(kFrame, 0);
+    engine->renderMix(out.data(), out.size());
+    const size_t talkReported = events.size();
+    TEST_ASSERT_EQ(talkReported,
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    for (const auto& event : events) {
+        TEST_ASSERT_EQ(event.state, 0); // TALKING
+    }
+
+    // Queue-time PASSIVE for every voice, then re-populate and render.
+    engine->clear();
+    for (int32_t s = 101; s <= 100 + AudioOutputEngine::MAX_VOICES; ++s) {
+        queueOne(*engine, s, 0);
+    }
+    events.clear();
+    engine->renderMix(out.data(), out.size());
+    TEST_ASSERT_EQ(events.size(),
+                   static_cast<size_t>(2 * AudioOutputEngine::MAX_VOICES));
+    for (int i = 0; i < AudioOutputEngine::MAX_VOICES; ++i) {
+        TEST_ASSERT_EQ(events[i].state, 2); // PASSIVE, queue-time first
+    }
+    for (int i = 0; i < AudioOutputEngine::MAX_VOICES; ++i) {
+        TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES + i].state,
+                       0); // TALKING, mix-time second
+    }
+    std::cout << "  [PASS] testTalkEventCapacityContract" << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -1167,4 +1216,5 @@ void run_audio_output_engine_tests() {
     testLosslessMixHasNoCrossfade();
     testJitterPoolExhaustionDropsAndCounts();
     testJitterPoolStress();
+    testTalkEventCapacityContract();
 }

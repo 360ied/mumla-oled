@@ -117,9 +117,11 @@ public:
     static constexpr int GATE_TIMEOUT_FRAMES = 20;
     static constexpr int DEAD_MISS_FRAMES = 10;
     static constexpr int MAX_VOICES = kMaxVoices;
-    // Pending transitions between renders: two per voice from the mix plus one
-    // per evicted session from queuePacket. Anything beyond this between two
-    // renders is not drained into a later result and is dropped.
+    // Pending transitions between renders. One result can carry at most one
+    // queue-time transition (eviction, removeUser, clear) plus one mix-time
+    // transition per voice, so 2 * MAX_VOICES bounds every result exactly;
+    // the pending array adds the same amount again as headroom so a render is
+    // never required to spill into the next one.
     static constexpr int MAX_PENDING_TALK_EVENTS = MAX_VOICES * 4;
     static constexpr int MAX_CONSECUTIVE_DECODE_ERRORS = 5;
     static constexpr int DEFAULT_JITTER_MARGIN_FRAMES = 4;
