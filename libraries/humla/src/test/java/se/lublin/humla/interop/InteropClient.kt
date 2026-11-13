@@ -232,6 +232,35 @@ object InteropClient {
         }
         throw AssertionError("Timed out waiting for $what")
     }
+
+    @JvmStatic
+    fun awaitUsingUdp(
+        session: se.lublin.humla.client.Session,
+        expected: Boolean,
+        what: String,
+    ) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
+            if (session.stats.value.usingUdp == expected) return
+            Thread.sleep(POLL_MILLIS)
+        }
+        throw AssertionError(
+            "Timed out waiting for $what; usingUdp=${session.stats.value.usingUdp}",
+        )
+    }
+
+    @JvmStatic
+    fun awaitUdpLatency(
+        session: se.lublin.humla.client.Session,
+        what: String,
+    ) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
+            if (session.stats.value.udpLatencyMicros != null) return
+            Thread.sleep(POLL_MILLIS)
+        }
+        throw AssertionError("Timed out waiting for $what")
+    }
 }
 
 class HumlaClientHandle(

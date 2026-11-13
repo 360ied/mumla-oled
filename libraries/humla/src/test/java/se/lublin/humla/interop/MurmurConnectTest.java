@@ -146,10 +146,14 @@ public class MurmurConnectTest {
     }
 
     private HumlaClient connect(String username, String password) throws Exception {
+        return connect(username, password, true);
+    }
+
+    private HumlaClient connect(String username, String password, boolean forceTcp) throws Exception {
         String trustStore = trustStoreForTestCert();
         ConnectTarget target = InteropClient.target(
-                server.host(), server.port(), username, password, trustStore);
-        HumlaClientHandle handle = InteropClient.create(noopObserver());
+                server.host(), server.port(), username, password, trustStore, forceTcp);
+        HumlaClientHandle handle = InteropClient.create(noopObserver(), forceTcp);
         open.add(handle);
         handle.getClient().connect(target);
         return handle.getClient();
@@ -269,7 +273,27 @@ public class MurmurConnectTest {
             if (bobSession < 0) Thread.sleep(100);
         }
         assertTrue("timed out waiting for superuser to see bob", bobSession >= 0);
-        suSession.kickBanUser(bobSession, "interop-kick", false);
+        // Under load Bob's connection can drop and reconnect with a new
+        // session id, or a single kick can go unprocessed; re-discover the
+        // live id and re-kick until Bob reaches Failed (idempotent: a kick
+        // for a stale id touches nobody).
+        long kickDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < kickDeadline
+                && !(bob.getState().getValue() instanceof ClientState.Failed)) {
+            if (bob.getState().getValue() instanceof ClientState.Connected) {
+                int liveBobSession = -1;
+                for (var e : suSession.getState().getValue().getServer().getUsers().entrySet()) {
+                    if ("InteropBob".equals(e.getValue().getName())) {
+                        liveBobSession = e.getKey();
+                        break;
+                    }
+                }
+                if (liveBobSession >= 0) {
+                    suSession.kickBanUser(liveBobSession, "interop-kick", false);
+                }
+            }
+            Thread.sleep(1000);
+        }
 
         ClientState.Failed failed = InteropClient.awaitFailed(bob, "bob kicked");
         assertTrue("expected Removed, got " + failed.getError(),
@@ -348,5 +372,25 @@ public class MurmurConnectTest {
         suSession.moveUserToChannel(aliceSessionId, 0);
         InteropClient.awaitUserInChannel(aliceSession, "InteropAlice", 0, "alice moved back");
         InteropClient.awaitUserInChannel(bobSession, "InteropAlice", 0, "bob sees alice back");
+    }
+
+    @Test
+    public void forcedTcpUsesTunnel() throws Exception {
+        HumlaClient alice = connect("InteropAlice", null, true);
+        Session session = InteropClient.awaitConnected(alice, "alice sync");
+        // Forced TCP never leaves tunnel mode: no flip to UDP while pings flow.
+        InteropClient.awaitUsingUdp(session, false, "forced TCP uses tunnel");
+        Thread.sleep(3000);
+        assertTrue("forced TCP must stay tunnelled, got usingUdp=true",
+                !session.getStats().getValue().getUsingUdp());
+    }
+
+    @Test
+    public void udpEnabledUsesUdp() throws Exception {
+        HumlaClient alice = connect("InteropAlice", null, false);
+        Session session = InteropClient.awaitConnected(alice, "alice sync");
+        InteropClient.awaitUsingUdp(session, true, "UDP enabled");
+        // A measured UDP latency proves real ping round-trips, not just the seed.
+        InteropClient.awaitUdpLatency(session, "UDP pings flow");
     }
 }
