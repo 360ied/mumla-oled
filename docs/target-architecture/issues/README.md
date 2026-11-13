@@ -1,6 +1,16 @@
-# Steps 1–4 Deep Audit: Issues
+# Issues
 
-Part of the [step 5a retrospective](../history/step5a-retrospective/README.md). Snapshot: 2026-11-12,
+The live queue of drift between the [target architecture](../README.md)
+spec and the code. Each issue file's `Status` row is authoritative; the
+`State` column below is its summary, updated in the same commit.
+[`open-items.md`](../open-items.md) links here for anything that gates a
+step rather than restating it.
+
+The queue began as a deep audit of steps 1–4, prompted by the
+[step 5a retrospective](../history/step5a-retrospective/README.md). An
+issue's bar is conformance, not the [admission bar](../README.md#admission-bar):
+the code disagrees with the spec, or a verification the spec promises is
+missing. New findings take the next number. Audit snapshot: 2026-11-12,
 `master` at `092d9dc8`. All line numbers in these files refer to that
 commit; symbols are given alongside so they stay findable as code moves.
 The `Status` rows were refreshed later the same day, at `4e9474c7`, after

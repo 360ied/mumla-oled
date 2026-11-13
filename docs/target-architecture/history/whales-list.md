@@ -1,5 +1,20 @@
 # Technical Debt Whales — Mumla OLED
 
+> **Historical.** This list was superseded by the
+> [target architecture](../README.md), which carries its admission bar
+> forward. Kept so commit messages and docs that cite "W1"–"W6" stay
+> traceable. Evidence below describes the code at `f7f32c9c` and is not
+> maintained.
+>
+> | Whale | Addressed by | State (see [`PROGRESS.md`](../PROGRESS.md)) |
+> |---|---|---|
+> | W1 session object | [Step 3](../migration.md#step-3--client-and-session) (`HumlaClient`, `Session`) | Done; `connectionGeneration` deleted, though `connectEpoch` remains ([open items](../open-items.md#open-not-gating)) |
+> | W2 model snapshots | [Step 2](../migration.md#step-2--immutable-state) (immutable `SessionState`) | Done; `Channel`, `User`, `ModelHandler` deleted |
+> | W3 audio control actor | [Step 4](../migration.md#step-4--voice-control-and-route) (`VoiceControl`, `RouteControl`) | Done; `mMuteLock` and the monitor order deleted |
+> | W4 data/DI layer | [Step 6](../migration.md#step-6--container-storage-and-features) (`AppContainer`) and step 7 (Hilt and kapt removed) | Decided as "revert DI"; not started |
+> | W5 app layer | [Steps 6 and 7](../migration.md#step-7--screens-and-service-cut-over) (features, ViewModels, `ConnectionService`) | Not started |
+> | W6 end-to-end harness | [Step 1](../migration.md#step-1--harness-and-gate) (gate and murmur interop) | Done; race validation still open ([open items](../open-items.md#open-gating)) |
+
 Snapshot: `master` at `f7f32c9c`, 2026-11-10. Citations name files and
 symbols, not line numbers; re-search the symbol at `HEAD`.
 

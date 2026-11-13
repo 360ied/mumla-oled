@@ -3,17 +3,44 @@
 Snapshot: claims about today's code verified against `master` at `c988bbfe`, 2026-11-10. Citations name files and
 symbols, not line numbers.
 
-Status: specification in progress. No code exists for any of this.
-Nothing here authorizes work; each migration step starts only on explicit
-request, once the [open items](open-items.md) that gate it are resolved.
+Status: migration in progress; steps 1–4 are implemented (see
+[`PROGRESS.md`](PROGRESS.md)). Nothing here authorizes work; each migration
+step starts only on explicit request, once the [open items](open-items.md)
+that gate it are resolved.
 
-## Relationship to the whales list
+## Where to look
 
-The [whales list](history/whales-list.md) is deliberately *satisficing*: the smallest
-structural fix for each family of symptoms. This specification is the
-*optimizing* counterpart: the architecture Mumla OLED would have if it were
-designed today, and a path to it. Both share the whales list's admission
-bar and its refusal to sweep krill.
+| To find | Read |
+|---|---|
+| The design | The [specification](#specification) files below |
+| Which step is done | [`PROGRESS.md`](PROGRESS.md) |
+| Open design questions, and what gates each step | [`open-items.md`](open-items.md) |
+| Known drift between spec and code, and the queue of fixes | [`issues/`](issues/README.md) (each issue file's `Status` row is authoritative; the index summarizes) |
+| Post-mortems and superseded plans | [`history/`](#history) |
+
+## Admission bar
+
+This specification replaced the satisficing
+[whales list](history/whales-list.md), which in turn replaced a deleted
+grab bag of low-severity items whose individual fixes caused more
+regressions than they removed. Any change to the design, and any debt
+paydown proposed outside it, meets the same bar ([issues](issues/README.md)
+are measured against the spec instead):
+
+1. **Root cause, not symptom.** It explains a *family* of past bugs or
+   commits, not one defect.
+2. **Structural fix.** It changes ownership, lifetime, or threading
+   boundaries, not a guard, null check, or extra lock.
+3. **Deletes code on landing.** It removes more defensive machinery than
+   it adds.
+4. **Has a done-when oracle** that a reviewer can check mechanically.
+
+Things that fail the bar (individual null checks, single missing logs,
+naming, doc rot, isolated dead code) are fixed only when a migration step
+or a feature is already rewriting that code, never as standalone sweeps.
+The same holds for the roughly 180 "literally" / "NPE-exact" markers left
+by the Java-to-Kotlin port: retire them in code a step is already
+rewriting.
 
 ## Design goal
 
@@ -45,6 +72,15 @@ with snapshot releases as the field test.
 | [testing.md](testing.md) | Test layers, murmur interop harness, native suite additions, on-device testing, `PROGRESS.md` |
 | [migration.md](migration.md) | Steps and commits, done-when lists, spikes, kill criteria, decisions reversed |
 | [open-items.md](open-items.md) | Underspecification tracker: open, gating, and resolved items |
+
+## History
+
+Records kept for their reasoning; none of them is current.
+
+| File | What |
+|---|---|
+| [history/whales-list.md](history/whales-list.md) | The satisficing W1–W6 list this specification replaced, with a map from each whale to the step that addressed it |
+| [history/step5a-retrospective/](history/step5a-retrospective/README.md) | Why the first step-5a attempt shipped dead voice and was reset; the spec edits it led to |
 
 ## Overview
 

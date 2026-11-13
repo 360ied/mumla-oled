@@ -10,14 +10,15 @@ of the [target architecture](../../README.md) was merged,
 shipped as `v0.27.4`, and pulled: all voice was dead at runtime while the
 gate (`check.sh`), the murmur interop suite, and the release build all
 passed. `master` was hard-reset to its pre-merge state. This directory
-records why, what the investigation found about steps 1–4, and the spec
-changes proposed before 5a is attempted again.
+records why and the spec changes proposed before 5a is attempted again.
+The deeper audit of steps 1–4 that the investigation started now lives on
+as the live [issue queue](../../issues/README.md).
 
 | File | Contents |
 |---|---|
 | [what-went-wrong.md](what-went-wrong.md) | Post-mortem of the 5a attempt: how it failed, why no automated layer caught it, and how the design drifted |
 | [whats-still-fine.md](whats-still-fine.md) | Design-conformance audit of steps 1–4 against the spec, and the small gaps it found |
-| [issues/](../../issues/README.md) | Deeper audit of steps 1–4: one file per issue (31) with a `Status` row, plus an index whose `State` column and remaining-work section say what is applied, decided, and open |
+| [../../issues/](../../issues/README.md) | Moved out: the deeper steps 1–4 audit, now the live issue queue |
 | [proposed-spec-edits.md](proposed-spec-edits.md) | Edits to `migration.md`, `testing.md`, `open-items.md`, and `PROGRESS.md` (applied) |
 
 ## Where the attempt lives
