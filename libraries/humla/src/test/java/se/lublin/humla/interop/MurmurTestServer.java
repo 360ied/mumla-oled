@@ -133,6 +133,55 @@ public final class MurmurTestServer {
         return withServerPassword ? SERVER_PASSWORD : null;
     }
 
+    public String superuserPassword() {
+        return SUPERUSER_PASSWORD;
+    }
+
+    /**
+     * Stops the server process but keeps the temp dir (config + SQLite),
+     * then starts a fresh process on the same port. The client should
+     * observe Reconnecting and then Connected once the port reopens.
+     */
+    public void restart() throws Exception {
+        Process p = process;
+        process = null;
+        Thread hook = shutdownHook;
+        shutdownHook = null;
+        if (hook != null) {
+            try {
+                Runtime.getRuntime().removeShutdownHook(hook);
+            } catch (IllegalStateException | IllegalArgumentException ignored) {
+            }
+        }
+        if (p != null && p.isAlive()) {
+            p.destroy();
+            try {
+                p.waitFor(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (p.isAlive()) {
+                p.destroyForcibly();
+            }
+        }
+        // Relaunch on the same port with the same ini/database.
+        Path ini = dir.resolve("murmur.ini");
+        List<String> cmd = new ArrayList<>();
+        cmd.add("mumble-server");
+        cmd.add("-fg");
+        cmd.add("-ini");
+        cmd.add(ini.toString());
+        ProcessBuilder server = new ProcessBuilder(cmd);
+        serverLog = dir.resolve("mumble-server.log");
+        server.redirectOutput(serverLog.toFile());
+        server.redirectErrorStream(true);
+        process = server.start();
+
+        waitForPort();
+        shutdownHook = new Thread(this::stop);
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+    }
+
     private void launch() throws Exception {
         copyResource("/murmur/test-cert.pem", dir.resolve("test-cert.pem"));
         Path keyDest = dir.resolve("test-key.pem");
@@ -150,6 +199,9 @@ public final class MurmurTestServer {
         StringBuilder sb = new StringBuilder();
         sb.append("host=127.0.0.1\n");
         sb.append("port=").append(port).append("\n");
+        // Pin the UDP port explicitly: modern murmur defaults it to `port`, and
+        // the UDP scenarios should not depend on that default holding.
+        sb.append("udpport=").append(port).append("\n");
         sb.append("database=").append(db.toString()).append("\n");
         sb.append("sslCert=").append(dir.resolve("test-cert.pem").toString()).append("\n");
         sb.append("sslKey=").append(dir.resolve("test-key.pem").toString()).append("\n");

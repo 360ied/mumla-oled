@@ -18,8 +18,6 @@ them.
 | AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
-| Step 1 harness validation | Break `HumlaClient`'s stale-attempt guard in a throwaway worktree; `HumlaClientTest`'s stale-callback tests must fail 10 of 10, and pass 10 of 10 on `master`. Record in `PROGRESS.md` (see [testing](testing.md#murmur-interop)) | Step 5a |
-| Missing interop scenarios | Add kick → `Removed`, server restart → `Reconnecting` → `Connected`, self-mute/deafen echo, channel join and move, forced TCP and UDP → tunnel to `MurmurConnectTest` | Step 5a |
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3 |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3 |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3 |
@@ -32,11 +30,18 @@ them.
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8. Until then it stays in `BOUNDARY_FILES` even though the reader thread it is named for now lives in `TransportImpl` (see [issue 31](issues/31-boundary-files-mismatch.md)) |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
-| `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling) once the step-1 validation can catch a regression |
+| `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling); the step-1 validation now fails the stale-callback tests when either guard is removed (see [testing](testing.md#murmur-interop)) |
 | Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3 (remote) and 5a.4 (self) via `VoiceEngine.talkActivity` |
 | Upstream-parity codec changes | Found during the first 5a attempt, deferred out of 5a (no behavior changes inside the step): honor `volume_adjustment`; drop the 1.2.2 CELT workaround; empty `opus_data` terminator handling; legacy chaining tolerance. Land after 5a.4 as their own commits |
 
 ## Resolved
+
+Items resolved by the step-1 harness work (2026-11-13):
+
+| Item | Resolution | Where |
+|---|---|---|
+| Step 1 harness validation | Both `HumlaClient` epoch guards disabled: the three stale-callback tests fail 10 of 10; intact on `master`: pass 10 of 10. Throwaway break reverted uncommitted | [testing](testing.md#murmur-interop), [PROGRESS](PROGRESS.md) |
+| Missing interop scenarios | `MurmurConnectTest` grows 5 → 13: kick → `Removed` (no reconnect), restart → `Reconnecting` → `Connected`, self-mute/deafen echo with coercion, channel join and move, forced-TCP tunnel, UDP pings, and both UDP-blocked → tunnel fallback triggers (never-open UDP voice switching on the 20 s giveup, plus a UDP socket that cannot be opened switching at once with the session surviving on the tunnel); suite green clean and under CPU load | [testing](testing.md#murmur-interop) |
 
 Items resolved by the [step 5a retrospective](history/step5a-retrospective/README.md):
 

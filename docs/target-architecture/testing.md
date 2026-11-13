@@ -152,11 +152,14 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - channel join and move (SuperUser creates channels);
 - text message in both directions;
 - self-mute and self-deafen echo, including coercion;
-- wrong server password → `Rejected`, no reconnect;
+- server password accepted at connect; wrong server password →
+  `Rejected`, no reconnect;
 - kick by SuperUser → `Removed`, no reconnect;
 - server stopped and restarted on the same port → `Reconnecting` with the
   expected delays, then `Connected`;
-- forced TCP; UDP pings and the switch to tunnel mode when UDP is blocked;
+- forced TCP; UDP pings; and both switch-to-tunnel triggers — the 20 s
+  zero-counter giveup and a UDP socket that cannot be opened at all
+  (`UdpUnavailable`, switch at once);
 - from step 5a: voice between two clients over UDP and over the tunnel
   (tunnel from 5a.2, inbound UDP from 5a.3, both directions from 5a.4;
   see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).
@@ -182,12 +185,15 @@ the result in `PROGRESS.md`. If no past race can be reproduced, the
 harness cannot vouch for the later steps (see
 [migration](migration.md#kill-criteria)).
 
-Step 1 could not reproduce the race against `HumlaConnection` and deferred
-the check to step 3's virtual-time tests; it has not yet been run. The
-literal `2e2a067d` revert is no longer possible (that code is gone): the
-equivalent is to break `HumlaClient`'s stale-attempt guard and confirm
-`HumlaClientTest`'s stale-callback tests fail. Tracked in
-[open items](open-items.md#open-gating); it gates step 5a.
+Run 2026-11-13 on `master` (`f5973f71`): with both stale-attempt guards
+in `HumlaClient` disabled (`if (false)` at the `runAttempt` bug guard and
+the `onConnectFailed` epoch guard), all three stale-callback tests
+(`staleConnectFailureDoesNotClobberNewerAttempt`,
+`staleEqualTargetFailureDoesNotClobberNewerAttempt`,
+`staleBugFailureDoesNotClobberNewerAttempt`) fail 10 of 10 runs; with the
+guards intact they pass 10 of 10. The
+throwaway break was reverted without committing. Recorded in
+[`PROGRESS.md`](PROGRESS.md).
 
 ## On-device testing
 
