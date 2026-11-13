@@ -145,5 +145,5 @@ here in detail).
 - [05](05-client-edge-invariants-weak.md): the invariant harness.
 - [02](02-service-destroy-leaks-transport.md): a defect these tests would
   catch.
-- Open item "Step 1 harness validation" in
-  [open-items.md](../open-items.md).
+- The step-1 harness validation and the murmur interop suite it left
+  behind (resolved; see [open items](../open-items.md#resolved)).

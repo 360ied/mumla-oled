@@ -41,7 +41,7 @@ Items resolved by the step-1 harness work (2026-11-13):
 | Item | Resolution | Where |
 |---|---|---|
 | Step 1 harness validation | Both `HumlaClient` epoch guards disabled: the three stale-callback tests fail 10 of 10; intact on `master`: pass 10 of 10. Throwaway break reverted uncommitted | [testing](testing.md#murmur-interop), [PROGRESS](PROGRESS.md) |
-| Missing interop scenarios | `MurmurConnectTest` grows 5 → 12: kick → `Removed` (no reconnect), restart → `Reconnecting` → `Connected`, self-mute/deafen echo with coercion, channel join and move, forced-TCP tunnel, UDP pings, and UDP-blocked → tunnel fallback (never-open UDP voice, true-to-false `usingUdp` at ~20 s, session survives, text flows); suite green clean and under CPU load | [testing](testing.md#murmur-interop) |
+| Missing interop scenarios | `MurmurConnectTest` grows 5 → 13: kick → `Removed` (no reconnect), restart → `Reconnecting` → `Connected`, self-mute/deafen echo with coercion, channel join and move, forced-TCP tunnel, UDP pings, and both UDP-blocked → tunnel fallback triggers (never-open UDP voice switching on the 20 s giveup, plus a UDP socket that cannot be opened switching at once with the session surviving on the tunnel); suite green clean and under CPU load | [testing](testing.md#murmur-interop) |
 
 Items resolved by the [step 5a retrospective](history/step5a-retrospective/README.md):
 

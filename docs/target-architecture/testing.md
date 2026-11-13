@@ -156,7 +156,9 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - kick by SuperUser → `Removed`, no reconnect;
 - server stopped and restarted on the same port → `Reconnecting` with the
   expected delays, then `Connected`;
-- forced TCP; UDP pings and the switch to tunnel mode when UDP is blocked;
+- forced TCP; UDP pings; and both switch-to-tunnel triggers — the 20 s
+  zero-counter giveup and a UDP socket that cannot be opened at all
+  (`UdpUnavailable`, switch at once);
 - from step 5a: voice between two clients over UDP and over the tunnel
   (tunnel from 5a.2, inbound UDP from 5a.3, both directions from 5a.4;
   see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).
@@ -185,8 +187,10 @@ harness cannot vouch for the later steps (see
 Run 2026-11-13 on `master` (`f5973f71`): with both stale-attempt guards
 in `HumlaClient` disabled (`if (false)` at the `runAttempt` bug guard and
 the `onConnectFailed` epoch guard), all three stale-callback tests
-(`staleConnectFailure`, `staleEqualTargetFailure`, `staleBugFailure`)
-fail 10 of 10 runs; with the guards intact they pass 10 of 10. The
+(`staleConnectFailureDoesNotClobberNewerAttempt`,
+`staleEqualTargetFailureDoesNotClobberNewerAttempt`,
+`staleBugFailureDoesNotClobberNewerAttempt`) fail 10 of 10 runs; with the
+guards intact they pass 10 of 10. The
 throwaway break was reverted without committing. Recorded in
 [`PROGRESS.md`](PROGRESS.md).
 
