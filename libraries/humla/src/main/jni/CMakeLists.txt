@@ -274,6 +274,7 @@ else()
         "${TEST_CPP_DIR}/test_audio_output_engine.cpp"
         "${TEST_CPP_DIR}/test_opus_interop.cpp"
         "${TEST_CPP_DIR}/test_engine_goldens.cpp"
+        "${TEST_CPP_DIR}/test_engine_allocation.cpp"
         "${TEST_CPP_DIR}/run_audio_tests.cpp"
     )
     target_include_directories(test_audio_engine PRIVATE
@@ -282,11 +283,24 @@ else()
         "${TEST_CPP_DIR}"
     )
     target_compile_options(test_audio_engine PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    # The allocation harness measures the C allocator through --wrap; keep the
+    # compiler from turning its probes into builtins with different symbols.
+    set_source_files_properties("${TEST_CPP_DIR}/test_engine_allocation.cpp"
+        PROPERTIES COMPILE_OPTIONS "-fno-builtin")
     target_compile_definitions(test_audio_engine PRIVATE
         MUMLA_GOLDEN_DIR="${JNI_ROOT}/../../test/fixtures/engine-goldens"
         MUMLA_RNNOISE_MODEL_PATH="${JNI_ROOT}/../assets/rnnoise_model.bin"
     )
     target_link_libraries(test_audio_engine PRIVATE humlaopus humlarnnoise Threads::Threads m)
+    # Counting allocator: test_engine_allocation.cpp replaces operator new/
+    # delete and wraps the C allocator, so steady-state calls can be shown to
+    # allocate nothing.
+    target_link_options(test_audio_engine PRIVATE
+        -Wl,--wrap=malloc
+        -Wl,--wrap=calloc
+        -Wl,--wrap=realloc
+        -Wl,--wrap=free
+    )
     add_test(NAME test_audio_engine COMMAND test_audio_engine)
 
     add_executable(test_crypt_state

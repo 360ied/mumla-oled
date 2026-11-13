@@ -47,19 +47,6 @@ void PreSpeechRingBuffer::push(const int16_t* pcm, size_t sampleCount) {
     }
 }
 
-void PreSpeechRingBuffer::flush(const std::function<void(const int16_t* pcm, size_t sampleCount)>& consumer) {
-    if (m_count == 0 || !consumer) {
-        return;
-    }
-    size_t startIndex = (m_head - m_count + m_capacity) % m_capacity;
-    for (size_t i = 0; i < m_count; i++) {
-        size_t index = (startIndex + i) % m_capacity;
-        const int16_t* framePtr = &m_storage[index * m_frameSize];
-        consumer(framePtr, m_frameSize);
-    }
-    m_count = 0;
-}
-
 void PreSpeechRingBuffer::clear() {
     m_count = 0;
     m_head = 0;

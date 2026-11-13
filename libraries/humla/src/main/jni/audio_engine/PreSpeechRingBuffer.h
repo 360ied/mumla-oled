@@ -20,7 +20,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <vector>
 
 namespace mumla {
@@ -51,8 +50,22 @@ public:
     /**
      * Flushes all stored frames in chronological order to the provided consumer.
      * Clears the buffer count after flushing.
+     *
+     * Templated rather than std::function: the capture thread calls this on the
+     * realtime path, where type erasure could allocate.
      */
-    void flush(const std::function<void(const int16_t* pcm, size_t sampleCount)>& consumer);
+    template <typename Consumer>
+    void flush(Consumer&& consumer) {
+        if (m_count == 0) {
+            return;
+        }
+        const size_t startIndex = (m_head + m_capacity - m_count) % m_capacity;
+        for (size_t i = 0; i < m_count; i++) {
+            const size_t index = (startIndex + i) % m_capacity;
+            consumer(&m_storage[index * m_frameSize], m_frameSize);
+        }
+        m_count = 0;
+    }
 
     /**
      * Resets the buffer state.
