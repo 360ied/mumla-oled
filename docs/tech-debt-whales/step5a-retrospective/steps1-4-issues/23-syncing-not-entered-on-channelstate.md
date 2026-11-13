@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — small code fix. |
 | Category | Spec drift |
 | Severity | Benign (no consumer distinguishes `HANDSHAKING` from `SYNCING`) |
 | Verified | Yes |

@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — not gating. |
 | Category | Verification gap |
 | Severity | Benign (behavior implemented; untested) |
 | Verified | Yes (no test sets a hash on an incoming message) |

@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — deliberately deferred: `VoiceControl` is deleted in 5a.4; the lesson applies to its replacement. |
 | Category | Verification gap |
 | Severity | Harmful (step 4's central class is behaviorally untested) |
 | Verified | Yes, by reading the test and the class |

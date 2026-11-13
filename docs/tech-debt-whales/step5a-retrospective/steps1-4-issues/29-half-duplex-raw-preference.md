@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — small. |
 | Category | Spec drift |
 | Severity | Benign (effective behavior correct; causes unnecessary pipeline rebuilds) |
 | Verified | Yes (code read) |

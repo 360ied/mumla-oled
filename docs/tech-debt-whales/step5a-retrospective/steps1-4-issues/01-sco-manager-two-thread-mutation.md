@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — regression unfixed; fix before step 5a.3. |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |

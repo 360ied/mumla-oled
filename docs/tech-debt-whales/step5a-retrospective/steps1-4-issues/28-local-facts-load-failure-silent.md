@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — trivial. |
 | Category | Spec drift |
 | Severity | Benign (diagnosability) |
 | Verified | Yes (code read) |

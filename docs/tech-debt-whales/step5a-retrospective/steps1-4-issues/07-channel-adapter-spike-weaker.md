@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — not gating. |
 | Category | Verification gap |
 | Severity | Benign-to-moderate (the spike's conclusion is backed by weaker evidence; daily use since agrees with it) |
 | Verified | Yes (test file read; spec compared) |

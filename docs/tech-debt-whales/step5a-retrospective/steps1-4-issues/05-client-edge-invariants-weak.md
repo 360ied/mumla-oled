@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — close together with [04](04-session-transport-virtual-time-gaps.md). |
 | Category | Verification gap |
 | Severity | Harmful (the invariants the spec relies on are mostly unchecked) |
 | Verified | Yes |

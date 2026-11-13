@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — should be closed before step 5a.3. |
 | Category | Verification gap |
 | Severity | Harmful (step 3's failure and recovery paths are untested; 5a.3 builds on them) |
 | Verified | Yes (test inventory and scenario-by-scenario comparison) |

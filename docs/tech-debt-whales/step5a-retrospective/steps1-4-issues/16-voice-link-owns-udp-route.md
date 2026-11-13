@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — settle before step 5a.3. |
 | Category | Undocumented interim |
 | Severity | Moderate (two writers of a decision the spec gives to one owner; directly relevant to 5a.3) |
 | Verified | Yes (code read) |

@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — fold into the transport tests from [04](04-session-transport-virtual-time-gaps.md). |
 | Category | Spec drift |
 | Severity | Benign (affects reactivity on slow connects, not correctness) |
 | Verified | Lens-reported; key lines confirmed (`startNanos` set in the constructor, `startKeepalive` does not reset it) |

@@ -28,7 +28,7 @@ them.
 | Item | Notes |
 |---|---|
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
-| TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8 |
+| TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8. Until then it stays in `BOUNDARY_FILES` even though the reader thread it is named for now lives in `TransportImpl` (see [issue 31](../step5a-retrospective/steps1-4-issues/31-boundary-files-mismatch.md)) |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
 | `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling) once the step-1 validation can catch a regression |
 | Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3 (remote) and 5a.4 (self) via `VoiceEngine.talkActivity` |

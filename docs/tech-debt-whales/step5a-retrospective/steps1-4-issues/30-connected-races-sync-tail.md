@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — revisit once [14](14-local-facts-self-mute-stub.md) makes the session restore self-mute. |
 | Category | Spec drift (ordering) |
 | Severity | Benign today (the racing step is currently a no-op in production) |
 | Verified | Yes (code read) |

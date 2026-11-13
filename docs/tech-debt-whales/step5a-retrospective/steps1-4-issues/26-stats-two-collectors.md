@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — fold into [04](04-session-transport-virtual-time-gaps.md). |
 | Category | Spec drift |
 | Severity | Benign |
 | Verified | Yes (code read) |

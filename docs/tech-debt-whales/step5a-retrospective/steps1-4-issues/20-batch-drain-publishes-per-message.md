@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — needs a decision: implement publish-once, or correct the spec's cost model. |
 | Category | Spec drift (performance mechanism missing) |
 | Severity | Benign (cost only; no incorrect state) |
 | Verified | Yes (code read) |

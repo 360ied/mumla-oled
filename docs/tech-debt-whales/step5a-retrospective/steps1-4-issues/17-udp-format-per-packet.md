@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — settle before step 5a.3. |
 | Category | Undocumented interim |
 | Severity | Low today (unreachable in practice); relevant to the 5a.3 contract |
 | Verified | Yes (code read) |

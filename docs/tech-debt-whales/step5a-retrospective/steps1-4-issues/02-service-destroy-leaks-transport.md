@@ -2,6 +2,7 @@
 
 | | |
 |---|---|
+| Status | Open — independent bugfix, not gating. |
 | Category | Confirmed regression (introduced by step 3) |
 | Severity | Harmful (resource leak and ghost user on a rare path) |
 | Verified | Yes, by code reading against the current tree and the pre-step-3 tree |
