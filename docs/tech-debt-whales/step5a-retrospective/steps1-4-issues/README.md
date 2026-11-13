@@ -109,23 +109,34 @@ the same state in its `Status` row.
 | [30](30-connected-races-sync-tail.md) | `Connected` can run before the session's `ServerSync` tail | Open; revisit once 14 restores self-mute in the session |
 | [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved (spec); `HumlaTCP` boundary question in [open items](../../target-architecture/open-items.md) |
 
-## Remaining work, in dependency order
+## Remaining work
 
-- **Small fixes, one worktree, no new test infrastructure:** 29,
-  27, 13's pinning test, and 19 together with 06's `ServerSync` lambda
-  (same branch of `handleMessage`). One file each, except 27's app
-  `when (ClientError)` sites.
-- **Route (one worktree):** 01 first, because the confinement turns 10's
-  "SCO failed in this route session" tracking into a plain field instead
-  of a third atomic; then 10, 11, 21, and 09's pinning test.
-- **Client/transport lifecycle and tests (one or two worktrees):** 02,
-  then 04 in scenario batches, then 05, then 16, 17, 22, 26, 30, which
-  are each easiest to pin with the tests from 04.
-- **Sweeps:** 06's rule-2 read-then-act pass over `Session`,
-  `PolicyCollector`, and `RouteControl` (the audit did not do it); 07 is
-  test-only.
-- **Needs a decision before it can be scheduled:** 20 (implement
-  publish-once or correct the spec's cost model) and 15 (which source
-  wins).
-- **Defer to the step that removes the code:** 03 and 18 (5a.4), 14
-  (step 6).
+Ordered by what must land before step 5a.3, then by dependency. Each row
+is one worktree unless noted.
+
+### Before step 5a.3
+
+| Order | Batch | Issues | Notes |
+|---|---|---|---|
+| 1 | Route confinement | [01](01-sco-manager-two-thread-mutation.md), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 first. Once routing state is confined to the route thread, 10's "SCO failed in this route session" flag can be a plain field instead of another atomic. 11 and 21 are not gating but touch the same `RouteControl` code. |
+| 2 | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
+| 3 | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3 reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
+
+### Independent, any time
+
+| Batch | Issues | Notes |
+|---|---|---|
+| Small library fixes (one worktree) | [29](29-half-duplex-raw-preference.md), [27](27-failed-with-connection-error.md), [13](13-cancel-reconnect-resets-attempts.md)'s pinning test, [19](19-pre-sync-local-intents-published.md) together with [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda | All in `libraries/humla`. 29 touches `VoiceSettingsMapper` and `VoiceControl`. 27 adds `ClientError.Internal`; `HumlaService`'s exhaustive `when` must handle it, and the app has no `ClientError` switches. 19 and 06 are the same branch of `Session.handleMessage`. `HumlaClientTest` already drives sync through a fake transport, so 13's and 19's tests need no new harness. |
+| Service destroy leak | [02](02-service-destroy-leaks-transport.md) | Independent bugfix. |
+| Rule-2 review sweep | [06](06-update-conventions-not-enforced.md) | Read-then-act pass over `Session`, `PolicyCollector`, and `RouteControl` (the audit did not do it). Sweep `RouteControl` after row 1, since confinement changes its reads. |
+| Spike test | [07](07-channel-adapter-spike-weaker.md) | Test-only. |
+
+### Blocked
+
+| Issues | Waiting on |
+|---|---|
+| [20](20-batch-drain-publishes-per-message.md) | A decision: implement publish-once, or correct the spec's cost model. |
+| [15](15-current-bandwidth-bypasses-stats.md) | A decision on which source wins; goes away if 5a's `VoiceStatus` replaces it. |
+| [03](03-voice-control-test-vacuous.md), [18](18-native-mute-writers-bypass-policy.md) | Step 5a.4, which removes the code. |
+| [14](14-local-facts-self-mute-stub.md) | Step 6 (real `LocalFactsStore`). |
+| [30](30-connected-races-sync-tail.md) | 14: the race only matters once the session restores self-mute. |
