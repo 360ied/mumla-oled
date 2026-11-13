@@ -108,6 +108,8 @@ class UserTransitionsTest : TestCase() {
         val r1 = applyUserState(syncing, Mumble.UserState.newBuilder().setSession(5).setName("n").build())
         assertTrue(r1.events.isEmpty())
         assertNotNull(r1.state.server.users[5])
+        // The UserState half of the HANDSHAKING -> SYNCING rule (spec, state.md).
+        assertEquals(SyncPhase.SYNCING, r1.state.server.phase)
 
         val synced = syncedStateWith()
         val r2 = applyUserState(synced, Mumble.UserState.newBuilder().setSession(5).setName("n").build())
