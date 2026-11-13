@@ -54,6 +54,16 @@ object InteropClient {
         username: String?,
         password: String?,
         trustStorePath: String?,
+    ): ConnectTarget = target(host, port, username, password, trustStorePath, forceTcp = true)
+
+    @JvmStatic
+    fun target(
+        host: String,
+        port: Int,
+        username: String?,
+        password: String?,
+        trustStorePath: String?,
+        forceTcp: Boolean,
     ): ConnectTarget = ConnectTarget(
         server = ServerEndpoint(
             serverId = -1L,
@@ -69,16 +79,19 @@ object InteropClient {
         } else {
             null
         },
-        forceTcp = true,
+        forceTcp = forceTcp,
         clientName = CLIENT_NAME,
         accessTokens = persistentListOf(),
     )
 
     @JvmStatic
-    fun create(observer: IHumlaObserver): HumlaClientHandle {
+    fun create(observer: IHumlaObserver): HumlaClientHandle = create(observer, forceTcp = true)
+
+    @JvmStatic
+    fun create(observer: IHumlaObserver, forceTcp: Boolean): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val voice = LegacyVoiceLink(tunnelSink = {})
-        voice.setForceTcp(true)
+        voice.setForceTcp(forceTcp)
         val route = NoopRouteLifecycle()
         val network = object : NetworkMonitor {
             // The network-available path is intentionally unexercised here;
@@ -153,6 +166,67 @@ object InteropClient {
             val users = session.state.value.server.users.values
             for (u in users) {
                 if (u.name == name) return
+            }
+            Thread.sleep(POLL_MILLIS)
+        }
+        throw AssertionError("Timed out waiting for $what")
+    }
+
+    @JvmStatic
+    fun awaitReconnecting(client: HumlaClient, what: String) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
+            if (client.state.value is ClientState.Reconnecting) return
+            Thread.sleep(POLL_MILLIS)
+        }
+        throw AssertionError("Timed out waiting for $what; state=${client.state.value}")
+    }
+
+    @JvmStatic
+    fun awaitChannel(
+        session: se.lublin.humla.client.Session,
+        channelId: Int,
+        what: String,
+    ) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
+            if (session.state.value.server.channels.containsKey(channelId)) return
+            Thread.sleep(POLL_MILLIS)
+        }
+        throw AssertionError("Timed out waiting for $what")
+    }
+
+    @JvmStatic
+    fun awaitUserInChannel(
+        session: se.lublin.humla.client.Session,
+        name: String,
+        channelId: Int,
+        what: String,
+    ) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
+            val users = session.state.value.server.users.values
+            for (u in users) {
+                if (u.name == name && u.channelId == channelId) return
+            }
+            Thread.sleep(POLL_MILLIS)
+        }
+        throw AssertionError("Timed out waiting for $what")
+    }
+
+    @JvmStatic
+    fun awaitSelfMute(
+        session: se.lublin.humla.client.Session,
+        name: String,
+        mute: Boolean,
+        deaf: Boolean,
+        what: String,
+    ) {
+        val start = System.nanoTime()
+        while (remainingNanos(start) > 0) {
+            val users = session.state.value.server.users.values
+            for (u in users) {
+                if (u.name == name && u.selfMuted == mute && u.selfDeafened == deaf) return
             }
             Thread.sleep(POLL_MILLIS)
         }
