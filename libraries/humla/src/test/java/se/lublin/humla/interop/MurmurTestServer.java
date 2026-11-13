@@ -199,6 +199,9 @@ public final class MurmurTestServer {
         StringBuilder sb = new StringBuilder();
         sb.append("host=127.0.0.1\n");
         sb.append("port=").append(port).append("\n");
+        // Pin the UDP port explicitly: modern murmur defaults it to `port`, and
+        // the UDP scenarios should not depend on that default holding.
+        sb.append("udpport=").append(port).append("\n");
         sb.append("database=").append(db.toString()).append("\n");
         sb.append("sslCert=").append(dir.resolve("test-cert.pem").toString()).append("\n");
         sb.append("sslKey=").append(dir.resolve("test-key.pem").toString()).append("\n");
