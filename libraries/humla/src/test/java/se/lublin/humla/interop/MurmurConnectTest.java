@@ -41,6 +41,8 @@ import se.lublin.humla.client.ClientState;
 import se.lublin.humla.client.ConnectTarget;
 import se.lublin.humla.client.HumlaClient;
 import se.lublin.humla.client.Session;
+import se.lublin.humla.net.HumlaTCPMessageType;
+import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
@@ -286,5 +288,65 @@ public class MurmurConnectTest {
         InteropClient.awaitReconnecting(alice, "restart triggers reconnect");
         Session recovered = InteropClient.awaitConnected(alice, "reconnect after restart");
         assertTrue(recovered.getState().getValue().getServer().getUsers().size() >= 1);
+    }
+
+    @Test
+    public void selfMuteDeafenEchoWithCoercion() throws Exception {
+        HumlaClient alice = connect("InteropAlice", null);
+        Session session = InteropClient.awaitConnected(alice, "alice sync");
+        session.setSelfMuteDeaf(true, false);
+        InteropClient.awaitSelfMute(session, "InteropAlice", true, false, "self-mute echo");
+        // Deafen implies mute: a deaf-only request coerces to mute+deaf.
+        session.setSelfMuteDeaf(false, true);
+        InteropClient.awaitSelfMute(session, "InteropAlice", true, true, "deafen coercion echo");
+        session.setSelfMuteDeaf(false, false);
+        InteropClient.awaitSelfMute(session, "InteropAlice", false, false, "unmute echo");
+    }
+
+    @Test
+    public void channelJoinAndMove() throws Exception {
+        HumlaClient alice = connect("InteropAlice", null);
+        Session aliceSession = InteropClient.awaitConnected(alice, "alice sync");
+        HumlaClient bob = connect("InteropBob", null);
+        Session bobSession = InteropClient.awaitConnected(bob, "bob sync");
+        HumlaClient superuser = connect("SuperUser", server.superuserPassword());
+        Session suSession = InteropClient.awaitConnected(superuser, "superuser sync");
+        // SuperUser creates a subchannel under root; the server assigns its id.
+        Mumble.ChannelState create = Mumble.ChannelState.newBuilder()
+                .setParent(0).setName("interop-room").build();
+        suSession.getTransport().send(create, HumlaTCPMessageType.ChannelState);
+        int roomId = -1;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (roomId < 0 && System.nanoTime() < deadline) {
+            for (var e : aliceSession.getState().getValue().getServer().getChannels().entrySet()) {
+                if ("interop-room".equals(e.getValue().getName())) {
+                    roomId = e.getKey();
+                    break;
+                }
+            }
+            if (roomId < 0) Thread.sleep(100);
+        }
+        assertTrue("timed out waiting for interop-room", roomId >= 0);
+        InteropClient.awaitChannel(bobSession, roomId, "bob sees room");
+        // Alice joins; both clients must observe her in the room.
+        aliceSession.joinChannel(roomId);
+        InteropClient.awaitUserInChannel(aliceSession, "InteropAlice", roomId, "alice joined");
+        InteropClient.awaitUserInChannel(bobSession, "InteropAlice", roomId, "bob sees alice move");
+        // SuperUser moves Alice back to root.
+        int aliceSessionId = -1;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (aliceSessionId < 0 && System.nanoTime() < deadline) {
+            for (var e : suSession.getState().getValue().getServer().getUsers().entrySet()) {
+                if ("InteropAlice".equals(e.getValue().getName())) {
+                    aliceSessionId = e.getKey();
+                    break;
+                }
+            }
+            if (aliceSessionId < 0) Thread.sleep(100);
+        }
+        assertTrue("timed out waiting for superuser to see alice", aliceSessionId >= 0);
+        suSession.moveUserToChannel(aliceSessionId, 0);
+        InteropClient.awaitUserInChannel(aliceSession, "InteropAlice", 0, "alice moved back");
+        InteropClient.awaitUserInChannel(bobSession, "InteropAlice", 0, "bob sees alice back");
     }
 }
