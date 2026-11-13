@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open — small code fix. |
+| Status | Resolved 2026-11-13 (`5d322791`, `0e8b4c15`, merged in `5ac34784`): `applyChannelState` advances `HANDSHAKING` → `SYNCING`, and tests pin the transition for both message types. |
 | Category | Spec drift |
 | Severity | Benign (no consumer distinguishes `HANDSHAKING` from `SYNCING`) |
 | Verified | Yes |

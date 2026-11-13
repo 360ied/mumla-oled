@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open — not gating. |
+| Status | Resolved 2026-11-13 (`3333918a`, `71bd3a54`, merged in `5ac34784`): six clearing-direction tests plus both-present ordering for user comments, user textures, and channel descriptions. |
 | Category | Verification gap |
 | Severity | Benign (behavior implemented; untested) |
 | Verified | Yes (no test sets a hash on an incoming message) |

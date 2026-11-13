@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open — trivial. |
+| Status | Resolved 2026-11-13 (`7459c0de`, merged in `5ac34784`): the fallback is kept and the failure logs a `WARNING`. |
 | Category | Spec drift |
 | Severity | Benign (diagnosability) |
 | Verified | Yes (code read) |

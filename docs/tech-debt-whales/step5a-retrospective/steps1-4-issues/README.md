@@ -44,13 +44,14 @@ ground rules).
 
 ## Issues
 
-State is current as of 2026-11-12, after the three spec commits that
-followed the audit (`028d2222`, `ec9faf63`, `4e9474c7`). The spec-only
-fixes (12, 13, 24, 25, 27, 31, and the interim entries for 14, 15, 18)
-are applied on `master`; the decisions for 09, 10, 11, and 19 are
-recorded; 06's review rules are in the pedantic-review skill. What
-remains is code, tests, and the two sweeps listed below. Each issue file
-carries the same state in its `Status` row.
+State is current as of 2026-11-13, after the three spec commits that
+followed the audit (`028d2222`, `ec9faf63`, `4e9474c7`) and the first code
+batch (`5ac34784`). The spec-only fixes (12, 13, 24, 25, 27, 31, and the
+interim entries for 14, 15, 18) are applied on `master`, and 08, 23, and
+28 are now fixed and tested; the decisions for 09, 10, 11, and 19 are
+recorded; 06's review rules are in the pedantic-review skill. What remains
+is code, tests, and the two sweeps listed below. Each issue file carries
+the same state in its `Status` row.
 
 ### Confirmed regressions
 
@@ -68,7 +69,7 @@ carries the same state in its `Status` row.
 | [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Open; with 04 |
 | [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions are not in any review checklist; one violation in `Session` | Half applied: review rules landed; `ServerSync` lambda and the rule-2 sweep open |
 | [07](07-channel-adapter-spike-weaker.md) | Step-2 live-handle spike test is weaker than specified | Open; not gating |
-| [08](08-hash-clearing-untested.md) | Hash-driven clearing has no transition test | Open; not gating |
+| [08](08-hash-clearing-untested.md) | Hash-driven clearing has no transition test | Resolved (`3333918a`, `71bd3a54`) |
 
 ### Spec/behavior mismatches (behavior preserved from before the migration)
 
@@ -98,19 +99,19 @@ carries the same state in its `Status` row.
 | [20](20-batch-drain-publishes-per-message.md) | 64-message batch drain still publishes once per message | Open; needs a decision (implement publish-once, or correct the spec's cost model) |
 | [21](21-retry-sco-no-counter-check.md) | `RetrySco` skips the counter check, publishes nothing, always returns true | Half resolved (spec); truthful return open |
 | [22](22-keepalive-anchored-at-construction.md) | Keepalive window and 20 s tunnel rule anchored at transport creation | Open; fold into 04's transport tests |
-| [23](23-syncing-not-entered-on-channelstate.md) | `SYNCING` entered only on `UserState` | Open; small code fix |
+| [23](23-syncing-not-entered-on-channelstate.md) | `SYNCING` entered only on `UserState` | Resolved (`5d322791`, `0e8b4c15`) |
 | [24](24-handles-drop-navigation-after-removal.md) | Removed handles drop navigation (spec wording too broad; matches old model) | Resolved (spec) |
 | [25](25-user-state-writes-local.md) | `applyUserState` writes `local.listeningVolumes` (spec self-contradiction) | Resolved (spec); optional test |
 | [26](26-stats-two-collectors.md) | Stats from two collectors; `usingUdp` seeded from the target | Open; fold into 04 |
 | [27](27-failed-with-connection-error.md) | `Failed` can carry a `ClientError.Connection` | Decided; `client.md` updated, `ClientError.Internal` code change open |
-| [28](28-local-facts-load-failure-silent.md) | A failed `LocalFacts` load is not logged | Open; trivial |
+| [28](28-local-facts-load-failure-silent.md) | A failed `LocalFacts` load is not logged | Resolved (`7459c0de`) |
 | [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Open; small |
 | [30](30-connected-races-sync-tail.md) | `Connected` can run before the session's `ServerSync` tail | Open; revisit once 14 restores self-mute in the session |
 | [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved (spec); `HumlaTCP` boundary question in [open items](../../target-architecture/open-items.md) |
 
 ## Remaining work, in dependency order
 
-- **Small fixes, one worktree, no new test infrastructure:** 28, 23, 29,
+- **Small fixes, one worktree, no new test infrastructure:** 29,
   27, 13's pinning test, and 19 together with 06's `ServerSync` lambda
   (same branch of `handleMessage`). One file each, except 27's app
   `when (ClientError)` sites.
@@ -121,8 +122,8 @@ carries the same state in its `Status` row.
   then 04 in scenario batches, then 05, then 16, 17, 22, 26, 30, which
   are each easiest to pin with the tests from 04.
 - **Sweeps:** 06's rule-2 read-then-act pass over `Session`,
-  `PolicyCollector`, and `RouteControl` (the audit did not do it); 07 and
-  08 are test-only.
+  `PolicyCollector`, and `RouteControl` (the audit did not do it); 07 is
+  test-only.
 - **Needs a decision before it can be scheduled:** 20 (implement
   publish-once or correct the spec's cost model) and 15 (which source
   wins).
