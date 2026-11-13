@@ -169,6 +169,32 @@ class ChannelTransitionsTest : TestCase() {
     }
 
     @Test
+    fun testFirstChannelStateEntersSyncing() {
+        val s = emptySessionState()
+        assertEquals(SyncPhase.HANDSHAKING, s.server.phase)
+        val out = applyChannelState(
+            s,
+            Mumble.ChannelState.newBuilder().setChannelId(0).setName("Root").build(),
+        ).state
+        assertEquals(SyncPhase.SYNCING, out.server.phase)
+    }
+
+    @Test
+    fun testChannelStateDoesNotLeaveSynced() {
+        var s = applyChannelState(
+            emptySessionState(),
+            Mumble.ChannelState.newBuilder().setChannelId(0).setName("Root").build(),
+        ).state
+        s = applyServerSync(s, Mumble.ServerSync.newBuilder().setSession(1).build()).state
+        assertEquals(SyncPhase.SYNCED, s.server.phase)
+        s = applyChannelState(
+            s,
+            Mumble.ChannelState.newBuilder().setChannelId(1).setName("Late").setParent(0).build(),
+        ).state
+        assertEquals(SyncPhase.SYNCED, s.server.phase)
+    }
+
+    @Test
     fun testChannelFieldMapping() {
         var s = emptySessionState()
         s = applyChannelState(

@@ -52,10 +52,18 @@ fun applyChannelState(state: SessionState, msg: Mumble.ChannelState): Transition
     if (!msg.hasChannelId()) return TransitionResult(state)
     val id = msg.channelId
 
-    // Self-parent is trivially a cycle: refuse before creating any stub.
-    if (msg.hasParent() && msg.parent == id) return TransitionResult(state)
+    // First channel/user message leaves HANDSHAKING for SYNCING. A real
+    // server sends the whole channel tree before any user, so this is what
+    // covers the channel half of sync (spec, state.md sync phases).
+    var server = state.server
+    if (server.phase == SyncPhase.HANDSHAKING) {
+        server = server.copy(phase = SyncPhase.SYNCING)
+    }
 
-    var channels = state.server.channels
+    // Self-parent is trivially a cycle: refuse before creating any stub.
+    if (msg.hasParent() && msg.parent == id) return TransitionResult(state.copy(server = server))
+
+    var channels = server.channels
     if (msg.hasParent()) {
         val parentId = msg.parent
         // Root never has a parent; ignore a hostile parent on id 0 to keep
@@ -75,7 +83,7 @@ fun applyChannelState(state: SessionState, msg: Mumble.ChannelState): Transition
         var pp: Int? = msg.parent
         val visited = HashSet<Int>()
         while (pp != null) {
-            if (pp == id) return TransitionResult(state.copy(server = state.server.copy(channels = channels)))
+            if (pp == id) return TransitionResult(state.copy(server = server.copy(channels = channels)))
             if (!visited.add(pp)) break
             pp = channels[pp]?.parentId
         }
@@ -181,7 +189,7 @@ fun applyChannelState(state: SessionState, msg: Mumble.ChannelState): Transition
     if (msg.hasCanEnter()) updated = updated.copy(canEnter = msg.canEnter)
 
     channels = channels.putting(id, updated)
-    return TransitionResult(state.copy(server = state.server.copy(channels = channels)))
+    return TransitionResult(state.copy(server = server.copy(channels = channels)))
 }
 
 /** ChannelRemove with whole-subtree delete. Drops every removed id from links and listeners. */
