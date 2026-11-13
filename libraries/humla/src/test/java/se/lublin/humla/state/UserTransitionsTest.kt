@@ -300,14 +300,19 @@ class UserTransitionsTest : TestCase() {
     fun testUserHashAndContentInOneMessageKeepsContent() {
         val before = syncedStateWith(userIn(1, "u"))
         val png = ByteString.copyFromUtf8("png")
+        val hash = ByteString.copyFromUtf8("hash")
         val after = applyUserState(
             before,
             Mumble.UserState.newBuilder().setSession(1)
-                .setTextureHash(ByteString.copyFromUtf8("hash"))
+                .setTextureHash(hash)
                 .setTexture(png)
+                .setCommentHash(hash)
+                .setComment("hello")
                 .build(),
         ).state.server.users[1]
         assertEquals(png, after?.texture)
         assertEquals(null, after?.textureHash)
+        assertEquals("hello", after?.comment)
+        assertEquals(null, after?.commentHash)
     }
 }
