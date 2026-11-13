@@ -109,6 +109,12 @@ public:
   The constant is derived from those two values, not hard-coded.
 - Talking-state changes are returned in `out` instead of through
   `TalkingStateCallback`.
+- Configuration is sampled once per frame: the capture thread hands over
+  the current view, and the engine compares it with the previous frame's.
+  A push-to-talk press and release that both fall between two frames is
+  therefore not observable and transmits nothing, and a mute takes effect
+  on the next frame (the interim bridge forwards it within one 10 ms frame,
+  so the user-visible behavior is unchanged).
 
 ### Output engine
 
@@ -148,20 +154,28 @@ public:
   picks the victim, and its slot is reset and reused
   (`opus_decoder_ctl(OPUS_RESET_STATE)`, jitter reset).
 - **Session lookup.** A fixed array of 32 (session, slot) pairs searched
-  linearly, replacing the `std::map`.
+  linearly, replacing the `std::map`. The array is kept sorted by session
+  id, so the mix visits voices in the same ascending order the map
+  supplied and the recorded goldens stay bit-exact.
 - **Jitter packet storage.** `jitter.c` allocates every packet's bytes with
   `calloc` today. It is changed to take packet storage from a fixed pool
   shared by all voices: 1024 slots of `MAX_PACKET_BYTES` (2 MiB), owned by
   the output engine. When the pool is exhausted, the incoming packet is
-  dropped and counted in `RenderResult.droppedPackets`. The pool size is
-  confirmed by a stress test with 32 voices at full jitter adaptation (see
-  [testing](testing.md#native-host-suite)).
+  dropped and counted in `RenderResult.droppedPackets`; a dropped packet
+  also does not credit the startup gate, since that audio never arrived.
+  The pool size is confirmed by a stress test with 32 voices at full jitter
+  adaptation (see [testing](testing.md#native-host-suite)): loss,
+  reordering and compression bursts for 60 simulated seconds at the
+  production margin peak at 140 of 1024 slots with zero drops.
 - **Render quantum.** The I/O layer never calls `render` with more than
   `MAX_QUANTUM_SAMPLES` (60 ms), so the scratch buffers' slow-path resize
   never runs. The engine asserts this in debug builds.
-- **Talk events.** Transitions recorded during `queuePacket` (eviction) and
-  `render` go into a fixed internal array, returned with the next
-  `RenderResult`.
+- **Talk events.** Transitions recorded during `queuePacket` (eviction),
+  `removeUser`, `clear`, and `render` go into a fixed internal array and are
+  returned by the next `RenderResult`, queue-time events before that
+  quantum's own. A render with no samples, or one where nothing is audible,
+  still delivers them, so nothing depends on a listener running. Whatever
+  does not fit in one result stays pending for the following render.
 
 ### Allocation sites removed
 

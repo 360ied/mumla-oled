@@ -87,7 +87,10 @@ Additions to the existing suite run by
   toggles, mid-utterance mute, and pre-speech flush; output sequences
   covering in-order, reordered, lost, terminator-only, and 33 concurrent
   senders (forcing eviction). Stored as binary fixtures under the native
-  test directory. The refactored engines must reproduce them exactly.
+  test directory (`libraries/humla/src/test/fixtures/engine-goldens/`) and
+  re-recorded only by an explicit, reviewed run
+  (`MUMLA_RECORD_ENGINE_GOLDENS=<dir>`). The refactored engines must
+  reproduce them exactly.
 - **No steady-state allocation:** the test build replaces global
   `operator new`/`delete` and `malloc`/`calloc` with counting versions;
   after warm-up, calls to `processFrame`, `queuePacket`, and `render` must

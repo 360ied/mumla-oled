@@ -165,12 +165,20 @@ libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <fcntl.h>
 libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <unistd.h>
 libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp: <jni.h>
 libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp: <jni.h>
+libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp: <mutex>
+libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp: <mutex>
 libraries/humla/src/main/jni/audio_engine/NativeCrashTestJni.cpp: <jni.h>
 libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>
 ```
 
 - `CryptStateOCB2.cpp` reads `/dev/urandom` for key generation (client
   keys come from the server, so this path is unused in practice).
+- The two engine bridges take `<mutex>` for the interim Kotlin path only:
+  the engines are single-threaded by contract, but Kotlin still calls them
+  from several threads (network threads queue voice, the control thread
+  sets input configuration, a render thread mixes). The bridge, not the
+  engine, serializes and holds the lock, and it is the only reason these
+  files keep the header. Both exceptions disappear with the bridge files.
 - The JNI bridges are deleted in step 5a (5b for anything `AudioInput` and
   `AudioOutput` still need), and `NativeCrashTestJni.cpp` moves to
   `jni/diagnostics/`.
