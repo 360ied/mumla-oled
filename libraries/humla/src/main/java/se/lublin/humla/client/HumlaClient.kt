@@ -232,6 +232,10 @@ class HumlaClient(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            // Starting with empty lists is right, but a failing store makes
+            // the user's mute/ignore lists look silently cleared, so leave a
+            // trace (spec, client.md start sequence step 1).
+            logger.warning("LocalFacts load failed for ${target.server.serverId}: $e")
             LocalFacts.empty()
         }
         attemptScope.ensureActive()
@@ -312,8 +316,7 @@ class HumlaClient(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                java.util.logging.Logger.getLogger("HumlaClient")
-                    .fine("Sync watcher dropped: $e")
+                logger.fine("Sync watcher dropped: $e")
             }
         }
         // Watch for failure -> Reconnecting/Failed.
@@ -470,5 +473,11 @@ class HumlaClient(
             } catch (e: Exception) {
             }
         }
+    }
+
+    companion object {
+        /** Same name as the rest of the client package, so logcat filters keep working. */
+        private val logger: java.util.logging.Logger =
+            java.util.logging.Logger.getLogger("HumlaClient")
     }
 }

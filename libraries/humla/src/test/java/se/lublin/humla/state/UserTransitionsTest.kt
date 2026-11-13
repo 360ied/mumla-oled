@@ -18,6 +18,7 @@
 package se.lublin.humla.state
 
 import junit.framework.TestCase
+import com.google.protobuf.ByteString
 import org.junit.Test
 import se.lublin.humla.protobuf.Mumble
 
@@ -107,6 +108,8 @@ class UserTransitionsTest : TestCase() {
         val r1 = applyUserState(syncing, Mumble.UserState.newBuilder().setSession(5).setName("n").build())
         assertTrue(r1.events.isEmpty())
         assertNotNull(r1.state.server.users[5])
+        // The UserState half of the HANDSHAKING -> SYNCING rule (spec, state.md).
+        assertEquals(SyncPhase.SYNCING, r1.state.server.phase)
 
         val synced = syncedStateWith()
         val r2 = applyUserState(synced, Mumble.UserState.newBuilder().setSession(5).setName("n").build())
@@ -236,5 +239,80 @@ class UserTransitionsTest : TestCase() {
         )
         assertTrue(r.state.server.users[9]?.localMuted == true)
         assertFalse(r.state.server.users[9]?.localIgnored == true)
+    }
+
+    // Hash-driven clearing: a *_hash replaces the cached content with null,
+    // and content replaces the hash. Server sends one or the other, never
+    // both; when both appear the later content branch wins (pinned below).
+
+    @Test
+    fun testCommentHashClearsComment() {
+        val before = syncedStateWith(userIn(1, "u").copy(comment = "hello", commentHash = null))
+        val bytes = ByteString.copyFromUtf8("hash")
+        val after = applyUserState(
+            before,
+            Mumble.UserState.newBuilder().setSession(1).setCommentHash(bytes).build(),
+        ).state.server.users[1]
+        assertEquals(null, after?.comment)
+        assertEquals(bytes, after?.commentHash)
+    }
+
+    @Test
+    fun testCommentClearsCommentHash() {
+        val hash = ByteString.copyFromUtf8("hash")
+        val before = syncedStateWith(userIn(1, "u").copy(comment = null, commentHash = hash))
+        val after = applyUserState(
+            before,
+            Mumble.UserState.newBuilder().setSession(1).setComment("hello").build(),
+        ).state.server.users[1]
+        assertEquals("hello", after?.comment)
+        assertEquals(null, after?.commentHash)
+    }
+
+    @Test
+    fun testTextureHashClearsTexture() {
+        val before = syncedStateWith(
+            userIn(1, "u").copy(texture = ByteString.copyFromUtf8("png"), textureHash = null),
+        )
+        val bytes = ByteString.copyFromUtf8("hash")
+        val after = applyUserState(
+            before,
+            Mumble.UserState.newBuilder().setSession(1).setTextureHash(bytes).build(),
+        ).state.server.users[1]
+        assertEquals(null, after?.texture)
+        assertEquals(bytes, after?.textureHash)
+    }
+
+    @Test
+    fun testTextureClearsTextureHash() {
+        val hash = ByteString.copyFromUtf8("hash")
+        val before = syncedStateWith(userIn(1, "u").copy(texture = null, textureHash = hash))
+        val png = ByteString.copyFromUtf8("png")
+        val after = applyUserState(
+            before,
+            Mumble.UserState.newBuilder().setSession(1).setTexture(png).build(),
+        ).state.server.users[1]
+        assertEquals(png, after?.texture)
+        assertEquals(null, after?.textureHash)
+    }
+
+    @Test
+    fun testUserHashAndContentInOneMessageKeepsContent() {
+        val before = syncedStateWith(userIn(1, "u"))
+        val png = ByteString.copyFromUtf8("png")
+        val hash = ByteString.copyFromUtf8("hash")
+        val after = applyUserState(
+            before,
+            Mumble.UserState.newBuilder().setSession(1)
+                .setTextureHash(hash)
+                .setTexture(png)
+                .setCommentHash(hash)
+                .setComment("hello")
+                .build(),
+        ).state.server.users[1]
+        assertEquals(png, after?.texture)
+        assertEquals(null, after?.textureHash)
+        assertEquals("hello", after?.comment)
+        assertEquals(null, after?.commentHash)
     }
 }

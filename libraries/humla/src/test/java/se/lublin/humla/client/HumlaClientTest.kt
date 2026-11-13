@@ -23,6 +23,9 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.Collections
+import java.util.logging.Handler
+import java.util.logging.Level
+import java.util.logging.LogRecord
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -269,6 +272,7 @@ class HumlaClientTest {
         route: FakeRoute,
         network: FakeNetwork,
         clock: Clock = Clock.fixed(Instant.ofEpochMilli(1_000_000), ZoneOffset.UTC),
+        localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
     ): HumlaClient = HumlaClient(
         parentScope = scope,
         transports = factory,
@@ -276,7 +280,7 @@ class HumlaClientTest {
         routeLifecycle = route,
         voiceLink = voice,
         network = network,
-        localFactsStore = InMemoryLocalFactsStore(),
+        localFactsStore = localFactsStore,
         clock = clock,
         observer = NoopObserver,
         mainPoster = { r -> r.run() },
@@ -414,6 +418,65 @@ class HumlaClientTest {
         assertEdges(seen)
         client.close().join()
         collectJob.cancel()
+    }
+
+    @Test
+    fun localFactsLoadFailureStartsEmptyAndLogs() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        val factory = FakeFactory()
+        val records = Collections.synchronizedList(ArrayList<LogRecord>())
+        val logger = java.util.logging.Logger.getLogger("HumlaClient")
+        val handler = object : Handler() {
+            override fun publish(record: LogRecord) {
+                records.add(record)
+            }
+
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
+        val previousLevel = logger.level
+        logger.addHandler(handler)
+        logger.level = Level.ALL
+        try {
+            // LocalFacts load throws: the session must still start with empty
+            // lists, and the failure must be logged (spec, client.md start
+            // sequence step 1).
+            val store = object : LocalFactsStore {
+                override suspend fun load(serverId: Long): LocalFacts =
+                    throw IllegalStateException("db unavailable")
+
+                override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) = Unit
+                override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) = Unit
+                override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) = Unit
+            }
+            val client = newClient(
+                this,
+                dispatcher,
+                factory,
+                FakeVoice(),
+                FakeRoute(Collections.synchronizedList(ArrayList())),
+                FakeNetwork(),
+                localFactsStore = store,
+            )
+            client.connect(testTarget())
+            runCurrent()
+            // A DB problem never blocks connecting: the transport was created.
+            assertEquals(1, factory.created.size)
+            assertTrue(client.state.value is ClientState.Connecting)
+            assertTrue(
+                "expected a LocalFacts load warning, got $records",
+                records.any {
+                    it.level == Level.WARNING &&
+                        it.message.contains("LocalFacts load failed")
+                },
+            )
+            client.disconnect()
+            runCurrent()
+            client.close().join()
+        } finally {
+            logger.removeHandler(handler)
+            logger.level = previousLevel
+        }
     }
 
     @Test
