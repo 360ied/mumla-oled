@@ -13,7 +13,7 @@
 > | W3 audio control actor | [Step 4](../migration.md#step-4--voice-control-and-route) (`VoiceControl`, `RouteControl`) | Done; `mMuteLock` and the monitor order deleted |
 > | W4 data/DI layer | [Step 6](../migration.md#step-6--container-storage-and-features) (`AppContainer`) and step 7 (Hilt and kapt removed) | Decided as "revert DI"; not started |
 > | W5 app layer | [Steps 6 and 7](../migration.md#step-7--screens-and-service-cut-over) (features, ViewModels, `ConnectionService`) | Not started |
-> | W6 end-to-end harness | [Step 1](../migration.md#step-1--harness-and-gate) (gate and murmur interop) | Done; race validation still open ([open items](../open-items.md#open-gating)) |
+> | W6 end-to-end harness | [Step 1](../migration.md#step-1--harness-and-gate) (gate and murmur interop) | Done; race validation was still open at snapshot time, and has since been run against `HumlaClient`'s guards ([open items](../open-items.md#resolved)) |
 
 Snapshot: `master` at `f7f32c9c`, 2026-11-10. Citations name files and
 symbols, not line numbers; re-search the symbol at `HEAD`.

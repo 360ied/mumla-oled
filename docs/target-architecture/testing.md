@@ -152,7 +152,8 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - channel join and move (SuperUser creates channels);
 - text message in both directions;
 - self-mute and self-deafen echo, including coercion;
-- wrong server password → `Rejected`, no reconnect;
+- server password accepted at connect; wrong server password →
+  `Rejected`, no reconnect;
 - kick by SuperUser → `Removed`, no reconnect;
 - server stopped and restarted on the same port → `Reconnecting` with the
   expected delays, then `Connected`;
