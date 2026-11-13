@@ -182,12 +182,13 @@ the result in `PROGRESS.md`. If no past race can be reproduced, the
 harness cannot vouch for the later steps (see
 [migration](migration.md#kill-criteria)).
 
-Step 1 could not reproduce the race against `HumlaConnection` and deferred
-the check to step 3's virtual-time tests; it has not yet been run. The
-literal `2e2a067d` revert is no longer possible (that code is gone): the
-equivalent is to break `HumlaClient`'s stale-attempt guard and confirm
-`HumlaClientTest`'s stale-callback tests fail. Tracked in
-[open items](open-items.md#open-gating); it gates step 5a.
+Run 2026-11-13 on `master` (`f5973f71`): with both stale-attempt guards
+in `HumlaClient` disabled (`if (false)` at the `runAttempt` bug guard and
+the `onConnectFailed` epoch guard), all three stale-callback tests
+(`staleConnectFailure`, `staleEqualTargetFailure`, `staleBugFailure`)
+fail 10 of 10 runs; with the guards intact they pass 10 of 10. The
+throwaway break was reverted without committing. Recorded in
+[`PROGRESS.md`](PROGRESS.md).
 
 ## On-device testing
 
