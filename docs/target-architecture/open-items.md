@@ -21,7 +21,6 @@ them.
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3 |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3 |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3 |
-| Interop UDP-blocked → tunnel fallback | Add the switch-to-tunnel-mode-when-UDP-is-blocked scenario to `MurmurConnectTest` (the one clause of "Missing interop scenarios" with no covering test; see [testing](testing.md#murmur-interop)) | Step 5a |
 | Voice interop harness | Host `libhumlaaudio` extended beyond crypto and loaded by the JVM interop test, driving `VoiceEngine` with synthetic PCM (see [testing](testing.md#murmur-interop)) | Step 5a.2 |
 
 ## Open (not gating)
@@ -42,7 +41,7 @@ Items resolved by the step-1 harness work (2026-11-13):
 | Item | Resolution | Where |
 |---|---|---|
 | Step 1 harness validation | Both `HumlaClient` epoch guards disabled: the three stale-callback tests fail 10 of 10; intact on `master`: pass 10 of 10. Throwaway break reverted uncommitted | [testing](testing.md#murmur-interop), [PROGRESS](PROGRESS.md) |
-| Missing interop scenarios (part) | `MurmurConnectTest` grows 5 → 11: kick → `Removed` (no reconnect), restart → `Reconnecting` → `Connected`, self-mute/deafen echo with coercion, channel join and move, forced-TCP tunnel, UDP pings; suite green clean and under CPU load. The UDP-blocked → tunnel fallback clause has no covering test and stays open (see the gating row above) | [testing](testing.md#murmur-interop) |
+| Missing interop scenarios | `MurmurConnectTest` grows 5 → 12: kick → `Removed` (no reconnect), restart → `Reconnecting` → `Connected`, self-mute/deafen echo with coercion, channel join and move, forced-TCP tunnel, UDP pings, and UDP-blocked → tunnel fallback (never-open UDP voice, true-to-false `usingUdp` at ~20 s, session survives, text flows); suite green clean and under CPU load | [testing](testing.md#murmur-interop) |
 
 Items resolved by the [step 5a retrospective](history/step5a-retrospective/README.md):
 
