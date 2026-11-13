@@ -1,7 +1,9 @@
 # Step 5a Retrospective
 
 Snapshot: 2026-11-12, `master` at `71f96f81` (step 4 plus two docs
-commits), after the step-5a merge was reset away.
+commits), after the step-5a merge was reset away. The spec edits proposed
+here were applied in `ec9faf63` and `4e9474c7`; issue statuses and the
+remaining-work queue were refreshed in `0746f5e4`.
 
 The first attempt at [step 5a](../target-architecture/migration.md#step-5a--engine-refactor-codec-network-threads)
 of the [target architecture](../target-architecture/README.md) was merged,
@@ -15,7 +17,7 @@ changes proposed before 5a is attempted again.
 |---|---|
 | [what-went-wrong.md](what-went-wrong.md) | Post-mortem of the 5a attempt: how it failed, why no automated layer caught it, and how the design drifted |
 | [whats-still-fine.md](whats-still-fine.md) | Design-conformance audit of steps 1–4 against the spec, and the small gaps it found |
-| [steps1-4-issues/](steps1-4-issues/README.md) | Deeper audit of steps 1–4: one file per issue (31), ready to hand off |
+| [steps1-4-issues/](steps1-4-issues/README.md) | Deeper audit of steps 1–4: one file per issue (31) with a `Status` row, plus an index whose `State` column and remaining-work section say what is applied, decided, and open |
 | [proposed-spec-edits.md](proposed-spec-edits.md) | Edits to `migration.md`, `testing.md`, `open-items.md`, and `PROGRESS.md` (applied) |
 
 ## Where the attempt lives
