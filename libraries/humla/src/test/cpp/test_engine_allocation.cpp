@@ -192,6 +192,32 @@ void testInputEngineSteadyStateAllocation() {
     }
 
     TEST_ASSERT_EQ(g_allocations, before);
+
+    // The denoiser is switched on the control plane, where a re-enable may
+    // allocate (RNNoise recreates its recurrent state). The capture thread
+    // must stay allocation-free across the switch on both sides of it.
+    engine.setRnnoiseEnabled(false);
+    const size_t beforeDisabled = g_allocations;
+    for (int i = 0; i < 50; ++i) {
+        engine.processFrame(pcm, kFrameSamples, config, &result);
+    }
+    TEST_ASSERT_EQ(g_allocations, beforeDisabled);
+
+    engine.setRnnoiseEnabled(true);
+    const size_t beforeReenabled = g_allocations;
+    for (int i = 0; i < 50; ++i) {
+        engine.processFrame(pcm, kFrameSamples, config, &result);
+    }
+    TEST_ASSERT_EQ(g_allocations, beforeReenabled);
+
+    // A model swap is control-plane too (it allocates); the frames after it
+    // are not.
+    engine.setRnnoiseModel(model.data(), model.size());
+    const size_t beforeModelSwap = g_allocations;
+    for (int i = 0; i < 50; ++i) {
+        engine.processFrame(pcm, kFrameSamples, config, &result);
+    }
+    TEST_ASSERT_EQ(g_allocations, beforeModelSwap);
     std::cout << "  [PASS] testInputEngineSteadyStateAllocation" << std::endl;
 }
 

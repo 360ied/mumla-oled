@@ -58,7 +58,6 @@ struct InputConfig {
     int bitrate;
     int framesPerPacket;
     float amplitudeBoost;
-    bool rnnoiseEnabled;
     bool adaptiveLevelerEnabled;
     float vadMax, vadMin;
     uint32_t vadHoldFrames;
@@ -87,7 +86,8 @@ public:
     // Realtime: one 10 ms frame (480 samples at 48 kHz).
     void processFrame(const int16_t* pcm, size_t samples,
                       const InputConfig& config, InputFrameResult* out);
-    // Control thread only, while stopped:
+    // Control plane only (may allocate, never called from the capture thread):
+    void setRnnoiseEnabled(bool enabled);
     void setRnnoiseModel(const uint8_t* data, size_t size);
     void reset();
 };
@@ -100,6 +100,13 @@ public:
 - `InputConfig` is the engine's own view, assembled by the capture thread
   each frame from `VoicePolicy` and `VoiceSettings`; the engine never sees
   either type.
+- The denoiser switch is deliberately **not** part of `InputConfig`:
+  RNNoise owns a large recurrent state and has no allocation-free reset, so
+  enabling it again recreates that state (five allocations). It is applied
+  on the control plane by `setRnnoiseEnabled`, and the capture thread only
+  reads the resulting flag, keeping the realtime path allocation-free
+  across the switch. The step 5a.4 settings push has to route this one
+  setting the same way (see [open items](open-items.md)).
 - Outbound packets hold up to `kMaxOpusBufferBytes` (1024) of Opus data, as
   today. Inbound packets may be larger (up to `MAX_PACKET_BYTES`, 2048), as
   today's output engine accepts.

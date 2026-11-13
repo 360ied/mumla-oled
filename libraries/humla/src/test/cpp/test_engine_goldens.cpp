@@ -763,7 +763,6 @@ mumla::audio::InputConfig toInputConfig(const InputControl& control) {
     config.bitrate = control.bitrate;
     config.framesPerPacket = control.framesPerPacket;
     config.amplitudeBoost = control.amplitudeBoost;
-    config.rnnoiseEnabled = control.rnnoise;
     config.adaptiveLevelerEnabled = control.leveler;
     config.vadMax = control.vadMax;
     config.vadMin = control.vadMin;
@@ -787,8 +786,16 @@ void runInputScenario(const InputScenario& scenario, InputResult* result) {
     AudioInputEngine engine(std::move(encoder), std::move(denoiser));
 
     mumla::audio::InputFrameResult frameResult;
+    bool rnnoiseEnabled = initial.rnnoise;
     for (size_t frame = 0; frame < scenario.frames.size(); ++frame) {
         const InputFrame& input = scenario.frames[frame];
+        // The denoiser switch is control-plane (enabling reallocates RNNoise's
+        // recurrent state), applied at the frame boundary exactly where the
+        // pre-refactor control-thread setter ran.
+        if (input.control.rnnoise != rnnoiseEnabled) {
+            rnnoiseEnabled = input.control.rnnoise;
+            engine.setRnnoiseEnabled(rnnoiseEnabled);
+        }
         engine.processFrame(input.pcm.data(), input.pcm.size(),
                             toInputConfig(input.control), &frameResult);
         if (frameResult.talkingChanged) {

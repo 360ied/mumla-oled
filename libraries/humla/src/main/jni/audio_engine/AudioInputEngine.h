@@ -52,7 +52,6 @@ struct InputConfig {
     int bitrate = 40000;
     int framesPerPacket = 2;
     float amplitudeBoost = 1.0f;
-    bool rnnoiseEnabled = true;
     bool adaptiveLevelerEnabled = true;
     float vadMax = HysteresisVad::DEFAULT_VAD_MAX;
     float vadMin = HysteresisVad::DEFAULT_VAD_MIN;
@@ -150,6 +149,13 @@ public:
      */
     void processFrame(const int16_t* pcm, size_t samples,
                       const InputConfig& config, InputFrameResult* out);
+
+    // Control plane (may allocate, so never called from the capture thread):
+    // the neural denoiser owns a large recurrent state, and RNNoise has no
+    // allocation-free way to reset it, so enabling it again recreates that
+    // state. The capture thread only reads the resulting flag.
+    void setRnnoiseEnabled(bool enabled);
+    bool isRnnoiseEnabled() const;
 
     // Control thread only, while stopped.
     void setRnnoiseModel(const uint8_t* modelData, size_t modelSize);

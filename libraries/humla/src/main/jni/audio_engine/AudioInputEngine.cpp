@@ -61,7 +61,6 @@ AudioInputEngine::AudioInputEngine(std::unique_ptr<IVoiceEncoder> encoder,
     m_config.transmitAllowed = true;
     m_config.pttPressed = false;
     m_config.adaptiveLevelerEnabled = m_leveler.isEnabled();
-    m_config.rnnoiseEnabled = m_denoiser ? m_denoiser->isEnabled() : false;
 }
 
 // Transition order matches the historical control-thread call order (mode,
@@ -118,13 +117,6 @@ void AudioInputEngine::applyConfig(const InputConfig& config,
 
     if (config.amplitudeBoost != m_config.amplitudeBoost) {
         m_config.amplitudeBoost = config.amplitudeBoost;
-    }
-
-    if (config.rnnoiseEnabled != m_config.rnnoiseEnabled) {
-        m_config.rnnoiseEnabled = config.rnnoiseEnabled;
-        if (m_denoiser) {
-            m_denoiser->setEnabled(config.rnnoiseEnabled);
-        }
     }
 
     if (config.adaptiveLevelerEnabled != m_config.adaptiveLevelerEnabled) {
@@ -399,6 +391,16 @@ void AudioInputEngine::flushAccumulator(bool isTerminator,
     } else {
         m_accumulatedFrames = 0;
     }
+}
+
+void AudioInputEngine::setRnnoiseEnabled(bool enabled) {
+    if (m_denoiser) {
+        m_denoiser->setEnabled(enabled);
+    }
+}
+
+bool AudioInputEngine::isRnnoiseEnabled() const {
+    return m_denoiser ? m_denoiser->isEnabled() : false;
 }
 
 void AudioInputEngine::setRnnoiseModel(const uint8_t* modelData,

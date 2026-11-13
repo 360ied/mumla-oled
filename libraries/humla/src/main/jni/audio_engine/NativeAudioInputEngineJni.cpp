@@ -112,7 +112,6 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
     ctx->config.bitrate = bitrate;
     ctx->config.framesPerPacket = framesPerPacket;
     ctx->config.amplitudeBoost = amplitudeBoost;
-    ctx->config.rnnoiseEnabled = rnnoiseEnabled != JNI_FALSE;
     ctx->config.adaptiveLevelerEnabled = adaptiveLevelerEnabled != JNI_FALSE;
     ctx->config.transmitAllowed = true;
     ctx->config.pttPressed = false;
@@ -122,12 +121,12 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeCreate(
     if (rnnoiseModelData != nullptr) {
         jsize modelLen = env->GetArrayLength(rnnoiseModelData);
         jbyte* modelBytes = env->GetByteArrayElements(rnnoiseModelData, nullptr);
-        denoiser = makeRnnoiseProcessor(ctx->config.rnnoiseEnabled,
+        denoiser = makeRnnoiseProcessor(rnnoiseEnabled != JNI_FALSE,
                                         reinterpret_cast<const uint8_t*>(modelBytes),
                                         static_cast<size_t>(modelLen));
         env->ReleaseByteArrayElements(rnnoiseModelData, modelBytes, JNI_ABORT);
     } else {
-        denoiser = makeRnnoiseProcessor(ctx->config.rnnoiseEnabled, nullptr, 0);
+        denoiser = makeRnnoiseProcessor(rnnoiseEnabled != JNI_FALSE, nullptr, 0);
     }
     ctx->engine = std::make_unique<AudioInputEngine>(std::move(encoder), std::move(denoiser));
 
@@ -330,8 +329,11 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeSetRnnoiseEnabled(
         jboolean enabled) {
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
+        // Control plane: enabling recreates the denoiser's recurrent state, so
+        // this is deliberately not part of the per-frame config (see
+        // AudioInputEngine::setRnnoiseEnabled).
         std::lock_guard<std::mutex> lock(ctx->engineMutex);
-        ctx->config.rnnoiseEnabled = enabled != JNI_FALSE;
+        ctx->engine->setRnnoiseEnabled(enabled != JNI_FALSE);
     }
 }
 
@@ -343,7 +345,7 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeIsRnnoiseEnabled(
     auto ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
         std::lock_guard<std::mutex> lock(ctx->engineMutex);
-        return ctx->config.rnnoiseEnabled ? JNI_TRUE : JNI_FALSE;
+        return ctx->engine->isRnnoiseEnabled() ? JNI_TRUE : JNI_FALSE;
     }
     return JNI_FALSE;
 }

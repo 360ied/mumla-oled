@@ -143,7 +143,10 @@ public:
         m_config.framesPerPacket = framesPerPacket;
     }
     void setAmplitudeBoost(float boost) { m_config.amplitudeBoost = boost; }
-    void setRnnoiseEnabled(bool enabled) { m_config.rnnoiseEnabled = enabled; }
+    // Control-plane call, not config: RNNoise cannot reset its recurrent
+    // state without allocating.
+    void setRnnoiseEnabled(bool enabled) { m_engine.setRnnoiseEnabled(enabled); }
+    bool isRnnoiseEnabled() const { return m_engine.isRnnoiseEnabled(); }
     void setAdaptiveLevelerEnabled(bool enabled) {
         m_config.adaptiveLevelerEnabled = enabled;
     }
@@ -249,19 +252,25 @@ void testInputConfigTransitions() {
     TEST_ASSERT_EQ(rig.packets[0].frames, 6);
     TEST_ASSERT_EQ(rig.framesPerPacket(), 3); // ignored on the engine side
 
-    // Bitrate, mode, denoiser and leveler reach their owners on the next frame.
+    // Bitrate, mode and leveler reach their owners on the next frame.
     rig.setBitrate(64000);
     rig.setInputMode(InputMode::PUSH_TO_TALK);
-    rig.setRnnoiseEnabled(false);
+    rig.setAdaptiveLevelerEnabled(true);
     rig.processFrame(frame.data(), frame.size());
     TEST_ASSERT_EQ(encoderPtr->getBitrate(), 64000);
     TEST_ASSERT_EQ(static_cast<int>(rig.inputMode()),
                    static_cast<int>(InputMode::PUSH_TO_TALK));
-    TEST_ASSERT_FALSE(denoiserPtr->isEnabled());
 
-    rig.setRnnoiseEnabled(true);
+    // The denoiser switch is control-plane: it applies on the calling thread
+    // because enabling reallocates RNNoise's recurrent state.
+    rig.setRnnoiseEnabled(false);
+    TEST_ASSERT_FALSE(denoiserPtr->isEnabled());
+    TEST_ASSERT_FALSE(rig.isRnnoiseEnabled());
     rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_FALSE(denoiserPtr->isEnabled());
+    rig.setRnnoiseEnabled(true);
     TEST_ASSERT_TRUE(denoiserPtr->isEnabled());
+    TEST_ASSERT_TRUE(rig.isRnnoiseEnabled());
 
     // The model is owned by the denoiser and queried through the engine.
     const uint8_t model[4] = {1, 2, 3, 4};
