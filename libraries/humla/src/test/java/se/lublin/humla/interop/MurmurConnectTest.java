@@ -245,4 +245,46 @@ public class MurmurConnectTest {
         assertTrue("expected a Reject failure, got " + failed.getError(),
                 failed.getError() instanceof ClientError.Rejected);
     }
+
+    @Test
+    public void kickLeadsToRemovedWithoutReconnect() throws Exception {
+        HumlaClient alice = connect("InteropAlice", null);
+        InteropClient.awaitConnected(alice, "alice sync");
+        HumlaClient bob = connect("InteropBob", null);
+        InteropClient.awaitConnected(bob, "bob sync");
+
+        HumlaClient superuser = connect("SuperUser", server.superuserPassword());
+        Session suSession = InteropClient.awaitConnected(superuser, "superuser sync");
+        int bobSession = -1;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (bobSession < 0 && System.nanoTime() < deadline) {
+            for (var e : suSession.getState().getValue().getServer().getUsers().entrySet()) {
+                if ("InteropBob".equals(e.getValue().getName())) {
+                    bobSession = e.getKey();
+                    break;
+                }
+            }
+            if (bobSession < 0) Thread.sleep(100);
+        }
+        assertTrue("timed out waiting for superuser to see bob", bobSession >= 0);
+        suSession.kickBanUser(bobSession, "interop-kick", false);
+
+        ClientState.Failed failed = InteropClient.awaitFailed(bob, "bob kicked");
+        assertTrue("expected Removed, got " + failed.getError(),
+                failed.getError() instanceof ClientError.Removed);
+        // Kicks never reconnect: the client must stay Failed.
+        Thread.sleep(3000);
+        assertTrue("kicked client must not reconnect, got " + bob.getState().getValue(),
+                bob.getState().getValue() instanceof ClientState.Failed);
+    }
+
+    @Test
+    public void serverRestartReconnects() throws Exception {
+        HumlaClient alice = connect("InteropAlice", null);
+        InteropClient.awaitConnected(alice, "alice sync");
+        server.restart();
+        InteropClient.awaitReconnecting(alice, "restart triggers reconnect");
+        Session recovered = InteropClient.awaitConnected(alice, "reconnect after restart");
+        assertTrue(recovered.getState().getValue().getServer().getUsers().size() >= 1);
+    }
 }
