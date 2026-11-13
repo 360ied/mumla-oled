@@ -17,6 +17,7 @@
 
 package se.lublin.humla.interop
 
+import java.io.IOException
 import java.time.Clock
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
@@ -87,26 +88,48 @@ object InteropClient {
         accessTokens = persistentListOf(),
     )
 
-    @JvmStatic
-    fun create(observer: IHumlaObserver): HumlaClientHandle = create(observer, forceTcp = true)
+    /**
+     * Voice setups the interop harness can hand to a client. One explicit
+     * mode instead of stacked booleans: the three UDP shapes are mutually
+     * exclusive and each maps to a distinct transport behaviour.
+     */
+    enum class Voice {
+        /** UDP allowed: the transport starts on UDP and may tunnel on its own. */
+        UDP,
+
+        /** Forced TCP: tunnelled from ServerSync on, no UDP socket at all. */
+        FORCED_TCP,
+
+        /**
+         * UDP presumed but never opened, so both cumulative good counters stay
+         * zero: only the transport's 20 s zero-counter giveup can react.
+         */
+        UDP_SILENTLY_BLOCKED,
+
+        /**
+         * UDP cannot be opened at all: voice reports `UdpUnavailable` and the
+         * transport tunnels at once, as it would after its 20 s rule
+         * (voice.md, failure handling).
+         */
+        UDP_SOCKET_FAILS,
+    }
 
     @JvmStatic
-    fun create(observer: IHumlaObserver, forceTcp: Boolean): HumlaClientHandle =
-        create(observer, forceTcp, udpEnabled = true)
+    fun create(observer: IHumlaObserver): HumlaClientHandle = create(observer, Voice.FORCED_TCP)
 
     @JvmStatic
-    fun create(observer: IHumlaObserver, forceTcp: Boolean, udpEnabled: Boolean): HumlaClientHandle {
+    fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val link = LegacyVoiceLink(tunnelSink = {})
+        val forceTcp = voice == Voice.FORCED_TCP
         link.setForceTcp(forceTcp)
-        // udpEnabled=false emulates fully-blocked UDP with working TCP: the
-        // voice layer never opens its socket, so both cumulative good
-        // counters stay zero and the transport must give up UDP for the
-        // tunnel ~20 s after creation. Never-working UDP is the only case
-        // the giveup covers, matching upstream parity.
-        val noUdp: NoUdpVoice? = if (udpEnabled) null else NoUdpVoice(link)
-        val voiceLink: VoiceLink = noUdp ?: link
-        val voiceLifecycle: VoiceLifecycle = noUdp ?: link
+        val blocked = when (voice) {
+            Voice.UDP_SILENTLY_BLOCKED -> NoUdpVoice(link, reportSocketFailure = false)
+            Voice.UDP_SOCKET_FAILS -> NoUdpVoice(link, reportSocketFailure = true)
+            Voice.UDP, Voice.FORCED_TCP -> null
+        }
+        val voiceLink: VoiceLink = blocked ?: link
+        val voiceLifecycle: VoiceLifecycle = blocked ?: link
         val route = NoopRouteLifecycle()
         val network = object : NetworkMonitor {
             // The network-available path is intentionally unexercised here;
@@ -288,17 +311,29 @@ object InteropClient {
 }
 
 /**
- * Test-only voice that never opens UDP, emulating a network where UDP is
- * entirely blocked while TCP works. Keys, the ping sink, and teardown
- * delegate to the wrapped link; only socket creation is suppressed. The
- * transport observes identical conditions to wire-level blocking (both
- * cumulative good counters stay zero) and must fall back to the tunnel.
+ * Test-only voice that never opens a UDP socket, standing in for a network
+ * where UDP cannot be used while TCP works. Keys, the ping sink, and teardown
+ * delegate to the wrapped link; only socket creation is suppressed.
+ *
+ * The two production triggers reach the same tunnel switch from different
+ * inputs, so both are modelled: with [reportSocketFailure] the wrapped link
+ * reports the failure the way `HumlaUDP` does when the socket cannot be opened
+ * (voice.md: tunnel at once); without it the session simply never exchanges a
+ * good packet, leaving only the transport's 20 s zero-counter giveup. That is
+ * equivalent at the decision — the giveup is an OR over the two counters — but
+ * not identical to wire-level blocking, where the client still sends.
  */
-private class NoUdpVoice(private val delegate: LegacyVoiceLink) :
-    VoiceLink by delegate,
+private class NoUdpVoice(
+    private val delegate: LegacyVoiceLink,
+    private val reportSocketFailure: Boolean,
+) : VoiceLink by delegate,
     VoiceLifecycle by delegate {
     override fun startVoice(host: String, port: Int) {
-        // UDP stays closed for the session.
+        // UDP stays closed for the session; report the socket failure through
+        // the listener callback HumlaUDP itself would use, or stay silent.
+        if (reportSocketFailure) {
+            delegate.onUDPConnectionError(IOException("interop: UDP socket cannot be opened"))
+        }
     }
 }
 

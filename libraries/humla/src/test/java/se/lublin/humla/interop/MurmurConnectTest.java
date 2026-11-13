@@ -17,6 +17,7 @@
 
 package se.lublin.humla.interop;
 
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.After;
@@ -57,8 +58,11 @@ import java.security.cert.X509Certificate;
  * Step-3 murmur interop scenarios driving {@link HumlaClient} directly.
  *
  * <p>Plain JVM (no Robolectric): the client runs on real dispatchers and
- * polls StateFlows with timeouts. Forced TCP throughout, so no UDP voice
- * is exercised here; voice between two clients arrives with step 5a.
+ * polls StateFlows with timeouts. Most scenarios force TCP; the ones that
+ * pin the UDP/TCP route decision ({@code forcedTcpUsesTunnel},
+ * {@code udpEnabledUsesUdp}, {@code udpBlockedFallsBackToTunnel},
+ * {@code udpSocketFailureTunnelsImmediately}) ask for an explicit voice mode
+ * instead. Voice media itself (codec, native pipeline) arrives with step 5a.
  */
 @Category(MurmurInterop.class)
 public class MurmurConnectTest {
@@ -146,25 +150,24 @@ public class MurmurConnectTest {
     }
 
     private HumlaClient connect(String username, String password) throws Exception {
-        return connect(username, password, true);
+        return connect(username, password, InteropClient.Voice.FORCED_TCP);
     }
 
-    private HumlaClientHandle connectHandle(String username, String password, boolean forceTcp) throws Exception {
-        return connectHandle(username, password, forceTcp, true);
-    }
-
-    private HumlaClientHandle connectHandle(String username, String password, boolean forceTcp, boolean udpEnabled) throws Exception {
+    private HumlaClientHandle connectHandle(
+            String username, String password, InteropClient.Voice voice) throws Exception {
         String trustStore = trustStoreForTestCert();
         ConnectTarget target = InteropClient.target(
-                server.host(), server.port(), username, password, trustStore, forceTcp);
-        HumlaClientHandle handle = InteropClient.create(noopObserver(), forceTcp, udpEnabled);
+                server.host(), server.port(), username, password, trustStore,
+                voice == InteropClient.Voice.FORCED_TCP);
+        HumlaClientHandle handle = InteropClient.create(noopObserver(), voice);
         open.add(handle);
         handle.getClient().connect(target);
         return handle;
     }
 
-    private HumlaClient connect(String username, String password, boolean forceTcp) throws Exception {
-        return connectHandle(username, password, forceTcp).getClient();
+    private HumlaClient connect(
+            String username, String password, InteropClient.Voice voice) throws Exception {
+        return connectHandle(username, password, voice).getClient();
     }
 
     @Test
@@ -306,7 +309,10 @@ public class MurmurConnectTest {
         ClientState.Failed failed = InteropClient.awaitFailed(bob, "bob kicked");
         assertTrue("expected Removed, got " + failed.getError(),
                 failed.getError() instanceof ClientError.Removed);
-        // Kicks never reconnect: the client must stay Failed.
+        // Kicks never reconnect: the client must stay Failed across the
+        // first reconnect slot. The policy retries 1 s after a failure (then
+        // 3 s, 6 s, …), so a resurrect-after-Removed regression would surface
+        // inside this 3 s window; later attempts only widen the margin.
         Thread.sleep(3000);
         assertTrue("kicked client must not reconnect, got " + bob.getState().getValue(),
                 bob.getState().getValue() instanceof ClientState.Failed);
@@ -384,7 +390,7 @@ public class MurmurConnectTest {
 
     @Test
     public void forcedTcpUsesTunnel() throws Exception {
-        HumlaClient alice = connect("InteropAlice", null, true);
+        HumlaClient alice = connect("InteropAlice", null, InteropClient.Voice.FORCED_TCP);
         Session session = InteropClient.awaitConnected(alice, "alice sync");
         // Forced TCP never leaves tunnel mode: no flip to UDP while pings flow.
         InteropClient.awaitUsingUdp(session, false, "forced TCP uses tunnel");
@@ -395,7 +401,7 @@ public class MurmurConnectTest {
 
     @Test
     public void udpEnabledUsesUdp() throws Exception {
-        HumlaClient alice = connect("InteropAlice", null, false);
+        HumlaClient alice = connect("InteropAlice", null, InteropClient.Voice.UDP);
         Session session = InteropClient.awaitConnected(alice, "alice sync");
         InteropClient.awaitUsingUdp(session, true, "UDP enabled");
         // A measured UDP latency proves real ping round-trips, not just the seed.
@@ -404,13 +410,16 @@ public class MurmurConnectTest {
 
     @Test
     public void udpBlockedFallsBackToTunnel() throws Exception {
-        // Alice's voice never opens UDP: identical transport-observable
-        // conditions to fully-blocked UDP with working TCP (both cumulative
-        // good counters stay zero from session start, the only case the
-        // giveup covers). Loopback offers no firewall seam and murmur binds
-        // UDP on the TCP port, so a client-side closed socket is the
-        // hermetic equivalent of wire-level blocking.
-        HumlaClientHandle aliceHandle = connectHandle("InteropAlice", null, false, false);
+        // Alice's voice never opens UDP, so the session never exchanges a good
+        // packet: the only case the transport's 20 s zero-counter giveup covers
+        // (once a counter is above zero the giveup is disabled by design, in
+        // parity with upstream). Loopback offers no firewall seam and murmur
+        // binds UDP on the TCP port, so a client-side closed socket is the
+        // hermetic stand-in for wire-level blocking; it is equivalent at the
+        // decision (an OR over the two counters), not identical, because a
+        // blocked wire still lets the client send.
+        HumlaClientHandle aliceHandle = connectHandle(
+                "InteropAlice", null, InteropClient.Voice.UDP_SILENTLY_BLOCKED);
         HumlaClient alice = aliceHandle.getClient();
         Session session = InteropClient.awaitConnected(alice, "alice sync");
 
@@ -445,14 +454,16 @@ public class MurmurConnectTest {
         String trustStore = trustStoreForTestCert();
         ConnectTarget bobTarget = InteropClient.target(
                 server.host(), server.port(), "InteropBob", null, trustStore, false);
-        HumlaClientHandle bobHandle = InteropClient.create(capturing, false);
+        HumlaClientHandle bobHandle = InteropClient.create(capturing, InteropClient.Voice.UDP);
         open.add(bobHandle);
         bobHandle.getClient().connect(bobTarget);
         InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
 
-        // Baseline: the transport still presumes UDP (seed) with zero traffic;
-        // the true-then-false pair below is the transition assertion.
-        InteropClient.awaitUsingUdp(session, true, "UDP presumed");
+        // Baseline: the transport still presumes UDP (the seed) with no
+        // traffic yet; the false reading below is the real assertion.
+        assertTrue("transport must presume UDP before the giveup, got "
+                        + session.getStats().getValue(),
+                session.getStats().getValue().getUsingUdp());
         // With no good packets the transport must give up UDP (~20 s after
         // creation) and switch to tunnel mode; the session survives on the tunnel.
         InteropClient.awaitUsingUdp(session, false, "tunnel fallback", 60L);
@@ -465,5 +476,31 @@ public class MurmurConnectTest {
                 "tunnel-hello");
         assertTrue("timed out waiting for post-fallback text",
                 gotText.await(30, TimeUnit.SECONDS));
+    }
+
+    @Test
+    public void udpSocketFailureTunnelsImmediately() throws Exception {
+        // voice.md: a socket that cannot be created or connected reports
+        // UdpUnavailable and the transport tunnels at once, "as it would after
+        // its 20 s rule". Timing is what separates the two triggers: the switch
+        // must land far inside the 20 s giveup window, which only the event
+        // path can do (the giveup needs a zero counter AND > 20 s).
+        long startNanos = System.nanoTime();
+        HumlaClientHandle aliceHandle = connectHandle(
+                "InteropAlice", null, InteropClient.Voice.UDP_SOCKET_FAILS);
+        HumlaClient alice = aliceHandle.getClient();
+        Session session = InteropClient.awaitConnected(alice, "alice sync");
+        InteropClient.awaitUsingUdp(session, false, "immediate tunnel", 10L);
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+        assertTrue("tunnel switch must not wait for the 20 s giveup, took "
+                        + elapsedMillis + " ms",
+                elapsedMillis < 15_000L);
+        // The tunnel carries the session: still connected, keepalive latency
+        // still measured after the switch.
+        Thread.sleep(3000);
+        assertTrue("session must survive the switch, got " + alice.getState().getValue(),
+                alice.getState().getValue() instanceof ClientState.Connected);
+        assertNotNull("TCP latency must keep being measured after the switch",
+                session.getStats().getValue().getTcpLatencyMicros());
     }
 }
