@@ -16,7 +16,7 @@
 """
 scripts/check_architecture.py: Tripwires for the target architecture.
 
-Three checks (see docs/tech-debt-whales/target-architecture/enforcement.md):
+Three checks (see docs/target-architecture/enforcement.md):
   1. Concurrency tripwire: forbidden thread/lock patterns in Kotlin/Java.
   2. Android-free packages: state/client/net must not import android(x)/R.
   3. Native tripwire: forbidden I/O/thread/JNI headers in no-I/O native dirs.
@@ -444,7 +444,7 @@ def main(argv):
             print(f"  {e}", file=sys.stderr)
         print(
             "\nLower counts in the same commit; never raise them. "
-            "See docs/tech-debt-whales/target-architecture/enforcement.md.",
+            "See docs/target-architecture/enforcement.md.",
             file=sys.stderr,
         )
         return 1

@@ -46,7 +46,7 @@ import se.lublin.humla.util.HumlaLogger
 /**
  * Interim voice control. Owns the voice control thread and today's
  * AudioHandler lifecycle (create, destroy, recreate), following RouteState.
- * See docs/tech-debt-whales/target-architecture/route.md#migration-notes.
+ * See docs/target-architecture/route.md#migration-notes.
  *
  * Step 5a replaces it with the VoiceEngine. Command-only: callers post
  * and never block; every blocking pipeline method starts with

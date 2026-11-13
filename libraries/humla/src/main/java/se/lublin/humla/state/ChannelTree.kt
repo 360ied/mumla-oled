@@ -19,7 +19,7 @@ package se.lublin.humla.state
 
 /**
  * Derived channel tree. See
- * docs/tech-debt-whales/target-architecture/state.md.
+ * docs/target-architecture/state.md.
  *
  * Channels whose parent is missing (possible transiently between messages)
  * are left out of the tree until the parent arrives.

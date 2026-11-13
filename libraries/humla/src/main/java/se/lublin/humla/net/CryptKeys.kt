@@ -22,7 +22,7 @@ import se.lublin.humla.client.CryptCounts
 
 /**
  * Latest full key set from CryptSetup. Each exactly 16 bytes (AES block).
- * See docs/tech-debt-whales/target-architecture/transport.md#crypt-setup.
+ * See docs/target-architecture/transport.md#crypt-setup.
  */
 data class CryptKeys(
     val key: ByteString,

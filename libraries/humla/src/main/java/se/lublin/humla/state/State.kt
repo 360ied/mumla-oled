@@ -24,7 +24,7 @@ import kotlinx.collections.immutable.persistentMapOf
 
 /**
  * Immutable session state. See
- * docs/tech-debt-whales/target-architecture/state.md.
+ * docs/target-architecture/state.md.
  *
  * One immutable value per session, held in a MutableStateFlow owned by the
  * Session. Every change is `state.update { ... }` with a pure transition.

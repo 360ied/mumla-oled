@@ -19,7 +19,7 @@ package se.lublin.humla.state
 
 /**
  * Semantic session events. See
- * docs/tech-debt-whales/target-architecture/state.md#events.
+ * docs/target-architecture/state.md#events.
  *
  * App formats user-visible strings from these; state code never formats text.
  */

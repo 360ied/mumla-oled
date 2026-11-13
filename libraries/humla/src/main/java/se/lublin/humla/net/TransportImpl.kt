@@ -58,7 +58,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Transport implementation: TCP control channel with reader thread,
  * writer coroutine, TLS, keepalive, and UDP-health decision.
- * See docs/tech-debt-whales/target-architecture/transport.md.
+ * See docs/target-architecture/transport.md.
  *
  * One per Session. Talks to voice only through VoiceLink.
  * Reader is a plain Thread on the allowlist; everything else is coroutines.

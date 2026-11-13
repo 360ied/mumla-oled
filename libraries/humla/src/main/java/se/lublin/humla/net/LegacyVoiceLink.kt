@@ -45,7 +45,7 @@ import se.lublin.humla.protobuf.MumbleUDP
 
 /**
  * Interim VoiceLink over today's Kotlin HumlaUDP and CryptState.
- * See docs/tech-debt-whales/target-architecture/migration.md step 3.
+ * See docs/target-architecture/migration.md step 3.
  *
  * Step 5a replaces it with the VoiceEngine. Until then it carries keys,
  * IVs, UDP pings, tunnelled packets, and resync requests between the

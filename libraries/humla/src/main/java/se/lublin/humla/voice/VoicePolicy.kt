@@ -27,7 +27,7 @@ import se.lublin.humla.state.effectiveSelfMute
 
 /**
  * Target-architecture voice policy and settings. See
- * docs/tech-debt-whales/target-architecture/voice.md#voicepolicy and
+ * docs/target-architecture/voice.md#voicepolicy and
  * #policy-and-settings-handoff.
  *
  * Android-free: pure Kotlin plus persistent collections so the mapping

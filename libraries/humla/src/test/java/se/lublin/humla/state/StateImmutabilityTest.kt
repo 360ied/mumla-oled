@@ -48,7 +48,7 @@ import kotlin.reflect.full.primaryConstructor
  *
  * Walks every class reachable from the state roots by primary-constructor
  * properties and fails on mutability. See
- * docs/tech-debt-whales/target-architecture/enforcement.md.
+ * docs/target-architecture/enforcement.md.
  */
 class StateImmutabilityTest {
     private val stopClasses = setOf(

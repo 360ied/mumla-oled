@@ -44,7 +44,7 @@ import se.lublin.humla.util.IHumlaObserver
 /**
  * Single entry point for connecting. Owns today's reconnect policy and
  * sequences session, route, and voice lifetimes.
- * See docs/tech-debt-whales/target-architecture/client.md#humlaclient.
+ * See docs/target-architecture/client.md#humlaclient.
  *
  * All lifecycle logic runs on one client dispatcher
  * (Default.limitedParallelism(1)). Public methods only launch onto it and

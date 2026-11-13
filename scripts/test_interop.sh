@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # scripts/test_interop.sh: Run the murmur interop suite against a local
-# mumble-server (see docs/tech-debt-whales/target-architecture/testing.md).
+# mumble-server (see docs/target-architecture/testing.md).
 #
 # Never called by check.sh: the suite takes a minute or more. Recommended
 # when a change touches networking code (transport, client and session, or

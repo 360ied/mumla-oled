@@ -48,7 +48,7 @@ import se.lublin.humla.client.checkNotMainThread
 /**
  * Target route controller. Owns a HandlerThread named route, publishes
  * RouteState and events, and keeps a private route-session counter for
- * stale-event checks. See docs/tech-debt-whales/target-architecture/route.md.
+ * stale-event checks. See docs/target-architecture/route.md.
  *
  * All funnel work runs on the route dispatcher. Submit is non-blocking.
  * Voice follows state; route never waits for voice.

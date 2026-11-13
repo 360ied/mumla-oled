@@ -19,7 +19,7 @@ package se.lublin.humla.client
 
 /**
  * Pure reconnect-backoff truth table, unchanged from today's HumlaService.
- * See docs/tech-debt-whales/target-architecture/client.md#reconnect-policy.
+ * See docs/target-architecture/client.md#reconnect-policy.
  *
  * Android-free and side-effect-free so the JVM suite pins it directly.
  */

@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Platform lifecycle boundaries the client sequences but never implements.
- * See docs/tech-debt-whales/target-architecture/client.md#humlaclient.
+ * See docs/target-architecture/client.md#humlaclient.
  *
  * Android-free: small interfaces so the client runs in plain JVM tests
  * with fakes. The app wires the real VoiceEngine/RouteControl in step 4+.

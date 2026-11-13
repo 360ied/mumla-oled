@@ -24,7 +24,7 @@ import se.lublin.humla.model.TalkState
 
 /**
  * Live compatibility handles. See
- * docs/tech-debt-whales/target-architecture/state.md#compatibility-handles-migration-only.
+ * docs/target-architecture/state.md#compatibility-handles-migration-only.
  *
  * Adapters keep references and re-read after observer callbacks. Snapshots
  * would compile and silently freeze screens, so these read the current

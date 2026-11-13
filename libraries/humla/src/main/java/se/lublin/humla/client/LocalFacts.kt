@@ -25,7 +25,7 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Device-local facts loaded once per session attempt. See
- * docs/tech-debt-whales/target-architecture/client.md#connecttarget.
+ * docs/target-architecture/client.md#connecttarget.
  *
  * Lists are keyed by registered user ID, as in today's database. When a
  * UserState arrives for a registered user, the transition sets

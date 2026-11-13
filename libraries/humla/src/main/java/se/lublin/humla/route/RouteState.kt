@@ -19,7 +19,7 @@ package se.lublin.humla.route
 
 /**
  * Target-architecture route state. See
- * docs/tech-debt-whales/target-architecture/route.md#routestate.
+ * docs/target-architecture/route.md#routestate.
  *
  * Android-free: no android.* imports so the decision and state stay
  * runnable in plain JVM tests. The controller (RouteControl) is the only

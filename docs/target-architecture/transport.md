@@ -1,0 +1,199 @@
+# Transport
+
+Part of the [target architecture](README.md). Specifies the TCP control
+channel, keepalive and UDP-health logic, crypt setup, and tunnel mode. The
+UDP socket itself belongs to the [`VoiceEngine`](voice.md); the transport
+decides *how* voice travels and passes keys and tunnelled packets to it.
+
+## Responsibilities
+
+| Concern | Owner |
+|---|---|
+| DNS (SRV then A/AAAA), TLS socket, certificate verification | Transport |
+| TCP framing, inbound parsing, outbound queue | Transport |
+| `Ping` over TCP, TCP latency, remote crypt statistics | Transport |
+| UDP vs TCP decision for voice | Transport (from voice's UDP ping results) |
+| UDP socket, UDP ping send and receive, voice encryption | `VoiceEngine` |
+| Crypt keys and resync | Transport receives `CryptSetup`, `VoiceEngine` holds the keys |
+
+The transport lives in `se.lublin.humla.net` and is owned by one
+`Session`. It talks to the voice side only through `VoiceLink`, an
+interface the `VoiceEngine` implements (`setKeys`, `setDecryptIv`,
+`encryptIv`, `submit(SetVoiceRoute)`, `submit(SendPing)`,
+`queueTunnelled`, and the `UdpPing`, `CryptResyncRequested`, and `UdpUnavailable` events), so
+transport tests use a fake. It reuses today's framing, SRV lookup
+([`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt)),
+frame validation
+([`FrameValidator`](../../libraries/humla/src/main/java/se/lublin/humla/net/FrameValidator.kt)),
+and TLS
+([`HumlaSSLSocketFactory`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt),
+[`TlsHostnameVerifier`](../../libraries/humla/src/main/java/se/lublin/humla/net/TlsHostnameVerifier.kt))
+unchanged in behavior.
+
+```kotlin
+interface Transport {
+    val inbound: ReceiveChannel<Inbound>      // parsed messages, server order
+    val stats: StateFlow<TransportStats>
+    val cryptKeys: StateFlow<CryptKeys?>      // latest full key set from CryptSetup
+    val failure: Deferred<ClientError>        // completes once on a fatal transport error
+    fun send(message: MessageLite, type: HumlaTCPMessageType)   // never blocks
+    fun sendTunnelled(packet: ByteArray)      // voice over TCP (UDPTunnel); never blocks
+}
+
+data class CryptKeys(                         // each exactly 16 bytes (AES block size)
+    val key: ByteString,
+    val clientNonce: ByteString,              // our encrypt IV
+    val serverNonce: ByteString,              // our decrypt IV
+)
+
+interface VoiceLink {                         // implemented by VoiceEngine
+    fun setKeys(keys: CryptKeys)
+    fun setDecryptIv(iv: ByteString)
+    fun encryptIv(): ByteString
+    fun submit(command: VoiceCommand)         // SetVoiceRoute, SendPing
+    fun queueTunnelled(packet: ByteArray)
+    val events: SharedFlow<VoiceEvent>        // UdpPing, CryptResyncRequested, UdpUnavailable
+    val status: StateFlow<VoiceStatus>        // local crypt counts for TCP pings
+}
+
+sealed interface Inbound {
+    data class Message(val type: HumlaTCPMessageType, val message: MessageLite) : Inbound
+    data class Tunnelled(val packet: ByteArray) : Inbound        // UDPTunnel payload
+}
+```
+
+## Threads
+
+- **Reader thread** (one per session, a plain `Thread`; on the allowlist):
+  blocking reads of the 6-byte header (2-byte type, 4-byte length,
+  big-endian), validation with `FrameValidator` (unknown type or length
+  over `MAX_FRAME_BYTES`, `0x7fffff`, is a protocol violation that
+  completes `failure`),
+  payload read, protobuf parse, and `trySend` into `inbound`. `UDPTunnel`
+  payloads are not parsed; they are delivered as `Inbound.Tunnelled`.
+- **Writer coroutine** on the I/O dispatcher, draining a bounded outbound
+  channel (capacity 256) and writing frames. `send` uses `trySend`; a full
+  channel means the server has stopped reading for a long time, so `send`
+  completes `failure` with `ClientError.Connection` and drops the message.
+  A write error completes `failure` the same way.
+
+Every fatal transport condition goes through `failure`; the session
+completes its own `failure` from it (see [client](client.md#session)).
+- **Ping coroutine** in the session scope (see below).
+
+`inbound` has capacity 1024. The reader uses
+`kotlinx.coroutines.channels.trySendBlocking`, which blocks the reader
+thread (a plain thread, never a coroutine) while the channel is full, so a backlog in the
+session's message coroutine leaves bytes in the socket buffer and pushes
+back on the server through TCP flow control. Nothing is dropped.
+
+Cancelling the session scope closes the socket from a completion handler,
+which unblocks the reader. The reader catches the resulting exception and
+exits without reporting a failure (the session is already ending).
+
+## TLS
+
+- Client certificate: from `ConnectTarget.certificate` (PKCS#12 bytes and
+  password), as today.
+- Trust: the system trust store plus the app trust store
+  (`MumlaTrustStore`, pinned certificates), as today.
+- Verification failure: the transport captures the chain, the
+  `HandshakeFailure` (`HOSTNAME_MISMATCH`, `UNTRUSTED_ISSUER`,
+  `PIN_CHANGED`), and the host verification ran against, and fails the
+  session with `ClientError.Trust`. It never reconnects; the app shows the
+  existing trust dialogs from `ClientState.Failed` and, if the user pins,
+  calls `connect` again.
+
+## Keepalive and UDP health
+
+Ported from
+[`HumlaConnection`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.kt)
+with the same constants:
+
+- **Cadence:** a ping every 5 s for the first 30 s after `ServerSync`, and
+  afterwards whenever UDP is in use but either side's good-packet count is
+  3 or fewer; otherwise every 10 s.
+- **Each ping round:** a TCP `Ping` (timestamp in microseconds since the
+  session started, plus local crypt statistics from the `VoiceEngine`), and
+  a request to the `VoiceEngine` to send a UDP ping (protobuf or legacy
+  format, matching the voice format).
+- **TCP `Ping` reply:** sets TCP latency and the remote crypt statistics.
+- **UDP ping reply** (reported by the `VoiceEngine`): sets UDP latency;
+  a protobuf ping may also carry the server version and max bandwidth,
+  which the session writes into `ServerState.info` (the single source of
+  the bandwidth cap; see [state](state.md#types)).
+- **Switch to TCP:** when UDP is in use, more than 20 s have passed, and
+  either side reports zero good packets. The transport sends the dummy
+  `UDPTunnel` message (3 zero bytes) that tells the server to tunnel, and
+  tells the `VoiceEngine` to use tunnel mode.
+- **Switch back to UDP:** when both sides report more than 3 good packets.
+- **Forced TCP:** with `ConnectTarget.forceTcp`, voice is tunnelled from
+  `ServerSync` on, the dummy `UDPTunnel` is sent at `ServerSync`, and UDP is
+  never used.
+
+**The transport alone owns the UDP/TCP decision.** It publishes it in
+`TransportStats.usingUdp` and pushes it to the `VoiceEngine` with
+`VoiceCommand.SetVoiceRoute(udp: Boolean)`; the `VoiceEngine` only follows
+that command and does not report its own idea of the route.
+
+## UDP packet format
+
+Chosen once per session from the server version (`Version` message), with
+today's rule (`Constants.isProtobufUdpSupported`): protobuf UDP when the
+server version is at least 1.5.0, legacy otherwise. Passed to the
+`VoiceEngine` in `VoiceCommand.Start`. The 1.2.2 legacy codec workaround
+(`applyLegacyCodecWorkaround`) moves into the native packet codec, keyed by
+the same version.
+
+## Crypt setup
+
+`CryptSetup` handling is unchanged in protocol terms, but keys now go to
+the `VoiceEngine` instead of a Kotlin `CryptState`:
+
+| `CryptSetup` contents | Action |
+|---|---|
+| `key`, `client_nonce`, and `server_nonce` all present, each 16 bytes | Publish `CryptKeys`; if voice is running, `VoiceLink.setKeys` |
+| All three present, any of them not 16 bytes | Protocol violation: fail the session |
+| Not all three, but `server_nonce` present and 16 bytes | Resync: `VoiceLink.setDecryptIv` |
+| Not all three, `server_nonce` present but not 16 bytes | Protocol violation: fail the session |
+| Any other combination (including empty, or a key without nonces) | The server asks for our nonce: reply with `CryptSetup(client_nonce = VoiceLink.encryptIv())` |
+
+This is today's `HumlaConnection.messageCryptSetup` decision order,
+unchanged.
+
+The client's `VoiceCommand.Start` includes the keys from `cryptKeys`, so a
+`CryptSetup` that arrives before voice starts is never lost.
+
+**Client-requested resync** is kept exactly as today's `HumlaUDP` does it
+(and as desktop Mumble's `ServerHandler` does): when a packet fails to
+decrypt, more than 5 s have passed since the last good packet, and more
+than 5 s since the last request, the receive thread emits
+`VoiceEvent.CryptResyncRequested`. The transport answers with an empty
+`CryptSetup`, which asks the server to send a fresh `server_nonce`. The
+receive thread keeps the last-request time, so requests are rate-limited at
+the source.
+
+## Tunnel mode
+
+When voice is tunnelled:
+- **Outbound:** the `VoiceEngine` hands framed, unencrypted voice packets to
+  Kotlin through its notifier thread; the transport sends each as a
+  `UDPTunnel` message.
+- **Inbound:** `Inbound.Tunnelled` packets go straight from the session's
+  message coroutine to `VoiceEngine.queueTunnelled(packet)`, which pushes
+  them onto the voice I/O layer's tunnel inbound queue. They are never
+  decrypted (TLS already protects them).
+
+## Statistics
+
+```kotlin
+data class TransportStats(
+    val tcpLatencyMicros: Long?,
+    val udpLatencyMicros: Long?,
+    val usingUdp: Boolean,
+    val remoteCrypt: CryptCounts,             // from TCP Ping replies
+)
+```
+
+The session merges these with the `VoiceEngine`'s local crypt counts into
+`SessionStats` (see [client](client.md#statistics)).

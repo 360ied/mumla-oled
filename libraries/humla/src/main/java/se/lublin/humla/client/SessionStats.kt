@@ -20,7 +20,7 @@ package se.lublin.humla.client
 /**
  * Connection statistics. Kept out of SessionState because latency changes
  * every ping. See
- * docs/tech-debt-whales/target-architecture/client.md#statistics.
+ * docs/target-architecture/client.md#statistics.
  *
  * Deeply immutable: data classes of primitives only.
  */

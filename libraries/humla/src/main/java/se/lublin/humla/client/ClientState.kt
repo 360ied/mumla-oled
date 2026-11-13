@@ -25,7 +25,7 @@ import se.lublin.humla.state.ServerState
 
 /**
  * Client connection lifecycle. See
- * docs/tech-debt-whales/target-architecture/client.md#clientstate.
+ * docs/target-architecture/client.md#clientstate.
  *
  * Android-free and deeply immutable (see StateImmutabilityTest): the
  * Connected branch holds a Session, which is a lifetime object, not a
