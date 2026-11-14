@@ -163,8 +163,9 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - forced TCP; UDP pings; and both switch-to-tunnel triggers — the 20 s
   zero-counter giveup and a UDP socket that cannot be opened at all
   (`UdpUnavailable`, switch at once);
-- from step 5a.2: text and tunnelled ping framing carried end-to-end
-  through the native codec (no audio device involved);
+- from step 5a.2: UDP ping framing built by the native codec round-trips
+  against murmur, and text messages keep flowing (text is TCP
+  control-channel traffic and never involves the codec);
 - from step 5a.3: voice between two clients over UDP and over the tunnel
   (inbound UDP from 5a.3, both directions from 5a.4;
   see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).

@@ -248,8 +248,10 @@ developer notices.
 **Done when:** codec golden tests pass; `SINGLE_THREADED_ENGINE` covers
 `voice_codec/`; the production framing entry points are driven from a JVM
 test and produce bytes byte-equal to the Java-generated classes and
-`PacketBuffer`, failing when the native codec is bypassed; interop text
-and tunnelled ping framing pass end-to-end through the native codec;
+`PacketBuffer`, failing when the native codec is absent or wrong; interop
+UDP ping framing built by the native codec completes a round trip against
+murmur (the reply proves the server parsed it), and text messages keep
+working end to end;
 daily use without regressions. Voice between two clients over the tunnel
 is **not** part of this sub-step: it moves to 5a.3, where synthetic PCM
 enters at the native capture and render entry points instead of through a

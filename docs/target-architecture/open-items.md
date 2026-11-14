@@ -26,7 +26,7 @@ them.
 
 | Item | Notes |
 |---|---|
-| Interop harness growth | Deliverable work inside each sub-step, not a gate: 5a.2 adds the codec JNI to the host `libhumlaaudio` and the tunnelled text and ping scenarios, 5a.3 adds the voice JNI, the tunnel voice scenario, and drives `VoiceEngine`, 5a.4 covers both directions (see [testing](testing.md#murmur-interop)) |
+| Interop harness growth | Deliverable work inside each sub-step, not a gate: 5a.2 adds the codec JNI to the host `libhumlaaudio` and drives UDP ping framing end to end, with text kept as a no-regression check, 5a.3 adds the voice JNI, the tunnel voice scenario, and drives `VoiceEngine`, 5a.4 covers both directions (see [testing](testing.md#murmur-interop)) |
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8. Until then it stays in `BOUNDARY_FILES` even though the reader thread it is named for now lives in `TransportImpl` (see [issue 31](issues/31-boundary-files-mismatch.md)) |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
