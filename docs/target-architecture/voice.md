@@ -747,8 +747,9 @@ causes. The engine's destructor emits no passive events by design, and a
 reset's events are never rendered, so without this rule a remote user
 talking at that moment stays shown as talking. After a reconnect the stale
 entry could even light up a different user, because Murmur reuses session
-IDs. `selfTalking` joins in 5a.4; until then `AudioHandler.shutdown`
-reports self as passive, as today.
+IDs. `selfTalking` is set from `AudioHandler`'s Kotlin talking callback
+from 5a.3a (`AudioHandler.shutdown` already reports not talking) and from
+the native capture event queue from 5a.4.
 
 ## Interim mute (step 4, before 5a)
 

@@ -311,12 +311,26 @@ wake design before 5a.3b (see [open items](open-items.md)).
    deleted.
 3. The notifier thread attaches to the JVM once and every 20 ms delivers
    the render events to Kotlin in one call. It publishes `talkActivity`
-   (remote users; self follows in 5a.4) through a production class that
-   the `VoiceEngine` facade takes over in 5a.3b, not a partial facade.
-   Remote talk indicators read `talkActivity`; handles stop carrying a
-   writable remote `talkState`, and the `onTalkStateChanged` callback is
-   deleted. The publisher clears remote users whenever the output engine
-   is destroyed (see [outputs](voice.md#outputs)).
+   through a production class that the `VoiceEngine` facade takes over in
+   5a.3b, not a partial facade:
+   - **Owner.** The publisher lives as long as the service: `HumlaService`
+     builds it in `onCreate`, next to `VoiceControl` and `HumlaClient`. It
+     is passed to `HumlaClient`, so `Session` builds handles with it, and
+     to `VoiceControl`, so each `AudioHandler` build feeds it. A
+     per-pipeline publisher would be replaced on every rebuild and leave
+     subscribers on a dead flow.
+   - **Remote users** come from the notifier. The publisher clears them
+     whenever the output engine is destroyed (see
+     [outputs](voice.md#outputs)).
+   - **Self** comes from `AudioHandler`'s existing Kotlin talking callback,
+     which sets `selfTalking` instead of stamping a fresh handle
+     (`HumlaService`'s encode listener today). `AudioHandler.shutdown`
+     already reports not talking. 5a.4 only moves the source to native
+     capture events.
+   - **Handles and hints.** Handles read `talkState` from `talkActivity`
+     for every user and stop carrying a writable `talkState`; the
+     `onTalkStateChanged` callback is deleted. Repaint hints follow the
+     [bridge rule](state.md#compatibility-handles-migration-only).
 4. Interim enqueue: Kotlin keeps parsing with 5a.2's codec and keeps the
    sender filter, and pushes the surviving frames into the rings through
    two interim calls, one per ring and producer: UDP frames from the
@@ -414,7 +428,8 @@ voice working:
    into exact 10 ms frames), input engine, framing, outbound queue with
    drop-oldest, send thread. `VoicePolicy` and `VoiceSettings` pushed to
    native.
-2. Self talk state from `VoiceEngine.talkActivity`.
+2. Self talk state: `selfTalking` moves from `AudioHandler`'s Kotlin talking
+   callback (5a.3a) to the native capture event queue.
 3. Delete the Kotlin framing in `AudioHandler`, `VoiceControl`, the
    interim seams from 5a.2 (the codec bridge) and 5a.3b
    (`nativeSendDatagram`), and the input engine bridge;

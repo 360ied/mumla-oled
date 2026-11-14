@@ -403,6 +403,15 @@ behind those interfaces would compile and silently freeze screens, so step
   fresh handle's `talkState` against a new event swallows the teardown edge
   and sticks the indicator on; this regressed on `master` in step 2 and was
   fixed by deleting the Java-side guard.
+- **Repaint hints keep no memory.** From 5a.3a, whenever `talkActivity`
+  changes, the bridge fires `onUserTalkStateUpdated` for every user in the
+  session. It never compares against an earlier snapshot, because a kept
+  snapshot is the transition memory the bridge must not carry. Users
+  cleared from `talkActivity` are still in the session, so clears get
+  hints too. `talkActivity` emits only when a level changes, so this is a
+  few emissions a second. Every consumer accepts repeated hints: the list
+  adapters compare drawables before setting them, and `MumlaService`
+  plays the push-to-talk sound only when its own `mSelfTalking` changes.
 
 Handle member sources:
 
