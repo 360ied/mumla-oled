@@ -326,7 +326,9 @@ wake design before 5a.3b (see [open items](open-items.md)).
    - **Self** comes from `AudioHandler`'s existing Kotlin talking callback,
      which sets `selfTalking` instead of stamping a fresh handle
      (`HumlaService`'s encode listener today). `AudioHandler.shutdown`
-     already reports not talking. 5a.4 only moves the source to the
+     reports not talking, but today resets `mTalking` before joining the
+     capture thread; 5a.3a moves the reset and report after
+     `mInput.shutdown()` so a last frame cannot leave `selfTalking` stuck. 5a.4 only moves the source to the
      capture thread's self-talking flag.
    - **Writes** to `talkActivity` use `update {}`, because the notifier
      and the talking callback can write at the same moment (see

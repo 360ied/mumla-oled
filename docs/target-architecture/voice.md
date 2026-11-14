@@ -766,8 +766,12 @@ screens, the overlay, and features. It is never part of `SessionState`.
 including the clear below. In 5a.3a there are three write sites: the
 notifier (remote users), `AudioHandler`'s talking callback (`selfTalking`,
 on the capture thread, plus the final not-talking from
-`AudioHandler.shutdown` after the capture thread is joined), and the
-clear. Two of them can run at the same moment, so in 5a.3a every write
+`AudioHandler.shutdown`), and the clear. `shutdown`'s reset and report
+must come after the capture thread is joined. Today they don't:
+`shutdown` resets `mTalking` before `mInput.shutdown()` joins capture, so
+a last frame in that window can report talking with no not-talking after
+it, which would leave `selfTalking` stuck in the service-lifetime
+publisher. 5a.3a moves the reset and report after the join. Two of them can run at the same moment, so in 5a.3a every write
 uses `MutableStateFlow.update {}`: a plain read-copy-write could let one
 writer overwrite the other's change and lose a not-talking.
 
@@ -781,7 +785,8 @@ reset's events are never rendered, so without this rule a remote user
 talking at that moment stays shown as talking. After a reconnect the stale
 entry could even light up a different user, because Murmur reuses session
 IDs. `selfTalking` is set from `AudioHandler`'s Kotlin talking callback
-from 5a.3a (`AudioHandler.shutdown` already reports not talking) and from
+from 5a.3a (`AudioHandler.shutdown` reports not talking, after the
+capture join; see Writers above) and from
 the capture thread's self-talking flag from 5a.4.
 
 ## Interim mute (step 4, before 5a)
