@@ -61,7 +61,9 @@ A foreground `Service` of type `microphone` with no logic of its own.
 - Holds the partial wake lock and the Wi-Fi lock with today's windows,
   moved from `HumlaService` unchanged: a 15 s grace on connect
   (`WAKELOCK_GRACE_MS`), held while connected, and the backoff delay plus
-  15 s while reconnecting.
+  15 s while reconnecting. Both are
+  [keep-alive shields](voice.md#keep-alive-shields); do not narrow these
+  windows to save power.
 - Posts the connection notification built by the connection notification
   feature.
 - Nothing binds to it. `onBind` returns `null`.

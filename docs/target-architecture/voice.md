@@ -1,8 +1,9 @@
 # Voice
 
 Part of the [target architecture](README.md). Specifies the native voice
-path: the refactored no-I/O engine, the packet codec, the voice I/O layer,
-the realtime rules, `VoicePolicy`, and the Kotlin facade.
+path: the keep-alive shields it must preserve, the refactored no-I/O
+engine, the packet codec, the voice I/O layer, the realtime rules,
+`VoicePolicy`, and the Kotlin facade.
 
 ## Invariant
 
@@ -13,6 +14,57 @@ on the host. Everything that touches a thread, socket, or device lives in
 the voice I/O layer. The engine may be refactored; the separation may not
 be traded away. A [native tripwire](enforcement.md#native-tripwire)
 enforces it.
+
+## Keep-alive shields
+
+While connected, the process must look active to the OS. On battery with
+the screen off, Android and OEM power managers otherwise suspend or kill
+it, and Murmur drops a client that sends no TCP data for 30 s. Each
+shield below defends against a different mechanism. Every past attempt to
+save power by removing one caused a regression, and none of those
+regressions showed up in tests.
+
+**Uncertainty keeps a shield.** These are heisenbugs: they take minutes to
+hours to appear, often on one OEM, and never on the bench. Several causes
+here were never isolated. For example, 0.21.9 shipped the standby pause
+and the mic gating together, so which one drew the SIGKILLs was never
+tested on its own. An unproven cause is a reason to keep every suspect,
+not to test by removing one. Removing or weakening a shield needs at
+least the kind of field evidence that established it.
+
+| Shield | Defends against | Evidence |
+|---|---|---|
+| **Output stream started for the whole connection**, never paused or stopped for silence: `AudioTrack` in `PLAYSTATE_PLAYING` in 5a, a started AAudio stream in 5b. During silence it underruns; nothing writes zeros | OEM watchdogs (Samsung, Xiaomi, Vivo) that SIGKILL a process holding a wake lock while its output is paused | The 0.21.9 standby pause (`09f6a8a0`) drew SIGKILLs; reverted in `681a8735` (0.21.11) |
+| **Microphone open for the whole connection**, muted and push-to-talk idle included. Muting gates frames in the input engine; it never closes the stream | Vivo force-suspend beneath a held wake lock. Recording-active is the signal it honors; a started but starved output stream does not count as active playback (no `+audio` in `batterystats`) | Closing the mic on mute (`23ca0ad4`, 0.21.9) led to Murmur timeouts every ~5 min on battery; the mic was reopened by the A/B merged in `6548f787` |
+| **Partial wake lock and high-performance Wi-Fi lock**, held by the [connection service](app.md#connectionservice) | Kernel suspend and Wi-Fi radio sleep stalling the keepalive | Releasing the wake lock during silence (0.21.10) left 37–104 s gaps and Murmur timeouts; the Wi-Fi lock came from the same A/B |
+| **TCP keepalive inside Murmur's 30 s**, sent from an in-process timer and flushed on write with `TCP_NODELAY` (see [transport](transport.md#keepalive-and-udp-health)) | Murmur dropping a client after 30 s without TCP data; UDP traffic does not count | The 0.21.10 investigation |
+
+Brief stream restarts (route change, RNNoise model load) are today's
+behavior and accepted. Power is saved only in ways that leave every
+shield intact. On silence with no registered voices, the render loop
+waits without a timeout (`b1a1118e`) instead of polling at 50 Hz. It is
+the least proven piece here. The A/B never tested the polling on its own:
+it showed that the mic and Wi-Fi lock together were enough with the wait
+in place, on one device. If disconnects return, restoring the polling is
+the first thing to try, and any change to the mic shield reopens the
+question.
+
+These failures appear only on an untethered device, on battery, with the
+screen off, after minutes to hours, and sometimes on one OEM only. USB
+charging disables Doze and an active screen holds its own wake lock, so
+both hide them. Green host tests say nothing here. Step 5b re-decides the
+streams, and its spikes must show that each shield survives: an AAudio
+input stream still registers as recording-active, and the output stream
+stays started through silence. AAudio callback mode would feed zeros
+rather than underrun, which may change whether the OS counts playback as
+active. That effect has not been measured in either direction.
+
+The investigations:
+[zero-audio standby](../power-draw-optimizations/zero-audio-standby-regression-investigation.md)
+(0.21.9 and 0.21.10) and
+[battery Doze disconnects](../power-draw-optimizations/battery-doze-disconnects.md)
+(the mic and Wi-Fi lock A/B). Their commit hash for the mic change,
+`1a971285`, does not exist; the commit is `23ca0ad4`.
 
 ## Source layout
 
@@ -139,8 +191,9 @@ public:
   - A mute takes effect on the next frame. Transition handling runs before
     that frame's PCM is touched, so no muted audio is transmitted; only the
     terminator's emission point moves. The capture loop keeps feeding frames
-    while muted (the microphone stays open for the whole connection), so the
-    deferred flush is never stranded.
+    while muted (the microphone stays open for the whole connection as a
+    [keep-alive shield](#keep-alive-shields)), so the deferred flush is
+    never stranded.
   - A push-to-talk press and release that both arrive inside one frame
     interval is not observable and transmits nothing. That is the intended
     behavior, not an accident: a press shorter than the 10 ms frame it would
