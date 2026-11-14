@@ -354,7 +354,7 @@ flowchart LR
 | Capture | Yes | Read 10 ms of PCM; read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; push talk edges to the capture event queue |
 | Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); push talk events to the render event queue; write PCM to the device |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
-| Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted senders, push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
+| Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
 | Notifier | No | Every 20 ms while running, drain the capture and render event queues and deliver them to Kotlin in one call |
 
 - In **step 5a**, the capture and render loops are entry points called by
@@ -395,7 +395,9 @@ twice that, so in practice the drop-newest path never runs.
 | Capture events | Capture → notifier | Self talk edge | 64 |
 | Render events | Render → notifier | `TalkEvent`, dropped-packet counts | 256 |
 
-The tunnel queue's producer is the session's message coroutine. It is one
+The tunnel queue's producer is the session's message coroutine. Its
+`queueTunnelled` call parses the packet and applies the same
+[sender filter](#sender-filter) as the receive thread before pushing. It is one
 coroutine, so it is a single logical producer even though it may resume on
 different dispatcher threads; the ring's acquire/release ordering covers
 that.
@@ -427,15 +429,27 @@ changes (RNNoise enabled when its model loads, VAD hold frames, squelch
 floor, jitter margin of 4 frames) stays a constant of the I/O layer.
 
 Each is stored in a **sequence lock**: one writer (the JNI call), any
-number of readers (capture, receive, render). The writer increments the
+number of readers (capture, receive, render, and the tunnel caller). The writer increments the
 sequence to odd, writes, and increments to even; a reader copies the value
 and retries if the sequence was odd or changed. Readers never block, and
 the copy is a few dozen bytes plus the locally-muted session list
 (capacity 256 sessions; a longer list keeps the first 256 and logs).
 
 The capture thread builds `InputConfig` from both values at every frame.
-The receive thread reads the locally-muted list. The render thread reads
-the jitter margin.
+The receive thread and the tunnel caller read the locally-muted list. The
+render thread reads `halfDuplex`; the jitter margin is a constant (above)
+and goes through no lock.
+
+### Sender filter
+
+Both inbound paths, UDP and tunnel, drop voice from a sender that is
+locally muted or not a known session, as today's `AudioOutput` does for
+both formats (`user == null || user.isLocalMuted`). Dropping unknown
+senders is retained, not listed as a behavior change. How native code
+learns the known sessions (a set beside the locally-muted list in the
+policy snapshot, its capacity, and an overflow rule that fails open rather
+than silencing real users) is an [open item](open-items.md) settled when
+5a.3 is re-planned.
 
 ### Realtime rules
 

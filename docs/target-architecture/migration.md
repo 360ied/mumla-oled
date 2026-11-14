@@ -239,8 +239,9 @@ developer notices.
    that directory, and both leave in 5a.4 with the Kotlin framing they
    serve. Both inbound formats go through the codec here, so the protobuf
    branch stops using the generated Java classes and hands the same parsed
-   frames to `AudioOutput` as the legacy branch; no Kotlin parser stays
-   behind, and the live path is what the daily-use check exercises.
+   frames to `AudioOutput` as the legacy branch, which keeps applying
+   today's locally-muted and unknown-sender drops to both; no Kotlin
+   parser stays behind, and the live path is what the daily-use check exercises.
 4. Device-free encode entry point: `AudioHandler` stops acquiring the
    native input engine, `AudioRecord`, and `AudioTrack` in its
    constructor and does it in `initialize()`/`startRecording()`, carrying
@@ -268,6 +269,15 @@ test-only seam in Kotlin (see [testing](testing.md#murmur-interop) and
 [open items](open-items.md#resolved)).
 
 ### 5a.3 — Native receive
+
+**Provisional.** Re-planned once 5a.2 is in daily use, because its shape
+depends on what 5a.2's inbound codec JNI turns out to be. The likely
+re-plan splits it in two: native render first (render entry point,
+inbound and tunnel queues, notifier, Kotlin still owning the socket and
+parse), then native receive and transport (socket, receive thread,
+decrypt, pings, resync, `VoiceEngine`, and `nativeSendDatagram`, which
+moves with the socket). Open questions are in
+[open items](open-items.md). The list below is the pre-split plan.
 
 1. `voice_io` receive half: the UDP socket, receive thread (`recvfrom`,
    OCB2 decrypt, `parseDatagram`), inbound and tunnel queues, render

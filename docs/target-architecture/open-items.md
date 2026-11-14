@@ -20,6 +20,8 @@ them.
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3 |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3 |
+| 5a.3 re-plan | After 5a.2 is in daily use, split 5a.3 per [migration](migration.md#5a3--native-receive) and settle: whether render-first keeps Kotlin parsing through 5a.2's inbound JNI (no sequence locks until the receive half) or moves parse and filtering native early; the interim inbound entry points; staging inside the receive half (UDP receive, tunnel through `queueTunnelled`, pings and resync, 20 s fallback); done-when additions (locally muted user silent over UDP and tunnel, unknown session produces no audio and holds no voice slot, crypt resync, 20 s fallback) | Step 5a.3 |
+| Known-sessions set for the [sender filter](voice.md#sender-filter) | Settle its place in the policy snapshot, capacity (copy cost per datagram argues for the existing 256), and a fail-open overflow flag: a truncated allowlist would silence real users, unlike the truncated muted list. Note the collector lag: a new user's first packets may be dropped slightly more often than today | Step 5a.3 |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3 |
 
 ## Open (not gating)
