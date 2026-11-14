@@ -70,11 +70,11 @@ import se.lublin.humla.route.RouteThread
  * manager on production's thread shapes and fails if an entry point
  * accepts an off-thread call.
  *
- * AudioManager mode is deliberately NOT owned here. The service route
- * policy (`HumlaService`) is the single owner of
+ * AudioManager mode is deliberately NOT owned here. The route controller
+ * (`RouteControl`, its `ModeHold`) is the single owner of
  * `MODE_IN_COMMUNICATION`: it holds the mode for the whole voice-route
  * duration, which covers confirmed SCO sessions. Setting it here as well
- * made the service classify our own hold as externally owned and give up
+ * made the owner classify our own hold as externally owned and give up
  * its claim, stranding the mode on later media switches — so this manager
  * only selects and releases the SCO route, never the mode.
  */
@@ -210,8 +210,8 @@ class BluetoothScoManager : ScoLink {
             return
         }
         // Bring-up IPC runs here on the route thread, never on main. (No
-        // mode work here: the service route policy owns
-        // MODE_IN_COMMUNICATION; see class note.)
+        // mode work here: the route controller owns MODE_IN_COMMUNICATION;
+        // see class note.)
         attemptBringUp()
     }
 
@@ -220,7 +220,7 @@ class BluetoothScoManager : ScoLink {
      * bring-up may still hold a requested route, so release is guarded by
      * the hold flag. Never fires listener callbacks: the generation bump
      * drops any already-posted failure on delivery. AudioManager mode is
-     * owned by the service route policy, never touched here (see class note).
+     * owned by the route controller, never touched here (see class note).
      */
     override fun stop() {
         checkOnThread()
@@ -388,12 +388,11 @@ class BluetoothScoManager : ScoLink {
 
     /**
      * Whether an SCO-capable device is currently available for bring-up,
-     * without starting anything. Used by the service attach trigger as a
-     * fallback when the added array carries no SCO entry itself (A2DP-first
-     * stagger, HALs that surface SCO only in the availability query).
-     * Fail-closed false on any error: doubt falls through to event-driven
-     * setup, never to a blind bring-up attempt. Public for the service
-     * route policy (same library, adjacent package).
+     * without starting anything. Used by the route controller's device
+     * arrival path as a fallback when the added array carries no SCO entry
+     * itself (A2DP-first stagger, HALs that surface SCO only in the
+     * availability query). Fail-closed false on any error: doubt falls
+     * through to event-driven setup, never to a blind bring-up attempt.
      * S+ queries the communication-device list; pre-S falls back to the
      * legacy off-call availability flag.
      */

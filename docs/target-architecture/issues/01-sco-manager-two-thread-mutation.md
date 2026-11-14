@@ -297,7 +297,8 @@ re-posting to the route thread, the private route-session counter);
 tests). Not changed here: `RouteControl`'s primary constructor still takes
 its scope and handler rather than `route.md`'s `(platform, sco, prefs)`,
 as since step 4, and `create` takes a link factory where that API shows a
-link. `route.md` is brought in line on `master` separately.
+link. `route.md` § API describes this construction since `b811c1ef` on
+`master`.
 
 On a device: the S+ backend was exercised on the developer's phone as
 above. The API 30 backend is covered only by Robolectric and code reading,

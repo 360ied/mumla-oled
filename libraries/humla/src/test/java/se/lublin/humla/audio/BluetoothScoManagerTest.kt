@@ -66,17 +66,28 @@ class BluetoothScoManagerTest {
     private val speaker: AudioDeviceInfo =
         AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER).build()
 
-    // Records whether the state flip preceded each callback (ScoLink contract).
+    // Records whether the state flip preceded each callback, and any
+    // callback delivered off the route looper (both ScoLink.Listener
+    // contract). tearDown asserts the second list stays empty.
+    private val offRouteCallbacks = mutableListOf<String>()
+
+    private fun onRoute(name: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) offRouteCallbacks += name
+    }
+
     private val listener = object : ScoLink.Listener {
         override fun onScoConnected() {
+            onRoute("connected")
             events += "connected active=${manager.isActive()}"
         }
 
         override fun onScoDisconnected() {
+            onRoute("disconnected")
             events += "disconnected active=${manager.isActive()}"
         }
 
         override fun onScoFailed(reason: String?) {
+            onRoute("failed")
             events += "failed $reason idle=${manager.isIdle()}"
         }
     }
@@ -96,6 +107,7 @@ class BluetoothScoManagerTest {
     fun tearDown() {
         manager.destroy()
         idle()
+        assertEquals("callbacks off the route looper", emptyList<String>(), offRouteCallbacks)
     }
 
     // The shapes RouteControl.create builds its route thread with, on the
