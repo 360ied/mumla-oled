@@ -455,11 +455,13 @@ Each is stored in a **sequence lock**: one writer (the JNI call), any
 number of readers (capture, receive, render, and the tunnel caller). The
 writer increments the sequence to odd, writes, and increments to even; a
 reader copies the value and retries if the sequence was odd or changed. Readers never block, and
-the copy is a few dozen bytes plus the locally-muted session list
-(capacity 256 sessions; a longer list keeps the first 256 and logs).
+the copy is a few dozen bytes plus the locally-muted and known session
+lists (capacity 256 sessions each; see [sender filter](#sender-filter) for
+what happens when a list is longer).
 
 The capture thread builds `InputConfig` from both values at every frame.
-The receive thread and the tunnel caller read the locally-muted list. The
+The receive thread and the tunnel caller read the locally-muted and known
+session lists. The
 render thread reads `halfDuplex`; the jitter margin is a constant (above)
 and goes through no lock.
 
@@ -468,12 +470,31 @@ and goes through no lock.
 Both inbound paths, UDP and tunnel, drop voice from a sender that is
 locally muted or not a known session, as today's `AudioOutput` does for
 both formats (`user == null || user.isLocalMuted`). Dropping unknown
-senders is retained, not listed as a behavior change. How native code
-learns the known sessions (a set beside the locally-muted list in the
-policy snapshot, its capacity, and an overflow rule that fails open rather
-than silencing real users) is an [open item](open-items.md) settled
-before 5a.3b, which brings the first native reader. Until then (5a.3a)
-Kotlin applies the filter before pushing frames into the rings.
+senders is retained, not listed as a behavior change. Until 5a.3b, which
+brings the first native reader, Kotlin applies the filter before pushing
+frames into the rings (5a.3a).
+
+- **Source.** The known sessions travel in `VoicePolicy.knownSessions`,
+  beside `locallyMuted`, through the same policy sequence lock. The byte
+  layout of the native snapshot is part of 5a.3b's design, together with
+  the fields 5a.4 adds.
+- **Capacity and overflow.** Both lists hold 256 sessions, since readers
+  copy the whole snapshot for every datagram. They fail in opposite
+  directions. A longer muted list keeps the first 256 and logs: some
+  muted users are heard. A longer known list sets an overflow flag, and
+  while it is set the unknown-sender check is skipped and only the muted
+  check applies, because a truncated allowlist would silence real users.
+- **Collector lag, accepted.** Native code learns of a new user one
+  collector hop (microseconds to about a millisecond) after
+  `Session.getUser` does today. This does not matter in practice. A
+  joining user's `UserState` is sent when they authenticate, and their
+  first voice comes at least their own sync round trip later. At our own
+  connect, both paths drop everything until state is published at
+  `ServerSync`, so the hop adds at most a packet in the middle of
+  speech. The same hop already delays the muted list. If first syllables
+  are ever lost in practice, the fallback is for `Session` to write the
+  list itself as it applies `UserState` and `UserRemove`, ahead of
+  publishing, through its own single-writer sequence lock.
 
 ### Realtime rules
 
@@ -537,6 +558,7 @@ data class VoicePolicy(
     val bitrate: Int,                         // after the server's bandwidth cap
     val framesPerPacket: Int,                 // after the server's bandwidth cap
     val locallyMuted: PersistentSet<Int>,     // sessions whose voice is dropped
+    val knownSessions: PersistentSet<Int>,    // senders the filter accepts
 )
 
 fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
@@ -553,6 +575,7 @@ fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
         framesPerPacket = encoder.framesPerPacket,
         locallyMuted = s.server.users.values.filter { it.localMuted }
             .map { it.session }.toPersistentSet(),
+        knownSessions = s.server.users.keys.toPersistentSet(),
     )
 }
 ```

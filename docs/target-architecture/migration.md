@@ -286,8 +286,7 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 [16](issues/16-voice-link-owns-udp-route.md) and
 [17](issues/17-udp-format-per-packet.md), issues
 [04](issues/04-session-transport-virtual-time-gaps.md) and
-[05](issues/05-client-edge-invariants-weak.md), and the known-sessions set
-before 5a.3b (see [open items](open-items.md)).
+[05](issues/05-client-edge-invariants-weak.md) before 5a.3b (see [open items](open-items.md)).
 
 #### 5a.3a — Native render
 

@@ -20,7 +20,6 @@ them.
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3b |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3b |
-| Known-sessions set for the [sender filter](voice.md#sender-filter) | Settle its place in the policy snapshot, capacity (copy cost per datagram argues for the existing 256), and a fail-open overflow flag: a truncated allowlist would silence real users, unlike the truncated muted list. Note the collector lag: a new user's first packets may be dropped slightly more often than today | Step 5a.3b |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3a |
 
 ## Open (not gating)
@@ -38,10 +37,11 @@ them.
 
 ## Resolved
 
-Item resolved while checking the 5a.3a gates (2026-11-14):
+Items resolved while checking the 5a.3 gates (2026-11-14):
 
 | Item | Resolution | Where |
 |---|---|---|
+| Known-sessions set for the [sender filter](voice.md#sender-filter) | `VoicePolicy.knownSessions` beside `locallyMuted`, through the policy sequence lock; native snapshot layout left to 5a.3b's design. Capacity 256; overflow sets a flag that skips the unknown-sender check (fail open) while the muted check still applies. The collector lag is accepted: one hop (microseconds to about a millisecond) against a joining user's sync round trip before their first voice, and at our own connect both paths drop everything until `ServerSync`. Fallback if first syllables are ever lost: `Session` writes the list itself ahead of publishing, through its own single-writer sequence lock | [voice](voice.md#sender-filter) |
 | `removeUser` routing to the render thread | The tunnel ring carries it as a control item. `UserRemove` reaches `AudioHandler.messageUserRemove` through `Session.handleMessage` on the session message coroutine, the same coroutine that calls `queueTunnelled`, so the tunnel ring already has the right producer and a new control ring is not needed. A removal stays ordered after that user's tunnelled voice. No slots are reserved for removals: a dropped removal, like a late UDP frame from the leaving user (the same window as today's `AudioOutput` filter), costs only a voice the engine's dead-voice rule releases about 100 ms after its audio runs out. `VoiceLink` and the facade gain `removeUser(session)`, called on the same coroutine; `Session` already uses `VoiceLink` for `queueTunnelled`, `events`, and `status`, and issues 16 and 17 touch only the route default and `setServerVersion` | [voice](voice.md#queues), [migration](migration.md#5a3a--native-render) |
 
 Item resolved by the 5a.3 re-plan (2026-11-14):
