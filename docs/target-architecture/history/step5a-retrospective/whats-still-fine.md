@@ -49,6 +49,9 @@ step 3). Spec commits on `master` between steps concerned 5a.
   and `RoutePreferences` as specified; blocking platform calls on the route
   thread. The public `setScoRequested`/`setHandsetStream` setters beside
   the `prefs` flow are the permitted `ConfigDelta` bridge (until step 7).
+  *(Correction, 2026-11-14: the setters have had no callers since the
+  step 4 cutover `ec3f882d`; see
+  [issue 33](../../issues/33-route-control-unused-bridge-api.md).)*
 - **[Transport](../../transport.md): conforms.** Plain
   reader `Thread`, `trySendBlocking` into a bounded inbound channel,
   bounded outbound channel drained by a writer coroutine,

@@ -125,6 +125,7 @@ the same state in its `Status` row.
 | [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Open; small |
 | [30](30-connected-races-sync-tail.md) | `Connected` can run before the session's `ServerSync` tail | Open; revisit once 14 restores self-mute in the session |
 | [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved (spec); `HumlaTCP` boundary question in [open items](../open-items.md) |
+| [33](33-route-control-unused-bridge-api.md) | `RouteControl`'s `ConfigDelta` bridge setters and getters have no callers | Open; small |
 
 ## Remaining work
 
@@ -149,6 +150,7 @@ a decision, made 2026-11-12). Rows 2 and 3 gate only 5a.3b (see [open items](../
 | Service destroy leak | [02](02-service-destroy-leaks-transport.md) | Independent bugfix. |
 | Rule-2 review sweep | [06](06-update-conventions-not-enforced.md) | Read-then-act pass over `Session`, `PolicyCollector`, and `RouteControl` (the audit did not do it). Sweep `RouteControl` after row 1, since confinement changes its reads. |
 | Spike test | [07](07-channel-adapter-spike-weaker.md) | Test-only. |
+| Unused route API | [33](33-route-control-unused-bridge-api.md) | Deletion only. Easiest after the issue 01 branch merges, since its confinement test calls one of the setters. |
 
 ### Blocked
 
