@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`485453c7`..`eca5b342`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`485453c7`..`7d16155b`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
@@ -235,8 +235,9 @@ Fixed along the preferred direction, one concern per commit:
 3. `14290883`: `HumlaService` passes the route thread. The timeout, the
    S+ device listener, the API 30 receiver (`registerReceiver` with the
    route `Handler`), and failure delivery all run on it. Entry points
-   check the thread (debug throws, release logs). `isActive` is exempt:
-   `HumlaService.isBluetoothScoActive` reads it from the UI.
+   check the thread (debug throws, release logs). This commit exempted
+   `isActive`, because `HumlaService.isBluetoothScoActive` read it from
+   main; that left the acceptance unmet until steps 7 and 8.
 4. `24bb84a2`: guards that only defended against a concurrent `stop()`
    are gone: the per-step epoch re-checks, the epoch-scoped route hold,
    `armTimeout`'s race checks, and `onConnectTimeout`'s second check.
@@ -247,17 +248,50 @@ Fixed along the preferred direction, one concern per commit:
 6. `eca5b342`: thread creation moves back into `RouteControl.kt` as
    `RouteControl.startThread()`, since `RouteControl` is the boundary
    file that owns the route thread (see [enforcement](../enforcement.md)),
-   leaving `RouteThread` a plain holder. `state` stays an
-   `AtomicReference`, as before, for the cross-thread `isActive` read; a
-   `@Volatile` would have been a new concurrency-tripwire match. Commits
-   1 to 5 fail only the tripwire step of `check.sh`; this one passes it.
+   leaving `RouteThread` a plain holder. It also kept `state` an
+   `AtomicReference` for the exempt `isActive` read, instead of a
+   `@Volatile` the tripwire forbids. Commits 1 to 5 fail only the
+   tripwire step of `check.sh`; this one passes it.
+7. `3859dc9e`: `HumlaService.isBluetoothScoActive` reads the published
+   `RouteState` (`Ready` on `VOICE_SCO`), as [client](../client.md)
+   maps it, instead of the link. It is the same test the service's route
+   collector uses for `onBluetoothScoChanged`. `updateRoute` maps an
+   active link to `VOICE_SCO` and nothing else, so the answer differs
+   from the link's only until the next publish, which re-runs the
+   proximity decision. `RouteControl.isScoActive` becomes private.
+8. `7d16155b`: `isActive` checks the thread like every other entry
+   point, and `state` is a plain field: the manager holds no atomics and
+   nothing reads it from another thread.
+
+Acceptance, line by line:
+
+- No `Dispatchers.Main`, `Main.immediate`, `mainExecutor`, or
+  `Looper.getMainLooper()` in `BluetoothScoManager.kt`: met (the only
+  match for `Main` is the name `checkNotMainThread` in a comment).
+- All methods and callbacks on the route thread, with entry-point
+  assertions: met. Every link call in `RouteControl` sits in a private
+  function reached through its route scope or its device callback on the
+  route handler. The manager's timers, listener, receiver, and failure
+  delivery run on the route thread's dispatcher, executor, and handler.
+  All six `ScoLink` methods and the three platform or timer callbacks
+  check the thread; a test calls five of them off-thread and expects each
+  to throw.
+- Virtual-time tests for timeout then retry, timeout racing `stop()`,
+  timeout racing `stop()` + `start()`, and failure delivery after
+  `stop()`: met by `timeoutRetriesOnceThenFails`,
+  `stopBeforeTimeoutCancelsIt`,
+  `timeoutFromStoppedSessionNeverActsOnNextSession`, and
+  `failureAfterStopIsDropped`.
+- `./scripts/check.sh` passes: met at `7d16155b` and at `3859dc9e`.
+  The on-device headset check (developer's discretion) has not been done.
 
 Kept: the session generation, which still drops work queued for an ended
 session (device and broadcast events, the fast-path task, failure
 delivery, and a timer that escapes a cancel).
 
 Not verified on a device: the API 30 path is covered only by Robolectric
-and code reading.
+and code reading, and the S+ path only by Robolectric with a shadow that
+models deferred routing.
 
 ## Related
 

@@ -9,7 +9,7 @@
 | Area | Route |
 | Spec | [route.md § RouteState](../route.md#routestate) (transition table, Events) |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt` (`recompute`, `updateRoute`, `computeVoiceRoute`, `handleScoFailed`, `armRouteSettle`) |
-| Gates | Gate met: the decision (with [09](09-route-settling-unobservable.md)) was required before step 5a.3 and was made 2026-11-12. The remaining code change is not gating; it follows [01](01-sco-manager-two-thread-mutation.md) in the same worktree |
+| Gates | Gate met: the decision (with [09](09-route-settling-unobservable.md)) was required before step 5a.3 and was made 2026-11-12. The remaining code change is not gating; it goes in its own worktree with 09's test, 11, and 21 (see the [remaining work](README.md#remaining-work)) |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
