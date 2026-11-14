@@ -28,7 +28,11 @@ Paths are relative to
 The existing JNI bridges for the engines
 (`NativeAudioInputEngineJni.cpp`, `NativeAudioOutputEngineJni.cpp`) and
 crypt (`NativeCryptStateJni.cpp`) are deleted when their Kotlin callers are
-(steps 5a and 5b); `voice_io` has the only JNI surface for voice.
+(steps 5a and 5b); `voice_io` owns the voice JNI surface once it lands in
+5a.3. Until 5a.4 the one exception is 5a.2's interim codec bridge,
+`voice_codec/NativeVoiceCodecJni.cpp`, which exists only because Kotlin
+still frames voice; it holds that directory's single `<jni.h>` allowlist
+entry and leaves with the file.
 `NativeCrashTestJni.cpp` (the crash reporter's native crash test, not part
 of voice) moves to `jni/diagnostics/` in step 5a, outside the native
 tripwire's scope.
