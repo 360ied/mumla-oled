@@ -622,8 +622,6 @@ class AudioHandler : HumlaNetworkListener,
         run {
             run {
                 mInitialized = false
-                wasTalking = mTalking
-                mTalking = false
                 policyRef.set(null)
                 lastPolicyTransmit = null
                 lastPolicyPtt = null
@@ -637,6 +635,10 @@ class AudioHandler : HumlaNetworkListener,
             } finally {
                 mInput = null
             }
+            // Read and reset only after the input join: the capture thread is
+            // the sole talking-callback source, so this orders the two.
+            wasTalking = mTalking
+            mTalking = false
             mOutput.stopPlaying()
             try {
                 mNativeEngine?.destroy()
@@ -867,10 +869,12 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     override fun onTalkingStateChanged(isTalking: Boolean, peakEnergy: Float) {
-        // Check-and-set under the lock (concurrent native callbacks must not
-        // duplicate or drop transitions), fan out outside it: the encode
-        // listener and mOutput each take locks of their own, and the capture
-        // thread must never hold `this` across them.
+        // The check-and-set needs no lock: callbacks arrive only on the
+        // capture thread (nativeProcessFrame applies the mute since 5a.1, so
+        // nothing else signals a transition), and shutdown() reads and resets
+        // mTalking only after joining that thread. The fan-out stays outside
+        // any monitor: the encode listener and mOutput each take locks of
+        // their own, and the capture thread must never hold `this` across them.
         val changed: Boolean
         run {
             changed = mTalking != isTalking
