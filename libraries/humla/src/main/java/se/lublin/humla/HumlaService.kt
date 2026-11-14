@@ -924,8 +924,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
     }
 
+    // From the published route state (client.md maps this query to
+    // route.state), never the SCO link itself: the link is confined to the
+    // route thread, and callers query from main. The same test as the
+    // route collector's onBluetoothScoChanged, so the two cannot disagree.
     open override fun isBluetoothScoActive(): Boolean {
-        return if (::routeControl.isInitialized) routeControl.isScoActive() else false
+        if (!::routeControl.isInitialized) return false
+        val rs = routeControl.state.value
+        return rs is RouteState.Ready && rs.route == AppliedRoute.VOICE_SCO
     }
 
     open override fun isMediaRouteActive(): Boolean {

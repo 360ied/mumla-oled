@@ -730,7 +730,9 @@ internal class RouteControl(
 
     fun decision(): AppliedRoute = appliedRoute.get()
 
-    fun isScoActive(): Boolean {
+    // Route thread only: the SCO link is confined to it. Off-thread callers
+    // read the published state instead.
+    private fun isScoActive(): Boolean {
         val link = sco ?: return false
         return try {
             link.isActive()
