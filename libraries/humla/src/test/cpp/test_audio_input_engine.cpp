@@ -434,7 +434,50 @@ void testPttPressObservedForOneFrameStillHolds() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 6: Terminator Packet Emission on Even Packet Boundaries (PTT-01)
+// Test 6: a press and release inside one frame transmits nothing
+// -----------------------------------------------------------------------------
+void testPttSubFrameTapTransmitsNothing() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
+
+    // Both edges land before the capture thread samples a frame, so the engine
+    // never observes a press. This is the intended behavior: a tap shorter
+    // than the 10 ms frame it would fill is not a transmission attempt, and the
+    // pre-refactor engine answering it with a 150 ms hangover was the accident.
+    rig.setPttTalking(true);
+    rig.setPttTalking(false);
+    auto frame = generateSineFrame(1);
+    for (int i = 0; i < 20; ++i) {
+        rig.processFrame(frame.data(), frame.size());
+    }
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 0u);
+    TEST_ASSERT_EQ(rig.packets.size(), 0u);
+
+    // The engine is not stuck: a press some frame does observe opens normally
+    // and still drains through the full hangover.
+    rig.setPttTalking(true);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first);
+
+    rig.setPttTalking(false);
+    for (int i = 0; i < 15; ++i) {
+        rig.processFrame(frame.data(), frame.size());
+    }
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u); // hold still running
+    rig.processFrame(frame.data(), frame.size()); // hold expired
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 2u);
+    TEST_ASSERT_FALSE(rig.talkEvents.back().first);
+    TEST_ASSERT_TRUE(rig.packets.back().isTerminator);
+
+    std::cout << "  [PASS] testPttSubFrameTapTransmitsNothing" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+// Test 7: Terminator Packet Emission on Even Packet Boundaries (PTT-01)
 // -----------------------------------------------------------------------------
 void testTerminatorPacketEmissionOnEvenBoundary() {
     g_testCount++;
@@ -464,7 +507,7 @@ void testTerminatorPacketEmissionOnEvenBoundary() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 7: Terminator Packet Emission on Odd Packet Boundaries
+// Test 8: Terminator Packet Emission on Odd Packet Boundaries
 // -----------------------------------------------------------------------------
 void testTerminatorPacketEmissionOnOddBoundary() {
     g_testCount++;
@@ -494,7 +537,7 @@ void testTerminatorPacketEmissionOnOddBoundary() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 8: Single-Frame Packets (framesPerPacket = 1) Terminator Parity
+// Test 9: Single-Frame Packets (framesPerPacket = 1) Terminator Parity
 // -----------------------------------------------------------------------------
 void testTerminatorPacketWithSingleFramePackets() {
     g_testCount++;
@@ -522,7 +565,7 @@ void testTerminatorPacketWithSingleFramePackets() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 9: Pre-Speech Ring Buffer Flushed on VAD Speech Onset (80ms Lookahead)
+// Test 10: Pre-Speech Ring Buffer Flushed on VAD Speech Onset (80ms Lookahead)
 // -----------------------------------------------------------------------------
 void testPreSpeechRingBufferFlushedOnOnset() {
     g_testCount++;
@@ -558,7 +601,7 @@ void testPreSpeechRingBufferFlushedOnOnset() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 10: Mute gates audio from the next frame and aborts the hangover
+// Test 11: Mute gates audio from the next frame and aborts the hangover
 // -----------------------------------------------------------------------------
 void testMuteGatesAudioImmediately() {
     g_testCount++;
@@ -602,7 +645,7 @@ void testMuteGatesAudioImmediately() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 11: Continuous Mode and VAD Mode Integration
+// Test 12: Continuous Mode and VAD Mode Integration
 // -----------------------------------------------------------------------------
 void testContinuousAndVadModes() {
     g_testCount++;
@@ -648,7 +691,7 @@ void testContinuousAndVadModes() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 12: Engine Reset Clears State and Frame Counters
+// Test 13: Engine Reset Clears State and Frame Counters
 // -----------------------------------------------------------------------------
 void testAudioInputEngineReset() {
     g_testCount++;
@@ -685,7 +728,7 @@ void testAudioInputEngineReset() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 13: Large Packet Framing (N=4, N=6) and Terminator Boundary Padding
+// Test 14: Large Packet Framing (N=4, N=6) and Terminator Boundary Padding
 // -----------------------------------------------------------------------------
 void testLargePacketFramingAndTerminators() {
     g_testCount++;
@@ -752,7 +795,7 @@ void testLargePacketFramingAndTerminators() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 14: Dynamic Input Mode Switching Mid-Speech
+// Test 15: Dynamic Input Mode Switching Mid-Speech
 // -----------------------------------------------------------------------------
 void testDynamicInputModeSwitchingMidSpeech() {
     g_testCount++;
@@ -794,7 +837,7 @@ void testDynamicInputModeSwitchingMidSpeech() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 15: Squelch Gate Before RNNoise
+// Test 16: Squelch Gate Before RNNoise
 // -----------------------------------------------------------------------------
 void testSquelchGateBeforeRnnoise() {
     g_testCount++;
@@ -887,7 +930,7 @@ void testSquelchGateBeforeRnnoise() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 16: PTT Idle Unconditionally Bypasses RNNoise Regardless of Ambient Noise
+// Test 17: PTT Idle Unconditionally Bypasses RNNoise Regardless of Ambient Noise
 // -----------------------------------------------------------------------------
 void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
     g_testCount++;
@@ -943,7 +986,7 @@ void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 17: PTT Onset Does Not Prepend Idle Noise
+// Test 18: PTT Onset Does Not Prepend Idle Noise
 // -----------------------------------------------------------------------------
 void testPttOnsetDoesNotPrependIdleNoise() {
     g_testCount++;
@@ -975,7 +1018,7 @@ void testPttOnsetDoesNotPrependIdleNoise() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 18: Muted Bypasses RNNoise Even With Ambient Noise in VAD Mode
+// Test 19: Muted Bypasses RNNoise Even With Ambient Noise in VAD Mode
 // -----------------------------------------------------------------------------
 void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
     g_testCount++;
@@ -1035,6 +1078,7 @@ void run_audio_input_engine_tests() {
     testPttReleaseHangoverTiming();
     testPttHangoverReassertionPreventsCutoff();
     testPttPressObservedForOneFrameStillHolds();
+    testPttSubFrameTapTransmitsNothing();
     testTerminatorPacketEmissionOnEvenBoundary();
     testTerminatorPacketEmissionOnOddBoundary();
     testTerminatorPacketWithSingleFramePackets();

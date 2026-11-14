@@ -42,6 +42,7 @@ Item resolved while implementing step 5a.1:
 | Item | Resolution | Where |
 |---|---|---|
 | RNNoise enable transition in the 5a.4 settings push | Settled as a restart, not a live push: the switch follows the model, which allocates the same way, so both are applied on the control plane when the model loads — engine creation or a capture restart — and neither is in `VoiceSettings`. A settings-driven toggle would need a state snapshot restored allocation-free; deliberately not pursued | [voice](voice.md#input-engine), [voice](voice.md#start-stop-reconfigure) |
+| Push-to-talk press and release inside one frame | Accepted as intended, the step's one intentional behavior change: per-frame configuration cannot observe an edge no frame sampled, and a press shorter than the 10 ms frame it would fill is not a transmission attempt. The pre-refactor engine's 150 ms hangover for it is not reproduced; a press that any frame observes still arms the full hangover. Pinned by `testPttSubFrameTapTransmitsNothing` | [voice](voice.md#input-engine), [migration](migration.md#step-5a--engine-refactor-codec-network-threads) |
 
 Items resolved by the step-1 harness work (2026-11-13):
 

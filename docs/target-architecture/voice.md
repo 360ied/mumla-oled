@@ -133,12 +133,14 @@ public:
     while muted (the microphone stays open for the whole connection), so the
     deferred flush is never stranded.
   - A push-to-talk press and release that both arrive inside one frame
-    interval is not observable and transmits nothing, where the pre-refactor
-    engine held its 150 ms hangover for it. That needs a tap of 10 ms or
-    less, and only through the direct UI path
-    (`HumlaService.setTalkingState`); the `VoicePolicy` path already samples
-    per frame. A press that any single frame observes arms the full hangover,
-    however brief.
+    interval is not observable and transmits nothing. That is the intended
+    behavior, not an accident: a press shorter than the 10 ms frame it would
+    have to fill is not a transmission attempt, and answering it with a
+    150 ms hangover and an empty burst (as the pre-refactor engine did) is
+    the thing that was wrong. Only the direct UI path
+    (`HumlaService.setTalkingState`) can produce it at all; the
+    `VoicePolicy` path already samples per frame. A press that any single
+    frame observes arms the full hangover, however brief.
 
 ### Output engine
 

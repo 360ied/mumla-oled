@@ -182,9 +182,12 @@ Four sub-steps. Each one leaves voice working on a live path, ships, and
 is used daily before the next begins. Old and new paths coexist through
 interim seams (as `LegacyVoiceLink` and `VoiceControl` did in steps 3
 and 4); the Kotlin path is deleted only in 5a.4. 5a introduces **no
-intentional behavior changes**: upstream-parity differences found along
-the way are recorded in [open items](open-items.md) and land after 5a.4
-as their own commits. Why the step is split: see the
+intentional behavior changes**, with one accepted exception: a
+push-to-talk press and release inside a single 10 ms frame no longer opens
+and closes a burst (see [voice](voice.md#input-engine)). Upstream-parity
+differences found along the way are recorded in [open
+items](open-items.md) and land after 5a.4 as their own commits. Why the
+step is split: see the
 [step 5a retrospective](history/step5a-retrospective/README.md).
 
 **Native loading** (from 5a.1 on): one `HumlaNative.ensureLoaded()`
