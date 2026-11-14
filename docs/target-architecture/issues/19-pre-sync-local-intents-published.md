@@ -8,10 +8,12 @@
 | Verified | Yes (code read) |
 | Area | Session / state publication |
 | Spec | [state.md § Sync phases and publication](../state.md#sync-phases-and-publication), [state.md § Rules](../state.md#rules), [state.md § User intents](../state.md#user-intents) |
-| Code | `libraries/humla/src/main/java/se/lublin/humla/client/Session.kt` (`setPtt` around line 767, `setVoiceTarget` around line 816, `ServerSync` branch of `handleMessage` around lines 551-566); `state/IntentTransitions.kt` |
+| Code | `libraries/humla/src/main/java/se/lublin/humla/client/Session.kt` (`setPtt`, `setVoiceTarget`, and the `ServerSync` branch of `handleMessage`); `state/IntentTransitions.kt` |
 | Gates | Not gating |
 
-Line numbers below refer to `master` at `092d9dc8`.
+Line numbers cited in the audit below refer to `master` at `092d9dc8`; the
+references in this file are anchored on symbols because the branch that fixes
+the issue shifts them.
 
 ## Summary
 
@@ -22,7 +24,9 @@ applies transitions to a private value and publishes once at
 value would overwrite those updates, so the `ServerSync` publish lambda
 copies `pttPressed` and `voiceTargetId` from the current published value
 into the synced value. That merge is not in the spec, and the lambda also
-assigns `Session` fields (see [06](06-update-conventions-not-enforced.md)).
+assigned `Session` fields (see
+[06](06-update-conventions-not-enforced.md)); the merge stays, the
+assignments moved out of the lambda on this branch.
 
 ## What the spec says
 
@@ -40,12 +44,12 @@ SessionState`, with no side effects".
 
 ## What the code does
 
-`Session.setPtt` (around line 767): `_state.update { current ->
+`Session.setPtt`: `_state.update { current ->
 applyPttIntent(current, pressed).state }`, with no phase check;
 `IntentTransitions` has no phase gate for PTT or voice target.
-`setVoiceTarget` (around line 816) likewise.
+`setVoiceTarget` likewise.
 
-`ServerSync` branch (around line 551):
+`ServerSync` branch:
 
 ```kotlin
 val result = applyServerSync(syncingState, msg)
@@ -95,14 +99,17 @@ Pick one model and write it into `state.md` (on `master` first):
    by intents, after checking no server transition writes `local`; note
    [25](25-user-state-writes-local.md) says one does).
 
-In either case, move the `syncingState`/`synced` assignments out of the
-`update` lambda.
+In either case, ~~move the `syncingState`/`synced` assignments out of the
+`update` lambda~~. Done: the merge uses `updateAndGet` and the builder adopts
+the committed value, so the lambda only computes.
 
 ## Acceptance
 
-`state.md` describes what is published before `SYNCED`; a test presses PTT
-during `SYNCING` and asserts it survives `ServerSync`; `./scripts/check.sh`
-passes.
+- `state.md` describes what is published before `SYNCED` (met: the 2026-11-12
+decision documented option 2).
+- A test presses PTT during `SYNCING` and asserts it survives `ServerSync`
+  (met: `HumlaClientTest.serverSyncPublishesDumpAndPreSyncIntents`).
+- `./scripts/check.sh` passes.
 
 ## Related
 
