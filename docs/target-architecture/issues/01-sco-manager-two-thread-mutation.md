@@ -278,8 +278,11 @@ Acceptance, line by line:
   `stopBeforeTimeoutCancelsIt`,
   `timeoutFromStoppedSessionNeverActsOnNextSession`, and
   `failureAfterStopIsDropped`.
-- `./scripts/check.sh` passes: met at `4cd3d623`. The on-device headset
-  check (developer's discretion) has not been done.
+- `./scripts/check.sh` passes: met at `4cd3d623`. On a device: the
+  developer tested a build from before `4cd3d623` on their phone and
+  reports that it works fully. `4cd3d623` only moves where the link is
+  built (same thread, same construction) and was not re-tested on the
+  device.
 
 Against the spec: `route.md` § Thread holds (thread named `route` owned by
 `RouteControl`, looper dispatcher, device callbacks on the route handler,
@@ -292,8 +295,9 @@ its scope and handler rather than `route.md`'s `(platform, sco, prefs)`,
 as since step 4, and `create` takes a link factory where that API shows a
 link; `route.md` does not say how the SCO manager gets the route thread.
 
-Not verified on a device: both backends are covered only by Robolectric
-and code reading.
+On a device: the S+ backend was exercised on the developer's phone as
+above. The API 30 backend is covered only by Robolectric and code reading,
+as `testing.md` expects for the theoretical Android 11–12 floor.
 
 ## Related
 
