@@ -68,7 +68,9 @@ Java_se_lublin_humla_net_NativeVoiceCodec_frameLegacyVoice(
     packet.frameNumber = static_cast<uint64_t>(frameNumber);
     (void)legacyVersion;  // Opus framing is unaffected by the 1.2.2 swap.
 
-    uint8_t out[1 + 10 + 10 + mumla::audio::kMaxOpusBufferBytes];
+    // Exact parity with AudioHandler's 1024-byte legacy buffer: larger
+    // payloads drop (return null) instead of emitting longer datagrams.
+    uint8_t out[1024];
     size_t written = mumla::voice_codec::frameVoice(
         UdpFormat::LEGACY, packet, static_cast<uint32_t>(voiceTarget),
         out, sizeof(out));
@@ -96,8 +98,8 @@ Java_se_lublin_humla_net_NativeVoiceCodec_frameProtobufVoice(
     if (opusArray == nullptr || opusLength < 0) return nullptr;
     jsize arrayLen = env->GetArrayLength(opusArray);
     if (opusLength > arrayLen) return nullptr;
-    if (opusLength > 2048) return nullptr;
-    uint8_t opusBuf[2048];
+    uint8_t opusBuf[mumla::audio::kMaxOpusBufferBytes];
+    if (static_cast<size_t>(opusLength) > sizeof(opusBuf)) return nullptr;
     if (opusLength > 0) {
         env->GetByteArrayRegion(opusArray, 0, opusLength,
                                 reinterpret_cast<jbyte*>(opusBuf));
@@ -115,7 +117,8 @@ Java_se_lublin_humla_net_NativeVoiceCodec_frameProtobufVoice(
     packet.isTerminator = isTerminator != JNI_FALSE;
     packet.frameNumber = static_cast<uint64_t>(frameNumber);
 
-    uint8_t out[1 + 2048 + 32];
+    // Exact parity with AudioHandler's 2048-byte protobuf buffer.
+    uint8_t out[2048];
     size_t written = mumla::voice_codec::frameVoice(
         UdpFormat::PROTOBUF, packet, static_cast<uint32_t>(voiceTarget),
         out, sizeof(out));

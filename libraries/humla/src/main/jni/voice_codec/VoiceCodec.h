@@ -41,7 +41,8 @@ enum class UdpFormat {
 
 // Largest Opus bundle the parser accepts: 12 x 10 ms frames, the output
 // engine's largest bundle (MAX_DECODE_SAMPLES). Frames beyond the twelfth
-// are dropped, a bound today's Kotlin parser lacks.
+// are dropped and counted in ParsedDatagram::droppedFrames, a bound today's
+// Kotlin parser lacks.
 inline constexpr size_t kMaxFramesPerDatagram = 12;
 
 // 1.2.2 legacy codec workaround version (applyLegacyCodecWorkaround).
@@ -77,6 +78,10 @@ struct ParsedDatagram {
     int32_t session = 0;
     size_t frameCount = 0;
     audio::InboundPacket frames[kMaxFramesPerDatagram];
+    // Frames beyond the twelfth, dropped. Real servers send one frame per
+    // datagram, so this is zero live; pinned by the 20-frame codec test.
+    // Surfacing to VoiceStatus moves to 5a.3 with the native receive path.
+    uint32_t droppedFrames = 0;
     uint64_t pingTimestamp = 0;
     uint64_t serverVersionV2 = 0;  // protobuf ping, 0 if absent
     uint32_t maxBandwidthPerUser = 0;  // protobuf ping, 0 if absent

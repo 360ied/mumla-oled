@@ -173,6 +173,7 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frames[0].data[1], 0x0B);
             TEST_ASSERT_EQ(parsed.frames[0].data[2], 0x0C);
             TEST_ASSERT_TRUE(!parsed.frames[0].isTerminator);
+            TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
         }
     }
     {
@@ -205,6 +206,7 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frames[1].sequence, static_cast<uint32_t>(101));
             TEST_ASSERT_EQ(parsed.frames[1].length, static_cast<uint16_t>(4));
             TEST_ASSERT_TRUE(parsed.frames[1].isTerminator);
+            TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
         }
     }
     {
@@ -269,18 +271,22 @@ void run_voice_codec_tests() {
             UdpFormat::PROTOBUF, badProtobuf, sizeof(badProtobuf), 0, &parsed));
     }
 
-    // Twelve-frame bound: the thirteenth frame drops, the first twelve stay.
+    // Twelve-frame bound: frames past the twelfth drop and count. Twenty
+    // 4-byte frames keep the 12-byte positional-trailer check from tripping
+    // (5-byte frames never land the remainder on exactly 12), so the bound
+    // and the counter pin cleanly: 12 stored, 8 dropped.
     {
         uint8_t bundled[2048];
         bundled[0] = static_cast<uint8_t>((4 << 5) & 0xFF);
         size_t pos = 1;
         bundled[pos++] = 7;
         bundled[pos++] = 50;
-        // Twenty 1-byte frames: the 12-byte trailer check never trips
-        // (remaining hits 12 only past the bound), so the bound itself pins.
         for (int i = 0; i < 20; ++i) {
-            bundled[pos++] = 1;
+            bundled[pos++] = 4;
             bundled[pos++] = static_cast<uint8_t>(0xA0 + (i & 0x0F));
+            bundled[pos++] = static_cast<uint8_t>(0xB0 + (i & 0x0F));
+            bundled[pos++] = static_cast<uint8_t>(0xC0 + (i & 0x0F));
+            bundled[pos++] = static_cast<uint8_t>(0xD0 + (i & 0x0F));
         }
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
@@ -288,6 +294,7 @@ void run_voice_codec_tests() {
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
         TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(12));
         TEST_ASSERT_EQ(parsed.frames[11].sequence, static_cast<uint32_t>(61));
+        TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(8));
     }
     std::cout << "  [PASS] voice codec (" << g_testFailures << " failures)" << std::endl;
 }

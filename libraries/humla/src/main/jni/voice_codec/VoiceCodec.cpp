@@ -221,8 +221,9 @@ bool parseLegacyVoice(const uint8_t* data,
         }
         int64_t headerLong = 0;
         if (!readVarint(data, length, &offset, &headerLong)) {
-            // Malformed mid-packet: drop the whole datagram (no partial
-            // signal), matching the Kotlin catch-and-drop.
+            // Malformed mid-packet: drop the whole datagram. (Kotlin queued
+            // the valid prefix but never signalled it, so nothing played;
+            // dropping all here is the cleaner equivalent.)
             out->frameCount = 0;
             return false;
         }
@@ -252,6 +253,27 @@ bool parseLegacyVoice(const uint8_t* data,
         frame.length = static_cast<uint16_t>(size);
         std::memcpy(frame.data, data + offset, size);
         offset += size;
+    }
+    if (out->frameCount == kMaxFramesPerDatagram) {
+        // Count frames beyond the twelfth without storing them. Stops at the
+        // positional trailer, a size overrun, or malformed bytes; the stored
+        // twelve stay valid regardless.
+        while (offset < length) {
+            if (length - offset == 3 * 4) break;
+            int64_t h = 0;
+            if (!readVarint(data, length, &offset, &h)) break;
+            uint64_t hu = static_cast<uint64_t>(h);
+            size_t sz = static_cast<size_t>(hu & 0x1FFFULL);
+            bool term = (hu & 0x2000ULL) != 0;
+            if (sz == 0 && term) {
+                out->droppedFrames++;
+                continue;
+            }
+            if (sz == 0 || sz > length - offset) break;
+            if (sz > sizeof(audio::InboundPacket::data)) break;
+            offset += sz;
+            out->droppedFrames++;
+        }
     }
     out->kind = ParsedDatagram::VOICE;
     return true;
@@ -369,7 +391,7 @@ size_t frameVoice(UdpFormat format,
         }
         return total;
     }
-    if (packet.size > 2048) return 0;
+    if (packet.size > audio::kMaxOpusBufferBytes) return 0;
     MumbleUDP_Audio msg = MumbleUDP_Audio_init_zero;
     if (voiceTarget != 0) {
         msg.which_Header = MumbleUDP_Audio_target_tag;
