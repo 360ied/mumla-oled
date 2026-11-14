@@ -73,7 +73,7 @@ the same state in its `Status` row.
 
 | # | Issue | Introduced by | State |
 |---|---|---|---|
-| [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Resolved (`485453c7`..`7d16155b`) |
+| [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Resolved (`485453c7`..`1eb102f1`) |
 | [02](02-service-destroy-leaks-transport.md) | Service destroy can leak the TLS connection; transport not closed by scope cancellation | Step 3 | Open; independent bugfix, not gating |
 | [32](32-route-decision-cached-sco-state.md) | The route decision cached the SCO link state, so leaving SCO stranded the call route | Step 4 | Resolved (`1089ad05`) |
 
