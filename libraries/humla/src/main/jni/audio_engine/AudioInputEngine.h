@@ -119,8 +119,12 @@ public:
  * encoding.
  *
  * Single-threaded by contract: one capture thread drives the instance. There
- * are no locks, no atomics and no callbacks, and nothing allocates after
- * construction. Configuration arrives with every frame (see InputConfig).
+ * are no locks, no atomics and no callbacks, and nothing allocates on the
+ * realtime path: every buffer is built at construction and the configuration
+ * arrives with every frame (see InputConfig). The control-plane calls
+ * (setRnnoiseEnabled, setRnnoiseModel, reset) may allocate, because RNNoise
+ * cannot recreate its recurrent state in place; they run on the control
+ * thread, never on the capture thread.
  */
 class AudioInputEngine {
 public:
@@ -180,7 +184,7 @@ private:
     AdaptiveLeveler m_leveler;
     HysteresisVad m_vad;
 
-    // Pre-allocated buffers: nothing allocates after construction.
+    // Pre-allocated buffers: nothing allocates on the realtime path.
     int16_t m_processedFrame[SAMPLES_PER_10MS];
     int16_t m_accumulatedPcm[MAX_ACCUMULATED_FRAMES * SAMPLES_PER_10MS];
     int16_t m_silenceDiscardBuffer[SAMPLES_PER_10MS];

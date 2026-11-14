@@ -44,7 +44,11 @@ not realtime threads. Step 5a changes its shape, not its algorithms.
    instance. No `std::mutex`, no `std::atomic`, no callbacks.
 2. **Outputs as return values.** Results go into caller-provided structs.
 3. **No allocation once started.** Every buffer, voice, decoder, and jitter
-   slot is allocated when the engine is constructed.
+   slot is allocated when the engine is constructed, and no call on the
+   realtime path allocates. The input engine's control-plane calls are the
+   one exception: RNNoise cannot reset its recurrent state in place, so
+   enabling it, swapping its model, or resetting the engine reallocates that
+   state (see [input engine](#input-engine)).
 4. **Configuration per call.** The input engine receives its configuration
    with every frame and handles transitions itself.
 
