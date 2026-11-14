@@ -163,16 +163,24 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - forced TCP; UDP pings; and both switch-to-tunnel triggers — the 20 s
   zero-counter giveup and a UDP socket that cannot be opened at all
   (`UdpUnavailable`, switch at once);
-- from step 5a: voice between two clients over UDP and over the tunnel
-  (tunnel from 5a.2, inbound UDP from 5a.3, both directions from 5a.4;
+- from step 5a.2: text and tunnelled ping framing carried end-to-end
+  through the native codec (no audio device involved);
+- from step 5a.3: voice between two clients over UDP and over the tunnel
+  (inbound UDP from 5a.3, both directions from 5a.4;
   see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).
 
 **Voice scenarios run the real native path.** The host build of
 `libhumlaaudio` (crypto JNI only today) grows with the step: the codec JNI
 arrives in 5a.2, the voice JNI in 5a.3. The interop test loads it and
-drives whatever is live at that point — in 5a.2 the interim Kotlin capture
-path through the native codec, from 5a.3 the real `VoiceEngine` — with
-synthetic PCM in place of `AudioRecord` and `AudioTrack`. A stub voice link
+drives whatever is live at that point. 5a.2 adds no voice scenario: with
+capture still Kotlin and no `VoiceEngine`, a PCM round-trip would run the
+same codec at both ends and prove self-consistency rather than wire
+parity, and injecting the PCM would need a test-only seam in
+`AudioHandler` that 5a.3 deletes. The native codec is instead driven live
+at the production framing entry points (JVM test, byte-equality against
+the Java-generated classes) and end-to-end through the tunnel (text and
+pings). From 5a.3 the interop test injects synthetic PCM at the native
+capture and render entry points, which are production API. A stub voice link
 is acceptable only for scenarios that do not claim to cover voice, and
 must say so in its name.
 

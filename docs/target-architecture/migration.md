@@ -235,10 +235,26 @@ developer notices.
 3. Live consumer: today's Kotlin framing (`AudioHandler` encode,
    `AudioOutput` parse, `HumlaUDP` pings) calls the native codec through
    a thin interim JNI.
+4. Device-free encode entry point: `AudioHandler` stops acquiring the
+   native input engine, `AudioRecord`, and `AudioTrack` in its
+   constructor and does it in `initialize()`/`startRecording()`, carrying
+   the existing construction-failure teardown with it — the lazy pattern
+   `AudioOutput` already uses (`AudioOutput.startPlaying`;
+   `AudioOutput(listener)` is device-free today). A production change on
+   its own merits, not a test seam, and it outlives 5a.3, so it leaves no
+   deletion debt. Without it, constructing `AudioHandler` in a JVM test
+   means grabbing the mic.
 
 **Done when:** codec golden tests pass; `SINGLE_THREADED_ENGINE` covers
-`voice_codec/`; interop text and voice-over-tunnel scenarios pass (see
-[testing](testing.md#murmur-interop)); daily use without regressions.
+`voice_codec/`; the production framing entry points are driven from a JVM
+test and produce bytes byte-equal to the Java-generated classes and
+`PacketBuffer`, failing when the native codec is bypassed; interop text
+and tunnelled ping framing pass end-to-end through the native codec;
+daily use without regressions. Voice between two clients over the tunnel
+is **not** part of this sub-step: it moves to 5a.3, where synthetic PCM
+enters at the native capture and render entry points instead of through a
+test-only seam in Kotlin (see [testing](testing.md#murmur-interop) and
+[open items](open-items.md#resolved)).
 
 ### 5a.3 — Native receive
 
@@ -264,7 +280,8 @@ the locks guard receive-visible settings and nothing else; one render
 entry point is the only path into the engines, pinned by a test that
 fails if a second caller appears; interop voice from a peer to the
 client over UDP and over the tunnel plays non-silent PCM through the
-real JNI binding; daily use without regressions.
+real JNI binding, including the tunnel voice scenario deferred from
+5a.2; daily use without regressions.
 
 ### 5a.4 — Native send and cleanup
 
