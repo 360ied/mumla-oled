@@ -167,13 +167,14 @@ pins). From step 3 on, it drives `HumlaClient` directly.
   (tunnel from 5a.2, inbound UDP from 5a.3, both directions from 5a.4;
   see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).
 
-**Voice scenarios run the real native path.** From step 5a.2, the host
-build of `libhumlaaudio` (crypto JNI only today) also carries the codec
-and voice JNI, and the interop test loads it and drives the real
-`VoiceEngine` (with synthetic PCM in place of `AudioRecord` and
-`AudioTrack`) against murmur. A stub voice link is acceptable only for
-scenarios that do not claim to cover voice, and must say so in its
-name.
+**Voice scenarios run the real native path.** The host build of
+`libhumlaaudio` (crypto JNI only today) grows with the step: the codec JNI
+arrives in 5a.2, the voice JNI in 5a.3. The interop test loads it and
+drives whatever is live at that point — in 5a.2 the interim Kotlin capture
+path through the native codec, from 5a.3 the real `VoiceEngine` — with
+synthetic PCM in place of `AudioRecord` and `AudioTrack`. A stub voice link
+is acceptable only for scenarios that do not claim to cover voice, and
+must say so in its name.
 
 **Native loading on Android.** A debug build fails loudly at startup if
 `HumlaNative.ensureLoaded()` fails, so daily use of any snapshot catches a

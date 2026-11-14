@@ -21,12 +21,13 @@ them.
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3 |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3 |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3 |
-| Voice interop harness | Host `libhumlaaudio` extended beyond crypto and loaded by the JVM interop test, driving `VoiceEngine` with synthetic PCM (see [testing](testing.md#murmur-interop)) | Step 5a.2 |
+| Interop PCM injection before `voice_io` | Decide how the JVM interop test feeds synthetic PCM to the voice path in 5a.2, where capture is still Kotlin and `VoiceEngine` does not exist yet: a test-only capture/render factory seam in `AudioHandler` defaulting to `AudioInput`/`AudioOutput` (an interim seam deleted when 5a.3 brings the native entry points), or deferring voice-over-tunnel to 5a.3, which defers a 5a.2 done-when. The harness growth itself is step work, not a precondition (see [testing](testing.md#murmur-interop)) | Step 5a.2 |
 
 ## Open (not gating)
 
 | Item | Notes |
 |---|---|
+| Interop harness growth | Deliverable work inside each sub-step, not a gate: 5a.2 adds the codec JNI to the host `libhumlaaudio` and the tunnel voice scenario, 5a.3 adds the voice JNI and drives `VoiceEngine`, 5a.4 covers both directions (see [testing](testing.md#murmur-interop)). Only the PCM injection seam above is still a decision |
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8. Until then it stays in `BOUNDARY_FILES` even though the reader thread it is named for now lives in `TransportImpl` (see [issue 31](issues/31-boundary-files-mismatch.md)) |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
