@@ -411,23 +411,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             AndroidAudioPlatform(null)
         }
         // RouteControl starts its route thread and builds the SCO link on it
-        // through this factory, so the link is confined to the controller's
-        // own thread; the controller destroys it on close.
-        val scoFactory: (RouteThread) -> ScoLink? = { routeThread ->
+        // through this factory, with a listener that reports to itself, so
+        // the link is confined to the controller's own thread; the
+        // controller destroys it on close.
+        val scoFactory: (RouteThread, ScoLink.Listener) -> ScoLink? = { routeThread, listener ->
             try {
-                BluetoothScoManager(this, object : BluetoothScoManager.Listener {
-                    override fun onScoConnected() {
-                        if (::routeControl.isInitialized) routeControl.onScoConnected()
-                    }
-
-                    override fun onScoDisconnected() {
-                        if (::routeControl.isInitialized) routeControl.onScoDisconnected()
-                    }
-
-                    override fun onScoFailed(reason: String?) {
-                        if (::routeControl.isInitialized) routeControl.onScoFailed(reason)
-                    }
-                }, routeThread)
+                BluetoothScoManager(this, listener, routeThread)
             } catch (e: Exception) {
                 Log.w(TAG, "SCO: no AudioManager", e)
                 null

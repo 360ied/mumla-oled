@@ -120,29 +120,9 @@ class BluetoothScoManager : ScoLink {
         }
     }
 
-    interface Listener {
-        /**
-         * Callbacks run on the manager scope and must not throw: a throwing
-         * observer is logged and contained for [RuntimeException], but an
-         * [Error] still propagates to the scope. In practice HumlaService
-         * never throws from these paths.
-         */
-        /** The SCO link is up; the audio pipeline may now select the voice-call route. */
-        fun onScoConnected()
-
-        /** A live link dropped; the pipeline should fall back to the previous route. */
-        fun onScoDisconnected()
-
-        /**
-         * The link never came up.
-         * @param reason one of `REASON_*`.
-         */
-        fun onScoFailed(reason: String?)
-    }
-
     private val context: Context
     private val audioManager: AudioManager
-    private val listener: Listener
+    private val listener: ScoLink.Listener
 
     // Thread the manager's timers and platform observers run on: the
     // dispatcher backs scoScope, the executor the S+ device listener, and
@@ -183,7 +163,7 @@ class BluetoothScoManager : ScoLink {
     // production and are narrowed by the JVM tests.
     internal constructor(
         context: Context?,
-        listener: Listener?,
+        listener: ScoLink.Listener?,
         thread: RouteThread,
         connectTimeoutMs: Long = CONNECT_TIMEOUT_MS,
         maxAttempts: Int = MAX_ATTEMPTS

@@ -102,24 +102,37 @@ internal class RouteControl(
 
         /**
          * Production factory: starts the route thread, builds the SCO link
-         * on it through [scoFactory], and builds the controller on the same
-         * thread. The controller owns both: `close()` destroys the link and
-         * then quits the thread, so the thread never leaves this class and
-         * the link cannot be given a different one. [scoFactory] returns
-         * null when there is no link. Tests of the decision logic use the
-         * primary constructor directly with a TestScope and a mock handler.
+         * on it through [scoFactory] with a listener that reports to this
+         * controller, and builds the controller on the same thread. The
+         * controller owns both: `close()` destroys the link and then quits
+         * the thread, so the thread never leaves this class, the link cannot
+         * be given a different one, and the caller needs no reference back
+         * to the controller. [scoFactory] returns null when there is no link.
+         * Tests of the decision logic use the primary constructor directly
+         * with a TestScope and a mock handler.
          */
         fun create(
             platform: AudioPlatform,
-            scoFactory: (RouteThread) -> ScoLink?,
+            scoFactory: (RouteThread, ScoLink.Listener) -> ScoLink?,
             prefs: Flow<RoutePreferences>,
             appScope: CoroutineScope,
         ): RouteControl {
             val thread = startThread()
-            val sco = scoFactory(thread)
+            // The link needs its listener before the controller exists, and
+            // the controller needs the link. The link only calls back once
+            // the controller has started it, from a command posted to the
+            // route thread after `control` is set.
+            lateinit var control: RouteControl
+            val listener = object : ScoLink.Listener {
+                override fun onScoConnected() = control.onScoConnected()
+                override fun onScoDisconnected() = control.onScoDisconnected()
+                override fun onScoFailed(reason: String?) = control.onScoFailed(reason)
+            }
+            val sco = scoFactory(thread, listener)
             val parentJob = appScope.coroutineContext[Job]
             val routeScope = CoroutineScope(SupervisorJob(parentJob) + thread.dispatcher)
-            return RouteControl(platform, sco, prefs, routeScope, thread.handler, thread)
+            control = RouteControl(platform, sco, prefs, routeScope, thread.handler, thread)
+            return control
         }
     }
 

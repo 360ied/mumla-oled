@@ -53,12 +53,13 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class RouteThreadConfinementTest {
-    private class RecordingSco(val thread: RouteThread) : ScoLink {
+    private class RecordingSco(val thread: RouteThread, val listener: ScoLink.Listener) : ScoLink {
         val calls = mutableListOf<String>()
         val offThread = mutableListOf<String>()
         @Volatile
         var idle = true
-        private var active = false
+        @Volatile
+        var active = false
 
         private fun record(name: String) {
             synchronized(calls) {
@@ -135,7 +136,7 @@ class RouteThreadConfinementTest {
         )
         val appScope = CoroutineScope(SupervisorJob())
         var built: RecordingSco? = null
-        val control = RouteControl.create(platform, { thread -> RecordingSco(thread).also { built = it } }, prefs, appScope)
+        val control = RouteControl.create(platform, { thread, listener -> RecordingSco(thread, listener).also { built = it } }, prefs, appScope)
         val sco = built!!
         assertTrue("test thread is not the route thread", !sco.thread.isCurrent())
 
@@ -168,6 +169,14 @@ class RouteThreadConfinementTest {
             AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP).build(),
         )
         settle()
+        // The link reports itself up through the listener create() gave it,
+        // on the route thread as the real link does; the controller acts on it.
+        sco.active = true
+        sco.thread.handler.post { sco.listener.onScoConnected() }
+        settle()
+        val ready = control.state.value
+        assertTrue("link-up reached the controller: $ready",
+            ready is RouteState.Ready && ready.route == AppliedRoute.VOICE_SCO)
         control.setScoRequested(false)
         control.setScoRequested(true)
         prefs.value = prefs.value.copy(bluetoothSco = false)

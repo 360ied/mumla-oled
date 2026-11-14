@@ -67,7 +67,7 @@ class BluetoothScoManagerTest {
         AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER).build()
 
     // Records whether the state flip preceded each callback (ScoLink contract).
-    private val listener = object : BluetoothScoManager.Listener {
+    private val listener = object : ScoLink.Listener {
         override fun onScoConnected() {
             events += "connected active=${manager.isActive()}"
         }
