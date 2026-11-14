@@ -21,6 +21,8 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
@@ -28,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -75,6 +78,28 @@ internal class RouteControl(
         @JvmStatic
         fun computeVoiceRoute(scoActive: Boolean, mediaDevicesPresent: Boolean): Boolean {
             return scoActive || !mediaDevicesPresent
+        }
+
+        /**
+         * Starts the route thread: a `HandlerThread` named `route`, exposed
+         * as the handler, executor, and dispatcher its users need. Lives
+         * here because the controller is the boundary file that owns it
+         * (see docs/target-architecture/enforcement.md); the service calls
+         * it before building the SCO link so both share the thread.
+         */
+        fun startThread(): RouteThread {
+            val thread = HandlerThread("route")
+            thread.start()
+            val looper = thread.looper
+            val handler = Handler(looper)
+            val executor = java.util.concurrent.Executor { r -> handler.post(r) }
+            return RouteThread(
+                handler = handler,
+                executor = executor,
+                dispatcher = executor.asCoroutineDispatcher(),
+                isCurrentCheck = { Looper.myLooper() == looper },
+                ownedThread = thread,
+            )
         }
 
         /**

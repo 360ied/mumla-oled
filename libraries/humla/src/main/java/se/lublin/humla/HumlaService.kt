@@ -50,7 +50,6 @@ import se.lublin.humla.route.AppliedRoute
 import se.lublin.humla.route.RouteControl
 import se.lublin.humla.route.RouteEvent
 import se.lublin.humla.route.RoutePreferences
-import se.lublin.humla.route.RouteThread
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.VoiceControl
@@ -412,7 +411,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
         // The route thread exists before both its users so the SCO link can
         // be confined to it; RouteControl owns its lifetime from here on.
-        val routeThread = RouteThread.start()
+        val routeThread = RouteControl.startThread()
         val scoLink: ScoLink? = try {
             BluetoothScoManager(this, object : BluetoothScoManager.Listener {
                 override fun onScoConnected() {

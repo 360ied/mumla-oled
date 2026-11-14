@@ -157,9 +157,12 @@ class BluetoothScoManager : ScoLink {
     private val maxAttempts: Int
 
     // Plain fields: confined to the route thread (see class note). Only
-    // state is volatile, for the cross-thread isActive read.
-    @Volatile
-    private var state = ScoState.IDLE
+    // state is an atomic, for the cross-thread isActive read; it publishes
+    // one value and guards nothing else.
+    private val stateRef = java.util.concurrent.atomic.AtomicReference(ScoState.IDLE)
+    private var state: ScoState
+        get() = stateRef.get()
+        set(value) = stateRef.set(value)
     private var attempts = 0
     private var generation = 0
     private var routeHeld = false

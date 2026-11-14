@@ -19,9 +19,7 @@ package se.lublin.humla.route
 
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.Looper
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executor
 
 /**
@@ -31,9 +29,10 @@ import java.util.concurrent.Executor
  * run on the same thread, so everything handed one of them is confined to
  * it (see docs/target-architecture/route.md, Thread).
  *
- * Created by the service before the route controller and the SCO link, so
- * both can share it. [RouteControl] owns its lifetime: its `close()` quits
- * the thread after the final teardown has run on it.
+ * Started by [RouteControl.startThread] (the controller is the boundary
+ * file that owns the thread) before the controller and the SCO link are
+ * built, so both can share it. [RouteControl] owns its lifetime: its
+ * `close()` quits the thread after the final teardown has run on it.
  */
 internal class RouteThread(
     val handler: Handler,
@@ -48,23 +47,5 @@ internal class RouteThread(
     /** Quits the owned looper once queued work has drained; no-op for test threads. */
     fun quitSafely() {
         ownedThread?.quitSafely()
-    }
-
-    companion object {
-        /** Production factory: starts a `HandlerThread` named `route`. */
-        fun start(): RouteThread {
-            val thread = HandlerThread("route")
-            thread.start()
-            val looper = thread.looper
-            val handler = Handler(looper)
-            val executor = Executor { r -> handler.post(r) }
-            return RouteThread(
-                handler = handler,
-                executor = executor,
-                dispatcher = executor.asCoroutineDispatcher(),
-                isCurrentCheck = { Looper.myLooper() == looper },
-                ownedThread = thread,
-            )
-        }
     }
 }
