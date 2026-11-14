@@ -21,7 +21,6 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
-import android.os.HandlerThread
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
@@ -38,7 +37,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import se.lublin.humla.audio.AudioPlatform
 import se.lublin.humla.audio.ScoLink
@@ -46,7 +44,8 @@ import se.lublin.humla.client.RouteLifecycle
 import se.lublin.humla.client.checkNotMainThread
 
 /**
- * Target route controller. Owns a HandlerThread named route, publishes
+ * Target route controller. Runs on, and owns the lifetime of, the route
+ * thread ([RouteThread]), publishes
  * RouteState and events, and keeps a private route-session counter for
  * stale-event checks. See docs/target-architecture/route.md.
  *
@@ -59,7 +58,7 @@ internal class RouteControl(
     prefs: Flow<RoutePreferences>,
     private val scope: CoroutineScope,
     private val deviceHandler: Handler,
-    private val ownedThread: HandlerThread? = null,
+    private val ownedThread: RouteThread? = null,
 ) : RouteLifecycle {
     companion object {
         internal const val TAG = "RouteControl"
@@ -79,24 +78,21 @@ internal class RouteControl(
         }
 
         /**
-         * Production factory: creates the owned route thread and its handler,
-         * then builds the controller around them. Tests use the primary
-         * constructor directly with a TestScope and a mock handler.
+         * Production factory: builds the controller on the given route
+         * thread and takes ownership of it (`close()` quits it). The SCO
+         * link is built on the same thread by the caller. Tests use the
+         * primary constructor directly with a TestScope and a mock handler.
          */
         fun create(
+            thread: RouteThread,
             platform: AudioPlatform,
             sco: ScoLink?,
             prefs: Flow<RoutePreferences>,
             appScope: CoroutineScope,
         ): RouteControl {
-            val thread = HandlerThread("route")
-            thread.start()
-            val handler = Handler(thread.looper)
-            val executor = java.util.concurrent.Executor { r -> handler.post(r) }
-            val dispatcher = executor.asCoroutineDispatcher()
             val parentJob = appScope.coroutineContext[Job]
-            val routeScope = CoroutineScope(SupervisorJob(parentJob) + dispatcher)
-            return RouteControl(platform, sco, prefs, routeScope, handler, thread)
+            val routeScope = CoroutineScope(SupervisorJob(parentJob) + thread.dispatcher)
+            return RouteControl(platform, sco, prefs, routeScope, thread.handler, thread)
         }
     }
 
