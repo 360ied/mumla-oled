@@ -1069,6 +1069,34 @@ void testJitterPoolExhaustionDropsAndCounts() {
 // Pool sizing evidence: 32 voices under heavy jitter adaptation for 60
 // simulated seconds must never exhaust the store. The peak is printed so the
 // slot count can be set from data rather than guessed.
+// Releasing a voice returns its queued packet bytes to the shared store at
+// once. The pre-refactor engine destroyed the jitter buffer on removeUser and
+// clear, and a released voice never renders again, so holding its slots until
+// the pool slot is reused would only shrink the store available to live
+// speakers.
+void testReleasedVoiceReturnsPoolSlots() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+
+    for (int i = 0; i < 4; ++i) {
+        queueOne(*engine, 11, static_cast<uint32_t>(i));
+        queueOne(*engine, 12, static_cast<uint32_t>(i));
+    }
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(), 8u);
+
+    engine->removeUser(11);
+    TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(), 4u);
+
+    engine->clear();
+    TEST_ASSERT_EQ(engine->activeUserCount(), 0u);
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(), 0u);
+
+    std::cout << "  [PASS] testReleasedVoiceReturnsPoolSlots" << std::endl;
+}
+
 void testJitterPoolStress() {
     g_testCount++;
     std::vector<TalkEvent> events;
@@ -1215,6 +1243,7 @@ void run_audio_output_engine_tests() {
     testLossBoundaryCrossfadeSmoothsStep();
     testLosslessMixHasNoCrossfade();
     testJitterPoolExhaustionDropsAndCounts();
+    testReleasedVoiceReturnsPoolSlots();
     testJitterPoolStress();
     testTalkEventCapacityContract();
 }

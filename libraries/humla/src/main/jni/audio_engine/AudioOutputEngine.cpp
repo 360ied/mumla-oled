@@ -495,8 +495,17 @@ void AudioOutputEngine::releaseVoice(int32_t session) {
         return;
     }
     const size_t idx = static_cast<size_t>(index);
-    if (m_pool[m_lookup[idx].slot] != nullptr) {
-        m_pool[m_lookup[idx].slot]->session = 0;
+    Voice* voice = m_pool[m_lookup[idx].slot];
+    if (voice != nullptr) {
+        voice->session = 0;
+        // Return the voice's queued packet bytes to the shared store now. A
+        // released voice never renders again, so anything left in its jitter
+        // buffer would hold pool slots until this pool slot is reused; the
+        // pre-refactor engine destroyed the buffer here and freed them at
+        // once. acquireVoice resets the buffer again on reuse.
+        if (voice->jitter != nullptr) {
+            jitter_buffer_reset(voice->jitter);
+        }
     }
     for (size_t i = idx + 1; i < m_lookupCount; ++i) {
         m_lookup[i - 1] = m_lookup[i];
