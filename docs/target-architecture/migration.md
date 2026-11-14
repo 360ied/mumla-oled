@@ -19,6 +19,19 @@ steps, the kill criteria, and the decisions this work reverses.
   criterion fails, the step stops: either fix it, or change the spec in
   a separate commit on `master` first. A rationale in `PROGRESS.md` is
   not a substitute for a result.
+- **Invariants name their detector.** A step that states an invariant in a
+  header comment or a spec section (nothing allocates on the capture
+  thread; one owner of the socket; no lock across the render path) names
+  that invariant in its done-when together with the object that fails
+  when it stops holding: a check in `scripts/check_architecture.py`, an
+  entry in `scripts/architecture-allowlist.txt`, or a test whose scope is
+  the same as the sentence. A test that passes without covering the
+  statement is not coverage: in 5a.1 the allocation rule was true of
+  `processFrame` and false of `reset` for the whole step, and the golden
+  fixtures could not see the difference. Where no such object can be
+  built, narrow the invariant as it is written. The rule's evidence is
+  that `SINGLE_THREADED_ENGINE`, the only invariant given a named object,
+  needed no review-round correction.
 - **A step branch does not edit the design it implements.** Changes to
   a step's own spec sections (threads, invariants, realtime rules,
   done-when) land on `master` as standalone docs commits, reviewed as
@@ -244,9 +257,14 @@ developer notices.
    carrying a writable remote `talkState`.
 
 **Done when:** native loopback, queue, and sequence-lock tests pass;
-interop voice from a peer to the client over UDP and over the tunnel
-plays non-silent PCM through the real JNI binding; daily use without
-regressions.
+`audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`
+while `voice_io/`'s allowlist section holds only the socket and thread
+includes and the sequence locks the spec names, with a test pinning that
+the locks guard receive-visible settings and nothing else; one render
+entry point is the only path into the engines, pinned by a test that
+fails if a second caller appears; interop voice from a peer to the
+client over UDP and over the tunnel plays non-silent PCM through the
+real JNI binding; daily use without regressions.
 
 ### 5a.4 — Native send and cleanup
 
@@ -262,8 +280,11 @@ regressions.
 
 **Done when:** interop voice in both directions over UDP and over the
 tunnel; mute, deafen, and push-to-talk gate transmission in interop;
-`HumlaUDP`, `CryptState`, `LegacyVoiceLink`, and `VoiceControl` are
-deleted; daily use without regressions.
+outbound queue is allocation-free and drops oldest under a full-queue
+test that pins the drop count; `HumlaUDP`, `CryptState`,
+`LegacyVoiceLink`, and `VoiceControl` are deleted and absent from the
+allowlist; the interim `<mutex>` entries from 5a.1 are gone with the
+bridge files; daily use without regressions.
 
 ## Step 5b — AAudio
 
