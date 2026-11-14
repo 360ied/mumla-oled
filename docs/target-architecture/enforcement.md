@@ -156,8 +156,12 @@ flips to `True`. OCB2 in `crypto/` keeps its locks, since two network
 threads share it.
 
 **Exceptions** live in the same allowlist file, in a `[native]` section of
-`path: header` lines, and follow the same ratchet (they may only be
-removed):
+`path: header` lines, and follow the same ratchet: entries may only be
+removed. The two `<mutex>` entries for the input and output engine bridges
+are the one addition a step makes in place: the engine refactor moved the
+lock out of the engine and into the interim JNI seam, so both entries
+disappear with the bridge files in 5a.4, and the check fails if an entry
+outlives the include it excuses.
 
 ```text
 [native]

@@ -379,6 +379,12 @@ DEFAULT_NATIVE_EXCEPTIONS = [
     ("libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp", "<unistd.h>"),
     ("libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp", "<jni.h>"),
     ("libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp", "<jni.h>"),
+    # Step 5a.1 moved the engine lock into the interim JNI seam; both entries
+    # go when the bridge files do (5a.4). Keep this list identical to the
+    # committed allowlist's [native] section: it is the fallback used when the
+    # file is missing.
+    ("libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp", "<mutex>"),
+    ("libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp", "<mutex>"),
     ("libraries/humla/src/main/jni/audio_engine/NativeCrashTestJni.cpp", "<jni.h>"),
     ("libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp", "<jni.h>"),
 ]
