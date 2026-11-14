@@ -98,7 +98,8 @@ class BluetoothScoManagerTest {
         idle()
     }
 
-    // Production's RouteControl.startThread shapes, on the test's looper.
+    // The shapes RouteControl.create builds its route thread with, on the
+    // test's looper.
     private fun routeThread(): RouteThread {
         val looper = Looper.getMainLooper()
         val handler = Handler(looper)

@@ -80,14 +80,11 @@ internal class RouteControl(
             return scoActive || !mediaDevicesPresent
         }
 
-        /**
-         * Starts the route thread: a `HandlerThread` named `route`, exposed
-         * as the handler, executor, and dispatcher its users need. Lives
-         * here because the controller is the boundary file that owns it
-         * (see docs/target-architecture/enforcement.md); the service calls
-         * it before building the SCO link so both share the thread.
-         */
-        fun startThread(): RouteThread {
+        // The route thread: a HandlerThread named route, exposed as the
+        // handler, executor, and dispatcher its users need. Lives here
+        // because the controller is the boundary file that owns it (see
+        // docs/target-architecture/enforcement.md).
+        private fun startThread(): RouteThread {
             val thread = HandlerThread("route")
             thread.start()
             val looper = thread.looper
@@ -104,18 +101,22 @@ internal class RouteControl(
         }
 
         /**
-         * Production factory: builds the controller on the given route
-         * thread and takes ownership of it (`close()` quits it). The SCO
-         * link is built on the same thread by the caller. Tests use the
+         * Production factory: starts the route thread, builds the SCO link
+         * on it through [scoFactory], and builds the controller on the same
+         * thread. The controller owns both: `close()` destroys the link and
+         * then quits the thread, so the thread never leaves this class and
+         * the link cannot be given a different one. [scoFactory] returns
+         * null when there is no link. Tests of the decision logic use the
          * primary constructor directly with a TestScope and a mock handler.
          */
         fun create(
-            thread: RouteThread,
             platform: AudioPlatform,
-            sco: ScoLink?,
+            scoFactory: (RouteThread) -> ScoLink?,
             prefs: Flow<RoutePreferences>,
             appScope: CoroutineScope,
         ): RouteControl {
+            val thread = startThread()
+            val sco = scoFactory(thread)
             val parentJob = appScope.coroutineContext[Job]
             val routeScope = CoroutineScope(SupervisorJob(parentJob) + thread.dispatcher)
             return RouteControl(platform, sco, prefs, routeScope, thread.handler, thread)

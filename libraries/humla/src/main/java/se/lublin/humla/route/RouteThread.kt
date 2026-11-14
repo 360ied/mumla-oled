@@ -29,10 +29,11 @@ import java.util.concurrent.Executor
  * run on the same thread, so everything handed one of them is confined to
  * it (see docs/target-architecture/route.md, Thread).
  *
- * Started by [RouteControl.startThread] (the controller is the boundary
- * file that owns the thread) before the controller and the SCO link are
- * built, so both can share it. [RouteControl] owns its lifetime: its
- * `close()` quits the thread after the final teardown has run on it.
+ * Started inside [RouteControl.create] (the controller is the boundary
+ * file that owns the thread), which hands it to the SCO link factory and
+ * builds the controller on it, so both share it and it never leaves the
+ * controller. `close()` quits the thread after the final teardown has run
+ * on it. Tests build one directly over a test looper.
  */
 internal class RouteThread(
     val handler: Handler,

@@ -21,6 +21,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -33,23 +34,26 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.AudioDeviceInfoBuilder
+import org.robolectric.shadows.ShadowLooper
 import se.lublin.humla.audio.AudioPlatform
 import se.lublin.humla.audio.ScoLink
 import java.time.Duration
 
 /**
  * Detector for the SCO link's route-thread confinement (issue 01): the
- * controller built by the production factories, on a real route
+ * controller and its link built by the production factory, on a real route
  * `HandlerThread`, driven through every public entry point and platform
  * callback that reaches the link, from a thread other than the route
  * thread. Every link call must land on the route thread. A path that calls
  * the link inline from a public method fails here, because the test thread
- * is not the route thread.
+ * is not the route thread, and so does a link given a thread other than
+ * the controller's, because the fake checks the thread the factory handed
+ * it.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class RouteThreadConfinementTest {
-    private class RecordingSco(private val thread: RouteThread) : ScoLink {
+    private class RecordingSco(val thread: RouteThread) : ScoLink {
         val calls = mutableListOf<String>()
         val offThread = mutableListOf<String>()
         @Volatile
@@ -125,18 +129,28 @@ class RouteThreadConfinementTest {
 
     @Test
     fun everyLinkCallLandsOnTheRouteThread() {
-        val thread = RouteControl.startThread()
-        val looper = shadowOf(thread.handler.looper)
-        val sco = RecordingSco(thread)
         val platform = PostingPlatform()
         val prefs = MutableStateFlow(
             RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
         )
         val appScope = CoroutineScope(SupervisorJob())
-        val control = RouteControl.create(thread, platform, sco, prefs, appScope)
-        assertTrue("test thread is not the route thread", !thread.isCurrent())
+        var built: RecordingSco? = null
+        val control = RouteControl.create(platform, { thread -> RecordingSco(thread).also { built = it } }, prefs, appScope)
+        val sco = built!!
+        assertTrue("test thread is not the route thread", !sco.thread.isCurrent())
 
-        fun settle() = looper.idleFor(Duration.ofSeconds(10))
+        // Drives every background looper, not just the link's, so the
+        // controller's work runs wherever it is scheduled and an off-thread
+        // call shows up as one. Loopers the controller has quit are skipped.
+        fun settle() {
+            for (l in ShadowLooper.getAllLoopers()) {
+                if (l == Looper.getMainLooper()) continue
+                try {
+                    shadowOf(l).idleFor(Duration.ofSeconds(10))
+                } catch (quitting: IllegalStateException) {
+                }
+            }
+        }
 
         control.onInit()
         control.start()
@@ -161,13 +175,9 @@ class RouteThreadConfinementTest {
         control.submit(RouteCommand.SessionEnded)
         settle()
         // close() runs the teardown on the route thread, then quits its
-        // looper, so the drain that runs the teardown ends with the looper
-        // gone.
+        // looper; settle() skips the looper once it is quitting.
         val teardown = control.close()
-        try {
-            settle()
-        } catch (expected: IllegalStateException) {
-        }
+        settle()
         assertTrue("teardown ran", teardown.isCompleted)
         appScope.cancel()
 
