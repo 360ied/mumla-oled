@@ -56,8 +56,11 @@ ground rules).
 
 State is current as of 2026-11-13, after the three spec commits that
 followed the audit (`028d2222`, `ec9faf63`, `4e9474c7`) and the first code
-batch (`5ac34784`). The spec-only fixes (12, 13, 24, 25, 27, 31, and the
-interim entries for 14, 15, 18) are applied on `master`, and 08, 23, and
+batch (`5ac34784`). [32](32-route-decision-cached-sco-state.md) came later,
+from a device check of the SCO exit path, and is the only entry in this
+queue that the audit snapshot could not have seen. The spec-only fixes (12,
+13, 24, 25, 27, 31, and the interim entries for 14, 15, 18) are applied on
+`master`, and 08, 23, and
 28 are now fixed and tested; the decisions for 09, 10, 11, and 19 are
 recorded; 06's review rules are in the pedantic-review skill. What remains
 is code, tests, and the two sweeps listed below. Each issue file carries
@@ -69,6 +72,7 @@ the same state in its `Status` row.
 |---|---|---|---|
 | [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Open; fix before 5a.3 |
 | [02](02-service-destroy-leaks-transport.md) | Service destroy can leak the TLS connection; transport not closed by scope cancellation | Step 3 | Open; independent bugfix, not gating |
+| [32](32-route-decision-cached-sco-state.md) | The route decision cached the SCO link state, so leaving SCO stranded the call route | Step 4 | Resolved (`1089ad05`) |
 
 ### Verification gaps
 

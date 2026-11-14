@@ -23,6 +23,7 @@ import android.media.AudioManager
 import android.os.Handler
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -279,6 +280,209 @@ class RouteControlTest {
         runCurrent()
         assertEquals(before + 1, sco.startCount)
         assertTrue(control.state.value !is RouteState.Idle)
+        control.close()
+        runCurrent()
+    }
+
+    private fun device(deviceType: Int): AudioDeviceInfo = mock(AudioDeviceInfo::class.java).apply {
+        org.mockito.Mockito.`when`(type).thenReturn(deviceType)
+    }
+
+    /**
+     * The decision must follow the link, not a copy of it: a stop this
+     * controller performs itself leaves the link silent by contract, so a
+     * cached flag would strand the route on SCO for the rest of the session.
+     */
+    @Test
+    fun routeDecisionFollowsLinkStateNotEvents() = runTest {
+        val platform = FakePlatform()
+        platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        sco.idleValue = false
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(AppliedRoute.VOICE_SCO, (control.state.value as RouteState.Ready).route)
+        // Drop the link behind the controller's back (no callback), then
+        // trigger a re-decision through an unrelated device event.
+        sco.stop()
+        platform.capturedCallback!!.onAudioDevicesAdded(
+            arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)),
+        )
+        runCurrent()
+        advanceTimeBy(500L)
+        runCurrent()
+        val state = control.state.value
+        assertTrue(state is RouteState.Ready)
+        assertEquals(AppliedRoute.MEDIA, (state as RouteState.Ready).route)
+        assertEquals(StreamProfile.MEDIA, state.profile)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun scoPreferenceOffWhileActiveFallsBackToMedia() = runTest {
+        val platform = FakePlatform()
+        platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        sco.idleValue = false
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(AppliedRoute.VOICE_SCO, (control.state.value as RouteState.Ready).route)
+        assertEquals(AudioManager.MODE_IN_COMMUNICATION, platform.modeValue)
+        val stopsBefore = sco.stopCount
+        prefs.value = prefs.value.copy(bluetoothSco = false)
+        runCurrent()
+        assertEquals(stopsBefore + 1, sco.stopCount)
+        val state = control.state.value
+        assertTrue(state is RouteState.Ready)
+        assertEquals(AppliedRoute.MEDIA, (state as RouteState.Ready).route)
+        assertEquals(StreamProfile.MEDIA, state.profile)
+        assertEquals(AudioManager.MODE_NORMAL, platform.modeValue)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun scoPreferenceOffWithoutMediaSinkKeepsHandsetVoice() = runTest {
+        val platform = FakePlatform()
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        sco.idleValue = false
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(AppliedRoute.VOICE_SCO, (control.state.value as RouteState.Ready).route)
+        prefs.value = prefs.value.copy(bluetoothSco = false)
+        runCurrent()
+        // Voice by absence, and not a fallback: SCO is no longer requested.
+        val state = control.state.value
+        assertTrue(state is RouteState.Ready)
+        assertEquals(AppliedRoute.VOICE_HANDSET, (state as RouteState.Ready).route)
+        assertEquals(StreamProfile.VOICE, state.profile)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun scoPreferenceOffOnOffRepublishesScoThenMedia() = runTest {
+        val platform = FakePlatform()
+        platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        assertEquals(AppliedRoute.MEDIA, (control.state.value as RouteState.Ready).route)
+
+        prefs.value = prefs.value.copy(bluetoothSco = true)
+        runCurrent()
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(AppliedRoute.VOICE_SCO, (control.state.value as RouteState.Ready).route)
+
+        // The reported failure: leaving SCO must publish the media route.
+        prefs.value = prefs.value.copy(bluetoothSco = false)
+        runCurrent()
+        assertEquals(AppliedRoute.MEDIA, (control.state.value as RouteState.Ready).route)
+
+        prefs.value = prefs.value.copy(bluetoothSco = true)
+        runCurrent()
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(AppliedRoute.VOICE_SCO, (control.state.value as RouteState.Ready).route)
+
+        prefs.value = prefs.value.copy(bluetoothSco = false)
+        runCurrent()
+        assertEquals(AppliedRoute.MEDIA, (control.state.value as RouteState.Ready).route)
+        assertEquals(2, sco.startCount)
+        assertEquals(2, sco.stopCount)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun duplicateScoConnectedEventPublishesNothing() = runTest {
+        val platform = FakePlatform()
+        platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        val events = mutableListOf<RouteEvent>()
+        val collector = launch { control.events.collect { events.add(it) } }
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        sco.idleValue = false
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        val published = control.state.value
+        assertEquals(AppliedRoute.VOICE_SCO, (published as RouteState.Ready).route)
+        val routeChanged = events.count { it is RouteEvent.RouteChanged }
+        assertTrue(routeChanged > 0)
+        // A repeated connect event is a trigger, not a transition: the
+        // decision re-reads an unchanged link, so nothing is republished.
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(published, control.state.value)
+        assertEquals(routeChanged, events.count { it is RouteEvent.RouteChanged })
+        collector.cancel()
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun preferenceChangeWithIdleLinkDoesNotStopAgain() = runTest {
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        // Stream changes re-apply the (still off) SCO request to the link;
+        // an idle link must not take a platform round-trip.
+        val stopsBefore = sco.stopCount
+        prefs.value = prefs.value.copy(handsetStream = AudioManager.STREAM_VOICE_CALL)
+        runCurrent()
+        assertEquals(stopsBefore, sco.stopCount)
         control.close()
         runCurrent()
     }

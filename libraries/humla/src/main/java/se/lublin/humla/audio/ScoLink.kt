@@ -29,7 +29,15 @@ internal interface ScoLink {
     /** Begins SCO bring-up; no-op while starting or active. */
     fun start()
 
-    /** Tears down the link; idempotent, never fires callbacks. */
+    /**
+     * Tears down the link; idempotent, never fires callbacks.
+     *
+     * Must leave [isActive] reading `false` before returning: the route
+     * controller applies a stop and then decides from a live read in the same
+     * step (see docs/target-architecture/route.md), so a deferred flip would
+     * publish the route just released. The never-callbacks half is what lets a
+     * teardown run without racing a stale connect or drop event.
+     */
     fun stop()
 
     /** Cancels the manager scope; called once from the service teardown. */
@@ -38,7 +46,15 @@ internal interface ScoLink {
     /** True when no bring-up is in progress and no link is up. */
     fun isIdle(): Boolean
 
-    /** True only once the link has reported connected and not since dropped. */
+    /**
+     * True only once the link has reported connected and not since dropped.
+     *
+     * The route decision samples this on every recompute instead of caching
+     * it, so it must be a synchronous read of the implementation's own state,
+     * and the connected/dropped callbacks must fire **after** the state flip.
+     * Event-driven and sampled reads are then interchangeable, and a stop the
+     * caller performs itself needs no callback at all.
+     */
     fun isActive(): Boolean
 
     /**

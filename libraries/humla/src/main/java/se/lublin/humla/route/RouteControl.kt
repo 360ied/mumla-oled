@@ -110,7 +110,9 @@ internal class RouteControl(
     private var hasSession = false
 
     private val scoRequested = java.util.concurrent.atomic.AtomicBoolean(false)
-    private var scoRouteActive: Boolean = false
+    // No cached "SCO route active" flag: the decision samples the link (see
+    // readFacts), because a callback-fed copy goes stale on every stop this
+    // controller performs itself (ScoLink.stop() reports nothing back).
     private val appliedRoute = java.util.concurrent.atomic.AtomicReference(AppliedRoute.VOICE_HANDSET)
     private val handsetStream = java.util.concurrent.atomic.AtomicInteger(AudioManager.STREAM_MUSIC)
     private var modeHold: ModeHold = ModeHold.Released
@@ -256,20 +258,23 @@ internal class RouteControl(
         checkNotMainThread()
         routeSessionCounter.incrementAndGet()
         hasSession = false
-        scoRouteActive = false
         settleAttempts = 0
         // Spec Idle->Settling: publish the pending target first so observers
         // see the settle; recompute below resolves to Ready/Fallback.
-        val mediaPresent = queryMediaDevicesPresent()
+        val facts = readFacts()
         val target = when {
             scoRequested.get() -> AppliedRoute.VOICE_SCO
-            !mediaPresent -> AppliedRoute.VOICE_HANDSET
+            !facts.mediaPresent -> AppliedRoute.VOICE_HANDSET
             else -> AppliedRoute.MEDIA
         }
         _state.value = RouteState.Settling(target)
         hasSession = true
-        recompute("sync", forceReload = false, isRecheck = false, firstCreate = true)
+        // Apply the request to the link, then decide — the same rule as
+        // onPrefsChanged. A link still up while SCO is no longer requested is
+        // released first, so the first decision cannot publish a route that
+        // nothing revisits (a silent self-stop fires no callback).
         updateScoRoute()
+        recompute("sync", forceReload = false, isRecheck = false, firstCreate = true)
     }
 
     private fun onSessionEnded() {
@@ -279,7 +284,7 @@ internal class RouteControl(
         cancelRouteDebounce()
         cancelRouteSettle()
         settleAttempts = 0
-        stopScoAndClearFlag()
+        sco?.let { stopScoLink(it) }
         val liveMedia = queryMediaDevicesPresent()
         appliedRoute.set(if (liveMedia) AppliedRoute.MEDIA else AppliedRoute.VOICE_HANDSET)
         releaseVoiceMode()
@@ -338,8 +343,12 @@ internal class RouteControl(
         handsetStream.set(stream)
         if (!hasSession) return
         if (changed) {
-            recompute("settings changed", forceReload = true, isRecheck = false, firstCreate = false)
+            // Apply the request to the link first, then decide from what it
+            // now reports. Deciding first publishes the route being left:
+            // the link is still up when a stop turns SCO off, so the gate
+            // below would report VOICE_SCO for a route already released.
             updateScoRoute()
+            recompute("settings changed", forceReload = true, isRecheck = false, firstCreate = false)
         }
     }
 
@@ -371,24 +380,18 @@ internal class RouteControl(
                 Log.w(TAG, "SCO start failed", e)
             }
         } else {
-            try {
-                if (!link.isIdle()) link.stop()
-            } catch (e: Exception) {
-                Log.w(TAG, "SCO stop failed", e)
-            }
+            stopScoLink(link)
         }
     }
 
-    private fun stopScoAndClearFlag() {
+    // Skips the platform round-trip when already idle: stop() is safe but
+    // needlessly releases and bumps the callback generation.
+    private fun stopScoLink(link: ScoLink) {
         checkNotMainThread()
-        val link = sco ?: return
         try {
-            link.stop()
+            if (!link.isIdle()) link.stop()
         } catch (e: Exception) {
             Log.w(TAG, "SCO stop failed", e)
-        }
-        if (scoRouteActive) {
-            scoRouteActive = false
         }
     }
 
@@ -398,11 +401,15 @@ internal class RouteControl(
             Log.d(TAG, "SCO link event with null link; ignoring.")
             return
         }
-        if (active == scoRouteActive) {
-            Log.d(TAG, "SCO route unchanged, skipping reload.")
-            return
-        }
-        scoRouteActive = active
+        // Trigger only: the decision below re-reads the link, so this event
+        // carries no route of its own. A duplicate (or one that raced a stop
+        // we performed) therefore cannot publish a stale route, and
+        // recompute's change gates keep the no-op case silent.
+        //
+        // `active` names the event, not the decision: if the two disagree,
+        // the log is reporting a stale or duplicated event, which is the
+        // useful reading. Deriving the reason from a second sample would
+        // instead hide it behind a skewed read.
         val reason = if (active) "Bluetooth SCO connected"
         else "Bluetooth SCO disconnected, falling back to phone audio"
         recompute(reason, forceReload = false, isRecheck = false, firstCreate = false)
@@ -427,7 +434,7 @@ internal class RouteControl(
         if (hasSession) {
             applyVoiceMode(voice)
             if (!voice) {
-                counterUnrequestedSystemSco(wasClaimedHold)
+                counterUnrequestedSystemSco(wasClaimedHold, update.scoActive)
             }
         } else {
             releaseVoiceMode()
@@ -435,7 +442,7 @@ internal class RouteControl(
         val shouldPublish = hasSession && (firstCreate || forceReload || update.changed)
         if (shouldPublish) {
             val profile = if (voice) StreamProfile.VOICE else StreamProfile.MEDIA
-            val next: RouteState = if (!scoRouteActive) {
+            val next: RouteState = if (!update.scoActive) {
                 val isFallback = scoRequested.get() && voice &&
                     update.route == AppliedRoute.VOICE_HANDSET
                 if (isFallback && !firstCreate) {
@@ -490,23 +497,45 @@ internal class RouteControl(
         }
     }
 
+    /**
+     * The decision's two inputs, sampled live. Neither may be cached across
+     * calls: this controller stops the SCO link itself (preference off,
+     * session end) and [ScoLink.stop] reports nothing back by contract, so a
+     * copy fed by connect/drop callbacks goes stale on exactly the paths
+     * that leave SCO. [ScoLink.isActive] is the link state machine's own
+     * read, and its callbacks fire after the state flip, so event-driven and
+     * live reads agree wherever both exist.
+     */
+    private data class RouteFacts(
+        val scoActive: Boolean,
+        val mediaPresent: Boolean,
+    )
+
     private data class RouteUpdate(
+        val scoActive: Boolean,
         val voice: Boolean,
         val route: AppliedRoute,
         val changed: Boolean,
     )
 
-    private fun updateRoute(): RouteUpdate {
+    private fun readFacts(): RouteFacts {
         val mediaPresent = queryMediaDevicesPresent()
-        val voice = computeVoiceRoute(scoRouteActive, mediaPresent)
+        // Same fail-closed read the rest of the library sees; one copy so the
+        // samples cannot drift apart.
+        return RouteFacts(isScoActive(), mediaPresent)
+    }
+
+    private fun updateRoute(): RouteUpdate {
+        val facts = readFacts()
+        val voice = computeVoiceRoute(facts.scoActive, facts.mediaPresent)
         val next = when {
-            scoRouteActive -> AppliedRoute.VOICE_SCO
+            facts.scoActive -> AppliedRoute.VOICE_SCO
             voice -> AppliedRoute.VOICE_HANDSET
             else -> AppliedRoute.MEDIA
         }
         val changed = next != appliedRoute.get()
         appliedRoute.set(next)
-        return RouteUpdate(voice, next, changed)
+        return RouteUpdate(facts.scoActive, voice, next, changed)
     }
 
     private fun applyVoiceMode(voice: Boolean) {
@@ -567,9 +596,9 @@ internal class RouteControl(
         }
     }
 
-    private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean) {
+    private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean, scoActive: Boolean) {
         val requested = scoRequested.get()
-        if (!wasClaimedHold || requested || scoRouteActive) return
+        if (!wasClaimedHold || requested || scoActive) return
         if (!hasSession) return
         try {
             if (platform.mode == AudioManager.MODE_IN_CALL) return
