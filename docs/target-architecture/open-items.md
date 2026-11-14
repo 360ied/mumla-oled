@@ -15,8 +15,8 @@ them.
 
 | Item | How it gets resolved | Gates |
 |---|---|---|
-| AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size | Step 5b |
-| AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device | Step 5b |
+| AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size. Reopening must leave both streams started, never closed for longer than today's brief restarts (see [keep-alive shields](voice.md#keep-alive-shields)) | Step 5b |
+| AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device. Also the [keep-alive shields](voice.md#keep-alive-shields): the input stream still registers as recording-active, the output stream stays started through silence, and whether callback mode's zero feeding changes how the OS counts playback, observed untethered on battery with the screen off. Decides whether the render idle state exists at all (see the render idle item) | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3b |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3b |

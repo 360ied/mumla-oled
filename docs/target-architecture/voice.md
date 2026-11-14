@@ -47,7 +47,11 @@ the least proven piece here. The A/B never tested the polling on its own:
 it showed that the mic and Wi-Fi lock together were enough with the wait
 in place, on one device. If disconnects return, restoring the polling is
 the first thing to try, and any change to the mic shield reopens the
-question.
+question. Its power saving is small today. Since the mic shield, the
+capture thread reads the microphone every 10 ms for the whole connection,
+so the CPU wakes regardless, and the Doze investigation's worry about a
+fully quiescent process does not apply while capture runs. That changes
+neither rule above.
 
 These failures appear only on an untethered device, on battery, with the
 screen off, after minutes to hours, and sometimes on one OEM only. USB
