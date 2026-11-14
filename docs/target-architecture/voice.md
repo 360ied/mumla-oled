@@ -405,11 +405,11 @@ flowchart LR
 
 | Thread | Realtime | Loop |
 |---|---|---|
-| Capture | Yes | Read 10 ms of PCM; read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; push talk edges to the capture event queue |
-| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); push talk events to the render event queue; write PCM to the device |
+| Capture | Yes | Read 10 ms of PCM; read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; store the self-talking flag |
+| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
 | Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
-| Notifier | No | Every 20 ms while running, drain the capture and render event queues and deliver them to Kotlin in one call |
+| Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call |
 
 - In **step 5a**, the capture and render loops are entry points called by
   today's Kotlin `AudioRecord` and `AudioTrack` threads
@@ -446,8 +446,28 @@ twice that, so in practice the drop-newest path never runs.
 | Outbound | Capture → send | Framed packet (≤ 1100 bytes) | 400 ms of packets at the current frames per packet (at most 40) |
 | Inbound | Receive → render | `InboundPacket` | 256 |
 | Tunnel inbound | Kotlin tunnel caller → render | `InboundPacket` or remove-user control (session id) | 256 |
-| Capture events | Capture → notifier | Self talk edge | 64 |
-| Render events | Render → notifier | `TalkEvent`, dropped-packet counts | 256 |
+
+Talk state does not travel through a queue, because a full queue would
+drop a transition and a lost "stopped talking" sticks an indicator (the
+step-2 regression's class; see
+[state](state.md#compatibility-handles-migration-only)). It travels as
+levels, latest value only:
+
+- **Talk snapshot (render → notifier).** The output engine still reports
+  transitions in `RenderResult.talkEvents`. The render thread folds them
+  into a level table, one entry per voice (at most `MAX_VOICES`), and
+  publishes the table plus cumulative dropped-packet counts through a
+  sequence lock with render as the single writer. Each snapshot is the
+  complete state and replaces the previous one, so a slow notifier sees a
+  newer snapshot, never a contradiction or a gap. Destroying or resetting
+  the output engine publishes an empty table.
+- **Self-talking flag (capture → notifier, from 5a.4).** One atomic flag
+  the capture thread stores on every talk transition.
+- A talking spell shorter than one notifier interval (about 20 ms) can go
+  unseen. Real transmissions last far longer: senders hold after speech
+  (250 ms after voice activity and 150 ms after push-to-talk in this
+  client), and a voice stays talking until it misses more than 10 frames.
+  Missing such a spell leaves no stale state.
 
 The tunnel queue's producer is the session's message coroutine. Its
 `queueTunnelled` call parses the packet and applies the same
@@ -738,9 +758,18 @@ listener), as today. `talkActivity` is updated by the notifier at most
 every 20 ms and feeds
 screens, the overlay, and features. It is never part of `SessionState`.
 
+**Writers.** From 5a.4 the notifier is the only writer of `talkActivity`,
+including the clear below. In 5a.3a there are three write sites: the
+notifier (remote users), `AudioHandler`'s talking callback (`selfTalking`,
+on the capture thread, plus the final not-talking from
+`AudioHandler.shutdown` after the capture thread is joined), and the
+clear. Two of them can run at the same moment, so in 5a.3a every write
+uses `MutableStateFlow.update {}`: a plain read-copy-write could let one
+writer overwrite the other's change and lose a not-talking.
+
 **Cleared when the output engine goes away.** Whenever the I/O layer stops
 render and destroys or resets the output engine, the publisher sets
-`users` to empty after the notifier's final drain, so no event from the
+`users` to empty after the notifier's final read, so no snapshot from the
 old engine can light an indicator afterwards. That happens at Stop and,
 in 5a.3a, at every `AudioHandler` rebuild that a route or settings change
 causes. The engine's destructor emits no passive events by design, and a
@@ -749,7 +778,7 @@ talking at that moment stays shown as talking. After a reconnect the stale
 entry could even light up a different user, because Murmur reuses session
 IDs. `selfTalking` is set from `AudioHandler`'s Kotlin talking callback
 from 5a.3a (`AudioHandler.shutdown` already reports not talking) and from
-the native capture event queue from 5a.4.
+the capture thread's self-talking flag from 5a.4.
 
 ## Interim mute (step 4, before 5a)
 

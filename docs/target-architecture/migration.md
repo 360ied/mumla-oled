@@ -295,7 +295,8 @@ wake design before 5a.3b (see [open items](open-items.md)).
    point, and the notifier thread, as in
    [voice](voice.md#voice-io-layer). The render entry point drains both
    rings into `queuePacket`, renders at most 60 ms per engine call, and
-   pushes talk events and drop counts to the render event queue; today's
+   publishes the talk snapshot (levels plus drop counts, see
+   [queues](voice.md#queues)); today's
    Kotlin `AudioTrack` thread calls it. `voice_io` creates, drives, and
    destroys the output engine, so exactly one thread drives it.
 2. Engine calls that reach it from other threads today move with it:
@@ -310,7 +311,7 @@ wake design before 5a.3b (see [open items](open-items.md)).
    the Kotlin `NativeAudioOutputEngine`, and the bridge's `<mutex>` are
    deleted.
 3. The notifier thread attaches to the JVM once and every 20 ms delivers
-   the render events to Kotlin in one call. It publishes `talkActivity`
+   the latest talk snapshot to Kotlin in one call. It publishes `talkActivity`
    through a production class that the `VoiceEngine` facade takes over in
    5a.3b, not a partial facade:
    - **Owner.** The publisher lives as long as the service: `HumlaService`
@@ -325,8 +326,14 @@ wake design before 5a.3b (see [open items](open-items.md)).
    - **Self** comes from `AudioHandler`'s existing Kotlin talking callback,
      which sets `selfTalking` instead of stamping a fresh handle
      (`HumlaService`'s encode listener today). `AudioHandler.shutdown`
-     already reports not talking. 5a.4 only moves the source to native
-     capture events.
+     already reports not talking. 5a.4 only moves the source to the
+     capture thread's self-talking flag.
+   - **Writes** to `talkActivity` use `update {}`, because the notifier
+     and the talking callback can write at the same moment (see
+     [outputs](voice.md#outputs)). 5a.4 makes the notifier the only
+     writer.
+   - **Drop counts** from the snapshot are logged until `VoiceStatus`
+     arrives in 5a.3b.
    - **Handles and hints.** Handles read `talkState` from `talkActivity`
      for every user and stop carrying a writable `talkState`; the
      `onTalkStateChanged` callback is deleted. Repaint hints follow the
@@ -336,7 +343,16 @@ wake design before 5a.3b (see [open items](open-items.md)).
    two interim calls, one per ring and producer: UDP frames from the
    `HumlaUDP` receive coroutine, tunnelled frames from the session message
    coroutine. `AudioHandler.messageUserRemove`, which already runs on that
-   coroutine, pushes removals through the tunnel call. Nothing native reads policy or settings yet, so no sequence
+   coroutine, pushes removals through the tunnel call. Every interim push
+   and the teardown in `AudioOutput.stopPlaying` run under `AudioOutput`'s
+   existing monitor, which `queueDecodedVoiceFrames` and `removeUser`
+   already enter. That keeps a push from reaching a destroyed `voice_io`
+   (the deleted `NativeAudioOutputEngine` and native mutex did this
+   before), and serializes the old and new UDP coroutines that briefly
+   overlap when UDP restarts (`HumlaUDP.disconnect` does not wait for its
+   coroutine), so each ring keeps one producer at a time. The render thread
+   never takes this monitor, and no new lock lines are added. Nothing
+   native reads policy or settings yet, so no sequence
    locks arrive in this half; half duplex stays in Kotlin's `AudioOutput`
    until capture moves in 5a.4.
 
@@ -345,7 +361,9 @@ entry is gone from the allowlist, and `NativeAudioOutputEngine.kt` with
 it; `voice_io/`'s allowlist section holds only the thread includes;
 `audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`;
 ring tests pin the full-ring drop counters; a notifier test pins one
-Kotlin call per drain; tests pin that the render entry point never
+Kotlin call per delivery; a snapshot test pins that a talk state change
+reaches Kotlin after a stalled notifier resumes; a test pins that a push
+after `stopPlaying` is dropped without touching native memory; tests pin that the render entry point never
 attaches to the JVM and is the only path into the output engine while
 render runs (failing if a second caller appears), and that lifecycle calls
 assert render is stopped; a test rebuilds the pipeline while a remote
@@ -429,7 +447,8 @@ voice working:
    drop-oldest, send thread. `VoicePolicy` and `VoiceSettings` pushed to
    native.
 2. Self talk state: `selfTalking` moves from `AudioHandler`'s Kotlin talking
-   callback (5a.3a) to the native capture event queue.
+   callback (5a.3a) to the capture thread's self-talking flag, and the
+   notifier becomes the only writer of `talkActivity`.
 3. Delete the Kotlin framing in `AudioHandler`, `VoiceControl`, the
    interim seams from 5a.2 (the codec bridge) and 5a.3b
    (`nativeSendDatagram`), and the input engine bridge;
