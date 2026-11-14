@@ -195,8 +195,9 @@ files under `voice_codec/generated/` are inside it.
 
 ## Remaining conventions
 
-Two rules cannot be checked mechanically. Reviews check them, and the
-pedantic review skill's checklist gains both:
+Two rules cannot be checked mechanically. Reviews check them, and no
+tripwire covers them yet; the enforcement state is tracked in
+[issue 06](issues/06-update-conventions-not-enforced.md).
 
 1. **No side effects inside `update {}`.** An atomic swap may run the
    lambda more than once. The lambda only computes the new value.

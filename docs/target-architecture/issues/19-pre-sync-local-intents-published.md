@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Decided 2026-11-12: allow and document (option 2). `state.md` describes the pre-sync carry-over of `pttPressed`/`voiceTargetId`. **Code change remains**: move the `syncingState`/`synced` assignments out of the `update` lambda (also closes the issue-06 violation), and add the PTT-during-sync test. |
+| Status | Resolved on branch `session-serversync-update-hygiene` (`89dd9b57`), pending merge. The 2026-11-12 decision stands: allow the carry-over and document it (option 2, `state.md`). The `syncingState`/`synced` assignments moved out of the `update` lambda (also closing the issue-06 violation), and `preSyncIntentsSurviveServerSync` presses PTT during `SYNCING` and asserts it survives. |
 | Category | Undocumented interim |
 | Severity | Low-to-moderate (works today; fragile, and the merge lambda breaks a convention) |
 | Verified | Yes (code read) |
@@ -52,17 +52,20 @@ val result = applyServerSync(syncingState, msg)
 // Preserve local-only intents that landed pre-sync (PTT, voice target)
 // atomically: read-then-publish would drop a press racing this block,
 // so merge inside update.
-_state.update { current ->
-    syncingState = result.state.copy(
+val published = _state.updateAndGet { current ->
+    result.state.copy(
         local = result.state.local.copy(
             pttPressed = current.local.pttPressed,
             voiceTargetId = current.local.voiceTargetId,
         ),
     )
-    synced = true
-    syncingState
 }
+syncingState = published
+synced = true
 ```
+
+(The lambda only computes the merged value; the builder adopts whatever the
+CAS committed, which is the fix for the rule-1 violation.)
 
 ## Impact
 
@@ -74,8 +77,9 @@ _state.update { current ->
   field. A future intent made valid pre-sync, or an edit that drops one of
   the two fields, silently loses a PTT press or pending voice target at
   sync.
-- The lambda assigns `syncingState` and `synced` (rule-1 violation, see
-  [06](06-update-conventions-not-enforced.md)).
+- ~~The lambda assigns `syncingState` and `synced`~~ (rule-1 violation, see
+  [06](06-update-conventions-not-enforced.md)): fixed, the lambda only
+  computes and the builder adopts the committed value.
 
 ## Fix directions
 
