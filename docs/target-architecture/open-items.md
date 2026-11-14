@@ -33,10 +33,15 @@ them.
 | `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling); the step-1 validation now fails the stale-callback tests when either guard is removed (see [testing](testing.md#murmur-interop)) |
 | Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3 (remote) and 5a.4 (self) via `VoiceEngine.talkActivity` |
 | `HumlaNative` failure reporting and fake native layer | [HumlaNative](../../libraries/humla/src/main/java/se/lublin/humla/HumlaNative.kt) owns the single `System.loadLibrary("humlaaudio")` from 5a.1 and every `external` class goes through it, but its two remaining spec duties need 5a.3 machinery: reporting a load failure as `VoiceEvent.PipelineError` on release builds (the event type arrives with the `VoiceEngine` facade) and JVM tests injecting a fake native layer instead of catching `UnsatisfiedLinkError` (they use zero-handle guards today) |
-| RNNoise enable transition in the 5a.4 settings push | The denoiser switch reallocates RNNoise's recurrent state and is therefore control-plane today (see [voice](voice.md#input-engine)). When 5a.4 pushes `VoiceSettings` to native, decide how a settings-driven switch reaches the engine without allocating on the capture thread: a control-channel message the I/O layer services off the realtime path, an allocation-free reset (state snapshot or an upstream change), or accepting the allocation at a rare settings change |
 | Upstream-parity codec changes | Found during the first 5a attempt, deferred out of 5a (no behavior changes inside the step): honor `volume_adjustment`; drop the 1.2.2 CELT workaround; empty `opus_data` terminator handling; legacy chaining tolerance. Land after 5a.4 as their own commits |
 
 ## Resolved
+
+Item resolved while implementing step 5a.1:
+
+| Item | Resolution | Where |
+|---|---|---|
+| RNNoise enable transition in the 5a.4 settings push | Settled as a restart, not a live push: the switch follows the model, which allocates the same way, so both are applied on the control plane when the model loads — engine creation or a capture restart — and neither is in `VoiceSettings`. A settings-driven toggle would need a state snapshot restored allocation-free; deliberately not pursued | [voice](voice.md#input-engine), [voice](voice.md#start-stop-reconfigure) |
 
 Items resolved by the step-1 harness work (2026-11-13):
 

@@ -100,13 +100,20 @@ public:
 - `InputConfig` is the engine's own view, assembled by the capture thread
   each frame from `VoicePolicy` and `VoiceSettings`; the engine never sees
   either type.
-- The denoiser switch is deliberately **not** part of `InputConfig`:
-  RNNoise owns a large recurrent state and has no allocation-free reset, so
-  enabling it again recreates that state (five allocations). It is applied
-  on the control plane by `setRnnoiseEnabled`, and the capture thread only
-  reads the resulting flag, keeping the realtime path allocation-free
-  across the switch. The step 5a.4 settings push has to route this one
-  setting the same way (see [open items](open-items.md)).
+- The denoiser switch is deliberately **not** part of `InputConfig`: it is
+  applied on the control plane by `setRnnoiseEnabled`, and the capture
+  thread only reads the resulting flag. RNNoise's API has no
+  allocation-free reset, so enabling it again recreates its recurrent state
+  (five allocations), which neither a frame nor a settings push may do. The
+  switch therefore follows the model, which allocates the same way: both
+  are set together when the model is loaded, at engine creation or after a
+  capture restart (see
+  [start, stop, reconfigure](#start-stop-reconfigure)), and neither is in
+  `VoiceSettings` (see
+  [policy and settings handoff](#policy-and-settings-handoff)). Restoring a
+  snapshot of the freshly created state would make a live toggle
+  allocation-free; that is deliberately not pursued, because the switch
+  changes only with the model.
 - Outbound packets hold up to `kMaxOpusBufferBytes` (1024) of Opus data, as
   today. Inbound packets may be larger (up to `MAX_PACKET_BYTES`, 2048), as
   today's output engine accepts.
