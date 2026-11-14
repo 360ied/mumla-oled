@@ -20,6 +20,11 @@ package se.lublin.humla.audio
 /**
  * SCO link port behind the route policy.
  *
+ * Every method is called on the route thread, and the implementation
+ * delivers its listener callbacks there (see
+ * docs/target-architecture/route.md, Thread). Off-thread readers use the
+ * route controller's published state, never the link.
+ *
  * The production implementation is [BluetoothScoManager]; controller
  * tests use trivial fakes. Instance-method-for-instance-method with the manager's
  * public SCO surface (the manager additionally exposes REASON_*, retry policy,
@@ -62,4 +67,25 @@ internal interface ScoLink {
      * communication-device list; pre-S falls back to the legacy off-call flag.
      */
     fun isScoDeviceAvailable(): Boolean
+
+    /**
+     * Link callbacks, delivered on the route thread, each after the state
+     * flip it reports (see [isActive]). The route controller supplies the
+     * listener when it builds the link, so nothing outside it holds one.
+     * Callbacks must not throw: a [RuntimeException] is logged and contained,
+     * but an [Error] still propagates.
+     */
+    interface Listener {
+        /** The SCO link is up; the route may now select the voice-call route. */
+        fun onScoConnected()
+
+        /** A live link dropped; the route falls back to the previous route. */
+        fun onScoDisconnected()
+
+        /**
+         * The link never came up.
+         * @param reason one of `BluetoothScoManager.REASON_*`.
+         */
+        fun onScoFailed(reason: String?)
+    }
 }

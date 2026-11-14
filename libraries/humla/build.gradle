@@ -53,6 +53,10 @@ dependencies {
     api libs.lifecycle.service
     api libs.lifecycle.runtime.ktx
     implementation libs.coroutines.core
+    // Handler.asCoroutineDispatcher for the route thread (route.md, Thread):
+    // timers post to the route looper. Same pin as coroutines-core; it was
+    // already on the runtime classpath through lifecycle.
+    implementation libs.coroutines.android
     // Target-architecture step 2: persistent collections for SessionState.
     // Pre-1.0 library: any upgrade is re-verified against the state tests.
     implementation libs.collections.immutable

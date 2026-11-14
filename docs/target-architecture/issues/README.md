@@ -73,7 +73,7 @@ the same state in its `Status` row.
 
 | # | Issue | Introduced by | State |
 |---|---|---|---|
-| [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Open; fix before 5a.3a |
+| [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Resolved (`485453c7`..`c47e06d6`) |
 | [02](02-service-destroy-leaks-transport.md) | Service destroy can leak the TLS connection; transport not closed by scope cancellation | Step 3 | Open; independent bugfix, not gating |
 | [32](32-route-decision-cached-sco-state.md) | The route decision cached the SCO link state, so leaving SCO stranded the call route | Step 4 | Resolved (`1089ad05`) |
 
@@ -130,15 +130,15 @@ the same state in its `Status` row.
 ## Remaining work
 
 Ordered by what must land before step 5a.3, then by dependency. Each row
-is one worktree unless noted. In row 1 only 01 gates 5a.3a; the rest of
-the row rides in the same worktree but does not gate (09 and 10 gated on
+is one worktree unless noted. In row 1 only 01 gated 5a.3a, and it is
+resolved; the rest of the row does not gate and is a separate worktree (09 and 10 gated on
 a decision, made 2026-11-12). Rows 2 and 3 gate only 5a.3b (see [open items](../open-items.md)).
 
 ### Before step 5a.3
 
 | Order | Batch | Issues | Notes |
 |---|---|---|---|
-| 1 (01 before 5a.3a) | Route confinement | [01](01-sco-manager-two-thread-mutation.md), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 first. Once routing state is confined to the route thread, 10's "SCO failed in this route session" flag can be a plain field instead of another atomic. 10's code change, 09's test, 11, and 21 are not gating but touch the same `RouteControl` code. |
+| 1 (01 before 5a.3a) | Route confinement, then route state | ~~[01](01-sco-manager-two-thread-mutation.md)~~ (resolved), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 was its own worktree. The rest is one separate worktree: all of it is `RouteControl` code that was already route-confined before 01, and none of it gates 5a.3a. 10 changes the published `RouteState`, which `VoiceControl` follows, so check that effect in review. |
 | 2 (before 5a.3b) | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
 | 3 (before 5a.3b) | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3b reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
 

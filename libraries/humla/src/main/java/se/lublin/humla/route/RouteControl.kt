@@ -22,6 +22,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CancellationException
@@ -29,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.android.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -38,7 +40,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import se.lublin.humla.audio.AudioPlatform
 import se.lublin.humla.audio.ScoLink
@@ -46,7 +47,8 @@ import se.lublin.humla.client.RouteLifecycle
 import se.lublin.humla.client.checkNotMainThread
 
 /**
- * Target route controller. Owns a HandlerThread named route, publishes
+ * Target route controller. Runs on, and owns the lifetime of, the route
+ * thread ([RouteThread]), publishes
  * RouteState and events, and keeps a private route-session counter for
  * stale-event checks. See docs/target-architecture/route.md.
  *
@@ -59,7 +61,7 @@ internal class RouteControl(
     prefs: Flow<RoutePreferences>,
     private val scope: CoroutineScope,
     private val deviceHandler: Handler,
-    private val ownedThread: HandlerThread? = null,
+    private val ownedThread: RouteThread? = null,
 ) : RouteLifecycle {
     companion object {
         internal const val TAG = "RouteControl"
@@ -78,25 +80,59 @@ internal class RouteControl(
             return scoActive || !mediaDevicesPresent
         }
 
+        // The route thread: a HandlerThread named route, exposed as the
+        // handler, executor, and dispatcher its users need. Lives here
+        // because the controller is the boundary file that owns it (see
+        // docs/target-architecture/enforcement.md).
+        private fun startThread(): RouteThread {
+            val thread = HandlerThread("route")
+            thread.start()
+            val looper = thread.looper
+            val handler = Handler(looper)
+            return RouteThread(
+                handler = handler,
+                executor = java.util.concurrent.Executor { r -> handler.post(r) },
+                // The looper dispatcher route.md specifies: delay() posts to
+                // the route looper, so timers never leave the route thread.
+                dispatcher = handler.asCoroutineDispatcher("route"),
+                isCurrentCheck = { Looper.myLooper() == looper },
+                ownedThread = thread,
+            )
+        }
+
         /**
-         * Production factory: creates the owned route thread and its handler,
-         * then builds the controller around them. Tests use the primary
-         * constructor directly with a TestScope and a mock handler.
+         * Production factory: starts the route thread, builds the SCO link
+         * on it through [scoFactory] with a listener that reports to this
+         * controller, and builds the controller on the same thread. The
+         * controller owns both: `close()` destroys the link and then quits
+         * the thread, so the thread never leaves this class, the link cannot
+         * be given a different one, and the caller needs no reference back
+         * to the controller. [scoFactory] returns null when there is no link.
+         * Tests of the decision logic use the primary constructor directly
+         * with a TestScope and a mock handler.
          */
         fun create(
             platform: AudioPlatform,
-            sco: ScoLink?,
+            scoFactory: (RouteThread, ScoLink.Listener) -> ScoLink?,
             prefs: Flow<RoutePreferences>,
             appScope: CoroutineScope,
         ): RouteControl {
-            val thread = HandlerThread("route")
-            thread.start()
-            val handler = Handler(thread.looper)
-            val executor = java.util.concurrent.Executor { r -> handler.post(r) }
-            val dispatcher = executor.asCoroutineDispatcher()
+            val thread = startThread()
+            // The link needs its listener before the controller exists, and
+            // the controller needs the link. The link only calls back once
+            // the controller has started it, from a command posted to the
+            // route thread after `control` is set.
+            lateinit var control: RouteControl
+            val listener = object : ScoLink.Listener {
+                override fun onScoConnected() = control.onScoConnected()
+                override fun onScoDisconnected() = control.onScoDisconnected()
+                override fun onScoFailed(reason: String?) = control.onScoFailed(reason)
+            }
+            val sco = scoFactory(thread, listener)
             val parentJob = appScope.coroutineContext[Job]
-            val routeScope = CoroutineScope(SupervisorJob(parentJob) + dispatcher)
-            return RouteControl(platform, sco, prefs, routeScope, handler, thread)
+            val routeScope = CoroutineScope(SupervisorJob(parentJob) + thread.dispatcher)
+            control = RouteControl(platform, sco, prefs, routeScope, thread.handler, thread)
+            return control
         }
     }
 
@@ -709,7 +745,9 @@ internal class RouteControl(
 
     fun decision(): AppliedRoute = appliedRoute.get()
 
-    fun isScoActive(): Boolean {
+    // Route thread only: the SCO link is confined to it. Off-thread callers
+    // read the published state instead.
+    private fun isScoActive(): Boolean {
         val link = sco ?: return false
         return try {
             link.isActive()

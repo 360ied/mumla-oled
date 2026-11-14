@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — regression unfixed; fix before step 5a.3a. |
+| Status | Resolved 2026-11-14 (`485453c7`..`c47e06d6`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
 | Area | Route / Bluetooth SCO |
 | Spec | [route.md § Thread](../route.md#thread), [migration.md § Step 4](../migration.md#step-4--voice-control-and-route) item 1 |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt`, `audio/ScoLink.kt`, `route/RouteControl.kt`, `HumlaService.kt` (construction) |
-| Gates | Should be fixed before step 5a.3a (voice starts following `RouteState` natively) |
+| Gates | Gated step 5a.3a; gate met |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
@@ -214,6 +214,95 @@ migration ground rules).
   `stop()` (must be dropped).
 - `./scripts/check.sh` passes; a Bluetooth headset session still connects,
   falls back, and retries on a device (developer's discretion).
+
+## Resolution
+
+Fixed along the preferred direction. The state at `c47e06d6`:
+
+- **Thread.** `RouteControl.create` starts the route `HandlerThread` as a
+  `RouteThread`: its `Handler`, an `Executor` posting to it, and the
+  looper dispatcher `route.md` specifies (`Handler.asCoroutineDispatcher`,
+  so `delay()` stays on the looper). It builds the SCO link through a
+  factory the caller passes, `(RouteThread, ScoLink.Listener) -> ScoLink?`,
+  handing it a listener that reports to the controller, and builds the
+  controller on the same thread, so the caller holds no reference back to
+  the controller. The link callbacks are part of the port
+  (`ScoLink.Listener`). The thread never leaves `RouteControl.kt`,
+  the boundary file that owns it (see [enforcement](../enforcement.md)),
+  and the controller both creates and destroys the link: `close()`
+  destroys it, then quits the thread. `HumlaService` passes a factory
+  wrapping the `BluetoothScoManager` construction; `AppContainer` will in
+  step 6.
+- **Confinement.** The manager's scope runs on the route dispatcher, the
+  S+ device listener on the route executor, and the API 30 receiver on the
+  route `Handler`. Control calls come only from `RouteControl` on its route
+  scope. All six `ScoLink` methods and the three platform and timer
+  callbacks check the thread (debug throws, release logs). Nothing reads
+  the manager from another thread: `HumlaService.isBluetoothScoActive`
+  reads the published `RouteState` (`Ready` on `VOICE_SCO`), the same test
+  its route collector uses, and `RouteControl.isScoActive` is private.
+- **Simplification.** The fields are plain. Gone: the atomics, the
+  per-step epoch re-checks, the epoch-scoped route hold, `armTimeout`'s
+  race checks, `onConnectTimeout`'s second check, the `run {}` "atomic
+  units", and the observer snapshot. No platform call re-enters the
+  manager synchronously, so nothing runs between a bring-up's IPC steps.
+- **Kept.** The session generation, which drops work queued for an ended
+  session: device and broadcast events, the fast-path task, failure
+  delivery, and a timer that escapes a cancel.
+- **Tests.** `BluetoothScoManagerTest` runs the manager under Robolectric
+  on production's thread shapes (Robolectric's paused main looper, the real
+  thread check, the virtual clock driving the timeout), against the stock
+  audio shadow with one override: a route request is accepted without
+  switching the device, as on a real device. Breaking the queued-event
+  epoch check, the failure-delivery generation check, `isActive`'s thread
+  check, or `fail()`'s observer teardown each fails a test.
+  `RouteThreadConfinementTest` is the confinement detector: the production
+  factories on a real route `HandlerThread`, driven from another thread
+  through every entry point that reaches the link, with a recording fake
+  `ScoLink` built through that factory; building the link on a second
+  thread or pointing the controller at another dispatcher fails it.
+
+Commits: `485453c7`..`c47e06d6`. Along the way, `14290883` first exempted
+`isActive` from the thread check (fixed by `3859dc9e` and `7d16155b`), the
+dispatcher and tests were reworked in `c7dbf668` and `1f3105c6`, and
+`4cd3d623` and `c47e06d6` moved link construction, and then the link's
+listener, into `RouteControl.create`.
+
+Acceptance, line by line:
+
+- No `Dispatchers.Main`, `Main.immediate`, `mainExecutor`, or
+  `Looper.getMainLooper()` in `BluetoothScoManager.kt`: met.
+- All methods and callbacks on the route thread, with entry-point
+  assertions: met, and detected by `RouteThreadConfinementTest` (the
+  controller and the link it builds share one thread, and every link call
+  is on it) and `BluetoothScoManagerTest` (the manager's entry points).
+- Virtual-time tests for timeout then retry, timeout racing `stop()`,
+  timeout racing `stop()` + `start()`, and failure delivery after
+  `stop()`: met by `timeoutRetriesOnceThenFails`,
+  `stopBeforeTimeoutCancelsIt`,
+  `timeoutFromStoppedSessionNeverActsOnNextSession`, and
+  `failureAfterStopIsDropped`.
+- `./scripts/check.sh` passes: met at `c47e06d6`. On a device: the
+  developer tested a build from before `4cd3d623` on their phone and
+  reports that it works fully. `4cd3d623` and `c47e06d6` only move where
+  the link and its listener are built (same thread, same construction,
+  same callbacks) and were not re-tested on the device.
+
+Against the spec: `route.md` § Thread holds (thread named `route` owned by
+`RouteControl`, looper dispatcher, device callbacks on the route handler,
+the SCO manager on the route executor and built on the route thread by
+the controller that destroys it, blocking platform calls off main,
+re-posting to the route thread, the private route-session counter);
+`migration.md`'s detector rule holds (the manager's header names both
+tests). Not changed here: `RouteControl`'s primary constructor still takes
+its scope and handler rather than `route.md`'s `(platform, sco, prefs)`,
+as since step 4, and `create` takes a link factory where that API shows a
+link. `route.md` § API describes this construction since `b811c1ef` on
+`master`.
+
+On a device: the S+ backend was exercised on the developer's phone as
+above. The API 30 backend is covered only by Robolectric and code reading,
+as `testing.md` expects for the theoretical Android 11–12 floor.
 
 ## Related
 
