@@ -628,7 +628,7 @@ class HumlaClientTest {
     }
 
     @Test
-    fun preSyncIntentsSurviveServerSync() = runTest {
+    fun serverSyncPublishesDumpAndPreSyncIntents() = runTest {
         val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
         val factory = FakeFactory()
         val voice = FakeVoice()
@@ -651,9 +651,13 @@ class HumlaClientTest {
         fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
         runCurrent()
         assertTrue(client.state.value is ClientState.Connected)
-        // The ServerSync publish merges the dump with the pre-sync intents
-        // instead of overwriting them with the builder's initial values.
+        // The publish carries the accumulated dump and merges the pre-sync
+        // intents instead of overwriting them with the builder's initial
+        // values. Connected already implies phase == SYNCED, so the phase is
+        // not asserted again here.
         val synced = live.state.value
+        assertTrue(synced.server.channels.containsKey(0))
+        assertTrue(synced.server.users.containsKey(1))
         assertTrue(synced.local.pttPressed)
         assertEquals(3, synced.local.voiceTargetId)
         client.close().join()
