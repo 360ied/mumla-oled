@@ -27,6 +27,8 @@ import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +38,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import se.lublin.humla.route.RouteThread
 
 /**
  * Owns the Bluetooth SCO (HFP) audio route for a voice session.
@@ -113,6 +116,21 @@ class BluetoothScoManager : ScoLink {
         fun shouldRetryBringUp(attempts: Int, maxAttempts: Int): Boolean {
             return attempts in 0 until maxAttempts
         }
+
+        // Main-thread shapes the manager has always used: Main.immediate
+        // for the scope, the main executor for the S+ listener, and a main
+        // handler for the API 30 receiver (where the flagless overload
+        // already delivered on main).
+        private fun mainThreadOf(context: Context?): RouteThread {
+            val ctx = context ?: throw NullPointerException("BluetoothScoManager context must not be null")
+            val main = Looper.getMainLooper()
+            return RouteThread(
+                handler = Handler(main),
+                executor = ctx.mainExecutor,
+                dispatcher = Dispatchers.Main.immediate,
+                isCurrentCheck = { Looper.myLooper() == main },
+            )
+        }
     }
 
     interface Listener {
@@ -139,11 +157,14 @@ class BluetoothScoManager : ScoLink {
     private val audioManager: AudioManager
     private val listener: Listener
 
+    // Thread the manager's timers and platform observers run on: the
+    // dispatcher backs scoScope, the executor the S+ device listener, and
+    // the handler the API 30 broadcast receiver.
+    private val thread: RouteThread
+
     // Handler timeout becomes a cancellable child (withTimeout-style
     // delay); stop() cancels it, so cancellation is the epoch for the timer.
-    // Main.immediate is hardcoded (not injected like the budgets below):
-    // correct on device; JVM tests need a Main-dispatcher rule to cover this.
-    private val scoScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scoScope: CoroutineScope
     // Atomic: armed on the route dispatcher, cancelled from route/stop and
     // Main.immediate paths; a missed cancel only orphans a harmless no-op
     // timer (onConnectTimeout re-checks state).
@@ -180,16 +201,16 @@ class BluetoothScoManager : ScoLink {
     constructor(context: Context?, listener: Listener?) : this(
         context,
         listener,
-        CONNECT_TIMEOUT_MS,
-        MAX_ATTEMPTS
+        mainThreadOf(context)
     )
 
-    // Visible for the JVM truth-table test; not part of the production API.
+    // Injected thread for the JVM tests; budgets default to production.
     internal constructor(
         context: Context?,
         listener: Listener?,
-        connectTimeoutMs: Long,
-        maxAttempts: Int
+        thread: RouteThread,
+        connectTimeoutMs: Long = CONNECT_TIMEOUT_MS,
+        maxAttempts: Int = MAX_ATTEMPTS
     ) {
         // Nullability is explicit but the fail-fast contract is Java-identical:
         // Objects.requireNonNull returns its input type, so the Elvis throw
@@ -201,6 +222,8 @@ class BluetoothScoManager : ScoLink {
         require(maxAttempts >= 1) { "maxAttempts must be >= 1" }
         this.context = ctx.applicationContext
         this.listener = lis
+        this.thread = thread
+        this.scoScope = CoroutineScope(SupervisorJob() + thread.dispatcher)
         this.connectTimeoutMs = connectTimeoutMs
         this.maxAttempts = maxAttempts
         val audioService = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager?
@@ -838,7 +861,7 @@ class BluetoothScoManager : ScoLink {
         deviceListener = listenerObj
         try {
             audioManager.addOnCommunicationDeviceChangedListener(
-                context.mainExecutor,
+                thread.executor,
                 listenerObj
             )
         } catch (e: SecurityException) {
@@ -856,8 +879,8 @@ class BluetoothScoManager : ScoLink {
     // Legacy observer (API 30): SCO audio-state broadcast. The inline
     // SDK_INT dispatch in registerDeviceListener is what keeps this off S+,
     // and context-registered system broadcasts need no exported flag below
-    // 33 (the 2-arg overload is used deliberately to avoid an androidx
-    // dependency in this module).
+    // 33 (the flagless overload is used deliberately to avoid an androidx
+    // dependency in this module). Delivered on the manager's thread handler.
     private fun registerLegacyReceiver(): Boolean {
         val epoch = generation.get()
         val receiver = object : BroadcastReceiver() {
@@ -873,7 +896,9 @@ class BluetoothScoManager : ScoLink {
         try {
             context.registerReceiver(
                 receiver,
-                IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED)
+                IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED),
+                null,
+                thread.handler
             )
         } catch (e: Exception) {
             Log.w(TAG, "SCO receiver registration threw", e)
