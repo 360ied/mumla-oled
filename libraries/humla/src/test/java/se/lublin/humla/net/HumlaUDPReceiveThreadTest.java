@@ -153,15 +153,16 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         assertTrue("Protobuf UDP should be supported for 1.5.0", link.isProtobufUdpSupported());
 
         final AtomicReference<Thread> audioDispatchThread = new AtomicReference<>();
-        final AtomicReference<MumbleUDP.Audio> receivedAudio = new AtomicReference<>();
+        final AtomicReference<java.util.List<se.lublin.humla.net.DecodedVoiceFrame>> receivedAudio =
+                new AtomicReference<>();
         final AtomicReference<Thread> pingDispatchThread = new AtomicReference<>();
         final AtomicReference<MumbleUDP.Ping> receivedPing = new AtomicReference<>();
 
         link.addUdpHandler(new HumlaUDPMessageListener.Stub() {
             @Override
-            public void messageProtobufAudio(MumbleUDP.Audio msg) {
+            public void messageDecodedVoice(java.util.List<se.lublin.humla.net.DecodedVoiceFrame> frames) {
                 audioDispatchThread.set(Thread.currentThread());
-                receivedAudio.set(msg);
+                receivedAudio.set(frames);
             }
 
             @Override
@@ -209,12 +210,15 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
             workerThread.join(3000);
             assertFalse("Worker must finish dispatch within timeout", workerThread.isAlive());
 
-        // Verify audio was dispatched synchronously on the background worker thread
+        // Verify audio was dispatched synchronously on the background worker thread.
+        // Inbound framing is owned by the native packet codec (step 5a.2):
+        // the same parsed frames reach AudioOutput for both formats.
         assertSame("Audio should be dispatched on the background worker thread",
                 workerThread, audioDispatchThread.get());
         assertNotNull("Received audio must not be null", receivedAudio.get());
-        assertEquals(42, receivedAudio.get().getSenderSession());
-        assertEquals(100, receivedAudio.get().getFrameNumber());
+        assertEquals(1, receivedAudio.get().size());
+        assertEquals(42, receivedAudio.get().get(0).session);
+        assertEquals(100, receivedAudio.get().get(0).sequence);
 
         // Verify ping was dispatched synchronously on the background worker thread
         assertSame("Ping should be dispatched on the background worker thread",

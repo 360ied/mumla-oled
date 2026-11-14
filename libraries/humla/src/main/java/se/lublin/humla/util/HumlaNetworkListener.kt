@@ -17,7 +17,7 @@
 
 package se.lublin.humla.util
 
-import se.lublin.humla.net.HumlaUDPMessageType
+import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protobuf.MumbleUDP
 import se.lublin.humla.protocol.HumlaTCPMessageListener
@@ -114,10 +114,7 @@ open class HumlaNetworkListener : HumlaTCPMessageListener, HumlaUDPMessageListen
     override fun messageUDPPing(data: ByteArray) {
     }
 
-    override fun messageVoiceData(data: ByteArray, messageType: HumlaUDPMessageType) {
-    }
-
-    override fun messageProtobufAudio(msg: MumbleUDP.Audio) {
+    override fun messageDecodedVoice(frames: List<DecodedVoiceFrame>) {
     }
 
     override fun messageProtobufPing(msg: MumbleUDP.Ping) {
