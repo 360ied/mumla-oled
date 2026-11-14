@@ -325,7 +325,7 @@ before 5a.3b (see [open items](open-items.md)).
 entry is gone from the allowlist, and `NativeAudioOutputEngine.kt` with
 it; `voice_io/`'s allowlist section holds only the thread includes;
 `audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`;
-ring tests pin the full-ring drop counters and the removal headroom; a notifier test pins one
+ring tests pin the full-ring drop counters; a notifier test pins one
 Kotlin call per drain; tests pin that the render entry point never
 attaches to the JVM and is the only path into the output engine (failing
 if a second caller appears); interop voice from a peer over the tunnel

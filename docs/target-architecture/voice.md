@@ -411,16 +411,19 @@ ring's producer, so the removal needs no second producer and no new ring.
 It also stays ordered after any tunnelled voice from that user already
 queued.
 
-- **Headroom.** Voice pushes leave 8 slots free, so a removal still fits
-  when tunnelled voice has filled the ring. A removal that finds even the
-  headroom full is dropped and counted like any full-ring drop. The only
-  cost is a voice slot held until it drains silent and the eviction rule
-  reuses it.
+- **Full ring.** A removal that finds the ring full is dropped and
+  counted like any full-ring drop; no slots are reserved for it. The ring
+  is only full when the render thread has stalled, so tunnelled voice is
+  being dropped too. The cost is small: the server has stopped forwarding
+  the user's voice, so the engine's dead-voice rule (more than
+  `DEAD_MISS_FRAMES`, 10 frames, without a packet) releases the voice and
+  reports it passive about 100 ms after its buffered audio runs out.
 - **UDP race.** A UDP frame from the leaving user that was filtered before
   the removal can still reach the render thread after it, from the inbound
-  ring, and briefly reopen a voice slot. Today's mutex bridge has the same
-  window (filter, then `removeUser`, then the late `queuePacket`). The
-  slot drains silent and is reclaimed the same way.
+  ring, and briefly reopen a voice slot. Today's code has the same window:
+  `AudioOutput` checks `getUser` on the UDP coroutine, the session
+  coroutine's `removeUser` runs, then the late `queuePacket` lands. The
+  dead-voice rule releases the slot the same way.
 
 ### Policy and settings handoff
 
