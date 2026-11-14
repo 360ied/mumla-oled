@@ -585,6 +585,17 @@ Performed by the Kotlin **voice control thread**, in command order:
 The control thread is the only caller of start and stop, so they never race
 each other, and it is never the main thread.
 
+**Engine lifecycle.** While capture runs, the capture thread is the only
+caller of the input engine; while render runs, the render thread is the
+only caller of the output engine. The control thread constructs, resets,
+and destroys an engine only while its thread is stopped. Starting and
+stopping that thread orders the handoff: `Thread.start` and `join` in 5a,
+and in 5b stopping the AAudio stream and waiting until it reports stopped
+(the request is asynchronous). Lifecycle calls assert in debug builds
+that the thread is stopped. Until `VoiceEngine` keeps the engines across
+sessions (5a.3b), each start constructs a fresh output engine, as
+`AudioOutput.startPlaying` does today, so 5a.3a needs no reset.
+
 ### Failures
 
 Voice failures never end the session: text, the channel tree, and every
@@ -726,6 +737,18 @@ packet's talk context (`talkStateForFlags`: normal, shout, whisper,
 listener), as today. `talkActivity` is updated by the notifier at most
 every 20 ms and feeds
 screens, the overlay, and features. It is never part of `SessionState`.
+
+**Cleared when the output engine goes away.** Whenever the I/O layer stops
+render and destroys or resets the output engine, the publisher sets
+`users` to empty after the notifier's final drain, so no event from the
+old engine can light an indicator afterwards. That happens at Stop and,
+in 5a.3a, at every `AudioHandler` rebuild that a route or settings change
+causes. The engine's destructor emits no passive events by design, and a
+reset's events are never rendered, so without this rule a remote user
+talking at that moment stays shown as talking. After a reconnect the stale
+entry could even light up a different user, because Murmur reuses session
+IDs. `selfTalking` joins in 5a.4; until then `AudioHandler.shutdown`
+reports self as passive, as today.
 
 ## Interim mute (step 4, before 5a)
 

@@ -286,7 +286,8 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 [16](issues/16-voice-link-owns-udp-route.md) and
 [17](issues/17-udp-format-per-packet.md), issues
 [04](issues/04-session-transport-virtual-time-gaps.md) and
-[05](issues/05-client-edge-invariants-weak.md) before 5a.3b (see [open items](open-items.md)).
+[05](issues/05-client-edge-invariants-weak.md), and the render idle and
+wake design before 5a.3b (see [open items](open-items.md)).
 
 #### 5a.3a — Native render
 
@@ -300,8 +301,12 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 2. Engine calls that reach it from other threads today move with it:
    `removeUser` reaches the render thread as a control item on the
    tunnel ring (see [queues](voice.md#queues)),
-   `hasActiveVoices` becomes internal to the render loop, and the jitter
-   margin is the I/O layer's constant. `NativeAudioOutputEngineJni.cpp`,
+   `hasActiveVoices` stops being a separate engine call (the render entry
+   point reports in its result whether any voices are active, which the
+   Kotlin idle wait reads, and the interim enqueue keeps calling
+   `signalData`), and the jitter margin is the I/O layer's constant. The
+   idle wait itself does not change in this half (see the render idle open
+   item in [open items](open-items.md)). `NativeAudioOutputEngineJni.cpp`,
    the Kotlin `NativeAudioOutputEngine`, and the bridge's `<mutex>` are
    deleted.
 3. The notifier thread attaches to the JVM once and every 20 ms delivers
@@ -310,7 +315,8 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
    the `VoiceEngine` facade takes over in 5a.3b, not a partial facade.
    Remote talk indicators read `talkActivity`; handles stop carrying a
    writable remote `talkState`, and the `onTalkStateChanged` callback is
-   deleted.
+   deleted. The publisher clears remote users whenever the output engine
+   is destroyed (see [outputs](voice.md#outputs)).
 4. Interim enqueue: Kotlin keeps parsing with 5a.2's codec and keeps the
    sender filter, and pushes the surviving frames into the rings through
    two interim calls, one per ring and producer: UDP frames from the
@@ -326,8 +332,10 @@ it; `voice_io/`'s allowlist section holds only the thread includes;
 `audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`;
 ring tests pin the full-ring drop counters; a notifier test pins one
 Kotlin call per drain; tests pin that the render entry point never
-attaches to the JVM and is the only path into the output engine (failing
-if a second caller appears); interop voice from a peer over the tunnel
+attaches to the JVM and is the only path into the output engine while
+render runs (failing if a second caller appears), and that lifecycle calls
+assert render is stopped; a test rebuilds the pipeline while a remote
+voice is talking and ends with empty `talkActivity` users; interop voice from a peer over the tunnel
 plays non-silent PCM through the real render entry point — the scenario
 deferred from 5a.2, with the peer sending voice through the device-free
 Kotlin `AudioHandler` encode path (production code, not a test seam);
