@@ -27,12 +27,9 @@ import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -57,16 +54,16 @@ import se.lublin.humla.route.RouteThread
  * the `ACTION_SCO_AUDIO_STATE_UPDATED` broadcast. Both backends share
  * the same state machine, timeout, retry budget, and epoch guards below.
  *
- * Threading (step 4, lock-free): the epoch/counter/flag fields are
- * atomics; bring-up re-validates by session epoch after each IPC step, so
- * a concurrent `stop()` aborts the sequence instead of interleaving with
- * it. Control calls (`start`/`stop`/`destroy`) arrive on the route
- * dispatcher; listener callbacks originate on main-thread platform
- * callbacks; `onScoFailed` is always launched in the manager scope
- * (Main.immediate) and dropped when its session generation is stale, so
- * `stop()` truly never callbacks. Coroutine cancellation is the epoch for
- * the timeout path (stop cancels the timeout child); the generation still
- * guards platform device-listener callbacks, which cannot be cancelled.
+ * Threading: confined to the route thread (docs/target-architecture/route.md,
+ * Thread). Control calls arrive from the route controller on it, and the
+ * manager's timers, S+ device listener, and API 30 broadcast receiver are
+ * all delivered on it, so no two of them ever run at once. The one
+ * exception is [isActive], which the service also reads from the UI.
+ * Confinement removes concurrency, not queued work: a platform event or
+ * failure callback posted for one session can still run after `stop()` or
+ * the next `start()`. The session generation drops those on delivery, so
+ * `stop()` truly never callbacks; the timeout is cancelled by `stop()`
+ * instead. Debug builds throw when an entry point runs off the thread.
  *
  * AudioManager mode is deliberately NOT owned here. The service route
  * policy (`HumlaService`) is the single owner of
@@ -116,21 +113,6 @@ class BluetoothScoManager : ScoLink {
         fun shouldRetryBringUp(attempts: Int, maxAttempts: Int): Boolean {
             return attempts in 0 until maxAttempts
         }
-
-        // Main-thread shapes the manager has always used: Main.immediate
-        // for the scope, the main executor for the S+ listener, and a main
-        // handler for the API 30 receiver (where the flagless overload
-        // already delivered on main).
-        private fun mainThreadOf(context: Context?): RouteThread {
-            val ctx = context ?: throw NullPointerException("BluetoothScoManager context must not be null")
-            val main = Looper.getMainLooper()
-            return RouteThread(
-                handler = Handler(main),
-                executor = ctx.mainExecutor,
-                dispatcher = Dispatchers.Main.immediate,
-                isCurrentCheck = { Looper.myLooper() == main },
-            )
-        }
     }
 
     interface Listener {
@@ -165,9 +147,8 @@ class BluetoothScoManager : ScoLink {
     // Handler timeout becomes a cancellable child (withTimeout-style
     // delay); stop() cancels it, so cancellation is the epoch for the timer.
     private val scoScope: CoroutineScope
-    // Atomic: armed on the route dispatcher, cancelled from route/stop and
-    // Main.immediate paths; a missed cancel only orphans a harmless no-op
-    // timer (onConnectTimeout re-checks state).
+    // Armed and cancelled on the route thread; onConnectTimeout re-checks
+    // state, so a missed cancel only orphans a harmless no-op timer.
     private val timeoutJob = java.util.concurrent.atomic.AtomicReference<Job?>(null)
 
     // Injected budgets (ODD-23): production uses the static defaults above;
@@ -198,13 +179,8 @@ class BluetoothScoManager : ScoLink {
     // SDK_INT), but teardown clears both for safety.
     private var scoReceiver: BroadcastReceiver? = null
 
-    constructor(context: Context?, listener: Listener?) : this(
-        context,
-        listener,
-        mainThreadOf(context)
-    )
-
-    // Injected thread for the JVM tests; budgets default to production.
+    // The route thread the manager is confined to; budgets default to
+    // production and are narrowed by the JVM tests.
     internal constructor(
         context: Context?,
         listener: Listener?,
@@ -237,6 +213,7 @@ class BluetoothScoManager : ScoLink {
      * callers must not assume the link is up when this returns.
      */
     override fun start() {
+        checkOnThread()
         run {
             if (state.get() != ScoState.IDLE) {
                 return
@@ -255,9 +232,9 @@ class BluetoothScoManager : ScoLink {
             fail(REASON_PERMISSION)
             return
         }
-        // Bring-up IPC must never block the route dispatcher
-        // main-thread callbacks and stop() need. (No mode work here: the
-        // service route policy owns MODE_IN_COMMUNICATION; see class note.)
+        // Bring-up IPC runs here on the route thread, never on main. (No
+        // mode work here: the service route policy owns
+        // MODE_IN_COMMUNICATION; see class note.)
         attemptBringUp()
     }
 
@@ -269,6 +246,7 @@ class BluetoothScoManager : ScoLink {
      * owned by the service route policy, never touched here (see class note).
      */
     override fun stop() {
+        checkOnThread()
         val taken: Observers
         run {
             // One atomic unit with the flip: timeout cancel and the
@@ -290,18 +268,34 @@ class BluetoothScoManager : ScoLink {
 
     /** Cancels the manager scope; called once from the service teardown. */
     override fun destroy() {
+        checkOnThread()
         stop()
         scoScope.cancel()
     }
 
     /** True when no bring-up is in progress and no link is up. */
     override fun isIdle(): Boolean {
+        checkOnThread()
         return state.get() == ScoState.IDLE
     }
 
-    /** True only once the link has reported connected and not since dropped. */
+    /**
+     * True only once the link has reported connected and not since dropped.
+     * Unlike the other entry points, safe from any thread: the service's
+     * `isBluetoothScoActive` reads it from the UI.
+     */
     override fun isActive(): Boolean {
         return state.get() == ScoState.ACTIVE
+    }
+
+    // Debug builds throw so a wiring mistake fails fast in tests and daily
+    // use; release builds log and carry on, like checkNotMainThread.
+    private fun checkOnThread() {
+        if (thread.isCurrent()) return
+        if (se.lublin.humla.BuildConfig.DEBUG) {
+            throw IllegalStateException("BluetoothScoManager used off the route thread")
+        }
+        Log.w(TAG, "BluetoothScoManager used off the route thread")
     }
 
     // Bring-up runs on the route dispatcher (see class threading note), keyed by
@@ -458,6 +452,7 @@ class BluetoothScoManager : ScoLink {
      * legacy off-call availability flag.
      */
     override fun isScoDeviceAvailable(): Boolean {
+        checkOnThread()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 return isScoDeviceAvailableModern()
@@ -475,6 +470,7 @@ class BluetoothScoManager : ScoLink {
     }
 
     private fun onModernDeviceChanged(device: AudioDeviceInfo?, epoch: Int) {
+        checkOnThread()
         val scoNow: Boolean
         val stateCopy: ScoState
         val currentEpoch: Int
@@ -576,6 +572,7 @@ class BluetoothScoManager : ScoLink {
     // A mid-bring-up DISCONNECTED still burns the timeout — the legacy
     // stack may flap before the first CONNECTED.
     private fun onLegacyScoStateChanged(scoState: Int, epoch: Int) {
+        checkOnThread()
         val stateCopy: ScoState
         val currentEpoch: Int
         run {
@@ -604,6 +601,7 @@ class BluetoothScoManager : ScoLink {
     }
 
     private fun onConnectTimeout(epoch: Int) {
+        checkOnThread()
         val retry: Boolean
         run {
             if (state.get() != ScoState.STARTING || epoch != generation.get()) {
@@ -641,8 +639,8 @@ class BluetoothScoManager : ScoLink {
             timeoutJob.set(null)
         }
         Log.i(TAG, "Bluetooth SCO connected")
-        // Main-thread origin (broadcast, device listener, or timeout), so a
-        // direct call preserves connected-then-callback ordering.
+        // Direct call after the flip preserves connected-then-callback
+        // ordering; the controller re-posts it to its own scope.
         try {
             listener.onScoConnected()
         } catch (e: Exception) {
@@ -664,7 +662,7 @@ class BluetoothScoManager : ScoLink {
         unregisterObservers(taken)
         releaseRouteIfHeld()
         Log.i(TAG, "Bluetooth SCO disconnected")
-        // Main-thread origin; see setActive.
+        // Direct call after the flip; see setActive.
         try {
             listener.onScoDisconnected()
         } catch (e: Exception) {

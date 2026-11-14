@@ -426,7 +426,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 override fun onScoFailed(reason: String?) {
                     if (::routeControl.isInitialized) routeControl.onScoFailed(reason)
                 }
-            })
+            }, routeThread)
         } catch (e: Exception) {
             Log.w(TAG, "SCO: no AudioManager", e)
             null

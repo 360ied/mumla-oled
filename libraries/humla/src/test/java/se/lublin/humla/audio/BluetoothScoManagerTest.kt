@@ -98,12 +98,14 @@ class BluetoothScoManagerTest {
         scheduler.advanceUntilIdle()
     }
 
+    private var onRouteThread = true
+
     private fun newManager(): BluetoothScoManager {
         val thread = RouteThread(
             handler = Handler(Looper.getMainLooper()),
             executor = dispatcher.asExecutor(),
             dispatcher = dispatcher,
-            isCurrentCheck = { true },
+            isCurrentCheck = { onRouteThread },
         )
         return BluetoothScoManager(app, listener, thread, TIMEOUT_MS, 2)
     }
@@ -272,6 +274,21 @@ class BluetoothScoManagerTest {
         assertTrue(events.isEmpty())
         assertTrue(manager.isIdle())
         assertNull(platform.currentDevice)
+    }
+
+    @Test
+    fun controlCallsOffRouteThreadThrowInDebug() {
+        onRouteThread = false
+        for (call in listOf<() -> Unit>(manager::start, manager::stop, { manager.isIdle() })) {
+            try {
+                call()
+                org.junit.Assert.fail("expected the route-thread check to throw")
+            } catch (expected: IllegalStateException) {
+            }
+        }
+        // isActive is the one cross-thread read (service UI query).
+        assertFalse(manager.isActive())
+        onRouteThread = true
     }
 
     @Test
