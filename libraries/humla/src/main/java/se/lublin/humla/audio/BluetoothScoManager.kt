@@ -65,6 +65,10 @@ import se.lublin.humla.route.RouteThread
  * the next `start()`. The session generation drops those on delivery, so
  * `stop()` truly never callbacks; the timeout is cancelled by `stop()`
  * instead. Debug builds throw when an entry point runs off the thread.
+ * Detectors: `RouteThreadConfinementTest` fails if the controller reaches
+ * the link off the route thread; `BluetoothScoManagerTest` runs the
+ * manager on production's thread shapes and fails if an entry point
+ * accepts an off-thread call.
  *
  * AudioManager mode is deliberately NOT owned here. The service route
  * policy (`HumlaService`) is the single owner of
