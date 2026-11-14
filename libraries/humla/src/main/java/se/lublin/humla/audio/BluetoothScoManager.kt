@@ -57,8 +57,9 @@ import se.lublin.humla.route.RouteThread
  * Threading: confined to the route thread (docs/target-architecture/route.md,
  * Thread). Control calls arrive from the route controller on it, and the
  * manager's timers, S+ device listener, and API 30 broadcast receiver are
- * all delivered on it, so no two of them ever run at once. The one
- * exception is [isActive], which the service also reads from the UI.
+ * all delivered on it, so no two of them ever run at once. Nothing reads
+ * the manager from another thread: off-thread callers use the controller's
+ * published route state.
  * Confinement removes concurrency, not queued work: a platform event or
  * failure callback posted for one session can still run after `stop()` or
  * the next `start()`. The session generation drops those on delivery, so
@@ -156,13 +157,8 @@ class BluetoothScoManager : ScoLink {
     private val connectTimeoutMs: Long
     private val maxAttempts: Int
 
-    // Plain fields: confined to the route thread (see class note). Only
-    // state is an atomic, for the cross-thread isActive read; it publishes
-    // one value and guards nothing else.
-    private val stateRef = java.util.concurrent.atomic.AtomicReference(ScoState.IDLE)
-    private var state: ScoState
-        get() = stateRef.get()
-        set(value) = stateRef.set(value)
+    // Plain fields: confined to the route thread (see class note).
+    private var state = ScoState.IDLE
     private var attempts = 0
     private var generation = 0
     private var routeHeld = false
@@ -266,12 +262,9 @@ class BluetoothScoManager : ScoLink {
         return state == ScoState.IDLE
     }
 
-    /**
-     * True only once the link has reported connected and not since dropped.
-     * Unlike the other entry points, safe from any thread: the service's
-     * `isBluetoothScoActive` reads it from the UI.
-     */
+    /** True only once the link has reported connected and not since dropped. */
     override fun isActive(): Boolean {
+        checkOnThread()
         return state == ScoState.ACTIVE
     }
 

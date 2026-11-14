@@ -20,6 +20,11 @@ package se.lublin.humla.audio
 /**
  * SCO link port behind the route policy.
  *
+ * Every method is called on the route thread, and the implementation
+ * delivers its listener callbacks there (see
+ * docs/target-architecture/route.md, Thread). Off-thread readers use the
+ * route controller's published state, never the link.
+ *
  * The production implementation is [BluetoothScoManager]; controller
  * tests use trivial fakes. Instance-method-for-instance-method with the manager's
  * public SCO surface (the manager additionally exposes REASON_*, retry policy,

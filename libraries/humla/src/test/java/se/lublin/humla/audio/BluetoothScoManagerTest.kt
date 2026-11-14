@@ -279,15 +279,20 @@ class BluetoothScoManagerTest {
     @Test
     fun controlCallsOffRouteThreadThrowInDebug() {
         onRouteThread = false
-        for (call in listOf<() -> Unit>(manager::start, manager::stop, { manager.isIdle() })) {
+        val calls = listOf<() -> Unit>(
+            manager::start,
+            manager::stop,
+            { manager.isIdle() },
+            { manager.isActive() },
+            { manager.isScoDeviceAvailable() },
+        )
+        for (call in calls) {
             try {
                 call()
                 org.junit.Assert.fail("expected the route-thread check to throw")
             } catch (expected: IllegalStateException) {
             }
         }
-        // isActive is the one cross-thread read (service UI query).
-        assertFalse(manager.isActive())
         onRouteThread = true
     }
 
