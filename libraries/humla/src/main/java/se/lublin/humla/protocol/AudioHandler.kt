@@ -278,9 +278,12 @@ class AudioHandler : HumlaNetworkListener,
 
     @Throws(AudioException::class)
     fun initialize(self: UserInfo?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
-        // Field setup under A; engine fan-out (bandwidth + mute) outside A:
-        // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
-        // join, while the capture thread needs A for onTalkingStateChanged.
+        // Field setup, then engine fan-out (bandwidth + mute): setMaxBandwidth
+        // and updateMuteState both reach the engine, which takes its own
+        // mutex on the native side, and updateMuteState can block on
+        // startRecording's bounded stale join (≤200 ms). No handler monitor
+        // is left to order against: the capture thread's
+        // onTalkingStateChanged touches only mTalking.
         if (self == null) return
         run {
             if (mInitialized) return
@@ -423,10 +426,10 @@ class AudioHandler : HumlaNetworkListener,
             run {
                 if (!mInitialized) return
             }
-            // Deliberately held across startRecording's bounded stale join
-            // (≤200 ms). No deadlock — a stale capture needs only
-            // short-lived engine access — at most concurrent mute
-            // updates serialize behind teardown of a dead capture thread.
+            // Blocks on startRecording's bounded stale join (≤200 ms) while a
+            // previous capture thread winds down. Nothing is held across it
+            // now that the handler monitor is gone: a concurrent mute update
+            // contends only inside AudioInput's own monitor.
             startRecording()
         }
     }
@@ -520,11 +523,11 @@ class AudioHandler : HumlaNetworkListener,
         // Seed from construction targets, not live values, so a relaxed or
         // cleared cap restores quality instead of ratcheting (see fields).
         val config = computeEffectiveConfig(mTargetBitrate, mTargetFramesPerPacket, maxBandwidth)
-        // Decide and publish under one lock (single main/TCP-serialized
-        // writer today; the lock documents it), then fan out and re-drive
-        // outside: torn pairs would misreport bandwidth, and callbacks must
-        // never run while holding this lock. The no-op check lives inside
-        // too so check-then-write cannot interleave.
+        // Decide and publish as one step, then fan out after it: torn pairs
+        // would misreport bandwidth, and the listener callback must not run
+        // inside the block. Single main/TCP-serialized writer today, so the
+        // run block is ordering rather than exclusion; the no-op check lives
+        // inside it too so check-then-write stays adjacent.
         val applied: EffectiveAudioConfig
         val oldFramesPerPacket: Int
         val changed: Boolean
@@ -622,8 +625,6 @@ class AudioHandler : HumlaNetworkListener,
         run {
             run {
                 mInitialized = false
-                wasTalking = mTalking
-                mTalking = false
                 policyRef.set(null)
                 lastPolicyTransmit = null
                 lastPolicyPtt = null
@@ -637,6 +638,10 @@ class AudioHandler : HumlaNetworkListener,
             } finally {
                 mInput = null
             }
+            // Read and reset only after the input join: the capture thread is
+            // the sole talking-callback source, so this orders the two.
+            wasTalking = mTalking
+            mTalking = false
             mOutput.stopPlaying()
             try {
                 mNativeEngine?.destroy()
@@ -687,9 +692,10 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     override fun messageUserState(msg: Mumble.UserState) {
-        // Fields under `this`, gate outside it: updateMuteState takes E plus
-        // a bounded join while the capture thread needs `this` (server-echo
-        // path; see docs/mute-tap-deadlock).
+        // Gate fields in the run block, fan-out after it: updateMuteState
+        // reaches the engine and can block on startRecording's bounded stale
+        // join, which must not sit inside the field block (see
+        // docs/mute-tap-deadlock for the incident behind this split).
         run {
             if (!mInitialized) return
 
@@ -867,10 +873,12 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     override fun onTalkingStateChanged(isTalking: Boolean, peakEnergy: Float) {
-        // Check-and-set under the lock (concurrent native callbacks must not
-        // duplicate or drop transitions), fan out outside it: the encode
-        // listener and mOutput each take locks of their own, and the capture
-        // thread must never hold `this` across them.
+        // The check-and-set needs no lock: callbacks arrive only on the
+        // capture thread (nativeProcessFrame applies the mute since 5a.1, so
+        // nothing else signals a transition), and shutdown() reads and resets
+        // mTalking only after joining that thread. The fan-out stays outside
+        // any monitor: the encode listener and mOutput each take locks of
+        // their own, and the capture thread must never hold `this` across them.
         val changed: Boolean
         run {
             changed = mTalking != isTalking
