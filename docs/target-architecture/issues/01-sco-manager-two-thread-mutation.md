@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`485453c7`..`87b1d325`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`485453c7`..`eca5b342`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
@@ -242,9 +242,15 @@ Fixed along the preferred direction, one concern per commit:
    `armTimeout`'s race checks, and `onConnectTimeout`'s second check.
    No platform call re-enters the manager synchronously, so nothing runs
    between a bring-up's IPC steps.
-5. `87b1d325`: the fields are plain (`state` is `@Volatile` for
-   `isActive`), and the `run {}` "atomic units" and the observer snapshot
-   are gone.
+5. `87b1d325`: the fields are plain, and the `run {}` "atomic units"
+   and the observer snapshot are gone.
+6. `eca5b342`: thread creation moves back into `RouteControl.kt` as
+   `RouteControl.startThread()`, since `RouteControl` is the boundary
+   file that owns the route thread (see [enforcement](../enforcement.md)),
+   leaving `RouteThread` a plain holder. `state` stays an
+   `AtomicReference`, as before, for the cross-thread `isActive` read; a
+   `@Volatile` would have been a new concurrency-tripwire match. Commits
+   1 to 5 fail only the tripwire step of `check.sh`; this one passes it.
 
 Kept: the session generation, which still drops work queued for an ended
 session (device and broadcast events, the fast-path task, failure
