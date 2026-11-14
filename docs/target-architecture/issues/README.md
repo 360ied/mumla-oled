@@ -129,14 +129,15 @@ the same state in its `Status` row.
 ## Remaining work
 
 Ordered by what must land before step 5a.3, then by dependency. Each row
-is one worktree unless noted. Row 1 gates 5a.3a; rows 2 and 3 gate only
-5a.3b (see [open items](../open-items.md)).
+is one worktree unless noted. In row 1 only 01 gates 5a.3a; the rest of
+the row rides in the same worktree but does not gate (09 and 10 gated on
+a decision, made 2026-11-12). Rows 2 and 3 gate only 5a.3b (see [open items](../open-items.md)).
 
 ### Before step 5a.3
 
 | Order | Batch | Issues | Notes |
 |---|---|---|---|
-| 1 (before 5a.3a) | Route confinement | [01](01-sco-manager-two-thread-mutation.md), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 first. Once routing state is confined to the route thread, 10's "SCO failed in this route session" flag can be a plain field instead of another atomic. 11 and 21 are not gating but touch the same `RouteControl` code. |
+| 1 (01 before 5a.3a) | Route confinement | [01](01-sco-manager-two-thread-mutation.md), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 first. Once routing state is confined to the route thread, 10's "SCO failed in this route session" flag can be a plain field instead of another atomic. 10's code change, 09's test, 11, and 21 are not gating but touch the same `RouteControl` code. |
 | 2 (before 5a.3b) | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
 | 3 (before 5a.3b) | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3b reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
 

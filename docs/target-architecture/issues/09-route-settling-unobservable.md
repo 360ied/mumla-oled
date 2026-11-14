@@ -9,7 +9,7 @@
 | Area | Route |
 | Spec | [route.md § RouteState](../route.md#routestate), [route.md § Session start](../route.md#session-start), [voice.md](../voice.md) ("Voice follows route state") |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt` (`onSessionStarted`, `recompute`), `voice/VoiceControl.kt` (`onRouteState`, `tryCreate`) |
-| Gates | **Gates step 5a.3**: decide whether to implement the spec's `Settling` semantics or correct the spec, before the native voice path is built to follow `RouteState` |
+| Gates | Gate met: step 5a.3 needed a decision on implementing the spec's `Settling` semantics or correcting the spec before the native voice path follows `RouteState`; made 2026-11-12. The pinning test is not gating |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
