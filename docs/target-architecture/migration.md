@@ -191,11 +191,13 @@ blocking method in `VoiceControl` and `RouteControl`); `AudioHandler`,
 
 ## Step 5a — Engine refactor, codec, network threads
 
-Four sub-steps. Each one leaves voice working on a live path, ships, and
-is used daily before the next begins. Old and new paths coexist through
-interim seams (as `LegacyVoiceLink` and `VoiceControl` did in steps 3
-and 4); the Kotlin path is deleted only in 5a.4. 5a introduces **no
-intentional behavior changes**, with one accepted exception: a
+Four sub-steps, the third in two halves (5a.3a and 5a.3b). Each one
+leaves voice working on a live path, ships, and is used daily before the
+next begins. Old and new paths coexist through interim seams (as
+`LegacyVoiceLink` and `VoiceControl` did in steps 3 and 4); the Kotlin
+receive path is deleted in 5a.3b and the Kotlin send path in 5a.4. 5a
+introduces **no intentional behavior changes**, with one accepted
+exception: a
 push-to-talk press and release inside a single 10 ms frame no longer opens
 and closes a burst (see [voice](voice.md#input-engine)). Upstream-parity
 differences found along the way are recorded in [open
@@ -263,46 +265,138 @@ UDP ping framing built by the native codec completes a round trip against
 murmur (the reply proves the server parsed it), and text messages keep
 working end to end;
 daily use without regressions. Voice between two clients over the tunnel
-is **not** part of this sub-step: it moves to 5a.3, where synthetic PCM
-enters at the native capture and render entry points instead of through a
-test-only seam in Kotlin (see [testing](testing.md#murmur-interop) and
+is **not** part of this sub-step: it moves to 5a.3a, where it plays
+through the native render entry point instead of through a test-only seam
+in Kotlin (see [testing](testing.md#murmur-interop) and
 [open items](open-items.md#resolved)).
 
 ### 5a.3 — Native receive
 
-**Provisional.** Re-planned once 5a.2 is in daily use, because its shape
-depends on what 5a.2's inbound codec JNI turns out to be. The likely
-re-plan splits it in two: native render first (render entry point,
-inbound and tunnel queues, notifier, Kotlin still owning the socket and
-parse), then native receive and transport (socket, receive thread,
-decrypt, pings, resync, `VoiceEngine`, and `nativeSendDatagram`, which
-moves with the socket). Open questions are in
-[open items](open-items.md). The list below is the pre-split plan.
+Two halves, each shipped and used daily before the next begins.
+Re-planned (2026-11-14) after 5a.2 went into daily use. 5a.2's inbound
+codec JNI hands parsed frames back to Kotlin, which filters senders and
+passes each frame to the output engine through a mutex-guarded bridge
+shared by three threads (the UDP receive coroutine, the session message
+coroutine, and the render thread), and the render thread calls into
+Kotlin for talk state. 5a.3a removes both without touching the network;
+5a.3b moves the socket.
 
-1. `voice_io` receive half: the UDP socket, receive thread (`recvfrom`,
-   OCB2 decrypt, `parseDatagram`), inbound and tunnel queues, render
-   entry point, notifier thread, and the policy/settings sequence locks
-   for what receive and render read. Threads and ownership exactly as in
-   [voice](voice.md#voice-io-layer).
-2. The Kotlin `VoiceEngine` facade (lifecycle, keys, pings, tunnelled
-   packets) replaces `LegacyVoiceLink`. The Kotlin `AudioTrack` thread
-   calls the render entry point.
-3. Interim send seam: Kotlin capture, encode, and framing stay; framed
+**Prerequisites:** issue
+[01](issues/01-sco-manager-two-thread-mutation.md) before 5a.3a; issues
+[16](issues/16-voice-link-owns-udp-route.md) and
+[17](issues/17-udp-format-per-packet.md), the known-sessions set, and the
+`removeUser` routing before the half that needs them (see
+[open items](open-items.md)).
+
+#### 5a.3a — Native render
+
+1. `voice_io` arrives with the inbound and tunnel rings, the render entry
+   point, and the notifier thread, as in
+   [voice](voice.md#voice-io-layer). The render entry point drains both
+   rings into `queuePacket`, renders at most 60 ms per engine call, and
+   pushes talk events and drop counts to the render event queue; today's
+   Kotlin `AudioTrack` thread calls it. `voice_io` creates, drives, and
+   destroys the output engine, so exactly one thread drives it.
+2. Engine calls that reach it from other threads today move with it:
+   `removeUser` reaches the render thread as a queued control item,
+   `hasActiveVoices` becomes internal to the render loop, and the jitter
+   margin is the I/O layer's constant. `NativeAudioOutputEngineJni.cpp`,
+   the Kotlin `NativeAudioOutputEngine`, and the bridge's `<mutex>` are
+   deleted.
+3. The notifier thread attaches to the JVM once and every 20 ms delivers
+   the render events to Kotlin in one call. It publishes `talkActivity`
+   (remote users; self follows in 5a.4) through a production class that
+   the `VoiceEngine` facade takes over in 5a.3b, not a partial facade.
+   Remote talk indicators read `talkActivity`; handles stop carrying a
+   writable remote `talkState`, and the `onTalkStateChanged` callback is
+   deleted.
+4. Interim enqueue: Kotlin keeps parsing with 5a.2's codec and keeps the
+   sender filter, and pushes the surviving frames into the rings through
+   two interim calls, one per ring and producer: UDP frames from the
+   `HumlaUDP` receive coroutine, tunnelled frames from the session message
+   coroutine. Nothing native reads policy or settings yet, so no sequence
+   locks arrive in this half; half duplex stays in Kotlin's `AudioOutput`
+   until capture moves in 5a.4.
+
+**Done when:** the output engine bridge is deleted and its `<mutex>`
+entry is gone from the allowlist, and `NativeAudioOutputEngine.kt` with
+it; `voice_io/`'s allowlist section holds only the thread includes;
+`audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`;
+ring tests pin the full-ring drop counters; a notifier test pins one
+Kotlin call per drain; tests pin that the render entry point never
+attaches to the JVM and is the only path into the output engine (failing
+if a second caller appears); interop voice from a peer over the tunnel
+plays non-silent PCM through the real render entry point — the scenario
+deferred from 5a.2, with the peer sending voice through the device-free
+Kotlin `AudioHandler` encode path (production code, not a test seam);
+daily use without regressions, including remote talk indicators and a
+user leaving mid-talk.
+
+#### 5a.3b — Native receive and transport
+
+One sub-step, built in this order, each item a checkpoint that keeps
+voice working:
+
+1. The Kotlin `VoiceEngine` facade (lifecycle, keys, pings, tunnelled
+   packets) replaces `LegacyVoiceLink` and implements `VoiceLink` and
+   `VoiceLifecycle`. `VoiceCommand.Start` carries the keys, the UDP
+   format, and the legacy server version, decided once by the transport
+   (issue [17](issues/17-udp-format-per-packet.md)). It takes over the
+   `talkActivity` publisher from 5a.3a.
+2. `voice_io` receive half: the UDP socket and receive thread
+   (`recvfrom`, OCB2 decrypt through `CryptStateOCB2` directly,
+   `parseDatagram`); the [sender filter](voice.md#sender-filter) reads
+   the locally-muted list and the known sessions through the policy
+   sequence lock; voice goes to the inbound ring. The interim UDP enqueue
+   is deleted.
+3. Native `queueTunnelled`: parse and filter on the session message
+   coroutine, push to the tunnel ring. The Kotlin tunnel parse and the
+   interim tunnel enqueue are deleted.
+4. Interim send seam: Kotlin capture, encode, and framing stay; framed
    packets go to native through a temporary `nativeSendDatagram`
-   (encrypt and `sendto` on the shared socket).
-4. Remote talk state comes from `VoiceEngine.talkActivity`; handles stop
-   carrying a writable remote `talkState`.
+   (encrypt and `sendto` on the shared socket), or to the tunnel sink
+   when the transport routes voice over TCP.
+5. Pings, resync, and counters: ping replies reach Kotlin as
+   `VoiceEvent.UdpPing`; a decrypt failure raises `CryptResyncRequested`
+   at today's rate; `VoiceStatus.localCrypt` comes from `CryptStateOCB2`.
+   The 20 s fallback and the switch back to UDP stay in `TransportImpl`,
+   unchanged — native code reports, the transport decides.
+6. `HumlaNative` takes up its remaining duties: a load failure reports
+   `VoiceEvent.PipelineError` on release builds, and JVM tests inject a
+   fake native layer instead of catching `UnsatisfiedLinkError`.
+7. Delete `HumlaUDP`, `LegacyVoiceLink`, the Kotlin `CryptState`, and
+   `NativeCryptStateJni.cpp`, which have no callers once the socket and
+   encryption are native; the interim codec bridge loses its parse and
+   ping calls and keeps only the voice framing Kotlin encode uses until
+   5a.4.
 
-**Done when:** native loopback, queue, and sequence-lock tests pass;
-`audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`
-while `voice_io/`'s allowlist section holds only the socket and thread
-includes and the sequence locks the spec names, with a test pinning that
-the locks guard receive-visible settings and nothing else; one render
-entry point is the only path into the engines, pinned by a test that
-fails if a second caller appears; interop voice from a peer to the
-client over UDP and over the tunnel plays non-silent PCM through the
-real JNI binding, including the tunnel voice scenario deferred from
-5a.2; daily use without regressions.
+**Done when:**
+- **Crypt counts match today's.** Before the Kotlin path is deleted, the
+  good, late, lost, and resync counts it reports for a scripted sequence
+  of in-order, late, lost, and replayed packets are recorded as a
+  fixture, and the native path reproduces them. Wrong counts make the
+  transport's health check fall back to the tunnel, or fail to, without
+  an audible symptom.
+- **Resync recovers.** A forced decrypt failure produces exactly one
+  rate-limited resync request, and voice resumes after the new IV.
+- **Stop leaves nothing behind.** A test pins that after `Stop` the
+  socket is closed and the receive and notifier threads have exited;
+  interop restart → `Reconnecting` → `Connected` carries voice
+  afterward.
+- **Sender filter.** A locally muted user is silent over UDP and over the
+  tunnel; an unknown session produces no audio and holds no voice slot;
+  known-sessions overflow fails open.
+- No per-packet UDP format decision remains.
+- Native loopback, queue, and sequence-lock tests pass; `audio_engine/`
+  and `voice_codec/` stay under `SINGLE_THREADED_ENGINE` while
+  `voice_io/`'s allowlist section holds only the socket and thread
+  includes and the sequence locks the spec names, with a test pinning
+  that the locks guard receive-visible settings and nothing else.
+- `HumlaUDP`, `CryptState`, `LegacyVoiceLink`, and
+  `NativeCryptStateJni.cpp` are deleted and absent from the allowlist.
+- Interop voice from a peer over UDP plays non-silent PCM; the existing
+  UDP ping and both UDP-blocked → tunnel fallback scenarios pass.
+- Daily use without regressions.
 
 ### 5a.4 — Native send and cleanup
 
@@ -311,18 +405,17 @@ real JNI binding, including the tunnel voice scenario deferred from
    drop-oldest, send thread. `VoicePolicy` and `VoiceSettings` pushed to
    native.
 2. Self talk state from `VoiceEngine.talkActivity`.
-3. Delete `HumlaUDP`, the Kotlin framing in `AudioHandler`, the Kotlin
-   `CryptState`, `VoiceControl`, the interim seams from 5a.2 and 5a.3, and
-   the old JNI bridges; `NativeCrashTestJni.cpp` moves to
-   `jni/diagnostics/`.
+3. Delete the Kotlin framing in `AudioHandler`, `VoiceControl`, the
+   interim seams from 5a.2 (the codec bridge) and 5a.3b
+   (`nativeSendDatagram`), and the input engine bridge;
+   `NativeCrashTestJni.cpp` moves to `jni/diagnostics/`.
 
 **Done when:** interop voice in both directions over UDP and over the
 tunnel; mute, deafen, and push-to-talk gate transmission in interop;
 outbound queue is allocation-free and drops oldest under a full-queue
-test that pins the drop count; `HumlaUDP`, `CryptState`,
-`LegacyVoiceLink`, and `VoiceControl` are deleted and absent from the
-allowlist; the interim `<mutex>` entries from 5a.1 are gone with the
-bridge files; daily use without regressions.
+test that pins the drop count; `VoiceControl` is deleted and absent from
+the allowlist; the input engine bridge's interim `<mutex>` entry from
+5a.1 is gone with the file; daily use without regressions.
 
 ## Step 5b — AAudio
 

@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — settle before step 5a.3. |
+| Status | Open — settle before step 5a.3b. |
 | Category | Undocumented interim |
 | Severity | Low today (unreachable in practice); relevant to the 5a.3 contract |
 | Verified | Yes (code read) |
 | Area | Transport / voice link |
 | Spec | [transport.md § UDP packet format](../transport.md#udp-packet-format), [transport.md § Responsibilities](../transport.md#responsibilities) (`VoiceLink` interface) |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt` (`handleVersion`, around lines 478-489); `net/Transport.kt` (`VoiceLink.setServerVersion`); `net/LegacyVoiceLink.kt` (`setServerVersion` line 104, `sendUdpPing` line 239, `isProtobufUdpSupported` line 258, `onUDPDataReceived` around lines 262-295) |
-| Gates | Settle before step 5a.3 (the native engine receives the format in `VoiceCommand.Start`) |
+| Gates | Settle before step 5a.3b (the native engine receives the format in `VoiceCommand.Start`) |
 
 Line numbers below refer to `master` at `092d9dc8`.
 

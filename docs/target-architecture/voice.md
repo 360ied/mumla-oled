@@ -28,8 +28,9 @@ Paths are relative to
 The existing JNI bridges for the engines
 (`NativeAudioInputEngineJni.cpp`, `NativeAudioOutputEngineJni.cpp`) and
 crypt (`NativeCryptStateJni.cpp`) are deleted when their Kotlin callers are
-(steps 5a and 5b); `voice_io` owns the voice JNI surface once it lands in
-5a.3. Until 5a.4 the one exception is 5a.2's interim codec bridge,
+(output engine in 5a.3a, crypt in 5a.3b, input engine in 5a.4); `voice_io`
+owns the voice JNI surface once it lands in 5a.3a. Until 5a.4 the one
+exception is 5a.2's interim codec bridge,
 `voice_codec/NativeVoiceCodecJni.cpp`, which exists only because Kotlin
 still frames voice; it holds that directory's single `<jni.h>` allowlist
 entry and leaves with the file.
@@ -402,6 +403,11 @@ coroutine, so it is a single logical producer even though it may resume on
 different dispatcher threads; the ring's acquire/release ordering covers
 that.
 
+Output-engine calls that originate off the render thread (`removeUser`
+when a user leaves) reach it as queued control items, drained with the
+inbound rings before `render`. Which ring carries them is an
+[open item](open-items.md) settled before 5a.3a.
+
 ### Policy and settings handoff
 
 Kotlin publishes two values into native code:
@@ -448,8 +454,9 @@ both formats (`user == null || user.isLocalMuted`). Dropping unknown
 senders is retained, not listed as a behavior change. How native code
 learns the known sessions (a set beside the locally-muted list in the
 policy snapshot, its capacity, and an overflow rule that fails open rather
-than silencing real users) is an [open item](open-items.md) settled when
-5a.3 is re-planned.
+than silencing real users) is an [open item](open-items.md) settled
+before 5a.3b, which brings the first native reader. Until then (5a.3a)
+Kotlin applies the filter before pushing frames into the rings.
 
 ### Realtime rules
 

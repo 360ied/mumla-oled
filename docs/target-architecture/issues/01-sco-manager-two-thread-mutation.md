@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — regression unfixed; fix before step 5a.3. |
+| Status | Open — regression unfixed; fix before step 5a.3a. |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
 | Area | Route / Bluetooth SCO |
 | Spec | [route.md § Thread](../route.md#thread), [migration.md § Step 4](../migration.md#step-4--voice-control-and-route) item 1 |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt`, `audio/ScoLink.kt`, `route/RouteControl.kt`, `HumlaService.kt` (construction) |
-| Gates | Should be fixed before step 5a.3 (voice starts following `RouteState` natively) |
+| Gates | Should be fixed before step 5a.3a (voice starts following `RouteState` natively) |
 
 Line numbers below refer to `master` at `092d9dc8`.
 

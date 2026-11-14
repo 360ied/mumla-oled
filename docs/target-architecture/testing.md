@@ -166,25 +166,29 @@ pins). From step 3 on, it drives `HumlaClient` directly.
 - from step 5a.2: UDP ping framing built by the native codec round-trips
   against murmur, and text messages keep flowing (text is TCP
   control-channel traffic and never involves the codec);
-- from step 5a.3: voice between two clients over UDP and over the tunnel
-  (inbound UDP from 5a.3, both directions from 5a.4;
-  see [migration](migration.md#step-5a--engine-refactor-codec-network-threads)).
+- from step 5a.3: voice between two clients — inbound over the tunnel
+  from 5a.3a, inbound over UDP from 5a.3b, both directions from 5a.4
+  (see [migration](migration.md#step-5a--engine-refactor-codec-network-threads));
+  from 5a.3b also restart → `Reconnecting` → `Connected` with voice
+  afterward, and a locally muted peer silent over UDP and the tunnel.
 
 **Voice scenarios run the real native path.** The host build of
 `libhumlaaudio` (crypto JNI only today) grows with the step: the codec JNI
-arrives in 5a.2, the voice JNI in 5a.3. The interop test loads it and
+arrives in 5a.2, the voice JNI in 5a.3a. The interop test loads it and
 drives whatever is live at that point. 5a.2 adds no voice scenario: with
 capture still Kotlin and no `VoiceEngine`, a PCM round-trip would run the
 same codec at both ends and prove self-consistency rather than wire
 parity, and injecting the PCM would need a test-only seam in
-`AudioHandler` that 5a.3 deletes. The native codec is instead driven live
-at the encode framing entry point (JVM test, byte-equality against the
-Java-generated classes) and end-to-end by UDP ping round trips; its
-inbound parse is pinned by the codec goldens here, because the Kotlin
+`AudioHandler` that native capture replaces. The native codec is instead
+driven live at the encode framing entry point (JVM test, byte-equality
+against the Java-generated classes) and end-to-end by UDP ping round
+trips; its inbound parse is pinned by the codec goldens here, because the Kotlin
 parse path a device-free parse entry point would drive is replaced by the
-native receive path in 5a.3. From 5a.3 the interop test injects
-synthetic PCM at the native capture and render entry points, which are
-production API. A stub voice link
+native receive path in 5a.3b. From 5a.3a the client under test plays
+inbound voice through the native render entry point, and the peer sends
+voice through the device-free Kotlin `AudioHandler` encode path until
+5a.4, when synthetic PCM enters at the native capture entry point; all
+are production API. A stub voice link
 is acceptable only for scenarios that do not claim to cover voice, and
 must say so in its name.
 

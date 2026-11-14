@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — should be closed before step 5a.3. |
+| Status | Open — should be closed before step 5a.3b. |
 | Category | Verification gap |
 | Severity | Harmful (step 3's failure and recovery paths are untested; 5a.3 builds on them) |
 | Verified | Yes (test inventory and scenario-by-scenario comparison) |
 | Area | Client, session, transport |
 | Spec | [testing.md § Virtual-time tests](../testing.md#virtual-time-tests), [testing.md § Test layers](../testing.md#test-layers) |
 | Code | `libraries/humla/src/test/java/se/lublin/humla/client/HumlaClientTest.kt`, `client/ReconnectPolicyTest.kt`, `net/*Test*`; production `client/Session.kt`, `net/TransportImpl.kt` |
-| Gates | Should gate step 5a.3 (native receive plugs into the transport and `VoiceLink`) |
+| Gates | Should gate step 5a.3b (native receive plugs into the transport and `VoiceLink`) |
 
 Line numbers below refer to `master` at `092d9dc8`.
 

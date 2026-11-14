@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — settle before step 5a.3. |
+| Status | Open — settle before step 5a.3b. |
 | Category | Undocumented interim |
 | Severity | Moderate (two writers of a decision the spec gives to one owner; directly relevant to 5a.3) |
 | Verified | Yes (code read) |
 | Area | Transport / voice link |
 | Spec | [transport.md § Keepalive and UDP health](../transport.md#keepalive-and-udp-health), [transport.md § Responsibilities](../transport.md#responsibilities) |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/net/LegacyVoiceLink.kt` (`usingUdp`, `startVoice`, `setForceTcp`, `submit`); `net/TransportImpl.kt` (`usingUdpRef`, `handlePing`, `switchToTunnel`, `startKeepalive`); `client/Session.kt` (`SessionStats.initial(usingUdp = !target.forceTcp)`) |
-| Gates | **Should be settled before step 5a.3**, which re-implements the voice side of this contract natively |
+| Gates | **Should be settled before step 5a.3b**, which re-implements the voice side of this contract natively |
 
 Line numbers below refer to `master` at `092d9dc8`.
 

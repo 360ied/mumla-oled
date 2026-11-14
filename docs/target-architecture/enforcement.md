@@ -159,8 +159,9 @@ threads share it.
 `path: header` lines, and follow the same ratchet: entries may only be
 removed. The two `<mutex>` entries for the input and output engine bridges
 are the one addition a step makes in place: the engine refactor moved the
-lock out of the engine and into the interim JNI seam, so both entries
-disappear with the bridge files in 5a.4, and the check fails if an entry
+lock out of the engine and into the interim JNI seam, so each entry
+disappears with its bridge file (the output engine's in 5a.3a, the input
+engine's in 5a.4), and the check fails if an entry
 outlives the include it excuses. 5a.2 adds one more the same way:
 `voice_codec/NativeVoiceCodecJni.cpp` takes `<jni.h>` for the interim
 codec bridge Kotlin calls, and the entry leaves with the file in 5a.4.
