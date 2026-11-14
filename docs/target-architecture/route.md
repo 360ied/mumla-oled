@@ -141,6 +141,21 @@ belongs to `RouteControl`: while the decision is `VOICE_HANDSET` by
 absence, it re-checks whether a media sink has appeared (late A2DP
 enumeration). It never produces `Fallback` by itself.
 
+**Inputs are sampled at decision time.** Every decision re-reads both of
+its inputs — the media-sink query and `ScoLink.isActive()` — instead of
+holding a copy across recomputes. Link and device callbacks only *trigger*
+a decision; they carry no route of their own. This is not a performance
+detail: `ScoLink.stop()` reports nothing back by contract, so the stops the
+controller performs itself (preference off, `SessionEnded`) are silent, and
+a callback-fed copy of the link state goes stale on exactly the paths that
+leave SCO — the decision then keeps publishing `VOICE_SCO`, holding the
+`VOICE` profile and `MODE_IN_COMMUNICATION` for the rest of the session.
+For the same reason a preference change applies to the link **before** the
+decision is taken (see
+[issue 32](issues/32-route-decision-cached-sco-state.md)). Detector:
+`RouteControlTest.routeDecisionFollowsLinkStateNotEvents` holds a decision
+to the link's own state with no callback delivered.
+
 **Events:** `ScoFailed(reason)` whenever an SCO bring-up fails (which,
 under the definition above, always coincides with entering or staying in
 `Fallback`), and `RouteChanged` whenever the published state changes,
