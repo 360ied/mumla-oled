@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
 import se.lublin.humla.model.IChannel
@@ -554,17 +555,20 @@ class Session internal constructor(
                     val result = applyServerSync(syncingState, msg)
                     // Preserve local-only intents that landed pre-sync (PTT,
                     // voice target) atomically: read-then-publish would drop
-                    // a press racing this block, so merge inside update.
-                    _state.update { current ->
-                        syncingState = result.state.copy(
+                    // a press racing this block, so merge inside update. The
+                    // lambda only computes; the builder adopts the value the
+                    // CAS actually committed, so no state leaks from a
+                    // retried attempt.
+                    val published = _state.updateAndGet { current ->
+                        result.state.copy(
                             local = result.state.local.copy(
                                 pttPressed = current.local.pttPressed,
                                 voiceTargetId = current.local.voiceTargetId,
                             ),
                         )
-                        synced = true
-                        syncingState
                     }
+                    syncingState = published
+                    synced = true
                     emitAll(result.events)
                     // Fan out the initial dump for screens still on observers.
                     for (id in syncingState.server.channels.keys) {
