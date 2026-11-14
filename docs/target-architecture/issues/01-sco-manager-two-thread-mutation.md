@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`485453c7`..`1eb102f1`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`485453c7`..`4cd3d623`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
@@ -217,17 +217,19 @@ migration ground rules).
 
 ## Resolution
 
-Fixed along the preferred direction. The state at `1eb102f1`:
+Fixed along the preferred direction. The state at `4cd3d623`:
 
-- **Thread.** `RouteControl.startThread()` starts the route `HandlerThread`
-  and returns a `RouteThread`: its `Handler`, an `Executor` posting to it,
-  and the looper dispatcher `route.md` specifies
-  (`Handler.asCoroutineDispatcher`, so `delay()` stays on the looper).
-  Thread creation lives in `RouteControl.kt`, the boundary file that owns
-  the thread (see [enforcement](../enforcement.md)). `HumlaService` starts
-  it before building the SCO manager and passes the same instance to the
-  manager and to `RouteControl.create`; `RouteControl.close()` quits it
-  after its teardown.
+- **Thread.** `RouteControl.create` starts the route `HandlerThread` as a
+  `RouteThread`: its `Handler`, an `Executor` posting to it, and the
+  looper dispatcher `route.md` specifies (`Handler.asCoroutineDispatcher`,
+  so `delay()` stays on the looper). It builds the SCO link through a
+  factory the caller passes, `(RouteThread) -> ScoLink?`, and builds the
+  controller on the same thread. The thread never leaves `RouteControl.kt`,
+  the boundary file that owns it (see [enforcement](../enforcement.md)),
+  and the controller both creates and destroys the link: `close()`
+  destroys it, then quits the thread. `HumlaService` passes a factory
+  wrapping the `BluetoothScoManager` construction; `AppContainer` will in
+  step 6.
 - **Confinement.** The manager's scope runs on the route dispatcher, the
   S+ device listener on the route executor, and the API 30 receiver on the
   route `Handler`. Control calls come only from `RouteControl` on its route
@@ -254,38 +256,41 @@ Fixed along the preferred direction. The state at `1eb102f1`:
   `RouteThreadConfinementTest` is the confinement detector: the production
   factories on a real route `HandlerThread`, driven from another thread
   through every entry point that reaches the link, with a recording fake
-  `ScoLink`; pointing the controller at another dispatcher fails it.
+  `ScoLink` built through that factory; building the link on a second
+  thread or pointing the controller at another dispatcher fails it.
 
-Commits: `485453c7`..`1eb102f1`. Along the way, `14290883` first exempted
-`isActive` from the thread check (fixed by `3859dc9e` and `7d16155b`), and
-the dispatcher and tests were reworked in `c7dbf668` and `1f3105c6`.
+Commits: `485453c7`..`4cd3d623`. Along the way, `14290883` first exempted
+`isActive` from the thread check (fixed by `3859dc9e` and `7d16155b`), the
+dispatcher and tests were reworked in `c7dbf668` and `1f3105c6`, and
+`4cd3d623` moved link construction into `RouteControl.create`.
 
 Acceptance, line by line:
 
 - No `Dispatchers.Main`, `Main.immediate`, `mainExecutor`, or
   `Looper.getMainLooper()` in `BluetoothScoManager.kt`: met.
 - All methods and callbacks on the route thread, with entry-point
-  assertions: met, and detected by `RouteThreadConfinementTest` (controller
-  side) and `BluetoothScoManagerTest` (manager side). Not detected: that
-  `HumlaService` hands the same `RouteThread` to both, which is one local
-  variable in `onCreate`.
+  assertions: met, and detected by `RouteThreadConfinementTest` (the
+  controller and the link it builds share one thread, and every link call
+  is on it) and `BluetoothScoManagerTest` (the manager's entry points).
 - Virtual-time tests for timeout then retry, timeout racing `stop()`,
   timeout racing `stop()` + `start()`, and failure delivery after
   `stop()`: met by `timeoutRetriesOnceThenFails`,
   `stopBeforeTimeoutCancelsIt`,
   `timeoutFromStoppedSessionNeverActsOnNextSession`, and
   `failureAfterStopIsDropped`.
-- `./scripts/check.sh` passes: met at `1eb102f1`. The on-device headset
+- `./scripts/check.sh` passes: met at `4cd3d623`. The on-device headset
   check (developer's discretion) has not been done.
 
 Against the spec: `route.md` § Thread holds (thread named `route` owned by
 `RouteControl`, looper dispatcher, device callbacks on the route handler,
-the SCO manager on the route executor, blocking platform calls off main,
+the SCO manager on the route executor and built on the route thread by
+the controller that destroys it, blocking platform calls off main,
 re-posting to the route thread, the private route-session counter);
 `migration.md`'s detector rule holds (the manager's header names both
 tests). Not changed here: `RouteControl`'s primary constructor still takes
 its scope and handler rather than `route.md`'s `(platform, sco, prefs)`,
-as since step 4.
+as since step 4, and `create` takes a link factory where that API shows a
+link; `route.md` does not say how the SCO manager gets the route thread.
 
 Not verified on a device: both backends are covered only by Robolectric
 and code reading.
