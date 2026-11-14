@@ -62,7 +62,10 @@ queue that the audit snapshot could not have seen. The spec-only fixes (12,
 13, 24, 25, 27, 31, and the interim entries for 14, 15, 18) are applied on
 `master`, and 08, 23, and
 28 are now fixed and tested; the decisions for 09, 10, 11, and 19 are
-recorded; 06's review rules are in the pedantic-review skill. What remains
+recorded; 19 and 06's `ServerSync` lambda are fixed on branch
+`session-serversync-update-hygiene`, pending merge, and the review skills
+that were to carry 06's two rules were deleted (`8e88589f`), leaving rule 1
+with no enforcement artifact. What remains
 is code, tests, and the two sweeps listed below. Each issue file carries
 the same state in its `Status` row.
 
@@ -81,7 +84,7 @@ the same state in its `Status` row.
 | [03](03-voice-control-test-vacuous.md) | `VoiceControlTest` never starts a session, so the pipeline lifecycle is untested | Open; deferred to 5a.4, lesson applies to its replacement |
 | [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Open; should close before 5a.3 |
 | [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Open; with 04 |
-| [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions are not in any review checklist; one violation in `Session` | Half applied: review rules landed; `ServerSync` lambda and the rule-2 sweep open |
+| [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions have no enforcement artifact; one violation in `Session` | Split: `ServerSync` lambda fixed on `session-serversync-update-hygiene`; review skills deleted, so enforcement is open (tripwire not written); rule-2 sweep undone |
 | [07](07-channel-adapter-spike-weaker.md) | Step-2 live-handle spike test is weaker than specified | Open; not gating |
 | [08](08-hash-clearing-untested.md) | Hash-driven clearing has no transition test | Resolved (`3333918a`, `71bd3a54`) |
 
@@ -104,7 +107,7 @@ the same state in its `Status` row.
 | [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Open; settle before 5a.3 |
 | [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Open; settle before 5a.3 |
 | [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Interim documented; ends in 5a.4 |
-| [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Decided; `state.md` updated, code change open |
+| [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved on `session-serversync-update-hygiene` (`89dd9b57`), pending merge |
 
 ### Benign drift
 

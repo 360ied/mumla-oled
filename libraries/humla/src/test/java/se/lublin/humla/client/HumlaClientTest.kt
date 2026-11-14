@@ -628,6 +628,42 @@ class HumlaClientTest {
     }
 
     @Test
+    fun serverSyncPublishesDumpAndPreSyncIntents() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        val factory = FakeFactory()
+        val voice = FakeVoice()
+        val route = FakeRoute(Collections.synchronizedList(ArrayList()))
+        val network = FakeNetwork()
+        val client = newClient(this, dispatcher, factory, voice, route, network)
+        runCurrent()
+        client.connect(testTarget())
+        runCurrent()
+        val live = client.currentSession.value!!
+        val fake = live.transport as FakeTransport
+        // Pre-sync dump accumulates in the session's private builder; the
+        // intents below land only on the published state.
+        fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
+        fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "alice", 0)))
+        runCurrent()
+        live.setPtt(true)
+        live.setVoiceTarget(3)
+        runCurrent()
+        fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
+        runCurrent()
+        assertTrue(client.state.value is ClientState.Connected)
+        // The publish carries the accumulated dump and merges the pre-sync
+        // intents instead of overwriting them with the builder's initial
+        // values. Connected already implies phase == SYNCED, so the phase is
+        // not asserted again here.
+        val synced = live.state.value
+        assertTrue(synced.server.channels.containsKey(0))
+        assertTrue(synced.server.users.containsKey(1))
+        assertTrue(synced.local.pttPressed)
+        assertEquals(3, synced.local.voiceTargetId)
+        client.close().join()
+    }
+
+    @Test
     fun muteSpamDuringConnectIsSafe() = runTest {
         val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
         val factory = FakeFactory()
