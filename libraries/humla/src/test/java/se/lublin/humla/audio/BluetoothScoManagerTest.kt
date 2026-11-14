@@ -24,10 +24,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.asExecutor
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.android.asCoroutineDispatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -44,19 +41,22 @@ import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.AudioDeviceInfoBuilder
 import org.robolectric.shadows.ShadowLooper
 import se.lublin.humla.route.RouteThread
+import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 
 /**
- * Virtual-time tests for the SCO state machine against a deferred-routing
- * platform shadow. Every timer, listener delivery, and failure callback runs
- * on one test dispatcher, standing in for the route thread.
+ * The SCO state machine on a route thread built the way production builds
+ * it: handler, executor, and looper dispatcher all on one looper, with the
+ * real thread check. The looper is Robolectric's paused main looper, which
+ * the test thread runs, so the test's own calls are on the route thread and
+ * its virtual clock drives the connect timeout. The platform is the stock
+ * audio shadow with deferred routing (see [DeferredRouteAudioManagerShadow]).
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], shadows = [DeferredRouteAudioManagerShadow::class])
 class BluetoothScoManagerTest {
-    private val scheduler = TestCoroutineScheduler()
-    private val dispatcher = StandardTestDispatcher(scheduler)
     private lateinit var app: Application
+    private lateinit var audioManager: AudioManager
     private lateinit var platform: DeferredRouteAudioManagerShadow
     private lateinit var manager: BluetoothScoManager
     private val events = mutableListOf<String>()
@@ -85,48 +85,47 @@ class BluetoothScoManagerTest {
     fun setUp() {
         app = RuntimeEnvironment.getApplication()
         shadowOf(app).grantPermissions(Manifest.permission.BLUETOOTH_CONNECT)
-        val audioManager = app.getSystemService(AudioManager::class.java)
+        audioManager = app.getSystemService(AudioManager::class.java)
         platform = Shadow.extract(audioManager)
         platform.setAvailableCommunicationDevices(listOf(scoDevice))
         platform.setIsBluetoothScoAvailableOffCall(true)
-        manager = newManager()
+        manager = BluetoothScoManager(app, listener, routeThread(), TIMEOUT_MS, 2)
     }
 
     @After
     fun tearDown() {
         manager.destroy()
-        scheduler.advanceUntilIdle()
+        idle()
     }
 
-    private var onRouteThread = true
-
-    private fun newManager(): BluetoothScoManager {
-        val thread = RouteThread(
-            handler = Handler(Looper.getMainLooper()),
-            executor = dispatcher.asExecutor(),
-            dispatcher = dispatcher,
-            isCurrentCheck = { onRouteThread },
+    // Production's RouteControl.startThread shapes, on the test's looper.
+    private fun routeThread(): RouteThread {
+        val looper = Looper.getMainLooper()
+        val handler = Handler(looper)
+        return RouteThread(
+            handler = handler,
+            executor = Executor { r -> handler.post(r) },
+            dispatcher = handler.asCoroutineDispatcher("route"),
+            isCurrentCheck = { Looper.myLooper() == looper },
         )
-        return BluetoothScoManager(app, listener, thread, TIMEOUT_MS, 2)
     }
 
-    private fun runCurrent() = scheduler.runCurrent()
+    /** Runs everything posted to the route looper that is due now. */
+    private fun idle() = ShadowLooper.idleMainLooper()
 
-    private fun advance(ms: Long) {
-        scheduler.advanceTimeBy(ms)
-        scheduler.runCurrent()
-    }
+    /** Advances the virtual clock, running what falls due on the way. */
+    private fun advance(ms: Long) = ShadowLooper.idleMainLooper(ms, TimeUnit.MILLISECONDS)
 
     @Test
     fun connectEventCompletesBringUpAfterStateFlip() {
         manager.start()
-        runCurrent()
-        assertEquals(1, platform.setRequests)
-        assertEquals(1, platform.listenerCount)
+        idle()
+        assertEquals(1, platform.requests)
+        assertEquals(1, platform.listeners)
         assertFalse(manager.isActive())
 
         platform.connect(scoDevice)
-        runCurrent()
+        idle()
 
         assertEquals(listOf("connected active=true"), events)
         assertTrue(manager.isActive())
@@ -136,37 +135,39 @@ class BluetoothScoManagerTest {
     fun alreadyRoutedCompletesWithoutWaitingForTimeout() {
         platform.preselect(scoDevice)
         manager.start()
-        runCurrent()
+        idle()
 
         assertEquals(listOf("connected active=true"), events)
         advance(TIMEOUT_MS * 3)
-        assertEquals(1, platform.setRequests)
+        assertEquals("the armed timeout was cancelled", 1, platform.requests)
     }
 
     @Test
     fun timeoutRetriesOnceThenFails() {
         manager.start()
-        runCurrent()
+        idle()
 
-        advance(TIMEOUT_MS)
-        assertEquals("one retry after the first timeout", 2, platform.setRequests)
-        assertEquals(1, platform.listenerCount)
+        advance(TIMEOUT_MS - 1)
+        assertEquals("no retry before the deadline", 1, platform.requests)
+        advance(1)
+        assertEquals("one retry at the first deadline", 2, platform.requests)
+        assertEquals(1, platform.listeners)
         assertTrue(events.isEmpty())
 
         advance(TIMEOUT_MS)
         assertEquals(listOf("failed ${BluetoothScoManager.REASON_TIMEOUT} idle=true"), events)
-        assertEquals(2, platform.setRequests)
-        assertEquals(0, platform.listenerCount)
-        assertNull(platform.currentDevice)
+        assertEquals(2, platform.requests)
+        assertEquals(0, platform.listeners)
+        assertNull("route released", audioManager.communicationDevice)
     }
 
     @Test
     fun failureAfterStopIsDropped() {
         platform.setAvailableCommunicationDevices(emptyList())
         manager.start()
-        // The no-device failure is posted, not delivered inline.
+        // The no-device failure is posted, not delivered inside start().
         manager.stop()
-        scheduler.advanceUntilIdle()
+        advance(TIMEOUT_MS * 3)
 
         assertTrue(events.isEmpty())
         assertTrue(manager.isIdle())
@@ -176,49 +177,52 @@ class BluetoothScoManagerTest {
     fun noDeviceFailsWhenNotStopped() {
         platform.setAvailableCommunicationDevices(emptyList())
         manager.start()
-        runCurrent()
+        assertTrue("posted, not inside start()", events.isEmpty())
+        idle()
 
         assertEquals(listOf("failed ${BluetoothScoManager.REASON_NO_DEVICE} idle=true"), events)
-        assertEquals(0, platform.setRequests)
+        assertEquals(0, platform.requests)
     }
 
     @Test
     fun stopBeforeTimeoutCancelsIt() {
         manager.start()
-        runCurrent()
+        idle()
         advance(TIMEOUT_MS - 1)
 
         manager.stop()
-        scheduler.advanceUntilIdle()
+        advance(TIMEOUT_MS * 3)
 
         assertTrue(events.isEmpty())
-        assertEquals(1, platform.setRequests)
-        assertEquals(0, platform.listenerCount)
-        assertNull(platform.currentDevice)
+        assertEquals(1, platform.requests)
+        assertEquals(0, platform.listeners)
+        assertNull(audioManager.communicationDevice)
     }
 
     @Test
     fun timeoutFromStoppedSessionNeverActsOnNextSession() {
         manager.start()
-        runCurrent()
+        idle()
         advance(TIMEOUT_MS - 1)
 
         // Session A ends and B starts just before A's timeout is due.
         manager.stop()
         manager.start()
-        runCurrent()
-        assertEquals(2, platform.setRequests)
+        idle()
+        assertEquals(2, platform.requests)
 
-        // A's deadline passes: no retry, no duplicate bring-up for B.
+        // A's deadline passes: no retry, no second bring-up for B.
         advance(1)
-        assertEquals(2, platform.setRequests)
-        assertEquals(1, platform.listenerCount)
+        assertEquals(2, platform.requests)
+        assertEquals(1, platform.listeners)
         assertTrue(events.isEmpty())
 
         // B keeps its own full budget: retry at its first deadline.
-        advance(TIMEOUT_MS - 1)
-        assertEquals(3, platform.setRequests)
-        assertEquals(1, platform.listenerCount)
+        advance(TIMEOUT_MS - 2)
+        assertEquals(2, platform.requests)
+        advance(1)
+        assertEquals(3, platform.requests)
+        assertEquals(1, platform.listeners)
         assertTrue(events.isEmpty())
 
         advance(TIMEOUT_MS)
@@ -228,7 +232,7 @@ class BluetoothScoManagerTest {
     @Test
     fun deviceEventQueuedForStoppedSessionNeverCompletesNextSession() {
         manager.start()
-        runCurrent()
+        idle()
 
         // Session A's link report is queued when A stops and B starts, so
         // it is delivered while B is starting. stop() clears the route, so
@@ -236,92 +240,99 @@ class BluetoothScoManagerTest {
         platform.connect(scoDevice)
         manager.stop()
         manager.start()
-        runCurrent()
+        idle()
 
         assertTrue(events.isEmpty())
         assertFalse(manager.isActive())
-        assertEquals(1, platform.listenerCount)
+        assertEquals(1, platform.listeners)
     }
 
     @Test
     fun droppedLinkReportsDisconnectAfterStateFlip() {
         manager.start()
-        runCurrent()
+        idle()
         platform.connect(scoDevice)
-        runCurrent()
+        idle()
 
         platform.connect(speaker)
-        runCurrent()
+        idle()
 
         assertEquals(
             listOf("connected active=true", "disconnected active=false"),
             events,
         )
-        assertEquals(0, platform.listenerCount)
+        assertEquals(0, platform.listeners)
     }
 
     @Test
     fun stopNeverCallsBack() {
         manager.start()
-        runCurrent()
+        idle()
         platform.connect(scoDevice)
-        runCurrent()
+        idle()
         events.clear()
 
         manager.stop()
-        scheduler.advanceUntilIdle()
+        advance(TIMEOUT_MS * 3)
 
         assertTrue(events.isEmpty())
         assertTrue(manager.isIdle())
-        assertNull(platform.currentDevice)
+        assertNull(audioManager.communicationDevice)
     }
 
     @Test
-    fun controlCallsOffRouteThreadThrowInDebug() {
-        onRouteThread = false
-        val calls = listOf<() -> Unit>(
-            manager::start,
-            manager::stop,
-            { manager.isIdle() },
-            { manager.isActive() },
-            { manager.isScoDeviceAvailable() },
+    fun entryPointsOffRouteThreadThrowInDebug() {
+        val calls = listOf<Pair<String, () -> Unit>>(
+            "start" to { manager.start() },
+            "stop" to { manager.stop() },
+            "destroy" to { manager.destroy() },
+            "isIdle" to { manager.isIdle() },
+            "isActive" to { manager.isActive() },
+            "isScoDeviceAvailable" to { manager.isScoDeviceAvailable() },
         )
-        for (call in calls) {
-            try {
-                call()
-                org.junit.Assert.fail("expected the route-thread check to throw")
-            } catch (expected: IllegalStateException) {
+        for ((name, call) in calls) {
+            var thrown: Throwable? = null
+            val other = Thread {
+                try {
+                    call()
+                } catch (t: Throwable) {
+                    thrown = t
+                }
             }
+            other.start()
+            other.join()
+            assertTrue("$name off the route thread must throw", thrown is IllegalStateException)
         }
-        onRouteThread = true
+        assertTrue("nothing changed", manager.isIdle())
     }
 
     @Test
     @Config(sdk = [30])
-    fun legacyBroadcastConnectsOnHandler() {
+    fun legacyBroadcastConnectsOnRouteHandler() {
         manager.start()
-        runCurrent()
-        assertEquals(1, platform.legacyStarts)
+        idle()
+        assertTrue("SCO requested", audioManager.isBluetoothScoOn)
+        assertEquals(1, shadowOf(app).registeredReceivers.size)
 
         app.sendBroadcast(scoState(AudioManager.SCO_AUDIO_STATE_CONNECTED))
-        ShadowLooper.idleMainLooper()
-        runCurrent()
+        assertTrue("delivered through the handler, not inline", events.isEmpty())
+        idle()
 
         assertEquals(listOf("connected active=true"), events)
     }
 
     @Test
     @Config(sdk = [30])
-    fun legacyErrorWhileStartingFailsFast() {
+    fun legacyErrorWhileStartingFailsFastAndReleases() {
         manager.start()
-        runCurrent()
+        idle()
 
         app.sendBroadcast(scoState(AudioManager.SCO_AUDIO_STATE_ERROR))
-        ShadowLooper.idleMainLooper()
-        runCurrent()
+        idle()
 
         assertEquals(listOf("failed ${BluetoothScoManager.REASON_ERROR} idle=true"), events)
-        assertEquals(1, platform.legacyStops)
+        assertFalse("SCO request released", audioManager.isBluetoothScoOn)
+        assertEquals(0, shadowOf(app).registeredReceivers.size)
     }
 
     private fun scoState(state: Int): Intent =

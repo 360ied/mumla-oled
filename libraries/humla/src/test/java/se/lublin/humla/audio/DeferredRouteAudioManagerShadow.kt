@@ -26,63 +26,42 @@ import org.robolectric.shadows.ShadowAudioManager
 import java.util.concurrent.Executor
 
 /**
- * [ShadowAudioManager] with a real platform's asynchronous routing: a
- * communication-device request is accepted without switching the current
- * device, so the link only comes up when the test calls [connect]. The
- * stock shadow switches immediately, which always takes the manager's
- * already-on-SCO fast path and never exercises the timeout.
+ * The stock [ShadowAudioManager] with asynchronous communication-device
+ * routing, as on a real device: a request is accepted without switching the
+ * current device, and the switch happens only when the test calls
+ * [connect]. The stock shadow switches inside the request, which always
+ * takes the SCO manager's already-routed fast path and never reaches its
+ * connect timeout.
  *
- * Also counts bring-up requests and tracks live listener registrations,
- * which is how a duplicate bring-up shows up.
+ * Overrides only the request. Device state, listener registration, and
+ * listener delivery (through the executor each listener was registered
+ * with) stay the stock shadow's. Listener add and remove are observed on
+ * their way through, because a leaked registration is invisible in the
+ * manager's behavior (its epoch guard drops what the listener delivers)
+ * and the stock shadow has no public view of its listeners.
  */
 @Implements(AudioManager::class)
 class DeferredRouteAudioManagerShadow : ShadowAudioManager() {
-    var setRequests = 0
+    /** Communication-device requests the platform has received. */
+    var requests = 0
         private set
-    var legacyStarts = 0
-        private set
-    var legacyStops = 0
-        private set
-    private var current: AudioDeviceInfo? = null
-    private val live = mutableSetOf<AudioManager.OnCommunicationDeviceChangedListener>()
-
-    /** Live device-listener registrations (S+). */
-    val listenerCount: Int get() = live.size
-
-    /** The device the platform currently routes communication audio to. */
-    val currentDevice: AudioDeviceInfo? get() = current
-
-    /** The platform switches to [device] and notifies listeners through their executors. */
-    fun connect(device: AudioDeviceInfo?) {
-        current = device
-        callOnCommunicationDeviceChangedListeners(device)
-    }
-
-    /** Preselects a route without notifying, as when SCO is already up. */
-    fun preselect(device: AudioDeviceInfo?) {
-        current = device
-    }
 
     @Implementation(minSdk = Build.VERSION_CODES.S)
     override fun setCommunicationDevice(device: AudioDeviceInfo): Boolean {
-        setRequests++
+        requests++
         return true
     }
 
-    @Implementation(minSdk = Build.VERSION_CODES.S)
-    override fun getCommunicationDevice(): AudioDeviceInfo? = current
-
-    @Implementation(minSdk = Build.VERSION_CODES.S)
-    override fun clearCommunicationDevice() {
-        current = null
-    }
+    /** Live communication-device listener registrations. */
+    var listeners = 0
+        private set
 
     @Implementation(minSdk = Build.VERSION_CODES.S)
     override fun addOnCommunicationDeviceChangedListener(
         executor: Executor,
         listener: AudioManager.OnCommunicationDeviceChangedListener,
     ) {
-        live += listener
+        listeners++
         super.addOnCommunicationDeviceChangedListener(executor, listener)
     }
 
@@ -90,17 +69,18 @@ class DeferredRouteAudioManagerShadow : ShadowAudioManager() {
     override fun removeOnCommunicationDeviceChangedListener(
         listener: AudioManager.OnCommunicationDeviceChangedListener,
     ) {
-        live -= listener
+        listeners--
         super.removeOnCommunicationDeviceChangedListener(listener)
     }
 
-    @Implementation
-    protected fun startBluetoothSco() {
-        legacyStarts++
+    /** The platform switches to [device], then notifies listeners. */
+    fun connect(device: AudioDeviceInfo) {
+        super.setCommunicationDevice(device)
+        callOnCommunicationDeviceChangedListeners(device)
     }
 
-    @Implementation
-    protected fun stopBluetoothSco() {
-        legacyStops++
+    /** The platform is already routed to [device], with no notification. */
+    fun preselect(device: AudioDeviceInfo) {
+        super.setCommunicationDevice(device)
     }
 }
