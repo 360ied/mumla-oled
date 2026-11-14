@@ -203,15 +203,16 @@ class NativeAudioInputEngine {
     }
 
     // Never hold this monitor across the native call: nativeProcessFrame
-    // performs the synchronous talking-state upcall, which needs the
-    // AudioHandler monitor — spanning it here is the capture side of the
-    // mute-tap ABBA. Snapshot the handle under the monitor, invoke outside.
-    // Lifetime: only the capture thread calls processFrame (via
-    // onAudioInputReceived). destroy() and the setters stay @Synchronized
-    // and mutually excluded, but processFrame is excluded from destroy only
-    // by the join-before-destroy convention in AudioHandler.shutdown()
-    // (convention, not enforcement — destroy() must only run after capture
-    // is joined; see docs/mute-tap-deadlock).
+    // performs the synchronous talking-state upcall back into AudioHandler on
+    // this thread, so a held monitor would pin the setters and destroy()
+    // behind a frame's upcall. Snapshot the handle under the monitor, invoke
+    // outside. (The handler monitor that upcall once re-entered is gone since
+    // step 4; the rule stands on its own now.) Lifetime: only the capture
+    // thread calls processFrame (via onAudioInputReceived). destroy() and the
+    // setters stay @Synchronized and mutually excluded, but processFrame is
+    // excluded from destroy only by the join-before-destroy convention in
+    // AudioHandler.shutdown() (convention, not enforcement — destroy() must
+    // only run after capture is joined; see docs/mute-tap-deadlock).
     fun processFrame(pcm: ShortArray?, offset: Int, length: Int) {
         val handle: Long
         synchronized(this) {
