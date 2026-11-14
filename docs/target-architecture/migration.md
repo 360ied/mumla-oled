@@ -284,9 +284,10 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 **Prerequisites:** issue
 [01](issues/01-sco-manager-two-thread-mutation.md) before 5a.3a; issues
 [16](issues/16-voice-link-owns-udp-route.md) and
-[17](issues/17-udp-format-per-packet.md), the known-sessions set, and the
-`removeUser` routing before the half that needs them (see
-[open items](open-items.md)).
+[17](issues/17-udp-format-per-packet.md), issues
+[04](issues/04-session-transport-virtual-time-gaps.md) and
+[05](issues/05-client-edge-invariants-weak.md), and the known-sessions set
+before 5a.3b (see [open items](open-items.md)).
 
 #### 5a.3a — Native render
 
@@ -298,7 +299,8 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
    Kotlin `AudioTrack` thread calls it. `voice_io` creates, drives, and
    destroys the output engine, so exactly one thread drives it.
 2. Engine calls that reach it from other threads today move with it:
-   `removeUser` reaches the render thread as a queued control item,
+   `removeUser` reaches the render thread as a control item on the
+   tunnel ring (see [queues](voice.md#queues)),
    `hasActiveVoices` becomes internal to the render loop, and the jitter
    margin is the I/O layer's constant. `NativeAudioOutputEngineJni.cpp`,
    the Kotlin `NativeAudioOutputEngine`, and the bridge's `<mutex>` are
@@ -314,7 +316,8 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
    sender filter, and pushes the surviving frames into the rings through
    two interim calls, one per ring and producer: UDP frames from the
    `HumlaUDP` receive coroutine, tunnelled frames from the session message
-   coroutine. Nothing native reads policy or settings yet, so no sequence
+   coroutine. `AudioHandler.messageUserRemove`, which already runs on that
+   coroutine, pushes removals through the tunnel call. Nothing native reads policy or settings yet, so no sequence
    locks arrive in this half; half duplex stays in Kotlin's `AudioOutput`
    until capture moves in 5a.4.
 
@@ -322,7 +325,7 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 entry is gone from the allowlist, and `NativeAudioOutputEngine.kt` with
 it; `voice_io/`'s allowlist section holds only the thread includes;
 `audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`;
-ring tests pin the full-ring drop counters; a notifier test pins one
+ring tests pin the full-ring drop counters and the removal headroom; a notifier test pins one
 Kotlin call per drain; tests pin that the render entry point never
 attaches to the JVM and is the only path into the output engine (failing
 if a second caller appears); interop voice from a peer over the tunnel

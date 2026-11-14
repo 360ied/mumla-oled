@@ -392,7 +392,7 @@ twice that, so in practice the drop-newest path never runs.
 |---|---|---|---|
 | Outbound | Capture → send | Framed packet (≤ 1100 bytes) | 400 ms of packets at the current frames per packet (at most 40) |
 | Inbound | Receive → render | `InboundPacket` | 256 |
-| Tunnel inbound | Kotlin tunnel caller → render | `InboundPacket` | 256 |
+| Tunnel inbound | Kotlin tunnel caller → render | `InboundPacket` or remove-user control (session id) | 256 |
 | Capture events | Capture → notifier | Self talk edge | 64 |
 | Render events | Render → notifier | `TalkEvent`, dropped-packet counts | 256 |
 
@@ -403,10 +403,24 @@ coroutine, so it is a single logical producer even though it may resume on
 different dispatcher threads; the ring's acquire/release ordering covers
 that.
 
-Output-engine calls that originate off the render thread (`removeUser`
-when a user leaves) reach it as queued control items, drained with the
-inbound rings before `render`. Which ring carries them is an
-[open item](open-items.md) settled before 5a.3a.
+Output-engine calls that originate off the render thread reach it as
+control items on the **tunnel ring**, drained with the inbound rings
+before `render`. The only one is `removeUser` when another user leaves:
+the session applies `UserRemove` on its message coroutine, the tunnel
+ring's producer, so the removal needs no second producer and no new ring.
+It also stays ordered after any tunnelled voice from that user already
+queued.
+
+- **Headroom.** Voice pushes leave 8 slots free, so a removal still fits
+  when tunnelled voice has filled the ring. A removal that finds even the
+  headroom full is dropped and counted like any full-ring drop. The only
+  cost is a voice slot held until it drains silent and the eviction rule
+  reuses it.
+- **UDP race.** A UDP frame from the leaving user that was filtered before
+  the removal can still reach the render thread after it, from the inbound
+  ring, and briefly reopen a voice slot. Today's mutex bridge has the same
+  window (filter, then `removeUser`, then the late `queuePacket`). The
+  slot drains silent and is reclaimed the same way.
 
 ### Policy and settings handoff
 
@@ -568,6 +582,7 @@ class VoiceEngine(context: Context, settings: StateFlow<VoiceSettings>,
     fun submit(command: VoiceCommand)         // non-blocking; executed on the voice control thread
     fun setPolicy(policy: VoicePolicy)        // policy collector only
     fun queueTunnelled(packet: ByteArray)     // session message coroutine only
+    fun removeUser(session: Int)              // session message coroutine only
     fun encryptIv(): ByteString               // for CryptSetup replies
     fun setKeys(keys: CryptKeys)              // CryptSetup with full keys
     fun setDecryptIv(iv: ByteString)          // CryptSetup resync

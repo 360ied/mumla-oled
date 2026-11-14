@@ -22,7 +22,6 @@ them.
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3b |
 | Known-sessions set for the [sender filter](voice.md#sender-filter) | Settle its place in the policy snapshot, capacity (copy cost per datagram argues for the existing 256), and a fail-open overflow flag: a truncated allowlist would silence real users, unlike the truncated muted list. Note the collector lag: a new user's first packets may be dropped slightly more often than today | Step 5a.3b |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3a |
-| `removeUser` routing to the render thread | Output-engine calls that start off the render thread (`removeUser` when a user leaves; `AudioHandler.messageUserRemove` today) need a queued control item, which the [queue table](voice.md#queues) does not list yet. Use the tunnel ring if user removal arrives on its producer, the session message coroutine; otherwise add a small control ring. Check which thread delivers the removal before choosing | Step 5a.3a |
 
 ## Open (not gating)
 
@@ -38,6 +37,12 @@ them.
 | Upstream-parity codec changes | Found during the first 5a attempt, deferred out of 5a (no behavior changes inside the step): honor `volume_adjustment`; drop the 1.2.2 CELT workaround; empty `opus_data` terminator handling; legacy chaining tolerance. Land after 5a.4 as their own commits |
 
 ## Resolved
+
+Item resolved while checking the 5a.3a gates (2026-11-14):
+
+| Item | Resolution | Where |
+|---|---|---|
+| `removeUser` routing to the render thread | The tunnel ring carries it as a control item. `UserRemove` reaches `AudioHandler.messageUserRemove` through `Session.handleMessage` on the session message coroutine, the same coroutine that calls `queueTunnelled`, so the tunnel ring already has the right producer and a new control ring is not needed. A removal stays ordered after that user's tunnelled voice. Voice pushes leave 8 slots of headroom for removals. A late UDP frame from the leaving user can briefly reopen a slot, the same window as today's mutex bridge. `VoiceLink` and the facade gain `removeUser(session)`, called on the same coroutine | [voice](voice.md#queues), [migration](migration.md#5a3a--native-render) |
 
 Item resolved by the 5a.3 re-plan (2026-11-14):
 

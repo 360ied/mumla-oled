@@ -73,7 +73,7 @@ the same state in its `Status` row.
 
 | # | Issue | Introduced by | State |
 |---|---|---|---|
-| [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Open; fix before 5a.3 |
+| [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Open; fix before 5a.3a |
 | [02](02-service-destroy-leaks-transport.md) | Service destroy can leak the TLS connection; transport not closed by scope cancellation | Step 3 | Open; independent bugfix, not gating |
 | [32](32-route-decision-cached-sco-state.md) | The route decision cached the SCO link state, so leaving SCO stranded the call route | Step 4 | Resolved (`1089ad05`) |
 
@@ -82,7 +82,7 @@ the same state in its `Status` row.
 | # | Issue | State |
 |---|---|---|
 | [03](03-voice-control-test-vacuous.md) | `VoiceControlTest` never starts a session, so the pipeline lifecycle is untested | Open; deferred to 5a.4, lesson applies to its replacement |
-| [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Open; should close before 5a.3 |
+| [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Open; should close before 5a.3b |
 | [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Open; with 04 |
 | [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions have no enforcement artifact; one violation in `Session` | Split: `ServerSync` lambda fixed on `session-serversync-update-hygiene`; review skills deleted, so enforcement is open (tripwire not written); rule-2 sweep undone |
 | [07](07-channel-adapter-spike-weaker.md) | Step-2 live-handle spike test is weaker than specified | Open; not gating |
@@ -104,8 +104,8 @@ the same state in its `Status` row.
 |---|---|---|
 | [14](14-local-facts-self-mute-stub.md) | Persisted self-mute/deafen never reaches the session; `LocalFactsStore` self-mute half is a stub | Interim documented; code fix at step 6 |
 | [15](15-current-bandwidth-bypasses-stats.md) | `getCurrentBandwidth` reads `AudioHandler`, not session stats | Interim documented; which source wins is open |
-| [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Open; settle before 5a.3 |
-| [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Open; settle before 5a.3 |
+| [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Open; settle before 5a.3b |
+| [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Open; settle before 5a.3b |
 | [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Interim documented; ends in 5a.4 |
 | [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved on `session-serversync-update-hygiene` (`89dd9b57`), pending merge |
 
@@ -129,15 +129,16 @@ the same state in its `Status` row.
 ## Remaining work
 
 Ordered by what must land before step 5a.3, then by dependency. Each row
-is one worktree unless noted.
+is one worktree unless noted. Row 1 gates 5a.3a; rows 2 and 3 gate only
+5a.3b (see [open items](../open-items.md)).
 
 ### Before step 5a.3
 
 | Order | Batch | Issues | Notes |
 |---|---|---|---|
-| 1 | Route confinement | [01](01-sco-manager-two-thread-mutation.md), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 first. Once routing state is confined to the route thread, 10's "SCO failed in this route session" flag can be a plain field instead of another atomic. 11 and 21 are not gating but touch the same `RouteControl` code. |
-| 2 | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
-| 3 | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3 reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
+| 1 (before 5a.3a) | Route confinement | [01](01-sco-manager-two-thread-mutation.md), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 first. Once routing state is confined to the route thread, 10's "SCO failed in this route session" flag can be a plain field instead of another atomic. 11 and 21 are not gating but touch the same `RouteControl` code. |
+| 2 (before 5a.3b) | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
+| 3 (before 5a.3b) | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3b reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
 
 ### Independent, any time
 

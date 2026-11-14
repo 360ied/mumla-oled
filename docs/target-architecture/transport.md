@@ -20,7 +20,7 @@ The transport lives in `se.lublin.humla.net` and is owned by one
 `Session`. It talks to the voice side only through `VoiceLink`, an
 interface the `VoiceEngine` implements (`setKeys`, `setDecryptIv`,
 `encryptIv`, `submit(SetVoiceRoute)`, `submit(SendPing)`,
-`queueTunnelled`, and the `UdpPing`, `CryptResyncRequested`, and `UdpUnavailable` events), so
+`queueTunnelled`, `removeUser`, and the `UdpPing`, `CryptResyncRequested`, and `UdpUnavailable` events), so
 transport tests use a fake. It reuses today's framing, SRV lookup
 ([`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt)),
 frame validation
@@ -52,6 +52,7 @@ interface VoiceLink {                         // implemented by VoiceEngine
     fun encryptIv(): ByteString
     fun submit(command: VoiceCommand)         // SetVoiceRoute, SendPing
     fun queueTunnelled(packet: ByteArray)
+    fun removeUser(session: Int)              // another user's UserRemove; same coroutine
     val events: SharedFlow<VoiceEvent>        // UdpPing, CryptResyncRequested, UdpUnavailable
     val status: StateFlow<VoiceStatus>        // local crypt counts for TCP pings
 }
