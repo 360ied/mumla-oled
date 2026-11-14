@@ -1154,8 +1154,12 @@ void testJitterPoolStress() {
     }
 
     TEST_ASSERT_EQ(drops, 0u);
-    TEST_ASSERT_TRUE(peakSlots <= AudioOutputEngine::JITTER_SLOT_COUNT);
     TEST_ASSERT_TRUE(peakSlots > 0u);
+    // The production count must keep at least twice the measured peak as
+    // headroom, so lowering JITTER_SLOT_COUNT toward the observed demand
+    // fails here rather than passing an assertion that only checks the peak
+    // fits at all.
+    TEST_ASSERT_TRUE(peakSlots * 2 <= AudioOutputEngine::JITTER_SLOT_COUNT);
     std::cout << "  [PASS] testJitterPoolStress (peak " << peakSlots
               << " of " << AudioOutputEngine::JITTER_SLOT_COUNT << " slots)"
               << std::endl;
