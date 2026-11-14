@@ -246,9 +246,12 @@ developer notices.
    means grabbing the mic.
 
 **Done when:** codec golden tests pass; `SINGLE_THREADED_ENGINE` covers
-`voice_codec/`; the production framing entry points are driven from a JVM
-test and produce bytes byte-equal to the Java-generated classes and
-`PacketBuffer`, failing when the native codec is absent or wrong; interop
+`voice_codec/`; the encode framing entry point is driven from a JVM test
+and produces bytes byte-equal to the Java-generated classes and
+`PacketBuffer`, failing when the native codec is absent or wrong; inbound
+framing is pinned by the codec goldens in this sub-step and by 5a.3's voice
+scenarios, which bring the native receive path — a device-free parse entry
+point invented here would only be deleted there; interop
 UDP ping framing built by the native codec completes a round trip against
 murmur (the reply proves the server parsed it), and text messages keep
 working end to end;

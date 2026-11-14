@@ -178,10 +178,13 @@ capture still Kotlin and no `VoiceEngine`, a PCM round-trip would run the
 same codec at both ends and prove self-consistency rather than wire
 parity, and injecting the PCM would need a test-only seam in
 `AudioHandler` that 5a.3 deletes. The native codec is instead driven live
-at the production framing entry points (JVM test, byte-equality against
-the Java-generated classes) and end-to-end through the tunnel (text and
-pings). From 5a.3 the interop test injects synthetic PCM at the native
-capture and render entry points, which are production API. A stub voice link
+at the encode framing entry point (JVM test, byte-equality against the
+Java-generated classes) and end-to-end by UDP ping round trips; its
+inbound parse is pinned by the codec goldens here, because the Kotlin
+parse path a device-free parse entry point would drive is replaced by the
+native receive path in 5a.3. From 5a.3 the interop test injects
+synthetic PCM at the native capture and render entry points, which are
+production API. A stub voice link
 is acceptable only for scenarios that do not claim to cover voice, and
 must say so in its name.
 
