@@ -4,3 +4,6 @@
 [submodule "libraries/humla/src/main/jni/rnnoise"]
 	path = libraries/humla/src/main/jni/rnnoise
 	url = https://github.com/xiph/rnnoise.git
+[submodule "libraries/humla/src/main/jni/nanopb"]
+	path = libraries/humla/src/main/jni/nanopb
+	url = https://github.com/nanopb/nanopb

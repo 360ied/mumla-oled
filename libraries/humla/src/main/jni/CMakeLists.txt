@@ -45,6 +45,8 @@ set(RNNOISE_DIR "${JNI_ROOT}/rnnoise")
 set(RNNOISE_BUILD_DIR "${JNI_ROOT}/rnnoise-build")
 set(AUDIO_ENGINE_DIR "${JNI_ROOT}/audio_engine")
 set(CRYPTO_DIR "${JNI_ROOT}/crypto")
+set(VOICE_CODEC_DIR "${JNI_ROOT}/voice_codec")
+set(NANOPB_DIR "${JNI_ROOT}/nanopb")
 set(TEST_CPP_DIR "${JNI_ROOT}/../../test/cpp")
 
 # Parse source lists from upstream Opus .mk files (file(STRINGS) joins \-continuations).
@@ -133,6 +135,18 @@ set(RNNOISE_SOURCES
     "${RNNOISE_DIR}/src/celt_lpc.c"
 )
 
+# Packet codec (step 5a.2): no-I/O framing, nanopb protobuf, allocation-free.
+# Compiled without PB_ENABLE_MALLOC (static allocation via max_size/max_count).
+set(NANOPB_SOURCES
+    "${NANOPB_DIR}/pb_encode.c"
+    "${NANOPB_DIR}/pb_decode.c"
+    "${NANOPB_DIR}/pb_common.c"
+)
+set(VOICE_CODEC_SOURCES
+    "${VOICE_CODEC_DIR}/VoiceCodec.cpp"
+    "${VOICE_CODEC_DIR}/generated/MumbleUDP.pb.c"
+)
+
 if(ANDROID)
     set(COMMON_ANDROID_FLAGS
         -ffunction-sections
@@ -169,7 +183,7 @@ if(ANDROID)
     )
 
     # Single-library layout: Opus, RNNoise, audio engines, Speex jitter buffer,
-    # and OCB2 crypto all link into libhumlaaudio.so.
+    # packet codec (nanopb), and OCB2 crypto all link into libhumlaaudio.so.
     add_library(humlaaudio SHARED
         "${AUDIO_ENGINE_DIR}/PreSpeechRingBuffer.cpp"
         "${AUDIO_ENGINE_DIR}/SoftLimiter.cpp"
@@ -184,12 +198,17 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/NativeAudioOutputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/NativeCrashTestJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
+        ${VOICE_CODEC_SOURCES}
+        ${NANOPB_SOURCES}
+        "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
         "${CRYPTO_DIR}/NativeCryptStateJni.cpp"
     )
     target_include_directories(humlaaudio PRIVATE
         "${AUDIO_ENGINE_DIR}"
         "${AUDIO_ENGINE_DIR}/jitter"
+        "${VOICE_CODEC_DIR}"
+        "${NANOPB_DIR}"
         "${CRYPTO_DIR}"
     )
     target_compile_options(humlaaudio PRIVATE
@@ -253,6 +272,21 @@ else()
     target_include_directories(humlacrypto_obj PRIVATE "${CRYPTO_DIR}")
     target_compile_options(humlacrypto_obj PRIVATE ${HOST_FLAGS})
 
+    # Packet codec (step 5a.2): nanopb runtime is third-party (-w, no -Werror),
+    # the codec core is ours (-Werror). Both stay allocation-free
+    # (no PB_ENABLE_MALLOC) via max_size/max_count in MumbleUDP.options.
+    add_library(humlanpb STATIC ${NANOPB_SOURCES})
+    target_include_directories(humlanpb PUBLIC "${NANOPB_DIR}")
+    target_compile_options(humlanpb PRIVATE -O2 -w)
+
+    add_library(humlavoicecodec STATIC ${VOICE_CODEC_SOURCES})
+    target_include_directories(humlavoicecodec PUBLIC
+        "${VOICE_CODEC_DIR}"
+        "${AUDIO_ENGINE_DIR}"
+    )
+    target_include_directories(humlavoicecodec PRIVATE "${NANOPB_DIR}")
+    target_compile_options(humlavoicecodec PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+
     add_executable(test_audio_engine
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${AUDIO_ENGINE_DIR}/SoftLimiter.cpp"
@@ -312,11 +346,34 @@ else()
     target_link_libraries(test_crypt_state PRIVATE Threads::Threads)
     add_test(NAME test_crypt_state COMMAND test_crypt_state)
 
+    add_executable(test_voice_codec
+        "${TEST_CPP_DIR}/test_voice_codec.cpp"
+    )
+    target_include_directories(test_voice_codec PRIVATE
+        "${VOICE_CODEC_DIR}"
+        "${AUDIO_ENGINE_DIR}"
+        "${NANOPB_DIR}"
+        "${TEST_CPP_DIR}"
+    )
+    target_compile_options(test_voice_codec PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    target_compile_definitions(test_voice_codec PRIVATE
+        MUMLA_VOICE_CODEC_FIXTURE_DIR="${JNI_ROOT}/../../test/fixtures/voice-codec"
+    )
+    target_link_libraries(test_voice_codec PRIVATE humlavoicecodec humlanpb Threads::Threads)
+    add_test(NAME test_voice_codec COMMAND test_voice_codec)
+
     add_library(humlaaudio SHARED
         $<TARGET_OBJECTS:humlacrypto_obj>
         "${CRYPTO_DIR}/NativeCryptStateJni.cpp"
+        "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
     )
-    target_include_directories(humlaaudio PRIVATE "${CRYPTO_DIR}" ${JNI_INCLUDE_DIRS})
+    target_include_directories(humlaaudio PRIVATE
+        "${CRYPTO_DIR}"
+        "${VOICE_CODEC_DIR}"
+        "${AUDIO_ENGINE_DIR}"
+        "${NANOPB_DIR}"
+        ${JNI_INCLUDE_DIRS}
+    )
     target_compile_options(humlaaudio PRIVATE ${HOST_FLAGS})
-    target_link_libraries(humlaaudio PRIVATE Threads::Threads)
+    target_link_libraries(humlaaudio PRIVATE humlavoicecodec humlanpb Threads::Threads)
 endif()

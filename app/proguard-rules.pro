@@ -20,6 +20,15 @@
 -keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
     public void onTalkStateChanged(int, int);
 }
+# Step 5a.2 interim codec bridge: DecodedVoiceFrame/DecodedPing are
+# constructed only from native code (FindClass/GetMethodID/NewObject), so R8
+# concludes they are never instantiated and strips their <init>/fields.
+# Without these, release GetMethodID throws NoSuchMethodError (an Error the
+# Kotlin catch (Exception) does not catch), killing the UDP receiver on the
+# first voice/ping datagram. Mirror the engine rules; both leave in 5a.4.
+-keep class se.lublin.humla.net.NativeVoiceCodec { *; }
+-keep class se.lublin.humla.net.DecodedVoiceFrame { *; }
+-keep class se.lublin.humla.net.DecodedPing { *; }
 
 # Keep line numbers for release crash traces (negligible size cost).
 -keepattributes SourceFile,LineNumberTable

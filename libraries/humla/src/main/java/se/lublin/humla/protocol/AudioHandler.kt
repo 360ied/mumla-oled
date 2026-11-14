@@ -21,7 +21,6 @@ package se.lublin.humla.protocol
 import android.content.Context
 import android.media.AudioManager
 import android.util.Log
-import com.google.protobuf.ByteString
 import java.util.Objects
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.flow.StateFlow
@@ -37,10 +36,11 @@ import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
 import se.lublin.humla.voice.VoicePolicy
+import se.lublin.humla.net.DecodedVoiceFrame
+import se.lublin.humla.net.HumlaUDPMessageType
+import se.lublin.humla.net.NativeVoiceCodec
 import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.state.UserInfo
-import se.lublin.humla.net.HumlaUDPMessageType
-import se.lublin.humla.net.PacketBuffer
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protobuf.MumbleUDP
 import se.lublin.humla.util.HumlaLogger
@@ -104,11 +104,17 @@ class AudioHandler : HumlaNetworkListener,
 
     private val mContext: Context
     private val mLogger: HumlaLogger
-    private val mInput: AudioInput
+    // Device-free construction (step 5a.2): the native input engine and the
+    // AudioRecord capture below are acquired in initialize(), not here, so a
+    // JVM test can construct this handler and drive the encode framing entry
+    // point without grabbing the mic. AudioOutput(listener) is already
+    // device-free (its track opens in startPlaying) and stays in the
+    // constructor. A production change on its own merits, not a test seam.
+    private var mInput: AudioInput? = null
     private val mOutput: AudioOutput
     private val mOutputListener: AudioOutput.AudioOutputListener
     private val mEncodeListener: AudioEncodeListener
-    private val mNativeEngine: NativeAudioInputEngine
+    private var mNativeEngine: NativeAudioInputEngine? = null
 
     private var mSession: Int = 0
     private var mCodec: HumlaUDPMessageType? = null
@@ -190,15 +196,14 @@ class AudioHandler : HumlaNetworkListener,
     private var lastPolicyFpp: Int? = null
     private var lastPolicyVoiceTarget: Int? = null
 
-    // Pre-allocated packet buffers for zero heap allocation on audio path.
     // (Step 4) No locks remain: gate fields are confined to the session
     // work-dispatcher plus main-thread optimistic updates and the single
     // voice-control owner; every update recomputes the composite from
     // current fields and the native setter early-returns on no-change, so
     // the last update converges. See updateMuteState/applyInterimPolicy.
-    private val mProtobufPacketBuffer = ByteArray(2048)
-    private val mLegacyPacketBuffer = ByteArray(1024)
-    private val mLegacyDataStream = PacketBuffer(mLegacyPacketBuffer, 1024)
+    // Framing buffers are owned by the native packet codec (step 5a.2),
+    // which returns a fresh datagram per packet; the interim JNI allocates,
+    // as the protobuf builder did before it.
 
     @Throws(AudioInitializationException::class)
     constructor(
@@ -243,62 +248,10 @@ class AudioHandler : HumlaNetworkListener,
         mTargetId = targetId
         mAudioSource = audioSource
 
-        var nativeMode = NativeAudioInputEngine.INPUT_MODE_VOICE_ACTIVITY
-        if (mInputMode is ToggleInputMode) {
-            nativeMode = NativeAudioInputEngine.INPUT_MODE_PUSH_TO_TALK
-        } else if (mInputMode is ContinuousInputMode) {
-            nativeMode = NativeAudioInputEngine.INPUT_MODE_CONTINUOUS
-        }
-
-        var modelData: ByteArray? = null
-        if (mPreprocessorEnabled) {
-            NativeAudioInputEngine.loadRnnoiseModel(context)
-            modelData = NativeAudioInputEngine.getCachedRnnoiseModel()
-        }
-
-        mNativeEngine = NativeAudioInputEngine(
-            mBitrate,
-            mFramesPerPacket,
-            mAmplitudeBoost,
-            mPreprocessorEnabled,
-            mAdaptiveLevelerEnabled,
-            nativeMode,
-            modelData,
-            this
-        )
-
-        // Anything below owns system handles (native engine above, mic
-        // below): clean up on failure so a failed connect never abandons
-        // a live native handle or a held mic.
-        try {
-            if (mInputMode is ActivityInputMode) {
-                val actMode = mInputMode as ActivityInputMode
-                mNativeEngine.setVadThresholds(actMode.vadMax, actMode.vadMin)
-            }
-
-            val input = AudioInput(this, mAudioSource)
-            try {
-                mOutput = AudioOutput(mContext, mOutputListener)
-            } catch (t: Throwable) {
-                // Output construction failed after capture was already
-                // holding the mic: shut it down before propagating. Errors
-                // must not leak either (same path as Exceptions).
-                try {
-                    input.shutdown()
-                } catch (ignored: Throwable) {
-                }
-                throw t
-            }
-            mInput = input
-        } catch (t: Throwable) {
-            // Covers AudioInput construction too: destroy the native engine
-            // on any failure, checked or fatal, without masking the original.
-            try {
-                mNativeEngine.destroy()
-            } catch (ignored: Throwable) {
-            }
-            throw t
-        }
+        // Device-free: AudioOutput(listener) opens no track (startPlaying
+        // does, in initialize()). The native engine and AudioInput stay null
+        // until initialize() acquires them.
+        mOutput = AudioOutput(mContext, mOutputListener)
     }
 
     /** Destroys capture + native engine made owned before a later init step failed.
@@ -309,12 +262,16 @@ class AudioHandler : HumlaNetworkListener,
         // or otherwise: Throwable guards throughout, original rethrown.
         run {
             try {
-                mInput.shutdown()
+                mInput?.shutdown()
             } catch (ignored: Throwable) {
+            } finally {
+                mInput = null
             }
             try {
-                mNativeEngine.destroy()
+                mNativeEngine?.destroy()
             } catch (ignored: Throwable) {
+            } finally {
+                mNativeEngine = null
             }
         }
     }
@@ -327,6 +284,54 @@ class AudioHandler : HumlaNetworkListener,
         if (self == null) return
         run {
             if (mInitialized) return
+        }
+
+        // Device acquisition (step 5a.2): the native input engine and the
+        // AudioRecord capture live here, not in the constructor, carrying the
+        // construction-failure teardown with them. Anything below owns system
+        // handles: clean up on failure so a failed connect never abandons a
+        // live native handle or a held mic.
+        var nativeMode = NativeAudioInputEngine.INPUT_MODE_VOICE_ACTIVITY
+        if (mInputMode is ToggleInputMode) {
+            nativeMode = NativeAudioInputEngine.INPUT_MODE_PUSH_TO_TALK
+        } else if (mInputMode is ContinuousInputMode) {
+            nativeMode = NativeAudioInputEngine.INPUT_MODE_CONTINUOUS
+        }
+        var modelData: ByteArray? = null
+        if (mPreprocessorEnabled) {
+            NativeAudioInputEngine.loadRnnoiseModel(mContext)
+            modelData = NativeAudioInputEngine.getCachedRnnoiseModel()
+        }
+        val engine = NativeAudioInputEngine(
+            mBitrate,
+            mFramesPerPacket,
+            mAmplitudeBoost,
+            mPreprocessorEnabled,
+            mAdaptiveLevelerEnabled,
+            nativeMode,
+            modelData,
+            this
+        )
+        try {
+            if (mInputMode is ActivityInputMode) {
+                val actMode = mInputMode as ActivityInputMode
+                engine.setVadThresholds(actMode.vadMax, actMode.vadMin)
+            }
+            mNativeEngine = engine
+            mInput = AudioInput(this, mAudioSource)
+        } catch (t: Throwable) {
+            // Engine without capture (or vice versa) must not survive: destroy
+            // what was made, without masking the original, checked or fatal.
+            mInput = null
+            mNativeEngine = null
+            try {
+                engine.destroy()
+            } catch (ignored: Throwable) {
+            }
+            throw t
+        }
+
+        run {
             mSession = self.session
 
             setCodec(codec)
@@ -352,7 +357,7 @@ class AudioHandler : HumlaNetworkListener,
                 else AudioManager.STREAM_MUSIC
             )
         } catch (t: Throwable) {
-            // The constructor owns a native engine + capture (AudioRecord +
+            // initialize() owns a native engine + capture (AudioRecord +
             // HW effects): destroy the partial pipeline before rethrow so
             // the caller never abandons a half-built handler holding the mic.
             // Throwable-wide: an unchecked or fatal throw from startPlaying
@@ -376,9 +381,11 @@ class AudioHandler : HumlaNetworkListener,
     private fun startRecording() {
         // No outer hold on mInput: AudioInput entry points self-synchronize
         // and join outside their monitor; holding it here would re-pin the
-        // lock across startRecording's bounded join.
-        if (!mInput.isRecording()) {
-            mInput.startRecording()
+        // lock across startRecording's bounded join. Null before initialize()
+        // (device-free construction) means never started: no-op.
+        val input = mInput ?: return
+        if (!input.isRecording()) {
+            input.startRecording()
         }
     }
 
@@ -408,7 +415,7 @@ class AudioHandler : HumlaNetworkListener,
                 if (!mInitialized) return
                 muted = mServerMuted || mSelfMuted || mServerDeafened || mSuppressed
             }
-            mNativeEngine.setMuted(muted)
+            mNativeEngine?.setMuted(muted)
             // Re-gate recording: shutdown flags mInitialized=false before
             // its join, so a mute racing disconnect cannot resurrect capture
             // after teardown (same check-then-act shape as startRecording
@@ -531,8 +538,8 @@ class AudioHandler : HumlaNetworkListener,
             mFramesPerPacket = config.framesPerPacket
             applied = config
         }
-        mNativeEngine.setBitrate(applied.bitrate)
-        mNativeEngine.setFramesPerPacket(applied.framesPerPacket)
+        mNativeEngine?.setBitrate(applied.bitrate)
+        mNativeEngine?.setFramesPerPacket(applied.framesPerPacket)
         mLogger.logInfo(
             mContext.getString(
                 R.string.audio_max_bandwidth,
@@ -591,7 +598,7 @@ class AudioHandler : HumlaNetworkListener,
 
     fun setAdaptiveLevelerEnabled(enabled: Boolean) {
         mAdaptiveLevelerEnabled = enabled
-        mNativeEngine.setAdaptiveLevelerEnabled(enabled)
+        mNativeEngine?.setAdaptiveLevelerEnabled(enabled)
     }
 
     fun isAdaptiveLevelerEnabled(): Boolean {
@@ -624,9 +631,19 @@ class AudioHandler : HumlaNetworkListener,
                 lastPolicyFpp = null
                 lastPolicyVoiceTarget = null
             }
-            mInput.shutdown()
+            try {
+                mInput?.shutdown()
+            } catch (ignored: Throwable) {
+            } finally {
+                mInput = null
+            }
             mOutput.stopPlaying()
-            mNativeEngine.destroy()
+            try {
+                mNativeEngine?.destroy()
+            } catch (ignored: Throwable) {
+            } finally {
+                mNativeEngine = null
+            }
             // Belt-and-braces: stopPlaying() already clears this after
             // joining the render thread; kept explicit so the disconnect
             // state does not depend on that callee-side effect.
@@ -716,15 +733,9 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    override fun messageVoiceData(data: ByteArray, messageType: HumlaUDPMessageType) {
+    override fun messageDecodedVoice(frames: List<DecodedVoiceFrame>) {
         run {
-            mOutput.queueVoiceData(data, messageType)
-        }
-    }
-
-    override fun messageProtobufAudio(msg: MumbleUDP.Audio) {
-        run {
-            mOutput.queueProtobufVoiceData(msg)
+            mOutput.queueDecodedVoiceFrames(frames)
         }
     }
 
@@ -746,7 +757,7 @@ class AudioHandler : HumlaNetworkListener,
 
     override fun onAudioInputReceived(frame: ShortArray?, frameSize: Int) {
         applyInterimPolicy()
-        mNativeEngine.processFrame(frame, 0, frameSize)
+        mNativeEngine?.processFrame(frame, 0, frameSize)
     }
 
     private fun applyInterimPolicy() {
@@ -759,14 +770,14 @@ class AudioHandler : HumlaNetworkListener,
         if (lastPolicyTransmit != policy.transmitAllowed) {
             lastPolicyTransmit = policy.transmitAllowed
             try {
-                mNativeEngine.setMuted(!policy.transmitAllowed)
+                mNativeEngine?.setMuted(!policy.transmitAllowed)
             } catch (_: Exception) {
             }
         }
         if (lastPolicyPtt != policy.pttPressed) {
             lastPolicyPtt = policy.pttPressed
             try {
-                mNativeEngine.setPttTalking(policy.pttPressed)
+                mNativeEngine?.setPttTalking(policy.pttPressed)
             } catch (_: Exception) {
             }
         }
@@ -774,11 +785,11 @@ class AudioHandler : HumlaNetworkListener,
             lastPolicyBitrate = policy.bitrate
             lastPolicyFpp = policy.framesPerPacket
             try {
-                mNativeEngine.setBitrate(policy.bitrate)
+                mNativeEngine?.setBitrate(policy.bitrate)
             } catch (_: Exception) {
             }
             try {
-                mNativeEngine.setFramesPerPacket(policy.framesPerPacket)
+                mNativeEngine?.setFramesPerPacket(policy.framesPerPacket)
             } catch (_: Exception) {
             }
         }
@@ -790,6 +801,13 @@ class AudioHandler : HumlaNetworkListener,
             }
         }
     }
+
+    /**
+     * Legacy server version for the 1.2.2 codec workaround. AudioHandler
+     * never frames non-Opus (the workaround swaps CELT Alpha/Beta only), so
+     * the native codec ignores it for Opus; 0 disables the swap explicitly.
+     */
+    private fun serverLegacyVersion(): Int = 0
 
     override fun onAudioPacketEncoded(
         data: ByteArray?,
@@ -811,55 +829,38 @@ class AudioHandler : HumlaNetworkListener,
             return
         }
 
+        // Framing is owned by the native packet codec (step 5a.2), byte-equal
+        // to the Java classes and PacketBuffer it replaces. A null return is
+        // an oversize/encode failure: drop with a log, as before.
         run {
             if (mProtobufUdp) {
-                val audioBuilder = MumbleUDP.Audio.newBuilder()
-                if (mTargetId != 0.toByte()) {
-                    audioBuilder.target = (mTargetId.toInt() and 0xFF)
+                val framed = try {
+                    NativeVoiceCodec.frameProtobufVoice(
+                        mTargetId.toInt() and 0xFF, frameNumber, data, length, isTerminator
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Dropping protobuf audio packet after codec failure", e)
+                    null
                 }
-                audioBuilder.frameNumber = frameNumber
-                audioBuilder.opusData = ByteString.copyFrom(data, 0, length)
-                if (isTerminator) {
-                    audioBuilder.isTerminator = true
-                }
-
-                val protoBytes = audioBuilder.build().toByteArray()
-                val totalLen = 1 + protoBytes.size
-                if (totalLen <= mProtobufPacketBuffer.size) {
-                    mProtobufPacketBuffer[0] = 0x00 // Protobuf Audio header
-                    System.arraycopy(protoBytes, 0, mProtobufPacketBuffer, 1, protoBytes.size)
-                    mEncodeListener.onAudioEncoded(mProtobufPacketBuffer, totalLen)
+                if (framed != null) {
+                    mEncodeListener.onAudioEncoded(framed, framed.size)
                 } else {
-                    Log.w(TAG, "Dropping oversize protobuf audio packet ($totalLen bytes)")
+                    Log.w(TAG, "Dropping oversize protobuf audio packet (payload $length bytes)")
                 }
             } else {
-                // Worst case: 1 flag byte + 2 varints (<=10 bytes each) +
-                // payload. Pre-check so overflow drops with a log instead of
-                // throwing BufferOverflowException to the native thread.
-                if (21 + length > mLegacyPacketBuffer.size) {
-                    Log.w(TAG, "Dropping oversize legacy audio packet (payload $length bytes)")
-                    return
+                val framed = try {
+                    NativeVoiceCodec.frameLegacyVoice(
+                        mTargetId.toInt() and 0xFF, frameNumber, data, length,
+                        isTerminator, serverLegacyVersion()
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Dropping legacy audio packet after codec failure", e)
+                    null
                 }
-                try {
-                    val flags = (HumlaUDPMessageType.UDPVoiceOpus.ordinal shl 5) or
-                        (mTargetId.toInt() and 0x1F)
-
-                    mLegacyPacketBuffer[0] = (flags and 0xFF).toByte()
-                    mLegacyDataStream.rewind()
-                    mLegacyDataStream.skip(1)
-                    mLegacyDataStream.writeLong(frameNumber)
-
-                    var header = length.toLong() and ((1 shl 13) - 1).toLong()
-                    if (isTerminator) {
-                        header = header or (1 shl 13).toLong()
-                    }
-                    mLegacyDataStream.writeLong(header)
-                    mLegacyDataStream.append(data, length)
-
-                    val totalLen = mLegacyDataStream.size()
-                    mEncodeListener.onAudioEncoded(mLegacyPacketBuffer, totalLen)
-                } catch (e: java.nio.BufferOverflowException) {
-                    Log.w(TAG, "Dropping legacy audio packet after buffer overflow", e)
+                if (framed != null) {
+                    mEncodeListener.onAudioEncoded(framed, framed.size)
+                } else {
+                    Log.w(TAG, "Dropping oversize legacy audio packet (payload $length bytes)")
                 }
             }
         }
@@ -897,19 +898,20 @@ class AudioHandler : HumlaNetworkListener,
         if (mInputMode is ToggleInputMode) {
             (mInputMode as ToggleInputMode).isTalkingOn = talking
         }
-        mNativeEngine.setPttTalking(talking)
+        mNativeEngine?.setPttTalking(talking)
     }
 
     fun setVadThresholds(vadMax: Float, vadMin: Float) {
-        mNativeEngine.setVadThresholds(vadMax, vadMin)
+        mNativeEngine?.setVadThresholds(vadMax, vadMin)
     }
 
     fun setVadSquelchFloor(minDb: Float) {
-        mNativeEngine.setVadSquelchFloor(minDb)
+        mNativeEngine?.setVadSquelchFloor(minDb)
     }
 
     fun getVadSquelchFloor(): Float {
-        return mNativeEngine.getVadSquelchFloor()
+        return mNativeEngine?.getVadSquelchFloor()
+            ?: NativeAudioInputEngine.DEFAULT_SQUELCH_MIN_DB
     }
 
     /** Degraded effective audio config produced by bandwidth adaptation. Pure value type. */

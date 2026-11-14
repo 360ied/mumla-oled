@@ -1,0 +1,2 @@
+MumbleUDP.Audio.opus_data max_size:2048
+MumbleUDP.Audio.positional_data max_count:3

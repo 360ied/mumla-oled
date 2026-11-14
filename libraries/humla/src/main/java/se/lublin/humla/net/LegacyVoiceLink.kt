@@ -18,8 +18,6 @@
 package se.lublin.humla.net
 
 import com.google.protobuf.ByteString
-import com.google.protobuf.InvalidProtocolBufferException
-import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -89,10 +87,6 @@ class LegacyVoiceLink @JvmOverloads constructor(
     // Interim encoder target for SessionStats.currentBandwidth until the step-5a
     // VoicePolicy carries real values. Seeded with the Settings default.
     private val targetBitrate = AtomicInteger(40000)
-
-    // Cached wire-type lookup: HumlaUDPMessageType order IS the legacy wire
-    // value; avoid values() allocation per received packet.
-    private val udpTypes = HumlaUDPMessageType.values()
 
     override fun setForceTcp(force: Boolean) {
         forceTcp.set(force)
@@ -179,10 +173,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     /**
      * Sends a voice packet, tunneling over TCP or via UDP per route policy.
-     * Mirrors HumlaConnection.sendUDPMessage, including the 1.2.2 workaround.
-     *
-     * The buffer is patched in place before sending; callers must not reuse
-     * it afterwards (parity with the legacy ownership contract).
+     * Mirrors HumlaConnection.sendUDPMessage. Framing (including the 1.2.2
+     * workaround, a no-op for Opus) is owned by the native packet codec;
+     * this only routes the framed datagram.
      */
     fun sendVoice(data: ByteArray, length: Int) {
         if (length < 0 || length > data.size) {
@@ -190,7 +183,6 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 "Requested length $length out of bounds for available data length ${data.size}!",
             )
         }
-        if (serverVersion.get() == 0x10202) applyLegacyCodecWorkaround(data)
         if (forceTcp.get() || !usingUdp.get()) {
             // Tunnel: hand the framed packet to the transport's UDPTunnel sender.
             val copy = data.copyOf(length)
@@ -239,19 +231,31 @@ class LegacyVoiceLink @JvmOverloads constructor(
     private fun sendUdpPing(timestampMicros: Long) {
         if (forceTcp.get() || !usingUdp.get()) return
         val current = udpRef.get() ?: return
+        // Ping framing is owned by the native packet codec (step 5a.2),
+        // byte-equal to the Java framing it replaces. A null return is an
+        // encode failure: drop with a log, as the oversize path did before.
         if (isProtobufUdpSupported()) {
-            val ping = MumbleUDP.Ping.newBuilder().setTimestamp(timestampMicros).build().toByteArray()
-            val packet = ByteArray(1 + ping.size)
-            packet[0] = 0x01
-            System.arraycopy(ping, 0, packet, 1, ping.size)
+            val packet = try {
+                NativeVoiceCodec.frameProtobufPing(timestampMicros)
+            } catch (e: Exception) {
+                logger.fine("Dropping protobuf ping after codec failure: $e")
+                null
+            } ?: run {
+                logger.fine("Dropping protobuf ping (codec encode failed)")
+                return
+            }
             current.sendMessage(packet, packet.size)
         } else {
-            val pingBuffer = ByteArray(10)
-            pingBuffer[0] = ((HumlaUDPMessageType.UDPPing.ordinal shl 5) and 0xFF).toByte()
-            val pb = PacketBuffer(pingBuffer, 10)
-            pb.skip(1)
-            pb.writeLong(timestampMicros)
-            current.sendMessage(pingBuffer, pb.size())
+            val packet = try {
+                NativeVoiceCodec.frameLegacyPing(timestampMicros)
+            } catch (e: Exception) {
+                logger.fine("Dropping legacy ping after codec failure: $e")
+                null
+            } ?: run {
+                logger.fine("Dropping legacy ping (codec encode failed)")
+                return
+            }
+            current.sendMessage(packet, packet.size)
         }
     }
 
@@ -261,6 +265,11 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     // HumlaUDP.UDPConnectionListener: runs on the UDP receiver coroutine for
     // data, and on the callback executor (direct) for resync/error.
+    // Both inbound formats are parsed by the native packet codec (step 5a.2);
+    // Kotlin only routes the parsed frames and pings. The protobuf branch no
+    // longer calls MumbleUDP.Audio.parseFrom, and no PacketBuffer parser stays
+    // behind: both formats hand the same parsed frames to AudioOutput, which
+    // keeps applying today's locally-muted and unknown-sender drops to both.
     override fun onUDPDataReceived(data: ByteArray) {
         if (data.isEmpty()) {
             logger.fine("Dropping empty UDP datagram")
@@ -269,28 +278,47 @@ class LegacyVoiceLink @JvmOverloads constructor(
         if (isProtobufUdpSupported()) {
             val msgType = data[0].toInt() and 0xFF
             if (msgType == 0) {
-                try {
-                    val audioMsg = MumbleUDP.Audio.parseFrom(ByteString.copyFrom(data, 1, data.size - 1))
-                    broadcast { it.messageProtobufAudio(audioMsg) }
-                } catch (e: InvalidProtocolBufferException) {
-                    logger.fine("Dropping malformed protobuf voice")
+                val frames = try {
+                    NativeVoiceCodec.parseProtobufVoice(data)
+                } catch (e: Exception) {
+                    logger.fine("Dropping malformed protobuf voice: $e")
+                    null
                 }
+                if (frames == null) {
+                    logger.fine("Dropping malformed protobuf voice")
+                    refreshStatus()
+                    return
+                }
+                broadcast { it.messageDecodedVoice(frames.toList()) }
                 refreshStatus()
                 return
             } else if (msgType == 1) {
-                try {
-                    val pingMsg = MumbleUDP.Ping.parseFrom(ByteString.copyFrom(data, 1, data.size - 1))
-                    val v2 = if (pingMsg.serverVersionV2 != 0L) pingMsg.serverVersionV2 else null
-                    val bw = if (pingMsg.maxBandwidthPerUser != 0) pingMsg.maxBandwidthPerUser else null
-                    if (!_events.tryEmit(VoiceEvent.UdpPing(pingMsg.timestamp, v2, bw))) {
-                        logger.fine("Dropping UdpPing (event buffer full)")
-                    }
-                    broadcast { it.messageProtobufPing(pingMsg) }
-                    if (v2 != null) serverVersionV2.set(v2)
-                    refreshStatus()
-                } catch (e: InvalidProtocolBufferException) {
-                    logger.fine("Dropping malformed protobuf ping")
+                val ping = try {
+                    NativeVoiceCodec.parseProtobufPing(data)
+                } catch (e: Exception) {
+                    logger.fine("Dropping malformed protobuf ping: $e")
+                    null
                 }
+                if (ping == null) {
+                    logger.fine("Dropping malformed protobuf ping")
+                    return
+                }
+                val v2 = if (ping.serverVersionV2 != 0L) ping.serverVersionV2 else null
+                val bw = if (ping.maxBandwidth != 0) ping.maxBandwidth else null
+                if (!_events.tryEmit(VoiceEvent.UdpPing(ping.timestamp, v2, bw))) {
+                    logger.fine("Dropping UdpPing (event buffer full)")
+                }
+                // Rebuilt for the broadcast only; parsing itself was native.
+                // AudioHandler ignores pings (handled in Transport).
+                val pingMsg = MumbleUDP.Ping.newBuilder()
+                    .setTimestamp(ping.timestamp)
+                    .apply {
+                        if (v2 != null) setServerVersionV2(v2)
+                        if (bw != null) setMaxBandwidthPerUser(bw)
+                    }.build()
+                broadcast { it.messageProtobufPing(pingMsg) }
+                if (v2 != null) serverVersionV2.set(v2)
+                refreshStatus()
                 return
             } else {
                 // Protobuf mode: any other lead byte is neither voice nor
@@ -299,53 +327,50 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 return
             }
         }
-        if (serverVersion.get() == 0x10202) applyLegacyCodecWorkaround(data)
+        // Legacy dispatch is a header peek only, not a parse: voice vs ping
+        // by the 3-bit type, exactly as before. Parsing itself is native.
         val dataType = (data[0].toInt() and 0xFF) shr 5
-        // Range is 0..7 by construction; the <0 arm is dead but kept as
-        // defense-in-depth, and udpTypes covers the 5 legacy enum entries.
-        if (dataType < 0 || dataType > udpTypes.size - 1) {
+        if (dataType == 1) {
+            val ping = try {
+                NativeVoiceCodec.parseLegacyPing(data)
+            } catch (e: Exception) {
+                logger.fine("Dropping malformed legacy ping: $e")
+                null
+            }
+            if (ping == null) {
+                logger.fine("Dropping malformed legacy ping")
+                refreshStatus()
+                return
+            }
+            if (!_events.tryEmit(VoiceEvent.UdpPing(ping.timestamp, null, null))) {
+                logger.fine("Dropping UdpPing (event buffer full)")
+            }
+            broadcast { it.messageUDPPing(data) }
+            refreshStatus()
+            return
+        } else if (dataType == 4) {
+            val frames = try {
+                NativeVoiceCodec.parseLegacyVoice(data, serverVersion.get())
+            } catch (e: Exception) {
+                logger.fine("Dropping malformed legacy voice: $e")
+                null
+            }
+            if (frames == null) {
+                logger.fine("Dropping malformed legacy voice")
+                refreshStatus()
+                return
+            }
+            broadcast { it.messageDecodedVoice(frames.toList()) }
+            refreshStatus()
+            return
+        }
+        if (dataType < 0 || dataType > 7) {
             logger.fine("Dropping out-of-range UDP type")
             return
         }
-        val udpDataType = udpTypes[dataType]
-        when (udpDataType) {
-            HumlaUDPMessageType.UDPPing -> {
-                // Legacy ping: bytes 1..9 are the timestamp.
-                try {
-                    val pb = PacketBuffer(data, data.size)
-                    pb.skip(1)
-                    val timestamp = pb.readLong()
-                    if (!_events.tryEmit(VoiceEvent.UdpPing(timestamp, null, null))) {
-                        logger.fine("Dropping UdpPing (event buffer full)")
-                    }
-                    broadcast { it.messageUDPPing(data) }
-                } catch (e: Exception) {
-                    // Bug-for-bug fallback (ported from HumlaConnection): the
-                    // varint timestamp above failed, so decode 8 fixed bytes.
-                    if (data.size >= 9) {
-                        val timedata = ByteArray(8)
-                        System.arraycopy(data, 1, timedata, 0, 8)
-                        val buffer = ByteBuffer.allocate(8)
-                        buffer.put(timedata)
-                        buffer.flip()
-                        val timestamp = buffer.long
-                        if (!_events.tryEmit(VoiceEvent.UdpPing(timestamp, null, null))) {
-                            logger.fine("Dropping UdpPing (event buffer full)")
-                        }
-                        broadcast { it.messageUDPPing(data) }
-                    }
-                }
-            }
-            HumlaUDPMessageType.UDPVoiceOpus -> {
-                broadcast { it.messageVoiceData(data, udpDataType) }
-            }
-            HumlaUDPMessageType.UDPVoiceCELTAlpha,
-            HumlaUDPMessageType.UDPVoiceSpeex,
-            HumlaUDPMessageType.UDPVoiceCELTBeta -> {
-                logger.fine("Dropping legacy-codec voice packet")
-                Unit
-            }
-        }
+        // Remaining legacy types (0 CELT Alpha, 2 Speex, 3 CELT Beta) predate
+        // Opus and never carry voice; 5-7 are unassigned. Drop, as before.
+        logger.fine("Dropping legacy-codec voice packet")
         refreshStatus()
     }
 
@@ -380,18 +405,4 @@ class LegacyVoiceLink @JvmOverloads constructor(
         scope.cancel()
     }
 
-    // Mutates the caller's buffer in place (1.2.2 codec-type swap); callers
-    // must not reuse it afterwards. Matches HumlaConnection parity.
-    private fun applyLegacyCodecWorkaround(data: ByteArray) {
-        if (data.isEmpty()) return
-        val ordinal = (data[0].toInt() and 0xFF) shr 5
-        if (ordinal < 0 || ordinal >= udpTypes.size) return
-        var dataType = udpTypes[ordinal]
-        if (dataType == HumlaUDPMessageType.UDPVoiceCELTBeta) {
-            dataType = HumlaUDPMessageType.UDPVoiceCELTAlpha
-        } else if (dataType == HumlaUDPMessageType.UDPVoiceCELTAlpha) {
-            dataType = HumlaUDPMessageType.UDPVoiceCELTBeta
-        }
-        data[0] = ((dataType.ordinal shl 5) and 0xFF).toByte()
-    }
 }

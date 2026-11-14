@@ -27,14 +27,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.util.Log
-import java.nio.BufferUnderflowException
 import java.util.Arrays
 import se.lublin.humla.exception.AudioInitializationException
 import se.lublin.humla.model.IUser
 import se.lublin.humla.model.TalkState
-import se.lublin.humla.net.HumlaUDPMessageType
-import se.lublin.humla.net.PacketBuffer
-import se.lublin.humla.protobuf.MumbleUDP
+import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.protocol.AudioHandler
 import kotlin.math.max
 import kotlin.math.min
@@ -420,7 +417,16 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
         }
     }
 
-    fun queueVoiceData(data: ByteArray?, messageType: HumlaUDPMessageType) {
+    /**
+     * Queues pre-parsed voice frames from the native packet codec (step 5a.2).
+     *
+     * Both inbound formats arrive here as the same frames; locally-muted and
+     * unknown-sender drops stay in Kotlin, as before, applied per frame.
+     * Empty non-terminators never arrive (the codec drops them); an empty
+     * terminator still forwards its marker so the voice drains instead of
+     * lingering to the miss-expiry.
+     */
+    fun queueDecodedVoiceFrames(frames: List<DecodedVoiceFrame>) {
         // Non-null by construction past the guard: the synchronized block
         // evaluates to the engine, so later uses need no assertion.
         val engineCopy: NativeAudioOutputEngine = synchronized(this) {
@@ -430,105 +436,28 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             }
             current
         }
-        if (messageType != HumlaUDPMessageType.UDPVoiceOpus) {
+        if (frames.isEmpty()) {
             return
         }
-        if (data == null || data.isEmpty()) {
-            return
-        }
-        try {
-            val msgFlags = data[0].toInt() and 0x1f
-            val pds = PacketBuffer(data, data.size)
-            pds.skip(1)
-            val session = pds.readLong().toInt()
-            val user = listener.getUser(session)
+        var queued = 0
+        for (f in frames) {
+            val user = listener.getUser(f.session)
             if (user == null || user.isLocalMuted) {
-                return
+                continue
             }
-            val seq = pds.readLong().toInt()
-            // Bundled datagrams chain header+payload pairs; each frame
-            // consumes sequence seq+i in UDP/protobuf 10 ms frame units.
-            // A legacy positional trailer (exactly 3 floats = 12 bytes
-            // after at least one frame, per upstream MumbleProtocol) is not
-            // another Opus frame: stop before parsing it as a header, or
-            // the trailing floats decode as a garbage header + payload.
-            // Intentional tolerance divergence: upstream decodes exactly one
-            // frame then discards the whole packet on any other remainder,
-            // while this loop plays the valid prefix and drops the tail.
-            // Benign (servers never bundle Opus; single-frame packets take
-            // one iteration) and better for voice; do not "fix" to match.
-            var queued = 0
-            while (pds.left() > 0) {
-                if (queued > 0 && pds.left() == 3 * 4) {
-                    break
-                }
-                val header = pds.readLong()
-                val size = (header and ((1 shl 13) - 1).toLong()).toInt()
-                val isTerminator = header and (1 shl 13).toLong() != 0L
-                if (size == 0 && isTerminator) {
-                    engineCopy.queuePacket(
-                        session, ByteArray(0), 0, seq + queued,
-                        msgFlags, true
-                    )
+            if (f.opus.isEmpty()) {
+                if (f.isTerminator) {
+                    engineCopy.queuePacket(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
                     queued++
-                    continue
                 }
-                if (size <= 0 || size > pds.left()) {
-                    break
-                }
-                val opus = pds.dataBlock(size)
-                engineCopy.queuePacket(
-                    session, opus, opus.size, seq + queued,
-                    msgFlags, isTerminator
-                )
-                queued++
+                continue
             }
-            if (queued > 0) {
-                signalData()
-            }
-        } catch (e: BufferUnderflowException) {
-            Log.v(TAG, "Dropping malformed voice packet", e)
-        } catch (e: IllegalArgumentException) {
-            Log.v(TAG, "Dropping malformed voice packet", e)
-        } catch (e: ArrayIndexOutOfBoundsException) {
-            Log.v(TAG, "Dropping malformed voice packet", e)
+            engineCopy.queuePacket(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
+            queued++
         }
-    }
-
-    fun queueProtobufVoiceData(audioMsg: MumbleUDP.Audio) {
-        // Non-null by construction past the guard: the synchronized block
-        // evaluates to the engine, so later uses need no assertion.
-        val engineCopy: NativeAudioOutputEngine = synchronized(this) {
-            val current = engine
-            if (!running || current == null) {
-                return
-            }
-            current
+        if (queued > 0) {
+            signalData()
         }
-        val session = audioMsg.senderSession
-        val user = listener.getUser(session)
-        if (user == null || user.isLocalMuted) {
-            return
-        }
-        val opus = audioMsg.opusData.toByteArray()
-        val seq = audioMsg.frameNumber.toInt()
-        val flags = if (audioMsg.hasContext()) audioMsg.context else 0
-        val isTerminator = audioMsg.isTerminator
-        if (opus.isEmpty()) {
-            // A terminator may carry no Opus payload; still forward the marker
-            // so the voice drains instead of lingering to the miss-expiry.
-            // Intentional divergence: upstream decodeAudio_protobuf rejects
-            // empty opus_data outright; forwarding only the terminator marker
-            // is harmless (compliant servers always set opus_data) and keeps
-            // talk-state teardown prompt. Do not "fix" to match.
-            if (isTerminator) {
-                engineCopy.queuePacket(session, ByteArray(0), 0, seq, flags, true)
-                signalData()
-            }
-            return
-        }
-        engineCopy.queuePacket(session, opus, opus.size, seq, flags, isTerminator)
-        signalData()
     }
 
     private fun signalData() {
