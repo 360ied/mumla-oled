@@ -47,6 +47,7 @@ set(AUDIO_ENGINE_DIR "${JNI_ROOT}/audio_engine")
 set(CRYPTO_DIR "${JNI_ROOT}/crypto")
 set(VOICE_CODEC_DIR "${JNI_ROOT}/voice_codec")
 set(NANOPB_DIR "${JNI_ROOT}/nanopb")
+set(VOICE_IO_DIR "${JNI_ROOT}/voice_io")
 set(TEST_CPP_DIR "${JNI_ROOT}/../../test/cpp")
 
 # Parse source lists from upstream Opus .mk files (file(STRINGS) joins \-continuations).
@@ -198,6 +199,7 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/NativeAudioOutputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/NativeCrashTestJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
+        "${VOICE_IO_DIR}/VoiceIo.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
@@ -345,6 +347,25 @@ else()
     target_compile_options(test_crypt_state PRIVATE ${HOST_FLAGS})
     target_link_libraries(test_crypt_state PRIVATE Threads::Threads)
     add_test(NAME test_crypt_state COMMAND test_crypt_state)
+
+    # Native render core (step 5a.3a): rings plus the VoiceIo render entry
+    # point. Links the real output engine with an injected fake decoder, so
+    # no libopus is needed; production passes makeOpusOutputDecoder.
+    add_executable(test_voice_io
+        "${VOICE_IO_DIR}/VoiceIo.cpp"
+        "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
+        "${TEST_CPP_DIR}/test_voice_io.cpp"
+    )
+    target_include_directories(test_voice_io PRIVATE
+        "${VOICE_IO_DIR}"
+        "${AUDIO_ENGINE_DIR}"
+        "${AUDIO_ENGINE_DIR}/jitter"
+        "${TEST_CPP_DIR}"
+    )
+    target_compile_options(test_voice_io PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    target_link_libraries(test_voice_io PRIVATE Threads::Threads m)
+    add_test(NAME test_voice_io COMMAND test_voice_io)
 
     add_executable(test_voice_codec
         "${TEST_CPP_DIR}/test_voice_codec.cpp"
