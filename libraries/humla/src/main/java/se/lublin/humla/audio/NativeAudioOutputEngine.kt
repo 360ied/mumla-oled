@@ -17,6 +17,8 @@
 
 package se.lublin.humla.audio
 
+import se.lublin.humla.HumlaNative
+
 /**
  * Java interface for the native C++ Audio Output Engine (libhumlaaudio.so).
  *
@@ -34,23 +36,6 @@ class NativeAudioOutputEngine {
         const val TALK_SHOUTING = 1
         const val TALK_PASSIVE = 2
         const val TALK_WHISPERING = 3
-
-        private val loadError: Throwable? = try {
-            System.loadLibrary("humlaaudio")
-            null
-        } catch (t: Throwable) {
-            t
-        }
-
-        private fun ensureLoaded() {
-            val error = loadError
-            if (error != null) {
-                throw IllegalStateException(
-                    "Native audio libraries failed to load",
-                    error
-                )
-            }
-        }
 
         @JvmStatic
         private external fun nativeCreate(listener: Any?): Long
@@ -89,7 +74,7 @@ class NativeAudioOutputEngine {
     private val listener: AudioOutputEngineListener?
 
     constructor(listener: AudioOutputEngineListener?) {
-        ensureLoaded()
+        HumlaNative.ensureLoaded()
         this.listener = listener
         nativeHandle = nativeCreate(listener)
         if (nativeHandle == 0L) {
@@ -126,12 +111,13 @@ class NativeAudioOutputEngine {
     }
 
     /**
-     * Renders mixed PCM. Only the handle copy is guarded; the native call
-     * runs unsynchronized so network-thread queuePacket never blocks behind
-     * a 60 ms decode+mix quantum. Thread safety below comes from the native
-     * engine mutex plus the single-render-thread discipline. destroy() must only
-     * run after the render thread is joined (AudioOutput.stopPlaying guarantees
-     * this); it stays synchronized against queuePacket/removeUser.
+     * Renders mixed PCM. Only the handle copy is guarded here; the native
+     * call itself runs outside this monitor. Thread safety below comes from the
+     * JNI bridge mutex (the engine itself is single-threaded by contract) plus
+     * the single-render-thread discipline: network-thread queuePacket waits at
+     * most one quantum. destroy() must only run after the render thread is
+     * joined (AudioOutput.stopPlaying guarantees this); it stays synchronized
+     * against queuePacket/removeUser.
      */
     fun render(out: ShortArray?, offset: Int, length: Int): Int {
         val handle: Long = synchronized(this) {

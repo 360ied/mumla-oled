@@ -44,7 +44,11 @@ not realtime threads. Step 5a changes its shape, not its algorithms.
    instance. No `std::mutex`, no `std::atomic`, no callbacks.
 2. **Outputs as return values.** Results go into caller-provided structs.
 3. **No allocation once started.** Every buffer, voice, decoder, and jitter
-   slot is allocated when the engine is constructed.
+   slot is allocated when the engine is constructed, and no call on the
+   realtime path allocates. The input engine's control-plane calls are the
+   one exception: RNNoise cannot reset its recurrent state in place, so
+   enabling it, swapping its model, or resetting the engine reallocates that
+   state (see [input engine](#input-engine)).
 4. **Configuration per call.** The input engine receives its configuration
    with every frame and handles transitions itself.
 
@@ -58,7 +62,6 @@ struct InputConfig {
     int bitrate;
     int framesPerPacket;
     float amplitudeBoost;
-    bool rnnoiseEnabled;
     bool adaptiveLevelerEnabled;
     float vadMax, vadMin;
     uint32_t vadHoldFrames;
@@ -87,7 +90,8 @@ public:
     // Realtime: one 10 ms frame (480 samples at 48 kHz).
     void processFrame(const int16_t* pcm, size_t samples,
                       const InputConfig& config, InputFrameResult* out);
-    // Control thread only, while stopped:
+    // Control plane only (may allocate, never called from the capture thread):
+    void setRnnoiseEnabled(bool enabled);
     void setRnnoiseModel(const uint8_t* data, size_t size);
     void reset();
 };
@@ -100,6 +104,20 @@ public:
 - `InputConfig` is the engine's own view, assembled by the capture thread
   each frame from `VoicePolicy` and `VoiceSettings`; the engine never sees
   either type.
+- The denoiser switch is deliberately **not** part of `InputConfig`: it is
+  applied on the control plane by `setRnnoiseEnabled`, and the capture
+  thread only reads the resulting flag. RNNoise's API has no
+  allocation-free reset, so enabling it again recreates its recurrent state
+  (five allocations), which neither a frame nor a settings push may do. The
+  switch therefore follows the model, which allocates the same way: both
+  are set together when the model is loaded, at engine creation or after a
+  capture restart (see
+  [start, stop, reconfigure](#start-stop-reconfigure)), and neither is in
+  `VoiceSettings` (see
+  [policy and settings handoff](#policy-and-settings-handoff)). Restoring a
+  snapshot of the freshly created state would make a live toggle
+  allocation-free; that is deliberately not pursued, because the switch
+  changes only with the model.
 - Outbound packets hold up to `kMaxOpusBufferBytes` (1024) of Opus data, as
   today. Inbound packets may be larger (up to `MAX_PACKET_BYTES`, 2048), as
   today's output engine accepts.
@@ -109,6 +127,24 @@ public:
   The constant is derived from those two values, not hard-coded.
 - Talking-state changes are returned in `out` instead of through
   `TalkingStateCallback`.
+- Configuration is sampled once per frame: the capture thread hands over
+  the current view and the engine compares it with the previous frame's, so
+  every transition lands on a frame boundary. Both consequences are bounded
+  by that one 10 ms frame:
+  - A mute takes effect on the next frame. Transition handling runs before
+    that frame's PCM is touched, so no muted audio is transmitted; only the
+    terminator's emission point moves. The capture loop keeps feeding frames
+    while muted (the microphone stays open for the whole connection), so the
+    deferred flush is never stranded.
+  - A push-to-talk press and release that both arrive inside one frame
+    interval is not observable and transmits nothing. That is the intended
+    behavior, not an accident: a press shorter than the 10 ms frame it would
+    have to fill is not a transmission attempt, and answering it with a
+    150 ms hangover and an empty burst (as the pre-refactor engine did) is
+    the thing that was wrong. Only the direct UI path
+    (`HumlaService.setTalkingState`) can produce it at all; the
+    `VoicePolicy` path already samples per frame. A press that any single
+    frame observes arms the full hangover, however brief.
 
 ### Output engine
 
@@ -148,20 +184,32 @@ public:
   picks the victim, and its slot is reset and reused
   (`opus_decoder_ctl(OPUS_RESET_STATE)`, jitter reset).
 - **Session lookup.** A fixed array of 32 (session, slot) pairs searched
-  linearly, replacing the `std::map`.
+  linearly, replacing the `std::map`. The array is kept sorted by session
+  id, so the mix visits voices in the same ascending order the map
+  supplied and the recorded goldens stay bit-exact.
 - **Jitter packet storage.** `jitter.c` allocates every packet's bytes with
   `calloc` today. It is changed to take packet storage from a fixed pool
   shared by all voices: 1024 slots of `MAX_PACKET_BYTES` (2 MiB), owned by
   the output engine. When the pool is exhausted, the incoming packet is
-  dropped and counted in `RenderResult.droppedPackets`. The pool size is
-  confirmed by a stress test with 32 voices at full jitter adaptation (see
-  [testing](testing.md#native-host-suite)).
+  dropped and counted in `RenderResult.droppedPackets`; a dropped packet
+  also does not credit the startup gate, since that audio never arrived.
+  The pool size is confirmed by a stress test with 32 voices at full jitter
+  adaptation (see [testing](testing.md#native-host-suite)): loss,
+  reordering and compression bursts for 60 simulated seconds at the
+  production margin peak at 140 of 1024 slots with zero drops.
 - **Render quantum.** The I/O layer never calls `render` with more than
   `MAX_QUANTUM_SAMPLES` (60 ms), so the scratch buffers' slow-path resize
   never runs. The engine asserts this in debug builds.
-- **Talk events.** Transitions recorded during `queuePacket` (eviction) and
-  `render` go into a fixed internal array, returned with the next
-  `RenderResult`.
+- **Talk events.** Transitions recorded during `queuePacket` (eviction),
+  `removeUser`, `clear`, and `render` go into a fixed internal array and are
+  returned by the next `RenderResult`, queue-time events before that
+  quantum's own. A render with no samples, or one where nothing is audible,
+  still delivers them, so nothing depends on a listener running. The arrays
+  are sized from the contract, not guessed: one result carries at most one
+  queue-time transition plus one mix-time transition per voice, so
+  `2 * MAX_VOICES` entries is exactly enough and the pending array holds the
+  same again as headroom (no transition spills into the next render, and a
+  full array would leave the transition retryable rather than lost).
 
 ### Allocation sites removed
 

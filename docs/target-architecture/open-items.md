@@ -21,20 +21,29 @@ them.
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3 |
 | `Session`/`TransportImpl` virtual-time tests | Add the missing scenarios and invariants: issues [04](issues/04-session-transport-virtual-time-gaps.md), [05](issues/05-client-edge-invariants-weak.md) | Step 5a.3 |
 | SCO manager confinement | Confine `BluetoothScoManager` to the route thread: issue [01](issues/01-sco-manager-two-thread-mutation.md) | Step 5a.3 |
-| Voice interop harness | Host `libhumlaaudio` extended beyond crypto and loaded by the JVM interop test, driving `VoiceEngine` with synthetic PCM (see [testing](testing.md#murmur-interop)) | Step 5a.2 |
+| Interop PCM injection before `voice_io` | Decide how the JVM interop test feeds synthetic PCM to the voice path in 5a.2, where capture is still Kotlin and `VoiceEngine` does not exist yet: a test-only capture/render factory seam in `AudioHandler` defaulting to `AudioInput`/`AudioOutput` (an interim seam deleted when 5a.3 brings the native entry points), or deferring voice-over-tunnel to 5a.3, which defers a 5a.2 done-when. The harness growth itself is step work, not a precondition (see [testing](testing.md#murmur-interop)) | Step 5a.2 |
 
 ## Open (not gating)
 
 | Item | Notes |
 |---|---|
+| Interop harness growth | Deliverable work inside each sub-step, not a gate: 5a.2 adds the codec JNI to the host `libhumlaaudio` and the tunnel voice scenario, 5a.3 adds the voice JNI and drives `VoiceEngine`, 5a.4 covers both directions (see [testing](testing.md#murmur-interop)). Only the PCM injection seam above is still a decision |
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8. Until then it stays in `BOUNDARY_FILES` even though the reader thread it is named for now lives in `TransportImpl` (see [issue 31](issues/31-boundary-files-mismatch.md)) |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
 | `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling); the step-1 validation now fails the stale-callback tests when either guard is removed (see [testing](testing.md#murmur-interop)) |
 | Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3 (remote) and 5a.4 (self) via `VoiceEngine.talkActivity` |
+| `HumlaNative` failure reporting and fake native layer | [HumlaNative](../../libraries/humla/src/main/java/se/lublin/humla/HumlaNative.kt) owns the single `System.loadLibrary("humlaaudio")` from 5a.1 and every `external` class goes through it, but its two remaining spec duties need 5a.3 machinery: reporting a load failure as `VoiceEvent.PipelineError` on release builds (the event type arrives with the `VoiceEngine` facade) and JVM tests injecting a fake native layer instead of catching `UnsatisfiedLinkError` (they use zero-handle guards today) |
 | Upstream-parity codec changes | Found during the first 5a attempt, deferred out of 5a (no behavior changes inside the step): honor `volume_adjustment`; drop the 1.2.2 CELT workaround; empty `opus_data` terminator handling; legacy chaining tolerance. Land after 5a.4 as their own commits |
 
 ## Resolved
+
+Item resolved while implementing step 5a.1:
+
+| Item | Resolution | Where |
+|---|---|---|
+| RNNoise enable transition in the 5a.4 settings push | Settled as a restart, not a live push: the switch follows the model, which allocates the same way, so both are applied on the control plane when the model loads — engine creation or a capture restart — and neither is in `VoiceSettings`. A settings-driven toggle would need a state snapshot restored allocation-free; deliberately not pursued | [voice](voice.md#input-engine), [voice](voice.md#start-stop-reconfigure) |
+| Push-to-talk press and release inside one frame | Accepted as intended, the step's one intentional behavior change: per-frame configuration cannot observe an edge no frame sampled, and a press shorter than the 10 ms frame it would fill is not a transmission attempt. The pre-refactor engine's 150 ms hangover for it is not reproduced; a press that any frame observes still arms the full hangover. Pinned by `testPttSubFrameTapTransmitsNothing` | [voice](voice.md#input-engine), [migration](migration.md#step-5a--engine-refactor-codec-network-threads) |
 
 Items resolved by the step-1 harness work (2026-11-13):
 

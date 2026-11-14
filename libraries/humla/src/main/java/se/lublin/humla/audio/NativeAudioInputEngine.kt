@@ -19,6 +19,7 @@ package se.lublin.humla.audio
 
 import android.content.Context
 import android.util.Log
+import se.lublin.humla.HumlaNative
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 
@@ -44,7 +45,7 @@ class NativeAudioInputEngine {
         const val DEFAULT_SQUELCH_MIN_DB = -65.0f // Squelch noise floor in dBFS
 
         init {
-            System.loadLibrary("humlaaudio")
+            HumlaNative.ensureLoaded()
         }
 
         @Volatile

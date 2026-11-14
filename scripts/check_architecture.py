@@ -36,8 +36,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent
 ALLOWLIST_PATH = SCRIPT_DIR / "architecture-allowlist.txt"
 
-# Step 5a flips this to True in the last engine-refactor commit.
-SINGLE_THREADED_ENGINE = False
+# True once the step 5a engine refactor landed: the audio engines and the
+# packet codec are single-threaded by contract and hold no locks.
+SINGLE_THREADED_ENGINE = True
 
 # New boundary files may only join the allowlist via these paths.
 # Adding a path here is a deliberate, reviewed change (see enforcement.md).
@@ -378,6 +379,12 @@ DEFAULT_NATIVE_EXCEPTIONS = [
     ("libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp", "<unistd.h>"),
     ("libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp", "<jni.h>"),
     ("libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp", "<jni.h>"),
+    # Step 5a.1 moved the engine lock into the interim JNI seam; both entries
+    # go when the bridge files do (5a.4). Keep this list identical to the
+    # committed allowlist's [native] section: it is the fallback used when the
+    # file is missing.
+    ("libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp", "<mutex>"),
+    ("libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp", "<mutex>"),
     ("libraries/humla/src/main/jni/audio_engine/NativeCrashTestJni.cpp", "<jni.h>"),
     ("libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp", "<jni.h>"),
 ]

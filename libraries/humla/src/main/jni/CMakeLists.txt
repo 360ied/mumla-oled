@@ -118,6 +118,21 @@ target_include_directories(humlaopus
             "${OPUS_DIR}/silk/fixed"
 )
 
+# RNNoise sources and internal flags are shared by the Android library and the
+# host test build: the golden engine fixtures drive the real denoiser.
+set(RNNOISE_SOURCES
+    "${RNNOISE_BUILD_DIR}/generated/rnnoise_data.c"
+    "${RNNOISE_DIR}/src/rnnoise_tables.c"
+    "${RNNOISE_DIR}/src/rnn.c"
+    "${RNNOISE_DIR}/src/pitch.c"
+    "${RNNOISE_DIR}/src/nnet.c"
+    "${RNNOISE_DIR}/src/nnet_default.c"
+    "${RNNOISE_DIR}/src/parse_lpcnet_weights.c"
+    "${RNNOISE_DIR}/src/kiss_fft.c"
+    "${RNNOISE_DIR}/src/denoise.c"
+    "${RNNOISE_DIR}/src/celt_lpc.c"
+)
+
 if(ANDROID)
     set(COMMON_ANDROID_FLAGS
         -ffunction-sections
@@ -134,18 +149,7 @@ if(ANDROID)
         -DNDEBUG
     )
 
-    add_library(humlarnnoise STATIC
-        "${RNNOISE_BUILD_DIR}/generated/rnnoise_data.c"
-        "${RNNOISE_DIR}/src/rnnoise_tables.c"
-        "${RNNOISE_DIR}/src/rnn.c"
-        "${RNNOISE_DIR}/src/pitch.c"
-        "${RNNOISE_DIR}/src/nnet.c"
-        "${RNNOISE_DIR}/src/nnet_default.c"
-        "${RNNOISE_DIR}/src/parse_lpcnet_weights.c"
-        "${RNNOISE_DIR}/src/kiss_fft.c"
-        "${RNNOISE_DIR}/src/denoise.c"
-        "${RNNOISE_DIR}/src/celt_lpc.c"
-    )
+    add_library(humlarnnoise STATIC ${RNNOISE_SOURCES})
     target_include_directories(humlarnnoise
         PUBLIC  "${RNNOISE_DIR}/include"
         PRIVATE "${RNNOISE_DIR}/src"
@@ -225,6 +229,24 @@ else()
         ${HOST_FLAGS}
     )
 
+    # Third-party code: no -Werror (the Android build silences the same
+    # warning groups), same internal flags as the Android target so the host
+    # denoiser is the one the app runs.
+    add_library(humlarnnoise STATIC ${RNNOISE_SOURCES})
+    target_include_directories(humlarnnoise
+        PUBLIC  "${RNNOISE_DIR}/include"
+        PRIVATE "${RNNOISE_DIR}/src"
+                "${RNNOISE_BUILD_DIR}"
+                "${RNNOISE_BUILD_DIR}/generated"
+    )
+    target_compile_options(humlarnnoise PRIVATE
+        -O2
+        -w
+        -DHAVE_CONFIG_H
+        -DUSE_WEIGHTS_FILE
+        -DVAR_ARRAYS
+    )
+
     add_library(humlacrypto_obj OBJECT
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
     )
@@ -241,6 +263,7 @@ else()
         "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceEncoder.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
+        "${AUDIO_ENGINE_DIR}/RnnoiseProcessor.cpp"
         "${TEST_CPP_DIR}/test_biquad_filter.cpp"
         "${TEST_CPP_DIR}/test_soft_limiter.cpp"
         "${TEST_CPP_DIR}/test_pre_speech_ring_buffer.cpp"
@@ -250,6 +273,8 @@ else()
         "${TEST_CPP_DIR}/test_audio_input_engine.cpp"
         "${TEST_CPP_DIR}/test_audio_output_engine.cpp"
         "${TEST_CPP_DIR}/test_opus_interop.cpp"
+        "${TEST_CPP_DIR}/test_engine_goldens.cpp"
+        "${TEST_CPP_DIR}/test_engine_allocation.cpp"
         "${TEST_CPP_DIR}/run_audio_tests.cpp"
     )
     target_include_directories(test_audio_engine PRIVATE
@@ -258,7 +283,24 @@ else()
         "${TEST_CPP_DIR}"
     )
     target_compile_options(test_audio_engine PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
-    target_link_libraries(test_audio_engine PRIVATE humlaopus Threads::Threads m)
+    # The allocation harness measures the C allocator through --wrap; keep the
+    # compiler from turning its probes into builtins with different symbols.
+    set_source_files_properties("${TEST_CPP_DIR}/test_engine_allocation.cpp"
+        PROPERTIES COMPILE_OPTIONS "-fno-builtin")
+    target_compile_definitions(test_audio_engine PRIVATE
+        MUMLA_GOLDEN_DIR="${JNI_ROOT}/../../test/fixtures/engine-goldens"
+        MUMLA_RNNOISE_MODEL_PATH="${JNI_ROOT}/../assets/rnnoise_model.bin"
+    )
+    target_link_libraries(test_audio_engine PRIVATE humlaopus humlarnnoise Threads::Threads m)
+    # Counting allocator: test_engine_allocation.cpp replaces operator new/
+    # delete and wraps the C allocator, so steady-state calls can be shown to
+    # allocate nothing.
+    target_link_options(test_audio_engine PRIVATE
+        -Wl,--wrap=malloc
+        -Wl,--wrap=calloc
+        -Wl,--wrap=realloc
+        -Wl,--wrap=free
+    )
     add_test(NAME test_audio_engine COMMAND test_audio_engine)
 
     add_executable(test_crypt_state

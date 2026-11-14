@@ -20,6 +20,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -32,22 +33,20 @@
 using namespace mumla::audio;
 
 // Cached in JNI_OnLoad; used to attach callback threads that the JVM did not
-// attach itself (e.g. a native audio thread calling back into Java).
+// attach itself.
 static JavaVM* g_vm = nullptr;
 
+// Interim JNI seam (deleted in step 5a.3 with the Kotlin audio path). The
+// engine itself is single-threaded by contract and holds no lock: this bridge
+// serializes the Kotlin network threads (queuePacket/removeUser) against the
+// render thread and forwards the talk transitions each render returns. The
+// tripwire's <mutex> ban covers the engine, not this seam; the allowlist
+// records the exception until the file is deleted.
 struct OutputEngineContext {
     std::unique_ptr<AudioOutputEngine> engine;
+    std::mutex engineMutex;
     jobject listenerGlobalRef = nullptr;
     jmethodID onTalkMethod = nullptr;
-    // Talk events from the engine, which emits them after releasing its own
-    // mutex on whichever thread produced them (the render thread for
-    // mix-time transitions, network threads for removeUser/clear/eviction).
-    // The persistent callback registered in nativeCreate appends here;
-    // nativeRender drains after each quantum and forwards to Java. Lock
-    // order is strictly one-way — engine mutex, then this one — because the
-    // engine never invokes its callback while holding its mutex.
-    std::mutex talkEventMutex;
-    std::vector<std::pair<int32_t, int>> talkEvents;
 };
 
 static OutputEngineContext* getContext(jlong handle) {
@@ -55,15 +54,61 @@ static OutputEngineContext* getContext(jlong handle) {
 }
 
 // Renders into this scratch so steady-state ticks allocate nothing. It is
-// thread-local because renderMix may run on a dedicated audio thread while
-// queuePacket runs on network threads; sharing one buffer would race. The
-// vector only grows (up to the largest render quantum seen) and is reused
-// across ticks after warmup.
+// thread-local because the render thread is a Java thread; the vector only
+// grows (up to the largest render quantum seen) and is reused across ticks
+// after warmup.
 static thread_local std::vector<int16_t> t_renderScratch;
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     g_vm = vm;
     return JNI_VERSION_1_6;
+}
+
+// Delivers the talk transitions a render returned to the Java listener. Runs
+// with the bridge mutex released: no listener code inside the seam.
+static void dispatchTalkEvents(OutputEngineContext* ctx, JNIEnv* env,
+                               const RenderResult& result) {
+    if (result.talkEventCount == 0 || ctx->listenerGlobalRef == nullptr ||
+        ctx->onTalkMethod == nullptr) {
+        return;
+    }
+    // Render is normally invoked from a Java-attached thread, but a native
+    // audio thread may call in without attachment. Attach as a daemon (no
+    // Java-thread semantics needed) and detach only if this scope attached; a
+    // pre-attached thread is left alone.
+    JNIEnv* cbEnv = env;
+    bool didAttach = false;
+    if (g_vm != nullptr) {
+        JNIEnv* probe = nullptr;
+        if (g_vm->GetEnv(reinterpret_cast<void**>(&probe), JNI_VERSION_1_6) ==
+            JNI_EDETACHED) {
+            if (g_vm->AttachCurrentThreadAsDaemon(&cbEnv, nullptr) == JNI_OK) {
+                didAttach = true;
+            } else {
+                LOGE("nativeRender: failed to attach callback thread, "
+                     "dropping %zu talk events", result.talkEventCount);
+                cbEnv = nullptr;
+            }
+        }
+    }
+    if (cbEnv != nullptr) {
+        for (size_t i = 0; i < result.talkEventCount; ++i) {
+            cbEnv->CallVoidMethod(ctx->listenerGlobalRef, ctx->onTalkMethod,
+                                  static_cast<jint>(result.talkEvents[i].session),
+                                  static_cast<jint>(static_cast<int>(
+                                      result.talkEvents[i].state)));
+            if (cbEnv->ExceptionCheck()) {
+                LOGE("nativeRender: onTalkStateChanged threw for session %d, "
+                     "continuing with remaining events",
+                     static_cast<int>(result.talkEvents[i].session));
+                cbEnv->ExceptionClear();
+                continue;
+            }
+        }
+    }
+    if (didAttach) {
+        g_vm->DetachCurrentThread();
+    }
 }
 
 extern "C" {
@@ -76,19 +121,8 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeCreate(
         // OOM: an exception may already be pending; just propagate it.
         return 0;
     }
-    ctx->engine = std::make_unique<AudioOutputEngine>([] { return makeOpusOutputDecoder(); });
-    // One persistent talk callback for the engine's lifetime. The previous
-    // code re-registered a lambda capturing a nativeRender stack vector per
-    // render; removeUser on a network thread could copy that callback and
-    // invoke it concurrently with — or after — the render call, a data race
-    // and use-after-free on the captured vector. It also dropped removeUser
-    // events entirely whenever no render was in flight. Events now land in
-    // the context queue and are drained by nativeRender, idle or not.
-    ctx->engine->setTalkCallback(
-        [ctx](int32_t session, int stateOrdinal) {
-            std::lock_guard<std::mutex> lock(ctx->talkEventMutex);
-            ctx->talkEvents.emplace_back(session, stateOrdinal);
-        });
+    ctx->engine = std::make_unique<AudioOutputEngine>(
+        [] { return makeOpusOutputDecoder(); });
     if (listener != nullptr) {
         jobject ref = env->NewGlobalRef(listener);
         if (ref == nullptr) {
@@ -144,37 +178,40 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeQueuePacket(
     if (ctx == nullptr) {
         return;
     }
-    if (isTerminator == JNI_TRUE && length == 0) {
-        // Empty end-of-speech marker (terminator with no Opus payload): no
-        // bytes to pin, just flag the voice so it drains instead of hitting
-        // the miss-expiry. data may be an empty array or null here.
-        ctx->engine->queuePacket(session, nullptr, 0,
-                                 static_cast<uint32_t>(sequence), flags, true);
+    InboundPacket packet;
+    packet.session = session;
+    packet.sequence = static_cast<uint32_t>(sequence);
+    packet.flags = flags;
+    packet.isTerminator = isTerminator == JNI_TRUE;
+    if (!packet.isTerminator && (data == nullptr || length <= 0)) {
         return;
     }
-    if (data == nullptr || length <= 0) {
-        return;
+    if (length > 0) {
+        if (data == nullptr || length > static_cast<jint>(AudioOutputEngine::MAX_PACKET_BYTES)) {
+            return;
+        }
+        const jsize arrayLen = env->GetArrayLength(data);
+        if (arrayLen <= 0) {
+            return;
+        }
+        // Overflow-safe overrun check in jsize arithmetic: both operands are
+        // non-negative here, so the comparison cannot wrap. Reject instead of
+        // clamping so a corrupt length never silently decodes a truncated
+        // frame.
+        if (length > arrayLen) {
+            return;
+        }
+        jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+        if (bytes == nullptr) {
+            // OOM: the pending exception propagates to the caller.
+            return;
+        }
+        std::memcpy(packet.data, bytes, static_cast<size_t>(length));
+        packet.length = static_cast<uint16_t>(length);
+        env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
     }
-    const jsize arrayLen = env->GetArrayLength(data);
-    if (arrayLen <= 0) {
-        return;
-    }
-    // Overflow-safe overrun check in jsize arithmetic: both operands are
-    // non-negative here, so the comparison cannot wrap. Reject instead of
-    // clamping so a corrupt length never silently decodes a truncated frame.
-    if (length > arrayLen) {
-        return;
-    }
-    jbyte* bytes = env->GetByteArrayElements(data, nullptr);
-    if (bytes == nullptr) {
-        // OOM: the pending exception propagates to the caller.
-        return;
-    }
-    ctx->engine->queuePacket(session, reinterpret_cast<uint8_t*>(bytes),
-                             static_cast<size_t>(length),
-                             static_cast<uint32_t>(sequence), flags,
-                             isTerminator == JNI_TRUE);
-    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+    std::lock_guard<std::mutex> lock(ctx->engineMutex);
+    ctx->engine->queuePacket(packet);
 }
 
 JNIEXPORT jint JNICALL
@@ -199,73 +236,41 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeRender(
     if (end > static_cast<int64_t>(arrayLen)) {
         return 0;
     }
+    // The engine covers quanta up to MAX_QUANTUM_SAMPLES (60 ms); Java's
+    // render quantum is 20 ms. Refuse anything larger rather than truncating
+    // silently.
+    if (static_cast<size_t>(length) > AudioOutputEngine::MAX_QUANTUM_SAMPLES) {
+        LOGE("nativeRender: refusing %d samples (max %zu)", length,
+             AudioOutputEngine::MAX_QUANTUM_SAMPLES);
+        return 0;
+    }
 
     if (t_renderScratch.size() < static_cast<size_t>(length)) {
         t_renderScratch.resize(static_cast<size_t>(length));
     }
-    const size_t rendered = ctx->engine->renderMix(
-        t_renderScratch.data(), static_cast<size_t>(length));
+    RenderResult result;
+    {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
+        ctx->engine->render(t_renderScratch.data(),
+                            static_cast<size_t>(length), &result);
+    }
 
-    if (rendered > 0) {
-        env->SetShortArrayRegion(out, offset, static_cast<jsize>(rendered),
+    if (result.samples > 0) {
+        env->SetShortArrayRegion(out, offset, static_cast<jsize>(result.samples),
                                  t_renderScratch.data());
         if (env->ExceptionCheck()) {
             LOGE("nativeRender: SetShortArrayRegion failed, dropping %zu samples",
-                 rendered);
+                 result.samples);
             env->ExceptionClear();
             return 0;
         }
     }
-    // Drain events queued by the persistent callback: this quantum's talk
-    // transitions plus anything emitted by removeUser/clear/eviction on
-    // network threads since the last render. Draining happens on every
-    // call, including silent quanta, so idle-time removals still reach
-    // Java within one 20 ms wake.
-    std::vector<std::pair<int32_t, int>> events;
-    {
-        std::lock_guard<std::mutex> lock(ctx->talkEventMutex);
-        events.swap(ctx->talkEvents);
-    }
-    if (ctx->listenerGlobalRef != nullptr && ctx->onTalkMethod != nullptr &&
-        !events.empty()) {
-        // Render is normally invoked from a Java-attached thread, but a
-        // native audio thread may call in without attachment. Attach as a
-        // daemon (no Java-thread semantics needed) and detach only if this
-        // scope attached; a pre-attached thread is left alone.
-        JNIEnv* cbEnv = env;
-        bool didAttach = false;
-        if (g_vm != nullptr) {
-            JNIEnv* probe = nullptr;
-            if (g_vm->GetEnv(reinterpret_cast<void**>(&probe),
-                             JNI_VERSION_1_6) == JNI_EDETACHED) {
-                if (g_vm->AttachCurrentThreadAsDaemon(&cbEnv, nullptr) == JNI_OK) {
-                    didAttach = true;
-                } else {
-                    LOGE("nativeRender: failed to attach callback thread, "
-                         "dropping %zu talk events", events.size());
-                    cbEnv = nullptr;
-                }
-            }
-        }
-        if (cbEnv != nullptr) {
-            for (const auto& event : events) {
-                cbEnv->CallVoidMethod(ctx->listenerGlobalRef, ctx->onTalkMethod,
-                                      static_cast<jint>(event.first),
-                                      static_cast<jint>(event.second));
-                if (cbEnv->ExceptionCheck()) {
-                    LOGE("nativeRender: onTalkStateChanged threw for session %d, "
-                         "continuing with remaining events",
-                         static_cast<int>(event.first));
-                    cbEnv->ExceptionClear();
-                    continue;
-                }
-            }
-        }
-        if (didAttach) {
-            g_vm->DetachCurrentThread();
-        }
-    }
-    return static_cast<jint>(rendered);
+    // This quantum's talk transitions plus anything queuePacket, removeUser or
+    // clear accumulated since the last render. Draining happens on every call,
+    // including silent quanta, so idle-time removals still reach Java within
+    // one 20 ms wake.
+    dispatchTalkEvents(ctx, env, result);
+    return static_cast<jint>(result.samples);
 }
 
 JNIEXPORT void JNICALL
@@ -273,6 +278,7 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeRemoveUser(
         JNIEnv* /*env*/, jclass /*clazz*/, jlong handle, jint session) {
     OutputEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
         ctx->engine->removeUser(session);
     }
 }
@@ -282,6 +288,7 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeSetJitterMarginFrames(
         JNIEnv* /*env*/, jclass /*clazz*/, jlong handle, jint marginFrames) {
     OutputEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
         ctx->engine->setJitterMarginFrames(marginFrames);
     }
 }
@@ -291,6 +298,7 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeReset(
         JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
     OutputEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
         ctx->engine->clear();
     }
 }
@@ -300,6 +308,7 @@ Java_se_lublin_humla_audio_NativeAudioOutputEngine_nativeHasActiveVoices(
         JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
     OutputEngineContext* ctx = getContext(handle);
     if (ctx != nullptr && ctx->engine != nullptr) {
+        std::lock_guard<std::mutex> lock(ctx->engineMutex);
         return ctx->engine->activeUserCount() > 0 ? JNI_TRUE : JNI_FALSE;
     }
     return JNI_FALSE;

@@ -210,6 +210,94 @@ void testJitterBufferAdaptiveTimingHistogram() {
     std::cout << "  [PASS] testJitterBufferAdaptiveTimingHistogram" << std::endl;
 }
 
+// Shared-slot packet store: a tiny pool with two slots, so the third queued
+// packet must be refused instead of growing the heap, and released slots must
+// be reusable.
+struct TestSlotPool {
+    char slots[2][16];
+    bool used[2] = {false, false};
+    // Accounting, to prove the buffer routes both alloc and free here.
+    int allocs = 0;
+    int frees = 0;
+};
+
+void* testPoolAlloc(void* ctx, uint32_t len) {
+    auto* pool = static_cast<TestSlotPool*>(ctx);
+    if (len > sizeof(pool->slots[0])) {
+        return nullptr;
+    }
+    for (int i = 0; i < 2; ++i) {
+        if (!pool->used[i]) {
+            pool->used[i] = true;
+            pool->allocs++;
+            return pool->slots[i];
+        }
+    }
+    return nullptr;
+}
+
+void testPoolFree(void* ctx, void* data) {
+    auto* pool = static_cast<TestSlotPool*>(ctx);
+    for (int i = 0; i < 2; ++i) {
+        if (data == pool->slots[i]) {
+            pool->used[i] = false;
+            pool->frees++;
+            return;
+        }
+    }
+}
+
+void testJitterBufferPacketAllocator() {
+    g_testCount++;
+    TestSlotPool pool;
+    JitterBuffer* jb = jitter_buffer_init(480);
+    TEST_ASSERT(jb != nullptr);
+    jitter_buffer_set_packet_allocator(jb, &testPoolAlloc, &testPoolFree, &pool);
+
+    JitterBufferPacket pkt;
+    char payload[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    pkt.data = payload;
+    pkt.len = sizeof(payload);
+    pkt.span = 480;
+    pkt.sequence = 0;
+    pkt.user_data = 0;
+
+    pkt.timestamp = 0;
+    TEST_ASSERT_EQ(jitter_buffer_put(jb, &pkt), JITTER_BUFFER_OK);
+    pkt.timestamp = 480;
+    TEST_ASSERT_EQ(jitter_buffer_put(jb, &pkt), JITTER_BUFFER_OK);
+    TEST_ASSERT_EQ(pool.allocs, 2);
+    // Both slots are taken: the third packet is refused, not heap-allocated.
+    pkt.timestamp = 960;
+    TEST_ASSERT_EQ(jitter_buffer_put(jb, &pkt), JITTER_BUFFER_POOL_EXHAUSTED);
+    TEST_ASSERT_EQ(pool.allocs, 2);
+
+    // Consuming a packet returns its slot to the pool.
+    JitterBufferPacket out;
+    char outBytes[32];
+    out.data = outBytes;
+    out.len = sizeof(outBytes);
+    int32_t startOffset = 0;
+    TEST_ASSERT_EQ(jitter_buffer_get(jb, &out, 480, &startOffset),
+                   JITTER_BUFFER_OK);
+    TEST_ASSERT_EQ(pool.frees, 1);
+    TEST_ASSERT_TRUE(pool.used[0] || pool.used[1]);
+
+    // The freed slot is reusable.
+    pkt.timestamp = 960;
+    TEST_ASSERT_EQ(jitter_buffer_put(jb, &pkt), JITTER_BUFFER_OK);
+    TEST_ASSERT_EQ(pool.allocs, 3);
+
+    // Reset releases everything still buffered through the pool.
+    jitter_buffer_reset(jb);
+    TEST_ASSERT_EQ(pool.frees, 3);
+    TEST_ASSERT_FALSE(pool.used[0]);
+    TEST_ASSERT_FALSE(pool.used[1]);
+
+    jitter_buffer_destroy(jb);
+    std::cout << "  [PASS] testJitterBufferPacketAllocator" << std::endl;
+}
+
 } // namespace
 
 void run_jitter_buffer_tests() {
@@ -219,4 +307,5 @@ void run_jitter_buffer_tests() {
     testJitterBufferOutOfOrderPackets();
     testJitterBufferMarginAndTick();
     testJitterBufferAdaptiveTimingHistogram();
+    testJitterBufferPacketAllocator();
 }

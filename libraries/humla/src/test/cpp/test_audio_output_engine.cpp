@@ -20,15 +20,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <cstdint>
+#include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using mumla::audio::AudioOutputEngine;
+using mumla::audio::InboundPacket;
 using mumla::audio::IOutputDecoder;
+using mumla::audio::RenderResult;
 
 constexpr int kFrame = AudioOutputEngine::FRAME_SIZE;
 
@@ -180,53 +186,116 @@ struct TalkEvent {
     int state;
 };
 
-std::unique_ptr<AudioOutputEngine> makeEngine(float level,
-                                              std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<AudioOutputEngine>(
+/**
+ * Test adapter over the single-threaded engine, mirroring the interim JNI
+ * seam: it forwards talk transitions returned by render to a callback, and
+ * accepts the byte-pointer queuePacket shape the tests were written against.
+ * Events produced by queuePacket, removeUser or clear surface on the next
+ * render, exactly as the engine's RenderResult contract specifies.
+ */
+class TestEngine {
+public:
+    using TalkCallback = std::function<void(int32_t session, int state)>;
+
+    explicit TestEngine(
+        AudioOutputEngine::DecoderFactory factory,
+        int marginFrames = AudioOutputEngine::DEFAULT_JITTER_MARGIN_FRAMES)
+        : m_engine(std::move(factory), marginFrames) {}
+
+    void setTalkCallback(TalkCallback callback) {
+        m_callback = std::move(callback);
+    }
+
+    void queuePacket(int32_t session, const uint8_t* data, size_t len,
+                     uint32_t sequence, int flags, bool isTerminator) {
+        InboundPacket packet;
+        packet.session = session;
+        packet.sequence = sequence;
+        packet.flags = flags;
+        packet.isTerminator = isTerminator;
+        if (data != nullptr && len > 0 && len <= AudioOutputEngine::MAX_PACKET_BYTES) {
+            std::memcpy(packet.data, data, len);
+            packet.length = static_cast<uint16_t>(len);
+        }
+        m_engine.queuePacket(packet);
+    }
+
+    size_t renderMix(int16_t* out, size_t samples) {
+        RenderResult result;
+        m_engine.render(out, samples, &result);
+        deliver(result);
+        m_lastDroppedPackets = result.droppedPackets;
+        return result.samples;
+    }
+
+    void removeUser(int32_t session) { m_engine.removeUser(session); }
+    void clear() { m_engine.clear(); }
+    void setJitterMarginFrames(int frames) {
+        m_engine.setJitterMarginFrames(frames);
+    }
+    size_t activeUserCount() const { return m_engine.activeUserCount(); }
+    size_t jitterSlotsInUse() const { return m_engine.jitterSlotsInUse(); }
+    uint32_t lastDroppedPackets() const { return m_lastDroppedPackets; }
+
+private:
+    void deliver(const RenderResult& result) {
+        if (!m_callback) {
+            return;
+        }
+        for (size_t i = 0; i < result.talkEventCount; ++i) {
+            m_callback(result.talkEvents[i].session,
+                       static_cast<int>(result.talkEvents[i].state));
+        }
+    }
+
+    AudioOutputEngine m_engine;
+    TalkCallback m_callback;
+    uint32_t m_lastDroppedPackets = 0;
+};
+
+std::unique_ptr<TestEngine> makeEngine(float level,
+                                       std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>(
         [level] { return std::make_unique<FakeDecoder>(level); });
-    engine->setTalkCallback(
-        [events](int32_t session, int state) {
-            if (events != nullptr) {
-                events->push_back({session, state});
-            }
-        });
+    engine->setTalkCallback([events](int32_t session, int state) {
+        if (events != nullptr) {
+            events->push_back({session, state});
+        }
+    });
     return engine;
 }
 
-std::unique_ptr<AudioOutputEngine> makeSpanEngine(int spanSamples, float level,
-                                                  std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<AudioOutputEngine>(
+std::unique_ptr<TestEngine> makeSpanEngine(int spanSamples, float level,
+                                           std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>(
         [spanSamples, level] {
             return std::make_unique<VariableSpanDecoder>(spanSamples, level);
         });
-    engine->setTalkCallback(
-        [events](int32_t session, int state) {
-            if (events != nullptr) {
-                events->push_back({session, state});
-            }
-        });
+    engine->setTalkCallback([events](int32_t session, int state) {
+        if (events != nullptr) {
+            events->push_back({session, state});
+        }
+    });
     return engine;
 }
 
-std::unique_ptr<AudioOutputEngine> makeFecEngine(float real, float fec,
-                                                float plc, bool fecFails,
-                                                int* fecAttempts,
-                                                std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<AudioOutputEngine>(
+std::unique_ptr<TestEngine> makeFecEngine(float real, float fec, float plc,
+                                          bool fecFails, int* fecAttempts,
+                                          std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>(
         [real, fec, plc, fecFails, fecAttempts] {
             return std::make_unique<FecAwareDecoder>(real, fec, plc, fecFails,
                                                      fecAttempts);
         });
-    engine->setTalkCallback(
-        [events](int32_t session, int state) {
-            if (events != nullptr) {
-                events->push_back({session, state});
-            }
-        });
+    engine->setTalkCallback([events](int32_t session, int state) {
+        if (events != nullptr) {
+            events->push_back({session, state});
+        }
+    });
     return engine;
 }
 
-void queueOne(AudioOutputEngine& engine, int32_t session, uint32_t seq,
+void queueOne(TestEngine& engine, int32_t session, uint32_t seq,
               int flags = 0, bool terminator = false) {
     uint8_t payload[8] = {0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68};
     engine.queuePacket(session, payload, sizeof(payload), seq, flags,
@@ -244,7 +313,7 @@ int peakAbs(const std::vector<int16_t>& out) {
 // Zero jitter margin: the startup gate opens on the first queued frame, so
 // tests exercise post-gate decode/mix/fade behavior without first filling
 // the default (margin+1)-frame gate span.
-void openGateOnFirstFrame(AudioOutputEngine& engine) {
+void openGateOnFirstFrame(TestEngine& engine) {
     engine.setJitterMarginFrames(0);
 }
 
@@ -369,6 +438,8 @@ void testRemoveUserSilencesAndEmitsPassive() {
     TEST_ASSERT_EQ(engine->activeUserCount(), 2u);
     engine->removeUser(11);
     TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    // The removal's PASSIVE arrives with the next render, never inline.
+    engine->renderMix(out.data(), out.size());
     TEST_ASSERT_EQ(events.back().session, 11);
     TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
     // Removing a session that was never queued is a no-op, not a crash.
@@ -619,7 +690,8 @@ void testEvictionEmitsPassiveForTalker() {
     g_testCount++;
     // An evicted voice must be reported PASSIVE like removeUser; without
     // that, the UI keeps a talking state for a voice that no longer exists.
-    // Regression test: eviction previously freed the voice silently.
+    // Eviction happens in queuePacket, so the PASSIVE is queued there and
+    // delivered by the next render, ahead of that render's own transitions.
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
     openGateOnFirstFrame(*engine);
@@ -631,18 +703,34 @@ void testEvictionEmitsPassiveForTalker() {
     // One quantum made every buffered voice talk.
     TEST_ASSERT_EQ(events.size(),
                    static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
-    // The 33rd voice evicts session 32 (highest id). Its PASSIVE arrives
-    // synchronously from queuePacket on the calling thread.
+
+    // The 33rd voice evicts session 32 (highest id): PASSIVE(32) is queued and
+    // arrives with the next render, followed by the new voice's TALKING.
     queueOne(*engine, AudioOutputEngine::MAX_VOICES + 1, 0);
     TEST_ASSERT_EQ(events.size(),
-                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 1));
-    TEST_ASSERT_EQ(events.back().session, AudioOutputEngine::MAX_VOICES);
-    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
-    // The replacement voice (33) never rendered, so evicting it in turn
-    // emits nothing: only voices with a reported state can transition.
-    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 2, 0);
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    engine->renderMix(out.data(), out.size());
     TEST_ASSERT_EQ(events.size(),
-                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 1));
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES + 2));
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES].session,
+                   AudioOutputEngine::MAX_VOICES);
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES].state, 2); // PASSIVE
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES + 1].session,
+                   AudioOutputEngine::MAX_VOICES + 1);
+    TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES + 1].state, 0); // TALKING
+
+    // A voice evicted before it ever rendered emits nothing: only voices with
+    // a reported state can transition. Queue 35 (evicting 34) and 36
+    // (evicting the never-rendered 35) back to back, then render.
+    const size_t before = events.size();
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 2, 0);
+    queueOne(*engine, AudioOutputEngine::MAX_VOICES + 3, 0);
+    engine->renderMix(out.data(), out.size());
+    TEST_ASSERT_EQ(events.size(), before + 2);
+    TEST_ASSERT_EQ(events[before].session, AudioOutputEngine::MAX_VOICES + 1);
+    TEST_ASSERT_EQ(events[before].state, 2); // PASSIVE for the rendered voice
+    TEST_ASSERT_EQ(events[before + 1].session,
+                   AudioOutputEngine::MAX_VOICES + 3);
     TEST_ASSERT_EQ(engine->activeUserCount(),
                    static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
     std::cout << "  [PASS] testEvictionEmitsPassiveForTalker" << std::endl;
@@ -937,6 +1025,194 @@ void testGateArithmeticSurvivesSequenceWrap() {
               << std::endl;
 }
 
+
+// The shared packet store is bounded: once every slot is held, further
+// packets are dropped and counted rather than growing the heap.
+void testJitterPoolExhaustionDropsAndCounts() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+
+    // Eight voices queueing 200 packets each: 1600 attempts against 1024
+    // slots. No render runs in between, so nothing is consumed.
+    const int voices = 8;
+    const uint32_t perVoice = 200;
+    for (int32_t s = 1; s <= voices; ++s) {
+        for (uint32_t p = 0; p < perVoice; ++p) {
+            queueOne(*engine, s, p);
+        }
+    }
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(),
+                   AudioOutputEngine::JITTER_SLOT_COUNT);
+
+    std::vector<int16_t> out(kFrame, 0);
+    engine->renderMix(out.data(), out.size());
+    const uint32_t expectedDrops =
+        static_cast<uint32_t>(voices) * perVoice -
+        static_cast<uint32_t>(AudioOutputEngine::JITTER_SLOT_COUNT);
+    TEST_ASSERT_EQ(engine->lastDroppedPackets(), expectedDrops);
+
+    // Drops are reported once, for the render that followed them.
+    engine->renderMix(out.data(), out.size());
+    TEST_ASSERT_EQ(engine->lastDroppedPackets(), 0u);
+
+    // Rendering returns slots to the store, so new packets are accepted again.
+    TEST_ASSERT_TRUE(engine->jitterSlotsInUse() <
+                     AudioOutputEngine::JITTER_SLOT_COUNT);
+    queueOne(*engine, 99, 0);
+    TEST_ASSERT_TRUE(engine->activeUserCount() >= 1u);
+    std::cout << "  [PASS] testJitterPoolExhaustionDropsAndCounts (" 
+              << expectedDrops << " dropped)" << std::endl;
+}
+
+// Pool sizing evidence: 32 voices under heavy jitter adaptation for 60
+// simulated seconds must never exhaust the store. The peak is printed so the
+// slot count can be set from data rather than guessed.
+// Releasing a voice returns its queued packet bytes to the shared store at
+// once. The pre-refactor engine destroyed the jitter buffer on removeUser and
+// clear, and a released voice never renders again, so holding its slots until
+// the pool slot is reused would only shrink the store available to live
+// speakers.
+void testReleasedVoiceReturnsPoolSlots() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+
+    for (int i = 0; i < 4; ++i) {
+        queueOne(*engine, 11, static_cast<uint32_t>(i));
+        queueOne(*engine, 12, static_cast<uint32_t>(i));
+    }
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(), 8u);
+
+    engine->removeUser(11);
+    TEST_ASSERT_EQ(engine->activeUserCount(), 1u);
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(), 4u);
+
+    engine->clear();
+    TEST_ASSERT_EQ(engine->activeUserCount(), 0u);
+    TEST_ASSERT_EQ(engine->jitterSlotsInUse(), 0u);
+
+    std::cout << "  [PASS] testReleasedVoiceReturnsPoolSlots" << std::endl;
+}
+
+void testJitterPoolStress() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    // The production margin (4 frames) is kept: the buffer holds the promised
+    // cushion, which is what the store must cover per voice.
+
+    constexpr int kVoices = AudioOutputEngine::MAX_VOICES;
+    constexpr int kFrames = 6000; // 60 s of 10 ms frames
+    uint32_t rng = 0x9E3779B9u;
+    auto next = [&rng]() {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        return rng;
+    };
+
+    size_t peakSlots = 0;
+    uint32_t drops = 0;
+    std::vector<int16_t> out(kFrame, 0);
+    // One 10 ms packet per voice per 20 ms on average, with deterministic
+    // loss, reordering and compression bursts: a burst delivers the next few
+    // packets at once and the following rounds are skipped, so the mean rate
+    // matches consumption while the buffers repeatedly fill and drain under
+    // adaptation.
+    uint32_t sequence[kVoices] = {};
+    int skipRounds[kVoices] = {};
+    for (int frame = 0; frame < kFrames; ++frame) {
+        if (frame % 2 == 0) {
+            for (int v = 0; v < kVoices; ++v) {
+                if (skipRounds[v] > 0) {
+                    --skipRounds[v];
+                    continue;
+                }
+                const int burst = (next() % 4 == 0) ? 3 : 1;
+                skipRounds[v] = burst - 1;
+                for (int k = 0; k < burst; ++k) {
+                    const uint32_t roll = next() % 100;
+                    if (roll < 3) {
+                        sequence[v] += 1; // lost packet: leave a hole
+                    }
+                    const uint32_t seq = sequence[v];
+                    sequence[v] += 1;
+                    if (roll >= 3 && roll < 8) {
+                        // Reordered: send the next packet first, then this one.
+                        queueOne(*engine, 1000 + v, seq + 1);
+                    }
+                    queueOne(*engine, 1000 + v, seq);
+                }
+            }
+        }
+        engine->renderMix(out.data(), out.size());
+        drops += engine->lastDroppedPackets();
+        peakSlots = std::max(peakSlots, engine->jitterSlotsInUse());
+    }
+
+    TEST_ASSERT_EQ(drops, 0u);
+    TEST_ASSERT_TRUE(peakSlots > 0u);
+    // The production count must keep at least twice the measured peak as
+    // headroom, so lowering JITTER_SLOT_COUNT toward the observed demand
+    // fails here rather than passing an assertion that only checks the peak
+    // fits at all.
+    TEST_ASSERT_TRUE(peakSlots * 2 <= AudioOutputEngine::JITTER_SLOT_COUNT);
+    std::cout << "  [PASS] testJitterPoolStress (peak " << peakSlots
+              << " of " << AudioOutputEngine::JITTER_SLOT_COUNT << " slots)"
+              << std::endl;
+}
+
+
+// Capacity contract for talk events: one queue-time plus one mix-time
+// transition per voice must fit one result, so nothing ever spills or is
+// dropped. Pinned by arithmetic and behaviorally: a clear of all voices
+// followed by a full re-population delivers all 64 transitions in a single
+// render's result, queue-time ones first.
+void testTalkEventCapacityContract() {
+    g_testCount++;
+    RenderResult sizing;
+    TEST_ASSERT_TRUE(std::size(sizing.talkEvents) >=
+                     static_cast<size_t>(2 * AudioOutputEngine::MAX_VOICES));
+    TEST_ASSERT_TRUE(static_cast<size_t>(AudioOutputEngine::MAX_PENDING_TALK_EVENTS) >=
+                     static_cast<size_t>(2 * AudioOutputEngine::MAX_VOICES));
+
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+    for (int32_t s = 1; s <= AudioOutputEngine::MAX_VOICES; ++s) {
+        queueOne(*engine, s, 0);
+    }
+    std::vector<int16_t> out(kFrame, 0);
+    engine->renderMix(out.data(), out.size());
+    const size_t talkReported = events.size();
+    TEST_ASSERT_EQ(talkReported,
+                   static_cast<size_t>(AudioOutputEngine::MAX_VOICES));
+    for (const auto& event : events) {
+        TEST_ASSERT_EQ(event.state, 0); // TALKING
+    }
+
+    // Queue-time PASSIVE for every voice, then re-populate and render.
+    engine->clear();
+    for (int32_t s = 101; s <= 100 + AudioOutputEngine::MAX_VOICES; ++s) {
+        queueOne(*engine, s, 0);
+    }
+    events.clear();
+    engine->renderMix(out.data(), out.size());
+    TEST_ASSERT_EQ(events.size(),
+                   static_cast<size_t>(2 * AudioOutputEngine::MAX_VOICES));
+    for (int i = 0; i < AudioOutputEngine::MAX_VOICES; ++i) {
+        TEST_ASSERT_EQ(events[i].state, 2); // PASSIVE, queue-time first
+    }
+    for (int i = 0; i < AudioOutputEngine::MAX_VOICES; ++i) {
+        TEST_ASSERT_EQ(events[AudioOutputEngine::MAX_VOICES + i].state,
+                       0); // TALKING, mix-time second
+    }
+    std::cout << "  [PASS] testTalkEventCapacityContract" << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -970,4 +1246,8 @@ void run_audio_output_engine_tests() {
     testUnrecoverableLossConcealsSilently();
     testLossBoundaryCrossfadeSmoothsStep();
     testLosslessMixHasNoCrossfade();
+    testJitterPoolExhaustionDropsAndCounts();
+    testReleasedVoiceReturnsPoolSlots();
+    testJitterPoolStress();
+    testTalkEventCapacityContract();
 }

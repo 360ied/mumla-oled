@@ -555,7 +555,7 @@ class AudioOutput : Runnable, NativeAudioOutputEngine.AudioOutputEngineListener 
             // live handle per call (default PASSIVE), so a stale guard here
             // swallows the PASSIVE that follows TALKING and sticks the
             // indicator on. Native already emits transitions only
-            // (recordTalkLocked/lastReportedState in
+            // (recordTalk/lastReportedState in
             // libraries/humla/src/main/jni/audio_engine/AudioOutputEngine.cpp);
             // stamp and fan out.
             if (user != null) {

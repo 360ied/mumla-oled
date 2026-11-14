@@ -23,15 +23,17 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using mumla::audio::AudioInputEngine;
+using mumla::audio::IDenoiser;
+using mumla::audio::InputConfig;
+using mumla::audio::InputFrameResult;
 using mumla::audio::InputMode;
 using mumla::audio::IVoiceEncoder;
-using mumla::audio::IDenoiser;
-using mumla::audio::DispatchedPacket;
 
 /**
  * Deterministic hermetic mock encoder that writes simulated packet bytes.
@@ -93,16 +95,18 @@ public:
         m_hasModel = (modelData != nullptr && modelSize > 0);
     }
     bool hasModel() const override { return m_hasModel; }
-    void reset() override {}
+    void reset() override { m_resetCount++; }
 
     void setSpeechProb(float prob) { m_speechProb = prob; }
     const std::vector<int16_t>& getLastInSamples() const { return m_lastInSamples; }
+    int getResetCount() const { return m_resetCount; }
 
 private:
     float m_speechProb;
     bool m_enabled;
     bool m_hasModel;
     std::vector<int16_t> m_lastInSamples;
+    int m_resetCount = 0;
 };
 
 struct PacketRecord {
@@ -112,23 +116,86 @@ struct PacketRecord {
     uint64_t frameNumber;
 };
 
-struct StateCollector {
+/**
+ * Test rig: owns the engine and the configuration snapshot the capture thread
+ * would assemble each frame. "Setters" here mutate the snapshot; the engine
+ * only sees it on the next processFrame, which is the contract.
+ */
+class InputRig {
+public:
+    InputRig(std::unique_ptr<IVoiceEncoder> encoder,
+             std::unique_ptr<IDenoiser> denoiser,
+             int framesPerPacket = 2, float amplitudeBoost = 1.0f,
+             bool adaptiveLevelerEnabled = false,
+             InputMode mode = InputMode::VOICE_ACTIVITY)
+        : m_engine(std::move(encoder), std::move(denoiser)) {
+        m_config.framesPerPacket = framesPerPacket;
+        m_config.amplitudeBoost = amplitudeBoost;
+        m_config.adaptiveLevelerEnabled = adaptiveLevelerEnabled;
+        m_config.mode = mode;
+    }
+
+    void setInputMode(InputMode mode) { m_config.mode = mode; }
+    void setPttTalking(bool pressed) { m_config.pttPressed = pressed; }
+    void setMuted(bool muted) { m_config.transmitAllowed = !muted; }
+    void setBitrate(int bitrate) { m_config.bitrate = bitrate; }
+    void setFramesPerPacket(int framesPerPacket) {
+        m_config.framesPerPacket = framesPerPacket;
+    }
+    void setAmplitudeBoost(float boost) { m_config.amplitudeBoost = boost; }
+    // Control-plane call, not config: RNNoise cannot reset its recurrent
+    // state without allocating.
+    void setRnnoiseEnabled(bool enabled) { m_engine.setRnnoiseEnabled(enabled); }
+    bool isRnnoiseEnabled() const { return m_engine.isRnnoiseEnabled(); }
+    void setAdaptiveLevelerEnabled(bool enabled) {
+        m_config.adaptiveLevelerEnabled = enabled;
+    }
+    void setVadThresholds(float vadMax, float vadMin) {
+        m_config.vadMax = vadMax;
+        m_config.vadMin = vadMin;
+    }
+    void setVadHoldFrames(uint32_t holdFrames) {
+        m_config.vadHoldFrames = holdFrames;
+    }
+    void setVadSquelchFloor(float minDb) { m_config.vadSquelchFloorDb = minDb; }
+
+    bool isMuted() const { return !m_config.transmitAllowed; }
+    bool isPttTalking() const { return m_config.pttPressed; }
+    InputMode inputMode() const { return m_config.mode; }
+    int framesPerPacket() const { return m_config.framesPerPacket; }
+
+    void processFrame(const int16_t* pcm, size_t samples) {
+        m_engine.processFrame(pcm, samples, m_config, &m_result);
+        if (m_result.talkingChanged) {
+            talkEvents.emplace_back(m_result.talking, m_result.peakEnergy);
+        }
+        for (size_t i = 0; i < m_result.packetCount; ++i) {
+            const auto& packet = m_result.packets[i];
+            packets.push_back({std::vector<uint8_t>(packet.data,
+                                                    packet.data + packet.size),
+                               packet.frames, packet.isTerminator,
+                               packet.frameNumber});
+        }
+    }
+
+    void reset() { m_engine.reset(); }
+    bool hasRnnoiseModel() const { return m_engine.hasRnnoiseModel(); }
+    void setRnnoiseModel(const uint8_t* data, size_t size) {
+        m_engine.setRnnoiseModel(data, size);
+    }
+
     std::vector<PacketRecord> packets;
     std::vector<std::pair<bool, float>> talkEvents;
 
-    void reset() {
+    void clear() {
         packets.clear();
         talkEvents.clear();
     }
 
-    void wire(AudioInputEngine& engine) {
-        engine.setPacketCallback([this](const uint8_t* data, size_t size, int frames, bool isTerminator, uint64_t frameNumber) {
-            packets.push_back({std::vector<uint8_t>(data, data + size), frames, isTerminator, frameNumber});
-        });
-        engine.setTalkingCallback([this](bool isTalking, float peakEnergy) {
-            talkEvents.emplace_back(isTalking, peakEnergy);
-        });
-    }
+private:
+    AudioInputEngine m_engine;
+    InputConfig m_config;
+    InputFrameResult m_result;
 };
 
 std::vector<int16_t> generateSineFrame(int frameIdx, int16_t amplitude = 10000) {
@@ -145,58 +212,73 @@ std::vector<int16_t> generateSilenceFrame() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 1: Lifecycle, Default State, and Accessor Sanitization
+// Test 1: Configuration is sampled per frame and transitions are applied
 // -----------------------------------------------------------------------------
-void testAudioInputEngineDefaultsAndAccessors() {
+void testInputConfigTransitions() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    FakeVoiceEncoder* encoderPtr = encoder.get();
     auto denoiser = std::make_unique<FakeDenoiser>();
-    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, true, InputMode::VOICE_ACTIVITY);
+    FakeDenoiser* denoiserPtr = denoiser.get();
+    InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                 InputMode::CONTINUOUS);
 
-    TEST_ASSERT_EQ(static_cast<int>(engine.getInputMode()), static_cast<int>(InputMode::VOICE_ACTIVITY));
-    TEST_ASSERT_FALSE(engine.isPttTalking());
-    TEST_ASSERT_FALSE(engine.isMuted());
-    TEST_ASSERT_EQ(engine.getFramesPerPacket(), 2);
-    TEST_ASSERT_EQ(engine.getBitrate(), 40000);
-    TEST_ASSERT_NEAR(engine.getAmplitudeBoost(), 1.0f, 0.001f);
-    TEST_ASSERT_TRUE(engine.isAdaptiveLevelerEnabled());
-    TEST_ASSERT_TRUE(engine.isRnnoiseEnabled());
+    // Default packet size: 2 frames.
+    auto frame = generateSineFrame(1);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_EQ(rig.packets[0].frames, 2);
 
-    // Sanitized frames per packet: 1, 2, 4, 6 accepted; 3, 5, 8 rejected
-    engine.setFramesPerPacket(1);
-    TEST_ASSERT_EQ(engine.getFramesPerPacket(), 1);
-    engine.setFramesPerPacket(4);
-    TEST_ASSERT_EQ(engine.getFramesPerPacket(), 4);
-    engine.setFramesPerPacket(6);
-    TEST_ASSERT_EQ(engine.getFramesPerPacket(), 6);
-    engine.setFramesPerPacket(3); // invalid, unchanged
-    TEST_ASSERT_EQ(engine.getFramesPerPacket(), 6);
-    engine.setFramesPerPacket(2);
-    TEST_ASSERT_EQ(engine.getFramesPerPacket(), 2);
+    // Accepted packet sizes are exactly Opus's 10/20/40/60 ms.
+    const int accepted[] = {1, 2, 4, 6};
+    for (int framesPerPacket : accepted) {
+        rig.setFramesPerPacket(framesPerPacket);
+        rig.clear();
+        for (int i = 0; i < framesPerPacket; ++i) {
+            rig.processFrame(frame.data(), frame.size());
+        }
+        TEST_ASSERT_EQ(rig.packets.size(), 1u);
+        TEST_ASSERT_EQ(rig.packets[0].frames, framesPerPacket);
+    }
+    // An unsupported size is ignored, keeping the last applied one.
+    rig.setFramesPerPacket(3);
+    rig.clear();
+    for (int i = 0; i < 6; ++i) {
+        rig.processFrame(frame.data(), frame.size());
+    }
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_EQ(rig.packets[0].frames, 6);
+    TEST_ASSERT_EQ(rig.framesPerPacket(), 3); // ignored on the engine side
 
-    // Bitrate accessor
-    engine.setBitrate(64000);
-    TEST_ASSERT_EQ(engine.getBitrate(), 64000);
+    // Bitrate, mode and leveler reach their owners on the next frame.
+    rig.setBitrate(64000);
+    rig.setInputMode(InputMode::PUSH_TO_TALK);
+    rig.setAdaptiveLevelerEnabled(true);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(encoderPtr->getBitrate(), 64000);
+    TEST_ASSERT_EQ(static_cast<int>(rig.inputMode()),
+                   static_cast<int>(InputMode::PUSH_TO_TALK));
 
-    // Mode switching
-    engine.setInputMode(InputMode::PUSH_TO_TALK);
-    TEST_ASSERT_EQ(static_cast<int>(engine.getInputMode()), static_cast<int>(InputMode::PUSH_TO_TALK));
+    // The denoiser switch is control-plane: it applies on the calling thread
+    // because enabling reallocates RNNoise's recurrent state.
+    rig.setRnnoiseEnabled(false);
+    TEST_ASSERT_FALSE(denoiserPtr->isEnabled());
+    TEST_ASSERT_FALSE(rig.isRnnoiseEnabled());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_FALSE(denoiserPtr->isEnabled());
+    rig.setRnnoiseEnabled(true);
+    TEST_ASSERT_TRUE(denoiserPtr->isEnabled());
+    TEST_ASSERT_TRUE(rig.isRnnoiseEnabled());
 
-    // Amplitude boost
-    engine.setAmplitudeBoost(1.5f);
-    TEST_ASSERT_NEAR(engine.getAmplitudeBoost(), 1.5f, 0.001f);
+    // The model is owned by the denoiser and queried through the engine.
+    const uint8_t model[4] = {1, 2, 3, 4};
+    TEST_ASSERT_FALSE(rig.hasRnnoiseModel());
+    rig.setRnnoiseModel(model, sizeof(model));
+    TEST_ASSERT_TRUE(rig.hasRnnoiseModel());
 
-    // Constructor default and invalid argument fallback to DEFAULT_FRAMES_PER_PACKET
-    AudioInputEngine defaultEngine;
-    TEST_ASSERT_EQ(defaultEngine.getFramesPerPacket(), AudioInputEngine::DEFAULT_FRAMES_PER_PACKET);
-
-    auto fallbackEncoder = std::make_unique<FakeVoiceEncoder>(40000);
-    auto fallbackDenoiser = std::make_unique<FakeDenoiser>();
-    AudioInputEngine fallbackEngine(std::move(fallbackEncoder), std::move(fallbackDenoiser), 0);
-    TEST_ASSERT_EQ(fallbackEngine.getFramesPerPacket(), AudioInputEngine::DEFAULT_FRAMES_PER_PACKET);
-
-    std::cout << "  [PASS] testAudioInputEngineDefaultsAndAccessors" << std::endl;
+    std::cout << "  [PASS] testInputConfigTransitions" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
@@ -206,29 +288,28 @@ void testPttStateTransitions() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
     // Press PTT
-    engine.setPttTalking(true);
-    TEST_ASSERT_TRUE(engine.isPttTalking());
+    rig.setPttTalking(true);
+    TEST_ASSERT_TRUE(rig.isPttTalking());
 
-    // Feed frame 1: Speech onset occurs!
-    // Since lookahead ring buffer was empty, frame 1 goes to accumulator (count = 1).
-    // Onset triggers talking callback (isTalking = true).
+    // Feed frame 1: speech onset. Since the lookahead ring buffer was empty,
+    // frame 1 goes to the accumulator (count = 1), and the transition reports
+    // talking.
     auto audio1 = generateSineFrame(1);
-    engine.processFrame(audio1.data(), audio1.size());
-    TEST_ASSERT_EQ(collector.talkEvents.size(), 1);
-    TEST_ASSERT_TRUE(collector.talkEvents[0].first); // isTalking == true
-    TEST_ASSERT_EQ(collector.packets.size(), 0); // accumulator has 1 of 2 frames
+    rig.processFrame(audio1.data(), audio1.size());
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first); // isTalking == true
+    TEST_ASSERT_EQ(rig.packets.size(), 0u); // accumulator has 1 of 2 frames
 
     // Feed frame 2: accumulator reaches 2 frames -> dispatches 1 packet
     auto audio2 = generateSineFrame(2);
-    engine.processFrame(audio2.data(), audio2.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
-    TEST_ASSERT_FALSE(collector.packets[0].isTerminator);
-    TEST_ASSERT_EQ(collector.packets[0].frames, 2);
+    rig.processFrame(audio2.data(), audio2.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_FALSE(rig.packets[0].isTerminator);
+    TEST_ASSERT_EQ(rig.packets[0].frames, 2);
 
     std::cout << "  [PASS] testPttStateTransitions" << std::endl;
 }
@@ -240,51 +321,44 @@ void testPttReleaseHangoverTiming() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
     // Press PTT and process 2 frames (1 regular packet)
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
-    TEST_ASSERT_FALSE(collector.packets[0].isTerminator);
-    TEST_ASSERT_EQ(collector.talkEvents.size(), 1);
-    TEST_ASSERT_TRUE(collector.talkEvents[0].first);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_FALSE(rig.packets[0].isTerminator);
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first);
 
-    // Release PTT!
-    engine.setPttTalking(false);
-    TEST_ASSERT_FALSE(engine.isPttTalking());
+    // Release PTT: the next frame observes it.
+    rig.setPttTalking(false);
 
-    // PTT release hangover is exactly 15 frames (150ms).
-    // During these 15 frames, transmission must continue seamlessly!
+    // PTT release hangover is exactly 15 frames (150ms). During these 15
+    // frames transmission must continue seamlessly.
     for (int h = 1; h <= 15; ++h) {
-        engine.processFrame(frame.data(), frame.size());
-        // Stream must still be talking; no deactivation callback yet
-        TEST_ASSERT_EQ(collector.talkEvents.size(), 1);
+        rig.processFrame(frame.data(), frame.size());
+        TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
     }
 
-    // After 15 hangover frames:
-    // Total frames since start = 2 + 15 = 17 frames.
-    // 17 frames at 2 frames/packet = 8 full packets dispatched, 1 frame in accumulator.
-    TEST_ASSERT_EQ(collector.packets.size(), 8);
+    // Total frames since start = 2 + 15 = 17 frames: 8 full packets, 1 frame
+    // banked.
+    TEST_ASSERT_EQ(rig.packets.size(), 8u);
     for (size_t i = 0; i < 8; ++i) {
-        TEST_ASSERT_FALSE(collector.packets[i].isTerminator);
+        TEST_ASSERT_FALSE(rig.packets[i].isTerminator);
     }
 
-    // Now process the 16th frame after release:
-    // Hangover has expired! Transmission must halt and emit a terminator packet!
-    engine.processFrame(frame.data(), frame.size());
+    // The 16th frame after release: hangover expired; transmission halts and
+    // the terminator packet flushes.
+    rig.processFrame(frame.data(), frame.size());
 
-    // Deactivation event must have fired
-    TEST_ASSERT_EQ(collector.talkEvents.size(), 2);
-    TEST_ASSERT_FALSE(collector.talkEvents[1].first); // isTalking == false
-
-    // Total packets should now be 9: 8 regular packets + 1 terminator packet
-    TEST_ASSERT_EQ(collector.packets.size(), 9);
-    TEST_ASSERT_TRUE(collector.packets[8].isTerminator);
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 2u);
+    TEST_ASSERT_FALSE(rig.talkEvents[1].first); // isTalking == false
+    TEST_ASSERT_EQ(rig.packets.size(), 9u);
+    TEST_ASSERT_TRUE(rig.packets[8].isTerminator);
 
     std::cout << "  [PASS] testPttReleaseHangoverTiming" << std::endl;
 }
@@ -296,37 +370,29 @@ void testPttHangoverReassertionPreventsCutoff() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.talkEvents.size(), 1);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
 
-    // User briefly releases button (e.g. for 50ms = 5 frames)
-    engine.setPttTalking(false);
+    // Release for 5 frames, then press again before the 150ms hold expires.
+    rig.setPttTalking(false);
     for (int i = 0; i < 5; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
-
-    // User presses PTT again before 150ms hangover expires
-    engine.setPttTalking(true);
-
-    // Feed 15 more frames
+    rig.setPttTalking(true);
     for (int i = 0; i < 15; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
 
-    // Talking callback should still only have the initial 'true' event
-    // No false deactivation occurred!
-    TEST_ASSERT_EQ(collector.talkEvents.size(), 1);
-    TEST_ASSERT_TRUE(collector.talkEvents[0].first);
-
-    // No terminator packet should have been emitted
-    for (const auto& pkt : collector.packets) {
+    // No deactivation, no terminator.
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first);
+    for (const auto& pkt : rig.packets) {
         TEST_ASSERT_FALSE(pkt.isTerminator);
     }
 
@@ -334,247 +400,252 @@ void testPttHangoverReassertionPreventsCutoff() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 5: Rapid Micro-Tap (Press and Release within same frame interval)
+// Test 5: A press the capture thread observes arms the full hangover
 // -----------------------------------------------------------------------------
-void testPttMicroTapTransmission() {
+void testPttPressObservedForOneFrameStillHolds() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    // Micro-tap: press then immediate release before processFrame runs
-    engine.setPttTalking(true);
-    engine.setPttTalking(false);
-
+    // A single frame observes the press; the release arrives right after it.
+    // The hold must still run its 15 frames, exactly like a micro-tap that
+    // the capture thread saw once.
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first);
 
-    // Frame 1 to 15: hangover window ensures speech is transmitted
-    for (int i = 1; i <= 15; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+    rig.setPttTalking(false);
+    for (int i = 0; i < 15; ++i) {
+        rig.processFrame(frame.data(), frame.size());
     }
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u); // still talking through the hold
 
-    // Initial talking event fired
-    TEST_ASSERT_TRUE(collector.talkEvents.size() >= 1);
-    TEST_ASSERT_TRUE(collector.talkEvents[0].first);
+    // 16th frame after the press: hold expired, terminator emitted.
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 2u);
+    TEST_ASSERT_FALSE(rig.talkEvents.back().first);
+    TEST_ASSERT_TRUE(rig.packets.back().isTerminator);
 
-    // 16th frame: terminates cleanly with terminator packet
-    engine.processFrame(frame.data(), frame.size());
-
-    TEST_ASSERT_TRUE(collector.talkEvents.size() >= 2);
-    TEST_ASSERT_FALSE(collector.talkEvents.back().first);
-
-    // Must have dispatched packets ending with a terminator
-    TEST_ASSERT_TRUE(collector.packets.size() > 0);
-    TEST_ASSERT_TRUE(collector.packets.back().isTerminator);
-
-    std::cout << "  [PASS] testPttMicroTapTransmission" << std::endl;
+    std::cout << "  [PASS] testPttPressObservedForOneFrameStillHolds" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 6: Terminator Packet Emission on Even Packet Boundaries (PTT-01)
+// Test 6: a press and release inside one frame transmits nothing
+// -----------------------------------------------------------------------------
+void testPttSubFrameTapTransmitsNothing() {
+    g_testCount++;
+
+    auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
+
+    // Both edges land before the capture thread samples a frame, so the engine
+    // never observes a press. This is the intended behavior: a tap shorter
+    // than the 10 ms frame it would fill is not a transmission attempt, and the
+    // pre-refactor engine answering it with a 150 ms hangover was the accident.
+    rig.setPttTalking(true);
+    rig.setPttTalking(false);
+    auto frame = generateSineFrame(1);
+    for (int i = 0; i < 20; ++i) {
+        rig.processFrame(frame.data(), frame.size());
+    }
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 0u);
+    TEST_ASSERT_EQ(rig.packets.size(), 0u);
+
+    // The engine is not stuck: a press some frame does observe opens normally
+    // and still drains through the full hangover.
+    rig.setPttTalking(true);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first);
+
+    rig.setPttTalking(false);
+    for (int i = 0; i < 15; ++i) {
+        rig.processFrame(frame.data(), frame.size());
+    }
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u); // hold still running
+    rig.processFrame(frame.data(), frame.size()); // hold expired
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 2u);
+    TEST_ASSERT_FALSE(rig.talkEvents.back().first);
+    TEST_ASSERT_TRUE(rig.packets.back().isTerminator);
+
+    std::cout << "  [PASS] testPttSubFrameTapTransmitsNothing" << std::endl;
+}
+
+// -----------------------------------------------------------------------------
+// Test 7: Terminator Packet Emission on Even Packet Boundaries (PTT-01)
 // -----------------------------------------------------------------------------
 void testTerminatorPacketEmissionOnEvenBoundary() {
     g_testCount++;
 
-    // When framesPerPacket = 2:
-    // If transmission ends when accumulatedFrames == 0, AudioInputEngine must zero-pad
-    // and encode 1 packet of silence with isTerminator = true, rather than dropping it.
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
+    rig.processFrame(frame.data(), frame.size()); // accumulated = 1
 
-    // Feed 1 frame while talking
-    engine.processFrame(frame.data(), frame.size()); // accumulated = 1
-
-    // Release PTT: 15 hangover frames follow
-    engine.setPttTalking(false);
+    rig.setPttTalking(false);
     for (int i = 0; i < 15; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
-    // Total frames transmitted = 1 + 15 = 16 frames.
-    // 16 % 2 == 0, so accumulatedFrames is EXACTLY 0 at the moment transmission terminates!
-    TEST_ASSERT_EQ(collector.packets.size(), 8);
+    // Total transmitted frames = 16, so the accumulator is exactly empty at
+    // termination.
+    TEST_ASSERT_EQ(rig.packets.size(), 8u);
 
-    // Next frame triggers cutoff:
-    engine.processFrame(frame.data(), frame.size());
-
-    // Verify terminator packet is NOT dropped! Exactly 1 terminator packet added (total 9)
-    TEST_ASSERT_EQ(collector.packets.size(), 9);
-    TEST_ASSERT_TRUE(collector.packets[8].isTerminator);
-    TEST_ASSERT_EQ(collector.packets[8].frames, 2);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 9u);
+    TEST_ASSERT_TRUE(rig.packets[8].isTerminator);
+    TEST_ASSERT_EQ(rig.packets[8].frames, 2);
 
     std::cout << "  [PASS] testTerminatorPacketEmissionOnEvenBoundary" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 7: Terminator Packet Emission on Odd Packet Boundaries
+// Test 8: Terminator Packet Emission on Odd Packet Boundaries
 // -----------------------------------------------------------------------------
 void testTerminatorPacketEmissionOnOddBoundary() {
     g_testCount++;
 
-    // When framesPerPacket = 2:
-    // If transmission ends when accumulatedFrames == 1, AudioInputEngine flushes
-    // the underfilled accumulator (zero-padded) with isTerminator = true.
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size()); // accumulated = 0
 
-    // Feed 2 frames while talking
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size()); // accumulated = 0
-
-    // Release PTT: 15 hangover frames follow
-    engine.setPttTalking(false);
+    rig.setPttTalking(false);
     for (int i = 0; i < 15; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
-    // Total frames transmitted = 2 + 15 = 17 frames.
-    // 17 % 2 == 1, so accumulatedFrames == 1 at termination!
-    TEST_ASSERT_EQ(collector.packets.size(), 8);
+    // 17 transmitted frames: 8 packets, 1 frame banked.
+    TEST_ASSERT_EQ(rig.packets.size(), 8u);
 
-    // Next frame triggers cutoff:
-    engine.processFrame(frame.data(), frame.size());
-
-    // Verify accumulator flushed with terminator
-    TEST_ASSERT_EQ(collector.packets.size(), 9);
-    TEST_ASSERT_TRUE(collector.packets[8].isTerminator);
-    TEST_ASSERT_EQ(collector.packets[8].frames, 2);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 9u);
+    TEST_ASSERT_TRUE(rig.packets[8].isTerminator);
+    TEST_ASSERT_EQ(rig.packets[8].frames, 2);
 
     std::cout << "  [PASS] testTerminatorPacketEmissionOnOddBoundary" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 8: Single-Frame Packets (framesPerPacket = 1) Terminator Parity
+// Test 9: Single-Frame Packets (framesPerPacket = 1) Terminator Parity
 // -----------------------------------------------------------------------------
 void testTerminatorPacketWithSingleFramePackets() {
     g_testCount++;
 
-    // For framesPerPacket = 1 (10ms packets), every packet boundary has accumulatedFrames == 0.
-    // PTT-01 previously dropped 100% of terminators in this mode.
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 1, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 1, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
-    engine.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
 
-    engine.setPttTalking(false);
+    rig.setPttTalking(false);
     for (int i = 0; i < 15; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
+    TEST_ASSERT_EQ(rig.packets.size(), 16u); // 16 regular 10ms packets
 
-    // 16 regular 10ms packets
-    TEST_ASSERT_EQ(collector.packets.size(), 16);
-
-    // Cutoff frame
-    engine.processFrame(frame.data(), frame.size());
-
-    // Terminator packet must be emitted
-    TEST_ASSERT_EQ(collector.packets.size(), 17);
-    TEST_ASSERT_TRUE(collector.packets[16].isTerminator);
-    TEST_ASSERT_EQ(collector.packets[16].frames, 1);
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 17u);
+    TEST_ASSERT_TRUE(rig.packets[16].isTerminator);
+    TEST_ASSERT_EQ(rig.packets[16].frames, 1);
 
     std::cout << "  [PASS] testTerminatorPacketWithSingleFramePackets" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 9: Pre-Speech Ring Buffer Flushed on VAD Speech Onset (80ms Lookahead)
+// Test 10: Pre-Speech Ring Buffer Flushed on VAD Speech Onset (80ms Lookahead)
 // -----------------------------------------------------------------------------
 void testPreSpeechRingBufferFlushedOnOnset() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
-    engine.setVadThresholds(0.5f, 0.2f);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::VOICE_ACTIVITY);
+    rig.setVadThresholds(0.5f, 0.2f);
 
-    // Feed 8 frames while unmuted below VAD threshold (amplitude 100 -> quiet, below speech threshold)
-    // In VOICE_ACTIVITY mode, these are buffered in the 80ms lookahead ring buffer
+    // 8 quiet frames while unmuted below the VAD threshold.
     for (int i = 1; i <= 8; ++i) {
         auto preFrame = generateSineFrame(i, 100);
-        engine.processFrame(preFrame.data(), preFrame.size());
+        rig.processFrame(preFrame.data(), preFrame.size());
     }
-    TEST_ASSERT_EQ(collector.packets.size(), 0);
+    TEST_ASSERT_EQ(rig.packets.size(), 0u);
 
-    // Feed 9th frame with loud speech (amplitude 15000 -> triggers VAD onset)
+    // 9th frame with loud speech triggers the onset.
     auto onsetFrame = generateSineFrame(9, 15000);
-    engine.processFrame(onsetFrame.data(), onsetFrame.size());
+    rig.processFrame(onsetFrame.data(), onsetFrame.size());
 
-    // Onset flushes the 8 buffered frames + processes current frame = 9 frames.
-    // 9 frames / 2 frames-per-packet = 4 full packets dispatched immediately!
-    TEST_ASSERT_EQ(collector.packets.size(), 4);
+    // 8 buffered frames + the current frame = 4 full packets, all released by
+    // the single processFrame call (and it must fit in one result struct).
+    TEST_ASSERT_EQ(rig.packets.size(), 4u);
     for (size_t i = 0; i < 4; ++i) {
-        TEST_ASSERT_FALSE(collector.packets[i].isTerminator);
-        TEST_ASSERT_EQ(collector.packets[i].frames, 2);
+        TEST_ASSERT_FALSE(rig.packets[i].isTerminator);
+        TEST_ASSERT_EQ(rig.packets[i].frames, 2);
     }
-
-    // Frame sequence numbers must be monotonic
-    for (size_t i = 1; i < collector.packets.size(); ++i) {
-        TEST_ASSERT_TRUE(collector.packets[i].frameNumber > collector.packets[i - 1].frameNumber);
+    for (size_t i = 1; i < rig.packets.size(); ++i) {
+        TEST_ASSERT_TRUE(rig.packets[i].frameNumber > rig.packets[i - 1].frameNumber);
     }
 
     std::cout << "  [PASS] testPreSpeechRingBufferFlushedOnOnset" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 10: Mute Gates Audio Immediately and Aborts Hangover
+// Test 11: Mute gates audio from the next frame and aborts the hangover
 // -----------------------------------------------------------------------------
 void testMuteGatesAudioImmediately() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
-    TEST_ASSERT_TRUE(collector.talkEvents.back().first);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents.back().first);
 
-    // Mute immediately gates audio, emits terminator packet, and clears talking state synchronously
-    engine.setMuted(true);
-    TEST_ASSERT_TRUE(engine.isMuted());
-    TEST_ASSERT_EQ(collector.packets.size(), 2);
-    TEST_ASSERT_TRUE(collector.packets.back().isTerminator);
-    TEST_ASSERT_FALSE(collector.talkEvents.back().first);
+    // Mute: the next frame's configuration carries it. That frame flushes the
+    // accumulator as a terminator and reports the stop; the muted frame
+    // itself produces nothing else.
+    rig.setMuted(true);
+    TEST_ASSERT_TRUE(rig.isMuted());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 2u);
+    TEST_ASSERT_TRUE(rig.packets.back().isTerminator);
+    TEST_ASSERT_FALSE(rig.talkEvents.back().first);
 
-    // Subsequent frames while muted (or if AudioRecord is halted): no new packets should be emitted
+    // Subsequent frames while muted emit nothing.
     for (int i = 0; i < 10; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
-    TEST_ASSERT_EQ(collector.packets.size(), 2);
+    TEST_ASSERT_EQ(rig.packets.size(), 2u);
 
-    // Release PTT while muted
-    engine.setPttTalking(false);
-
-    // Unmute: hangover must NOT resume or leak audio
-    engine.setMuted(false);
+    // Release PTT while muted, then unmute: the hangover must not resume.
+    rig.setPttTalking(false);
+    rig.setMuted(false);
     for (int i = 0; i < 5; ++i) {
-        engine.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
     }
-    TEST_ASSERT_EQ(collector.packets.size(), 2);
+    TEST_ASSERT_EQ(rig.packets.size(), 2u);
 
     std::cout << "  [PASS] testMuteGatesAudioImmediately" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 11: Continuous Mode and VAD Mode Integration
+// Test 12: Continuous Mode and VAD Mode Integration
 // -----------------------------------------------------------------------------
 void testContinuousAndVadModes() {
     g_testCount++;
@@ -582,80 +653,82 @@ void testContinuousAndVadModes() {
     // Continuous Mode
     {
         auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-        AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::CONTINUOUS);
-        StateCollector collector;
-        collector.wire(engine);
+        InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                     InputMode::CONTINUOUS);
 
         auto frame = generateSineFrame(1);
-        // Transmits regardless of PTT state
-        engine.processFrame(frame.data(), frame.size());
-        engine.processFrame(frame.data(), frame.size());
-        TEST_ASSERT_EQ(collector.packets.size(), 1);
-        TEST_ASSERT_TRUE(collector.talkEvents.front().first);
+        rig.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
+        TEST_ASSERT_EQ(rig.packets.size(), 1u);
+        TEST_ASSERT_TRUE(rig.talkEvents.front().first);
     }
 
     // VAD Mode with Mock Denoiser
     {
         auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-        auto denoiser = std::make_unique<FakeDenoiser>(0.9f); // high speech probability
+        auto denoiser = std::make_unique<FakeDenoiser>(0.9f);
         FakeDenoiser* denoiserPtr = denoiser.get();
-        AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
-        StateCollector collector;
-        collector.wire(engine);
+        InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                     InputMode::VOICE_ACTIVITY);
 
         auto frame = generateSineFrame(1);
-        engine.processFrame(frame.data(), frame.size());
-        engine.processFrame(frame.data(), frame.size());
-        TEST_ASSERT_EQ(collector.packets.size(), 1);
-        TEST_ASSERT_TRUE(collector.talkEvents.front().first);
+        rig.processFrame(frame.data(), frame.size());
+        rig.processFrame(frame.data(), frame.size());
+        TEST_ASSERT_EQ(rig.packets.size(), 1u);
+        TEST_ASSERT_TRUE(rig.talkEvents.front().first);
 
-        // Turn off speech probability -> VAD enters hangover and terminates
+        // Drop the speech probability: the VAD holds, then terminates.
         denoiserPtr->setSpeechProb(0.0f);
         auto silence = generateSilenceFrame();
         for (int i = 0; i < 50; ++i) {
-            engine.processFrame(silence.data(), silence.size());
+            rig.processFrame(silence.data(), silence.size());
         }
-        TEST_ASSERT_FALSE(collector.talkEvents.back().first);
-        TEST_ASSERT_TRUE(collector.packets.back().isTerminator);
+        TEST_ASSERT_FALSE(rig.talkEvents.back().first);
+        TEST_ASSERT_TRUE(rig.packets.back().isTerminator);
     }
 
     std::cout << "  [PASS] testContinuousAndVadModes" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 12: Engine Reset Clears State and Frame Counters
+// Test 13: Engine Reset Clears State and Frame Counters
 // -----------------------------------------------------------------------------
 void testAudioInputEngineReset() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    auto denoiser = std::make_unique<FakeDenoiser>();
+    FakeDenoiser* denoiserPtr = denoiser.get();
+    InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    engine.setPttTalking(true);
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
 
-    // Engine reset must explicitly clear PTT talking flag and hold frames
-    engine.reset();
-    TEST_ASSERT_FALSE(engine.isPttTalking());
+    // Reset clears the hangover and the engine's view of the pressed state, so
+    // the next frame re-arms push-to-talk.
+    rig.reset();
+    TEST_ASSERT_EQ(denoiserPtr->getResetCount(), 1);
 
-    // Next processing starts clean from frame 0
-    collector.reset();
-    engine.setPttTalking(true);
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
-    TEST_ASSERT_EQ(collector.packets[0].frameNumber, 0);
+    rig.clear();
+    rig.processFrame(frame.data(), frame.size());
+    // The still-pressed snapshot re-arms the hold: talking resumes at once.
+    TEST_ASSERT_EQ(rig.talkEvents.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents[0].first);
+
+    rig.clear();
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_EQ(rig.packets[0].frameNumber, 0);
 
     std::cout << "  [PASS] testAudioInputEngineReset" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 13: Large Packet Framing (N=4, N=6) and Terminator Boundary Padding
+// Test 14: Large Packet Framing (N=4, N=6) and Terminator Boundary Padding
 // -----------------------------------------------------------------------------
 void testLargePacketFramingAndTerminators() {
     g_testCount++;
@@ -663,75 +736,66 @@ void testLargePacketFramingAndTerminators() {
     // Subtest A: N=4 (40ms packets, 1920 samples)
     {
         auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-        AudioInputEngine engine(std::move(encoder), nullptr, 4, 1.0f, false, InputMode::PUSH_TO_TALK);
-        StateCollector collector;
-        collector.wire(engine);
+        InputRig rig(std::move(encoder), nullptr, 4, 1.0f, false,
+                     InputMode::PUSH_TO_TALK);
 
-        engine.setPttTalking(true);
+        rig.setPttTalking(true);
         auto frame = generateSineFrame(1);
         for (int i = 0; i < 4; ++i) {
-            engine.processFrame(frame.data(), frame.size());
+            rig.processFrame(frame.data(), frame.size());
         }
-        // Exactly 1 packet emitted with 4 frames
-        TEST_ASSERT_EQ(collector.packets.size(), 1);
-        TEST_ASSERT_EQ(collector.packets[0].frames, 4);
-        TEST_ASSERT_FALSE(collector.packets[0].isTerminator);
+        TEST_ASSERT_EQ(rig.packets.size(), 1u);
+        TEST_ASSERT_EQ(rig.packets[0].frames, 4);
+        TEST_ASSERT_FALSE(rig.packets[0].isTerminator);
 
-        // Release PTT: 15 frames hangover countdown
-        engine.setPttTalking(false);
+        rig.setPttTalking(false);
         for (int i = 0; i < 15; ++i) {
-            engine.processFrame(frame.data(), frame.size());
+            rig.processFrame(frame.data(), frame.size());
         }
-        // Total active speech frames = 4 + 15 = 19 frames.
-        // 19 / 4 = 4 full packets emitted so far.
-        TEST_ASSERT_EQ(collector.packets.size(), 4);
+        // 19 active frames = 4 full packets.
+        TEST_ASSERT_EQ(rig.packets.size(), 4u);
 
-        // Frame 16 after release: speech cutoff triggers terminator packet.
-        // Remaining 3 frames in accumulator are padded to 4 frames.
-        engine.processFrame(frame.data(), frame.size());
-        TEST_ASSERT_EQ(collector.packets.size(), 5);
-        TEST_ASSERT_TRUE(collector.packets[4].isTerminator);
-        TEST_ASSERT_EQ(collector.packets[4].frames, 4);
-        TEST_ASSERT_FALSE(collector.talkEvents.back().first);
+        // Cutoff frame: the 3 banked frames are padded to 4.
+        rig.processFrame(frame.data(), frame.size());
+        TEST_ASSERT_EQ(rig.packets.size(), 5u);
+        TEST_ASSERT_TRUE(rig.packets[4].isTerminator);
+        TEST_ASSERT_EQ(rig.packets[4].frames, 4);
+        TEST_ASSERT_FALSE(rig.talkEvents.back().first);
     }
 
     // Subtest B: N=6 (60ms packets, 2880 samples)
     {
         auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-        AudioInputEngine engine(std::move(encoder), nullptr, 6, 1.0f, false, InputMode::PUSH_TO_TALK);
-        StateCollector collector;
-        collector.wire(engine);
+        InputRig rig(std::move(encoder), nullptr, 6, 1.0f, false,
+                     InputMode::PUSH_TO_TALK);
 
-        engine.setPttTalking(true);
+        rig.setPttTalking(true);
         auto frame = generateSineFrame(1);
         for (int i = 0; i < 6; ++i) {
-            engine.processFrame(frame.data(), frame.size());
+            rig.processFrame(frame.data(), frame.size());
         }
-        TEST_ASSERT_EQ(collector.packets.size(), 1);
-        TEST_ASSERT_EQ(collector.packets[0].frames, 6);
+        TEST_ASSERT_EQ(rig.packets.size(), 1u);
+        TEST_ASSERT_EQ(rig.packets[0].frames, 6);
 
-        // Release PTT: 15 frames hangover
-        engine.setPttTalking(false);
+        rig.setPttTalking(false);
         for (int i = 0; i < 15; ++i) {
-            engine.processFrame(frame.data(), frame.size());
+            rig.processFrame(frame.data(), frame.size());
         }
-        // Total 21 frames: 21 / 6 = 3 full packets
-        TEST_ASSERT_EQ(collector.packets.size(), 3);
+        // 21 active frames = 3 full packets.
+        TEST_ASSERT_EQ(rig.packets.size(), 3u);
 
-        // Frame 16 after release: speech cutoff triggers terminator
-        // 3 remaining frames padded to 6 frames
-        engine.processFrame(frame.data(), frame.size());
-        TEST_ASSERT_EQ(collector.packets.size(), 4);
-        TEST_ASSERT_TRUE(collector.packets[3].isTerminator);
-        TEST_ASSERT_EQ(collector.packets[3].frames, 6);
-        TEST_ASSERT_FALSE(collector.talkEvents.back().first);
+        rig.processFrame(frame.data(), frame.size());
+        TEST_ASSERT_EQ(rig.packets.size(), 4u);
+        TEST_ASSERT_TRUE(rig.packets[3].isTerminator);
+        TEST_ASSERT_EQ(rig.packets[3].frames, 6);
+        TEST_ASSERT_FALSE(rig.talkEvents.back().first);
     }
 
     std::cout << "  [PASS] testLargePacketFramingAndTerminators" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 14: Dynamic Input Mode Switching Mid-Speech
+// Test 15: Dynamic Input Mode Switching Mid-Speech
 // -----------------------------------------------------------------------------
 void testDynamicInputModeSwitchingMidSpeech() {
     g_testCount++;
@@ -739,42 +803,41 @@ void testDynamicInputModeSwitchingMidSpeech() {
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
     auto denoiser = std::make_unique<FakeDenoiser>();
     FakeDenoiser* denoiserPtr = denoiser.get();
-    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    // 1. Start talking in PTT mode
-    engine.setPttTalking(true);
+    // 1. Start talking in PTT mode.
+    rig.setPttTalking(true);
     auto frame = generateSineFrame(1);
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
-    TEST_ASSERT_TRUE(collector.talkEvents.back().first);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_TRUE(rig.talkEvents.back().first);
 
-    // 2. Switch to CONTINUOUS mode while speaking
-    engine.setInputMode(InputMode::CONTINUOUS);
-    engine.setPttTalking(false); // Release PTT; continuous mode should keep transmitting
-    engine.processFrame(frame.data(), frame.size());
-    engine.processFrame(frame.data(), frame.size());
-    TEST_ASSERT_EQ(collector.packets.size(), 2);
-    TEST_ASSERT_TRUE(collector.talkEvents.back().first);
+    // 2. Switch to CONTINUOUS while speaking and release PTT: continuous mode
+    // keeps transmitting.
+    rig.setInputMode(InputMode::CONTINUOUS);
+    rig.setPttTalking(false);
+    rig.processFrame(frame.data(), frame.size());
+    rig.processFrame(frame.data(), frame.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 2u);
+    TEST_ASSERT_TRUE(rig.talkEvents.back().first);
 
-    // 3. Switch to VOICE_ACTIVITY mode with silence
-    engine.setInputMode(InputMode::VOICE_ACTIVITY);
+    // 3. Switch to VOICE_ACTIVITY with silence: VAD terminates the stream.
+    rig.setInputMode(InputMode::VOICE_ACTIVITY);
     denoiserPtr->setSpeechProb(0.0f);
     auto silence = generateSilenceFrame();
     for (int i = 0; i < 50; ++i) {
-        engine.processFrame(silence.data(), silence.size());
+        rig.processFrame(silence.data(), silence.size());
     }
-    // VAD should detect silence and terminate transmission with terminator packet
-    TEST_ASSERT_FALSE(collector.talkEvents.back().first);
-    TEST_ASSERT_TRUE(collector.packets.back().isTerminator);
+    TEST_ASSERT_FALSE(rig.talkEvents.back().first);
+    TEST_ASSERT_TRUE(rig.packets.back().isTerminator);
 
     std::cout << "  [PASS] testDynamicInputModeSwitchingMidSpeech" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 15: Squelch Gate Before RNNoise
+// Test 16: Squelch Gate Before RNNoise
 // -----------------------------------------------------------------------------
 void testSquelchGateBeforeRnnoise() {
     g_testCount++;
@@ -782,16 +845,15 @@ void testSquelchGateBeforeRnnoise() {
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
     auto denoiser = std::make_unique<FakeDenoiser>(0.95f);
     FakeDenoiser* denoiserPtr = denoiser.get();
-    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                 InputMode::VOICE_ACTIVITY);
 
-    // 1. Send ambient noise AC frame below squelch floor (amplitude 10 -> ~-70 dBFS < -65 dBFS)
+    // 1. Ambient noise below the squelch floor (amplitude 10 -> ~-70 dBFS).
     auto ambientBelowSquelch = generateSineFrame(0, 10);
-    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    rig.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
 
-    // Denoiser must have received pure silence (zeros) to advance overlap-add delay
-    // while bypassing recurrent GRU inference
+    // The denoiser receives pure silence to advance the overlap-add delay
+    // while its recurrent inference is bypassed.
     TEST_ASSERT_EQ(denoiserPtr->getLastInSamples().size(), 480u);
     bool allZeros = true;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
@@ -802,11 +864,9 @@ void testSquelchGateBeforeRnnoise() {
     }
     TEST_ASSERT_TRUE(allZeros);
 
-    // 2. Send active speech frame above squelch (sine wave)
+    // 2. Active speech above the squelch reaches the denoiser.
     auto speechFrame = generateSineFrame(1);
-    engine.processFrame(speechFrame.data(), speechFrame.size());
-
-    // Denoiser receives active speech PCM
+    rig.processFrame(speechFrame.data(), speechFrame.size());
     bool hasNonZero = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -816,8 +876,8 @@ void testSquelchGateBeforeRnnoise() {
     }
     TEST_ASSERT_TRUE(hasNonZero);
 
-    // 3. During VAD hangover (speaking is true), low-energy frame must NOT be squelch-bypassed
-    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    // 3. During the VAD hold, a low-energy frame is not squelch-bypassed.
+    rig.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
     bool hangoverReceivedRealAudio = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -827,12 +887,11 @@ void testSquelchGateBeforeRnnoise() {
     }
     TEST_ASSERT_TRUE(hangoverReceivedRealAudio);
 
-    // Tick through remaining hangover hold frames (DEFAULT_HOLD_FRAMES = 25)
+    // Tick through the hold, then the bypass resumes.
     for (int i = 0; i < 30; ++i) {
-        engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+        rig.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
     }
-    // Now that hangover has expired, low-energy ambient frame must resume squelch bypass
-    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    rig.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
     bool squelchResumedZeros = true;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -842,9 +901,9 @@ void testSquelchGateBeforeRnnoise() {
     }
     TEST_ASSERT_TRUE(squelchResumedZeros);
 
-    // 4. In CONTINUOUS mode, low-energy frame must NOT be squelch-bypassed
-    engine.setInputMode(InputMode::CONTINUOUS);
-    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    // 4. CONTINUOUS mode never squelch-bypasses.
+    rig.setInputMode(InputMode::CONTINUOUS);
+    rig.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
     bool continuousReceivedRealAudio = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -854,10 +913,10 @@ void testSquelchGateBeforeRnnoise() {
     }
     TEST_ASSERT_TRUE(continuousReceivedRealAudio);
 
-    // 5. In PUSH_TO_TALK mode with PTT active, low-energy frame must NOT be squelch-bypassed
-    engine.setInputMode(InputMode::PUSH_TO_TALK);
-    engine.setPttTalking(true);
-    engine.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
+    // 5. PUSH_TO_TALK with the button pressed does not bypass either.
+    rig.setInputMode(InputMode::PUSH_TO_TALK);
+    rig.setPttTalking(true);
+    rig.processFrame(ambientBelowSquelch.data(), ambientBelowSquelch.size());
     bool pttReceivedRealAudio = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -871,7 +930,7 @@ void testSquelchGateBeforeRnnoise() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 16: PTT Idle Unconditionally Bypasses RNNoise Regardless of Ambient Noise
+// Test 17: PTT Idle Unconditionally Bypasses RNNoise Regardless of Ambient Noise
 // -----------------------------------------------------------------------------
 void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
     g_testCount++;
@@ -879,16 +938,13 @@ void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
     auto denoiser = std::make_unique<FakeDenoiser>(0.9f);
     FakeDenoiser* denoiserPtr = denoiser.get();
+    InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
-
-    // Loud frame above squelch (peakDb ~ -10 dBFS >> -65 dBFS)
     auto loudAmbientFrame = generateSineFrame(1, 10000);
 
-    // While PTT is idle (unpressed), denoiser MUST be bypassed by feeding static zeroes
-    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    // Idle PTT: the denoiser gets static zeroes.
+    rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     bool allZerosInIdle = true;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -897,11 +953,11 @@ void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
         }
     }
     TEST_ASSERT_TRUE(allZerosInIdle);
-    TEST_ASSERT_EQ(collector.packets.size(), 0);
+    TEST_ASSERT_EQ(rig.packets.size(), 0u);
 
-    // Press PTT: denoiser must immediately receive real audio and packets must be emitted
-    engine.setPttTalking(true);
-    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    // Pressing PTT delivers real audio immediately.
+    rig.setPttTalking(true);
+    rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     bool nonZeroWhenPttActive = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -911,12 +967,12 @@ void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
     }
     TEST_ASSERT_TRUE(nonZeroWhenPttActive);
 
-    // Release PTT: after hold hangover expires, denoiser must revert to static zeroes
-    engine.setPttTalking(false);
+    // After the release hold expires, the bypass resumes.
+    rig.setPttTalking(false);
     for (int i = 0; i < 20; ++i) {
-        engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+        rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     }
-    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     bool zeroesResumedAfterPttRelease = true;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -930,44 +986,39 @@ void testPttIdleBypassesRnnoiseEvenWithAmbientNoise() {
 }
 
 // -----------------------------------------------------------------------------
-// Test 17: PTT Onset Does Not Prepend Idle Noise
+// Test 18: PTT Onset Does Not Prepend Idle Noise
 // -----------------------------------------------------------------------------
 void testPttOnsetDoesNotPrependIdleNoise() {
     g_testCount++;
 
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
-    AudioInputEngine engine(std::move(encoder), nullptr, 2, 1.0f, false, InputMode::PUSH_TO_TALK);
-    StateCollector collector;
-    collector.wire(engine);
+    InputRig rig(std::move(encoder), nullptr, 2, 1.0f, false,
+                 InputMode::PUSH_TO_TALK);
 
-    // Feed 8 frames of ambient noise while PTT is unpressed
+    // 8 frames of ambient noise while PTT is unpressed: nothing is buffered.
     for (int i = 1; i <= 8; ++i) {
         auto preFrame = generateSineFrame(i, 5000);
-        engine.processFrame(preFrame.data(), preFrame.size());
+        rig.processFrame(preFrame.data(), preFrame.size());
     }
-    TEST_ASSERT_EQ(collector.packets.size(), 0);
+    TEST_ASSERT_EQ(rig.packets.size(), 0u);
 
-    // Press PTT and feed 1 frame
-    engine.setPttTalking(true);
+    // Press PTT and feed 1 frame: 1 frame banked, no packet yet.
+    rig.setPttTalking(true);
     auto frame1 = generateSineFrame(9, 5000);
-    engine.processFrame(frame1.data(), frame1.size());
+    rig.processFrame(frame1.data(), frame1.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 0u);
 
-    // Because PTT does not buffer pre-speech idle noise, exactly 1 frame is accumulated (0 packets sent for 2 fpp)
-    TEST_ASSERT_EQ(collector.packets.size(), 0);
-
-    // Feed 2nd frame while talking
+    // The 2nd talking frame completes the packet.
     auto frame2 = generateSineFrame(10, 5000);
-    engine.processFrame(frame2.data(), frame2.size());
-
-    // Exactly 1 packet emitted with 2 frames
-    TEST_ASSERT_EQ(collector.packets.size(), 1);
-    TEST_ASSERT_EQ(collector.packets[0].frames, 2);
+    rig.processFrame(frame2.data(), frame2.size());
+    TEST_ASSERT_EQ(rig.packets.size(), 1u);
+    TEST_ASSERT_EQ(rig.packets[0].frames, 2);
 
     std::cout << "  [PASS] testPttOnsetDoesNotPrependIdleNoise" << std::endl;
 }
 
 // -----------------------------------------------------------------------------
-// Test 18: Muted Bypasses RNNoise Even With Ambient Noise in VAD Mode
+// Test 19: Muted Bypasses RNNoise Even With Ambient Noise in VAD Mode
 // -----------------------------------------------------------------------------
 void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
     g_testCount++;
@@ -975,16 +1026,13 @@ void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
     auto encoder = std::make_unique<FakeVoiceEncoder>(40000);
     auto denoiser = std::make_unique<FakeDenoiser>(0.9f);
     FakeDenoiser* denoiserPtr = denoiser.get();
+    InputRig rig(std::move(encoder), std::move(denoiser), 2, 1.0f, false,
+                 InputMode::VOICE_ACTIVITY);
 
-    AudioInputEngine engine(std::move(encoder), std::move(denoiser), 2, 1.0f, false, InputMode::VOICE_ACTIVITY);
-    StateCollector collector;
-    collector.wire(engine);
-
-    // Loud frame above squelch (peakDb ~ -10 dBFS >> -65 dBFS)
     auto loudAmbientFrame = generateSineFrame(1, 10000);
 
-    // When unmuted in VAD mode, loud ambient frame must NOT bypass denoiser
-    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    // Unmuted: the denoiser sees real audio.
+    rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     bool nonZeroWhenUnmuted = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -994,9 +1042,9 @@ void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
     }
     TEST_ASSERT_TRUE(nonZeroWhenUnmuted);
 
-    // Now mute client: denoiser MUST be bypassed by feeding static zeroes even with loud frame
-    engine.setMuted(true);
-    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    // Muted: the bypass feeds static zeroes even for a loud frame.
+    rig.setMuted(true);
+    rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     bool allZerosWhenMuted = true;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -1006,9 +1054,9 @@ void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
     }
     TEST_ASSERT_TRUE(allZerosWhenMuted);
 
-    // Unmute: denoiser resumes receiving real audio
-    engine.setMuted(false);
-    engine.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
+    // Unmuted again: real audio resumes.
+    rig.setMuted(false);
+    rig.processFrame(loudAmbientFrame.data(), loudAmbientFrame.size());
     bool nonZeroAfterUnmute = false;
     for (int16_t s : denoiserPtr->getLastInSamples()) {
         if (s != 0) {
@@ -1025,11 +1073,12 @@ void testMutedBypassesRnnoiseEvenWithAmbientNoise() {
 
 void run_audio_input_engine_tests() {
     std::cout << "--- AudioInputEngine Tests ---" << std::endl;
-    testAudioInputEngineDefaultsAndAccessors();
+    testInputConfigTransitions();
     testPttStateTransitions();
     testPttReleaseHangoverTiming();
     testPttHangoverReassertionPreventsCutoff();
-    testPttMicroTapTransmission();
+    testPttPressObservedForOneFrameStillHolds();
+    testPttSubFrameTapTransmitsNothing();
     testTerminatorPacketEmissionOnEvenBoundary();
     testTerminatorPacketEmissionOnOddBoundary();
     testTerminatorPacketWithSingleFramePackets();

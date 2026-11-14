@@ -28,6 +28,8 @@ void run_jitter_buffer_tests();
 void run_audio_output_engine_tests();
 void run_audio_input_engine_tests();
 void run_opus_interop_tests();
+void run_engine_golden_tests();
+void run_engine_allocation_tests();
 
 int main() {
     std::cout << "========================================" << std::endl;
@@ -59,6 +61,12 @@ int main() {
     std::cout << std::endl;
 
     run_opus_interop_tests();
+    std::cout << std::endl;
+
+    run_engine_golden_tests();
+    std::cout << std::endl;
+
+    run_engine_allocation_tests();
     std::cout << std::endl;
 
     std::cout << "========================================" << std::endl;

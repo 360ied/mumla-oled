@@ -37,5 +37,7 @@ libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <fcntl.h>
 libraries/humla/src/main/jni/crypto/CryptStateOCB2.cpp: <unistd.h>
 libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp: <jni.h>
 libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp: <jni.h>
+libraries/humla/src/main/jni/audio_engine/NativeAudioInputEngineJni.cpp: <mutex>
+libraries/humla/src/main/jni/audio_engine/NativeAudioOutputEngineJni.cpp: <mutex>
 libraries/humla/src/main/jni/audio_engine/NativeCrashTestJni.cpp: <jni.h>
 libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>
