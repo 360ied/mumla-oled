@@ -429,9 +429,9 @@ changes (RNNoise enabled when its model loads, VAD hold frames, squelch
 floor, jitter margin of 4 frames) stays a constant of the I/O layer.
 
 Each is stored in a **sequence lock**: one writer (the JNI call), any
-number of readers (capture, receive, render, and the tunnel caller). The writer increments the
-sequence to odd, writes, and increments to even; a reader copies the value
-and retries if the sequence was odd or changed. Readers never block, and
+number of readers (capture, receive, render, and the tunnel caller). The
+writer increments the sequence to odd, writes, and increments to even; a
+reader copies the value and retries if the sequence was odd or changed. Readers never block, and
 the copy is a few dozen bytes plus the locally-muted session list
 (capacity 256 sessions; a longer list keeps the first 256 and logs).
 
