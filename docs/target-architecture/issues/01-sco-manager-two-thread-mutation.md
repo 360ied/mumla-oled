@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — regression unfixed; fix before step 5a.3a. |
+| Status | Resolved 2026-11-14 (`485453c7`..`87b1d325`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
 | Area | Route / Bluetooth SCO |
 | Spec | [route.md § Thread](../route.md#thread), [migration.md § Step 4](../migration.md#step-4--voice-control-and-route) item 1 |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt`, `audio/ScoLink.kt`, `route/RouteControl.kt`, `HumlaService.kt` (construction) |
-| Gates | Should be fixed before step 5a.3a (voice starts following `RouteState` natively) |
+| Gates | Gated step 5a.3a; gate met |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
@@ -214,6 +214,44 @@ migration ground rules).
   `stop()` (must be dropped).
 - `./scripts/check.sh` passes; a Bluetooth headset session still connects,
   falls back, and retries on a device (developer's discretion).
+
+## Resolution
+
+Fixed along the preferred direction, one concern per commit:
+
+1. `485453c7`: `RouteThread` holds the route `HandlerThread` as a
+   `Handler`, an `Executor`, and a `CoroutineDispatcher`. `HumlaService`
+   creates it before the SCO manager and passes it to
+   `RouteControl.create`, which still owns its lifetime.
+2. `f934e952`: the manager takes the thread instead of hardcoding main.
+   `BluetoothScoManagerTest` drives it under Robolectric on one test
+   dispatcher, against a shadow that accepts a route request without
+   switching the device (the stock shadow switches at once, which always
+   takes the fast path). Covered: timeout then retry then fail, timeout
+   racing `stop()`, timeout racing `stop()` + `start()`, failure and
+   device events delivered after `stop()` (dropped), link drop, and the
+   API 30 broadcast path. Deleting the queued-event epoch check or the
+   failure-delivery generation check fails a test.
+3. `14290883`: `HumlaService` passes the route thread. The timeout, the
+   S+ device listener, the API 30 receiver (`registerReceiver` with the
+   route `Handler`), and failure delivery all run on it. Entry points
+   check the thread (debug throws, release logs). `isActive` is exempt:
+   `HumlaService.isBluetoothScoActive` reads it from the UI.
+4. `24bb84a2`: guards that only defended against a concurrent `stop()`
+   are gone: the per-step epoch re-checks, the epoch-scoped route hold,
+   `armTimeout`'s race checks, and `onConnectTimeout`'s second check.
+   No platform call re-enters the manager synchronously, so nothing runs
+   between a bring-up's IPC steps.
+5. `87b1d325`: the fields are plain (`state` is `@Volatile` for
+   `isActive`), and the `run {}` "atomic units" and the observer snapshot
+   are gone.
+
+Kept: the session generation, which still drops work queued for an ended
+session (device and broadcast events, the fast-path task, failure
+delivery, and a timer that escapes a cancel).
+
+Not verified on a device: the API 30 path is covered only by Robolectric
+and code reading.
 
 ## Related
 
