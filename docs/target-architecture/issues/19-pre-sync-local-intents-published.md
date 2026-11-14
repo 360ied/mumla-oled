@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved on branch `session-serversync-update-hygiene` (`89dd9b57`), pending merge. The 2026-11-12 decision stands: allow the carry-over and document it (option 2, `state.md`). The `syncingState`/`synced` assignments moved out of the `update` lambda (also closing the issue-06 violation), and `preSyncIntentsSurviveServerSync` presses PTT during `SYNCING` and asserts it survives. |
+| Status | Resolved on branch `session-serversync-update-hygiene` (`89dd9b57`), pending merge. The 2026-11-12 decision stands: allow the carry-over and document it (option 2, `state.md`). The `syncingState`/`synced` assignments moved out of the `update` lambda (also closing the issue-06 violation), and `serverSyncPublishesDumpAndPreSyncIntents` presses PTT during `SYNCING` and asserts it survives. |
 | Category | Undocumented interim |
 | Severity | Low-to-moderate (works today; fragile, and the merge lambda breaks a convention) |
 | Verified | Yes (code read) |

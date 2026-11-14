@@ -8,7 +8,7 @@
 | Verified | Yes |
 | Area | Enforcement / state |
 | Spec | [enforcement.md § Remaining conventions](../enforcement.md#remaining-conventions) |
-| Code | Violation, now fixed: `libraries/humla/src/main/java/se/lublin/humla/client/Session.kt` (`ServerSync` branch of `handleMessage`); pinning test in `HumlaClientTest.preSyncIntentsSurviveServerSync` |
+| Code | Violation, now fixed: `libraries/humla/src/main/java/se/lublin/humla/client/Session.kt` (`ServerSync` branch of `handleMessage`); pinning test in `HumlaClientTest.serverSyncPublishesDumpAndPreSyncIntents` |
 | Gates | Not gating; cheap to fix |
 
 Line numbers below refer to `master` at `092d9dc8`.
@@ -73,7 +73,7 @@ without anyone flagging it, which shows the rule is not being applied.
 
 Fixed on `session-serversync-update-hygiene`: the merge moved to
 `updateAndGet`, and `syncingState`/`synced` are assigned from the committed
-value, outside the lambda. `preSyncIntentsSurviveServerSync` pins the
+value, outside the lambda. `serverSyncPublishesDumpAndPreSyncIntents` pins the
 carry-over that the merge exists for; deleting the merge fails that test and
 no other.
 
