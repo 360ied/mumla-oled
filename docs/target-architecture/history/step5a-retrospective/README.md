@@ -21,21 +21,17 @@ as the live [issue queue](../../issues/README.md).
 | [../../issues/](../../issues/README.md) | Moved out: the deeper steps 1–4 audit, now the live issue queue |
 | [proposed-spec-edits.md](proposed-spec-edits.md) | Edits to `migration.md`, `testing.md`, `open-items.md`, and `PROGRESS.md` (applied) |
 
-## Where the attempt lives
+## Do not reuse the attempt
 
 The reset removed the attempt from `master`, and `origin/master` was
-force-pushed to match. The commits remain reachable only through the local
-`bugfix/voice-load-library` (tip `db0733c4`) and
-`bugfix/voice-jni-attach-ndk` branches, unless an archive tag is created
-(for example `git tag archive/step5a-attempt1 db0733c4`). Key commits:
+force-pushed to match. **Its code is not a reference for the redo and must
+not be reused.** Copying from it is how the drift this directory describes
+comes back: the attempt passed `check.sh`, the interop suite, and the
+release build while shipping no working voice, so passing those gates says
+nothing about whether its code is sound.
 
-| Commit | What |
-|---|---|
-| `69155b90` | First 5a commit (single-threaded engines) |
-| `524e5c1b` | Packet codec and voice infra tests |
-| `58f3dd13` | Native voice I/O layer |
-| `f2cdeea6` | Cut-over to native voice via `VoiceEngine` |
-| `9dbd0ace` … `39e5ecfe` | Eight review-fix rounds |
-| `2f4c09e2` | Merge of `target-arch-step5a-engine-codec-net` |
-| `ad666579` | Merge of the NDK `AttachCurrentThread` build fix |
+The spec plus fixtures generated from the Java-generated protobuf classes
+is the source of truth for steps 5a.2 onward; port from those, not from a
+recovered tree. No branch name, tag recipe, or commit list is kept here on
+purpose, so this directory cannot be used to look the attempt up.
 

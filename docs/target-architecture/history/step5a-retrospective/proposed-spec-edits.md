@@ -181,7 +181,7 @@ Add to **Open (not gating)**:
 
 Change the 5a row's notes:
 
-> First attempt (`69155b90`..`39e5ecfe`, merged as `2f4c09e2`) shipped as
+> First attempt shipped as
 > `v0.27.4`, pulled (voice dead at runtime), and reset off `master`; see
 > the [retrospective](README.md). Redo split into
 > 5a.1–5a.4 (see [migration](migration.md)). Pool size settled by stress

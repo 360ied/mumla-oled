@@ -81,10 +81,10 @@ each slice field-tested in daily use before the next.
 The branch went through eight review-fix rounds, each changing 600–1600
 lines. Three of them found that the production path did nothing:
 
-- Round 2 (`9d7c3372`): "wire real Opus/RNNoise backends into VoiceIo
+- Round 2: "wire real Opus/RNNoise backends into VoiceIo
   **(production was silent)**".
-- Round 3 (`ad9d58ac`): "JNI **never built by the gate**".
-- Round 7 (`ee109e48`): "render path **returned 0 for every 960-sample
+- Round 3: "JNI **never built by the gate**".
+- Round 7: "render path **returned 0 for every 960-sample
   sink call**", a regression introduced by round 6's own fix.
 
 Each time a reviewer reading code caught it; nothing that executed the
