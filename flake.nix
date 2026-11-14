@@ -64,6 +64,7 @@
               jdk
               pkgs.gradle
               pkgs.protobuf
+              pkgs.nanopb
               pkgs.git
               pkgs.python3
               pkgs.ccache
