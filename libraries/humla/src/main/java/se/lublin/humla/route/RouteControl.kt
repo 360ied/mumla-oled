@@ -30,7 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.android.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -92,11 +92,12 @@ internal class RouteControl(
             thread.start()
             val looper = thread.looper
             val handler = Handler(looper)
-            val executor = java.util.concurrent.Executor { r -> handler.post(r) }
             return RouteThread(
                 handler = handler,
-                executor = executor,
-                dispatcher = executor.asCoroutineDispatcher(),
+                executor = java.util.concurrent.Executor { r -> handler.post(r) },
+                // The looper dispatcher route.md specifies: delay() posts to
+                // the route looper, so timers never leave the route thread.
+                dispatcher = handler.asCoroutineDispatcher("route"),
                 isCurrentCheck = { Looper.myLooper() == looper },
                 ownedThread = thread,
             )
