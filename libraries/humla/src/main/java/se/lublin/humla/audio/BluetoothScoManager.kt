@@ -161,11 +161,6 @@ class BluetoothScoManager : ScoLink {
     private val generation = java.util.concurrent.atomic.AtomicInteger(0)
     private val routeHeld = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    // Generation that holds the route request (see markRouteHeld): stale
-    // abort paths only release their own epoch so a newer session's route
-    // is never cleared by an older session's teardown.
-    private val routeHeldEpoch = java.util.concurrent.atomic.AtomicInteger(-1)
-
     // S+-only listener type is deliberately erased to Any: naming
     // AudioManager.OnCommunicationDeviceChangedListener in a field
     // descriptor risks class verification failure on API 30, where the
@@ -225,7 +220,6 @@ class BluetoothScoManager : ScoLink {
             state.set(ScoState.STARTING)
             attempts.set(0)
             routeHeld.set(false)
-            routeHeldEpoch.set(-1)
             generation.incrementAndGet()
         }
         if (!hasConnectPermission()) {
@@ -298,8 +292,10 @@ class BluetoothScoManager : ScoLink {
         Log.w(TAG, "BluetoothScoManager used off the route thread")
     }
 
-    // Bring-up runs on the route dispatcher (see class threading note), keyed by
-    // session epoch: every step re-checks that its session is still current.
+    // Bring-up runs to completion on the route thread: nothing else runs
+    // between its IPC steps (platform events and the controller's callbacks
+    // are posted), so its session stays current throughout. The epoch keys
+    // the work it leaves queued: listener events and the timeout.
     private fun attemptBringUp() {
         val epoch: Int
         run {
@@ -325,8 +321,7 @@ class BluetoothScoManager : ScoLink {
         }
     }
 
-    // Returns a REASON_* on failure, null on success or concurrent-stop abort
-    // (stop() owns teardown there, so there is nothing to report).
+    // Returns a REASON_* on failure, null on success.
     // Modern backend (S+): callers guarantee SDK_INT >= S via attemptBringUp.
     @TargetApi(Build.VERSION_CODES.S)
     private fun bringUpModern(epoch: Int): String? {
@@ -340,9 +335,6 @@ class BluetoothScoManager : ScoLink {
             Log.w(TAG, "getAvailableCommunicationDevices threw", e)
             return REASON_ERROR
         }
-        if (!isStartingEpoch(epoch)) {
-            return null
-        }
         if (sco == null) {
             return REASON_NO_DEVICE
         }
@@ -353,11 +345,6 @@ class BluetoothScoManager : ScoLink {
         } catch (e: SecurityException) {
             Log.w(TAG, "Device listener denied", e)
             return REASON_PERMISSION
-        }
-        if (!isStartingEpoch(epoch)) {
-            // Stopped after registration: unregister what was just added.
-            teardownObservers()
-            return null
         }
         val accepted: Boolean
         try {
@@ -372,19 +359,13 @@ class BluetoothScoManager : ScoLink {
         if (!accepted) {
             return REASON_REFUSED
         }
-        markRouteHeld(epoch)
-        if (!isStartingEpoch(epoch)) {
-            // Stopped after the request landed: undo it, since stop() ran
-            // before the request existed. Epoch-scoped: a newer session may
-            // hold its own route by now, which this stale path must not clear.
-            releaseRouteIfHeldForEpoch(epoch)
-            return null
-        }
+        routeHeld.set(true)
         if (isScoActiveNow()) {
             // Already on SCO (preselected route or idempotent re-request):
             // complete now instead of burning the timeout waiting for a
             // change event that will never come. The timeout stays armed as
-            // fallback; setActive (or stop) removes it.
+            // fallback; setActive (or stop) removes it. Posted, so the
+            // epoch check drops it if stop() or a newer start() runs first.
             armTimeout(epoch)
             scoScope.launch {
                 if (isStartingEpoch(epoch) && isScoActiveNow()) {
@@ -510,18 +491,11 @@ class BluetoothScoManager : ScoLink {
             Log.w(TAG, "Legacy SCO availability threw", e)
             return REASON_ERROR
         }
-        if (!isStartingEpoch(epoch)) {
-            return null
-        }
         // registerLegacyReceiver swallows all registration errors to false and
         // never throws, so no SecurityException catch here (modern path keeps
         // its own permission mapping).
         if (!registerDeviceListener()) {
             return REASON_ERROR
-        }
-        if (!isStartingEpoch(epoch)) {
-            teardownObservers()
-            return null
         }
         try {
             audioManager.startBluetoothSco()
@@ -551,11 +525,7 @@ class BluetoothScoManager : ScoLink {
             }
             return REASON_ERROR
         }
-        markRouteHeld(epoch)
-        if (!isStartingEpoch(epoch)) {
-            releaseRouteIfHeldForEpoch(epoch)
-            return null
-        }
+        routeHeld.set(true)
         // No fast-path here (unlike the modern backend): isBluetoothScoOn
         // is the request flag just set above, so reading it back would
         // always report "active" and complete before the link exists -
@@ -620,12 +590,6 @@ class BluetoothScoManager : ScoLink {
         // observer left to be mistaken for the retry's.
         teardownObservers()
         releaseRouteIfHeld()
-        run {
-            if (state.get() != ScoState.STARTING || epoch != generation.get()) {
-                return
-            }
-        }
-        // Bring-up IPC must never block the route dispatcher.
         attemptBringUp()
     }
 
@@ -708,52 +672,13 @@ class BluetoothScoManager : ScoLink {
 
     // Releases only when this session holds a route request, so a teardown
     // that follows a completed fail()/drop() cannot clear another app's
-    // routing selection.
+    // routing selection. A failed release keeps the hold for the next try.
     private fun releaseRouteIfHeld() {
-        val epoch: Int
-        run {
-            if (!routeHeld.get()) {
-                return
-            }
-            epoch = routeHeldEpoch.get()
-        }
-        if (releaseRoute()) {
-            run {
-                if (routeHeld.get() && routeHeldEpoch.get() == epoch) {
-                    routeHeld.set(false)
-                    routeHeldEpoch.set(-1)
-                }
-            }
-        }
-    }
-
-    private fun markRouteHeld(epoch: Int) {
-        run {
-            routeHeld.set(true)
-            routeHeldEpoch.set(epoch)
-        }
-    }
-
-    /**
-     * Epoch-scoped release for stale abort paths: only clears the hold when
-     * it still belongs to the given session generation. Authoritative
-     * teardowns (stop/fail/drop/timeout) use [releaseRouteIfHeld].
-     */
-    private fun releaseRouteIfHeldForEpoch(epoch: Int) {
-        val held: Boolean
-        run {
-            held = routeHeld.get() && routeHeldEpoch.get() == epoch
-        }
-        if (!held) {
+        if (!routeHeld.get()) {
             return
         }
         if (releaseRoute()) {
-            run {
-                if (routeHeld.get() && routeHeldEpoch.get() == epoch) {
-                    routeHeld.set(false)
-                    routeHeldEpoch.set(-1)
-                }
-            }
+            routeHeld.set(false)
         }
     }
 
@@ -792,34 +717,15 @@ class BluetoothScoManager : ScoLink {
         audioManager.clearCommunicationDevice()
     }
 
+    // Arms this attempt's timeout, replacing any earlier one. stop(),
+    // fail(), setActive() and dropActiveLink() cancel it; onConnectTimeout
+    // still re-checks the epoch, so a timer that escapes a cancel is a no-op.
     private fun armTimeout(epoch: Int) {
-        // Epoch-guarded: a stop() that lands between the bring-up's epoch
-        // check and this arm must not resurrect a timer for a dead session.
-        // The guard is an epoch check; the launch itself is fire-and-forget
-        // it so bring-up never blocks on teardown. onConnectTimeout
-        // re-validates the epoch before acting, so an orphaned timer is a
-        // harmless no-op even if the cancel below races it.
-        run {
-            if (epoch != generation.get() || state.get() != ScoState.STARTING) {
-                return
-            }
-            timeoutJob.get()?.cancel()
-        }
-        val job = scoScope.launch {
+        timeoutJob.get()?.cancel()
+        timeoutJob.set(scoScope.launch {
             delay(connectTimeoutMs)
             onConnectTimeout(epoch)
-        }
-        run {
-            // Lost the race with stop()/fail(): they nulled the job and
-            // moved state off STARTING — drop our timer instead of
-            // resurrecting it.
-            if (epoch != generation.get() || state.get() != ScoState.STARTING) {
-                job.cancel()
-                return
-            }
-            timeoutJob.get()?.cancel()
-            timeoutJob.set(job)
-        }
+        })
     }
 
     // BLUETOOTH_CONNECT is an API 31+ runtime permission; below S the legacy
