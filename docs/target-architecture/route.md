@@ -31,7 +31,8 @@ just on a different thread.
 - `AudioPlatform.registerDeviceCallback` receives the route handler instead
   of the main handler.
 - `BluetoothScoManager` uses the route thread's executor where it uses
-  `context.mainExecutor` today.
+  `context.mainExecutor` today, and is built on the route thread by
+  `RouteControl.create` (see [API](#api)).
 - Blocking platform calls (`setCommunicationDevice`, `setMode`, SCO
   bring-up) therefore run on the route thread, never on main.
 - `AudioRouteController.isMainThread` becomes `isRouteThread`. Off-thread
@@ -52,10 +53,19 @@ just on a different thread.
 ## API
 
 ```kotlin
-class RouteControl(platform: AudioPlatform, sco: ScoLink?, prefs: Flow<RoutePreferences>) {
+class RouteControl {
+    companion object {
+        fun create(
+            platform: AudioPlatform,
+            scoFactory: (RouteThread, ScoLink.Listener) -> ScoLink?,
+            prefs: Flow<RoutePreferences>,
+            appScope: CoroutineScope,
+        ): RouteControl
+    }
     fun submit(command: RouteCommand)         // non-blocking; posts to the route thread
     val state: StateFlow<RouteState>
     val events: SharedFlow<RouteEvent>
+    fun close(): Job                          // destroys the SCO link, then quits the route thread
 }
 
 sealed interface RouteCommand {
@@ -69,6 +79,18 @@ data class RoutePreferences(
     val handsetStream: Int,                   // today's ConfigDelta.audioStream
 )
 ```
+
+`create` starts the route thread, builds the SCO link on it through
+`scoFactory` with a listener that reports to the controller, and builds
+the controller on the same thread. `RouteThread` is that thread as a
+`Handler`, an `Executor`, and the looper dispatcher. The controller owns
+both: the thread never leaves it, the link cannot be given a different
+thread, and the caller supplies the platform-specific link
+(`BluetoothScoManager`) without holding a reference to the thread or back
+to the controller. `scoFactory` returns `null` when there is no link. The
+link's callbacks are part of the port (`ScoLink.Listener`), delivered on
+the route thread. The primary constructor, which takes a scope and handler
+directly, exists for the decision-logic tests.
 
 `RouteControl` implements the client's `RouteLifecycle` interface
 (`SessionStarted`, `SessionEnded`), so the client depends only on that.

@@ -30,7 +30,9 @@ process lifetime:
    bridges go).
 3. `LocalFactsStore` over the database and settings (local mute/ignore
    lists, persisted self-mute/deafen).
-4. `RouteControl` with `AndroidAudioPlatform` and `BluetoothScoManager`.
+4. `RouteControl`, through `RouteControl.create`, with `AndroidAudioPlatform`
+   and a factory that builds `BluetoothScoManager` (see
+   [route](route.md#api)).
 5. `VoiceEngine`, given the voice settings flow and `RouteControl.state`.
 6. `NetworkMonitor` over `ConnectivityManager`.
 7. `HumlaClient`.
