@@ -23,6 +23,7 @@ import android.media.AudioManager
 import android.os.Handler
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -426,6 +427,62 @@ class RouteControlTest {
         assertEquals(AppliedRoute.MEDIA, (control.state.value as RouteState.Ready).route)
         assertEquals(2, sco.startCount)
         assertEquals(2, sco.stopCount)
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun duplicateScoConnectedEventPublishesNothing() = runTest {
+        val platform = FakePlatform()
+        platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        val events = mutableListOf<RouteEvent>()
+        val collector = launch { control.events.collect { events.add(it) } }
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        sco.idleValue = false
+        sco.activeValue = true
+        control.onScoConnected()
+        runCurrent()
+        val published = control.state.value
+        assertEquals(AppliedRoute.VOICE_SCO, (published as RouteState.Ready).route)
+        val routeChanged = events.count { it is RouteEvent.RouteChanged }
+        assertTrue(routeChanged > 0)
+        // A repeated connect event is a trigger, not a transition: the
+        // decision re-reads an unchanged link, so nothing is republished.
+        control.onScoConnected()
+        runCurrent()
+        assertEquals(published, control.state.value)
+        assertEquals(routeChanged, events.count { it is RouteEvent.RouteChanged })
+        collector.cancel()
+        control.close()
+        runCurrent()
+    }
+
+    @Test
+    fun preferenceChangeWithIdleLinkDoesNotStopAgain() = runTest {
+        val sco = FakeSco()
+        val prefs = MutableStateFlow(
+            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+        )
+        val control = newControl(sco = sco, prefs = prefs, scope = this)
+        control.start()
+        runCurrent()
+        control.submit(RouteCommand.SessionStarted)
+        runCurrent()
+        // Stream changes re-apply the (still off) SCO request to the link;
+        // an idle link must not take a platform round-trip.
+        val stopsBefore = sco.stopCount
+        prefs.value = prefs.value.copy(handsetStream = AudioManager.STREAM_VOICE_CALL)
+        runCurrent()
+        assertEquals(stopsBefore, sco.stopCount)
         control.close()
         runCurrent()
     }

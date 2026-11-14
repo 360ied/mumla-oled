@@ -269,8 +269,12 @@ internal class RouteControl(
         }
         _state.value = RouteState.Settling(target)
         hasSession = true
-        recompute("sync", forceReload = false, isRecheck = false, firstCreate = true)
+        // Apply the request to the link, then decide — the same rule as
+        // onPrefsChanged. A link still up while SCO is no longer requested is
+        // released first, so the first decision cannot publish a route that
+        // nothing revisits (a silent self-stop fires no callback).
         updateScoRoute()
+        recompute("sync", forceReload = false, isRecheck = false, firstCreate = true)
     }
 
     private fun onSessionEnded() {
@@ -401,6 +405,11 @@ internal class RouteControl(
         // carries no route of its own. A duplicate (or one that raced a stop
         // we performed) therefore cannot publish a stale route, and
         // recompute's change gates keep the no-op case silent.
+        //
+        // `active` names the event, not the decision: if the two disagree,
+        // the log is reporting a stale or duplicated event, which is the
+        // useful reading. Deriving the reason from a second sample would
+        // instead hide it behind a skewed read.
         val reason = if (active) "Bluetooth SCO connected"
         else "Bluetooth SCO disconnected, falling back to phone audio"
         recompute(reason, forceReload = false, isRecheck = false, firstCreate = false)
@@ -511,13 +520,9 @@ internal class RouteControl(
 
     private fun readFacts(): RouteFacts {
         val mediaPresent = queryMediaDevicesPresent()
-        val scoActive = try {
-            sco?.isActive() == true
-        } catch (e: Exception) {
-            Log.w(TAG, "SCO link state query failed", e)
-            false
-        }
-        return RouteFacts(scoActive, mediaPresent)
+        // Same fail-closed read the rest of the library sees; one copy so the
+        // samples cannot drift apart.
+        return RouteFacts(isScoActive(), mediaPresent)
     }
 
     private fun updateRoute(): RouteUpdate {
