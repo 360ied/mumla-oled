@@ -278,9 +278,12 @@ class AudioHandler : HumlaNetworkListener,
 
     @Throws(AudioException::class)
     fun initialize(self: UserInfo?, maxBandwidth: Int, codec: HumlaUDPMessageType?) {
-        // Field setup under A; engine fan-out (bandwidth + mute) outside A:
-        // setMaxBandwidth takes E and updateMuteState takes E plus a bounded
-        // join, while the capture thread needs A for onTalkingStateChanged.
+        // Field setup, then engine fan-out (bandwidth + mute): setMaxBandwidth
+        // and updateMuteState both reach the engine, which takes its own
+        // mutex on the native side, and updateMuteState can block on
+        // startRecording's bounded stale join (≤200 ms). No handler monitor
+        // is left to order against: the capture thread's
+        // onTalkingStateChanged touches only mTalking.
         if (self == null) return
         run {
             if (mInitialized) return
