@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`485453c7`..`4cd3d623`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`485453c7`..`c47e06d6`): the manager is confined to the route thread, as `route.md` specifies. See [Resolution](#resolution). |
 | Category | Confirmed regression (introduced by step 4) |
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
@@ -217,14 +217,17 @@ migration ground rules).
 
 ## Resolution
 
-Fixed along the preferred direction. The state at `4cd3d623`:
+Fixed along the preferred direction. The state at `c47e06d6`:
 
 - **Thread.** `RouteControl.create` starts the route `HandlerThread` as a
   `RouteThread`: its `Handler`, an `Executor` posting to it, and the
   looper dispatcher `route.md` specifies (`Handler.asCoroutineDispatcher`,
   so `delay()` stays on the looper). It builds the SCO link through a
-  factory the caller passes, `(RouteThread) -> ScoLink?`, and builds the
-  controller on the same thread. The thread never leaves `RouteControl.kt`,
+  factory the caller passes, `(RouteThread, ScoLink.Listener) -> ScoLink?`,
+  handing it a listener that reports to the controller, and builds the
+  controller on the same thread, so the caller holds no reference back to
+  the controller. The link callbacks are part of the port
+  (`ScoLink.Listener`). The thread never leaves `RouteControl.kt`,
   the boundary file that owns it (see [enforcement](../enforcement.md)),
   and the controller both creates and destroys the link: `close()`
   destroys it, then quits the thread. `HumlaService` passes a factory
@@ -259,10 +262,11 @@ Fixed along the preferred direction. The state at `4cd3d623`:
   `ScoLink` built through that factory; building the link on a second
   thread or pointing the controller at another dispatcher fails it.
 
-Commits: `485453c7`..`4cd3d623`. Along the way, `14290883` first exempted
+Commits: `485453c7`..`c47e06d6`. Along the way, `14290883` first exempted
 `isActive` from the thread check (fixed by `3859dc9e` and `7d16155b`), the
 dispatcher and tests were reworked in `c7dbf668` and `1f3105c6`, and
-`4cd3d623` moved link construction into `RouteControl.create`.
+`4cd3d623` and `c47e06d6` moved link construction, and then the link's
+listener, into `RouteControl.create`.
 
 Acceptance, line by line:
 
@@ -278,11 +282,11 @@ Acceptance, line by line:
   `stopBeforeTimeoutCancelsIt`,
   `timeoutFromStoppedSessionNeverActsOnNextSession`, and
   `failureAfterStopIsDropped`.
-- `./scripts/check.sh` passes: met at `4cd3d623`. On a device: the
+- `./scripts/check.sh` passes: met at `c47e06d6`. On a device: the
   developer tested a build from before `4cd3d623` on their phone and
-  reports that it works fully. `4cd3d623` only moves where the link is
-  built (same thread, same construction) and was not re-tested on the
-  device.
+  reports that it works fully. `4cd3d623` and `c47e06d6` only move where
+  the link and its listener are built (same thread, same construction,
+  same callbacks) and were not re-tested on the device.
 
 Against the spec: `route.md` § Thread holds (thread named `route` owned by
 `RouteControl`, looper dispatcher, device callbacks on the route handler,
@@ -293,7 +297,7 @@ re-posting to the route thread, the private route-session counter);
 tests). Not changed here: `RouteControl`'s primary constructor still takes
 its scope and handler rather than `route.md`'s `(platform, sco, prefs)`,
 as since step 4, and `create` takes a link factory where that API shows a
-link; `route.md` does not say how the SCO manager gets the route thread.
+link. `route.md` is brought in line on `master` separately.
 
 On a device: the S+ backend was exercised on the developer's phone as
 above. The API 30 backend is covered only by Robolectric and code reading,
