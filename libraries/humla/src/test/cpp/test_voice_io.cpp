@@ -648,6 +648,71 @@ void testPolicyKnownOverflowFailsOpen() {
     std::cout << "  [PASS] testPolicyKnownOverflowFailsOpen" << std::endl;
 }
 
+void testSenderFilterEndToEndUdpAndTunnel() {
+    g_testCount++;
+    // Done-when (e): muted silent over UDP and tunnel, unknown holds no
+    // slot, overflow fail-open — through handlePlaintext/handleTunnelled,
+    // not just the shouldDrop predicate.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const int32_t muted[] = {7};
+    const int32_t known[] = {7, 8};
+    policy.publish(muted, 1, known, 2, false);
+    int udpSurvivors = 0;
+    int tunnelSurvivors = 0;
+    bool lastTunnel = false;
+    rx.setVoiceSink([&](const InboundPacket* frames, size_t count, bool tunnel) {
+        (void)frames;
+        if (tunnel) tunnelSurvivors += static_cast<int>(count);
+        else udpSurvivors += static_cast<int>(count);
+        lastTunnel = tunnel;
+    });
+    // Minimal legacy receive datagram: header opus/target0, session, seq,
+    // size header (4-byte opus, no terminator), 4-byte opus payload.
+    auto buildLegacy = [](int32_t session, uint32_t seq, uint8_t* out) -> size_t {
+        out[0] = static_cast<uint8_t>((mumla::voice_codec::kLegacyVoiceOpus << 5) & 0xFF);
+        out[1] = static_cast<uint8_t>(session);
+        out[2] = static_cast<uint8_t>(seq);
+        out[3] = 4;
+        out[4] = 0xF8; out[5] = 1; out[6] = 2; out[7] = 3;
+        return 8;
+    };
+    uint8_t dg[8];
+    // Muted session over UDP: understood but silent (no sink, no slot).
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(7, 1, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 0);
+    // Allowed session over UDP: one survivor on the UDP path.
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(8, 2, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 1);
+    TEST_ASSERT_FALSE(lastTunnel);
+    // Unknown session over UDP: dropped, no audio and no slot.
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(99, 3, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 1);
+    // Muted session over tunnel: silent on the tunnel path too.
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(7, 4, dg)));
+    TEST_ASSERT_EQ(tunnelSurvivors, 0);
+    // Allowed session over tunnel: one survivor flagged tunnel.
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(8, 5, dg)));
+    TEST_ASSERT_EQ(tunnelSurvivors, 1);
+    TEST_ASSERT_TRUE(lastTunnel);
+    // Overflow fail-open: unknown passes, muted still drops (both paths).
+    // Note: datagram sessions must stay <128 (single-byte varint); the
+    // policy list itself holds the 1000+ range to force the overflow flag.
+    int32_t many[300];
+    for (int i = 0; i < 300; ++i) many[i] = 1000 + i;
+    policy.publish(nullptr, 0, many, 300, false);
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(50, 6, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 2);
+    const int32_t muted50[] = {50};
+    policy.publish(muted50, 1, many, 300, false);
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(50, 7, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 2);
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(50, 8, dg)));
+    TEST_ASSERT_EQ(tunnelSurvivors, 1);
+    std::cout << "  [PASS] testSenderFilterEndToEndUdpAndTunnel" << std::endl;
+}
+
 void testPolicyGuardsReceiveVisibleOnly() {
     g_testCount++;
     // Pins the 5a.3b done-when lock-scope rule: the policy cell carries
@@ -840,6 +905,7 @@ void run_voice_io_tests() {
     testPolicyDropsMutedOverUdpAndTunnel();
     testPolicyUnknownHoldsNoSlot();
     testPolicyKnownOverflowFailsOpen();
+    testSenderFilterEndToEndUdpAndTunnel();
     testPolicyGuardsReceiveVisibleOnly();
     testReceiveResyncGateRateLimited();
     testReceiveCryptCountsMatchKotlin();
