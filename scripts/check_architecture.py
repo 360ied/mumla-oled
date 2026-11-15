@@ -16,10 +16,12 @@
 """
 scripts/check_architecture.py: Tripwires for the target architecture.
 
-Three checks (see docs/target-architecture/enforcement.md):
+Four checks (see docs/target-architecture/enforcement.md):
   1. Concurrency tripwire: forbidden thread/lock patterns in Kotlin/Java.
   2. Android-free packages: state/client/net must not import android(x)/R.
   3. Native tripwire: forbidden I/O/thread/JNI headers in no-I/O native dirs.
+  4. Voice lifecycle: the voice_io JNI destroy/clear paths keep the debug
+     assert that the render thread is stopped (RenderGuard protocol).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -126,6 +128,40 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
     "<atomic>",
 )
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
+
+# 5a.3a native render lifecycle: the JNI destroy/clear paths must keep the
+# debug assert that the render thread is stopped (RenderGuard protocol in
+# NativeVoiceIoJni.cpp). Absent voice_io passes trivially (master); once it
+# lands, removing an assert or the guard fails the gate.
+VOICE_IO_LIFECYCLE_FILE = (
+    "libraries/humla/src/main/jni/voice_io/NativeVoiceIoJni.cpp"
+)
+RE_RENDER_GUARD_USE = re.compile(r"\bRenderGuard\s+\w+")
+RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
+
+
+def check_voice_lifecycle(root: Path):
+    """Return list of error strings for the voice_io lifecycle asserts."""
+    f = root / VOICE_IO_LIFECYCLE_FILE
+    if not f.is_file():
+        return []
+    try:
+        text = f.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [f"voice-lifecycle: cannot read {VOICE_IO_LIFECYCLE_FILE}"]
+    errors = []
+    if not RE_RENDER_GUARD_USE.search(text):
+        errors.append(
+            f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has no RenderGuard; "
+            f"render must set renderActive while inside VoiceIo::render"
+        )
+    asserts = RE_RENDER_ACTIVE_ASSERT.findall(text)
+    if len(asserts) < 2:
+        errors.append(
+            f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has {len(asserts)} "
+            f"renderActive assert(s), expected >= 2 (destroy and clear paths)"
+        )
+    return errors
 
 
 def scan_concurrency(root: Path):
@@ -371,6 +407,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     for rel, lineno, line in scan_android_free(root):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
+    errors.extend(check_voice_lifecycle(root))
     return errors, actual
 
 

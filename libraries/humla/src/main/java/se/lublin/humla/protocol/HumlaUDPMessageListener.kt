@@ -26,11 +26,20 @@ import se.lublin.humla.protobuf.MumbleUDP
 interface HumlaUDPMessageListener {
     fun messageUDPPing(data: ByteArray)
     fun messageDecodedVoice(frames: List<DecodedVoiceFrame>)
+    /**
+     * Interim step-5a.3a split: tunnelled voice arrives on the session
+     * message coroutine and is pushed into the tunnel ring, while UDP
+     * voice arrives on the receive coroutine and goes to the inbound ring.
+     * One producer per ring, so the interim calls stay distinct until the
+     * native receive (5a.3b) unifies them again.
+     */
+    fun messageDecodedVoiceTunnel(frames: List<DecodedVoiceFrame>)
     fun messageProtobufPing(msg: MumbleUDP.Ping)
 
     open class Stub : HumlaUDPMessageListener {
         open override fun messageUDPPing(data: ByteArray) {}
         open override fun messageDecodedVoice(frames: List<DecodedVoiceFrame>) {}
+        open override fun messageDecodedVoiceTunnel(frames: List<DecodedVoiceFrame>) {}
         open override fun messageProtobufPing(msg: MumbleUDP.Ping) {}
     }
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IUser
 import se.lublin.humla.model.TalkState
+import se.lublin.humla.voice.TalkActivity
 
 /**
  * Live compatibility handles. See
@@ -31,19 +32,27 @@ import se.lublin.humla.model.TalkState
  * value on every access. Each handle caches the last value it saw; when
  * the user or channel is gone from state, reads return that cached value,
  * as a departed model object does today. Navigation returns handles.
- * Equal when IDs are equal. Read-only except [talkState], which stays
- * voice-owned until the VoiceEngine arrives.
+ * Equal when IDs are equal. Read-only: [talkState] reads the live talk
+ * levels (absent means passive), unless [talkStateOverride] pins it — the
+ * service uses the override for the local user's repaint hint, whose
+ * state lives in TalkActivity.selfTalking rather than the remote table.
  */
 class UserHandle(
     private val sessionId: Int,
     private val state: StateFlow<SessionState>,
+    private val talkActivity: StateFlow<TalkActivity>? = null,
     seed: UserInfo? = null,
+    private val talkStateOverride: TalkState? = null,
 ) : IUser {
     override val session: Int get() = sessionId
 
-    // Voice-owned until VoiceEngine.talkActivity arrives; plain var keeps
-    // the tripwire clean and races benign (main-thread today).
-    override var talkState: TalkState = TalkState.PASSIVE
+    // Voice-owned, read live on every access: absent from the table means
+    // passive (which is also what a missing publisher means, so call
+    // sites without voice stay compiling and show passive, as fresh
+    // handles always did).
+    override val talkState: TalkState
+        get() = talkStateOverride
+            ?: talkActivity?.value?.users?.get(sessionId) ?: TalkState.PASSIVE
 
     private var cached: UserInfo? = seed
 
@@ -59,7 +68,7 @@ class UserHandle(
         get() {
             // Detached (removed) users read null, as today.
             val id = live()?.channelId ?: return null
-            return ChannelHandle(id, state)
+            return ChannelHandle(id, state, talkActivity)
         }
 
     override val userId: Int get() = current()?.userId ?: -1
@@ -119,6 +128,7 @@ class UserHandle(
 class ChannelHandle(
     private val channelId: Int,
     private val state: StateFlow<SessionState>,
+    private val talkActivity: StateFlow<TalkActivity>? = null,
     seed: ChannelInfo? = null,
 ) : IChannel {
     override val id: Int get() = channelId
@@ -140,7 +150,7 @@ class ChannelHandle(
             // Detached subtree nodes read null, as today (cleared on remove).
             val info = live() ?: return null
             val parentId = info.parentId ?: return null
-            return ChannelHandle(parentId, state)
+            return ChannelHandle(parentId, state, talkActivity)
         }
     override val name: String? get() = current()?.name
     override val description: String? get() = current()?.description
@@ -150,13 +160,13 @@ class ChannelHandle(
     override val users: List<IUser>
         get() {
             if (live() == null) return emptyList()
-            return state.value.server.tree.users(channelId).map { UserHandle(it.session, state) }
+            return state.value.server.tree.users(channelId).map { UserHandle(it.session, state, talkActivity) }
         }
 
     override val subchannels: List<IChannel>
         get() {
             if (live() == null) return emptyList()
-            return state.value.server.tree.children(channelId).map { ChannelHandle(it.id, state) }
+            return state.value.server.tree.children(channelId).map { ChannelHandle(it.id, state, talkActivity) }
         }
 
     override val subchannelUserCount: Int
@@ -172,7 +182,7 @@ class ChannelHandle(
             val out = ArrayList<IChannel>(ids.size)
             for (linkId in ids) {
                 if (state.value.server.channels.containsKey(linkId)) {
-                    out.add(ChannelHandle(linkId, state))
+                    out.add(ChannelHandle(linkId, state, talkActivity))
                 }
             }
             return out

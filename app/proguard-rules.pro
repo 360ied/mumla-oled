@@ -10,15 +10,18 @@
     public void onAudioPacketEncoded(byte[], int, int, boolean, long);
     public void onTalkingStateChanged(boolean, float);
 }
--keep class se.lublin.humla.audio.NativeAudioOutputEngine { *; }
 # Explicit JNI (Java_se_lublin_humla_audio_NativeCrashTest_nativeCrash) needs the class name.
 # (Top wildcard already covers native methods; kept explicit as documentation.)
 -keepclasseswithmembernames class se.lublin.humla.audio.NativeCrashTest {
     native <methods>;
 }
--keep class se.lublin.humla.audio.NativeAudioOutputEngine$* { *; }
--keepclassmembers class * implements se.lublin.humla.audio.NativeAudioOutputEngine$AudioOutputEngineListener {
-    public void onTalkStateChanged(int, int);
+# Step 5a.3a native render: the JNI entry points embed this class name
+# (Java_se_lublin_humla_voice_NativeVoiceIo_*), and the notifier looks up
+# onTalkSnapshot on the listener at runtime.
+-keep class se.lublin.humla.voice.NativeVoiceIo { *; }
+-keep class se.lublin.humla.voice.NativeVoiceIo$* { *; }
+-keepclassmembers class * implements se.lublin.humla.voice.NativeVoiceIo$VoiceIoListener {
+    public void onTalkSnapshot(int[], int[], long, long, long);
 }
 # Step 5a.2 interim codec bridge: DecodedVoiceFrame/DecodedPing are
 # constructed only from native code (FindClass/GetMethodID/NewObject), so R8

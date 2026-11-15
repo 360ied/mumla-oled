@@ -24,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
@@ -39,6 +40,7 @@ import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.voice.TalkActivity
 
 private const val AWAIT_TIMEOUT_NANOS = 30_000_000_000L
 private const val POLL_MILLIS = 100L
@@ -144,6 +146,7 @@ object InteropClient {
             voiceLink = voiceLink,
             network = network,
             localFactsStore = InMemoryLocalFactsStore(),
+            talkActivity = MutableStateFlow(TalkActivity.initial()),
             clock = Clock.systemUTC(),
             observer = observer,
             mainPoster = { r -> r.run() },

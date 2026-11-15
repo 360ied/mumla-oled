@@ -224,8 +224,17 @@ class LegacyVoiceLink @JvmOverloads constructor(
     }
 
     override fun queueTunnelled(packet: ByteArray) {
-        // Tunnelled packets arrive unencrypted (TLS protects them).
-        onUDPDataReceived(packet)
+        // Tunnelled packets arrive unencrypted (TLS protects them). Parsed
+        // here on the session message coroutine; voice fans out through the
+        // tunnel method so AudioHandler pushes it into the tunnel ring,
+        // while the UDP coroutine's onUDPDataReceived keeps the inbound
+        // method. Ping handling is identical on both paths (the transport
+        // still observes tunnelled ping replies for its latency stat).
+        if (packet.isEmpty()) {
+            logger.fine("Dropping empty tunnelled packet")
+            return
+        }
+        onDatagramReceived(packet, tunnel = true)
     }
 
     private fun sendUdpPing(timestampMicros: Long) {
@@ -275,6 +284,17 @@ class LegacyVoiceLink @JvmOverloads constructor(
             logger.fine("Dropping empty UDP datagram")
             return
         }
+        onDatagramReceived(data, tunnel = false)
+    }
+
+    /**
+     * Shared parse for the UDP and tunnelled paths (same bytes, different
+     * coroutines). Voice fans out through [HumlaUDPMessageListener.messageDecodedVoice]
+     * for UDP and `messageDecodedVoiceTunnel` for the tunnel, feeding the
+     * inbound and tunnel rings respectively; everything else is identical.
+     */
+    private fun onDatagramReceived(data: ByteArray, tunnel: Boolean) {
+        // Non-empty by construction on both paths (checked above).
         if (isProtobufUdpSupported()) {
             val msgType = data[0].toInt() and 0xFF
             if (msgType == 0) {
@@ -289,7 +309,11 @@ class LegacyVoiceLink @JvmOverloads constructor(
                     refreshStatus()
                     return
                 }
-                broadcast { it.messageDecodedVoice(frames.toList()) }
+                if (tunnel) {
+                    broadcast { it.messageDecodedVoiceTunnel(frames.toList()) }
+                } else {
+                    broadcast { it.messageDecodedVoice(frames.toList()) }
+                }
                 refreshStatus()
                 return
             } else if (msgType == 1) {
@@ -324,6 +348,7 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 // Protobuf mode: any other lead byte is neither voice nor
                 // ping; drop instead of mis-decoding as legacy voice.
                 logger.fine("Dropping unknown protobuf-UDP lead byte")
+                refreshStatus()
                 return
             }
         }
@@ -360,16 +385,17 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 refreshStatus()
                 return
             }
-            broadcast { it.messageDecodedVoice(frames.toList()) }
+            if (tunnel) {
+                broadcast { it.messageDecodedVoiceTunnel(frames.toList()) }
+            } else {
+                broadcast { it.messageDecodedVoice(frames.toList()) }
+            }
             refreshStatus()
-            return
-        }
-        if (dataType < 0 || dataType > 7) {
-            logger.fine("Dropping out-of-range UDP type")
             return
         }
         // Remaining legacy types (0 CELT Alpha, 2 Speex, 3 CELT Beta) predate
         // Opus and never carry voice; 5-7 are unassigned. Drop, as before.
+        // (dataType is the top 3 bits of a byte, so always 0-7.)
         logger.fine("Dropping legacy-codec voice packet")
         refreshStatus()
     }

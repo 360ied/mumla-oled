@@ -37,6 +37,7 @@ import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.TransportStats
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.route.RouteState
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.VoicePolicy
 import se.lublin.humla.voice.VoiceSettings
 import kotlin.reflect.KMutableProperty1
@@ -175,6 +176,7 @@ class StateImmutabilityTest {
             TransportStats::class,
             CryptKeys::class,
             VoiceStatus::class,
+            TalkActivity::class,
             VoicePolicy::class,
             VoiceSettings::class,
             RouteState::class,

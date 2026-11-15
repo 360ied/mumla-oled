@@ -20,14 +20,31 @@
 #include "RnnoiseProcessor.h"
 
 #include <jni.h>
-#include <android/log.h>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 
+#ifdef __ANDROID__
+#include <android/log.h>
 #define LOG_TAG "NativeAudioInputEngine"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#else
+// Host (interop-test) build: no android/log, log to stderr instead.
+#define LOGE(...)                                     \
+    do {                                              \
+        std::fprintf(stderr, "[NativeAudioInputEngine] "); \
+        std::fprintf(stderr, __VA_ARGS__);             \
+        std::fputc('\n', stderr);                     \
+    } while (0)
+#define LOGI(...)                                     \
+    do {                                              \
+        std::fprintf(stderr, "[NativeAudioInputEngine] "); \
+        std::fprintf(stderr, __VA_ARGS__);             \
+        std::fputc('\n', stderr);                     \
+    } while (0)
+#endif
 
 using namespace mumla::audio;
 
@@ -65,7 +82,12 @@ static JNIEnv* attachForCallback(EngineContext* ctx, bool* attached) {
     const jint res =
         ctx->jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
     if (res == JNI_EDETACHED) {
+        // C++ JNI takes JNIEnv** on Android, void** on the host JVM.
+#ifdef __ANDROID__
         if (ctx->jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+#else
+        if (ctx->jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK) {
+#endif
             return nullptr;
         }
         *attached = true;
@@ -166,8 +188,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeProcessFrame(
     jsize arrayLen = env->GetArrayLength(pcmArray);
     if (arrayLen <= 0) return;
     // Overflow-safe window check: promote to 64 bits before adding so a
-    // hostile offset+length pair cannot wrap past the array end (mirrors
-    // nativeRender in NativeAudioOutputEngineJni.cpp).
+    // hostile offset+length pair cannot wrap past the array end (it mirrors
+    // the same check the deleted 5a.2 output bridge used).
     const int64_t end =
         static_cast<int64_t>(offset) + static_cast<int64_t>(length);
     if (end > static_cast<int64_t>(arrayLen)) return;

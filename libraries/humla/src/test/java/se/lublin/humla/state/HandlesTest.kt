@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import org.junit.Test
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.protobuf.Mumble
+import se.lublin.humla.voice.TalkActivity
 
 private fun channelMsg(id: Int, name: String, parent: Int? = null): Mumble.ChannelState {
     val b = Mumble.ChannelState.newBuilder().setChannelId(id).setName(name)
@@ -96,12 +97,34 @@ class HandlesTest : TestCase() {
     }
 
     @Test
-    fun testTalkStateStoredLocally() {
+    fun testTalkStateReadsLiveLevels() {
         val flow = syncedFlow()
-        val handle = UserHandle(2, flow)
+        val talk = MutableStateFlow(TalkActivity.initial())
+        val handle = UserHandle(2, flow, talk)
         assertEquals(TalkState.PASSIVE, handle.talkState)
-        handle.talkState = TalkState.TALKING
+        talk.value = talk.value.copy(
+            users = kotlinx.collections.immutable.persistentMapOf(2 to TalkState.TALKING),
+        )
         assertEquals(TalkState.TALKING, handle.talkState)
+        // A fresh handle reads the same live table, never a stamped copy.
+        assertEquals(TalkState.TALKING, UserHandle(2, flow, talk).talkState)
+    }
+
+    @Test
+    fun testTalkStateOverridePinsSelfHint() {
+        val flow = syncedFlow()
+        val talk = MutableStateFlow(TalkActivity.initial())
+        // The service fires the local user's repaint hint with an override
+        // sourced from selfTalking, since the remote table never holds self.
+        val hint = UserHandle(1, flow, talk, talkStateOverride = TalkState.TALKING)
+        assertEquals(TalkState.TALKING, hint.talkState)
+        // The override wins even if the table disagrees, and absence of an
+        // override keeps the live-table read for remote users.
+        talk.value = talk.value.copy(
+            users = kotlinx.collections.immutable.persistentMapOf(1 to TalkState.PASSIVE),
+        )
+        assertEquals(TalkState.TALKING, hint.talkState)
+        assertEquals(TalkState.PASSIVE, UserHandle(1, flow, talk).talkState)
     }
 
     @Test

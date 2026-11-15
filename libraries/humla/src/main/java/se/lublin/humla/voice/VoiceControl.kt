@@ -57,6 +57,7 @@ class VoiceControl(
     private val logger: HumlaLogger,
     private val encodeListener: AudioHandler.AudioEncodeListener,
     private val talkingListener: AudioOutput.AudioOutputListener,
+    private val talkPublisher: TalkActivityPublisher,
     private val routeStates: StateFlow<RouteState>,
     private val policies: StateFlow<VoicePolicy>,
     private val settings: StateFlow<VoiceSettings>,
@@ -319,6 +320,7 @@ class VoiceControl(
             .setLogger(logger)
             .setEncodeListener(encodeListener)
             .setTalkingListener(talkingListener)
+            .setTalkPublisher(talkPublisher)
 
         builder.setTargetBitrate(currentSettings.targetBitrate)
         builder.setTargetFramesPerPacket(currentSettings.targetFramesPerPacket)

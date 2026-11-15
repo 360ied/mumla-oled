@@ -364,6 +364,62 @@ class TestNative(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "")
 
 
+class TestVoiceLifecycle(unittest.TestCase):
+    HEALTHY = (
+        "#include <cassert>\n"
+        "struct RenderGuard { explicit RenderGuard(std::atomic<bool>* f) : m(f) {}\n"
+        "  ~RenderGuard() {}\n"
+        "  std::atomic<bool>* m; };\n"
+        "void nativeDestroy() {\n"
+        "  assert(!ctx->renderActive.load(std::memory_order_acquire));\n"
+        "}\n"
+        "void nativeRender() { RenderGuard guard(&ctx->renderActive); }\n"
+        "void nativeClear() {\n"
+        "  assert(!ctx->renderActive.load(std::memory_order_acquire));\n"
+        "}\n"
+    )
+
+    def write_lifecycle(self, root, text):
+        d = root / "libraries/humla/src/main/jni/voice_io"
+        d.mkdir(parents=True)
+        (d / "NativeVoiceIoJni.cpp").write_text(text, encoding="utf-8")
+
+    def test_absent_voice_io_passes_trivially(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(ca.check_voice_lifecycle(Path(tmp)), [])
+
+    def test_healthy_file_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_lifecycle(root, self.HEALTHY)
+            self.assertEqual(ca.check_voice_lifecycle(root), [])
+
+    def test_missing_assert_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = self.HEALTHY.replace(
+                "void nativeClear() {\n"
+                "  assert(!ctx->renderActive.load(std::memory_order_acquire));\n"
+                "}\n",
+                "void nativeClear() {}\n",
+            )
+            self.write_lifecycle(root, text)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(any("voice-lifecycle" in e for e in errors))
+
+    def test_missing_guard_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = self.HEALTHY.replace(
+                "RenderGuard guard(&ctx->renderActive);", "/* guard removed */"
+            )
+            self.write_lifecycle(root, text)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(any("RenderGuard" in e for e in errors))
+
+
 class TestRunAll(unittest.TestCase):
     def test_missing_source_root_is_error(self):
         with tempfile.TemporaryDirectory() as tmp:

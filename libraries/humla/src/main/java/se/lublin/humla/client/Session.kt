@@ -57,6 +57,7 @@ import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.UserHandle
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.state.UserInfo
 import se.lublin.humla.state.applyChannelRemove
 import se.lublin.humla.state.applyChannelState
@@ -97,6 +98,7 @@ class Session internal constructor(
     parentScope: CoroutineScope,
     val transport: Transport,
     val localFacts: LocalFacts,
+    private val talkActivity: StateFlow<TalkActivity>,
     private val voiceLink: VoiceLink,
     private val observer: IHumlaObserver,
     private val localFactsStore: LocalFactsStore,
@@ -396,7 +398,7 @@ class Session internal constructor(
                         next
                     }
                     val seed = addedInfo
-                    val handle = if (seed != null) ChannelHandle(id, state, seed = seed) else ChannelHandle(id, state)
+                    val handle = if (seed != null) ChannelHandle(id, state, talkActivity, seed = seed) else ChannelHandle(id, state, talkActivity)
                     val added = wasAbsent && seed != null
                     postObserver(
                         Runnable {
@@ -435,7 +437,7 @@ class Session internal constructor(
                     }
                     if (id == 0 || !known) return
                     for (info in removedInfos) {
-                        val seeded = ChannelHandle(info.id, state, seed = info)
+                        val seeded = ChannelHandle(info.id, state, talkActivity, seed = info)
                         postObserver(Runnable { observer.onChannelRemoved(seeded) })
                     }
                 }
@@ -477,7 +479,7 @@ class Session internal constructor(
                     }
                     emitAll(outcomeEvents)
                     val seed = createdInfo
-                    val handle = if (seed != null) UserHandle(session, state, seed = seed) else UserHandle(session, state)
+                    val handle = if (seed != null) UserHandle(session, state, talkActivity, seed = seed) else UserHandle(session, state, talkActivity)
                     val isNew = seed != null
                     postObserver(
                         Runnable {
@@ -487,12 +489,12 @@ class Session internal constructor(
                                 observer.onUserStateUpdated(handle)
                                 if (newChannelId != oldChannelId) {
                                     val newChannel = if (newChannelId != null) {
-                                        ChannelHandle(newChannelId, state)
+                                        ChannelHandle(newChannelId, state, talkActivity)
                                     } else {
                                         null
                                     }
                                     val oldChannel = if (oldChannelId != null) {
-                                        ChannelHandle(oldChannelId, state)
+                                        ChannelHandle(oldChannelId, state, talkActivity)
                                     } else {
                                         null
                                     }
@@ -541,7 +543,7 @@ class Session internal constructor(
                     postObserver(
                         Runnable {
                             if (seed != null) {
-                                observer.onUserRemoved(UserHandle(session, state, seed = seed), reason)
+                                observer.onUserRemoved(UserHandle(session, state, talkActivity, seed = seed), reason)
                             } else {
                                 observer.onUserRemoved(null, reason)
                             }
@@ -572,11 +574,11 @@ class Session internal constructor(
                     emitAll(result.events)
                     // Fan out the initial dump for screens still on observers.
                     for (id in syncingState.server.channels.keys) {
-                        val handle = ChannelHandle(id, state)
+                        val handle = ChannelHandle(id, state, talkActivity)
                         postObserver(Runnable { observer.onChannelAdded(handle) })
                     }
                     for (sessionId in syncingState.server.users.keys) {
-                        val handle = UserHandle(sessionId, state)
+                        val handle = UserHandle(sessionId, state, talkActivity)
                         postObserver(Runnable { observer.onUserConnected(handle) })
                     }
                     try {
@@ -616,7 +618,7 @@ class Session internal constructor(
                         applyPermissionQuery(current, msg).state
                     }
                     if (known) {
-                        val handle = ChannelHandle(msg.channelId, state)
+                        val handle = ChannelHandle(msg.channelId, state, talkActivity)
                         postObserver(Runnable { observer.onChannelPermissionsUpdated(handle) })
                     }
                 }
@@ -696,19 +698,19 @@ class Session internal constructor(
         val channels = ArrayList<IChannel>(event.channels.size)
         for (id in event.channels) {
             if (_state.value.server.channels.containsKey(id)) {
-                channels.add(ChannelHandle(id, state))
+                channels.add(ChannelHandle(id, state, talkActivity))
             }
         }
         val trees = ArrayList<IChannel>(event.trees.size)
         for (id in event.trees) {
             if (_state.value.server.channels.containsKey(id)) {
-                trees.add(ChannelHandle(id, state))
+                trees.add(ChannelHandle(id, state, talkActivity))
             }
         }
         val users = ArrayList<IUser>(event.users.size)
         for (session in event.users) {
             if (_state.value.server.users.containsKey(session)) {
-                users.add(UserHandle(session, state))
+                users.add(UserHandle(session, state, talkActivity))
             }
         }
         return Message(
@@ -762,7 +764,7 @@ class Session internal constructor(
             val s = _state.value
             val selfSession = s.server.selfSession
             if (selfSession != null && s.server.users.containsKey(selfSession)) {
-                val handle = UserHandle(selfSession, state)
+                val handle = UserHandle(selfSession, state, talkActivity)
                 postObserver(Runnable { observer.onUserStateUpdated(handle) })
             }
         }
@@ -1081,7 +1083,7 @@ class Session internal constructor(
         val s = state.value
         val session = s.server.selfSession ?: return null
         if (!s.server.users.containsKey(session)) return null
-        return UserHandle(session, state)
+        return UserHandle(session, state, talkActivity)
     }
 
     fun getSessionChannel(): IChannel? {
@@ -1091,13 +1093,13 @@ class Session internal constructor(
     fun getUser(session: Int): IUser? {
         val s = state.value
         if (!s.server.users.containsKey(session)) return null
-        return UserHandle(session, state)
+        return UserHandle(session, state, talkActivity)
     }
 
     fun getChannel(id: Int): IChannel? {
         val s = state.value
         if (!s.server.channels.containsKey(id)) return null
-        return ChannelHandle(id, state)
+        return ChannelHandle(id, state, talkActivity)
     }
 
     fun getRootChannel(): IChannel? = getChannel(0)
@@ -1126,7 +1128,7 @@ class Session internal constructor(
         val selfSession = s.server.selfSession ?: throw IllegalStateException("Not synced")
         val selfName = s.server.users[selfSession]?.name
         val users = ArrayList<IUser>()
-        if (s.server.users.containsKey(session)) users.add(UserHandle(session, state))
+        if (s.server.users.containsKey(session)) users.add(UserHandle(session, state, talkActivity))
         return Message(selfSession, selfName, emptyList(), emptyList(), users, message)
     }
 
@@ -1142,7 +1144,7 @@ class Session internal constructor(
         val selfSession = s.server.selfSession ?: throw IllegalStateException("Not synced")
         val selfName = s.server.users[selfSession]?.name
         val targetChannels = ArrayList<IChannel>()
-        if (s.server.channels.containsKey(channel)) targetChannels.add(ChannelHandle(channel, state))
+        if (s.server.channels.containsKey(channel)) targetChannels.add(ChannelHandle(channel, state, talkActivity))
         // Mirror the wire split (tree ids vs channel ids), not both.
         return if (tree) {
             Message(selfSession, selfName, emptyList(), targetChannels, emptyList(), message)
