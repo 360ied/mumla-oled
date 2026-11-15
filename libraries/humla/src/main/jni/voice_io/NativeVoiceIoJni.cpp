@@ -452,6 +452,30 @@ Java_se_lublin_humla_voice_NativeVoiceIo_nativeLastDroppedJitter(JNIEnv* /*env*/
                      ctx->lastDroppedJitter.load(std::memory_order_relaxed));
 }
 
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_voice_NativeVoiceIo_nativeAwaitWork(JNIEnv* /*env*/,
+                                                        jclass /*clazz*/,
+                                                        jlong handle,
+                                                        jint timeoutMs) {
+    VoiceIoContext* ctx = getContext(handle);
+    if (ctx == nullptr) {
+        return JNI_FALSE;
+    }
+    // Between render calls only: the caller holds no RenderGuard here, so
+    // no lifecycle assert applies. Never attaches, never calls Kotlin.
+    return ctx->io.awaitWork(timeoutMs) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceIo_nativeWakeForStop(JNIEnv* /*env*/,
+                                                           jclass /*clazz*/,
+                                                           jlong handle) {
+    VoiceIoContext* ctx = getContext(handle);
+    if (ctx != nullptr) {
+        ctx->io.wakeForStop();
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_se_lublin_humla_voice_NativeVoiceIo_nativeClear(JNIEnv* /*env*/, jclass /*clazz*/,
                                                      jlong handle) {

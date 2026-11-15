@@ -85,6 +85,12 @@ class NativeVoiceIo {
         private external fun nativeRender(handle: Long, out: ShortArray?, offset: Int, length: Int): Int
 
         @JvmStatic
+        private external fun nativeAwaitWork(handle: Long, timeoutMs: Int): Boolean
+
+        @JvmStatic
+        private external fun nativeWakeForStop(handle: Long)
+
+        @JvmStatic
         private external fun nativeLastHasActiveVoices(handle: Long): Boolean
 
         @JvmStatic
@@ -181,6 +187,23 @@ class NativeVoiceIo {
             return nativeRender(handle, out, offset, length)
         }
         return 0
+    }
+
+    /**
+     * Waits for work after a silent quantum (render thread only, between
+     * render calls). timeoutMs < 0 waits indefinitely, else at most that
+     * long. Returns true when either ring is non-empty afterwards.
+     */
+    fun awaitWork(timeoutMs: Int): Boolean {
+        val handle: Long = nativeHandle
+        return handle != 0L && nativeAwaitWork(handle, timeoutMs)
+    }
+
+    fun wakeForStop() {
+        val handle = nativeHandle
+        if (handle != 0L) {
+            nativeWakeForStop(handle)
+        }
     }
 
     /**

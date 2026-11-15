@@ -58,7 +58,6 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         private const val RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 2
     }
 
-    private val inactiveLock = Object()
     private val listener: AudioOutputListener
     private val talkPublisher: TalkActivityPublisher
 
@@ -76,7 +75,6 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
 
     @Volatile
     private var halfDuplexMuted = false
-    private var hasIncomingAudio = false
 
     // Last logged cumulative drop counts (until VoiceStatus arrives in
     // 5a.3b, drops are logged here); read and written on the notifier
@@ -190,15 +188,10 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
             halfDuplexMuted = false
             thread = this.thread
         }
-        synchronized(inactiveLock) {
-            inactiveLock.notifyAll()
-        }
-        if (thread != null) {
-            // The render thread idles in inactiveLock.wait() when nobody
-            // is speaking. A notify raced with wait entry strands it and
-            // the join below blocks forever, so interrupt as well; the
-            // wait responds with InterruptedException and run() exits.
-            thread.interrupt()
+        // Wake the render semaphore: sem_post is remembered across a racing
+        // wait entry, so no interrupt is needed (5a.3b render wake).
+        synchronized(this) {
+            voiceIo?.wakeForStop()
         }
         if (thread != null && thread != Thread.currentThread()) {
             var interrupted = false
@@ -334,16 +327,11 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
                     }
                     break
                 }
-                synchronized(inactiveLock) {
-                    try {
-                        inactiveLock.wait(5)
-                    } catch (e: InterruptedException) {
-                        // stopPlaying interrupts after clearing running;
-                        // a stray interrupt just ends pacing for this
-                        // quantum instead of busy-waiting on a set flag.
-                        Thread.currentThread().interrupt()
-                        break
-                    }
+                try {
+                    Thread.sleep(5)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
                 }
                 synchronized(this) {
                     if (!running) {
@@ -388,47 +376,28 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
             } else {
                 pacer.onIdle()
                 // No live voice rendered this quantum. Keep the track playing so
-                // resume is gapless, and idle until the next packet arrives.
-                // When nobody is speaking and zero voices are registered in the
-                // native engine, wait indefinitely to eliminate the 50 Hz CPU spin
-                // and allow cores to enter deep C-states.
-                // If active voices exist (fresh voices filling their startup gate,
-                // or wedged voices pending miss expiry), use the 20 ms timed wait
-                // to keep paced ticks progressing.
-                synchronized(inactiveLock) {
-                    if (!hasIncomingAudio) {
-                        // The last render already folded liveness; no separate
-                        // engine call (5a.3a render-entry contract).
-                        voiceIoCopy = voiceIo
-                        val hasVoices = voiceIoCopy != null && voiceIoCopy.lastHasActiveVoices()
-                        if (!hasVoices) {
-                            // When nobody is speaking and zero voices are registered in the
-                            // native engine, wait indefinitely to eliminate the 50 Hz CPU spin
-                            // and allow cores to enter deep C-states. AudioTrack remains continuously
-                            // in PLAYSTATE_PLAYING, rendering zero-PCM digital silence to maintain
-                            // the silence shield against OEM watchdog SIGKILL terminations.
-                            while (running && !hasIncomingAudio) {
-                                try {
-                                    inactiveLock.wait()
-                                } catch (e: InterruptedException) {
-                                    Thread.currentThread().interrupt()
-                                    break@renderLoop
-                                }
-                                voiceIoCopy = voiceIo
-                                if (voiceIoCopy != null && voiceIoCopy.lastHasActiveVoices()) {
-                                    break
-                                }
-                            }
-                        } else {
-                            try {
-                                inactiveLock.wait(20)
-                            } catch (e: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                                break@renderLoop
-                            }
-                        }
+                // resume is gapless, and idle in the native semaphore until the
+                // next packet arrives (5a.3b render wake). No timeout when
+                // nobody is speaking and zero voices are registered in the
+                // native engine (eliminates the 50 Hz CPU spin); 20 ms when
+                // active voices exist (startup gate or miss expiry) to keep
+                // paced ticks progressing. The post lives in the voice_io
+                // push functions, so the interim Kotlin pushes share one wake
+                // path with the future native receive thread.
+                // The last render already folded liveness; no separate
+                // engine call (5a.3a render-entry contract).
+                voiceIoCopy = voiceIo
+                val hasVoices = voiceIoCopy != null && voiceIoCopy.lastHasActiveVoices()
+                val ioForWait = voiceIoCopy
+                if (ioForWait != null) {
+                    ioForWait.awaitWork(if (hasVoices) 20 else -1)
+                } else {
+                    try {
+                        Thread.sleep(20)
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        break@renderLoop
                     }
-                    hasIncomingAudio = false
                 }
             }
         }
@@ -469,10 +438,8 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         // producer at a time (serializing the old and new UDP coroutines
         // that briefly overlap on a UDP restart), and no push can reach a
         // destroyed voice_io (stopPlaying destroys only under this monitor
-        // after the render thread is joined). getUser reads the session
-        // flow and tryPush never blocks, so the render thread's brief
-        // monitor takes cannot stall behind a push.
-        var queued = 0
+        // after the render thread is joined). The native push posts the
+        // render semaphore when idle, so no Kotlin wake is needed here.
         synchronized(this) {
             val io = voiceIo
             if (!running || io == null) {
@@ -483,15 +450,13 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
                 if (user == null || user.isLocalMuted) {
                     continue
                 }
-                val pushed = if (f.opus.isEmpty()) {
+                if (f.opus.isEmpty()) {
                     if (f.isTerminator) {
                         if (tunnel) {
                             io.pushTunnel(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
                         } else {
                             io.pushInbound(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
                         }
-                    } else {
-                        false
                     }
                 } else {
                     if (tunnel) {
@@ -500,20 +465,7 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
                         io.pushInbound(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
                     }
                 }
-                if (pushed) {
-                    queued++
-                }
             }
-        }
-        if (queued > 0) {
-            signalData()
-        }
-    }
-
-    private fun signalData() {
-        synchronized(inactiveLock) {
-            hasIncomingAudio = true
-            inactiveLock.notify()
         }
     }
 
