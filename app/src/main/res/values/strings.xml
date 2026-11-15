@@ -64,6 +64,7 @@
     <string name="server_info_protocol">Protocol %s.</string>
     <string name="server_info_version">%1$s (%2$s)</string>
     <string name="server_info_latency">%1$.2f ms latency</string>
+    <string name="server_info_latency_unknown">Latency unknown</string>
     <string name="server_info_host">Remote host %1$s (port %2$d)</string>
     <string name="server_info_codec">Codec: %s</string>
     <string name="server_info_max_bandwidth">Maximum %1$.1f kbit/s</string>
