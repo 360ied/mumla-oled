@@ -152,7 +152,9 @@ reason a closed transport submits no further voice commands.
 Chosen once per session by the transport from the server's first
 `Version` message, with today's rule (`Constants.isProtobufUdpSupported`):
 protobuf UDP when the server version is at least 1.5.0, legacy otherwise.
-A later `Version` does not change it, and neither does the version in a
+If no `Version` has arrived by `ServerSync`, the transport fixes the
+default (legacy, version 0) there, since voice starts right after. A later
+`Version` does not change it, and neither does the version in a
 protobuf UDP ping, which is only reported (`VoiceEvent.UdpPing`, then
 `ServerState.info`). The transport exposes the choice, with the server's
 legacy version, as `voiceFormat`; the client passes both to the

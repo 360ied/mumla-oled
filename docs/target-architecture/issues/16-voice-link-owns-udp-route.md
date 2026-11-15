@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`aba7011b`, `6b72a255`): the transport pushes the initial route at `ServerSync` and the link only follows `SetVoiceRoute`. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`aba7011b`, `6b72a255`): the transport pushes the initial route at `ServerSync` and the link only follows `SetVoiceRoute`. One narrow residual is documented. See [Resolution](#resolution). |
 | Category | Undocumented interim |
 | Severity | Moderate (two writers of a decision the spec gives to one owner; directly relevant to 5a.3) |
 | Verified | Yes (code read) |
@@ -152,6 +152,21 @@ starts (the 20 s window is anchored at transport creation; see
 `startVoice` then put the link back on UDP or not depending on thread
 order; now the session deterministically stays tunnelled, which is what
 the transport publishes.
+
+**Known residual: a switch in the teardown window.** `client.md`'s
+ending order submits voice `Stop` before the session (and its transport)
+is closed, so the next `Start` follows that `Stop` on the voice control
+thread. In between, the old transport's reader can still handle a TCP
+ping reply that switches back to UDP, leaving the stopped link's route on
+UDP. The next session's `startVoice`, if it runs before that session's
+`ServerSync` push, then opens a UDP socket. That matters only when the
+next session is forced TCP: the push turns the route to tunnel right
+after, so no voice or ping goes over the socket, but an idle socket stays
+open until `stopVoice`, against "UDP is never used" in letter. Closing
+before stopping would end the window but give up the ending order's
+guarantee. A real fix tags route commands with a session token the engine
+checks; not worth it for an idle socket. Revisit if the native engine
+gains a per-session token for another reason.
 
 **Pinned by** `TransportImplTest.initialRouteIsPushedAtServerSync`
 (nothing at `start()`, one push at `ServerSync`) and

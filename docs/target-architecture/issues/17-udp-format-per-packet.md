@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`aba7011b`): the transport fixes the format at the first `Version` and voice receives it at start. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`aba7011b`, `7a439caf`): the transport fixes the format at the first `Version` and voice receives it at start. See [Resolution](#resolution). |
 | Category | Undocumented interim |
 | Severity | Low today (unreachable in practice); relevant to the 5a.3 contract |
 | Verified | Yes (code read) |
@@ -96,7 +96,11 @@ The state at `aba7011b`.
   stores a `VoiceFormat(udp: UdpFormat, legacyServerVersion: Int)` from
   the first `Version` (compare-and-set; a repeat is logged and ignored)
   and exposes it as `Transport.voiceFormat`, `VoiceFormat.DEFAULT`
-  (legacy, version 0, today's default) until then.
+  (legacy, version 0, today's default) until then. If none has arrived by
+  `ServerSync`, `startKeepalive` fixes the default (`7a439caf`): voice
+  starts right after with it, and a late `Version` would otherwise set the
+  transport's format, which `VoiceControl` reads for the send side, while
+  the started link kept parsing in the default.
 - **Passed at start.** `VoiceLink.setServerVersion` is gone.
   `VoiceLifecycle.startVoice(host, port, format)` is the interim
   `VoiceCommand.Start`, and `HumlaClient` reads the format from the
@@ -121,8 +125,10 @@ and `legacyServerVersionPicksLegacyFormat`,
 acceptance test: a 1.4.0 ping on a 1.5.0 session leaves the format
 protobuf and protobuf voice still parses), and
 `HumlaClientTest.connectSyncDisconnect` (the transport's format reaches
-`startVoice`). **Shown to fail** with last-`Version`-wins, with the ping
-rewriting the format, and with the client passing the default format.
+`startVoice`), and `versionAfterServerSyncDoesNotChangeTheFormat`.
+**Shown to fail** with last-`Version`-wins, with the ping rewriting the
+format, with the client passing the default format, and without the
+default fixed at `ServerSync`.
 **Not pinned:** the `VoiceControl` read, since `VoiceControlTest` never
 starts a session ([03](03-voice-control-test-vacuous.md)).
 

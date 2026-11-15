@@ -107,8 +107,8 @@ the same state in its `Status` row.
 |---|---|---|
 | [14](14-local-facts-self-mute-stub.md) | Persisted self-mute/deafen never reaches the session; `LocalFactsStore` self-mute half is a stub | Interim documented; code fix at step 6 |
 | [15](15-current-bandwidth-bypasses-stats.md) | `getCurrentBandwidth` reads `AudioHandler`, not session stats | Interim documented; which source wins is open |
-| [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Resolved (`aba7011b`) |
-| [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Resolved (`aba7011b`) |
+| [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Resolved (`aba7011b`, `6b72a255`); teardown-window residual documented |
+| [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Resolved (`aba7011b`, `7a439caf`) |
 | [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Interim documented; ends in 5a.4 |
 | [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved on `session-serversync-update-hygiene` (`89dd9b57`), pending merge |
 
