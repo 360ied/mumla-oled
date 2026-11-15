@@ -57,13 +57,25 @@ bool VoiceNotifier::notifyNow() {
     return true;
 }
 
+void VoiceNotifier::setThreadHooks(std::function<void()> onStart,
+                                  std::function<void()> onExit) {
+    m_onStart = std::move(onStart);
+    m_onExit = std::move(onExit);
+}
+
 void VoiceNotifier::loop() {
+    if (m_onStart) {
+        m_onStart();
+    }
     while (m_running.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(m_interval);
         if (!m_running.load(std::memory_order_relaxed)) {
             break;
         }
         notifyNow();
+    }
+    if (m_onExit) {
+        m_onExit();
     }
 }
 

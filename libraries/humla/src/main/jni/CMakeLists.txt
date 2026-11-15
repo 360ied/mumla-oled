@@ -201,6 +201,7 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
+        "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"

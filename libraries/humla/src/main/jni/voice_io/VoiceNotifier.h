@@ -59,6 +59,11 @@ public:
 
     ~VoiceNotifier();
 
+    // Thread hooks run on the notifier thread around the loop (start before
+    // the first delivery, exit after the last). The JNI layer attaches to
+    // the JVM here once per thread lifetime; host tests leave them empty.
+    void setThreadHooks(std::function<void()> onStart, std::function<void()> onExit);
+
     void start();
     void stop();
 
@@ -72,6 +77,8 @@ private:
     const TalkCell* m_cell;
     Sink m_sink;
     std::chrono::milliseconds m_interval;
+    std::function<void()> m_onStart;
+    std::function<void()> m_onExit;
     std::thread m_thread;
     std::atomic<bool> m_running{false};
     uint64_t m_deliveredVersion = 0;
