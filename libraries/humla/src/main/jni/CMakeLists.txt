@@ -201,6 +201,7 @@ if(ANDROID)
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
+        "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
@@ -354,9 +355,11 @@ else()
     # point. Links the real output engine with an injected fake decoder, so
     # no libopus is needed; production passes makeOpusOutputDecoder.
     add_executable(test_voice_io
+        $<TARGET_OBJECTS:humlacrypto_obj>
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
+        "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${TEST_CPP_DIR}/test_voice_io.cpp"
@@ -365,10 +368,13 @@ else()
         "${VOICE_IO_DIR}"
         "${AUDIO_ENGINE_DIR}"
         "${AUDIO_ENGINE_DIR}/jitter"
+        "${VOICE_CODEC_DIR}"
+        "${CRYPTO_DIR}"
+        "${NANOPB_DIR}"
         "${TEST_CPP_DIR}"
     )
     target_compile_options(test_voice_io PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
-    target_link_libraries(test_voice_io PRIVATE Threads::Threads m)
+    target_link_libraries(test_voice_io PRIVATE humlavoicecodec humlanpb Threads::Threads m)
     add_test(NAME test_voice_io COMMAND test_voice_io)
 
     add_executable(test_voice_codec
@@ -398,6 +404,7 @@ else()
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
+        "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"

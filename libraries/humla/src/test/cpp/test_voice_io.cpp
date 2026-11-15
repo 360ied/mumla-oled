@@ -21,9 +21,11 @@
 // quanta of at most 60 ms, and folds talk transitions into a level table.
 
 #include "TestHarness.h"
+#include "CryptStateOCB2.h"
 #include "VoiceIo.h"
 #include "VoiceNotifier.h"
 #include "VoicePolicy.h"
+#include "VoiceReceive.h"
 #include "VoiceRings.h"
 #include "VoiceTalk.h"
 
@@ -43,8 +45,10 @@ using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
 using mumla::audio::IOutputDecoder;
 using mumla::audio::OutputTalkState;
+using humla::crypto::CryptStateOCB2;
 using mumla::voice_io::PolicyCell;
 using mumla::voice_io::PolicySnapshot;
+using mumla::voice_io::VoiceReceive;
 using mumla::voice_io::SpscRing;
 using mumla::voice_io::TalkCell;
 using mumla::voice_io::TalkPublication;
@@ -662,6 +666,73 @@ void testPolicyGuardsReceiveVisibleOnly() {
     std::cout << "  [PASS] testPolicyGuardsReceiveVisibleOnly" << std::endl;
 }
 
+void testReceiveResyncGateRateLimited() {
+    g_testCount++;
+    // Exactly one rate-limited request: long-good then failure fires once,
+    // an immediate second failure is suppressed, a failure after the gap
+    // fires again. Times in microseconds.
+    TEST_ASSERT_TRUE(VoiceReceive::shouldRequestResync(6000000, 6000000, 0));
+    TEST_ASSERT_FALSE(VoiceReceive::shouldRequestResync(6000001, 6000000, 6000000));
+    TEST_ASSERT_TRUE(VoiceReceive::shouldRequestResync(11000001, 9000000, 6000000));
+    // Recent good never fires, and no last-good never fires.
+    TEST_ASSERT_FALSE(VoiceReceive::shouldRequestResync(9000000, 1000000, 0));
+    TEST_ASSERT_FALSE(VoiceReceive::shouldRequestResync(9000000, -1, 0));
+    std::cout << "  [PASS] testReceiveResyncGateRateLimited" << std::endl;
+}
+
+void testReceiveCryptCountsMatchKotlin() {
+    g_testCount++;
+    // Fixture for the 5a.3b done-when crypt-count parity: the Kotlin path
+    // reports these counts for the same scripted sequence through the same
+    // OCB2 engine (in-order, replayed, lost), so the native path must
+    // reproduce them or the transport's health check mis-falls-back.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {16, 32, 48, 64, 80, 96, 112, 128,
+                             144, 160, 176, 192, 208, 224, 240, 0};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    const uint8_t secret[10] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'};
+    uint8_t packet[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    rx.handleCrypted(packet, 14);
+    int32_t good = 0, late = 0, lost = 0, resync = 0;
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    // Replay rejected: good stays.
+    rx.handleCrypted(packet, 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    // Skip 5 (lost 4 on the next good).
+    for (int i = 0; i < 5; ++i) {
+        TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    }
+    rx.handleCrypted(packet, 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 2);
+    TEST_ASSERT_EQ(lost, 4);
+    std::cout << "  [PASS] testReceiveCryptCountsMatchKotlin" << std::endl;
+}
+
+void testReceiveStopLeavesNothing() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
+    TEST_ASSERT_TRUE(rx.running());
+    TEST_ASSERT_TRUE(rx.socketFd() >= 0);
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.running());
+    TEST_ASSERT_EQ(rx.socketFd(), -1);
+    // Second stop is safe (idempotent close, no join-from-nowhere).
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.sendDatagram(nullptr, 0));
+    std::cout << "  [PASS] testReceiveStopLeavesNothing" << std::endl;
+}
+
 } // namespace
 
 void run_voice_io_tests() {
@@ -693,6 +764,9 @@ void run_voice_io_tests() {
     testPolicyUnknownHoldsNoSlot();
     testPolicyKnownOverflowFailsOpen();
     testPolicyGuardsReceiveVisibleOnly();
+    testReceiveResyncGateRateLimited();
+    testReceiveCryptCountsMatchKotlin();
+    testReceiveStopLeavesNothing();
 }
 
 int main() {
