@@ -81,7 +81,7 @@ import se.lublin.humla.model.WhisperTargetList
 import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.HumlaUDPMessageType
-import se.lublin.humla.net.LegacyVoiceLink
+import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.StateEventLogger
@@ -214,7 +214,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     private var stateLogger: StateEventLogger? = null
 
-    private lateinit var voiceLink: LegacyVoiceLink
+    private lateinit var voiceLink: VoiceEngine
     private lateinit var client: HumlaClient
     private val networkFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -426,13 +426,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
         // Application-scoped voice link (survives reconnects). The tunnel sink
         // routes to the current session's transport (present only in tunnel mode).
-        voiceLink = LegacyVoiceLink(
+        voiceLink = VoiceEngine(
             tunnelSink = { packet ->
                 try {
                     currentSession()?.transport?.sendTunnelled(packet)
                 } catch (ignored: Exception) {
                 }
             },
+            talkPublisher = talkPublisher,
         )
 
         policyCollector = PolicyCollector(

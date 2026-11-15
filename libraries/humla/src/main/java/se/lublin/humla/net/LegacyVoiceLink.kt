@@ -51,7 +51,7 @@ import se.lublin.humla.protobuf.MumbleUDP
  * Android-free: no android.* imports. No tripwire patterns: uses
  * AtomicBoolean/AtomicInteger and coroutines, never synchronized/Volatile.
  */
-class LegacyVoiceLink @JvmOverloads constructor(
+open class LegacyVoiceLink @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) : VoiceLink, VoiceLifecycle, HumlaUDP.UDPConnectionListener {
@@ -65,7 +65,7 @@ class LegacyVoiceLink @JvmOverloads constructor(
     private val _events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
     override val events: SharedFlow<VoiceEvent> = _events.asSharedFlow()
 
-    private val _status = MutableStateFlow(VoiceStatus.initial())
+    protected val _status = MutableStateFlow(VoiceStatus.initial())
     override val status: StateFlow<VoiceStatus> = _status.asStateFlow()
 
     private val udpHandlers = CopyOnWriteArrayList<HumlaUDPMessageListener>()
@@ -245,6 +245,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 if (command.udp) connectUdpIfRouted()
             }
             is VoiceCommand.SendPing -> sendUdpPing(command.timestampMicros)
+            // Start/Stop are VoiceEngine facade commands; the base link
+            // never receives them (its startVoice/stopVoice are direct).
+            is VoiceCommand.Start, is VoiceCommand.Stop -> Unit
         }
         refreshStatus()
     }
@@ -437,7 +440,8 @@ class LegacyVoiceLink @JvmOverloads constructor(
         }
     }
 
-    fun refreshStatus() {
+    open fun refreshStatus() {
+        val prev = _status.value
         _status.value = VoiceStatus(
             localCrypt = CryptCounts(
                 good = crypt.getGood(),
@@ -447,6 +451,11 @@ class LegacyVoiceLink @JvmOverloads constructor(
             ),
             bitrate = targetBitrate.get(),
             framesPerPacket = targetFramesPerPacket.get(),
+            running = prev.running,
+            droppedOutbound = prev.droppedOutbound,
+            droppedInbound = prev.droppedInbound,
+            droppedJitter = prev.droppedJitter,
+            lastError = prev.lastError,
         )
     }
 

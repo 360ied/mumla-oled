@@ -125,6 +125,19 @@ interface VoiceLink {
 sealed interface VoiceCommand {
     data class SetVoiceRoute(val udp: Boolean) : VoiceCommand
     data class SendPing(val timestampMicros: Long) : VoiceCommand
+    /**
+     * Start network voice (5a.3b facade). Carries the session's UDP
+     * address plus the transport's per-session decision (issue 17): the UDP
+     * format and the legacy server version, fixed at the first Version.
+     * No route: voice follows the transport's SetVoiceRoute, and Stop
+     * resets to tunnel so no route carries over.
+     */
+    data class Start(
+        val host: String,
+        val port: Int,
+        val format: VoiceFormat,
+    ) : VoiceCommand
+    data object Stop : VoiceCommand
 }
 
 /** Events voice pushes to the transport. */
@@ -149,6 +162,11 @@ data class VoiceStatus(
     val localCrypt: CryptCounts,
     val bitrate: Int = 40000,
     val framesPerPacket: Int = 2,
+    val running: Boolean = false,
+    val droppedOutbound: Long = 0,
+    val droppedInbound: Long = 0,
+    val droppedJitter: Long = 0,
+    val lastError: String? = null,
 ) {
     companion object {
         fun initial(): VoiceStatus = VoiceStatus(localCrypt = CryptCounts.zero())
