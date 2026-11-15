@@ -35,8 +35,10 @@ import se.lublin.humla.HumlaNative
  * AudioOutput.stopPlaying run under AudioOutput's existing monitor, which
  * keeps each ring to one producer at a time and serializes pushes against
  * destroy; the render thread never takes that monitor, and destroy runs
- * only after the render thread is joined. A plain field is enough because
- * every access is under the caller's monitor or after the join.
+ * only after the render thread is joined. The handle is volatile as a
+ * backstop: a stale copy can no longer reach this class (pushes re-check
+ * under the monitor), but release visibility across threads must not
+ * depend on the monitor alone.
  */
 class NativeVoiceIo {
     companion object {
@@ -96,6 +98,7 @@ class NativeVoiceIo {
         private external fun nativeClear(handle: Long)
     }
 
+    @Volatile
     private var nativeHandle: Long = 0
     private val listener: VoiceIoListener?
 

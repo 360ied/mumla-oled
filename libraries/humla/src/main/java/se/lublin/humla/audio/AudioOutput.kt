@@ -457,43 +457,47 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
     }
 
     private fun queueRingFrames(frames: List<DecodedVoiceFrame>, tunnel: Boolean) {
-        // Non-null by construction past the guard: the synchronized block
-        // evaluates to the voice I/O layer, so later uses need no assertion.
-        val ioCopy: NativeVoiceIo = synchronized(this) {
-            val current = voiceIo
-            if (!running || current == null) {
-                return
-            }
-            current
-        }
         if (frames.isEmpty()) {
             return
         }
+        // The whole push runs under this monitor: each ring keeps one
+        // producer at a time (serializing the old and new UDP coroutines
+        // that briefly overlap on a UDP restart), and no push can reach a
+        // destroyed voice_io (stopPlaying destroys only under this monitor
+        // after the render thread is joined). getUser reads the session
+        // flow and tryPush never blocks, so the render thread's brief
+        // monitor takes cannot stall behind a push.
         var queued = 0
-        for (f in frames) {
-            val user = listener.getUser(f.session)
-            if (user == null || user.isLocalMuted) {
-                continue
+        synchronized(this) {
+            val io = voiceIo
+            if (!running || io == null) {
+                return
             }
-            val pushed = if (f.opus.isEmpty()) {
-                if (f.isTerminator) {
-                    if (tunnel) {
-                        ioCopy.pushTunnel(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
+            for (f in frames) {
+                val user = listener.getUser(f.session)
+                if (user == null || user.isLocalMuted) {
+                    continue
+                }
+                val pushed = if (f.opus.isEmpty()) {
+                    if (f.isTerminator) {
+                        if (tunnel) {
+                            io.pushTunnel(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
+                        } else {
+                            io.pushInbound(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
+                        }
                     } else {
-                        ioCopy.pushInbound(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
+                        false
                     }
                 } else {
-                    false
+                    if (tunnel) {
+                        io.pushTunnel(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
+                    } else {
+                        io.pushInbound(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
+                    }
                 }
-            } else {
-                if (tunnel) {
-                    ioCopy.pushTunnel(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
-                } else {
-                    ioCopy.pushInbound(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
+                if (pushed) {
+                    queued++
                 }
-            }
-            if (pushed) {
-                queued++
             }
         }
         if (queued > 0) {
@@ -565,11 +569,12 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
      * Runs on the session message coroutine, the tunnel ring's producer.
      */
     fun removeUser(session: Int) {
-        val ioCopy: NativeVoiceIo?
+        // Under the monitor with the pushes and the teardown: the removal
+        // can neither slip in after destroy nor race another producer on
+        // the tunnel ring.
         synchronized(this) {
-            ioCopy = voiceIo
+            voiceIo?.pushRemoveUser(session)
         }
-        ioCopy?.pushRemoveUser(session)
     }
 
     /**
