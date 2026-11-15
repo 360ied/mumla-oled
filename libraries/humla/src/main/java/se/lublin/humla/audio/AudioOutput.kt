@@ -179,6 +179,11 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         val thread: Thread?
         synchronized(this) {
             if (!running && this.thread == null) {
+                // Never started (or already stopped): no thread to join and
+                // no engine to destroy, but the service-lifetime publisher
+                // may still hold levels from a previous pipeline — leave no
+                // stale indicator behind. update is lock-free, safe here.
+                talkPublisher.clearRemote()
                 return
             }
             running = false
