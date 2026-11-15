@@ -157,6 +157,9 @@ class TransportImpl internal constructor(
 
     private val startNanos = nanoTime()
     private val usingUdpRef = AtomicBoolean(!forceTcp)
+    // First Version wins: the format is fixed for the session (issue 17).
+    private val voiceFormatRef = AtomicReference<VoiceFormat?>(null)
+    override val voiceFormat: VoiceFormat get() = voiceFormatRef.get() ?: VoiceFormat.DEFAULT
 
     private val readerThreadRef = AtomicReference<Thread?>(null)
     private val writerJobRef = AtomicReference<Job?>(null)
@@ -499,7 +502,12 @@ class TransportImpl internal constructor(
         } else {
             return
         }
-        voice.setServerVersion(v2, v1)
+        // Once per session: a repeated Version (servers send one), or one
+        // after ServerSync fixed the default, does not change the format
+        // under a live stream.
+        if (!voiceFormatRef.compareAndSet(null, VoiceFormat.fromServerVersion(v2, v1))) {
+            logger.fine("Ignoring repeated Version for the UDP format")
+        }
     }
 
     private fun handleCryptSetup(msg: Mumble.CryptSetup) {
@@ -557,7 +565,7 @@ class TransportImpl internal constructor(
                 return
             }
             _stats.update { it.copy(usingUdp = true, tcpLatencyMicros = tcpLatency, remoteCrypt = remote) }
-            voice.submit(VoiceCommand.SetVoiceRoute(true))
+            submitVoice(VoiceCommand.SetVoiceRoute(true))
             logger.fine("Switching back to UDP mode")
             return
         }
@@ -573,7 +581,7 @@ class TransportImpl internal constructor(
     private fun switchToTunnel(reason: String) {
         if (!usingUdpRef.getAndSet(false)) return
         _stats.update { it.copy(usingUdp = false) }
-        voice.submit(VoiceCommand.SetVoiceRoute(false))
+        submitVoice(VoiceCommand.SetVoiceRoute(false))
         logger.info("Switching to TCP mode ($reason)")
         // Single dummy in the protobuf form, matching enableForceTCP parity
         // (HumlaConnection sent Mumble.UDPTunnel{packet=3 zeros}; raw voice
@@ -596,11 +604,22 @@ class TransportImpl internal constructor(
     /** Starts the keepalive ping loop; called once by Session on ServerSync. */
     override fun startKeepalive() {
         if (!pingStarted.compareAndSet(false, true)) return
+        // Voice starts after ServerSync with whatever format is fixed by now.
+        // A server that sent no Version gets the default for the whole
+        // session: a late Version must not change the transport's format
+        // under a started link (VoiceControl reads it for the send side).
+        if (voiceFormatRef.compareAndSet(null, VoiceFormat.DEFAULT)) {
+            logger.fine("No Version before ServerSync; UDP format stays default")
+        }
+        // The transport alone owns the route (transport.md § Keepalive and UDP
+        // health): push the initial decision here, at ServerSync, not at
+        // start(). A cancelled connect attempt can finish its TLS handshake
+        // and run start() after a newer attempt took over, but it never
+        // reaches ServerSync, so it cannot steer the shared voice link. Voice
+        // resets to tunnel at stop, so until this push no UDP is opened.
+        submitVoice(VoiceCommand.SetVoiceRoute(usingUdpRef.get()))
         if (forceTcp) {
             // Forced TCP: send the dummy tunnel now, never use UDP.
-            usingUdpRef.set(false)
-            _stats.update { it.copy(usingUdp = false) }
-            voice.submit(VoiceCommand.SetVoiceRoute(false))
             val utb = Mumble.UDPTunnel.newBuilder()
                 .setPacket(ByteString.copyFrom(dummyTunnelPacket()))
                 .build()
@@ -634,7 +653,7 @@ class TransportImpl internal constructor(
     private fun sendKeepalivePing() {
         val t = elapsedMicros()
         if (!forceTcp) {
-            voice.submit(VoiceCommand.SendPing(t))
+            submitVoice(VoiceCommand.SendPing(t))
         }
         val local = voice.status.value.localCrypt
         val pb = Mumble.Ping.newBuilder()
@@ -661,6 +680,16 @@ class TransportImpl internal constructor(
         if (!result.isSuccess) {
             failOnce(ClientError.Connection("Transport outbound full; server stopped reading", null))
         }
+    }
+
+    /**
+     * Voice commands stop at close: voice is application-scoped and outlives
+     * this transport, so a late reply on a closing transport must not steer
+     * the next session's route.
+     */
+    private fun submitVoice(command: VoiceCommand) {
+        if (closed.get()) return
+        voice.submit(command)
     }
 
     private fun failOnce(error: ClientError) {

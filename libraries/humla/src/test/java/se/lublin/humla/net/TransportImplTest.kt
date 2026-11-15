@@ -53,6 +53,7 @@ import se.lublin.humla.client.LocalFacts
 import se.lublin.humla.client.NoopObserver
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.testTarget
+import se.lublin.humla.Constants
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.voice.TalkActivity
 
@@ -384,6 +385,29 @@ class TransportImplTest {
     }
 
     @Test
+    fun initialRouteIsPushedAtServerSync() = runTest {
+        // The transport alone owns the route (issue 16): voice is told UDP at
+        // ServerSync, not left on its own default. Nothing at start(): a
+        // cancelled attempt can still run start() after a newer attempt took
+        // over, but never reaches ServerSync, so it never steers voice.
+        val f = Fixture(this)
+        try {
+            f.serverPing(good = 0)
+            f.sync()
+            assertTrue(f.voice.routes().isEmpty())
+            assertTrue(f.transport.stats.value.usingUdp)
+            f.transport.startKeepalive()
+            f.step()
+            assertEquals(listOf(VoiceCommand.SetVoiceRoute(true)), f.voice.routes())
+            f.serverPing(good = 0)
+            f.sync()
+            assertEquals(1, f.voice.routes().size)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
     fun forcedTcpTunnelsFromServerSyncAndNeverUsesUdp() = runTest {
         val f = Fixture(this, forceTcp = true)
         try {
@@ -407,6 +431,61 @@ class TransportImplTest {
             f.transport.startKeepalive()
             f.step()
             assertEquals(1, f.sentOf(HumlaTCPMessageType.UDPTunnel).size)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
+    fun voiceFormatIsFixedByTheFirstVersion() = runTest {
+        val f = Fixture(this)
+        try {
+            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            val v150 = Constants.toVersionV2(1, 5, 0)
+            f.serverSends(HumlaTCPMessageType.Version, Mumble.Version.newBuilder().setVersionV2(v150).build())
+            f.sync()
+            val fixed = VoiceFormat(UdpFormat.PROTOBUF, Constants.toLegacyVersion(v150))
+            assertEquals(fixed, f.transport.voiceFormat)
+            // A second Version does not re-pick the format (issue 17).
+            f.serverSends(
+                HumlaTCPMessageType.Version,
+                Mumble.Version.newBuilder().setVersionV1((1 shl 16) or (4 shl 8)).build(),
+            )
+            f.sync()
+            assertEquals(fixed, f.transport.voiceFormat)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
+    fun versionAfterServerSyncDoesNotChangeTheFormat() = runTest {
+        // No Version before ServerSync: voice starts with the default, so a
+        // late Version must not change what the transport reports.
+        val f = Fixture(this)
+        try {
+            f.transport.startKeepalive()
+            f.step()
+            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            f.serverSends(
+                HumlaTCPMessageType.Version,
+                Mumble.Version.newBuilder().setVersionV2(Constants.toVersionV2(1, 5, 0)).build(),
+            )
+            f.sync()
+            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
+    fun legacyServerVersionPicksLegacyFormat() = runTest {
+        val f = Fixture(this)
+        try {
+            val v1 = (1 shl 16) or (2 shl 8) or 2
+            f.serverSends(HumlaTCPMessageType.Version, Mumble.Version.newBuilder().setVersionV1(v1).build())
+            f.sync()
+            assertEquals(VoiceFormat(UdpFormat.LEGACY, v1), f.transport.voiceFormat)
         } finally {
             f.close()
         }
@@ -628,6 +707,7 @@ class TransportImplTest {
             f.transport.send(Mumble.Ping.getDefaultInstance(), HumlaTCPMessageType.Ping)
         }
         val voicePingsBefore = f.voice.pings().size
+        val routesBefore = f.voice.routes().size
         f.advance(60_000)
         assertFalse(f.transport.failure.isCompleted)
         assertEquals(sentBefore, f.sentFrames().size)
@@ -636,7 +716,7 @@ class TransportImplTest {
         assertEquals(voicePingsBefore, f.voice.pings().size)
         f.voice.eventFlow.tryEmit(VoiceEvent.UdpUnavailable)
         f.step()
-        assertTrue(f.voice.routes().isEmpty())
+        assertEquals(routesBefore, f.voice.routes().size)
         f.close()
     }
 }

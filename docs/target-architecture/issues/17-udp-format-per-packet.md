@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — settle before step 5a.3b. |
+| Status | Resolved 2026-11-14 (`aba7011b`, `7a439caf`): the transport fixes the format at the first `Version` and voice receives it at start. See [Resolution](#resolution). |
 | Category | Undocumented interim |
 | Severity | Low today (unreachable in practice); relevant to the 5a.3 contract |
 | Verified | Yes (code read) |
 | Area | Transport / voice link |
 | Spec | [transport.md § UDP packet format](../transport.md#udp-packet-format), [transport.md § Responsibilities](../transport.md#responsibilities) (`VoiceLink` interface) |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt` (`handleVersion`, around lines 478-489); `net/Transport.kt` (`VoiceLink.setServerVersion`); `net/LegacyVoiceLink.kt` (`setServerVersion` line 104, `sendUdpPing` line 239, `isProtobufUdpSupported` line 258, `onUDPDataReceived` around lines 262-295) |
-| Gates | Settle before step 5a.3b (the native engine receives the format in `VoiceCommand.Start`) |
+| Gates | Gated step 5a.3b; gate met |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
@@ -87,6 +87,50 @@ override fun onUDPDataReceived(data: ByteArray) {          // around line 264
 The format is fixed for a session after `Version`; a test shows a UDP ping
 with a different `server_version_v2` does not change the format.
 `./scripts/check.sh` passes.
+
+## Resolution
+
+The state at `aba7011b`.
+
+- **Decided once, in the transport.** `TransportImpl.handleVersion`
+  stores a `VoiceFormat(udp: UdpFormat, legacyServerVersion: Int)` from
+  the first `Version` (compare-and-set; a repeat is logged and ignored)
+  and exposes it as `Transport.voiceFormat`, `VoiceFormat.DEFAULT`
+  (legacy, version 0, today's default) until then. If none has arrived by
+  `ServerSync`, `startKeepalive` fixes the default (`7a439caf`): voice
+  starts right after with it, and a late `Version` would otherwise set the
+  transport's format, which `VoiceControl` reads for the send side, while
+  the started link kept parsing in the default.
+- **Passed at start.** `VoiceLink.setServerVersion` is gone.
+  `VoiceLifecycle.startVoice(host, port, format)` is the interim
+  `VoiceCommand.Start`, and `HumlaClient` reads the format from the
+  transport. `LegacyVoiceLink` reads the format once per datagram and
+  parses the whole datagram in it; the 1.2.2 workaround takes
+  `legacyServerVersion` from the same value.
+- **Pings report, never apply.** The protobuf UDP ping's
+  `server_version_v2` still reaches `VoiceEvent.UdpPing` and
+  `ServerState.info`, but no longer touches the format.
+- **A second flip path, not in the summary above.** `VoiceControl` chose
+  `AudioHandler`'s send framing from `ServerState.info.versionV2`, which
+  UDP pings rewrite, so an `AudioHandler` rebuild after such a ping could
+  flip the send format. It now reads `session.transport.voiceFormat`.
+- **Spec.** [transport](../transport.md#udp-packet-format) names the
+  transport as the decider and `voiceFormat` as the source for `Start`,
+  and rules out `ServerState.info` as a source.
+  [client](../client.md#start-sequence) step 7 says the same.
+
+**Pinned by** `TransportImplTest.voiceFormatIsFixedByTheFirstVersion`
+and `legacyServerVersionPicksLegacyFormat`,
+`LegacyVoiceLinkContractTest.udpPingVersionDoesNotChangeTheFormat` (the
+acceptance test: a 1.4.0 ping on a 1.5.0 session leaves the format
+protobuf and protobuf voice still parses), and
+`HumlaClientTest.connectSyncDisconnect` (the transport's format reaches
+`startVoice`), and `versionAfterServerSyncDoesNotChangeTheFormat`.
+**Shown to fail** with last-`Version`-wins, with the ping rewriting the
+format, with the client passing the default format, and without the
+default fixed at `ServerSync`.
+**Not pinned:** the `VoiceControl` read, since `VoiceControlTest` never
+starts a session ([03](03-voice-control-test-vacuous.md)).
 
 ## Related
 

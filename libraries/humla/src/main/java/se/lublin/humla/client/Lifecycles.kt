@@ -18,6 +18,7 @@
 package se.lublin.humla.client
 
 import java.util.concurrent.atomic.AtomicInteger
+import se.lublin.humla.net.VoiceFormat
 
 /**
  * Platform lifecycle boundaries the client sequences but never implements.
@@ -27,11 +28,14 @@ import java.util.concurrent.atomic.AtomicInteger
  * with fakes. The app wires the real VoiceEngine/RouteControl in step 4+.
  */
 interface VoiceLifecycle {
-    /** Start network voice with the session's UDP address and crypt keys. */
-    fun startVoice(host: String, port: Int)
+    /**
+     * Start network voice with the session's UDP address and the transport's
+     * voice format (interim `VoiceCommand.Start`). The route is not an
+     * argument: voice follows the transport's `SetVoiceRoute`, including for
+     * forced-TCP targets, which the transport keeps tunnelled.
+     */
+    fun startVoice(host: String, port: Int, format: VoiceFormat)
     fun stopVoice()
-    /** Forced-TCP targets never open a UDP socket. Defaults to tunnel-agnostic. */
-    fun setForceTcp(force: Boolean) {}
 }
 
 interface RouteLifecycle {
@@ -46,7 +50,7 @@ class NoopVoiceLifecycle : VoiceLifecycle {
     val starts: Int get() = startsCount.get()
     val stops: Int get() = stopsCount.get()
 
-    override fun startVoice(host: String, port: Int) {
+    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
         startsCount.incrementAndGet()
     }
 

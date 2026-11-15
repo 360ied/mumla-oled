@@ -97,8 +97,9 @@ class HumlaClientTest {
         assertTrue(h.state is ClientState.Connected)
         assertEquals(1, h.route.starts)
         assertEquals(1, h.voice.starts)
-        // Route pushed before the socket opened.
-        assertTrue(h.order.indexOf("voice-setforcetcp") < h.order.indexOf("voice-start"))
+        // Voice starts in the transport's format; the route is not the
+        // client's to push (the transport owns it, issue 16).
+        assertEquals(listOf(fake.voiceFormat), h.voice.startFormats)
 
         h.client.disconnect()
         h.step()

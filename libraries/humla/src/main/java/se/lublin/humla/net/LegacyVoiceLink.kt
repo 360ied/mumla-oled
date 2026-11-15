@@ -21,7 +21,6 @@ import com.google.protobuf.ByteString
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -71,11 +70,22 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     private val udpHandlers = CopyOnWriteArrayList<HumlaUDPMessageListener>()
 
-    private val usingUdp = AtomicBoolean(true)
-    private val forceTcp = AtomicBoolean(false)
+    // The route is the transport's decision (transport.md § Keepalive and UDP
+    // health); within a session this link only follows SetVoiceRoute. Each
+    // session starts tunnelled (initial value, reset at stopVoice) until the
+    // transport pushes its route at ServerSync, so no route carries over.
+    private val usingUdp = AtomicBoolean(false)
 
-    private val serverVersion = AtomicInteger(0)
-    private val serverVersionV2 = AtomicLong(0L)
+    // The session's endpoint while voice is started; null when stopped.
+    private data class Endpoint(val host: String, val port: Int)
+    private val endpointRef = AtomicReference<Endpoint?>(null)
+
+    // Fixed per voice start from the transport's decision (issue 17); never
+    // re-derived per packet or from UDP pings.
+    private val formatRef = AtomicReference(VoiceFormat.DEFAULT)
+
+    /** The current voice session's UDP framing. */
+    val udpFormat: UdpFormat get() = formatRef.get().udp
 
     private val udpRef = AtomicReference<HumlaUDP?>(null)
     // Direct executor (no thread hop): UDP data callbacks run on the
@@ -87,18 +97,6 @@ class LegacyVoiceLink @JvmOverloads constructor(
     // Interim encoder target for SessionStats.currentBandwidth until the step-5a
     // VoicePolicy carries real values. Seeded with the Settings default.
     private val targetBitrate = AtomicInteger(40000)
-
-    override fun setForceTcp(force: Boolean) {
-        forceTcp.set(force)
-        if (force) {
-            usingUdp.set(false)
-        }
-    }
-
-    override fun setServerVersion(v2: Long, v1: Int) {
-        serverVersionV2.set(v2)
-        serverVersion.set(v1)
-    }
 
     fun setTargetFramesPerPacket(fpp: Int) {
         targetFramesPerPacket.set(Constants.sanitizeFramesPerPacket(fpp))
@@ -113,30 +111,55 @@ class LegacyVoiceLink @JvmOverloads constructor(
         refreshStatus()
     }
 
-    override fun startVoice(host: String, port: Int) {
-        // Fresh session, fresh route: a previous session's tunnel decision
-        // must not pin the new one on TCP (or skip UDP when forced).
-        if (forceTcp.get()) return
-        usingUdp.set(true)
-        connectUdp(host, port)
+    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
+        // The route is not touched here: the transport's ServerSync push may
+        // land before or after this call. The socket opens once voice is
+        // started and the route is UDP, whichever comes last.
+        formatRef.set(format)
+        endpointRef.set(Endpoint(host, port))
+        connectUdpIfRouted()
+    }
+
+    /**
+     * Voice started for the session without ever opening UDP (interop
+     * harness: a network that drops UDP). Fixes the format like [startVoice].
+     */
+    internal fun startVoiceWithoutUdp(format: VoiceFormat) {
+        formatRef.set(format)
     }
 
     override fun stopVoice() {
+        endpointRef.set(null)
+        // Fail safe for the next session: tunnel (no UDP) until its transport
+        // pushes a route.
+        usingUdp.set(false)
         disconnectUdp()
     }
 
-    fun connectUdp(host: String, port: Int) {
-        if (forceTcp.get() || !usingUdp.get()) return
+    /**
+     * Opens the UDP socket when voice is started and routed over UDP. Once
+     * open it stays open across tunnel switches until [stopVoice], as before.
+     * Runs on the client coroutine (startVoice) or the caller of
+     * SetVoiceRoute(true) (transport reader); the socket is CAS-owned.
+     */
+    private fun connectUdpIfRouted() {
+        if (!usingUdp.get()) return
+        val endpoint = endpointRef.get() ?: return
         if (udpRef.get() != null) return
         val created = HumlaUDP(crypt, this, udpExecutor, targetFramesPerPacket.get())
         if (!udpRef.compareAndSet(null, created)) {
             created.disconnect()
             return
         }
-        created.connect(host, port)
-        // A concurrent stopVoice() disconnects the object before connect
-        // opens it; verify ownership after the fact so no live socket
-        // survives the stop.
+        created.connect(endpoint.host, endpoint.port)
+        // A concurrent stopVoice() clears the endpoint and may disconnect the
+        // object before connect opens it; verify both after the fact so no
+        // live socket survives the stop.
+        if (endpointRef.get() !== endpoint) {
+            udpRef.compareAndSet(created, null)
+            created.disconnect()
+            return
+        }
         if (udpRef.get() !== created) {
             created.disconnect()
             return
@@ -183,7 +206,7 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 "Requested length $length out of bounds for available data length ${data.size}!",
             )
         }
-        if (forceTcp.get() || !usingUdp.get()) {
+        if (!usingUdp.get()) {
             // Tunnel: hand the framed packet to the transport's UDPTunnel sender.
             val copy = data.copyOf(length)
             tunnelSink(copy)
@@ -217,7 +240,10 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     override fun submit(command: VoiceCommand) {
         when (command) {
-            is VoiceCommand.SetVoiceRoute -> usingUdp.set(command.udp && !forceTcp.get())
+            is VoiceCommand.SetVoiceRoute -> {
+                usingUdp.set(command.udp)
+                if (command.udp) connectUdpIfRouted()
+            }
             is VoiceCommand.SendPing -> sendUdpPing(command.timestampMicros)
         }
         refreshStatus()
@@ -238,12 +264,12 @@ class LegacyVoiceLink @JvmOverloads constructor(
     }
 
     private fun sendUdpPing(timestampMicros: Long) {
-        if (forceTcp.get() || !usingUdp.get()) return
+        if (!usingUdp.get()) return
         val current = udpRef.get() ?: return
         // Ping framing is owned by the native packet codec (step 5a.2),
         // byte-equal to the Java framing it replaces. A null return is an
         // encode failure: drop with a log, as the oversize path did before.
-        if (isProtobufUdpSupported()) {
+        if (formatRef.get().udp == UdpFormat.PROTOBUF) {
             val packet = try {
                 NativeVoiceCodec.frameProtobufPing(timestampMicros)
             } catch (e: Exception) {
@@ -268,10 +294,6 @@ class LegacyVoiceLink @JvmOverloads constructor(
         }
     }
 
-    fun isProtobufUdpSupported(): Boolean {
-        return Constants.isProtobufUdpSupported(serverVersionV2.get(), serverVersion.get())
-    }
-
     // HumlaUDP.UDPConnectionListener: runs on the UDP receiver coroutine for
     // data, and on the callback executor (direct) for resync/error.
     // Both inbound formats are parsed by the native packet codec (step 5a.2);
@@ -294,8 +316,10 @@ class LegacyVoiceLink @JvmOverloads constructor(
      * inbound and tunnel rings respectively; everything else is identical.
      */
     private fun onDatagramReceived(data: ByteArray, tunnel: Boolean) {
-        // Non-empty by construction on both paths (checked above).
-        if (isProtobufUdpSupported()) {
+        // Non-empty by construction on both paths (checked above). One read:
+        // the whole datagram is parsed in the session's format.
+        val format = formatRef.get()
+        if (format.udp == UdpFormat.PROTOBUF) {
             val msgType = data[0].toInt() and 0xFF
             if (msgType == 0) {
                 val frames = try {
@@ -341,7 +365,8 @@ class LegacyVoiceLink @JvmOverloads constructor(
                         if (bw != null) setMaxBandwidthPerUser(bw)
                     }.build()
                 broadcast { it.messageProtobufPing(pingMsg) }
-                if (v2 != null) serverVersionV2.set(v2)
+                // The ping's version is reported (UdpPing above), never used
+                // to re-pick the format.
                 refreshStatus()
                 return
             } else {
@@ -375,7 +400,7 @@ class LegacyVoiceLink @JvmOverloads constructor(
             return
         } else if (dataType == 4) {
             val frames = try {
-                NativeVoiceCodec.parseLegacyVoice(data, serverVersion.get())
+                NativeVoiceCodec.parseLegacyVoice(data, format.legacyServerVersion)
             } catch (e: Exception) {
                 logger.fine("Dropping malformed legacy voice: $e")
                 null

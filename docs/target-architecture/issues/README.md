@@ -107,8 +107,8 @@ the same state in its `Status` row.
 |---|---|---|
 | [14](14-local-facts-self-mute-stub.md) | Persisted self-mute/deafen never reaches the session; `LocalFactsStore` self-mute half is a stub | Interim documented; code fix at step 6 |
 | [15](15-current-bandwidth-bypasses-stats.md) | `getCurrentBandwidth` reads `AudioHandler`, not session stats | Interim documented; which source wins is open |
-| [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Open; settle before 5a.3b |
-| [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Open; settle before 5a.3b |
+| [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Resolved (`aba7011b`, `6b72a255`); teardown-window residual documented |
+| [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Resolved (`aba7011b`, `7a439caf`) |
 | [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Interim documented; ends in 5a.4 |
 | [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved on `session-serversync-update-hygiene` (`89dd9b57`), pending merge |
 
@@ -122,7 +122,7 @@ the same state in its `Status` row.
 | [23](23-syncing-not-entered-on-channelstate.md) | `SYNCING` entered only on `UserState` | Resolved (`5d322791`, `0e8b4c15`) |
 | [24](24-handles-drop-navigation-after-removal.md) | Removed handles drop navigation (spec wording too broad; matches old model) | Resolved (spec) |
 | [25](25-user-state-writes-local.md) | `applyUserState` writes `local.listeningVolumes` (spec self-contradiction) | Resolved (spec); optional test |
-| [26](26-stats-two-collectors.md) | Stats from two collectors; `usingUdp` seeded from the target | Open; not gating |
+| [26](26-stats-two-collectors.md) | Stats from two collectors; `usingUdp` seeded from the target | Seed fixed (`aba7011b`); single collector open, not gating |
 | [27](27-failed-with-connection-error.md) | `Failed` can carry a `ClientError.Connection` | Decided; `client.md` updated, `ClientError.Internal` code change open |
 | [28](28-local-facts-load-failure-silent.md) | A failed `LocalFacts` load is not logged | Resolved (`7459c0de`) |
 | [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Open; small |
@@ -144,7 +144,7 @@ a decision, made 2026-11-12). Rows 2 to 4 gate only 5a.3b (see [open items](../o
 | 1 (01 before 5a.3a) | Route confinement, then route state | ~~[01](01-sco-manager-two-thread-mutation.md)~~ (resolved), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 was its own worktree. The rest is one separate worktree: all of it is `RouteControl` code that was already route-confined before 01, and none of it gates 5a.3a. 10 changes the published `RouteState`, which `VoiceControl` follows, so check that effect in review. |
 | 2 (before 5a.3b) | Session and transport tests | ~~[04](04-session-transport-virtual-time-gaps.md)~~, ~~[05](05-client-edge-invariants-weak.md)~~ (resolved) | Done in one worktree. The `Session` and `TransportImpl` fakes row 3 reuses are in `ClientTestSupport.kt` and `TransportImplTest.kt`. |
 | 4 (before 5a.3b) | Published policy invariant | [34](34-published-policy-not-an-invariant.md) | Test-only; extends 05's harness with a real `PolicyCollector`. Independent of row 3. |
-| 3 (before 5a.3b) | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3b reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
+| 3 (before 5a.3b) | Transport ownership | ~~[16](16-voice-link-owns-udp-route.md)~~, ~~[17](17-udp-format-per-packet.md)~~ (resolved); [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) left | 16 and 17 done in one worktree. 22 and 26 are not gating and can be picked up any time; each is easiest to pin with 04's transport tests. |
 
 ### Independent, any time
 

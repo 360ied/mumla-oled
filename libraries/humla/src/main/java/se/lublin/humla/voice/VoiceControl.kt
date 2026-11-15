@@ -36,6 +36,7 @@ import se.lublin.humla.client.Session
 import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.LegacyVoiceLink
+import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.route.AppliedRoute
 import se.lublin.humla.route.RoutePreferences
@@ -366,13 +367,9 @@ class VoiceControl(
         }
 
         val handler = builder.initialize(self, maxBandwidth, codec, voiceTargetId)
-        val v2 = s.server.info.versionV2 ?: 0L
-        handler.setProtobufUdp(
-            se.lublin.humla.Constants.isProtobufUdpSupported(
-                v2,
-                se.lublin.humla.Constants.toLegacyVersion(v2),
-            ),
-        )
+        // The transport's per-session decision, not ServerState.info, which
+        // protobuf UDP pings may rewrite mid-session (issue 17).
+        handler.setProtobufUdp(session.transport.voiceFormat.udp == UdpFormat.PROTOBUF)
         return handler
     }
 }

@@ -604,7 +604,7 @@ public class MurmurConnectTest {
                 new ContinuousInputMode(),
                 (byte) 0, 1.0f, false, false,
                 peerEncode, peerOutput, new TalkActivityPublisher());
-        peerHandler.setProtobufUdp(receiverLink.isProtobufUdpSupported());
+        peerHandler.setProtobufUdp(receiverLink.getUdpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
         final AudioHandler peerRef = peerHandler;
         NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
                 40000, 2, 1.0f, false,

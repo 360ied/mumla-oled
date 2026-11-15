@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open; not gating. [04](04-session-transport-virtual-time-gaps.md) was resolved without it; its `SessionTest` fakes are the natural place for a pinning test. |
+| Status | Open; not gating. The seed half is done: `Session` seeds `usingUdp` from `transport.stats.value` since `aba7011b` ([16](16-voice-link-owns-udp-route.md)); the single `combine` collector remains. [04](04-session-transport-virtual-time-gaps.md) was resolved without it; its `SessionTest` fakes are the natural place for a pinning test. |
 | Category | Spec drift |
 | Severity | Benign |
 | Verified | Yes (code read) |
