@@ -38,7 +38,10 @@ interface Transport {
     val failure: Deferred<ClientError>        // completes once on a fatal transport error
     fun send(message: MessageLite, type: HumlaTCPMessageType)   // never blocks
     fun sendTunnelled(packet: ByteArray)      // voice over TCP (UDPTunnel); never blocks
+    val voiceFormat: VoiceFormat              // UDP format + legacy version, fixed at the first Version
 }
+
+data class VoiceFormat(val udp: UdpFormat, val legacyServerVersion: Int)
 
 data class CryptKeys(                         // each exactly 16 bytes (AES block size)
     val key: ByteString,
@@ -135,14 +138,24 @@ with the same constants:
 **The transport alone owns the UDP/TCP decision.** It publishes it in
 `TransportStats.usingUdp` and pushes it to the `VoiceEngine` with
 `VoiceCommand.SetVoiceRoute(udp: Boolean)`; the `VoiceEngine` only follows
-that command and does not report its own idea of the route.
+that command and does not report its own idea of the route. The transport
+pushes its initial route (`!forceTcp`) when it starts, before its reader
+runs, and then each switch; nothing else sets the route, and `Start` does
+not carry one (see [voice](voice.md#kotlin-facade)). The `VoiceEngine`
+outlives transports, so a closed transport submits no further voice
+commands.
 
 ## UDP packet format
 
-Chosen once per session from the server version (`Version` message), with
-today's rule (`Constants.isProtobufUdpSupported`): protobuf UDP when the
-server version is at least 1.5.0, legacy otherwise. Passed to the
-`VoiceEngine` in `VoiceCommand.Start`. The 1.2.2 legacy codec workaround
+Chosen once per session by the transport from the server's first
+`Version` message, with today's rule (`Constants.isProtobufUdpSupported`):
+protobuf UDP when the server version is at least 1.5.0, legacy otherwise.
+A later `Version` does not change it, and neither does the version in a
+protobuf UDP ping, which is only reported (`VoiceEvent.UdpPing`, then
+`ServerState.info`). The transport exposes the choice, with the server's
+legacy version, as `voiceFormat`; the client passes both to the
+`VoiceEngine` in `VoiceCommand.Start`. `ServerState.info.versionV2` is not
+a source for the format, since UDP pings rewrite it. The 1.2.2 legacy codec workaround
 (`applyLegacyCodecWorkaround`) moves into the native packet codec, keyed by
 the same version.
 
