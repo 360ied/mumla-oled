@@ -19,6 +19,7 @@ package se.lublin.humla.voice
 
 import com.google.protobuf.ByteString
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.collections.immutable.toPersistentSet
 import org.junit.Assert.assertArrayEquals
@@ -123,7 +124,9 @@ class VoiceEngineTest {
         return VoiceEngine(
             tunnelSink = { sunk.add(it) },
             talkPublisher = TalkActivityPublisher(),
-            scope = CoroutineScope(SupervisorJob()),
+            // Unconfined: command launches complete synchronously, so the
+            // assertions below observe submission order without waiting.
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
             engineFactory = { fake },
         )
     }
@@ -218,7 +221,7 @@ class VoiceEngineTest {
         val publisher = TalkActivityPublisher()
         val engine = VoiceEngine(
             talkPublisher = publisher,
-            scope = CoroutineScope(SupervisorJob()),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
             engineFactory = { FakeEngineNative() },
         )
         engine.onTalkSnapshot(
@@ -255,7 +258,7 @@ class VoiceEngineTest {
     fun `native load failure throws in debug builds`() {
         val engine = VoiceEngine(
             talkPublisher = TalkActivityPublisher(),
-            scope = CoroutineScope(SupervisorJob()),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
             engineFactory = { throw RuntimeException("no lib") },
         )
         try {

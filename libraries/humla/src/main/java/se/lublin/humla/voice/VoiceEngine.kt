@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -74,7 +75,7 @@ import kotlin.math.min
 class VoiceEngine @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val talkPublisher: TalkActivityPublisher = TalkActivityPublisher(),
-    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)),
     private val engineFactory: (NativeVoiceEngine.Listener) -> EngineNative = { NativeVoiceEngine(it) },
 ) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener {
     companion object {
@@ -98,6 +99,7 @@ class VoiceEngine @JvmOverloads constructor(
     private val targetBitrate = AtomicInteger(40000)
     private val runningFlag = AtomicBoolean(false)
 
+    @Volatile
     private var native: EngineNative? = null
     private val scopeRef = scope
 
@@ -188,11 +190,27 @@ class VoiceEngine @JvmOverloads constructor(
     }
 
     override fun submit(command: VoiceCommand) {
+        // Never blocks the caller: only fast atomic state lands here;
+        // every blocking native call (socket connect, joins) runs on the
+        // single-thread command scope, in submission order. The transport
+        // reader and the client dispatcher share this entry, so inline
+        // execution stalled TCP framing on DNS/connect.
         when (command) {
             is VoiceCommand.Start -> {
                 formatRef.set(command.format)
                 endpointRef.set(Endpoint(command.host, command.port))
-                ensureNative()
+                runningFlag.set(true)
+                // Fast JNI only (format, keys, reset, policy): no socket,
+                // no join, safe inline. The blocking connect below runs on
+                // the command scope so the transport reader never stalls.
+                try {
+                    ensureNative()
+                } catch (t: Throwable) {
+                    // Debug load failure must stay loud to the submitter
+                    // (the failure mode that killed the first 5a attempt).
+                    refreshStatus()
+                    throw t
+                }
                 val engine = native ?: run {
                     refreshStatus()
                     return
@@ -224,12 +242,23 @@ class VoiceEngine @JvmOverloads constructor(
                     loggerFine("Dropping engine reset: $e")
                 }
                 pushPolicy()
-                runningFlag.set(true)
                 if (usingUdp.get()) {
-                    val endpoint = endpointRef.get()
-                    if (endpoint != null && !engine.start(endpoint.host, endpoint.port)) {
-                        if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
-                            loggerFine("Dropping UdpUnavailable (event buffer full)")
+                    scope.launch {
+                        // Rechecked here so a Stop that landed after
+                        // submission wins over this queued connect.
+                        if (!usingUdp.get()) return@launch
+                        val endpoint = endpointRef.get() ?: return@launch
+                        if (!runningFlag.get()) return@launch
+                        try {
+                            if (!engine.start(endpoint.host, endpoint.port)) {
+                                if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
+                                    loggerFine("Dropping UdpUnavailable (event buffer full)")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            loggerFine("Dropping native start: $e")
+                        } finally {
+                            refreshStatus()
                         }
                     }
                 }
@@ -238,31 +267,37 @@ class VoiceEngine @JvmOverloads constructor(
                 endpointRef.set(null)
                 usingUdp.set(false)
                 runningFlag.set(false)
-                try {
-                    native?.stop()
-                } catch (e: Exception) {
-                    loggerFine("Dropping native stop: $e")
+                scope.launch {
+                    try {
+                        native?.stop()
+                    } catch (e: Exception) {
+                        loggerFine("Dropping native stop: $e")
+                    }
                 }
             }
             is VoiceCommand.SetVoiceRoute -> {
                 usingUdp.set(command.udp)
                 if (command.udp) {
-                    val endpoint = endpointRef.get()
-                    if (runningFlag.get() && endpoint != null) {
-                        try {
-                            if (native?.start(endpoint.host, endpoint.port) == false) {
-                                if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
-                                    loggerFine("Dropping UdpUnavailable (event buffer full)")
+                    scope.launch {
+                        // Rechecked here so a Stop that landed after submission
+                        // wins over this queued start.
+                        val endpoint = endpointRef.get()
+                        if (runningFlag.get() && endpoint != null) {
+                            try {
+                                if (native?.start(endpoint.host, endpoint.port) == false) {
+                                    if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
+                                        loggerFine("Dropping UdpUnavailable (event buffer full)")
+                                    }
                                 }
+                            } catch (e: Exception) {
+                                loggerFine("Dropping native start: $e")
                             }
-                        } catch (e: Exception) {
-                            loggerFine("Dropping native start: $e")
                         }
                     }
                 }
                 // The socket stays open across tunnel switches until Stop.
             }
-            is VoiceCommand.SendPing -> sendUdpPing(command.timestampMicros)
+            is VoiceCommand.SendPing -> scope.launch { sendUdpPing(command.timestampMicros) }
         }
         refreshStatus()
     }
