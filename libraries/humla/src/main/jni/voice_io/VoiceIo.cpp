@@ -119,9 +119,9 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     // The engine covers quanta up to MAX_QUANTUM_SAMPLES (60 ms); larger
     // requests split into several render calls. Every quantum's talk events
     // fold into the same level table, so nothing is lost across the split.
-    // The engine always fills its quantum (zeros when silent or gated), so
-    // no fill is needed here; result->samples mirrors the engine's 0-vs-full
-    // contract so the Kotlin idle wait can idle on silence.
+    // A quantum the engine reports as silent (0 samples) is zero-filled
+    // here; result->samples is 0 only when every quantum was silent, so
+    // the Kotlin idle wait can idle on silence.
     while (written < samples) {
         size_t want = std::min(samples - written,
                                AudioOutputEngine::MAX_QUANTUM_SAMPLES);
@@ -131,6 +131,8 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
         m_droppedJitter += engineResult.droppedPackets;
         if (engineResult.samples > 0) {
             silent = false;
+        } else {
+            std::fill(out + written, out + written + want, 0);
         }
         written += want;
     }
@@ -140,15 +142,47 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     result->droppedTunnel = m_droppedTunnel;
     result->droppedJitter = m_droppedJitter;
     result->talk = m_levels;
-    if (m_talkCell != nullptr) {
-        m_talkCell->publish(m_levels, m_droppedInbound, m_droppedTunnel,
-                            m_droppedJitter);
-    }
+    publishTalk();
 }
 
 void VoiceIo::clear() {
     m_engine->clear();
     m_levels.count = 0;
+    // Publish the emptied table: a control-plane reset while the notifier
+    // runs must deliver passive, per voice.md#queues (the destroy path
+    // covers Kotlin via clearRemote; this covers the cell).
+    publishTalk();
+}
+
+bool VoiceIo::talkEqual(const TalkSnapshot& a, const TalkSnapshot& b) {
+    if (a.count != b.count) {
+        return false;
+    }
+    for (size_t i = 0; i < a.count; ++i) {
+        if (a.entries[i].session != b.entries[i].session ||
+            a.entries[i].state != b.entries[i].state) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void VoiceIo::publishTalk() {
+    if (m_talkCell == nullptr) {
+        return;
+    }
+    if (talkEqual(m_levels, m_lastPublishedTalk) &&
+        m_droppedInbound == m_lastPublishedDroppedInbound &&
+        m_droppedTunnel == m_lastPublishedDroppedTunnel &&
+        m_droppedJitter == m_lastPublishedDroppedJitter) {
+        return;
+    }
+    m_talkCell->publish(m_levels, m_droppedInbound, m_droppedTunnel,
+                        m_droppedJitter);
+    m_lastPublishedTalk = m_levels;
+    m_lastPublishedDroppedInbound = m_droppedInbound;
+    m_lastPublishedDroppedTunnel = m_droppedTunnel;
+    m_lastPublishedDroppedJitter = m_droppedJitter;
 }
 
 } // namespace voice_io

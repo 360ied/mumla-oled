@@ -28,6 +28,7 @@ import org.mockito.Mockito.mock
 import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.protocol.AudioHandler
+import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.util.HumlaLogger
 
@@ -38,8 +39,8 @@ class VoiceControlTest {
         route: MutableStateFlow<RouteState> = MutableStateFlow(RouteState.Idle),
         policy: MutableStateFlow<VoicePolicy> = MutableStateFlow(VoicePolicy.mutedFallback(VoiceSettings.initial())),
         settings: MutableStateFlow<VoiceSettings> = MutableStateFlow(VoiceSettings.initial()),
-        prefs: MutableStateFlow<se.lublin.humla.route.RoutePreferences> = MutableStateFlow(
-            se.lublin.humla.route.RoutePreferences(bluetoothSco = false, handsetStream = 3),
+        prefs: MutableStateFlow<RoutePreferences> = MutableStateFlow(
+            RoutePreferences(bluetoothSco = false, handsetStream = 3),
         ),
     ): VoiceControl {
         val context = mock(Context::class.java)

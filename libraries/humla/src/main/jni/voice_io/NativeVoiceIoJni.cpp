@@ -122,8 +122,16 @@ struct VoiceIoContext {
         jintArray states = env->NewIntArray(static_cast<jsize>(n));
         if (sessions == nullptr || states == nullptr) {
             // OOM: drop this snapshot; the next 20 ms tick carries a newer
-            // table wholesale, so nothing sticks.
+            // table wholesale, so nothing sticks. Delete the surviving
+            // half first: locals on the attached notifier thread live
+            // until detach, so an early return would leak it.
             env->ExceptionClear();
+            if (sessions != nullptr) {
+                env->DeleteLocalRef(sessions);
+            }
+            if (states != nullptr) {
+                env->DeleteLocalRef(states);
+            }
             return;
         }
         if (n > 0) {
@@ -134,7 +142,21 @@ struct VoiceIoContext {
                 jstates[i] = static_cast<jint>(pub.talk.entries[i].state);
             }
             env->SetIntArrayRegion(sessions, 0, static_cast<jsize>(n), jsessions.data());
+            if (env->ExceptionCheck()) {
+                LOGE("SetIntArrayRegion(sessions) failed; dropping snapshot");
+                env->ExceptionClear();
+                env->DeleteLocalRef(sessions);
+                env->DeleteLocalRef(states);
+                return;
+            }
             env->SetIntArrayRegion(states, 0, static_cast<jsize>(n), jstates.data());
+            if (env->ExceptionCheck()) {
+                LOGE("SetIntArrayRegion(states) failed; dropping snapshot");
+                env->ExceptionClear();
+                env->DeleteLocalRef(sessions);
+                env->DeleteLocalRef(states);
+                return;
+            }
         }
         env->CallVoidMethod(listenerGlobalRef, onSnapshotMethod, sessions, states,
                             static_cast<jlong>(pub.droppedInbound),
@@ -160,6 +182,12 @@ static VoiceIoContext* getContext(jlong handle) {
 static thread_local std::vector<int16_t> t_renderScratch;
 
 namespace {
+// Largest single render request: four 60 ms quanta (240 ms). Kotlin always
+// sends one 20 ms quantum (FRAME_SIZE * 2), so anything larger is a caller
+// bug, refused rather than silently truncated. Doubles as the bound on the
+// thread-local scratch below (11520 int16, ~23 KiB, freed at thread exit).
+constexpr size_t kMaxRenderSamples =
+        AudioOutputEngine::MAX_QUANTUM_SAMPLES * 4;
 // RAII debug pin for the render-active lifecycle assertion.
 struct RenderGuard {
     explicit RenderGuard(std::atomic<bool>* flag) : m_flag(flag) {
@@ -174,6 +202,9 @@ struct RenderGuard {
 static bool fillPacket(JNIEnv* env, InboundPacket* packet, jint session,
                         jbyteArray data, jint length, jint sequence, jint flags,
                         jboolean isTerminator) {
+    if (length < 0) {
+        return false;
+    }
     packet->session = session;
     packet->sequence = static_cast<uint32_t>(sequence);
     packet->flags = flags;
@@ -233,7 +264,16 @@ Java_se_lublin_humla_voice_NativeVoiceIo_nativeCreate(JNIEnv* env, jclass /*claz
             return 0;
         }
     }
-    auto* ctx = new (std::nothrow) VoiceIoContext(vm, ref, method);
+    // nothrow covers only the allocation: the constructor builds the
+    // output engine (jitter pool plus per-voice decoders) and copies
+    // std::function hooks, all of which can throw bad_alloc out of the
+    // JNI frame. Catch it and fail creation instead of aborting.
+    VoiceIoContext* ctx = nullptr;
+    try {
+        ctx = new (std::nothrow) VoiceIoContext(vm, ref, method);
+    } catch (...) {
+        ctx = nullptr;
+    }
     if (ctx == nullptr) {
         if (ref != nullptr) {
             env->DeleteGlobalRef(ref);
@@ -334,9 +374,9 @@ Java_se_lublin_humla_voice_NativeVoiceIo_nativeRender(JNIEnv* env, jclass /*claz
     }
     // The engine covers quanta up to MAX_QUANTUM_SAMPLES (60 ms); larger
     // requests are a caller bug, refused rather than silently truncated.
-    if (static_cast<size_t>(length) > AudioOutputEngine::MAX_QUANTUM_SAMPLES * 4) {
+    if (static_cast<size_t>(length) > kMaxRenderSamples) {
         LOGE("nativeRender: refusing %d samples (max %zu)", length,
-             AudioOutputEngine::MAX_QUANTUM_SAMPLES * 4);
+             kMaxRenderSamples);
         return 0;
     }
     if (t_renderScratch.size() < static_cast<size_t>(length)) {

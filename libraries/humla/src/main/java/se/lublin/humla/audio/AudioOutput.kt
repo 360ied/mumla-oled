@@ -531,11 +531,14 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         val count = min(sessions.size, states.size)
         var index = 0
         while (index < count) {
+            // TALK_PASSIVE never arrives: VoiceIo::setTalkLevel strips
+            // passive before publish, so absence is the only passive. Like
+            // unknown ordinals it must not insert an entry, or the
+            // absent-means-passive canonical form breaks.
             val state = when (states[index]) {
                 NativeVoiceIo.TALK_TALKING -> TalkState.TALKING
                 NativeVoiceIo.TALK_SHOUTING -> TalkState.SHOUTING
                 NativeVoiceIo.TALK_WHISPERING -> TalkState.WHISPERING
-                NativeVoiceIo.TALK_PASSIVE -> TalkState.PASSIVE
                 else -> {
                     Log.w(TAG, "Unknown talk state ordinal: " + states[index])
                     null

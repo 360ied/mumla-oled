@@ -575,6 +575,7 @@ public class MurmurConnectTest {
         // never flows in the other scenarios), so the test routes framed
         // packets into the live session transport directly — the production
         // input engine and AudioHandler framing above are what is exercised.
+        // The sink wiring itself stays unpinned until 5a.3b removes it.
         final HumlaClient senderClient = senderHandle.getClient();
         AudioHandler.AudioEncodeListener peerEncode = new AudioHandler.AudioEncodeListener() {
             @Override public void onAudioEncoded(byte[] data, int length) {

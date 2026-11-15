@@ -122,6 +122,11 @@ private:
     void drainRings();
     void applyTalkEvents(const mumla::audio::RenderResult& engineResult);
     void setTalkLevel(int32_t session, mumla::audio::OutputTalkState state);
+    // Publishes into the talk cell only when the table or a drop counter
+    // changed since the last publication, so a steady render tick costs
+    // no JNI delivery (the notifier still wakes every 20 ms).
+    void publishTalk();
+    static bool talkEqual(const TalkSnapshot& a, const TalkSnapshot& b);
 
     std::unique_ptr<mumla::audio::AudioOutputEngine> m_engine;
     SpscRing<mumla::audio::InboundPacket, kInboundRingCapacity> m_inbound;
@@ -132,6 +137,11 @@ private:
     uint64_t m_droppedInbound = 0;
     uint64_t m_droppedTunnel = 0;
     uint64_t m_droppedJitter = 0;
+    // Last published talk state, for publishTalk's change detection.
+    TalkSnapshot m_lastPublishedTalk;
+    uint64_t m_lastPublishedDroppedInbound = 0;
+    uint64_t m_lastPublishedDroppedTunnel = 0;
+    uint64_t m_lastPublishedDroppedJitter = 0;
 };
 
 } // namespace voice_io

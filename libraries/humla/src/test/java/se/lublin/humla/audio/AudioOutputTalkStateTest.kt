@@ -31,6 +31,7 @@ import se.lublin.humla.state.UserHandle
 import se.lublin.humla.state.applyChannelState
 import se.lublin.humla.state.applyUserState
 import se.lublin.humla.state.emptySessionState
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.TalkActivityPublisher
 
 /**

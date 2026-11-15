@@ -348,6 +348,7 @@ class LegacyVoiceLink @JvmOverloads constructor(
                 // Protobuf mode: any other lead byte is neither voice nor
                 // ping; drop instead of mis-decoding as legacy voice.
                 logger.fine("Dropping unknown protobuf-UDP lead byte")
+                refreshStatus()
                 return
             }
         }
@@ -392,12 +393,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
             refreshStatus()
             return
         }
-        if (dataType < 0 || dataType > 7) {
-            logger.fine("Dropping out-of-range UDP type")
-            return
-        }
         // Remaining legacy types (0 CELT Alpha, 2 Speex, 3 CELT Beta) predate
         // Opus and never carry voice; 5-7 are unassigned. Drop, as before.
+        // (dataType is the top 3 bits of a byte, so always 0-7.)
         logger.fine("Dropping legacy-codec voice packet")
         refreshStatus()
     }

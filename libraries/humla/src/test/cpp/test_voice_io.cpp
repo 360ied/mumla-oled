@@ -263,15 +263,18 @@ void testRemoveUserClearsTalkLevel() {
 void testRenderSplitsLargeRequest() {
     g_testCount++;
     VoiceIo io(fakeFactory());
-    pushBurst(io, 55, 0, 8, /*inbound=*/true);
+    pushBurst(io, 55, 0, 25, /*inbound=*/true);
     // 200 ms exceeds the 60 ms engine quantum: VoiceIo splits it into
-    // several engine renders. The voice stays alive on concealment, so the
-    // full request mixes.
+    // several engine renders. 25 frames cover the whole request, so the
+    // voice stays talking throughout the split and the assertion below
+    // pins that every quantum's talk events folded into one table.
     const size_t want = static_cast<size_t>(kFrame) * 20;
     std::vector<int16_t> pcm(want);
     VoiceIo::RenderOut result;
     io.render(pcm.data(), want, &result);
     TEST_ASSERT_EQ(result.samples, want);
+    // The multi-quantum fold must carry the talk table, not just audio.
+    TEST_ASSERT_TRUE(snapshotHas(result.talk, 55, OutputTalkState::TALKING));
     std::cout << "  [PASS] testRenderSplitsLargeRequest" << std::endl;
 }
 
@@ -286,6 +289,19 @@ void testShoutFlagMapsToShouting() {
     io.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_TRUE(snapshotHas(result.talk, 66, OutputTalkState::SHOUTING));
     std::cout << "  [PASS] testShoutFlagMapsToShouting" << std::endl;
+}
+
+void testWhisperFlagMapsToWhispering() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    for (uint32_t i = 0; i < 8; ++i) {
+        TEST_ASSERT_TRUE(io.pushInbound(makePacket(67, i, /*flags=*/2)));
+    }
+    std::vector<int16_t> pcm(kFrame * 2);
+    VoiceIo::RenderOut result;
+    io.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_TRUE(snapshotHas(result.talk, 67, OutputTalkState::WHISPERING));
+    std::cout << "  [PASS] testWhisperFlagMapsToWhispering" << std::endl;
 }
 
 void testTalkCellPublishesLatest() {
@@ -462,6 +478,7 @@ void run_voice_io_tests() {
     testRemoveUserClearsTalkLevel();
     testRenderSplitsLargeRequest();
     testShoutFlagMapsToShouting();
+    testWhisperFlagMapsToWhispering();
     testTalkCellPublishesLatest();
     testTalkCellNeverTornUnderThreads();
     testNotifierDeliversOncePerChange();
