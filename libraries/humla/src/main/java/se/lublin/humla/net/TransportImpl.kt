@@ -21,15 +21,19 @@ import com.google.protobuf.ByteString
 import com.google.protobuf.InvalidProtocolBufferException
 import com.google.protobuf.MessageLite
 import java.io.ByteArrayInputStream
+import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.security.KeyStore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -74,6 +78,10 @@ class TransportImpl internal constructor(
     private val forceTcp: Boolean,
     private val voice: VoiceLink,
     parentScope: CoroutineScope,
+    // Injected so transport tests run the writer, keepalive, and voice
+    // collector under virtual time; production uses the defaults.
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val nanoTime: () -> Long = System::nanoTime,
 ) : Transport {
     companion object {
         const val CONNECT_TIMEOUT_MS = 10000
@@ -113,7 +121,7 @@ class TransportImpl internal constructor(
     }
 
     private val scope = CoroutineScope(
-        parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) + Dispatchers.IO,
+        parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) + ioDispatcher,
     )
 
     private val inboundChannel = Channel<Inbound>(INBOUND_CAPACITY)
@@ -143,11 +151,11 @@ class TransportImpl internal constructor(
 
     private val outbound = Channel<Outbound>(OUTBOUND_CAPACITY)
 
-    private val socketRef = AtomicReference<javax.net.ssl.SSLSocket?>(null)
+    private val socketRef = AtomicReference<Closeable?>(null)
     private val closed = AtomicBoolean(false)
     private val pingStarted = AtomicBoolean(false)
 
-    private val startNanos = System.nanoTime()
+    private val startNanos = nanoTime()
     private val usingUdpRef = AtomicBoolean(!forceTcp)
 
     private val readerThreadRef = AtomicReference<Thread?>(null)
@@ -161,7 +169,7 @@ class TransportImpl internal constructor(
     override val remoteHost: String get() = resolvedHostRef.get()
     override val remotePort: Int get() = resolvedPortRef.get()
 
-    fun elapsedMicros(): Long = (System.nanoTime() - startNanos) / 1000
+    fun elapsedMicros(): Long = (nanoTime() - startNanos) / 1000
 
     /** Connects (DNS + TLS + verify), then starts reader/writer. Throws TransportException. */
     suspend fun connect() {
@@ -235,8 +243,7 @@ class TransportImpl internal constructor(
                 )
             }
             socket.soTimeout = READ_TIMEOUT_MS
-            socketRef.set(socket)
-            startReaderWriter(socket)
+            start(socket.inputStream, socket.outputStream, socket)
             // usingUdpRef and _stats were already seeded with !forceTcp at
             // construction; no post-connect reset needed.
         }
@@ -360,9 +367,16 @@ class TransportImpl internal constructor(
     // entries (not values()) matches FrameValidator.MESSAGE_TYPE_COUNT.
     private val tcpTypes = HumlaTCPMessageType.entries.toTypedArray()
 
-    private fun startReaderWriter(socket: javax.net.ssl.SSLSocket) {
-        val input = DataInputStream(socket.inputStream)
-        val output = DataOutputStream(socket.outputStream)
+    /**
+     * Starts the reader thread, writer, and voice collector over a connected
+     * stream pair; [socket] is what failure and close shut to unblock the
+     * reader. [connect] calls it with the TLS socket; transport tests call it
+     * with in-memory streams.
+     */
+    internal fun start(rawInput: InputStream, rawOutput: OutputStream, socket: Closeable) {
+        socketRef.set(socket)
+        val input = DataInputStream(rawInput)
+        val output = DataOutputStream(rawOutput)
         writerJobRef.set(scope.launch {
             for (item in outbound) {
                 try {
