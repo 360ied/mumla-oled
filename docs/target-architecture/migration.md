@@ -360,15 +360,16 @@ wake design before 5a.3b (see [open items](open-items.md)).
 
 **Done when:** the output engine bridge is deleted and its `<mutex>`
 entry is gone from the allowlist, and `NativeAudioOutputEngine.kt` with
-it; `voice_io/`'s allowlist section holds only the thread includes;
+it; `voice_io/` stays outside the native tripwire's scope by design (it
+is the I/O layer) and holds no locks, per enforcement.md;
 `audio_engine/` and `voice_codec/` stay under `SINGLE_THREADED_ENGINE`;
 ring tests pin the full-ring drop counters; a notifier test pins one
 Kotlin call per delivery; a snapshot test pins that a talk state change
 reaches Kotlin after a stalled notifier resumes; a test pins that a push
-after `stopPlaying` is dropped without touching native memory; tests pin that the render entry point never
-attaches to the JVM and is the only path into the output engine while
-render runs (failing if a second caller appears), and that lifecycle calls
-assert render is stopped; a test rebuilds the pipeline while a remote
+after `stopPlaying` is dropped without touching native memory; the render
+core compiles with no JNI dependency (the render entry never attaches)
+and owns the output engine privately as the only path while render runs,
+with lifecycle calls asserting render is stopped in debug builds; a test rebuilds the pipeline while a remote
 voice is talking and ends with empty `talkActivity` users; interop voice from a peer over the tunnel
 plays non-silent PCM through the real render entry point — the scenario
 deferred from 5a.2, with the peer sending voice through the device-free
