@@ -53,6 +53,7 @@ import se.lublin.humla.client.LocalFacts
 import se.lublin.humla.client.NoopObserver
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.testTarget
+import se.lublin.humla.Constants
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.voice.TalkActivity
 
@@ -196,9 +197,14 @@ private class Fixture(val scope: TestScope, val forceTcp: Boolean = false) {
     )
     private var sentinels = 0
 
+    /** Routes pushed by start(), before any test step; cleared from [voice]. */
+    val initialRoutes: List<VoiceCommand.SetVoiceRoute>
+
     init {
         transport.start(socket.input, socket.output, socket)
         scope.runCurrent()
+        initialRoutes = voice.routes()
+        voice.commands.clear()
     }
 
     fun step() = scope.runCurrent()
@@ -384,14 +390,32 @@ class TransportImplTest {
     }
 
     @Test
+    fun initialRouteIsPushedAtStart() = runTest {
+        // The transport alone owns the route (issue 16): voice is told UDP at
+        // start, not left on its own default, and nothing more until a switch.
+        val f = Fixture(this)
+        try {
+            assertEquals(listOf(VoiceCommand.SetVoiceRoute(true)), f.initialRoutes)
+            assertTrue(f.transport.stats.value.usingUdp)
+            f.transport.startKeepalive()
+            f.step()
+            assertTrue(f.voice.routes().isEmpty())
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
     fun forcedTcpTunnelsFromServerSyncAndNeverUsesUdp() = runTest {
         val f = Fixture(this, forceTcp = true)
         try {
             assertFalse(f.transport.stats.value.usingUdp)
-            assertTrue(f.voice.routes().isEmpty())
+            // Tunnel pushed at start, ahead of voice start; not repeated.
+            assertEquals(listOf(VoiceCommand.SetVoiceRoute(false)), f.initialRoutes)
+            assertTrue(f.sentOf(HumlaTCPMessageType.UDPTunnel).isEmpty())
             f.transport.startKeepalive()
             f.step()
-            assertEquals(listOf(VoiceCommand.SetVoiceRoute(false)), f.voice.routes())
+            assertTrue(f.voice.routes().isEmpty())
             val frames = f.sentFrames()
             assertEquals(HumlaTCPMessageType.UDPTunnel, frames[0].first)
             assertDummyTunnel(frames[0].second)
@@ -402,11 +426,46 @@ class TransportImplTest {
             f.advance(40_000)
             f.serverPing(good = 50)
             f.sync()
-            assertEquals(1, f.voice.routes().size)
+            assertTrue(f.voice.routes().isEmpty())
             assertTrue(f.voice.pings().isEmpty())
             f.transport.startKeepalive()
             f.step()
             assertEquals(1, f.sentOf(HumlaTCPMessageType.UDPTunnel).size)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
+    fun voiceFormatIsFixedByTheFirstVersion() = runTest {
+        val f = Fixture(this)
+        try {
+            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            val v150 = Constants.toVersionV2(1, 5, 0)
+            f.serverSends(HumlaTCPMessageType.Version, Mumble.Version.newBuilder().setVersionV2(v150).build())
+            f.sync()
+            val fixed = VoiceFormat(UdpFormat.PROTOBUF, Constants.toLegacyVersion(v150))
+            assertEquals(fixed, f.transport.voiceFormat)
+            // A second Version does not re-pick the format (issue 17).
+            f.serverSends(
+                HumlaTCPMessageType.Version,
+                Mumble.Version.newBuilder().setVersionV1((1 shl 16) or (4 shl 8)).build(),
+            )
+            f.sync()
+            assertEquals(fixed, f.transport.voiceFormat)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
+    fun legacyServerVersionPicksLegacyFormat() = runTest {
+        val f = Fixture(this)
+        try {
+            val v1 = (1 shl 16) or (2 shl 8) or 2
+            f.serverSends(HumlaTCPMessageType.Version, Mumble.Version.newBuilder().setVersionV1(v1).build())
+            f.sync()
+            assertEquals(VoiceFormat(UdpFormat.LEGACY, v1), f.transport.voiceFormat)
         } finally {
             f.close()
         }

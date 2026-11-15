@@ -149,8 +149,11 @@ public class HumlaUDPReceiveThreadTest extends TestCase {
         final LegacyVoiceLink link = new LegacyVoiceLink(packet -> kotlin.Unit.INSTANCE);
 
         // Set server version to Mumble 1.5.0 so Protobuf UDP is supported
-        link.setServerVersion(Constants.toVersionV2(1, 5, 0), Constants.toLegacyVersion(Constants.toVersionV2(1, 5, 0)));
-        assertTrue("Protobuf UDP should be supported for 1.5.0", link.isProtobufUdpSupported());
+        // Start voice with the 1.5.0 format. No SetVoiceRoute was pushed, so
+        // the link stays tunnelled and opens no socket.
+        long v150 = Constants.toVersionV2(1, 5, 0);
+        link.startVoice("127.0.0.1", 9, VoiceFormat.fromServerVersion(v150, Constants.toLegacyVersion(v150)));
+        assertEquals("Protobuf UDP for 1.5.0", UdpFormat.PROTOBUF, link.getUdpFormat());
 
         final AtomicReference<Thread> audioDispatchThread = new AtomicReference<>();
         final AtomicReference<java.util.List<se.lublin.humla.net.DecodedVoiceFrame>> receivedAudio =

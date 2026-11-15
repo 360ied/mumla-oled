@@ -38,6 +38,7 @@ import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.LegacyVoiceLink
+import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.voice.TalkActivity
@@ -123,8 +124,6 @@ object InteropClient {
     fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val link = LegacyVoiceLink(tunnelSink = {})
-        val forceTcp = voice == Voice.FORCED_TCP
-        link.setForceTcp(forceTcp)
         val blocked = when (voice) {
             Voice.UDP_SILENTLY_BLOCKED -> NoUdpVoice(link, reportSocketFailure = false)
             Voice.UDP_SOCKET_FAILS -> NoUdpVoice(link, reportSocketFailure = true)
@@ -331,9 +330,11 @@ private class NoUdpVoice(
     private val reportSocketFailure: Boolean,
 ) : VoiceLink by delegate,
     VoiceLifecycle by delegate {
-    override fun startVoice(host: String, port: Int) {
-        // UDP stays closed for the session; report the socket failure through
-        // the listener callback HumlaUDP itself would use, or stay silent.
+    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
+        // UDP stays closed for the session (the format is still fixed); report
+        // the socket failure through the listener callback HumlaUDP itself
+        // would use, or stay silent.
+        delegate.startVoiceWithoutUdp(format)
         if (reportSocketFailure) {
             delegate.onUDPConnectionError(IOException("interop: UDP socket cannot be opened"))
         }

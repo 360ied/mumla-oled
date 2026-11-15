@@ -60,6 +60,36 @@ interface Transport {
     /** Resolved remote host/port for voice start (SRV resolved). */
     val remoteHost: String
     val remotePort: Int
+
+    /**
+     * UDP packet format for this session, decided once from the server's
+     * first `Version` (transport.md § UDP packet format). The client passes
+     * it to voice at start; [VoiceFormat.DEFAULT] until `Version` arrives.
+     */
+    val voiceFormat: VoiceFormat
+}
+
+/** Legacy vs protobuf UDP framing (voice.md packet codec). */
+enum class UdpFormat { LEGACY, PROTOBUF }
+
+/**
+ * The session's voice format: the UDP framing plus the server's legacy
+ * version, which keys the 1.2.2 codec workaround. Interim carrier of
+ * `VoiceCommand.Start`'s `format` and `legacyServerVersion` fields.
+ */
+data class VoiceFormat(val udp: UdpFormat, val legacyServerVersion: Int) {
+    companion object {
+        /** No `Version` seen: legacy framing, unknown version (today's default). */
+        @JvmField
+        val DEFAULT = VoiceFormat(UdpFormat.LEGACY, 0)
+
+        /** Today's rule (`Constants.isProtobufUdpSupported`): protobuf from 1.5.0. */
+        @JvmStatic
+        fun fromServerVersion(v2: Long, v1: Int): VoiceFormat = VoiceFormat(
+            if (se.lublin.humla.Constants.isProtobufUdpSupported(v2, v1)) UdpFormat.PROTOBUF else UdpFormat.LEGACY,
+            v1,
+        )
+    }
 }
 
 /** Inbound control-channel items, server order. */
@@ -87,8 +117,6 @@ interface VoiceLink {
     fun encryptIv(): ByteString
     fun submit(command: VoiceCommand)
     fun queueTunnelled(packet: ByteArray)
-    /** Server version for the UDP packet format (legacy vs protobuf). */
-    fun setServerVersion(v2: Long, v1: Int) {}
     val events: SharedFlow<VoiceEvent>
     val status: StateFlow<VoiceStatus>
 }

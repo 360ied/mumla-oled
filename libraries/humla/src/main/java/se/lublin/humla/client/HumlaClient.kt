@@ -35,6 +35,7 @@ import kotlinx.coroutines.withContext
 import se.lublin.humla.net.Transport
 import se.lublin.humla.net.TransportException
 import se.lublin.humla.net.TransportFactory
+import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.state.ServerState
 import se.lublin.humla.state.SessionEvent
@@ -352,15 +353,23 @@ class HumlaClient(
             routeLifecycle.sessionStarted()
         } catch (ignored: Exception) {
         }
-        // Push the route before opening UDP: startVoice skips the socket when
-        // forced (or when a previous session left the link tunnelled).
+        // The route is the transport's (pushed when it started); the format
+        // is the one it fixed from the server's Version.
         try {
-            voiceLifecycle.setForceTcp(target.forceTcp)
+            voiceLifecycle.startVoice(
+                transportRemoteHost(session),
+                transportRemotePort(session),
+                transportVoiceFormat(session),
+            )
         } catch (ignored: Exception) {
         }
-        try {
-            voiceLifecycle.startVoice(transportRemoteHost(session), transportRemotePort(session))
-        } catch (ignored: Exception) {
+    }
+
+    private fun transportVoiceFormat(session: Session): VoiceFormat {
+        return try {
+            session.transport.voiceFormat
+        } catch (e: Exception) {
+            VoiceFormat.DEFAULT
         }
     }
 

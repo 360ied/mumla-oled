@@ -174,7 +174,9 @@ class Session internal constructor(
     // overtake them. Consumers order by sentAt/receivedAtMillis.
     val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
-    private val _stats = MutableStateFlow(SessionStats.initial(usingUdp = !target.forceTcp))
+    // usingUdp comes only from the transport, which owns the decision
+    // (client.md § Statistics).
+    private val _stats = MutableStateFlow(SessionStats.initial(usingUdp = transport.stats.value.usingUdp))
     val stats: StateFlow<SessionStats> = _stats.asStateFlow()
 
     private val failureDeferred = CompletableDeferred<ClientError>()
