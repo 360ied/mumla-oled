@@ -410,7 +410,7 @@ flowchart LR
 | Thread | Realtime | Loop |
 |---|---|---|
 | Capture | Yes | Read 10 ms of PCM; read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; store the self-talking flag |
-| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device |
+| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device; after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
 | Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
 | Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call |
@@ -502,6 +502,42 @@ queued.
   coroutine's `removeUser` runs, then the late `queuePacket` lands. The
   dead-voice rule releases the slot the same way.
 
+### Render idle and wake
+
+When a render returns no audio, the render thread waits instead of
+spinning at 50 Hz (`b1a1118e`), with the same rule as before 5a.3b: no
+timeout when the output engine reports no active voices, 20 ms when it
+does (voices filling their startup gate or waiting out the miss expiry).
+The output stream stays started and underruns; nothing writes zeros (see
+[keep-alive shields](#keep-alive-shields)). The pacer is unchanged.
+
+The wait is a POSIX semaphore owned by `voice_io`, entered through
+`awaitWork(timeoutMs)` between render calls, never inside one. Timeouts
+use `sem_clockwait` on `CLOCK_MONOTONIC` (API 30, the minimum SDK).
+
+- **No lost wakeups.** Before waiting, render stores an `idle` flag and
+  then checks both rings; if either is non-empty it clears the flag and
+  skips the wait. Every producer pushes first, then posts only if
+  `idle.exchange(false)` returns true. Both sides use sequentially
+  consistent ordering, so a push either lands before render's check or
+  sees the flag. At most one post per idle period; a spurious wake costs
+  one empty quantum.
+- **Producers.** The post lives inside the `voice_io` push functions
+  (inbound, tunnel, and the remove-user control item), so the receive
+  thread, the tunnel caller, and the interim Kotlin pushes share one wake
+  path and the receive thread never calls into Kotlin for it.
+- **Stop.** Clear the running flag, then post. The semaphore remembers
+  the post, so a stop racing the wait's entry cannot strand the render
+  thread, and no thread interrupt is needed.
+- **Step 5b.** A blocking-mode render thread calls the same `awaitWork`.
+  In callback mode no idle state exists: the flag is never set and
+  producers never post. The design does not prejudge that spike.
+
+Rejected: a Kotlin wake called from native (a JNI call on the receive
+path that needs the same idle protocol, and dies in 5b); writing silence
+continuously (writes zeros, against the output-stream shield, and brings
+back the 50 Hz spin).
+
 ### Policy and settings handoff
 
 Kotlin publishes two values into native code:
@@ -578,7 +614,9 @@ frames into the rings (5a.3a).
 1. **The capture and render threads never wait on a lock, allocate, or
    call into Kotlin.** Their only system calls are the audio read or write
    and `sem_post` to wake the send thread. `sem_post` never blocks and
-   never allocates, and is the one deliberate exception.
+   never allocates, and is the one deliberate exception. The render
+   thread's [idle wait](#render-idle-and-wake) is not a lock: it blocks
+   only between render calls, after a quantum with no audio.
 2. **Each engine instance is driven by exactly one thread**: the input
    engine by capture, the output engine by render. Every other thread
    reaches them through the queues or the sequence locks.
@@ -596,7 +634,8 @@ Performed by the Kotlin **voice control thread**, in command order:
   socket; start the send, receive, and notifier threads; start capture and
   render (Kotlin threads in 5a, AAudio streams in 5b) once `RouteState` is
   `Ready` or `Fallback` (see [route](route.md#session-start)).
-- **Stop:** stop capture and render; set the stop flag; close the socket
+- **Stop:** stop capture and render (render: clear its running flag and
+  post the render wake before the join); set the stop flag; close the socket
   (unblocks `recvfrom`); post the send semaphore; join the three threads;
   zero the crypt keys; clear the queues.
 - **Reconfigure:** settings go through the sequence lock and need no

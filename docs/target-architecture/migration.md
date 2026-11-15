@@ -286,8 +286,9 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 [16](issues/16-voice-link-owns-udp-route.md) and
 [17](issues/17-udp-format-per-packet.md), issues
 [04](issues/04-session-transport-virtual-time-gaps.md) and
-[05](issues/05-client-edge-invariants-weak.md), and the render idle and
-wake design before 5a.3b (see [open items](open-items.md)).
+[05](issues/05-client-edge-invariants-weak.md) before 5a.3b (see
+[open items](open-items.md)). The render idle and wake design is settled
+(see [voice](voice.md#render-idle-and-wake)).
 
 #### 5a.3a — Native render
 
@@ -306,8 +307,8 @@ wake design before 5a.3b (see [open items](open-items.md)).
    point reports in its result whether any voices are active, which the
    Kotlin idle wait reads, and the interim enqueue keeps calling
    `signalData`), and the jitter margin is the I/O layer's constant. The
-   idle wait itself does not change in this half (see the render idle open
-   item in [open items](open-items.md)). `NativeAudioOutputEngineJni.cpp`,
+   idle wait itself does not change in this half; 5a.3b moves it native
+   (see [render idle](voice.md#render-idle-and-wake)). `NativeAudioOutputEngineJni.cpp`,
    the Kotlin `NativeAudioOutputEngine`, and the bridge's `<mutex>` are
    deleted.
 3. The notifier thread attaches to the JVM once and every 20 ms delivers
@@ -382,34 +383,42 @@ user leaving mid-talk.
 One sub-step, built in this order, each item a checkpoint that keeps
 voice working:
 
-1. The Kotlin `VoiceEngine` facade (lifecycle, keys, pings, tunnelled
+1. Native render wake, as in
+   [voice](voice.md#render-idle-and-wake): `voice_io` gains the render
+   semaphore and `awaitWork(timeoutMs)`, its push functions post when
+   render is idle, and the Kotlin render thread waits through it with
+   today's timeouts. `signalData`, `hasIncomingAudio`, the idle
+   `inactiveLock` waits, and `stopPlaying`'s thread interrupt are deleted;
+   the pacing poll becomes a plain sleep. Lands first, on the interim
+   pushes, so the receive thread arrives with its wake path in place.
+2. The Kotlin `VoiceEngine` facade (lifecycle, keys, pings, tunnelled
    packets) replaces `LegacyVoiceLink` and implements `VoiceLink` and
    `VoiceLifecycle`. `VoiceCommand.Start` carries the keys, the UDP
    format, and the legacy server version, decided once by the transport
    (issue [17](issues/17-udp-format-per-packet.md)). It takes over the
    `talkActivity` publisher from 5a.3a.
-2. `voice_io` receive half: the UDP socket and receive thread
+3. `voice_io` receive half: the UDP socket and receive thread
    (`recvfrom`, OCB2 decrypt through `CryptStateOCB2` directly,
    `parseDatagram`); the [sender filter](voice.md#sender-filter) reads
    the locally-muted list and the known sessions through the policy
    sequence lock; voice goes to the inbound ring. The interim UDP enqueue
    is deleted.
-3. Native `queueTunnelled`: parse and filter on the session message
+4. Native `queueTunnelled`: parse and filter on the session message
    coroutine, push to the tunnel ring. The Kotlin tunnel parse and the
    interim tunnel enqueue are deleted.
-4. Interim send seam: Kotlin capture, encode, and framing stay; framed
+5. Interim send seam: Kotlin capture, encode, and framing stay; framed
    packets go to native through a temporary `nativeSendDatagram`
    (encrypt and `sendto` on the shared socket), or to the tunnel sink
    when the transport routes voice over TCP.
-5. Pings, resync, and counters: ping replies reach Kotlin as
+6. Pings, resync, and counters: ping replies reach Kotlin as
    `VoiceEvent.UdpPing`; a decrypt failure raises `CryptResyncRequested`
    at today's rate; `VoiceStatus.localCrypt` comes from `CryptStateOCB2`.
    The 20 s fallback and the switch back to UDP stay in `TransportImpl`,
    unchanged — native code reports, the transport decides.
-6. `HumlaNative` takes up its remaining duties: a load failure reports
+7. `HumlaNative` takes up its remaining duties: a load failure reports
    `VoiceEvent.PipelineError` on release builds, and JVM tests inject a
    fake native layer instead of catching `UnsatisfiedLinkError`.
-7. Delete `HumlaUDP`, `LegacyVoiceLink`, the Kotlin `CryptState`, and
+8. Delete `HumlaUDP`, `LegacyVoiceLink`, the Kotlin `CryptState`, and
    `NativeCryptStateJni.cpp`, which have no callers once the socket and
    encryption are native; the interim codec bridge loses its parse and
    ping calls and keeps only the voice framing Kotlin encode uses until
@@ -424,6 +433,9 @@ voice working:
   an audible symptom.
 - **Resync recovers.** A forced decrypt failure produces exactly one
   rate-limited resync request, and voice resumes after the new IV.
+- **Render wake.** Host tests pin that a push to either ring wakes an
+  idle render wait, that stop wakes it, that the 20 ms timeout fires, and
+  that a producer-versus-waiter stress run loses no wakeup.
 - **Stop leaves nothing behind.** A test pins that after `Stop` the
   socket is closed and the receive and notifier threads have exited;
   interop restart → `Reconnecting` → `Connected` carries voice
