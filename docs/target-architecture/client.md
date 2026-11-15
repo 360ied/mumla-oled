@@ -137,7 +137,7 @@ stateDiagram-v2
     Connecting --> Connected: ServerSync
     Connecting --> Reconnecting: Connection error
     Connected --> Reconnecting: Connection error
-    Reconnecting --> Connecting: backoff elapsed or network available
+    Reconnecting --> Connecting: backoff elapsed, network available, or connect
     Connecting --> Failed: Rejected, Removed, Trust, Internal
     Connected --> Failed: Rejected, Removed
     Failed --> Connecting: connect
@@ -146,7 +146,15 @@ stateDiagram-v2
     Reconnecting --> Idle: disconnect or cancelReconnect
     Failed --> Idle: disconnect
     Connected --> Connecting: connect (other target)
+    Connecting --> Connecting: connect (other target)
 ```
+
+A `connect` while `Connecting` cancels the attempt in flight (and its
+session, if one exists) and publishes `Connecting` for the new target, the
+self-edge above. A same-server retry publishes an equal value, which a
+`StateFlow` does not emit, so only a different target or attempt is a
+visible transition. The virtual-time tests check every published value
+against exactly these edges (see [testing](testing.md#virtual-time-tests)).
 
 ### Reconnect policy
 
