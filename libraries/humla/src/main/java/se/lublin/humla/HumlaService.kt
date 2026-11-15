@@ -1489,7 +1489,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
         val selfSession = session.state.value.server.selfSession
         if (selfSession != null && session.state.value.server.users.containsKey(selfSession)) {
-            mCallbacks.onUserStateUpdated(UserHandle(selfSession, session.state))
+            // Self hint shape, like the talkActivity fanout below: the local
+            // user's state lives in selfTalking, not the remote table.
+            mCallbacks.onUserStateUpdated(
+                UserHandle(
+                    selfSession,
+                    session.state,
+                    talkPublisher.talkActivity,
+                    talkStateOverride = if (talkPublisher.talkActivity.value.selfTalking) {
+                        TalkState.TALKING
+                    } else {
+                        TalkState.PASSIVE
+                    },
+                ),
+            )
         }
     }
 

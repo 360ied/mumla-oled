@@ -27,6 +27,7 @@ import java.util.logging.Handler
 import java.util.logging.Level
 import java.util.logging.LogRecord
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -47,6 +48,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
+import se.lublin.humla.model.TalkState
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.model.IUser
 import se.lublin.humla.net.CryptKeys
@@ -274,6 +276,7 @@ class HumlaClientTest {
         network: FakeNetwork,
         clock: Clock = Clock.fixed(Instant.ofEpochMilli(1_000_000), ZoneOffset.UTC),
         localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
+        talkActivity: MutableStateFlow<TalkActivity> = MutableStateFlow(TalkActivity.initial()),
     ): HumlaClient = HumlaClient(
         parentScope = scope,
         transports = factory,
@@ -282,7 +285,7 @@ class HumlaClientTest {
         voiceLink = voice,
         network = network,
         localFactsStore = localFactsStore,
-        talkActivity = MutableStateFlow(TalkActivity.initial()),
+        talkActivity = talkActivity,
         clock = clock,
         observer = NoopObserver,
         mainPoster = { r -> r.run() },
@@ -858,5 +861,44 @@ class HumlaClientTest {
             assertTrue((error as ClientError.Connection).cause is IllegalStateException)
             client.close().join()
         }
+    }
+
+    @Test
+    fun channelRosterReadsLiveTalkLevels() = runTest {
+        val dispatcher = coroutineContext[ContinuationInterceptor] as TestDispatcher
+        val factory = FakeFactory()
+        val order = Collections.synchronizedList(ArrayList<String>())
+        val voice = FakeVoice()
+        val route = FakeRoute(order)
+        val network = FakeNetwork()
+        val talk = MutableStateFlow(TalkActivity.initial())
+        val client = newClient(this, dispatcher, factory, voice, route, network, talkActivity = talk)
+        runCurrent()
+
+        client.connect(testTarget())
+        runCurrent()
+        val live = client.currentSession.value!!
+        val fake = live.transport as FakeTransport
+        fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ChannelState, channelState(0, "Root")))
+        fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.UserState, userState(1, "alice", 0)))
+        fake.inboundChannel.send(Inbound.Message(HumlaTCPMessageType.ServerSync, serverSync(1)))
+        runCurrent()
+        assertTrue(client.state.value is ClientState.Connected)
+        // Channel-roster handles read the same live levels as user handles:
+        // without the forwarded flow they would stay passive here.
+        talk.value = TalkActivity(selfTalking = false, users = persistentMapOf(1 to TalkState.TALKING))
+        assertEquals(
+            TalkState.TALKING,
+            live.getChannel(0)!!.users.single { it.session == 1 }.talkState,
+        )
+        talk.value = TalkActivity.initial()
+        assertEquals(
+            TalkState.PASSIVE,
+            live.getChannel(0)!!.users.single { it.session == 1 }.talkState,
+        )
+
+        client.disconnect()
+        runCurrent()
+        client.close().join()
     }
 }

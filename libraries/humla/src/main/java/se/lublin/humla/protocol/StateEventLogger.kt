@@ -223,6 +223,8 @@ class StateEventLogger(
         event: SessionEvent.TextMessageReceived,
         stateFlow: StateFlow<SessionState>,
     ): IMessage {
+        // Chat-log handles read passive talkState by design (no
+        // talkActivity flow here): the log renders no talk dots.
         val channels = ArrayList<IChannel>(event.channels.size)
         for (id in event.channels) {
             if (stateFlow.value.server.channels.containsKey(id)) {
