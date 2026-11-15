@@ -78,7 +78,7 @@ import kotlin.math.min
 class VoiceEngine @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val talkPublisher: TalkActivityPublisher = TalkActivityPublisher(),
-    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)),
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)),
     private val engineFactory: (NativeVoiceEngine.Listener) -> EngineNative = { NativeVoiceEngine(it) },
 ) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener {
     companion object {
