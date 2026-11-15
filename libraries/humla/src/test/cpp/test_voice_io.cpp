@@ -1002,7 +1002,10 @@ void testReceiveStopLeavesNothing() {
     TEST_ASSERT_FALSE(rx.sendDatagram(nullptr, 0));
     // Restart after stop: the socket is closed and the receive thread was
     // joined, so start binds fresh and the path carries voice again.
-    // (Done-when (d): socket closed and receive/notifier threads exited.)
+    // (Done-when (d) receive half: socket closed, receive thread exited.
+    // The session-lifetime notifier stops in nativeStop and restarts in
+    // nativeReset; its own start/stop/restart is pinned by the notifier
+    // unit tests, and the Reset-on-Start ordering by VoiceEngineTest.)
     TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
     TEST_ASSERT_TRUE(rx.running());
     TEST_ASSERT_TRUE(rx.socketFd() >= 0);

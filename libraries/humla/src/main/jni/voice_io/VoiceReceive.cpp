@@ -67,6 +67,10 @@ bool VoiceReceive::setDecryptIv(const uint8_t div[16]) {
     return m_crypt.setDecryptIV(div);
 }
 
+void VoiceReceive::clearKeys() {
+    m_crypt.clear();
+}
+
 void VoiceReceive::getEncryptIv(uint8_t out[16]) const {
     m_crypt.getEncryptIV(out);
 }
@@ -102,8 +106,11 @@ bool VoiceReceive::handlePlaintext(const uint8_t* data, size_t length) {
     }
     PolicySnapshot snapshot;
     if (m_policy != nullptr) {
-        if (!m_policy->tryRead(&snapshot)) {
-            return true;
+        // Seqlock reader: retry while the writer is publishing or a
+        // concurrent publish landed mid-copy (voice.md policy handoff).
+        // Both callers are non-realtime and the writer holds no locks, so
+        // this terminates after at most a few copies.
+        while (!m_policy->tryRead(&snapshot)) {
         }
     }
     mumla::audio::InboundPacket survivors[voice_codec::kMaxFramesPerDatagram];
@@ -176,8 +183,11 @@ bool VoiceReceive::handleTunnelled(const uint8_t* data, size_t length) {
     }
     PolicySnapshot snapshot;
     if (m_policy != nullptr) {
-        if (!m_policy->tryRead(&snapshot)) {
-            return true;
+        // Seqlock reader: retry while the writer is publishing or a
+        // concurrent publish landed mid-copy (voice.md policy handoff).
+        // Both callers are non-realtime and the writer holds no locks, so
+        // this terminates after at most a few copies.
+        while (!m_policy->tryRead(&snapshot)) {
         }
     }
     mumla::audio::InboundPacket survivors[voice_codec::kMaxFramesPerDatagram];

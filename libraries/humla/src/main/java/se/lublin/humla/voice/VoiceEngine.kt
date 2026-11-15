@@ -165,6 +165,13 @@ class VoiceEngine @JvmOverloads constructor(
         runningFlag.set(true)
         try {
             ensureNative()
+            // Like Start: drain stale state and (re)start the
+            // session-lifetime notifier while no render is live.
+            try {
+                native?.reset()
+            } catch (e: Exception) {
+                loggerFine("Dropping engine reset: $e")
+            }
             native?.setFormat(
                 if (format.udp == UdpFormat.PROTOBUF) 1 else 0,
                 format.legacyServerVersion,

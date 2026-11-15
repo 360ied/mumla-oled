@@ -275,5 +275,7 @@ class VoiceEngineTest {
         assertTrue(engine.status.value.running)
         assertTrue(fake.started.isEmpty())
         assertEquals(1, fake.formatUdp)
+        // Session start drains stale state like Start (notifier restart).
+        assertEquals(1, fake.resetCalls)
     }
 }

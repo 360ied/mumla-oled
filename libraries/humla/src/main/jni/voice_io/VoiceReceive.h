@@ -78,6 +78,9 @@ public:
     // loop: OCB2 serializes internally, never on a realtime thread.
     bool setKeys(const uint8_t key[16], const uint8_t eiv[16], const uint8_t div[16]);
     bool setDecryptIv(const uint8_t div[16]);
+    // Session end (Stop, control thread, receive already joined): zero the
+    // crypt keys so nothing lingers across sessions. Stats restart at zero.
+    void clearKeys();
     void getEncryptIv(uint8_t out[16]) const;
     void getStats(int32_t* good, int32_t* late, int32_t* lost, int32_t* resync) const;
 

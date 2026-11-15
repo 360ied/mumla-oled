@@ -133,6 +133,20 @@ bool CryptStateOCB2::setKey(const uint8_t *rkey, const uint8_t *eiv, const uint8
     return true;
 }
 
+void CryptStateOCB2::clear() {
+    std::scoped_lock lock(m_encryptMutex, m_decryptMutex);
+    secure_zero(raw_key, sizeof(raw_key));
+    secure_zero(encrypt_iv, sizeof(encrypt_iv));
+    secure_zero(decrypt_iv, sizeof(decrypt_iv));
+    secure_zero(decrypt_history, sizeof(decrypt_history));
+    bInit = false;
+    m_hasLastGood.store(false);
+    m_statGood.store(0);
+    m_statLate.store(0);
+    m_statLost.store(0);
+    m_statResync.store(0);
+}
+
 bool CryptStateOCB2::setDecryptIV(const uint8_t *div) {
     if (!div) return false;
     std::lock_guard lock(m_decryptMutex);

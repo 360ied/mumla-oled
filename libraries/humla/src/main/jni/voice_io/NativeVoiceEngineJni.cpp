@@ -299,8 +299,10 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCreate(JNIEnv* env, jclass /*
         env->DeleteGlobalRef(ref);
         return 0;
     }
-    // The notifier runs for the context lifetime (service-scoped publisher);
-    // render wakeups and talk delivery need no per-session start.
+    // The notifier is session-lifetime: nativeReset starts it (covering UDP
+    // and tunnel sessions alike) and nativeStop stops it, so no notifier
+    // thread outlives the session. The Kotlin talkActivity flow itself stays
+    // service-lifetime; only its native producer is per-session.
     ctx->notifier.start();
     return reinterpret_cast<jlong>(ctx);
 }
@@ -351,6 +353,9 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetPolicy(JNIEnv* env, jclass
         const jsize m = env->GetArrayLength(muted);
         if (m > 0) {
             jsize take = m > 256 ? 256 : m;
+            if (m > 256) {
+                LOGE("nativeSetPolicy: muted list %d exceeds 256, keeping first 256", m);
+            }
             env->GetIntArrayRegion(muted, 0, take, mutedBuf);
             mutedCount = static_cast<size_t>(take);
         }
@@ -432,11 +437,14 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
                                                         jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
-        // Stop closes the socket and joins the receive thread. It never
-        // touches the engine: the render thread is owned by the pipeline
-        // and joined there, so clearing here would race it. Reset happens
-        // in nativeReset at the next Start, when no render is live.
+        // Stop closes the socket and joins the receive thread, stops the
+        // session-lifetime notifier, and zeroes the crypt keys. It never
+        // touches the engine or rings: the render thread is owned by the
+        // pipeline and joined there, so clearing here would race it. Reset
+        // happens in nativeReset at the next Start, when no render is live.
         ctx->receive.stop();
+        ctx->notifier.stop();
+        ctx->receive.clearKeys();
     }
 }
 
@@ -446,8 +454,13 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeReset(JNIEnv* /*env*/, jclass
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
         // Session start, when no render is live: drain stale rings, reset
-        // both engines, publish the emptied table (see VoiceIo::clear).
+        // both engines, publish the emptied table (see VoiceIo::clear),
+        // and (re)start the session-lifetime notifier. The render thread
+        // does not exist yet at this point, so the debug assert below must
+        // hold; a violation fails loudly in debug builds.
+        assert(!ctx->renderActive.load(std::memory_order_acquire));
         ctx->io.clear();
+        ctx->notifier.start();
     }
 }
 

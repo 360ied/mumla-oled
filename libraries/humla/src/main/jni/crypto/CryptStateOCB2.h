@@ -51,6 +51,11 @@ public:
     bool setDecryptIV(const uint8_t *div);
     bool setEncryptIV(const uint8_t *eiv);
 
+    // Session end (Stop, control thread, receive already joined): zero key
+    // material and return to the invalid state, so nothing lingers across
+    // sessions. Stats restart from zero, like a fresh setKey.
+    void clear();
+
     void getEncryptIV(uint8_t out[16]) const;
     void getDecryptIV(uint8_t out[16]) const;
     void getRawKey(uint8_t out[16]) const;

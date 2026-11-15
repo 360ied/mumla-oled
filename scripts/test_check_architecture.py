@@ -382,7 +382,10 @@ class TestVoiceLifecycle(unittest.TestCase):
     def write_lifecycle(self, root, text):
         d = root / "libraries/humla/src/main/jni/voice_io"
         d.mkdir(parents=True)
-        (d / "NativeVoiceIoJni.cpp").write_text(text, encoding="utf-8")
+        # Keep in sync with the gate: the lifecycle pin follows the file,
+        # not the other way round (renamed NativeVoiceIoJni ->
+        # NativeVoiceEngineJni in 5a.3b).
+        (d / Path(ca.VOICE_IO_LIFECYCLE_FILE).name).write_text(text, encoding="utf-8")
 
     def test_absent_voice_io_passes_trivially(self):
         with tempfile.TemporaryDirectory() as tmp:
