@@ -231,13 +231,6 @@ bool VoiceReceive::start(const char* host, uint16_t port) {
     if (m_running.load(std::memory_order_acquire)) {
         return true;
     }
-    // Reclaim a stale fd from an abnormal loop exit without an
-    // intervening stop(): control thread only, no receiver running.
-    int stale = m_sock.exchange(-1, std::memory_order_acq_rel);
-    if (stale >= 0) {
-        shutdown(stale, SHUT_RDWR);
-        close(stale);
-    }
     if (host == nullptr || port == 0) {
         return false;
     }
@@ -275,13 +268,13 @@ void VoiceReceive::stop() {
     m_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel,
                                         std::memory_order_relaxed);
     // Close the socket to unblock recvfrom (spec Stop); the loop exits on
-    // running false or the closed socket. Exchange keeps it idempotent.
-    int toClose = m_sock.exchange(-1, std::memory_order_acq_rel);
+    // running false or the closed socket. Single writer (control thread
+    // only), so plain load-check-close-store suffices.
+    int toClose = m_sock.load(std::memory_order_acquire);
     if (toClose >= 0) {
         close(toClose);
     }
-    // Join after close orders the handoff: the receiver is out before
-    // the next start reuses the context.
+    m_sock.store(-1, std::memory_order_release);
     if (m_thread.joinable()) {
         m_thread.join();
     }
@@ -298,12 +291,9 @@ void VoiceReceive::loop() {
         if (got <= 0) {
             if (!m_running.load(std::memory_order_acquire)) break;
             // Socket error while running: report once; the transport
-            // switches to tunnel, as after its 20 s rule.
+            // switches to tunnel, as after its 20 s rule. Teardown
+            // always stops before the next start, which heals this.
             if (m_unavailableSink) m_unavailableSink();
-            // Abnormal exit: clear liveness (control closes the socket in
-            // stop()) so a later start() restarts instead of succeeding
-            // on a dead thread.
-            m_running.store(false, std::memory_order_release);
             break;
         }
         if (!m_crypt.isValid() || got < 5) {
