@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — close together with [04](04-session-transport-virtual-time-gaps.md). |
+| Status | Resolved 2026-11-14 (`26b6c8c4`, `02e68f97`): one checker asserts all five invariants after every step; edges are exactly the diagram's. See [Resolution](#resolution). |
 | Category | Verification gap |
 | Severity | Harmful (the invariants the spec relies on are mostly unchecked) |
 | Verified | Yes |
 | Area | Client tests |
 | Spec | [testing.md § Virtual-time tests](../testing.md#virtual-time-tests) (invariants), [client.md § ClientState](../client.md#clientstate) (edge diagram) |
 | Code | `libraries/humla/src/test/java/se/lublin/humla/client/HumlaClientTest.kt` (`allowedEdges`, `assertEdges`) |
-| Gates | Should be fixed together with [04](04-session-transport-virtual-time-gaps.md) |
+| Gates | Gated step 5a.3b with 04; gate met |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
@@ -115,6 +115,39 @@ without visibly breaking" rests on these invariants being checked.
 - Temporarily adding an illegal transition in `HumlaClient` (for example,
   publishing `Reconnecting` from `Failed`) makes the suite fail.
 - `./scripts/check.sh` passes.
+
+## Resolution
+
+`InvariantChecker` and `ClientHarness` in
+`libraries/humla/src/test/java/se/lublin/humla/client/ClientTestSupport.kt`.
+Unconfined collectors record every `ClientState` and every state each
+session publishes, so values landing between two steps are still seen.
+`ClientHarness.step()` and `advance()` wrap `runCurrent()` and
+`advanceTimeBy()` and run the check after each; every `HumlaClientTest`
+and `SessionTest` scenario steps through them.
+
+| Invariant | Detector |
+|---|---|
+| At most one live session; nothing runs in a cancelled session's scope | Every live session (scope job active) is the client's current one, so a session the client let go of must be cancelled even before a successor exists; a cancelled scope has no unfinished children |
+| `Stop` before `SessionEnded` | Every `route-end` in the shared lifecycle log follows its own `voice-stop` |
+| No `VoicePolicy` allows transmit while muted, deafened, or suppressed | `voicePolicy(state, VoiceSettings.initial())` on every published state, against `effectiveSelfMute` and the server's mute, deafen, and suppress flags |
+| Every user's `channelId` refers to an existing channel | On every published state; the one tolerated gap is the null `channelId` that [state](../state.md#server-message-transitions) gives occupants of a removed channel until the server moves them |
+| `ClientState` edges | Every consecutive pair of recorded values, against exactly the diagram's edges; no same-state skip |
+
+**`Connecting → Connecting` is legitimate.** testing.md's own scenario
+(connect to another target while connecting) makes it: the client
+cancels the attempt and publishes `Connecting` for the new target. The
+diagram gained the self-edge, and connect as a trigger of
+`Reconnecting → Connecting` (`26b6c8c4`). A same-server retry publishes
+an equal value, which `StateFlow` does not emit, so no skip is needed;
+`connectToOtherTargetWhileConnecting` asserts that the edge occurs.
+
+The checker has its own tests (`invariantCheckerRejectsEdgeOutsideDiagram`,
+`invariantCheckerRejectsRouteEndBeforeVoiceStop`,
+`invariantCheckerRejectsTwoLiveSessions`). Publishing `Reconnecting` from
+`Failed` in `HumlaClient` fails four scenarios. Swapping the teardown
+order, or leaving `Session.close` without its scope cancel, fails most of
+the suite (see [04](04-session-transport-virtual-time-gaps.md#resolution)).
 
 ## Related
 

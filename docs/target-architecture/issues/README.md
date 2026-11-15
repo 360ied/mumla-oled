@@ -82,8 +82,8 @@ the same state in its `Status` row.
 | # | Issue | State |
 |---|---|---|
 | [03](03-voice-control-test-vacuous.md) | `VoiceControlTest` never starts a session, so the pipeline lifecycle is untested | Open; deferred to 5a.4, lesson applies to its replacement |
-| [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Open; should close before 5a.3b |
-| [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Open; with 04 |
+| [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Resolved (`bf1b37a3`..`cc3a673f`) |
+| [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Resolved (`26b6c8c4`, `02e68f97`) |
 | [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions have no enforcement artifact; one violation in `Session` | Split: `ServerSync` lambda fixed on `session-serversync-update-hygiene`; review skills deleted, so enforcement is open (tripwire not written); rule-2 sweep undone |
 | [07](07-channel-adapter-spike-weaker.md) | Step-2 live-handle spike test is weaker than specified | Open; not gating |
 | [08](08-hash-clearing-untested.md) | Hash-driven clearing has no transition test | Resolved (`3333918a`, `71bd3a54`) |
@@ -115,7 +115,7 @@ the same state in its `Status` row.
 |---|---|---|
 | [20](20-batch-drain-publishes-per-message.md) | 64-message batch drain still publishes once per message | Open; needs a decision (implement publish-once, or correct the spec's cost model) |
 | [21](21-retry-sco-no-counter-check.md) | `RetrySco` skips the counter check, publishes nothing, always returns true | Half resolved (spec); truthful return open |
-| [22](22-keepalive-anchored-at-construction.md) | Keepalive window and 20 s tunnel rule anchored at transport creation | Open; fold into 04's transport tests |
+| [22](22-keepalive-anchored-at-construction.md) | Keepalive window and 20 s tunnel rule anchored at transport creation | Open; pin in `TransportImplTest` (04's injected clock) |
 | [23](23-syncing-not-entered-on-channelstate.md) | `SYNCING` entered only on `UserState` | Resolved (`5d322791`, `0e8b4c15`) |
 | [24](24-handles-drop-navigation-after-removal.md) | Removed handles drop navigation (spec wording too broad; matches old model) | Resolved (spec) |
 | [25](25-user-state-writes-local.md) | `applyUserState` writes `local.listeningVolumes` (spec self-contradiction) | Resolved (spec); optional test |
@@ -139,7 +139,7 @@ a decision, made 2026-11-12). Rows 2 and 3 gate only 5a.3b (see [open items](../
 | Order | Batch | Issues | Notes |
 |---|---|---|---|
 | 1 (01 before 5a.3a) | Route confinement, then route state | ~~[01](01-sco-manager-two-thread-mutation.md)~~ (resolved), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 was its own worktree. The rest is one separate worktree: all of it is `RouteControl` code that was already route-confined before 01, and none of it gates 5a.3a. 10 changes the published `RouteState`, which `VoiceControl` follows, so check that effect in review. |
-| 2 (before 5a.3b) | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
+| 2 (before 5a.3b) | Session and transport tests | ~~[04](04-session-transport-virtual-time-gaps.md)~~, ~~[05](05-client-edge-invariants-weak.md)~~ (resolved) | Done in one worktree. The `Session` and `TransportImpl` fakes row 3 reuses are in `ClientTestSupport.kt` and `TransportImplTest.kt`. |
 | 3 (before 5a.3b) | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3b reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
 
 ### Independent, any time
