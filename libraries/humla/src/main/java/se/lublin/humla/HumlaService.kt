@@ -241,16 +241,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 // Self talk comes from the capture thread alone. From 5a.3a
                 // it sets selfTalking in the service-lifetime publisher
                 // instead of stamping a fresh handle; repaint hints fan out
-                // from the publisher's flow below.
-                lifecycleScope.launch {
-                    try {
-                        if (!isSynchronized())
-                            return@launch
-                        talkPublisher.setSelfTalking(talking)
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        Log.w(TAG, "Talking-state update after unsync", e)
-                    }
+                // from the publisher's flow below. Written synchronously:
+                // MutableStateFlow.update is lock-free and thread-safe, and
+                // queuing through lifecycleScope would let a stale true
+                // overtake shutdown's clear + synthetic false and stick
+                // selfTalking (AudioHandler.shutdown orders its reset and
+                // report after the capture join; the funnel must not undo it).
+                try {
+                    if (!isSynchronized())
+                        return
+                    talkPublisher.setSelfTalking(talking)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Log.w(TAG, "Talking-state update after unsync", e)
                 }
             }
         }
