@@ -524,7 +524,7 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         droppedJitter: Long
     ) {
         val levels = HashMap<Int, TalkState>(sessions.size)
-        var count = min(sessions.size, states.size)
+        val count = min(sessions.size, states.size)
         var index = 0
         while (index < count) {
             val state = when (states[index]) {
