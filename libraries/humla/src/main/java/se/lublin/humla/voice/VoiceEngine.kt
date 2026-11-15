@@ -102,7 +102,6 @@ class VoiceEngine @JvmOverloads constructor(
     private val targetBitrate = AtomicInteger(40000)
     private val runningFlag = AtomicBoolean(false)
 
-    @Volatile
     private var native: EngineNative? = null
 
     private val _latestPolicy = MutableStateFlow<VoicePolicy?>(null)
