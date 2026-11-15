@@ -191,31 +191,41 @@ class VoiceEngine @JvmOverloads constructor(
     }
 
     override fun submit(command: VoiceCommand) {
-        // Never blocks the caller: only fast atomic state lands here;
-        // every blocking native call (socket connect, joins) runs on the
-        // single-thread command scope, in submission order. The transport
-        // reader and the client dispatcher share this entry, so inline
-        // execution stalled TCP framing on DNS/connect.
+        // Never blocks the caller: the whole command is applied on the
+        // shared voice control thread (VoiceControl's dispatcher), in
+        // queue order. The transport reader and the client dispatcher
+        // share this entry, so inline execution would stall TCP framing
+        // on DNS/connect. Fallible native creation stays inline so a
+        // debug load failure still throws to the submitter.
+        if (command is VoiceCommand.Start) {
+            try {
+                ensureNative()
+            } catch (t: Throwable) {
+                // Debug load failure must stay loud to the submitter
+                // (the failure mode that killed the first 5a attempt).
+                refreshStatus()
+                throw t
+            }
+        }
+        scope.launch {
+            apply(command)
+        }
+        refreshStatus()
+    }
+
+    private fun apply(command: VoiceCommand) {
+        // Runs on the voice control thread only: every command observes
+        // all prior commands, so Stop-before-route needs no recheck
+        // protocol and Start-vs-initial-route stays either-order.
         when (command) {
             is VoiceCommand.Start -> {
-                formatRef.set(command.format)
-                endpointRef.set(Endpoint(command.host, command.port))
-                runningFlag.set(true)
-                // Fast JNI only (format, keys, reset, policy): no socket,
-                // no join, safe inline. The blocking connect below runs on
-                // the command scope so the transport reader never stalls.
-                try {
-                    ensureNative()
-                } catch (t: Throwable) {
-                    // Debug load failure must stay loud to the submitter
-                    // (the failure mode that killed the first 5a attempt).
-                    refreshStatus()
-                    throw t
-                }
                 val engine = native ?: run {
                     refreshStatus()
                     return
                 }
+                formatRef.set(command.format)
+                endpointRef.set(Endpoint(command.host, command.port))
+                runningFlag.set(true)
                 try {
                     engine.setFormat(
                         if (command.format.udp == UdpFormat.PROTOBUF) 1 else 0,
@@ -244,12 +254,8 @@ class VoiceEngine @JvmOverloads constructor(
                 }
                 pushPolicy()
                 if (usingUdp.get()) {
-                    scope.launch {
-                        // Rechecked here so a Stop that landed after
-                        // submission wins over this queued connect.
-                        if (!usingUdp.get()) return@launch
-                        val endpoint = endpointRef.get() ?: return@launch
-                        if (!runningFlag.get()) return@launch
+                    val endpoint = endpointRef.get()
+                    if (endpoint != null) {
                         try {
                             if (!engine.start(endpoint.host, endpoint.port)) {
                                 if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
@@ -258,8 +264,6 @@ class VoiceEngine @JvmOverloads constructor(
                             }
                         } catch (e: Exception) {
                             loggerFine("Dropping native start: $e")
-                        } finally {
-                            refreshStatus()
                         }
                     }
                 }
@@ -268,37 +272,31 @@ class VoiceEngine @JvmOverloads constructor(
                 endpointRef.set(null)
                 usingUdp.set(false)
                 runningFlag.set(false)
-                scope.launch {
-                    try {
-                        native?.stop()
-                    } catch (e: Exception) {
-                        loggerFine("Dropping native stop: $e")
-                    }
+                try {
+                    native?.stop()
+                } catch (e: Exception) {
+                    loggerFine("Dropping native stop: $e")
                 }
             }
             is VoiceCommand.SetVoiceRoute -> {
                 usingUdp.set(command.udp)
                 if (command.udp) {
-                    scope.launch {
-                        // Rechecked here so a Stop that landed after submission
-                        // wins over this queued start.
-                        val endpoint = endpointRef.get()
-                        if (runningFlag.get() && endpoint != null) {
-                            try {
-                                if (native?.start(endpoint.host, endpoint.port) == false) {
-                                    if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
-                                        loggerFine("Dropping UdpUnavailable (event buffer full)")
-                                    }
+                    val endpoint = endpointRef.get()
+                    if (runningFlag.get() && endpoint != null) {
+                        try {
+                            if (native?.start(endpoint.host, endpoint.port) == false) {
+                                if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
+                                    loggerFine("Dropping UdpUnavailable (event buffer full)")
                                 }
-                            } catch (e: Exception) {
-                                loggerFine("Dropping native start: $e")
                             }
+                        } catch (e: Exception) {
+                            loggerFine("Dropping native start: $e")
                         }
                     }
                 }
                 // The socket stays open across tunnel switches until Stop.
             }
-            is VoiceCommand.SendPing -> scope.launch { sendUdpPing(command.timestampMicros) }
+            is VoiceCommand.SendPing -> sendUdpPing(command.timestampMicros)
         }
         refreshStatus()
     }

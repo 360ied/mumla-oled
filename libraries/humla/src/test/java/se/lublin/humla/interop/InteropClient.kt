@@ -123,7 +123,12 @@ object InteropClient {
     @JvmStatic
     fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val link = VoiceEngine(tunnelSink = {})
+        // Unconfined: harness commands apply synchronously like the unit
+        // tests, so no second thread exists even in the harness.
+        val link = VoiceEngine(
+            tunnelSink = {},
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+        )
         val blocked = when (voice) {
             Voice.UDP_SILENTLY_BLOCKED -> NoUdpVoice(link, reportSocketFailure = false)
             Voice.UDP_SOCKET_FAILS -> NoUdpVoice(link, reportSocketFailure = true)

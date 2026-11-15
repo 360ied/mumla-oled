@@ -33,6 +33,9 @@ import android.util.Log
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -415,6 +418,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         routeControl.onInit()
         routeControl.start()
 
+        // One voice control thread, shared by VoiceControl (audio
+        // lifecycle) and VoiceEngine (network commands): the spec's
+        // single executor for start/stop, in command order. Sharing it
+        // keeps teardown and destroy serialized without a second thread.
+        val voiceThread = Dispatchers.IO.limitedParallelism(1)
         // Application-scoped voice link (survives reconnects). The tunnel sink
         // routes to the current session's transport (present only in tunnel mode).
         voiceLink = VoiceEngine(
@@ -425,6 +433,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 }
             },
             talkPublisher = talkPublisher,
+            scope = CoroutineScope(SupervisorJob() + voiceThread),
         )
 
         policyCollector = PolicyCollector(
@@ -443,6 +452,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             prefs = routePrefsFlow,
             voiceLink = voiceLink,
             appScope = lifecycleScope,
+            controlDispatcher = voiceThread,
         )
         // Policy push (5a.3b): the collector maps SessionState to VoicePolicy
         // and VoiceEngine forwards it to the native sender filter.
