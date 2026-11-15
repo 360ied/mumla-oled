@@ -1,0 +1,23 @@
+# 5a.3b crypt-count parity fixture.
+#
+# Provenance: reconstructed from the pre-deletion Kotlin path semantics
+# (TransportImpl health check reads good/late/lost/resync) and the OCB2
+# core both paths share. The Kotlin receiver is deleted in 5a.3b, so this
+# file is the standing record the Done-when item requires; the native test
+# testReceiveCryptCountsMatchKotlin reproduces the scripted sequence below
+# and asserts the tuple.
+#
+# Scripted sequence (one sender, one receiver, same key; s1..s6 are the
+# sender's 1st..6th encrypted packets):
+#   1. deliver s1            -> good=1
+#   2. replay s1             -> still good=1 (replay rejected, counters hold)
+#   3. deliver s6 (skip s2..s5, 4 lost) -> good=2, lost=4
+#   4. deliver s4 late       -> good=3, late=1, lost recovers one (lost=3)
+#   5. tampered packet with recent good -> suppressed, no resync, hold
+#   6. rekey (new IV)        -> counters reset, next good=1, lost=0, late=0
+#
+# Expected tuple after step 4 (before tamper/rekey):
+good=3
+late=1
+lost=3
+resync=0

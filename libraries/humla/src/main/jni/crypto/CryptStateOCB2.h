@@ -76,6 +76,11 @@ public:
 
     int64_t getLastGoodElapsedUs() const;
 
+    // Test-only: backdate the last-good timestamp so the resync gate sees
+    // an old good decrypt without a 5 s sleep. No effect when no good
+    // decrypt has happened yet. Never called on the realtime path.
+    void backdateLastGoodForTest(uint64_t micros);
+
 private:
     uint8_t raw_key[AES_KEY_SIZE_BYTES];
     uint8_t encrypt_iv[AES_BLOCK_SIZE];

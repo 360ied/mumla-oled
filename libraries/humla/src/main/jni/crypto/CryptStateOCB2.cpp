@@ -441,4 +441,10 @@ int64_t CryptStateOCB2::getLastGoodElapsedUs() const {
     return std::chrono::duration_cast<std::chrono::microseconds>(now - m_lastGoodTime).count();
 }
 
+void CryptStateOCB2::backdateLastGoodForTest(uint64_t micros) {
+    std::lock_guard lock(m_decryptMutex);
+    if (!m_hasLastGood.load()) return;
+    m_lastGoodTime -= std::chrono::microseconds(micros);
+}
+
 } // namespace humla::crypto

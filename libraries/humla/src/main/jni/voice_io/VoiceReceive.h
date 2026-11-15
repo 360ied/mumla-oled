@@ -103,6 +103,11 @@ public:
     // and connects it to host/port; the receive thread runs until stop.
     // Returns false when the socket cannot be created or connected
     // (VoiceEvent.UdpUnavailable on the live path).
+    // Test-only: backdate the crypt last-good clock (see
+    // CryptStateOCB2::backdateLastGoodForTest). Never on live paths.
+    void backdateLastGoodForTest(uint64_t micros) { m_crypt.backdateLastGoodForTest(micros); }
+    void setLastRequestUsForTest(uint64_t v) { m_lastRequestUs.store(v); }
+
     bool start(const char* host, uint16_t port);
     void stop();
 

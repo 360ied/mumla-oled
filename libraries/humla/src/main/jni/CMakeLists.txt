@@ -373,6 +373,9 @@ else()
         "${TEST_CPP_DIR}"
     )
     target_compile_options(test_voice_io PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    target_compile_definitions(test_voice_io PRIVATE
+        MUMLA_CRYPT_COUNT_FIXTURE_DIR="${JNI_ROOT}/../../test/fixtures/crypt-counts"
+    )
     target_link_libraries(test_voice_io PRIVATE humlavoicecodec humlanpb Threads::Threads m)
     add_test(NAME test_voice_io COMMAND test_voice_io)
 

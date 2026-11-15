@@ -35,8 +35,11 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -748,10 +751,13 @@ void testReceiveResyncGateRateLimited() {
 
 void testReceiveCryptCountsMatchKotlin() {
     g_testCount++;
-    // Fixture for the 5a.3b done-when crypt-count parity: the Kotlin path
-    // reports these counts for the same scripted sequence through the same
-    // OCB2 engine (in-order, replayed, lost), so the native path must
-    // reproduce them or the transport's health check mis-falls-back.
+    // Done-when crypt-count parity, recorded in
+    // test/fixtures/crypt-counts/5a.3b-kotlin-parity.txt: the Kotlin path
+    // reports good/late/lost/resync for this scripted sequence through the
+    // same OCB2 engine, so the native path must reproduce the tuple or the
+    // transport's health check mis-falls-back. The fixture file is the
+    // record; the expectations below are asserted against both the live
+    // counters and the file so the two cannot drift apart.
     VoiceIo io(fakeFactory());
     PolicyCell policy;
     VoiceReceive rx(&io, &policy);
@@ -761,47 +767,142 @@ void testReceiveCryptCountsMatchKotlin() {
     CryptStateOCB2 sender;
     TEST_ASSERT_TRUE(sender.setKey(key, key, key));
     const uint8_t secret[10] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'};
-    uint8_t packet[14];
-    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
-    rx.handleCrypted(packet, 14);
-    int32_t good = 0, late = 0, lost = 0, resync = 0;
-    rx.getStats(&good, &late, &lost, &resync);
-    TEST_ASSERT_EQ(good, 1);
-    // Replay rejected: good stays.
-    rx.handleCrypted(packet, 14);
-    rx.getStats(&good, &late, &lost, &resync);
-    TEST_ASSERT_EQ(good, 1);
-    // Skip 5 (lost 4 on the next good).
-    for (int i = 0; i < 5; ++i) {
-        TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    // Six sender packets s1..s6; delivered out of order below.
+    uint8_t sent[6][14];
+    for (int i = 0; i < 6; ++i) {
+        TEST_ASSERT_TRUE(sender.encrypt(secret, sent[i], 10));
     }
-    rx.handleCrypted(packet, 14);
+    int32_t good = 0, late = 0, lost = 0, resync = 0;
+    // 1. In order: good=1.
+    rx.handleCrypted(sent[0], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(late, 0);
+    TEST_ASSERT_EQ(lost, 0);
+    TEST_ASSERT_EQ(resync, 0);
+    // 2. Replay rejected: counters hold.
+    rx.handleCrypted(sent[0], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(late, 0);
+    TEST_ASSERT_EQ(lost, 0);
+    // 3. Skip s2..s5, deliver s6: lost 4 on the next good.
+    rx.handleCrypted(sent[5], 14);
     rx.getStats(&good, &late, &lost, &resync);
     TEST_ASSERT_EQ(good, 2);
     TEST_ASSERT_EQ(lost, 4);
-    // Forced decrypt failure with a recent good decrypt: the rate limiter
-    // suppresses the resync request (the 5 s gate is pinned pure above).
+    // 4. Late s4 after s6: the fixture tuple (good=3, late=1, lost=3).
+    rx.handleCrypted(sent[3], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 3);
+    TEST_ASSERT_EQ(late, 1);
+    TEST_ASSERT_EQ(lost, 3);
+    TEST_ASSERT_EQ(resync, 0);
+#ifdef MUMLA_CRYPT_COUNT_FIXTURE_DIR
+    // The file is authoritative: live counters must equal the record.
+    {
+        std::filesystem::path file =
+            std::filesystem::path(MUMLA_CRYPT_COUNT_FIXTURE_DIR) /
+            "5a.3b-kotlin-parity.txt";
+        std::ifstream in(file);
+        TEST_ASSERT_TRUE(in.good());
+        int expGood = -1, expLate = -1, expLost = -1, expResync = -1;
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.rfind("good=", 0) == 0) expGood = std::stoi(line.substr(5));
+            else if (line.rfind("late=", 0) == 0) expLate = std::stoi(line.substr(5));
+            else if (line.rfind("lost=", 0) == 0) expLost = std::stoi(line.substr(5));
+            else if (line.rfind("resync=", 0) == 0) expResync = std::stoi(line.substr(7));
+        }
+        TEST_ASSERT_EQ(expGood, 3);
+        TEST_ASSERT_EQ(expLate, 1);
+        TEST_ASSERT_EQ(expLost, 3);
+        TEST_ASSERT_EQ(expResync, 0);
+        TEST_ASSERT_EQ(good, expGood);
+        TEST_ASSERT_EQ(late, expLate);
+        TEST_ASSERT_EQ(lost, expLost);
+        TEST_ASSERT_EQ(resync, expResync);
+    }
+#endif
+    // 5. Forced decrypt failure with a recent good decrypt: the rate
+    // limiter suppresses the resync request (the 5 s gate is pinned pure
+    // in testReceiveResyncGateRateLimited; firing is pinned next).
+    int resyncs = 0;
+    rx.setResyncSink([&] { resyncs++; });
+    uint8_t tampered[14];
+    memcpy(tampered, sent[5], 14);
+    tampered[5] ^= 0xFF;
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 0);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 3);
+    // 6. Rekey (new IV after the resync round trip): voice resumes. Rekey
+    // resets the counters on both sides (as Kotlin setKeys does), so good
+    // restarts at 1 with the first post-rekey decrypt.
+    const uint8_t key2[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    TEST_ASSERT_TRUE(rx.setKeys(key2, key2, key2));
+    TEST_ASSERT_TRUE(sender.setKey(key2, key2, key2));
+    uint8_t fresh[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, fresh, 10));
+    TEST_ASSERT_TRUE(rx.handleCrypted(fresh, 14));
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(lost, 0);
+    TEST_ASSERT_EQ(late, 0);
+    std::cout << "  [PASS] testReceiveCryptCountsMatchKotlin" << std::endl;
+}
+
+void testReceiveResyncFiresExactlyOnce() {
+    g_testCount++;
+    // Done-when resync recovery (firing half): a forced decrypt failure
+    // with an old good decrypt raises exactly one rate-limited request;
+    // an immediate second failure is suppressed; after the gap it fires
+    // again; voice resumes after the new IV. Backdates the clocks instead
+    // of sleeping out the 5 s windows (test-only setters, never live).
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {21, 22, 23, 24, 25, 26, 27, 28,
+                             29, 30, 31, 32, 33, 34, 35, 36};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    const uint8_t secret[10] = {'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'};
+    uint8_t packet[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    rx.handleCrypted(packet, 14);
+    int32_t good = 0;
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    // Age the good decrypt past the 5 s window; the request clock starts
+    // at zero (long ago), so the next failure must fire exactly once.
+    rx.backdateLastGoodForTest(6000000);
     int resyncs = 0;
     rx.setResyncSink([&] { resyncs++; });
     uint8_t tampered[14];
     memcpy(tampered, packet, 14);
     tampered[5] ^= 0xFF;
     TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
-    TEST_ASSERT_EQ(resyncs, 0);
-    rx.getStats(&good, &late, &lost, &resync);
-    TEST_ASSERT_EQ(good, 2);
-    // Rekey (new IV after the resync round trip): voice resumes. Rekey
-    // resets the counters on both sides (as Kotlin setKeys does), so good
-    // restarts at 1 with the first post-rekey decrypt.
-    const uint8_t key2[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    TEST_ASSERT_EQ(resyncs, 1);
+    // Immediate second failure: suppressed by the 5 s request gap.
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 1);
+    // After the gap (clocks rewound for determinism): fires again.
+    rx.setLastRequestUsForTest(0);
+    rx.backdateLastGoodForTest(6000000);
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 2);
+    // New IV after the round trip: voice resumes at good=1.
+    const uint8_t key2[16] = {41, 42, 43, 44, 45, 46, 47, 48,
+                              49, 50, 51, 52, 53, 54, 55, 56};
     TEST_ASSERT_TRUE(rx.setKeys(key2, key2, key2));
     TEST_ASSERT_TRUE(sender.setKey(key2, key2, key2));
-    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
-    TEST_ASSERT_TRUE(rx.handleCrypted(packet, 14));
-    rx.getStats(&good, &late, &lost, &resync);
+    uint8_t fresh[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, fresh, 10));
+    rx.handleCrypted(fresh, 14);
+    rx.getStats(&good, nullptr, nullptr, nullptr);
     TEST_ASSERT_EQ(good, 1);
-    TEST_ASSERT_EQ(lost, 0);
-    std::cout << "  [PASS] testReceiveCryptCountsMatchKotlin" << std::endl;
+    std::cout << "  [PASS] testReceiveResyncFiresExactlyOnce" << std::endl;
 }
 
 void testReceiveLoopbackPingFiresSink() {
@@ -909,6 +1010,7 @@ void run_voice_io_tests() {
     testPolicyGuardsReceiveVisibleOnly();
     testReceiveResyncGateRateLimited();
     testReceiveCryptCountsMatchKotlin();
+    testReceiveResyncFiresExactlyOnce();
     testReceiveLoopbackPingFiresSink();
     testClearDrainsRingsAndCountsResetDiscards();
     testReceiveStopLeavesNothing();
