@@ -114,8 +114,8 @@ public:
     bool start(const char* host, uint16_t port);
     void stop();
 
-    bool running() const { return m_running.load(); }
-    int socketFd() const { return m_sock; }
+    bool running() const { return m_running.load(std::memory_order_acquire); }
+    int socketFd() const { return m_sock.load(std::memory_order_acquire); }
 
     void setPingSink(PingSink sink) { m_pingSink = std::move(sink); }
     void setResyncSink(ResyncSink sink) { m_resyncSink = std::move(sink); }
@@ -136,7 +136,10 @@ private:
     uint32_t m_legacyVersion = 0;
 
     std::atomic<bool> m_running{false};
-    int m_sock = -1;
+    // Socket fd shared with the receive thread (loop + sendDatagram).
+    // Control writes, receive reads: atomic with release/acquire so stop()
+    // never races a live recv/sendto (plain int was a data race).
+    std::atomic<int> m_sock{-1};
     std::thread m_thread;
 
     PingSink m_pingSink;

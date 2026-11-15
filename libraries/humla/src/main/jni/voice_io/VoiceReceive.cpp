@@ -211,7 +211,7 @@ bool VoiceReceive::handleTunnelled(const uint8_t* data, size_t length) {
 }
 
 bool VoiceReceive::sendDatagram(const uint8_t* plain, size_t length) {
-    const int sock = m_sock;
+    const int sock = m_sock.load(std::memory_order_acquire);
     if (sock < 0 || !m_running.load(std::memory_order_acquire)) {
         return false;
     }
@@ -228,8 +228,15 @@ bool VoiceReceive::sendDatagram(const uint8_t* plain, size_t length) {
 }
 
 bool VoiceReceive::start(const char* host, uint16_t port) {
-    if (m_running.load()) {
+    if (m_running.load(std::memory_order_acquire)) {
         return true;
+    }
+    // Reclaim a stale fd from an abnormal loop exit without an
+    // intervening stop(): control thread only, no receiver running.
+    int stale = m_sock.exchange(-1, std::memory_order_acq_rel);
+    if (stale >= 0) {
+        shutdown(stale, SHUT_RDWR);
+        close(stale);
     }
     if (host == nullptr || port == 0) {
         return false;
@@ -257,7 +264,7 @@ bool VoiceReceive::start(const char* host, uint16_t port) {
         if (m_unavailableSink) m_unavailableSink();
         return false;
     }
-    m_sock = sock;
+    m_sock.store(sock, std::memory_order_release);
     m_running.store(true, std::memory_order_release);
     m_thread = std::thread(&VoiceReceive::loop, this);
     return true;
@@ -265,22 +272,21 @@ bool VoiceReceive::start(const char* host, uint16_t port) {
 
 void VoiceReceive::stop() {
     bool expected = true;
-    if (!m_running.compare_exchange_strong(expected, false)) {
-        if (m_sock >= 0) {
-            shutdown(m_sock, SHUT_RDWR);
-        }
-        return;
-    }
-    const int sock = m_sock;
+    m_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel,
+                                        std::memory_order_relaxed);
+    // Unblock recv even when already stopped (idempotent shutdown).
+    int sock = m_sock.load(std::memory_order_acquire);
     if (sock >= 0) {
-        // Unblock recvfrom: shutdown + close. The loop exits on running
-        // false or a closed socket; join orders the handoff.
         shutdown(sock, SHUT_RDWR);
-        close(sock);
     }
-    m_sock = -1;
     if (m_thread.joinable()) {
         m_thread.join();
+    }
+    // Close after the join so the fd number cannot be recycled while the
+    // receiver still holds its copy; exchange makes it idempotent.
+    int toClose = m_sock.exchange(-1, std::memory_order_acq_rel);
+    if (toClose >= 0) {
+        close(toClose);
     }
 }
 
@@ -289,7 +295,7 @@ void VoiceReceive::loop() {
     uint8_t crypted[kMaxDatagram + 4];
     uint8_t plain[kMaxDatagram + 4];
     while (m_running.load(std::memory_order_acquire)) {
-        const int sock = m_sock;
+        const int sock = m_sock.load(std::memory_order_acquire);
         if (sock < 0) break;
         const ssize_t got = recv(sock, reinterpret_cast<char*>(crypted), sizeof(crypted), 0);
         if (got <= 0) {
@@ -297,6 +303,10 @@ void VoiceReceive::loop() {
             // Socket error while running: report once; the transport
             // switches to tunnel, as after its 20 s rule.
             if (m_unavailableSink) m_unavailableSink();
+            // Abnormal exit: clear liveness (control closes the socket in
+            // stop()) so a later start() restarts instead of succeeding
+            // on a dead thread.
+            m_running.store(false, std::memory_order_release);
             break;
         }
         if (!m_crypt.isValid() || got < 5) {
