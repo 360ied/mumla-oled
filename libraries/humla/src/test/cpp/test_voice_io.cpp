@@ -22,13 +22,17 @@
 
 #include "TestHarness.h"
 #include "VoiceIo.h"
+#include "VoiceNotifier.h"
 #include "VoiceRings.h"
+#include "VoiceTalk.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -38,7 +42,10 @@ using mumla::audio::InboundPacket;
 using mumla::audio::IOutputDecoder;
 using mumla::audio::OutputTalkState;
 using mumla::voice_io::SpscRing;
+using mumla::voice_io::TalkCell;
+using mumla::voice_io::TalkPublication;
 using mumla::voice_io::VoiceIo;
+using mumla::voice_io::VoiceNotifier;
 using mumla::voice_io::kInboundRingCapacity;
 using mumla::voice_io::kTunnelRingCapacity;
 
@@ -281,6 +288,152 @@ void testShoutFlagMapsToShouting() {
     std::cout << "  [PASS] testShoutFlagMapsToShouting" << std::endl;
 }
 
+void testTalkCellPublishesLatest() {
+    g_testCount++;
+    TalkCell cell;
+    VoiceIo::TalkSnapshot talk;
+    talk.entries[0].session = 9;
+    talk.entries[0].state = OutputTalkState::TALKING;
+    talk.count = 1;
+    cell.publish(talk, 1, 2, 3);
+    TalkPublication out;
+    TEST_ASSERT_TRUE(cell.tryRead(&out));
+    TEST_ASSERT_EQ(out.version, 1u);
+    TEST_ASSERT_EQ(out.talk.count, 1u);
+    TEST_ASSERT_EQ(out.talk.entries[0].session, 9);
+    TEST_ASSERT_EQ(out.droppedInbound, 1u);
+    TEST_ASSERT_EQ(out.droppedTunnel, 2u);
+    TEST_ASSERT_EQ(out.droppedJitter, 3u);
+    // A newer publication replaces the older one wholesale.
+    VoiceIo::TalkSnapshot empty;
+    cell.publish(empty, 4, 5, 6);
+    TEST_ASSERT_TRUE(cell.tryRead(&out));
+    TEST_ASSERT_EQ(out.version, 2u);
+    TEST_ASSERT_EQ(out.talk.count, 0u);
+    TEST_ASSERT_EQ(out.droppedInbound, 4u);
+    std::cout << "  [PASS] testTalkCellPublishesLatest" << std::endl;
+}
+
+void testTalkCellNeverTornUnderThreads() {
+    g_testCount++;
+    TalkCell cell;
+    constexpr int kVersions = 2000;
+    std::atomic<bool> done{false};
+    std::atomic<int> badReads{0};
+    // Writer: every version carries count copies of its own session id, so
+    // any mix of two versions is observable as a mismatch.
+    std::thread writer([&] {
+        for (int v = 1; v <= kVersions; ++v) {
+            VoiceIo::TalkSnapshot talk;
+            const int n = v % (static_cast<int>(VoiceIo::TalkSnapshot::kMaxEntries) + 1);
+            for (int i = 0; i < n; ++i) {
+                talk.entries[i].session = v;
+                talk.entries[i].state = OutputTalkState::TALKING;
+            }
+            talk.count = static_cast<size_t>(n);
+            cell.publish(talk, static_cast<uint64_t>(v), 0, 0);
+        }
+        done.store(true);
+    });
+    // Three readers, as the spec's sequence-lock bar demands.
+    auto reader = [&] {
+        TalkPublication out;
+        while (!done.load()) {
+            if (!cell.tryRead(&out)) {
+                continue;
+            }
+            for (size_t i = 0; i < out.talk.count; ++i) {
+                if (out.talk.entries[i].session !=
+                    static_cast<int32_t>(out.droppedInbound)) {
+                    badReads.fetch_add(1);
+                    break;
+                }
+            }
+        }
+    };
+    std::thread r1(reader), r2(reader), r3(reader);
+    writer.join();
+    r1.join();
+    r2.join();
+    r3.join();
+    TEST_ASSERT_EQ(badReads.load(), 0);
+    TalkPublication last;
+    TEST_ASSERT_TRUE(cell.tryRead(&last));
+    TEST_ASSERT_EQ(last.version, static_cast<uint64_t>(kVersions));
+    std::cout << "  [PASS] testTalkCellNeverTornUnderThreads" << std::endl;
+}
+
+void testNotifierDeliversOncePerChange() {
+    g_testCount++;
+    TalkCell cell;
+    int calls = 0;
+    TalkPublication last;
+    VoiceNotifier notifier(&cell, [&](const TalkPublication& pub) {
+        calls++;
+        last = pub;
+    });
+    VoiceIo::TalkSnapshot talk;
+    talk.entries[0].session = 3;
+    talk.entries[0].state = OutputTalkState::WHISPERING;
+    talk.count = 1;
+    cell.publish(talk, 0, 0, 0);
+    TEST_ASSERT_TRUE(notifier.notifyNow());
+    TEST_ASSERT_EQ(calls, 1);
+    TEST_ASSERT_EQ(last.talk.count, 1u);
+    // No change since the last delivery: no second Kotlin call.
+    TEST_ASSERT_FALSE(notifier.notifyNow());
+    TEST_ASSERT_EQ(calls, 1);
+    VoiceIo::TalkSnapshot empty;
+    cell.publish(empty, 0, 0, 0);
+    TEST_ASSERT_TRUE(notifier.notifyNow());
+    TEST_ASSERT_EQ(calls, 2);
+    TEST_ASSERT_EQ(last.talk.count, 0u);
+    std::cout << "  [PASS] testNotifierDeliversOncePerChange" << std::endl;
+}
+
+void testNotifierStalledResumesWithLatest() {
+    g_testCount++;
+    TalkCell cell;
+    int calls = 0;
+    TalkPublication last;
+    VoiceNotifier notifier(&cell, [&](const TalkPublication& pub) {
+        calls++;
+        last = pub;
+    });
+    // Stalled: two publications, no delivery; the resume carries the latest.
+    VoiceIo::TalkSnapshot v1;
+    v1.entries[0].session = 1;
+    v1.entries[0].state = OutputTalkState::TALKING;
+    v1.count = 1;
+    cell.publish(v1, 0, 0, 0);
+    VoiceIo::TalkSnapshot v2;
+    v2.entries[0].session = 2;
+    v2.entries[0].state = OutputTalkState::SHOUTING;
+    v2.count = 1;
+    cell.publish(v2, 0, 0, 7);
+    TEST_ASSERT_TRUE(notifier.notifyNow());
+    TEST_ASSERT_EQ(calls, 1);
+    TEST_ASSERT_EQ(last.talk.entries[0].session, 2);
+    TEST_ASSERT_EQ(last.droppedJitter, 7u);
+    std::cout << "  [PASS] testNotifierStalledResumesWithLatest" << std::endl;
+}
+
+void testRenderPublishesTalkCell() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    TalkCell cell;
+    io.setTalkCell(&cell);
+    pushBurst(io, 88, 0, 8, /*inbound=*/true);
+    std::vector<int16_t> pcm(kFrame * 2);
+    VoiceIo::RenderOut result;
+    io.render(pcm.data(), pcm.size(), &result);
+    TalkPublication pub;
+    TEST_ASSERT_TRUE(cell.tryRead(&pub));
+    TEST_ASSERT_TRUE(pub.version >= 1u);
+    TEST_ASSERT_TRUE(snapshotHas(pub.talk, 88, OutputTalkState::TALKING));
+    std::cout << "  [PASS] testRenderPublishesTalkCell" << std::endl;
+}
+
 void testClearEmptiesTalkLevels() {
     g_testCount++;
     VoiceIo io(fakeFactory());
@@ -309,6 +462,11 @@ void run_voice_io_tests() {
     testRemoveUserClearsTalkLevel();
     testRenderSplitsLargeRequest();
     testShoutFlagMapsToShouting();
+    testTalkCellPublishesLatest();
+    testTalkCellNeverTornUnderThreads();
+    testNotifierDeliversOncePerChange();
+    testNotifierStalledResumesWithLatest();
+    testRenderPublishesTalkCell();
     testClearEmptiesTalkLevels();
 }
 

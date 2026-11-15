@@ -27,6 +27,8 @@
 namespace mumla {
 namespace voice_io {
 
+class TalkCell;
+
 /**
  * Native voice I/O core (step 5a.3a: native render).
  *
@@ -107,6 +109,11 @@ public:
      */
     void render(int16_t* out, size_t samples, RenderOut* result);
 
+    // Attaches the talk cell render publishes into after every render.
+    // Control thread only, while render is stopped (no race: render is the
+    // only reader of this pointer and it never runs concurrently).
+    void setTalkCell(TalkCell* cell) { m_talkCell = cell; }
+
     // Destroys queued state; called on the control thread only while render
     // is stopped (asserted in debug builds by the JNI lifecycle in commit 2).
     void clear();
@@ -119,6 +126,7 @@ private:
     std::unique_ptr<mumla::audio::AudioOutputEngine> m_engine;
     SpscRing<mumla::audio::InboundPacket, kInboundRingCapacity> m_inbound;
     SpscRing<TunnelItem, kTunnelRingCapacity> m_tunnel;
+    TalkCell* m_talkCell = nullptr;
     // Level table parallel to the engine's voices, render-thread only.
     TalkSnapshot m_levels;
     uint64_t m_droppedInbound = 0;

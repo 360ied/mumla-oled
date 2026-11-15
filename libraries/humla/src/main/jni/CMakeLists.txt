@@ -200,6 +200,7 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/NativeCrashTestJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
+        "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
@@ -353,6 +354,7 @@ else()
     # no libopus is needed; production passes makeOpusOutputDecoder.
     add_executable(test_voice_io
         "${VOICE_IO_DIR}/VoiceIo.cpp"
+        "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${TEST_CPP_DIR}/test_voice_io.cpp"

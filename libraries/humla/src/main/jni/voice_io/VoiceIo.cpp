@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <cassert>
 
+#include "VoiceTalk.h"
+
 namespace mumla {
 namespace voice_io {
 
@@ -138,6 +140,10 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     result->droppedTunnel = m_droppedTunnel;
     result->droppedJitter = m_droppedJitter;
     result->talk = m_levels;
+    if (m_talkCell != nullptr) {
+        m_talkCell->publish(m_levels, m_droppedInbound, m_droppedTunnel,
+                            m_droppedJitter);
+    }
 }
 
 void VoiceIo::clear() {
