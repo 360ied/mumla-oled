@@ -23,8 +23,15 @@ import java.util.logging.Level
 import java.util.logging.LogRecord
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,6 +45,7 @@ import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
 import se.lublin.humla.net.TransportException
 import se.lublin.humla.protobuf.Mumble
+import se.lublin.humla.state.SessionState
 import se.lublin.humla.voice.TalkActivity
 
 /**
@@ -52,11 +60,13 @@ class HumlaClientTest {
         factory: FakeFactory = FakeFactory(),
         localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
         talkActivity: MutableStateFlow<TalkActivity> = MutableStateFlow(TalkActivity.initial()),
+        policySource: Flow<SessionState?>? = null,
     ): ClientHarness = ClientHarness(
         this,
         factory = factory,
         localFactsStore = localFactsStore,
         talkActivity = talkActivity,
+        policySource = policySource,
     ).also { it.step() }
 
     private fun ClientHarness.reconnecting(): ClientState.Reconnecting {
@@ -824,5 +834,63 @@ class HumlaClientTest {
         assertThrows(AssertionError::class.java) { h.invariants.check() }
         stray.close()
         h.finish()
+    }
+
+    // Published-policy detector (issue 34): a real PolicyCollector fed by a
+    // freezable mirror of the session source. Freezing proves the detector
+    // catches the stale policy a broken collector would keep publishing.
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun TestScope.stuckPolicyHarness(): Pair<ClientHarness, MutableStateFlow<SessionState?>> {
+        val stuck = MutableStateFlow<SessionState?>(null)
+        val h = harness(policySource = stuck)
+        val mirror = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            h.client.currentSession.flatMapLatest { s ->
+                if (s == null) flowOf(null) else s.state
+            }.collect { stuck.value = it }
+        }
+        h.connectAndSync()
+        h.step()
+        mirror.cancel()
+        return h to stuck
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun invariantCheckerRejectsPublishedTransmittingWhileMuted() = runTest {
+        val (h, _) = stuckPolicyHarness()
+        // The live session mutes while the frozen source keeps the
+        // transmitting policy published.
+        h.session.setSelfMuteDeaf(true, false)
+        assertThrows(AssertionError::class.java) { h.step() }
+        h.client.close().join()
+        h.collector.close()
+        runCurrent()
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun publishedPolicyWithoutResetOnDisconnectIsCaught() = runTest {
+        val (h, _) = stuckPolicyHarness()
+        // Disconnect without resetting the source: the transmitting policy
+        // outlives the session instead of falling back to muted.
+        h.client.disconnect()
+        assertThrows(AssertionError::class.java) { h.step() }
+        h.client.close().join()
+        h.collector.close()
+        runCurrent()
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun publishedPolicyStuckAcrossSessionSwitchIsCaught() = runTest {
+        val (h, _) = stuckPolicyHarness()
+        // A new target tears the session down; the frozen source keeps the
+        // old session's transmitting policy published past the switch.
+        h.client.connect(testTarget(username = "bob"))
+        assertThrows(AssertionError::class.java) { h.step() }
+        h.client.close().join()
+        h.collector.close()
+        runCurrent()
     }
 }

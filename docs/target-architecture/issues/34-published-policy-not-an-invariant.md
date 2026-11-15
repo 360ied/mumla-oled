@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open — should be closed before step 5a.3b. |
+| Status | Resolved 2026-11-15 (code `49b80378`; resolution recorded here). |
 | Category | Verification gap |
 | Severity | Harmful (the policy that gates transmit and the sender filter is checked only as a pure function, never as what the collector publishes across a scenario) |
 | Verified | Yes (code read of the checker and the collector tests) |
@@ -89,6 +89,40 @@ production.
   to the fallback when the session goes away, or holding the previous
   value across a session switch.
 - `./scripts/check.sh` passes.
+
+## Resolution
+
+`ClientHarness` builds a real `PolicyCollector` on the test dispatcher,
+fed by a `HumlaService` mirror: `client.currentSession.flatMapLatest` to
+the session's state, or null when there is none (which the collector maps
+to `emptySessionState()`, i.e. the muted fallback). `InvariantChecker`
+records every published value with an unconfined collector and, after every
+step, asserts the latest has converged to the current session:
+
+| Check | Detector |
+|---|---|
+| No transmit unless `SYNCED` with an unmuted self | Latest policy's `transmitAllowed` against phase, `effectiveSelfMute`, and the server mute/deafen/suppress flags |
+| Muted fallback with no session | Latest equals `VoicePolicy.mutedFallback(settings)`; transmit off |
+| `locallyMuted` follows the session | Latest set against the current state's `localMuted` users |
+| Full convergence | Latest equals `voicePolicy(currentState, settings)` (covers ptt, target, bitrate staleness too) |
+
+The per-state `voicePolicy()` recomputation stays as a cheap cross-check
+(fix direction 3, keep option); it still serves `SessionTest`, whose checker
+has no policy attached. The harness `policySource` seam lets a test freeze
+the mirror and prove the detector fires on the resulting stale policy:
+transmitting with a muted self, transmitting after disconnect, and
+transmitting across a session switch all fail the suite, while the
+unfrozen mirror passes every existing scenario (mute/deafen/PTT spam,
+`connectWhileConnectedKeepsOneSession`, disconnect at every sync boundary).
+`PolicyCollectorTest` pins the collector transitions directly: self-mute
+while `SYNCED` closes the gate, disconnect returns to the fallback, and
+`locallyMuted` follows user removal.
+
+**Accepted difference** (fix direction 4, document option): the test mirror
+is `flatMapLatest` over `client.currentSession`, while production reads
+`HumlaService._sessionState`, a `StateFlow` mirror reset on the service's
+own disconnect paths. Both reset to null/empty on teardown, so both yield
+the fallback; no production source was moved.
 
 ## Related
 
