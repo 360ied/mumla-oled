@@ -502,8 +502,9 @@ class TransportImpl internal constructor(
         } else {
             return
         }
-        // Once per session: a repeated Version (servers send one) does not
-        // change the format under a live stream.
+        // Once per session: a repeated Version (servers send one), or one
+        // after ServerSync fixed the default, does not change the format
+        // under a live stream.
         if (!voiceFormatRef.compareAndSet(null, VoiceFormat.fromServerVersion(v2, v1))) {
             logger.fine("Ignoring repeated Version for the UDP format")
         }
@@ -603,6 +604,13 @@ class TransportImpl internal constructor(
     /** Starts the keepalive ping loop; called once by Session on ServerSync. */
     override fun startKeepalive() {
         if (!pingStarted.compareAndSet(false, true)) return
+        // Voice starts after ServerSync with whatever format is fixed by now.
+        // A server that sent no Version gets the default for the whole
+        // session: a late Version must not change the transport's format
+        // under a started link (VoiceControl reads it for the send side).
+        if (voiceFormatRef.compareAndSet(null, VoiceFormat.DEFAULT)) {
+            logger.fine("No Version before ServerSync; UDP format stays default")
+        }
         // The transport alone owns the route (transport.md § Keepalive and UDP
         // health): push the initial decision here, at ServerSync, not at
         // start(). A cancelled connect attempt can finish its TLS handshake

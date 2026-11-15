@@ -459,6 +459,26 @@ class TransportImplTest {
     }
 
     @Test
+    fun versionAfterServerSyncDoesNotChangeTheFormat() = runTest {
+        // No Version before ServerSync: voice starts with the default, so a
+        // late Version must not change what the transport reports.
+        val f = Fixture(this)
+        try {
+            f.transport.startKeepalive()
+            f.step()
+            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            f.serverSends(
+                HumlaTCPMessageType.Version,
+                Mumble.Version.newBuilder().setVersionV2(Constants.toVersionV2(1, 5, 0)).build(),
+            )
+            f.sync()
+            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+        } finally {
+            f.close()
+        }
+    }
+
+    @Test
     fun legacyServerVersionPicksLegacyFormat() = runTest {
         val f = Fixture(this)
         try {
