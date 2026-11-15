@@ -82,8 +82,12 @@ static JNIEnv* attachForCallback(EngineContext* ctx, bool* attached) {
     const jint res =
         ctx->jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
     if (res == JNI_EDETACHED) {
-        // Host JNI takes void** here (Android takes JNIEnv**).
+        // C++ JNI takes JNIEnv** on Android, void** on the host JVM.
+#ifdef __ANDROID__
+        if (ctx->jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+#else
         if (ctx->jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK) {
+#endif
             return nullptr;
         }
         *attached = true;

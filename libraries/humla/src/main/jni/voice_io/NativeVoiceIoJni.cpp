@@ -95,10 +95,16 @@ struct VoiceIoContext {
         io.setTalkCell(&cell);
         notifier.setThreadHooks(
             [this] {
-                // Host JNI takes void** here (Android takes JNIEnv**).
+                // C++ JNI takes JNIEnv** on Android, void** on the host JVM.
                 JNIEnv* env = nullptr;
-                if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), nullptr) !=
-                    JNI_OK) {
+#ifdef __ANDROID__
+                const jint attached =
+                    vm->AttachCurrentThreadAsDaemon(&env, nullptr);
+#else
+                const jint attached = vm->AttachCurrentThreadAsDaemon(
+                    reinterpret_cast<void**>(&env), nullptr);
+#endif
+                if (attached != JNI_OK) {
                     LOGE("notifier attach failed; no snapshots this run");
                 }
             },
