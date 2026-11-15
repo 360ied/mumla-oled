@@ -1190,7 +1190,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceSettingsFlow.value = nextSettings
         }
         // Interim encoder target for SessionStats.currentBandwidth until the
-        // step-5a VoicePolicy carries real values (see LegacyVoiceLink).
+        // step-5a VoicePolicy carries real values (VoiceEngine status).
         if (delta.inputQuality != null) {
             try {
                 voiceLink.setTargetBitrate(delta.inputQuality)

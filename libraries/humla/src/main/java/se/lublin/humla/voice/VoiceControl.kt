@@ -34,8 +34,8 @@ import kotlinx.coroutines.launch
 import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.checkNotMainThread
+import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.net.HumlaUDPMessageType
-import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.route.AppliedRoute
@@ -63,7 +63,7 @@ class VoiceControl(
     private val policies: StateFlow<VoicePolicy>,
     private val settings: StateFlow<VoiceSettings>,
     private val prefs: StateFlow<RoutePreferences>,
-    private val voiceLink: LegacyVoiceLink,
+    private val voiceLink: VoiceEngine,
     appScope: CoroutineScope,
     controlDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
 ) {
@@ -221,16 +221,13 @@ class VoiceControl(
                 logger.logWarning("VoiceControl dropping stale TCP handler failed: $e")
             }
             try {
-                voiceLink.removeUdpHandler(existing)
-            } catch (e: Exception) {
-                logger.logWarning("VoiceControl dropping stale UDP handler failed: $e")
-            }
-            try {
                 existing.shutdown()
             } catch (e: Exception) {
                 logger.logWarning("VoiceControl stale handler shutdown failed: $e")
             }
             handlerRef.set(null)
+            voiceLink.framesSink = null
+            voiceLink.dropProvider = null
         }
         val created = try {
             buildHandler(session, route, current, handset)
@@ -249,21 +246,30 @@ class VoiceControl(
             }
             return
         }
-        try {
-            voiceLink.addUdpHandler(created)
-        } catch (e: Exception) {
-            logger.logWarning("VoiceControl UDP attach failed; detaching TCP side: $e")
+        // Native receive (5a.3b): parsed frames arrive through
+        // VoiceEngine.framesSink, not UDP handlers. The sink fans out to the
+        // current pipeline's rings under AudioOutput's monitor, which keeps
+        // each ring to one producer.
+        voiceLink.framesSink = { frames: List<DecodedVoiceFrame>, tunnel: Boolean ->
             try {
-                session.removeTcpHandler(created)
-            } catch (detachError: Exception) {
-                logger.logWarning("VoiceControl TCP detach after UDP failure failed: $detachError")
+                val output = created.getAudioOutput()
+                if (tunnel) {
+                    output.queueTunnelVoiceFrames(frames)
+                } else {
+                    output.queueUdpVoiceFrames(frames)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logger.logWarning("VoiceControl frames sink dropped: $e")
             }
+        }
+        voiceLink.dropProvider = {
             try {
-                created.shutdown()
-            } catch (shutdownError: Exception) {
-                logger.logWarning("VoiceControl orphan shutdown failed: $shutdownError")
+                created.getAudioOutput().lastDropped()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Triple(0, 0, 0)
             }
-            return
         }
         voiceLink.setTargetFramesPerPacket(created.getFramesPerPacket())
         created.setFramesPerPacketListener { fpp ->
@@ -271,7 +277,7 @@ class VoiceControl(
                 voiceLink.setTargetFramesPerPacket(fpp)
             } catch (e: Exception) {
                 // Must never throw off the audio thread; counting on the
-                // target setter to be non-blocking (see LegacyVoiceLink).
+                // target setter to be non-blocking.
                 if (e is CancellationException) throw e
                 logger.logWarning("VoiceControl FPP forward failed: $e")
             }
@@ -291,10 +297,9 @@ class VoiceControl(
         } catch (e: Exception) {
             logger.logWarning("VoiceControl TCP detach failed: $e")
         }
-        try {
-            voiceLink.removeUdpHandler(existing)
-        } catch (e: Exception) {
-            logger.logWarning("VoiceControl UDP detach failed: $e")
+        if (handlerRef.get() == null) {
+            voiceLink.framesSink = null
+            voiceLink.dropProvider = null
         }
         try {
             existing.shutdown()

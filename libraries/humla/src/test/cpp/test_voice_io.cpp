@@ -713,6 +713,28 @@ void testReceiveCryptCountsMatchKotlin() {
     rx.getStats(&good, &late, &lost, &resync);
     TEST_ASSERT_EQ(good, 2);
     TEST_ASSERT_EQ(lost, 4);
+    // Forced decrypt failure with a recent good decrypt: the rate limiter
+    // suppresses the resync request (the 5 s gate is pinned pure above).
+    int resyncs = 0;
+    rx.setResyncSink([&] { resyncs++; });
+    uint8_t tampered[14];
+    memcpy(tampered, packet, 14);
+    tampered[5] ^= 0xFF;
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 0);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 2);
+    // Rekey (new IV after the resync round trip): voice resumes. Rekey
+    // resets the counters on both sides (as Kotlin setKeys does), so good
+    // restarts at 1 with the first post-rekey decrypt.
+    const uint8_t key2[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    TEST_ASSERT_TRUE(rx.setKeys(key2, key2, key2));
+    TEST_ASSERT_TRUE(sender.setKey(key2, key2, key2));
+    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    TEST_ASSERT_TRUE(rx.handleCrypted(packet, 14));
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(lost, 0);
     std::cout << "  [PASS] testReceiveCryptCountsMatchKotlin" << std::endl;
 }
 

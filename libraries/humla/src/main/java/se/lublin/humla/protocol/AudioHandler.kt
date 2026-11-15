@@ -37,13 +37,11 @@ import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
 import se.lublin.humla.voice.TalkActivityPublisher
 import se.lublin.humla.voice.VoicePolicy
-import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.NativeVoiceCodec
 import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.state.UserInfo
 import se.lublin.humla.protobuf.Mumble
-import se.lublin.humla.protobuf.MumbleUDP
 import se.lublin.humla.util.HumlaLogger
 import se.lublin.humla.util.HumlaNetworkListener
 
@@ -742,24 +740,9 @@ class AudioHandler : HumlaNetworkListener,
         }
     }
 
-    override fun messageDecodedVoice(frames: List<DecodedVoiceFrame>) {
-        // UDP receive coroutine: the inbound ring's producer.
-        run {
-            mOutput.queueUdpVoiceFrames(frames)
-        }
-    }
-
-    override fun messageDecodedVoiceTunnel(frames: List<DecodedVoiceFrame>) {
-        // Session message coroutine: the tunnel ring's producer, shared with
-        // messageUserRemove below.
-        run {
-            mOutput.queueTunnelVoiceFrames(frames)
-        }
-    }
-
-    override fun messageProtobufPing(msg: MumbleUDP.Ping) {
-        // Handled in Transport (tunnelled voice bypasses the UDP path)
-    }
+    // Voice frames no longer arrive here: the native receive thread parses
+    // and filters (5a.3b), delivering through VoiceEngine.framesSink to the
+    // rings. The base no-ops cover the inherited UDP listener methods.
 
     fun setProtobufUdp(protobufUdp: Boolean) {
         mProtobufUdp = protobufUdp

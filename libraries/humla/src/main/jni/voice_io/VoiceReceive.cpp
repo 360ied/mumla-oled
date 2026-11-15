@@ -106,12 +106,26 @@ bool VoiceReceive::handlePlaintext(const uint8_t* data, size_t length) {
             return true;
         }
     }
+    mumla::audio::InboundPacket survivors[voice_codec::kMaxFramesPerDatagram];
+    size_t survivorCount = 0;
     for (size_t i = 0; i < parsed.frameCount; ++i) {
         const auto& frame = parsed.frames[i];
         if (m_policy != nullptr && PolicyCell::shouldDrop(snapshot, frame.session)) {
             continue;
         }
-        m_io->pushInbound(frame);
+        if (m_io != nullptr) {
+            m_io->pushInbound(frame);
+        }
+        if (survivorCount < voice_codec::kMaxFramesPerDatagram) {
+            survivors[survivorCount++] = frame;
+        }
+    }
+    if (m_voiceSink && survivorCount > 0) {
+        // Tunnel flag: queueTunnelled runs on the session coroutine (tunnel
+        // ring, ordered after removals); the receive loop runs UDP
+        // (inbound ring). Distinguishing here keeps one wake path per ring.
+        // handlePlaintext is the UDP path; tunnel uses handleTunnelled.
+        m_voiceSink(survivors, survivorCount, false);
     }
     return true;
 }
@@ -137,6 +151,53 @@ bool VoiceReceive::handleCrypted(const uint8_t* data, size_t length) {
         if (m_resyncSink) m_resyncSink();
     }
     return false;
+}
+
+bool VoiceReceive::handleTunnelled(const uint8_t* data, size_t length) {
+    if (data == nullptr || length == 0 || length > kMaxDatagram) {
+        return false;
+    }
+    voice_codec::ParsedDatagram parsed;
+    if (!voice_codec::parseDatagram(m_format, data, length, m_legacyVersion, &parsed)) {
+        return false;
+    }
+    if (parsed.kind == voice_codec::ParsedDatagram::PING) {
+        if (m_pingSink) {
+            PingReport report;
+            report.timestampMicros = parsed.pingTimestamp;
+            report.serverVersionV2 = parsed.serverVersionV2;
+            report.maxBandwidth = parsed.maxBandwidthPerUser;
+            m_pingSink(report);
+        }
+        return true;
+    }
+    if (parsed.kind != voice_codec::ParsedDatagram::VOICE) {
+        return true;
+    }
+    PolicySnapshot snapshot;
+    if (m_policy != nullptr) {
+        if (!m_policy->tryRead(&snapshot)) {
+            return true;
+        }
+    }
+    mumla::audio::InboundPacket survivors[voice_codec::kMaxFramesPerDatagram];
+    size_t survivorCount = 0;
+    for (size_t i = 0; i < parsed.frameCount; ++i) {
+        const auto& frame = parsed.frames[i];
+        if (m_policy != nullptr && PolicyCell::shouldDrop(snapshot, frame.session)) {
+            continue;
+        }
+        if (m_io != nullptr) {
+            m_io->pushTunnel(frame);
+        }
+        if (survivorCount < voice_codec::kMaxFramesPerDatagram) {
+            survivors[survivorCount++] = frame;
+        }
+    }
+    if (m_voiceSink && survivorCount > 0) {
+        m_voiceSink(survivors, survivorCount, true);
+    }
+    return true;
 }
 
 bool VoiceReceive::sendDatagram(const uint8_t* plain, size_t length) {
@@ -214,6 +275,7 @@ void VoiceReceive::stop() {
 }
 
 void VoiceReceive::loop() {
+    if (m_onStart) m_onStart();
     uint8_t crypted[kMaxDatagram + 4];
     uint8_t plain[kMaxDatagram + 4];
     while (m_running.load(std::memory_order_acquire)) {
@@ -244,6 +306,7 @@ void VoiceReceive::loop() {
             if (m_resyncSink) m_resyncSink();
         }
     }
+    if (m_onExit) m_onExit();
 }
 
 } // namespace voice_io

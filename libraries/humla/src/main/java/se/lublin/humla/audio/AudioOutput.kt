@@ -409,18 +409,14 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
     }
 
     /**
-     * Interim enqueue (step 5a.3a): Kotlin keeps parsing with the 5a.2 codec
-     * and the sender filter, and pushes the surviving frames into the rings
-     * through two calls, one per producer. UDP frames arrive on the HumlaUDP
-     * receive coroutine, tunnelled frames on the session message coroutine;
-     * every push and the teardown in stopPlaying run under this monitor, so
-     * each ring keeps one producer at a time (serializing the old and new
-     * UDP coroutines that briefly overlap on a UDP restart). The render
-     * thread never takes this monitor. Both inbound formats arrive here as
-     * the same frames; locally-muted and unknown-sender drops stay in
-     * Kotlin, as before, applied per frame. Empty non-terminators never
-     * arrive (the codec drops them); an empty terminator still forwards its
-     * marker so the voice drains instead of lingering to the miss-expiry.
+     * Ring enqueue (step 5a.3b): the native receive thread parses and
+     * filters, delivering survivors through VoiceEngine.framesSink; the
+     * session coroutine tunnels through nativeQueueTunnelled the same way.
+     * Both land here, one call per ring, under this monitor so each ring
+     * keeps one producer and no push reaches a destroyed voice_io. The
+     * render thread never takes this monitor. Empty non-terminators never
+     * arrive; an empty terminator still forwards its marker so the voice
+     * drains instead of lingering to the miss-expiry.
      */
     fun queueUdpVoiceFrames(frames: List<DecodedVoiceFrame>) {
         queueRingFrames(frames, tunnel = false)
@@ -507,7 +503,10 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
             index++
         }
         talkPublisher.updateRemote(levels)
-        // Until VoiceStatus arrives in 5a.3b, full-ring drops are logged
+        cachedDroppedInbound = droppedInbound
+        cachedDroppedTunnel = droppedTunnel
+        cachedDroppedJitter = droppedJitter
+        // Drops also feed VoiceStatus (5a.3b) via lastDropped; logging stays
         // here, on change only.
         if (droppedInbound != lastLoggedDroppedInbound ||
             droppedTunnel != lastLoggedDroppedTunnel ||
@@ -544,6 +543,19 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
     fun hasActiveVoices(): Boolean {
         val ioCopy = voiceIo
         return ioCopy != null && ioCopy.lastHasActiveVoices()
+    }
+
+    // Latest cumulative drops, cached on the notifier thread (which also logs
+    // them) for VoiceStatus. Plain vars: written on the notifier thread only,
+    // read anywhere for telemetry; a stale or torn read only skews a counter
+    // until the next snapshot. No monitor (the render wake must stay
+    // lock-free) and no new tripwire lines.
+    private var cachedDroppedInbound = 0L
+    private var cachedDroppedTunnel = 0L
+    private var cachedDroppedJitter = 0L
+
+    fun lastDropped(): Triple<Long, Long, Long> {
+        return Triple(cachedDroppedInbound, cachedDroppedTunnel, cachedDroppedJitter)
     }
 
     /**

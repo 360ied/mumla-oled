@@ -22,7 +22,7 @@ import se.lublin.humla.HumlaNative
 /**
  * One decoded voice frame from the native packet codec (step 5a.2).
  *
- * Android-free: lives in net so LegacyVoiceLink can use it without android
+ * Android-free: lives in net for android-free framing use without android
  * imports. [opus] is empty for an end-of-transmission marker.
  */
 data class DecodedVoiceFrame(
@@ -53,29 +53,17 @@ data class DecodedVoiceFrame(
 }
 
 /**
- * One decoded ping from the native packet codec.
+ * Interim JNI over the native packet codec (step 5a.2, trimmed in 5a.3b).
  *
- * [serverVersionV2] and [maxBandwidth] are 0 when absent (protobuf ping
- * without extended info, or any legacy ping); callers map 0 to null, as
- * today's LegacyVoiceLink does.
- */
-data class DecodedPing(
-    @JvmField val timestamp: Long,
-    @JvmField val serverVersionV2: Long,
-    @JvmField val maxBandwidth: Int,
-)
-
-/**
- * Interim JNI over the native packet codec (step 5a.2).
+ * Thin bridge only: AudioHandler encode and VoiceEngine ping framing call
+ * through here. Both inbound parses are native now (voice_io receive and
+ * tunnel), so the parse and ping-parse entries are deleted with the Kotlin
+ * framing they served. The codec core stays JNI-free; this file holds
+ * voice_codec's single <jni.h> allowlist entry and leaves with the Kotlin
+ * encode framing in 5a.4. See docs/target-architecture/voice.md#packet-codec.
  *
- * Thin bridge only: today's Kotlin framing (AudioHandler encode,
- * LegacyVoiceLink ping framing) and both inbound parses call through here.
- * The codec core stays JNI-free; this file holds voice_codec's single
- * <jni.h> allowlist entry and leaves with the Kotlin framing it serves in
- * 5a.4. See docs/target-architecture/voice.md#packet-codec.
- *
- * Android-free: no android.* imports, so Transport and LegacyVoiceLink stay
- * in the android-free check.
+ * Android-free: no android.* imports, so Transport stays in the
+ * android-free check.
  */
 object NativeVoiceCodec {
     init {
@@ -106,16 +94,5 @@ object NativeVoiceCodec {
 
     @JvmStatic
     external fun frameProtobufPing(timestamp: Long): ByteArray?
-
-    @JvmStatic
-    external fun parseLegacyVoice(data: ByteArray, legacyVersion: Int): Array<DecodedVoiceFrame>?
-
-    @JvmStatic
-    external fun parseProtobufVoice(data: ByteArray): Array<DecodedVoiceFrame>?
-
-    @JvmStatic
-    external fun parseLegacyPing(data: ByteArray): DecodedPing?
-
-    @JvmStatic
-    external fun parseProtobufPing(data: ByteArray): DecodedPing?
 }
+

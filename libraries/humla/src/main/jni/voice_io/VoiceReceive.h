@@ -58,6 +58,12 @@ public:
     using PingSink = std::function<void(const PingReport&)>;
     using ResyncSink = std::function<void()>;
     using UnavailableSink = std::function<void()>;
+    // Voice frames sink (live 5a.3b path): invoked with the filtered
+    // survivors plus the tunnel flag when m_io is null (no shared VoiceIo;
+    // render stays per-pipeline until 5a.4). Tests use m_io directly
+    // without a sink.
+    using VoiceSink = std::function<void(const mumla::audio::InboundPacket* frames,
+                                         size_t count, bool tunnel)>;
 
     VoiceReceive(VoiceIo* io, PolicyCell* policy);
     ~VoiceReceive();
@@ -83,6 +89,11 @@ public:
     // decrypt success; on failure applies the same rate-limited resync.
     bool handleCrypted(const uint8_t* data, size_t length);
 
+    // Tunnel path (session message coroutine): parse + filter, push to the
+    // tunnel ring when m_io is present, otherwise the voice sink with
+    // tunnel=true. Removals stay ordered after tunnelled voice on this ring.
+    bool handleTunnelled(const uint8_t* data, size_t length);
+
     // Pure resync gate for pinning (5 s since last good, 5 s between
     // requests). Live loop and tests share it; no clock inside.
     static bool shouldRequestResync(uint64_t nowUs, int64_t lastGoodElapsedUs,
@@ -101,6 +112,7 @@ public:
     void setPingSink(PingSink sink) { m_pingSink = std::move(sink); }
     void setResyncSink(ResyncSink sink) { m_resyncSink = std::move(sink); }
     void setUnavailableSink(UnavailableSink sink) { m_unavailableSink = std::move(sink); }
+    void setVoiceSink(VoiceSink sink) { m_voiceSink = std::move(sink); }
 
     // Send seam (item 5): encrypt and sendto on the shared socket. Returns
     // false when down or the packet cannot be framed/encrypted (dropped).
@@ -122,6 +134,18 @@ private:
     PingSink m_pingSink;
     ResyncSink m_resyncSink;
     UnavailableSink m_unavailableSink;
+    VoiceSink m_voiceSink;
+    // Thread hooks run on the receive thread around the loop (start before
+    // the first recv, exit after). The JNI layer attaches to the JVM here
+    // once per thread lifetime so callbacks can GetEnv safely.
+    std::function<void()> m_onStart;
+    std::function<void()> m_onExit;
+
+public:
+    void setThreadHooks(std::function<void()> onStart, std::function<void()> onExit) {
+        m_onStart = std::move(onStart);
+        m_onExit = std::move(onExit);
+    }
 
     std::atomic<uint64_t> m_lastRequestUs{0};
 };

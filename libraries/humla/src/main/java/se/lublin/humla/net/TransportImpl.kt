@@ -415,6 +415,10 @@ class TransportImpl internal constructor(
                             send(empty, HumlaTCPMessageType.CryptSetup)
                         }
                         is VoiceEvent.UdpUnavailable -> switchToTunnel("voice reported UDP unavailable")
+                        // Pipeline errors never end the session (voice.md
+                        // failures); text and features keep working. Encoder
+                        // limits only retune the sender (a 5a.4 policy push).
+                        is VoiceEvent.PipelineError, is VoiceEvent.EncoderLimited -> Unit
                     }
                 }
             } catch (e: CancellationException) {
@@ -516,9 +520,11 @@ class TransportImpl internal constructor(
                 val key = msg.key
                 val clientNonce = msg.clientNonce
                 val serverNonce = msg.serverNonce
-                if (key.size() == CryptState.AES_BLOCK_SIZE &&
-                    clientNonce.size() == CryptState.AES_BLOCK_SIZE &&
-                    serverNonce.size() == CryptState.AES_BLOCK_SIZE
+                // OCB2 block size (was CryptState.AES_BLOCK_SIZE; Kotlin
+                // CryptState is deleted in 5a.3b, keys live native).
+                if (key.size() == 16 &&
+                    clientNonce.size() == 16 &&
+                    serverNonce.size() == 16
                 ) {
                     val keys = CryptKeys(key, clientNonce, serverNonce)
                     _cryptKeys.value = keys
@@ -528,7 +534,7 @@ class TransportImpl internal constructor(
                 }
             } else if (msg.hasServerNonce()) {
                 val serverNonce = msg.serverNonce
-                if (serverNonce.size() == CryptState.AES_BLOCK_SIZE) {
+                if (serverNonce.size() == 16) {
                     voice.setDecryptIv(serverNonce)
                 } else {
                     failOnce(ClientError.Connection("Invalid server nonce in CryptSetup", null))

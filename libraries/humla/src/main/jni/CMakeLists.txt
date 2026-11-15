@@ -202,12 +202,12 @@ if(ANDROID)
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
-        "${CRYPTO_DIR}/NativeCryptStateJni.cpp"
     )
     target_include_directories(humlaaudio PRIVATE
         "${AUDIO_ENGINE_DIR}"
@@ -399,12 +399,12 @@ else()
     # non-silent PCM through the production render path on the host.
     add_library(humlaaudio SHARED
         $<TARGET_OBJECTS:humlacrypto_obj>
-        "${CRYPTO_DIR}/NativeCryptStateJni.cpp"
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"

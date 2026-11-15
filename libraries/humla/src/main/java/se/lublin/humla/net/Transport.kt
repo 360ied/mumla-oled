@@ -109,7 +109,7 @@ sealed interface Inbound {
 
 /**
  * Voice side of the transport boundary. Implemented by the VoiceEngine
- * (step 5a); until then by [LegacyVoiceLink] over HumlaUDP/CryptState.
+ * (step 5a.3b native receive and transport).
  */
 interface VoiceLink {
     fun setKeys(keys: CryptKeys)
@@ -150,6 +150,16 @@ sealed interface VoiceEvent {
 
     data object CryptResyncRequested : VoiceEvent
     data object UdpUnavailable : VoiceEvent
+
+    /** Capture or playback stream cannot open; the session stays connected. */
+    data class PipelineError(val message: String) : VoiceEvent
+
+    /** The server bandwidth cap lowered the effective encoder settings. */
+    data class EncoderLimited(
+        val maxBandwidth: Int,
+        val bitrate: Int,
+        val framesPerPacket: Int,
+    ) : VoiceEvent
 }
 
 /**
