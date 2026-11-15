@@ -27,8 +27,9 @@ import se.lublin.humla.protobuf.MumbleUDP
 import se.lublin.humla.protocol.HumlaUDPMessageListener
 
 /**
- * The interim link's side of issues 16 and 17: the route changes only on
- * SetVoiceRoute, and the UDP format only at voice start. No test here opens
+ * The interim link's side of issues 16 and 17: within a session the route
+ * changes only on SetVoiceRoute (stop resets it to tunnel), and the UDP
+ * format only at voice start. No test here opens
  * a socket: UDP needs both a started endpoint and a UDP route, and each case
  * withholds one of them.
  */
@@ -53,13 +54,15 @@ class LegacyVoiceLinkContractTest {
             assertTrue(!routedToTunnel())
             link.submit(VoiceCommand.SetVoiceRoute(false))
             assertTrue(routedToTunnel())
-            // Starting and stopping voice leave the route alone (the old link
-            // reset it to UDP at start, issue 16). Route is tunnel here, so
-            // start opens no socket.
+            // Stop resets to tunnel: no route carries into the next session.
+            link.submit(VoiceCommand.SetVoiceRoute(true))
+            link.stopVoice()
+            assertTrue(routedToTunnel())
+            // Start leaves the route alone (the old link reset it to UDP at
+            // start, issue 16). Route is tunnel here, so start opens no socket.
             link.startVoice("127.0.0.1", 9, VoiceFormat.DEFAULT)
             assertTrue(routedToTunnel())
             link.stopVoice()
-            assertTrue(routedToTunnel())
             link.submit(VoiceCommand.SetVoiceRoute(true))
             link.startVoiceWithoutUdp(VoiceFormat.DEFAULT)
             assertTrue(!routedToTunnel())

@@ -353,8 +353,9 @@ class HumlaClient(
             routeLifecycle.sessionStarted()
         } catch (ignored: Exception) {
         }
-        // The route is the transport's (pushed when it started); the format
-        // is the one it fixed from the server's Version.
+        // The route is the transport's (pushed at ServerSync, in either order
+        // with this call); the format is the one it fixed from the server's
+        // Version.
         try {
             voiceLifecycle.startVoice(
                 transportRemoteHost(session),

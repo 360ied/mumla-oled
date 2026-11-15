@@ -71,8 +71,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
     private val udpHandlers = CopyOnWriteArrayList<HumlaUDPMessageListener>()
 
     // The route is the transport's decision (transport.md § Keepalive and UDP
-    // health); this link only follows SetVoiceRoute. Tunnel until told: the
-    // transport pushes its initial route when it starts.
+    // health); within a session this link only follows SetVoiceRoute. Each
+    // session starts tunnelled (initial value, reset at stopVoice) until the
+    // transport pushes its route at ServerSync, so no route carries over.
     private val usingUdp = AtomicBoolean(false)
 
     // The session's endpoint while voice is started; null when stopped.
@@ -111,9 +112,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
     }
 
     override fun startVoice(host: String, port: Int, format: VoiceFormat) {
-        // The route is not touched here: it is whatever the transport last
-        // pushed, in either order relative to this call. The socket opens
-        // once voice is started and the route is UDP, whichever comes last.
+        // The route is not touched here: the transport's ServerSync push may
+        // land before or after this call. The socket opens once voice is
+        // started and the route is UDP, whichever comes last.
         formatRef.set(format)
         endpointRef.set(Endpoint(host, port))
         connectUdpIfRouted()
@@ -129,6 +130,9 @@ class LegacyVoiceLink @JvmOverloads constructor(
 
     override fun stopVoice() {
         endpointRef.set(null)
+        // Fail safe for the next session: tunnel (no UDP) until its transport
+        // pushes a route.
+        usingUdp.set(false)
         disconnectUdp()
     }
 

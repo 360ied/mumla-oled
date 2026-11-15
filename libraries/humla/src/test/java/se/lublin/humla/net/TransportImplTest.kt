@@ -197,14 +197,9 @@ private class Fixture(val scope: TestScope, val forceTcp: Boolean = false) {
     )
     private var sentinels = 0
 
-    /** Routes pushed by start(), before any test step; cleared from [voice]. */
-    val initialRoutes: List<VoiceCommand.SetVoiceRoute>
-
     init {
         transport.start(socket.input, socket.output, socket)
         scope.runCurrent()
-        initialRoutes = voice.routes()
-        voice.commands.clear()
     }
 
     fun step() = scope.runCurrent()
@@ -390,16 +385,23 @@ class TransportImplTest {
     }
 
     @Test
-    fun initialRouteIsPushedAtStart() = runTest {
+    fun initialRouteIsPushedAtServerSync() = runTest {
         // The transport alone owns the route (issue 16): voice is told UDP at
-        // start, not left on its own default, and nothing more until a switch.
+        // ServerSync, not left on its own default. Nothing at start(): a
+        // cancelled attempt can still run start() after a newer attempt took
+        // over, but never reaches ServerSync, so it never steers voice.
         val f = Fixture(this)
         try {
-            assertEquals(listOf(VoiceCommand.SetVoiceRoute(true)), f.initialRoutes)
+            f.serverPing(good = 0)
+            f.sync()
+            assertTrue(f.voice.routes().isEmpty())
             assertTrue(f.transport.stats.value.usingUdp)
             f.transport.startKeepalive()
             f.step()
-            assertTrue(f.voice.routes().isEmpty())
+            assertEquals(listOf(VoiceCommand.SetVoiceRoute(true)), f.voice.routes())
+            f.serverPing(good = 0)
+            f.sync()
+            assertEquals(1, f.voice.routes().size)
         } finally {
             f.close()
         }
@@ -410,12 +412,10 @@ class TransportImplTest {
         val f = Fixture(this, forceTcp = true)
         try {
             assertFalse(f.transport.stats.value.usingUdp)
-            // Tunnel pushed at start, ahead of voice start; not repeated.
-            assertEquals(listOf(VoiceCommand.SetVoiceRoute(false)), f.initialRoutes)
-            assertTrue(f.sentOf(HumlaTCPMessageType.UDPTunnel).isEmpty())
+            assertTrue(f.voice.routes().isEmpty())
             f.transport.startKeepalive()
             f.step()
-            assertTrue(f.voice.routes().isEmpty())
+            assertEquals(listOf(VoiceCommand.SetVoiceRoute(false)), f.voice.routes())
             val frames = f.sentFrames()
             assertEquals(HumlaTCPMessageType.UDPTunnel, frames[0].first)
             assertDummyTunnel(frames[0].second)
@@ -426,7 +426,7 @@ class TransportImplTest {
             f.advance(40_000)
             f.serverPing(good = 50)
             f.sync()
-            assertTrue(f.voice.routes().isEmpty())
+            assertEquals(1, f.voice.routes().size)
             assertTrue(f.voice.pings().isEmpty())
             f.transport.startKeepalive()
             f.step()
@@ -687,6 +687,7 @@ class TransportImplTest {
             f.transport.send(Mumble.Ping.getDefaultInstance(), HumlaTCPMessageType.Ping)
         }
         val voicePingsBefore = f.voice.pings().size
+        val routesBefore = f.voice.routes().size
         f.advance(60_000)
         assertFalse(f.transport.failure.isCompleted)
         assertEquals(sentBefore, f.sentFrames().size)
@@ -695,7 +696,7 @@ class TransportImplTest {
         assertEquals(voicePingsBefore, f.voice.pings().size)
         f.voice.eventFlow.tryEmit(VoiceEvent.UdpUnavailable)
         f.step()
-        assertTrue(f.voice.routes().isEmpty())
+        assertEquals(routesBefore, f.voice.routes().size)
         f.close()
     }
 }

@@ -378,12 +378,6 @@ class TransportImpl internal constructor(
      */
     internal fun start(rawInput: InputStream, rawOutput: OutputStream, socket: Closeable) {
         socketRef.set(socket)
-        // The transport alone owns the route (transport.md § Keepalive and UDP
-        // health): push the initial decision before the reader starts, so it
-        // reaches voice ahead of anything this session does. Voice keeps the
-        // last route it was told across sessions, so without this push a
-        // forced-TCP session could open UDP on the previous session's route.
-        submitVoice(VoiceCommand.SetVoiceRoute(usingUdpRef.get()))
         val input = DataInputStream(rawInput)
         val output = DataOutputStream(rawOutput)
         writerJobRef.set(scope.launch {
@@ -609,9 +603,15 @@ class TransportImpl internal constructor(
     /** Starts the keepalive ping loop; called once by Session on ServerSync. */
     override fun startKeepalive() {
         if (!pingStarted.compareAndSet(false, true)) return
+        // The transport alone owns the route (transport.md § Keepalive and UDP
+        // health): push the initial decision here, at ServerSync, not at
+        // start(). A cancelled connect attempt can finish its TLS handshake
+        // and run start() after a newer attempt took over, but it never
+        // reaches ServerSync, so it cannot steer the shared voice link. Voice
+        // resets to tunnel at stop, so until this push no UDP is opened.
+        submitVoice(VoiceCommand.SetVoiceRoute(usingUdpRef.get()))
         if (forceTcp) {
-            // Forced TCP: send the dummy tunnel now, never use UDP. The route
-            // (tunnel) and stats were already set at construction and start.
+            // Forced TCP: send the dummy tunnel now, never use UDP.
             val utb = Mumble.UDPTunnel.newBuilder()
                 .setPacket(ByteString.copyFrom(dummyTunnelPacket()))
                 .build()
