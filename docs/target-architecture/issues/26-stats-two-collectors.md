@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open — fold into [04](04-session-transport-virtual-time-gaps.md). |
+| Status | Open; not gating. [04](04-session-transport-virtual-time-gaps.md) was resolved without it; its `SessionTest` fakes are the natural place for a pinning test. |
 | Category | Spec drift |
 | Severity | Benign |
 | Verified | Yes (code read) |

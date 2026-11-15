@@ -116,6 +116,9 @@ class Session internal constructor(
         parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) + workDispatcher,
     )
 
+    /** Test seam: the session scope's job, for the no-work-after-close invariant. */
+    internal val scopeJob: Job get() = scope.coroutineContext[Job]!!
+
     private val tcpHandlers = CopyOnWriteArrayList<HumlaTCPMessageListener>()
 
     fun addTcpHandler(handler: HumlaTCPMessageListener) {

@@ -57,8 +57,10 @@ ground rules).
 State is current as of 2026-11-13, after the three spec commits that
 followed the audit (`028d2222`, `ec9faf63`, `4e9474c7`) and the first code
 batch (`5ac34784`). [32](32-route-decision-cached-sco-state.md) came later,
-from a device check of the SCO exit path, and is the only entry in this
-queue that the audit snapshot could not have seen. The spec-only fixes (12,
+from a device check of the SCO exit path, and
+[34](34-published-policy-not-an-invariant.md) from the review of 05's
+resolution; they are the only entries in this queue that the audit
+snapshot could not have seen. The spec-only fixes (12,
 13, 24, 25, 27, 31, and the interim entries for 14, 15, 18) are applied on
 `master`, and 08, 23, and
 28 are now fixed and tested; the decisions for 09, 10, 11, and 19 are
@@ -82,11 +84,12 @@ the same state in its `Status` row.
 | # | Issue | State |
 |---|---|---|
 | [03](03-voice-control-test-vacuous.md) | `VoiceControlTest` never starts a session, so the pipeline lifecycle is untested | Open; deferred to 5a.4, lesson applies to its replacement |
-| [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Open; should close before 5a.3b |
-| [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Open; with 04 |
+| [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Resolved (`bf1b37a3`..`cc3a673f`) |
+| [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Resolved (`26b6c8c4`, `02e68f97`) |
 | [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions have no enforcement artifact; one violation in `Session` | Split: `ServerSync` lambda fixed on `session-serversync-update-hygiene`; review skills deleted, so enforcement is open (tripwire not written); rule-2 sweep undone |
 | [07](07-channel-adapter-spike-weaker.md) | Step-2 live-handle spike test is weaker than specified | Open; not gating |
 | [08](08-hash-clearing-untested.md) | Hash-driven clearing has no transition test | Resolved (`3333918a`, `71bd3a54`) |
+| [34](34-published-policy-not-an-invariant.md) | The published `VoicePolicy` is never checked as an invariant; the checker recomputes `voicePolicy()` | Open; should close before 5a.3b |
 
 ### Spec/behavior mismatches (behavior preserved from before the migration)
 
@@ -96,7 +99,7 @@ the same state in its `Status` row.
 | [10](10-route-fallback-unreachable.md) | `Fallback` unreachable when a media sink exists; `ScoFailed` and state disagree | Decided; `route.md` rewritten, `Fallback` code change open |
 | [11](11-route-changed-suppressed-on-recheck.md) | `RouteChanged` not emitted for recheck-driven state changes | Decided; `route.md` rewritten, drop-`isRecheck` code change open |
 | [12](12-route-prefs-skip-debounce-and-settling.md) | Re-decisions skip `Settling`; preference changes skip the debounce | Resolved (spec follows code) |
-| [13](13-cancel-reconnect-resets-attempts.md) | `cancelReconnect` resets the attempt counter (legacy parity) | Resolved (spec); pinning test open |
+| [13](13-cancel-reconnect-resets-attempts.md) | `cancelReconnect` resets the attempt counter (legacy parity) | Resolved (spec, `02e68f97`) |
 
 ### Undocumented interims
 
@@ -115,11 +118,11 @@ the same state in its `Status` row.
 |---|---|---|
 | [20](20-batch-drain-publishes-per-message.md) | 64-message batch drain still publishes once per message | Open; needs a decision (implement publish-once, or correct the spec's cost model) |
 | [21](21-retry-sco-no-counter-check.md) | `RetrySco` skips the counter check, publishes nothing, always returns true | Half resolved (spec); truthful return open |
-| [22](22-keepalive-anchored-at-construction.md) | Keepalive window and 20 s tunnel rule anchored at transport creation | Open; fold into 04's transport tests |
+| [22](22-keepalive-anchored-at-construction.md) | Keepalive window and 20 s tunnel rule anchored at transport creation | Open; acceptance test fits `TransportImplTest` (04's injected clock) |
 | [23](23-syncing-not-entered-on-channelstate.md) | `SYNCING` entered only on `UserState` | Resolved (`5d322791`, `0e8b4c15`) |
 | [24](24-handles-drop-navigation-after-removal.md) | Removed handles drop navigation (spec wording too broad; matches old model) | Resolved (spec) |
 | [25](25-user-state-writes-local.md) | `applyUserState` writes `local.listeningVolumes` (spec self-contradiction) | Resolved (spec); optional test |
-| [26](26-stats-two-collectors.md) | Stats from two collectors; `usingUdp` seeded from the target | Open; fold into 04 |
+| [26](26-stats-two-collectors.md) | Stats from two collectors; `usingUdp` seeded from the target | Open; not gating |
 | [27](27-failed-with-connection-error.md) | `Failed` can carry a `ClientError.Connection` | Decided; `client.md` updated, `ClientError.Internal` code change open |
 | [28](28-local-facts-load-failure-silent.md) | A failed `LocalFacts` load is not logged | Resolved (`7459c0de`) |
 | [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Open; small |
@@ -132,21 +135,22 @@ the same state in its `Status` row.
 Ordered by what must land before step 5a.3, then by dependency. Each row
 is one worktree unless noted. In row 1 only 01 gated 5a.3a, and it is
 resolved; the rest of the row does not gate and is a separate worktree (09 and 10 gated on
-a decision, made 2026-11-12). Rows 2 and 3 gate only 5a.3b (see [open items](../open-items.md)).
+a decision, made 2026-11-12). Rows 2 to 4 gate only 5a.3b (see [open items](../open-items.md)).
 
 ### Before step 5a.3
 
 | Order | Batch | Issues | Notes |
 |---|---|---|---|
 | 1 (01 before 5a.3a) | Route confinement, then route state | ~~[01](01-sco-manager-two-thread-mutation.md)~~ (resolved), then [10](10-route-fallback-unreachable.md), [11](11-route-changed-suppressed-on-recheck.md), [21](21-retry-sco-no-counter-check.md), [09](09-route-settling-unobservable.md)'s pinning test | 01 was its own worktree. The rest is one separate worktree: all of it is `RouteControl` code that was already route-confined before 01, and none of it gates 5a.3a. 10 changes the published `RouteState`, which `VoiceControl` follows, so check that effect in review. |
-| 2 (before 5a.3b) | Session and transport tests | [04](04-session-transport-virtual-time-gaps.md) in scenario batches, then [05](05-client-edge-invariants-weak.md) | May take two worktrees. Builds the `Session` and `TransportImpl` fakes that row 3 reuses. |
+| 2 (before 5a.3b) | Session and transport tests | ~~[04](04-session-transport-virtual-time-gaps.md)~~, ~~[05](05-client-edge-invariants-weak.md)~~ (resolved) | Done in one worktree. The `Session` and `TransportImpl` fakes row 3 reuses are in `ClientTestSupport.kt` and `TransportImplTest.kt`. |
+| 4 (before 5a.3b) | Published policy invariant | [34](34-published-policy-not-an-invariant.md) | Test-only; extends 05's harness with a real `PolicyCollector`. Independent of row 3. |
 | 3 (before 5a.3b) | Transport ownership | [16](16-voice-link-owns-udp-route.md), [17](17-udp-format-per-packet.md); with them [22](22-keepalive-anchored-at-construction.md), [26](26-stats-two-collectors.md) | 16 and 17 decide what the transport owns before 5a.3b reimplements the voice side natively. 22 and 26 are not gating; each is easiest to pin with 04's transport tests. |
 
 ### Independent, any time
 
 | Batch | Issues | Notes |
 |---|---|---|
-| Small library fixes (one worktree) | [29](29-half-duplex-raw-preference.md), [27](27-failed-with-connection-error.md), [13](13-cancel-reconnect-resets-attempts.md)'s pinning test, [19](19-pre-sync-local-intents-published.md) together with [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda | All in `libraries/humla`. 29 touches `VoiceSettingsMapper` and `VoiceControl`. 27 adds `ClientError.Internal`; `HumlaService`'s exhaustive `when` must handle it, and the app has no `ClientError` switches. 19 and 06 are the same branch of `Session.handleMessage`. `HumlaClientTest` already drives sync through a fake transport, so 13's and 19's tests need no new harness. |
+| Small library fixes (one worktree) | [29](29-half-duplex-raw-preference.md), [27](27-failed-with-connection-error.md), [19](19-pre-sync-local-intents-published.md) together with [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda | All in `libraries/humla`. 29 touches `VoiceSettingsMapper` and `VoiceControl`. 27 adds `ClientError.Internal`; `HumlaService`'s exhaustive `when` must handle it, and the app has no `ClientError` switches. 19 and 06 are the same branch of `Session.handleMessage`. `HumlaClientTest` already drives sync through a fake transport, so 19's test needs no new harness. |
 | Service destroy leak | [02](02-service-destroy-leaks-transport.md) | Independent bugfix. |
 | Rule-2 review sweep | [06](06-update-conventions-not-enforced.md) | Read-then-act pass over `Session`, `PolicyCollector`, and `RouteControl` (the audit did not do it). Sweep `RouteControl` after row 1, since confinement changes its reads. |
 | Spike test | [07](07-channel-adapter-spike-weaker.md) | Test-only. |

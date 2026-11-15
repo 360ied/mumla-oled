@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — should be closed before step 5a.3b. |
+| Status | Resolved 2026-11-14 (`bf1b37a3`..`cc3a673f`): `SessionTest` and `TransportImplTest` exist and `HumlaClientTest` fills the client gaps. See [Resolution](#resolution). |
 | Category | Verification gap |
 | Severity | Harmful (step 3's failure and recovery paths are untested; 5a.3 builds on them) |
 | Verified | Yes (test inventory and scenario-by-scenario comparison) |
 | Area | Client, session, transport |
 | Spec | [testing.md § Virtual-time tests](../testing.md#virtual-time-tests), [testing.md § Test layers](../testing.md#test-layers) |
 | Code | `libraries/humla/src/test/java/se/lublin/humla/client/HumlaClientTest.kt`, `client/ReconnectPolicyTest.kt`, `net/*Test*`; production `client/Session.kt`, `net/TransportImpl.kt` |
-| Gates | Should gate step 5a.3b (native receive plugs into the transport and `VoiceLink`) |
+| Gates | Gated step 5a.3b; gate met |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
@@ -139,6 +139,60 @@ here in detail).
   "exactly one `CryptSetup`" test fail). This is the same discipline as
   the step-1 harness validation.
 - `./scripts/check.sh` passes.
+
+## Resolution
+
+The state at `cc3a673f`. Production changed only by test seams
+(`bf1b37a3`): `TransportImpl` takes an `ioDispatcher` and a `nanoTime`
+source, and starts its reader, writer, and voice collector through an
+internal `start(input, output, socket)` that `connect()` calls with the
+TLS socket; `Session` exposes its scope job. Every scenario below runs the
+invariant checker from [05](05-client-edge-invariants-weak.md).
+
+| Scenario | Now covered by |
+|---|---|
+| Disconnect at every message boundary of the sync sequence | `HumlaClientTest.disconnectAtEverySyncBoundaryEndsClean`; at session level `SessionTest.closeAtEverySyncBoundaryLeavesNothingRunning` |
+| `connect` to another target while connected / connecting / reconnecting | `connectWhileConnectedKeepsOneSession`, `connectToOtherTargetWhileConnecting` (before and after the session exists), `connectToOtherTargetWhileReconnecting`, plus the three stale-attempt tests |
+| Reconnect racing a user disconnect and a `cancelReconnect` | `disconnectBeatsPendingReconnect`, `disconnectRacingReconnectTimerEndsIdle`, `cancelReconnectBeatsPendingReconnect`, `cancelReconnectRacingReconnectTimerLetsAttemptRun` (a timer that fires first wins; only a pending `Reconnecting` is disarmed, as the code documents) |
+| Network-available events during each `ClientState` | `networkAvailableRetriesAtOnce` (also repeated events while `Connecting`), `networkAvailableIgnoredOutsideReconnecting` (Idle, Connecting before and after the session, Connected, Failed) |
+| Reconnect delay sequence and counter rules | `reconnectBackoffSequence` (delays and `retryAtMillis`), `attemptCounterResetsOnConnected`, `attemptCounterResetsOnDisconnect`, `cancelReconnectResetsAttemptCounter` (the pinning test [13](13-cancel-reconnect-resets-attempts.md) asked for), `manualConnectKeepsAttemptCounter` |
+| Mute, deafen, PTT spam during connect and disconnect | `muteDeafenPttSpamDuringConnectAndDisconnectIsSafe`, pre-sync and connected, with server mute, deafen, and suppress interleaved |
+| Route flaps, SCO failure, `RetrySco` | Unchanged: route-level tests in `RouteControlTest` (`scoFailedPublishesFallback`, `retryScoStartsLinkWhenRequestedAndIdle`, `backToBackStartThenEndSettlesIdle`); not a client concern |
+| `Reject`, removal of self, trust failure → `Failed`, no reconnect | `rejectGoesFailedWithoutReconnect`, `removalOfSelfWhileConnectedGoesFailedWithoutReconnect`, `removalOfSelfInSyncBatchGoesFailedWithoutReconnect`, `trustFailureGoesFailedWithoutReconnect`; at session level `rejectFailsOnceAndStopsProcessing`, `selfRemoveFailsWithRemoved` |
+| Forced TCP from `ServerSync`; UDP→tunnel and back; one empty `CryptSetup` per `CryptResyncRequested` | `TransportImplTest`: `forcedTcpTunnelsFromServerSyncAndNeverUsesUdp`, `udpGivesUpOnlyAfter20Seconds`, `udpGivesUpWhenOnlyLocalSideIsDead`, `switchesBackToUdpWhenBothSidesHaveMoreThanThreeGood`, `udpUnavailableSwitchesToTunnelOnce`, `cryptResyncRequestSendsExactlyOneEmptyCryptSetup`; `SessionTest.serverSyncStartsKeepaliveOnce` |
+| Full outbound channel fails the session | `fullOutboundFailsTheTransport`, `fullOutboundFailsTheSession` (a real `Session` over a real `TransportImpl`) |
+
+Also from fix direction 1: the keepalive cadence
+(`keepaliveCadenceBootstrapThenSteady`), the `CryptSetup` decision table
+and its protocol violations, inbound routing, an invalid frame, a server
+hangup, and a quiet, final `close()`. From direction 2: the handshake
+order, the restored self-mute sent at `ServerSync`, transport failures
+passed through unchanged, tunnelled packets reaching voice in order, and
+users kept in existing channels across `ChannelRemove`.
+
+**Not pinned: scope cancellation closing the socket.** Direction 1 asked
+for it, but it is [02](02-service-destroy-leaks-transport.md)'s open bug
+and would fail today. `close()` is pinned instead; 02's fix adds the
+scope-cancellation case to `TransportImplTest`.
+
+**Shown to fail.** Each guard was broken on purpose in production code
+and the suite rerun. These were caught: a `Failed → Reconnecting`
+publish, route end before voice stop, `Session.close` not cancelling its
+scope, `TransportImpl.close` not cancelling its scope, keepalive
+restartable, an unguarded tunnel switch, give-up at exactly 20 s,
+switch-back on one side's count, the session processing messages after a
+failure, no keepalive at `ServerSync`, two `CryptSetup`s per resync
+request, a full outbound channel ignored, `cancelReconnect` or `Connected`
+not resetting the counter, the policy ignoring suppress, a move to an
+unknown channel kept, disconnect without teardown, keys not pushed to
+voice, self-removal not recognised, and the self-mute not restored. One
+mutation survived as equivalent: dropping the network collector's
+`Reconnecting` check, since every exit from `Reconnecting` cancels the
+collector.
+
+[22](22-keepalive-anchored-at-construction.md) and
+[26](26-stats-two-collectors.md) stay open. The injected clock makes 22
+directly testable in `TransportImplTest`.
 
 ## Related
 
