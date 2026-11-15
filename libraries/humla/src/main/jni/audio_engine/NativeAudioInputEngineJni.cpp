@@ -20,14 +20,31 @@
 #include "RnnoiseProcessor.h"
 
 #include <jni.h>
-#include <android/log.h>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 
+#ifdef __ANDROID__
+#include <android/log.h>
 #define LOG_TAG "NativeAudioInputEngine"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#else
+// Host (interop-test) build: no android/log, log to stderr instead.
+#define LOGE(...)                                     \
+    do {                                              \
+        std::fprintf(stderr, "[NativeAudioInputEngine] "); \
+        std::fprintf(stderr, __VA_ARGS__);             \
+        std::fputc('\n', stderr);                     \
+    } while (0)
+#define LOGI(...)                                     \
+    do {                                              \
+        std::fprintf(stderr, "[NativeAudioInputEngine] "); \
+        std::fprintf(stderr, __VA_ARGS__);             \
+        std::fputc('\n', stderr);                     \
+    } while (0)
+#endif
 
 using namespace mumla::audio;
 
@@ -65,7 +82,8 @@ static JNIEnv* attachForCallback(EngineContext* ctx, bool* attached) {
     const jint res =
         ctx->jvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
     if (res == JNI_EDETACHED) {
-        if (ctx->jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+        // Host JNI takes void** here (Android takes JNIEnv**).
+        if (ctx->jvm->AttachCurrentThread(reinterpret_cast<void**>(&env), nullptr) != JNI_OK) {
             return nullptr;
         }
         *attached = true;

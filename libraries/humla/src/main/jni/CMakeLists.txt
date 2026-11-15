@@ -385,18 +385,42 @@ else()
     target_link_libraries(test_voice_codec PRIVATE humlavoicecodec humlanpb Threads::Threads)
     add_test(NAME test_voice_codec COMMAND test_voice_codec)
 
+    # Host JNI library for JVM tests (interop drives the live path through
+    # it). Step 5a.3a adds the native render entry: the voice_io core plus
+    # the real output engine and Opus decoder, so tunnelled voice plays
+    # non-silent PCM through the production render path on the host.
     add_library(humlaaudio SHARED
         $<TARGET_OBJECTS:humlacrypto_obj>
         "${CRYPTO_DIR}/NativeCryptStateJni.cpp"
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
+        "${VOICE_IO_DIR}/VoiceIo.cpp"
+        "${VOICE_IO_DIR}/VoiceNotifier.cpp"
+        "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
+        "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
+        "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/OpusVoiceEncoder.cpp"
+        "${AUDIO_ENGINE_DIR}/PreSpeechRingBuffer.cpp"
+        "${AUDIO_ENGINE_DIR}/SoftLimiter.cpp"
+        "${AUDIO_ENGINE_DIR}/AdaptiveLeveler.cpp"
+        "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
+        "${AUDIO_ENGINE_DIR}/RnnoiseProcessor.cpp"
+        "${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
+        "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
     )
     target_include_directories(humlaaudio PRIVATE
         "${CRYPTO_DIR}"
         "${VOICE_CODEC_DIR}"
+        "${VOICE_IO_DIR}"
         "${AUDIO_ENGINE_DIR}"
+        "${AUDIO_ENGINE_DIR}/jitter"
         "${NANOPB_DIR}"
         ${JNI_INCLUDE_DIRS}
     )
-    target_compile_options(humlaaudio PRIVATE ${HOST_FLAGS})
-    target_link_libraries(humlaaudio PRIVATE humlavoicecodec humlanpb Threads::Threads)
+    target_compile_options(humlaaudio PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    # The input-engine JNI seam predates host -Werror (unused JNI params);
+    # snapshots are Android-built, so silence only the host test library.
+    set_source_files_properties("${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
+        PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
+    target_link_libraries(humlaaudio PRIVATE humlavoicecodec humlanpb humlaopus humlarnnoise Threads::Threads m)
 endif()

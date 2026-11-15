@@ -17,11 +17,10 @@
 
 #include <jni.h>
 
-#include <android/log.h>
-
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <new>
@@ -33,8 +32,19 @@
 #include "VoiceNotifier.h"
 #include "VoiceTalk.h"
 
+#ifdef __ANDROID__
+#include <android/log.h>
 #define LOG_TAG "NativeVoiceIo"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#else
+// Host (interop-test) build: no android/log, log to stderr instead.
+#define LOGE(...)                                 \
+    do {                                          \
+        std::fprintf(stderr, "[NativeVoiceIo] "); \
+        std::fprintf(stderr, __VA_ARGS__);         \
+        std::fputc('\n', stderr);                 \
+    } while (0)
+#endif
 
 using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
@@ -85,8 +95,10 @@ struct VoiceIoContext {
         io.setTalkCell(&cell);
         notifier.setThreadHooks(
             [this] {
+                // Host JNI takes void** here (Android takes JNIEnv**).
                 JNIEnv* env = nullptr;
-                if (vm->AttachCurrentThreadAsDaemon(&env, nullptr) != JNI_OK) {
+                if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), nullptr) !=
+                    JNI_OK) {
                     LOGE("notifier attach failed; no snapshots this run");
                 }
             },
