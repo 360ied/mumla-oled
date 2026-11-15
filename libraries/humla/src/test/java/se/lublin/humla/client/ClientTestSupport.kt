@@ -28,11 +28,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -59,11 +62,14 @@ import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.state.SessionState
+import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.effectiveSelfMute
 import se.lublin.humla.util.HumlaException
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.util.VoiceTargetMode
+import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.TalkActivity
+import se.lublin.humla.voice.VoicePolicy
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.voicePolicy
 
@@ -345,6 +351,9 @@ internal class InvariantChecker(
     private val orphanedUsers = HashMap<Session, MutableSet<Int>>()
     private var currentSession: () -> Session? = { null }
     private var tracksClient = false
+    private var policyFlow: StateFlow<VoicePolicy>? = null
+    private var policySettings: StateFlow<VoiceSettings>? = null
+    val publishedPolicies: MutableList<VoicePolicy> = Collections.synchronizedList(ArrayList())
 
     private val unconfined = UnconfinedTestDispatcher(testScope.testScheduler)
 
@@ -369,9 +378,22 @@ internal class InvariantChecker(
         }
     }
 
+    /** Observe a published policy flow (issue 34): every value is recorded
+     * unconfined so nothing landing between two steps is missed; [check]
+     * asserts the latest has converged to the current session after each
+     * step (see [checkPublishedPolicy]). */
+    fun watchPolicy(policy: StateFlow<VoicePolicy>, settings: StateFlow<VoiceSettings>) {
+        policyFlow = policy
+        policySettings = settings
+        testScope.backgroundScope.launch(unconfined) {
+            policy.collect { publishedPolicies.add(it) }
+        }
+    }
+
     // Invariants 3 and 4, on every state a session publishes.
     private fun checkState(session: Session, s: SessionState) {
-        val policy = voicePolicy(s, VoiceSettings.initial())
+        val settingsValue = policySettings?.value ?: VoiceSettings.initial()
+        val policy = voicePolicy(s, settingsValue)
         val self = s.server.self
         if (policy.transmitAllowed &&
             (self == null || effectiveSelfMute(s) || self.muted || self.deafened || self.suppressed)
@@ -408,8 +430,56 @@ internal class InvariantChecker(
             if (violations.isNotEmpty()) fail("Invariant violated: ${violations.first()}")
         }
         checkSessions()
+        checkPublishedPolicy()
         checkStopBeforeEnded()
         checkEdges()
+    }
+
+    // Invariant 3 on the published policy (issue 34): after the scheduler
+    // is flushed, the collector must have converged to the current session.
+    // A stale transmitting value outliving a mute, a session switch, or a
+    // disconnect fails here even though the per-state recomputation above
+    // (which only re-checks the pure function) still passes.
+    private fun checkPublishedPolicy() {
+        val flow = policyFlow ?: return
+        if (!tracksClient) return
+        val latest = synchronized(publishedPolicies) { publishedPolicies.lastOrNull() } ?: flow.value
+        val settingsValue = policySettings?.value ?: VoiceSettings.initial()
+        val current = currentSession()
+        if (current == null) {
+            val expected = VoicePolicy.mutedFallback(settingsValue)
+            assertTrue(
+                "Published VoicePolicy allows transmit with no current session: $latest",
+                !latest.transmitAllowed,
+            )
+            assertTrue(
+                "Published VoicePolicy is not the muted fallback with no current session: " +
+                    "latest=$latest expected=$expected",
+                latest == expected,
+            )
+            return
+        }
+        val s = current.state.value
+        val self = s.server.self
+        val gateOpen = s.server.phase == SyncPhase.SYNCED && self != null &&
+            !effectiveSelfMute(s) && !self.muted && !self.deafened && !self.suppressed
+        assertTrue(
+            "Published VoicePolicy allows transmit while muted/deafened/suppressed: " +
+                "policy=$latest self=$self phase=${s.server.phase}",
+            !latest.transmitAllowed || gateOpen,
+        )
+        val expectedMuted = s.server.users.values
+            .filter { it.localMuted }.map { it.session }.toSet()
+        assertTrue(
+            "Published VoicePolicy locallyMuted ${latest.locallyMuted} != expected $expectedMuted " +
+                "(policy=$latest)",
+            latest.locallyMuted == expectedMuted,
+        )
+        val expected = voicePolicy(s, settingsValue)
+        assertTrue(
+            "Published VoicePolicy stale: latest=$latest expected=$expected",
+            latest == expected,
+        )
     }
 
     // Invariant 1: at most one live session, and it is the published one
@@ -503,6 +573,8 @@ internal class ClientHarness(
     val network: FakeNetwork = FakeNetwork(),
     val localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
     val talkActivity: MutableStateFlow<TalkActivity> = MutableStateFlow(TalkActivity.initial()),
+    policySource: Flow<SessionState?>? = null,
+    val settings: MutableStateFlow<VoiceSettings> = MutableStateFlow(VoiceSettings.initial()),
 ) {
     val order: MutableList<String> = Collections.synchronizedList(ArrayList())
     val voice = FakeVoice(order)
@@ -527,8 +599,28 @@ internal class ClientHarness(
         sessionDispatcher = dispatcher,
     )
 
+    // Published-policy harness (issue 34): a real PolicyCollector fed by a
+    // HumlaService mirror of the session source (the current session's state,
+    // or null when there is none, which the collector maps to the muted
+    // fallback). Tests inject [policySource] to freeze the source and prove
+    // the detector catches the resulting stale policy. The mirror duplicates
+    // HumlaService._sessionState's resetting behavior by construction
+    // (flatMapLatest re-emits null on teardown); that shared shape is the
+    // accepted difference from production (issue 34, fix direction 4).
+    private val policyStates: Flow<SessionState?> =
+        policySource ?: client.currentSession.flatMapLatest { sess ->
+            if (sess == null) flowOf(null) else sess.state
+        }
+    val collector = PolicyCollector(
+        sessionStates = PolicyCollector.FlowOfStates { policyStates },
+        settings = settings,
+        appScope = scope.backgroundScope,
+        dispatcher = dispatcher,
+    )
+
     init {
         invariants.watchClient(client)
+        invariants.watchPolicy(collector.policy, settings)
     }
 
     val state: ClientState get() = client.state.value
@@ -571,5 +663,7 @@ internal class ClientHarness(
     suspend fun finish() {
         client.close().join()
         step()
+        collector.close()
+        scope.runCurrent()
     }
 }
