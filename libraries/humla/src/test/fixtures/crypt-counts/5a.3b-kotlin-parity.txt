@@ -1,11 +1,13 @@
 # 5a.3b crypt-count parity fixture.
 #
-# Provenance: reconstructed from the pre-deletion Kotlin path semantics
-# (TransportImpl health check reads good/late/lost/resync) and the OCB2
-# core both paths share. The Kotlin receiver is deleted in 5a.3b, so this
-# file is the standing record the Done-when item requires; the native test
-# testReceiveCryptCountsMatchKotlin reproduces the scripted sequence below
-# and asserts the tuple.
+# Provenance: the counting core is unchanged by 5a.3b. Master's Kotlin
+# CryptState is a thin wrapper over this same native OCB2 engine (stats
+# buffer -> good/late/lost/resync) with the same 5 s resync rule in
+# HumlaUDP, and CryptStateOCB2.cpp is byte-identical between master and
+# this branch (verified via git diff; the branch's only addition is the
+# test-only backdate hook). So the tuple below is what the pre-deletion
+# path reports for this scripted sequence, and the native test
+# testReceiveCryptCountsMatchKotlin reproduces it through the same core.
 #
 # Scripted sequence (one sender, one receiver, same key; s1..s6 are the
 # sender's 1st..6th encrypted packets):
