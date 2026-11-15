@@ -671,17 +671,44 @@ void testSenderFilterEndToEndUdpAndTunnel() {
         else udpSurvivors += static_cast<int>(count);
         lastTunnel = tunnel;
     });
-    // Minimal legacy receive datagram: header opus/target0, session, seq,
-    // size header (4-byte opus, no terminator), 4-byte opus payload.
-    auto buildLegacy = [](int32_t session, uint32_t seq, uint8_t* out) -> size_t {
-        out[0] = static_cast<uint8_t>((mumla::voice_codec::kLegacyVoiceOpus << 5) & 0xFF);
-        out[1] = static_cast<uint8_t>(session);
-        out[2] = static_cast<uint8_t>(seq);
-        out[3] = 4;
-        out[4] = 0xF8; out[5] = 1; out[6] = 2; out[7] = 3;
-        return 8;
+    // Minimal legacy receive datagram: header opus/target0, varint
+    // session, varint seq, varint size header (4-byte opus, no terminator),
+    // 4-byte opus payload. Varints are full Mumble encoding so large
+    // session IDs (e.g. 9999) travel intact, as on the wire.
+    auto putVarint = [](uint64_t u, uint8_t* out) -> size_t {
+        if (u <= 0x7FULL) {
+            out[0] = static_cast<uint8_t>(u);
+            return 1;
+        }
+        if (u <= 0x3FFFULL) {
+            out[0] = static_cast<uint8_t>((u >> 8) | 0x80);
+            out[1] = static_cast<uint8_t>(u & 0xFF);
+            return 2;
+        }
+        if (u <= 0x1FFFFFULL) {
+            out[0] = static_cast<uint8_t>((u >> 16) | 0xC0);
+            out[1] = static_cast<uint8_t>((u >> 8) & 0xFF);
+            out[2] = static_cast<uint8_t>(u & 0xFF);
+            return 3;
+        }
+        // Sessions are int32: the 4-byte form covers the whole range.
+        out[0] = 0xF0;
+        out[1] = static_cast<uint8_t>((u >> 24) & 0xFF);
+        out[2] = static_cast<uint8_t>((u >> 16) & 0xFF);
+        out[3] = static_cast<uint8_t>((u >> 8) & 0xFF);
+        out[4] = static_cast<uint8_t>(u & 0xFF);
+        return 5;
     };
-    uint8_t dg[8];
+    auto buildLegacy = [&](int32_t session, uint32_t seq, uint8_t* out) -> size_t {
+        size_t pos = 0;
+        out[pos++] = static_cast<uint8_t>((mumla::voice_codec::kLegacyVoiceOpus << 5) & 0xFF);
+        pos += putVarint(static_cast<uint64_t>(static_cast<int64_t>(session)), out + pos);
+        pos += putVarint(seq, out + pos);
+        pos += putVarint(4, out + pos);
+        out[pos++] = 0xF8; out[pos++] = 1; out[pos++] = 2; out[pos++] = 3;
+        return pos;
+    };
+    uint8_t dg[16];
     // Muted session over UDP: understood but silent (no sink, no slot).
     TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(7, 1, dg)));
     TEST_ASSERT_EQ(udpSurvivors, 0);
@@ -700,18 +727,18 @@ void testSenderFilterEndToEndUdpAndTunnel() {
     TEST_ASSERT_EQ(tunnelSurvivors, 1);
     TEST_ASSERT_TRUE(lastTunnel);
     // Overflow fail-open: unknown passes, muted still drops (both paths).
-    // Note: datagram sessions must stay <128 (single-byte varint); the
-    // policy list itself holds the 1000+ range to force the overflow flag.
+    // Wire sessions use the real large IDs now that varints are encoded
+    // properly, mirroring the predicate test's 9999/8888 pair.
     int32_t many[300];
     for (int i = 0; i < 300; ++i) many[i] = 1000 + i;
     policy.publish(nullptr, 0, many, 300, false);
-    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(50, 6, dg)));
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(8888, 6, dg)));
     TEST_ASSERT_EQ(udpSurvivors, 2);
-    const int32_t muted50[] = {50};
-    policy.publish(muted50, 1, many, 300, false);
-    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(50, 7, dg)));
+    const int32_t muted9999[] = {9999};
+    policy.publish(muted9999, 1, many, 300, false);
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(9999, 7, dg)));
     TEST_ASSERT_EQ(udpSurvivors, 2);
-    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(50, 8, dg)));
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(9999, 8, dg)));
     TEST_ASSERT_EQ(tunnelSurvivors, 1);
     std::cout << "  [PASS] testSenderFilterEndToEndUdpAndTunnel" << std::endl;
 }
