@@ -274,19 +274,16 @@ void VoiceReceive::stop() {
     bool expected = true;
     m_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel,
                                         std::memory_order_relaxed);
-    // Unblock recv even when already stopped (idempotent shutdown).
-    int sock = m_sock.load(std::memory_order_acquire);
-    if (sock >= 0) {
-        shutdown(sock, SHUT_RDWR);
-    }
-    if (m_thread.joinable()) {
-        m_thread.join();
-    }
-    // Close after the join so the fd number cannot be recycled while the
-    // receiver still holds its copy; exchange makes it idempotent.
+    // Close the socket to unblock recvfrom (spec Stop); the loop exits on
+    // running false or the closed socket. Exchange keeps it idempotent.
     int toClose = m_sock.exchange(-1, std::memory_order_acq_rel);
     if (toClose >= 0) {
         close(toClose);
+    }
+    // Join after close orders the handoff: the receiver is out before
+    // the next start reuses the context.
+    if (m_thread.joinable()) {
+        m_thread.join();
     }
 }
 
