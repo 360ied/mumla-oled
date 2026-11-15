@@ -19,6 +19,7 @@ them.
 | AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device. Also the [keep-alive shields](voice.md#keep-alive-shields): the input stream still registers as recording-active, the output stream stays started through silence, and whether callback mode's zero feeding changes how the OS counts playback, observed untethered on battery with the screen off. Decides whether the render idle state exists at all; the [render wake](voice.md#render-idle-and-wake) serves blocking mode and goes unused in callback mode | Step 5b |
 | Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
 | `VoiceLink` contract as implemented | Make the transport the sole owner of the UDP route and format: issues [16](issues/16-voice-link-owns-udp-route.md), [17](issues/17-udp-format-per-packet.md) | Step 5a.3b |
+| Published `VoicePolicy` as an invariant | Check `PolicyCollector`'s output after every scenario step: issue [34](issues/34-published-policy-not-an-invariant.md) | Step 5a.3b |
 
 ## Open (not gating)
 

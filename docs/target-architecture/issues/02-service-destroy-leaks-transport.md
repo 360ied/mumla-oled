@@ -235,7 +235,9 @@ first is kept.
 
 ## Related
 
-- [04](04-session-transport-virtual-time-gaps.md): there are no
-  `Session`/`TransportImpl` tests that would have caught this.
+- [04](04-session-transport-virtual-time-gaps.md): added `TransportImplTest`,
+  which starts the transport over in-memory streams with a fake socket.
+  It pins `close()` but not scope cancellation, since that is this bug;
+  the fix adds the scope-cancellation case there.
 - [30](30-connected-races-sync-tail.md): another place where the session
   scope does not own what the spec says it owns.

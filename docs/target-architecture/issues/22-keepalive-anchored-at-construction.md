@@ -2,14 +2,14 @@
 
 | | |
 |---|---|
-| Status | Open — fold into the transport tests from [04](04-session-transport-virtual-time-gaps.md). |
+| Status | Open. The clock injection fix direction landed with [04](04-session-transport-virtual-time-gaps.md) (`bf1b37a3`); the acceptance test now fits in `TransportImplTest`. Its current tests start keepalive, if at all, at the instant the transport is constructed, so they cannot see this drift. |
 | Category | Spec drift |
 | Severity | Benign (affects reactivity on slow connects, not correctness) |
 | Verified | Lens-reported; key lines confirmed (`startNanos` set in the constructor, `startKeepalive` does not reset it) |
 | Area | Transport |
 | Spec | [transport.md § Keepalive and UDP health](../transport.md#keepalive-and-udp-health) |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt` (`startNanos` line 150, `elapsedMicros` line 164, `nextPingDelaySeconds`, `handlePing`, `startKeepalive` line 583, constants `BOOTSTRAP_DURATION_MICROS = 30_000_000L` line 86, `UDP_GIVEUP_MICROS = 20_000_000L` line 87) |
-| Gates | Not gating; fix alongside the transport tests in [04](04-session-transport-virtual-time-gaps.md) |
+| Gates | Not gating |
 
 Line numbers below refer to `master` at `092d9dc8`.
 

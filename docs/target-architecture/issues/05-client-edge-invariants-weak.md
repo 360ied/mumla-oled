@@ -149,6 +149,24 @@ The checker has its own tests (`invariantCheckerRejectsEdgeOutsideDiagram`,
 order, or leaving `Session.close` without its scope cancel, fails most of
 the suite (see [04](04-session-transport-virtual-time-gaps.md#resolution)).
 
+**Limits.** Two detectors are weaker than the table suggests:
+
+- The policy check recomputes `voicePolicy()` on each published state and
+  compares it against the flags `voicePolicy()` itself reads, so it only
+  catches a mutation inside that function. The policy `PolicyCollector`
+  publishes, which is what the voice layer reads, is not observed. That
+  is [34](34-published-policy-not-an-invariant.md), which gates 5a.3b.
+- Fix direction 3 (the fake transport rejecting calls from a closed
+  session) was not done. The scope-children check stands in for it: it
+  covers coroutines in the session scope, not intents a caller makes on a
+  dead session. Those still reach `FakeTransport.send` unflagged; in
+  production `TransportImpl.send` drops them once closed.
+
+Only the edge, stop-before-end, and live-session detectors have
+self-tests. The channel detector was shown to fire by making
+`applyChannelRemove` keep occupants in the removed channel; the policy
+detector can only fire on a mutation inside `voicePolicy()`, as above.
+
 ## Related
 
 - [04](04-session-transport-virtual-time-gaps.md)

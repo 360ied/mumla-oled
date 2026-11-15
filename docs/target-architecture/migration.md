@@ -283,10 +283,11 @@ Kotlin for talk state. 5a.3a removes both without touching the network;
 
 **Prerequisites:** issue
 [01](issues/01-sco-manager-two-thread-mutation.md) before 5a.3a (resolved); issues
-[16](issues/16-voice-link-owns-udp-route.md) and
-[17](issues/17-udp-format-per-packet.md), issues
+[16](issues/16-voice-link-owns-udp-route.md),
+[17](issues/17-udp-format-per-packet.md), and
+[34](issues/34-published-policy-not-an-invariant.md) before 5a.3b; issues
 [04](issues/04-session-transport-virtual-time-gaps.md) and
-[05](issues/05-client-edge-invariants-weak.md) (resolved) before 5a.3b (see
+[05](issues/05-client-edge-invariants-weak.md), also before 5a.3b, are resolved (see
 [open items](open-items.md)). The render idle and wake design is settled
 (see [voice](voice.md#render-idle-and-wake)).
 
