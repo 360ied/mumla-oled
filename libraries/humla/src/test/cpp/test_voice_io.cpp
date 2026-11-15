@@ -22,6 +22,7 @@
 
 #include "TestHarness.h"
 #include "CryptStateOCB2.h"
+#include "VoiceCodec.h"
 #include "VoiceIo.h"
 #include "VoiceNotifier.h"
 #include "VoicePolicy.h"
@@ -738,6 +739,38 @@ void testReceiveCryptCountsMatchKotlin() {
     std::cout << "  [PASS] testReceiveCryptCountsMatchKotlin" << std::endl;
 }
 
+void testReceiveLoopbackPingFiresSink() {
+    g_testCount++;
+    // Full native loopback without a socket: frame a legacy ping, encrypt
+    // it the way the send seam does, decrypt + parse + dispatch it the way
+    // the receive loop does. Voice-data loopback with real Opus is pinned
+    // by the UDP interop scenario instead.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 9, 8, 7, 6, 5, 4};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    uint8_t framed[64];
+    const size_t framedLen =
+        mumla::voice_codec::framePing(mumla::voice_codec::UdpFormat::LEGACY,
+                                      12345678, framed, sizeof(framed));
+    TEST_ASSERT_TRUE(framedLen > 0);
+    uint64_t gotTimestamp = 0;
+    rx.setPingSink([&](const VoiceReceive::PingReport& report) {
+        gotTimestamp = report.timestampMicros;
+    });
+    uint8_t crypted[68];
+    TEST_ASSERT_TRUE(sender.encrypt(framed, crypted, static_cast<uint32_t>(framedLen)));
+    TEST_ASSERT_TRUE(rx.handleCrypted(crypted, framedLen + 4));
+    TEST_ASSERT_EQ(gotTimestamp, 12345678u);
+    int32_t good = 0;
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    std::cout << "  [PASS] testReceiveLoopbackPingFiresSink" << std::endl;
+}
+
 void testReceiveStopLeavesNothing() {
     g_testCount++;
     VoiceIo io(fakeFactory());
@@ -788,6 +821,7 @@ void run_voice_io_tests() {
     testPolicyGuardsReceiveVisibleOnly();
     testReceiveResyncGateRateLimited();
     testReceiveCryptCountsMatchKotlin();
+    testReceiveLoopbackPingFiresSink();
     testReceiveStopLeavesNothing();
 }
 

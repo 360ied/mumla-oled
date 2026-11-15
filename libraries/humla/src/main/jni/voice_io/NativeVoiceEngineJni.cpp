@@ -18,6 +18,7 @@
 #include <jni.h>
 
 #include <atomic>
+#include <cassert>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -25,8 +26,12 @@
 #include <new>
 #include <vector>
 
+#include "OpusVoiceDecoder.h"
+#include "VoiceIo.h"
+#include "VoiceNotifier.h"
 #include "VoicePolicy.h"
 #include "VoiceReceive.h"
+#include "VoiceTalk.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -41,41 +46,78 @@
     } while (0)
 #endif
 
+using mumla::audio::AudioOutputEngine;
+using mumla::audio::InboundPacket;
 using mumla::voice_io::PolicyCell;
+using mumla::voice_io::TalkCell;
+using mumla::voice_io::TalkPublication;
+using mumla::voice_io::VoiceIo;
+using mumla::voice_io::VoiceNotifier;
 using mumla::voice_io::VoiceReceive;
 
-// VoiceEngine network context (step 5a.3b): policy cell plus the UDP
-// receive half. No VoiceIo here: render stays per-pipeline in AudioOutput's
-// NativeVoiceIo until 5a.4, so voice frames cross to Kotlin through the
-// listener (the non-realtime receive thread calling Kotlin is allowed; only
-// realtime threads are forbidden). The render wake post stays in the
-// voice_io push functions Kotlin calls after this callback.
+// Unified voice I/O context (step 5a.3b, spec-literal): the output engine
+// and both inbound rings, the sender-filter policy cell, the UDP receive
+// half, and the talk notifier — one application-scoped native object owned
+// by the VoiceEngine facade, kept across sessions. The render thread is the
+// only thread that touches the engine; producers never reach it: UDP frames
+// arrive via the receive thread, tunnelled frames via the session message
+// coroutine, removals as control items on the tunnel ring. Talk travels as
+// levels through the sequence lock to the notifier thread, which calls
+// Kotlin; render never calls into Kotlin.
 struct VoiceEngineContext {
+    VoiceIo io;
+    TalkCell cell;
+    VoiceNotifier notifier;
     PolicyCell policy;
     VoiceReceive receive;
     JavaVM* vm = nullptr;
     jobject listenerGlobalRef = nullptr;
-    jmethodID onVoiceMethod = nullptr;
     jmethodID onPingMethod = nullptr;
     jmethodID onResyncMethod = nullptr;
     jmethodID onUnavailableMethod = nullptr;
+    jmethodID onTalkSnapshotMethod = nullptr;
+    // Debug lifecycle pin: render sets this while inside VoiceIo::render;
+    // destroy asserts it is clear, so tearing down under a live render
+    // thread fails loudly in debug builds instead of freeing the engine
+    // under it. Release builds rely on the Kotlin join ordering (control
+    // thread destroys only after the render thread is joined).
+    std::atomic<bool> renderActive{false};
+    std::atomic<bool> lastHasActiveVoices{false};
+    std::atomic<uint64_t> lastDroppedInbound{0};
+    std::atomic<uint64_t> lastDroppedTunnel{0};
+    std::atomic<uint64_t> lastDroppedJitter{0};
 
-    VoiceEngineContext(JavaVM* javaVm, jobject listener, jmethodID onVoice,
-                       jmethodID onPing, jmethodID onResync, jmethodID onUnavailable)
-        : receive(nullptr, &policy),
+    VoiceEngineContext(JavaVM* javaVm, jobject listener, jmethodID onPing,
+                       jmethodID onResync, jmethodID onUnavailable, jmethodID onTalk)
+        : io(mumla::audio::makeOpusOutputDecoder),
+          notifier(&cell, [this](const TalkPublication& pub) { deliverTalk(pub); }),
+          receive(&io, &policy),
           vm(javaVm),
           listenerGlobalRef(listener),
-          onVoiceMethod(onVoice),
           onPingMethod(onPing),
           onResyncMethod(onResync),
-          onUnavailableMethod(onUnavailable) {
+          onUnavailableMethod(onUnavailable),
+          onTalkSnapshotMethod(onTalk) {
+        io.setTalkCell(&cell);
+        notifier.setThreadHooks(
+            [this] {
+                JNIEnv* env = nullptr;
+#ifdef __ANDROID__
+                const jint attached = vm->AttachCurrentThreadAsDaemon(&env, nullptr);
+#else
+                const jint attached = vm->AttachCurrentThreadAsDaemon(
+                    reinterpret_cast<void**>(&env), nullptr);
+#endif
+                if (attached != JNI_OK) {
+                    LOGE("notifier attach failed; no snapshots this run");
+                }
+            },
+            [this] { vm->DetachCurrentThread(); });
         receive.setPingSink([this](const VoiceReceive::PingReport& report) {
             deliverPing(report);
         });
         receive.setResyncSink([this] { deliverResync(); });
         receive.setUnavailableSink([this] { deliverUnavailable(); });
-        receive.setVoiceSink([this](const mumla::audio::InboundPacket* frames, size_t count,
-                                    bool tunnel) { deliverVoice(frames, count, tunnel); });
         receive.setThreadHooks(
             [this] {
                 JNIEnv* env = nullptr;
@@ -90,76 +132,67 @@ struct VoiceEngineContext {
                 }
             },
             [this] { vm->DetachCurrentThread(); });
+        // NOTE: no voice-frames sink. Voice stays native-direct (receive and
+        // tunnel push straight into the owned VoiceIo rings); the receive
+        // thread never calls into Kotlin for voice, only for pings, resync,
+        // and unavailability (all non-realtime).
     }
 
-    void deliverVoice(const mumla::audio::InboundPacket* frames, size_t count, bool tunnel);
+    void deliverTalk(const TalkPublication& pub);
     void deliverPing(const VoiceReceive::PingReport& report);
     void deliverResync();
     void deliverUnavailable();
 };
 
-void VoiceEngineContext::deliverVoice(const mumla::audio::InboundPacket* frames,
-                                      size_t count, bool tunnel) {
-    if (count == 0) return;
+void VoiceEngineContext::deliverTalk(const TalkPublication& pub) {
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK ||
         env == nullptr) {
         return;
     }
-    const int n = static_cast<int>(count);
-    jintArray jSessions = env->NewIntArray(n);
-    jintArray jLengths = env->NewIntArray(n);
-    jintArray jSequences = env->NewIntArray(n);
-    jintArray jFlags = env->NewIntArray(n);
-    jbooleanArray jTerms = env->NewBooleanArray(n);
-    jclass byteArrayClass = env->FindClass("[B");
-    jobjectArray jPayloads = env->NewObjectArray(n, byteArrayClass, nullptr);
-    if (jSessions == nullptr || jLengths == nullptr || jSequences == nullptr ||
-        jFlags == nullptr || jTerms == nullptr || jPayloads == nullptr) {
+    const size_t n = pub.talk.count;
+    jintArray sessions = env->NewIntArray(static_cast<jsize>(n));
+    jintArray states = env->NewIntArray(static_cast<jsize>(n));
+    if (sessions == nullptr || states == nullptr) {
         env->ExceptionClear();
+        if (sessions != nullptr) env->DeleteLocalRef(sessions);
+        if (states != nullptr) env->DeleteLocalRef(states);
         return;
     }
-    std::vector<int32_t> sessions(n);
-    std::vector<int32_t> lengths(n);
-    std::vector<int32_t> sequences(n);
-    std::vector<int32_t> flags(n);
-    std::vector<unsigned char> terms(n);
-    for (int i = 0; i < n; ++i) {
-        sessions[i] = frames[i].session;
-        lengths[i] = frames[i].length;
-        sequences[i] = static_cast<int32_t>(frames[i].sequence);
-        flags[i] = frames[i].flags;
-        terms[i] = frames[i].isTerminator ? 1 : 0;
-        if (frames[i].length > 0) {
-            jbyteArray arr = env->NewByteArray(static_cast<jsize>(frames[i].length));
-            if (arr == nullptr) {
-                env->ExceptionClear();
-                return;
-            }
-            env->SetByteArrayRegion(arr, 0, static_cast<jsize>(frames[i].length),
-                                    reinterpret_cast<const jbyte*>(frames[i].data));
-            env->SetObjectArrayElement(jPayloads, i, arr);
-            env->DeleteLocalRef(arr);
+    if (n > 0) {
+        std::vector<jint> jsessions(n);
+        std::vector<jint> jstates(n);
+        for (size_t i = 0; i < n; ++i) {
+            jsessions[i] = pub.talk.entries[i].session;
+            jstates[i] = static_cast<jint>(pub.talk.entries[i].state);
+        }
+        env->SetIntArrayRegion(sessions, 0, static_cast<jsize>(n), jsessions.data());
+        if (env->ExceptionCheck()) {
+            LOGE("SetIntArrayRegion(sessions) failed; dropping snapshot");
+            env->ExceptionClear();
+            env->DeleteLocalRef(sessions);
+            env->DeleteLocalRef(states);
+            return;
+        }
+        env->SetIntArrayRegion(states, 0, static_cast<jsize>(n), jstates.data());
+        if (env->ExceptionCheck()) {
+            LOGE("SetIntArrayRegion(states) failed; dropping snapshot");
+            env->ExceptionClear();
+            env->DeleteLocalRef(sessions);
+            env->DeleteLocalRef(states);
+            return;
         }
     }
-    env->SetIntArrayRegion(jSessions, 0, n, sessions.data());
-    env->SetIntArrayRegion(jLengths, 0, n, lengths.data());
-    env->SetIntArrayRegion(jSequences, 0, n, sequences.data());
-    env->SetIntArrayRegion(jFlags, 0, n, flags.data());
-    env->SetBooleanArrayRegion(jTerms, 0, n, terms.data());
-    env->CallVoidMethod(listenerGlobalRef, onVoiceMethod, jSessions, jPayloads, jLengths,
-                        jSequences, jFlags, jTerms,
-                        tunnel ? JNI_TRUE : JNI_FALSE);
+    env->CallVoidMethod(listenerGlobalRef, onTalkSnapshotMethod, sessions, states,
+                        static_cast<jlong>(pub.droppedInbound),
+                        static_cast<jlong>(pub.droppedTunnel),
+                        static_cast<jlong>(pub.droppedJitter));
     if (env->ExceptionCheck()) {
-        LOGE("onVoice threw; clearing");
+        LOGE("onTalkSnapshot threw; clearing to protect the notifier thread");
         env->ExceptionClear();
     }
-    env->DeleteLocalRef(jSessions);
-    env->DeleteLocalRef(jPayloads);
-    env->DeleteLocalRef(jLengths);
-    env->DeleteLocalRef(jSequences);
-    env->DeleteLocalRef(jFlags);
-    env->DeleteLocalRef(jTerms);
+    env->DeleteLocalRef(sessions);
+    env->DeleteLocalRef(states);
 }
 
 void VoiceEngineContext::deliverPing(const VoiceReceive::PingReport& report) {
@@ -208,6 +241,23 @@ static VoiceEngineContext* getContext(jlong handle) {
     return reinterpret_cast<VoiceEngineContext*>(handle);
 }
 
+// Renders into this scratch so steady-state ticks allocate nothing. It is
+// thread-local because the render entry runs on a Java thread; the vector
+// only grows (up to the largest render quantum seen) and is reused after
+// warmup.
+static thread_local std::vector<int16_t> t_renderScratch;
+
+namespace {
+constexpr size_t kMaxRenderSamples = AudioOutputEngine::MAX_QUANTUM_SAMPLES * 4;
+struct RenderGuard {
+    explicit RenderGuard(std::atomic<bool>* flag) : m_flag(flag) {
+        m_flag->store(true, std::memory_order_release);
+    }
+    ~RenderGuard() { m_flag->store(false, std::memory_order_release); }
+    std::atomic<bool>* m_flag;
+};
+} // namespace
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL
@@ -227,13 +277,13 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCreate(JNIEnv* env, jclass /*
         env->DeleteGlobalRef(ref);
         return 0;
     }
-    jmethodID onVoice = env->GetMethodID(cls, "onVoice", "([I[[B[I[I[I[ZZ)V");
     jmethodID onPing = env->GetMethodID(cls, "onUdpPing", "(JJI)V");
     jmethodID onResync = env->GetMethodID(cls, "onCryptResync", "()V");
     jmethodID onUnavailable = env->GetMethodID(cls, "onUdpUnavailable", "()V");
+    jmethodID onTalk = env->GetMethodID(cls, "onTalkSnapshot", "([I[IJJJ)V");
     env->DeleteLocalRef(cls);
-    if (onVoice == nullptr || onPing == nullptr || onResync == nullptr ||
-        onUnavailable == nullptr) {
+    if (onPing == nullptr || onResync == nullptr || onUnavailable == nullptr ||
+        onTalk == nullptr) {
         env->ExceptionClear();
         env->DeleteGlobalRef(ref);
         return 0;
@@ -241,7 +291,7 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCreate(JNIEnv* env, jclass /*
     VoiceEngineContext* ctx = nullptr;
     try {
         ctx = new (std::nothrow)
-            VoiceEngineContext(vm, ref, onVoice, onPing, onResync, onUnavailable);
+            VoiceEngineContext(vm, ref, onPing, onResync, onUnavailable, onTalk);
     } catch (...) {
         ctx = nullptr;
     }
@@ -249,6 +299,9 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCreate(JNIEnv* env, jclass /*
         env->DeleteGlobalRef(ref);
         return 0;
     }
+    // The notifier runs for the context lifetime (service-scoped publisher);
+    // render wakeups and talk delivery need no per-session start.
+    ctx->notifier.start();
     return reinterpret_cast<jlong>(ctx);
 }
 
@@ -259,7 +312,11 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeDestroy(JNIEnv* env, jclass /
     if (ctx == nullptr) {
         return;
     }
+    // The control thread destroys only after the render thread is joined: a
+    // live render here is a lifecycle bug, loud in debug builds.
+    assert(!ctx->renderActive.load(std::memory_order_acquire));
     ctx->receive.stop();
+    ctx->notifier.stop();
     if (ctx->listenerGlobalRef != nullptr) {
         env->DeleteGlobalRef(ctx->listenerGlobalRef);
     }
@@ -376,6 +433,9 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
         ctx->receive.stop();
+        // Reset the engines while the socket is down (Stop clears queues);
+        // the control thread runs this only while render is stopped.
+        ctx->io.clear();
     }
 }
 
@@ -414,6 +474,134 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeQueueTunnelled(JNIEnv* env, j
                                                  static_cast<size_t>(len));
     env->ReleaseByteArrayElements(packet, bytes, JNI_ABORT);
     return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativePushRemoveUser(JNIEnv* /*env*/,
+                                                                  jclass /*clazz*/,
+                                                                  jlong handle,
+                                                                  jint session) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) {
+        return JNI_FALSE;
+    }
+    return ctx->io.pushRemoveUser(session) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeRender(JNIEnv* env, jclass /*clazz*/,
+                                                          jlong handle, jshortArray out,
+                                                          jint offset, jint length) {
+    if (env->ExceptionCheck()) {
+        return 0;
+    }
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr || out == nullptr || length <= 0 || offset < 0) {
+        return 0;
+    }
+    const jsize arrayLen = env->GetArrayLength(out);
+    if (arrayLen <= 0) {
+        return 0;
+    }
+    const int64_t end = static_cast<int64_t>(offset) + static_cast<int64_t>(length);
+    if (end > static_cast<int64_t>(arrayLen)) {
+        return 0;
+    }
+    if (static_cast<size_t>(length) > kMaxRenderSamples) {
+        LOGE("nativeRender: refusing %d samples (max %zu)", length, kMaxRenderSamples);
+        return 0;
+    }
+    if (t_renderScratch.size() < static_cast<size_t>(length)) {
+        t_renderScratch.resize(static_cast<size_t>(length));
+    }
+    RenderGuard guard(&ctx->renderActive);
+    VoiceIo::RenderOut result;
+    // Never attaches to the JVM and never calls into Kotlin: the caller's
+    // env touches only the PCM array below, and the talk snapshot waits in
+    // the sequence lock for the notifier thread.
+    ctx->io.render(t_renderScratch.data(), static_cast<size_t>(length), &result);
+    ctx->lastHasActiveVoices.store(result.hasActiveVoices, std::memory_order_relaxed);
+    ctx->lastDroppedInbound.store(result.droppedInbound, std::memory_order_relaxed);
+    ctx->lastDroppedTunnel.store(result.droppedTunnel, std::memory_order_relaxed);
+    ctx->lastDroppedJitter.store(result.droppedJitter, std::memory_order_relaxed);
+    if (result.samples > 0) {
+        env->SetShortArrayRegion(out, offset, static_cast<jsize>(result.samples),
+                                 t_renderScratch.data());
+        if (env->ExceptionCheck()) {
+            LOGE("nativeRender: SetShortArrayRegion failed, dropping %zu samples",
+                 result.samples);
+            env->ExceptionClear();
+            return 0;
+        }
+    }
+    return static_cast<jint>(result.samples);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeAwaitWork(JNIEnv* /*env*/,
+                                                             jclass /*clazz*/,
+                                                             jlong handle,
+                                                             jint timeoutMs) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) {
+        return JNI_FALSE;
+    }
+    return ctx->io.awaitWork(timeoutMs) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeWakeForStop(JNIEnv* /*env*/,
+                                                               jclass /*clazz*/,
+                                                               jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx != nullptr) {
+        ctx->io.wakeForStop();
+    }
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeLastHasActiveVoices(JNIEnv* /*env*/,
+                                                                       jclass /*clazz*/,
+                                                                       jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) {
+        return JNI_FALSE;
+    }
+    return ctx->lastHasActiveVoices.load(std::memory_order_relaxed) ? JNI_TRUE
+                                                                    : JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeLastDroppedInbound(JNIEnv* /*env*/,
+                                                                      jclass /*clazz*/,
+                                                                      jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    return ctx == nullptr
+               ? 0
+               : static_cast<jlong>(
+                     ctx->lastDroppedInbound.load(std::memory_order_relaxed));
+}
+
+JNIEXPORT jlong JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeLastDroppedTunnel(JNIEnv* /*env*/,
+                                                                     jclass /*clazz*/,
+                                                                     jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    return ctx == nullptr
+               ? 0
+               : static_cast<jlong>(
+                     ctx->lastDroppedTunnel.load(std::memory_order_relaxed));
+}
+
+JNIEXPORT jlong JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeLastDroppedJitter(JNIEnv* /*env*/,
+                                                                     jclass /*clazz*/,
+                                                                     jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    return ctx == nullptr
+               ? 0
+               : static_cast<jlong>(
+                     ctx->lastDroppedJitter.load(std::memory_order_relaxed));
 }
 
 JNIEXPORT jintArray JNICALL
