@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`26b6c8c4`, `02e68f97`): one checker asserts all five invariants after every step; edges are exactly the diagram's. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`26b6c8c4`, `02e68f97`): one checker asserts all five invariants after every step (the policy check is limited; see [34](34-published-policy-not-an-invariant.md)); edges are exactly the diagram's. See [Resolution](#resolution). |
 | Category | Verification gap |
 | Severity | Harmful (the invariants the spec relies on are mostly unchecked) |
 | Verified | Yes |
