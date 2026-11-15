@@ -25,7 +25,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
-import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
@@ -45,7 +44,6 @@ class VoiceControlTest {
         val context = mock(Context::class.java)
         val logger = mock(HumlaLogger::class.java)
         val encode = mock(AudioHandler.AudioEncodeListener::class.java)
-        val talking = mock(AudioOutput.AudioOutputListener::class.java)
         val link = mock(VoiceEngine::class.java)
         // Child scope: close() cancels only this child, never the TestScope.
         val child = kotlinx.coroutines.CoroutineScope(
@@ -55,7 +53,6 @@ class VoiceControlTest {
             context = context,
             logger = logger,
             encodeListener = encode,
-            talkingListener = talking,
             talkPublisher = TalkActivityPublisher(),
             routeStates = route,
             policies = policy,

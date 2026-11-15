@@ -117,6 +117,12 @@ interface VoiceLink {
     fun encryptIv(): ByteString
     fun submit(command: VoiceCommand)
     fun queueTunnelled(packet: ByteArray)
+    /**
+     * Another user left: reaches the render thread as a control item on
+     * the tunnel ring, ordered after that user's queued tunnelled voice.
+     * Called on the session message coroutine, the tunnel ring's producer.
+     */
+    fun removeUser(session: Int)
     val events: SharedFlow<VoiceEvent>
     val status: StateFlow<VoiceStatus>
 }
@@ -127,14 +133,16 @@ sealed interface VoiceCommand {
     data class SendPing(val timestampMicros: Long) : VoiceCommand
     /**
      * Start network voice (5a.3b facade). Carries the session's UDP
-     * address plus the transport's per-session decision (issue 17): the UDP
-     * format and the legacy server version, fixed at the first Version.
+     * address plus the transport's per-session decisions, fixed once:
+     * the keys (when CryptSetup already arrived) and the UDP format with
+     * the legacy server version from the first Version (issue 17).
      * No route: voice follows the transport's SetVoiceRoute, and Stop
      * resets to tunnel so no route carries over.
      */
     data class Start(
         val host: String,
         val port: Int,
+        val keys: CryptKeys?,
         val format: VoiceFormat,
     ) : VoiceCommand
     data object Stop : VoiceCommand

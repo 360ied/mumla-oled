@@ -526,6 +526,14 @@ class Session internal constructor(
                     }
                     return
                 }
+                // Render thread removal, ordered after this user's queued
+                // tunnelled voice on the same session coroutine (voice.md
+                // queues). Voice failures never fail the session.
+                try {
+                    voiceLink.removeUser(session)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                }
                 if (!synced) {
                     val oldInfo = syncingState.server.users[session]
                     val actorName = if (msg.hasActor()) syncingState.server.users[msg.actor]?.name else null

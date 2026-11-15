@@ -17,8 +17,8 @@
 
 package se.lublin.humla.voice
 
+import android.util.Log
 import com.google.protobuf.ByteString
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -33,10 +33,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import se.lublin.humla.BuildConfig
+import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.VoiceLifecycle
+import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.CryptKeys
-import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.net.NativeVoiceCodec
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
@@ -44,32 +45,40 @@ import se.lublin.humla.net.VoiceEvent
 import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
+import kotlin.math.min
 
 /**
- * Kotlin VoiceEngine facade (step 5a.3b).
+ * Kotlin VoiceEngine facade (step 5a.3b, spec-literal).
  *
- * Implements the client's [VoiceLifecycle] and the transport's [VoiceLink].
- * Network voice runs native: the UDP socket and receive thread (recvfrom,
- * OCB2 decrypt, parseDatagram, sender filter) live in [NativeVoiceEngine];
- * render stays per-pipeline in AudioOutput's NativeVoiceIo until 5a.4, so
- * parsed frames cross to Kotlin through the listener and push into the
- * rings there. The transport keeps the fallback decision: native reports
- * pings, resyncs, and unavailability; TransportImpl switches routes.
+ * Implements the client's [VoiceLifecycle], the transport's [VoiceLink],
+ * and the render [RenderDriver]. Owns the application-scoped native voice
+ * engine (output engine, rings, policy cell, UDP socket and receive
+ * thread, notifier) across sessions. Takes over the service-lifetime
+ * [TalkActivity] publisher from 5a.3a (same instance, new owner).
  *
- * Takes over the service-lifetime [TalkActivity] publisher from 5a.3a (same
- * instance, new owner). `Start` carries the transport's per-session decision
- * (UDP format, legacy version); `Stop` resets the route to tunnel.
+ * Voice stays native-direct throughout: the receive thread and the tunnel
+ * caller push straight into the owned rings; removals arrive as control
+ * items on the tunnel ring from the session message coroutine. Render is
+ * driven per-pipeline through [RenderDriver] but owns nothing.
  *
- * Android-free: no android.* imports.
+ * `Start` carries the session's UDP address plus the transport's
+ * per-session decisions, fixed once: keys (when CryptSetup arrived) and
+ * the UDP format with the legacy version. No route: voice follows the
+ * transport's `SetVoiceRoute`; `Stop` resets to tunnel and closes the
+ * socket without touching the engines (reset happens at the next Start,
+ * when no render is live). Engines keep their state across route changes.
+ *
+ * Android-free except android.util.Log for the drop log (the audio layer
+ * already logs the same way).
  */
 class VoiceEngine @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
     private val talkPublisher: TalkActivityPublisher = TalkActivityPublisher(),
     scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-) : VoiceLink, VoiceLifecycle, NativeVoiceEngine.Listener {
+    private val engineFactory: (NativeVoiceEngine.Listener) -> EngineNative = { NativeVoiceEngine(it) },
+) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener {
     companion object {
-        private val logger: java.util.logging.Logger =
-            java.util.logging.Logger.getLogger(VoiceEngine::class.java.name)
+        private val TAG: String = VoiceEngine::class.java.name
     }
 
     /** Service-lifetime talk levels; the notifier feeds remote, AudioHandler feeds self. */
@@ -81,12 +90,6 @@ class VoiceEngine @JvmOverloads constructor(
     private val _status = MutableStateFlow(VoiceStatus.initial())
     override val status: StateFlow<VoiceStatus> = _status.asStateFlow()
 
-    /** Frames sink for the current pipeline (VoiceControl sets per build). */
-    var framesSink: ((List<DecodedVoiceFrame>, Boolean) -> Unit)? = null
-
-    /** Drops provider for status (VoiceControl sets per build; AudioOutput owns the rings). */
-    var dropProvider: (() -> Triple<Long, Long, Long>)? = null
-
     private val usingUdp = AtomicBoolean(false)
     private data class Endpoint(val host: String, val port: Int)
     private val endpointRef = AtomicReference<Endpoint?>(null)
@@ -95,22 +98,27 @@ class VoiceEngine @JvmOverloads constructor(
     private val targetBitrate = AtomicInteger(40000)
     private val runningFlag = AtomicBoolean(false)
 
-    private var native: NativeVoiceEngine? = null
+    private var native: EngineNative? = null
     private val scopeRef = scope
 
     private val _latestPolicy = MutableStateFlow<VoicePolicy?>(null)
     val latestPolicy: StateFlow<VoicePolicy?> = _latestPolicy.asStateFlow()
 
+    private var lastLoggedDroppedInbound = 0L
+    private var lastLoggedDroppedTunnel = 0L
+    private var lastLoggedDroppedJitter = 0L
+
+    /** Policy collector only: publishes the mapped VoicePolicy for the native filter. */
     fun setPolicy(policy: VoicePolicy) {
         _latestPolicy.value = policy
-        val nativeCopy = native ?: return
+        val engine = native ?: return
         try {
-            nativeCopy.setPolicy(
+            engine.setPolicy(
                 policy.locallyMuted.toIntArray(),
                 policy.knownSessions.toIntArray(),
             )
         } catch (e: Exception) {
-            logger.fine("Dropping policy push: $e")
+            loggerFine("Dropping policy push: $e")
         }
     }
 
@@ -124,7 +132,7 @@ class VoiceEngine @JvmOverloads constructor(
             ensureNative()
             native?.setPolicy(muted, known)
         } catch (e: Exception) {
-            logger.fine("Dropping test filter push: $e")
+            loggerFine("Dropping test filter push: $e")
         }
     }
 
@@ -140,47 +148,11 @@ class VoiceEngine @JvmOverloads constructor(
         refreshStatus()
     }
 
-    /** Current session format (test interop mirrors sender framing to it). */
+    /** Current session format (tests mirror sender framing to it). */
     fun udpFormat(): UdpFormat = formatRef.get().udp
 
-    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
-        formatRef.set(format)
-        endpointRef.set(Endpoint(host, port))
-        ensureNative()
-        val engine = native ?: run {
-            refreshStatus()
-            return
-        }
-        try {
-            engine.setFormat(
-                if (format.udp == UdpFormat.PROTOBUF) 1 else 0,
-                format.legacyServerVersion,
-            )
-        } catch (e: Exception) {
-            logger.fine("Dropping format push: $e")
-        }
-        pushPolicy()
-        runningFlag.set(true)
-        if (usingUdp.get()) {
-            if (!engine.start(host, port)) {
-                if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
-                    logger.fine("Dropping UdpUnavailable (event buffer full)")
-                }
-            }
-        }
-        refreshStatus()
-    }
-
-    override fun stopVoice() {
-        endpointRef.set(null)
-        usingUdp.set(false)
-        runningFlag.set(false)
-        try {
-            native?.stop()
-        } catch (e: Exception) {
-            logger.fine("Dropping native stop: $e")
-        }
-        refreshStatus()
+    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
+        submit(VoiceCommand.Start(host, port, keys, format))
     }
 
     /**
@@ -192,21 +164,79 @@ class VoiceEngine @JvmOverloads constructor(
         formatRef.set(format)
         runningFlag.set(true)
         try {
+            ensureNative()
             native?.setFormat(
                 if (format.udp == UdpFormat.PROTOBUF) 1 else 0,
                 format.legacyServerVersion,
             )
         } catch (e: Exception) {
-            logger.fine("Dropping format push: $e")
+            loggerFine("Dropping format push: $e")
         }
         pushPolicy()
         refreshStatus()
     }
 
+    override fun stopVoice() {
+        submit(VoiceCommand.Stop)
+    }
+
     override fun submit(command: VoiceCommand) {
         when (command) {
-            is VoiceCommand.Start -> startVoice(command.host, command.port, command.format)
-            is VoiceCommand.Stop -> stopVoice()
+            is VoiceCommand.Start -> {
+                formatRef.set(command.format)
+                endpointRef.set(Endpoint(command.host, command.port))
+                ensureNative()
+                val engine = native ?: run {
+                    refreshStatus()
+                    return
+                }
+                try {
+                    engine.setFormat(
+                        if (command.format.udp == UdpFormat.PROTOBUF) 1 else 0,
+                        command.format.legacyServerVersion,
+                    )
+                } catch (e: Exception) {
+                    loggerFine("Dropping format push: $e")
+                }
+                if (command.keys != null) {
+                    try {
+                        engine.setKeys(
+                            command.keys.key.toByteArray(),
+                            command.keys.clientNonce.toByteArray(),
+                            command.keys.serverNonce.toByteArray(),
+                        )
+                    } catch (e: Exception) {
+                        loggerFine("Dropping Start keys: $e")
+                    }
+                }
+                // Reset while no render is live (pipelines build after
+                // Start; the previous one joined in its teardown).
+                try {
+                    engine.reset()
+                } catch (e: Exception) {
+                    loggerFine("Dropping engine reset: $e")
+                }
+                pushPolicy()
+                runningFlag.set(true)
+                if (usingUdp.get()) {
+                    val endpoint = endpointRef.get()
+                    if (endpoint != null && !engine.start(endpoint.host, endpoint.port)) {
+                        if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
+                            loggerFine("Dropping UdpUnavailable (event buffer full)")
+                        }
+                    }
+                }
+            }
+            is VoiceCommand.Stop -> {
+                endpointRef.set(null)
+                usingUdp.set(false)
+                runningFlag.set(false)
+                try {
+                    native?.stop()
+                } catch (e: Exception) {
+                    loggerFine("Dropping native stop: $e")
+                }
+            }
             is VoiceCommand.SetVoiceRoute -> {
                 usingUdp.set(command.udp)
                 if (command.udp) {
@@ -215,14 +245,15 @@ class VoiceEngine @JvmOverloads constructor(
                         try {
                             if (native?.start(endpoint.host, endpoint.port) == false) {
                                 if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
-                                    logger.fine("Dropping UdpUnavailable (event buffer full)")
+                                    loggerFine("Dropping UdpUnavailable (event buffer full)")
                                 }
                             }
                         } catch (e: Exception) {
-                            logger.fine("Dropping native start: $e")
+                            loggerFine("Dropping native start: $e")
                         }
                     }
                 }
+                // The socket stays open across tunnel switches until Stop.
             }
             is VoiceCommand.SendPing -> sendUdpPing(command.timestampMicros)
         }
@@ -231,15 +262,15 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun setKeys(keys: CryptKeys) {
         if (!keys.isWellFormed()) return
-        ensureNative()
         try {
+            ensureNative()
             native?.setKeys(
                 keys.key.toByteArray(),
                 keys.clientNonce.toByteArray(),
                 keys.serverNonce.toByteArray(),
             )
         } catch (e: Exception) {
-            logger.fine("Dropping native setKeys: $e")
+            loggerFine("Dropping native setKeys: $e")
         }
         refreshStatus()
     }
@@ -249,7 +280,7 @@ class VoiceEngine @JvmOverloads constructor(
         try {
             native?.setDecryptIv(iv.toByteArray())
         } catch (e: Exception) {
-            logger.fine("Dropping native setDecryptIv: $e")
+            loggerFine("Dropping native setDecryptIv: $e")
         }
     }
 
@@ -265,15 +296,23 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun queueTunnelled(packet: ByteArray) {
         if (packet.isEmpty()) {
-            logger.fine("Dropping empty tunnelled packet")
+            loggerFine("Dropping empty tunnelled packet")
             return
         }
         try {
             native?.queueTunnelled(packet)
         } catch (e: Exception) {
-            logger.fine("Dropping tunnelled packet: $e")
+            loggerFine("Dropping tunnelled packet: $e")
         }
         refreshStatus()
+    }
+
+    override fun removeUser(session: Int) {
+        try {
+            native?.pushRemoveUser(session)
+        } catch (e: Exception) {
+            loggerFine("Dropping removeUser: $e")
+        }
     }
 
     fun sendVoice(data: ByteArray, length: Int) {
@@ -293,9 +332,42 @@ class VoiceEngine @JvmOverloads constructor(
         try {
             native?.sendDatagram(data, length)
         } catch (e: Exception) {
-            logger.fine("Dropping voice send: $e")
+            loggerFine("Dropping voice send: $e")
         }
         refreshStatus()
+    }
+
+    // RenderDriver: the render thread's only path into the owned engine.
+
+    override fun render(out: ShortArray?, offset: Int, length: Int): Int {
+        return try {
+            native?.render(out, offset, length) ?: 0
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    override fun awaitWork(timeoutMs: Int): Boolean {
+        return try {
+            native?.awaitWork(timeoutMs) ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override fun lastHasActiveVoices(): Boolean {
+        return try {
+            native?.lastHasActiveVoices() ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override fun wakeForStop() {
+        try {
+            native?.wakeForStop()
+        } catch (ignored: Exception) {
+        }
     }
 
     private fun sendUdpPing(timestampMicros: Long) {
@@ -309,95 +381,89 @@ class VoiceEngine @JvmOverloads constructor(
                 NativeVoiceCodec.frameLegacyPing(timestampMicros)
             }
         } catch (e: Exception) {
-            logger.fine("Dropping ping after codec failure: $e")
+            loggerFine("Dropping ping after codec failure: $e")
             null
         } ?: return
         try {
             engine.sendDatagram(packet, packet.size)
         } catch (e: Exception) {
-            logger.fine("Dropping ping send: $e")
+            loggerFine("Dropping ping send: $e")
         }
-    }
-
-    override fun onVoice(
-        sessions: IntArray,
-        payloads: Array<ByteArray?>,
-        lengths: IntArray,
-        sequences: IntArray,
-        flags: IntArray,
-        terminators: BooleanArray,
-        tunnel: Boolean
-    ) {
-        val count = minOf(sessions.size, lengths.size, sequences.size, flags.size)
-        if (count <= 0) return
-        val frames = ArrayList<DecodedVoiceFrame>(count)
-        var i = 0
-        while (i < count) {
-            val opus = payloads.getOrNull(i)
-            val len = lengths.getOrNull(i) ?: 0
-            val isTerm = terminators.getOrNull(i) ?: false
-            if (len > 0 && opus != null && len <= opus.size) {
-                frames.add(
-                    DecodedVoiceFrame(
-                        session = sessions[i],
-                        sequence = sequences[i],
-                        flags = flags[i],
-                        opus = opus.copyOf(len),
-                        isTerminator = isTerm,
-                    )
-                )
-            } else if (isTerm) {
-                frames.add(
-                    DecodedVoiceFrame(
-                        session = sessions[i],
-                        sequence = sequences[i],
-                        flags = flags[i],
-                        opus = ByteArray(0),
-                        isTerminator = true,
-                    )
-                )
-            }
-            i++
-        }
-        if (frames.isEmpty()) return
-        try {
-            framesSink?.invoke(frames, tunnel)
-        } catch (e: Exception) {
-            logger.fine("Dropping voice frames: $e")
-        }
-        refreshStatus()
     }
 
     override fun onUdpPing(timestampMicros: Long, serverVersionV2: Long, maxBandwidth: Int) {
         val v2 = if (serverVersionV2 != 0L) serverVersionV2 else null
         val bw = if (maxBandwidth != 0) maxBandwidth else null
         if (!_events.tryEmit(VoiceEvent.UdpPing(timestampMicros, v2, bw))) {
-            logger.fine("Dropping UdpPing (event buffer full)")
+            loggerFine("Dropping UdpPing (event buffer full)")
         }
     }
 
     override fun onCryptResync() {
         if (!_events.tryEmit(VoiceEvent.CryptResyncRequested)) {
-            logger.fine("Dropping CryptResyncRequested (event buffer full)")
+            loggerFine("Dropping CryptResyncRequested (event buffer full)")
         }
     }
 
     override fun onUdpUnavailable() {
         if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
-            logger.fine("Dropping UdpUnavailable (event buffer full)")
+            loggerFine("Dropping UdpUnavailable (event buffer full)")
+        }
+    }
+
+    override fun onTalkSnapshot(
+        sessions: IntArray,
+        states: IntArray,
+        droppedInbound: Long,
+        droppedTunnel: Long,
+        droppedJitter: Long
+    ) {
+        val levels = HashMap<Int, TalkState>(sessions.size)
+        val count = min(sessions.size, states.size)
+        var index = 0
+        while (index < count) {
+            // TALK_PASSIVE (2) never arrives: the engine strips passive
+            // before publish, so absence is the only passive. Unknown
+            // ordinals must not insert an entry either.
+            val state = when (states[index]) {
+                0 -> TalkState.TALKING
+                1 -> TalkState.SHOUTING
+                3 -> TalkState.WHISPERING
+                else -> {
+                    Log.w(TAG, "Unknown talk state ordinal: " + states[index])
+                    null
+                }
+            }
+            if (state != null) {
+                levels[sessions[index]] = state
+            }
+            index++
+        }
+        talkPublisher.updateRemote(levels)
+        if (droppedInbound != lastLoggedDroppedInbound ||
+            droppedTunnel != lastLoggedDroppedTunnel ||
+            droppedJitter != lastLoggedDroppedJitter
+        ) {
+            lastLoggedDroppedInbound = droppedInbound
+            lastLoggedDroppedTunnel = droppedTunnel
+            lastLoggedDroppedJitter = droppedJitter
+            Log.w(
+                TAG, "Voice I/O drops: inbound=" + droppedInbound +
+                    " tunnel=" + droppedTunnel + " jitter=" + droppedJitter
+            )
         }
     }
 
     private fun ensureNative() {
         if (native != null) return
         try {
-            native = NativeVoiceEngine(this)
-        } catch (e: Throwable) {
+            native = engineFactory(this)
+        } catch (t: Throwable) {
             if (BuildConfig.DEBUG) {
-                throw IllegalStateException("Native voice engine failed to load", e)
+                throw IllegalStateException("Native voice engine failed to load", t)
             }
             if (!_events.tryEmit(VoiceEvent.PipelineError("voice engine unavailable"))) {
-                logger.fine("Dropping PipelineError (event buffer full)")
+                loggerFine("Dropping PipelineError (event buffer full)")
             }
             _status.value = _status.value.copy(lastError = "voice engine unavailable")
         }
@@ -411,7 +477,7 @@ class VoiceEngine @JvmOverloads constructor(
                 policy.knownSessions.toIntArray(),
             )
         } catch (e: Exception) {
-            logger.fine("Dropping policy push: $e")
+            loggerFine("Dropping policy push: $e")
         }
     }
 
@@ -426,11 +492,6 @@ class VoiceEngine @JvmOverloads constructor(
         } else {
             _status.value.localCrypt
         }
-        val drops = try {
-            dropProvider?.invoke()
-        } catch (e: Exception) {
-            null
-        }
         val prev = _status.value
         _status.value = VoiceStatus(
             localCrypt = crypt,
@@ -438,10 +499,22 @@ class VoiceEngine @JvmOverloads constructor(
             framesPerPacket = targetFramesPerPacket.get(),
             running = runningFlag.get(),
             droppedOutbound = prev.droppedOutbound,
-            droppedInbound = drops?.first ?: prev.droppedInbound,
-            droppedJitter = drops?.third ?: prev.droppedJitter,
+            droppedInbound = try {
+                native?.lastDroppedInbound() ?: prev.droppedInbound
+            } catch (e: Exception) {
+                prev.droppedInbound
+            },
+            droppedJitter = try {
+                native?.lastDroppedJitter() ?: prev.droppedJitter
+            } catch (e: Exception) {
+                prev.droppedJitter
+            },
             lastError = prev.lastError,
         )
+    }
+
+    private fun loggerFine(message: String) {
+        java.util.logging.Logger.getLogger(TAG).fine(message)
     }
 
     fun close() {

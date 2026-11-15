@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.Transport
 import se.lublin.humla.net.TransportException
 import se.lublin.humla.net.TransportFactory
@@ -361,6 +362,7 @@ class HumlaClient(
                 transportRemoteHost(session),
                 transportRemotePort(session),
                 transportVoiceFormat(session),
+                transportCryptKeys(session),
             )
         } catch (ignored: Exception) {
         }
@@ -371,6 +373,14 @@ class HumlaClient(
             session.transport.voiceFormat
         } catch (e: Exception) {
             VoiceFormat.DEFAULT
+        }
+    }
+
+    private fun transportCryptKeys(session: Session): CryptKeys? {
+        return try {
+            session.transport.cryptKeys.value
+        } catch (e: Exception) {
+            null
         }
     }
 

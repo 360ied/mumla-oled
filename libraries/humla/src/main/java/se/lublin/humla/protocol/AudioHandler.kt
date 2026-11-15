@@ -28,6 +28,7 @@ import se.lublin.humla.Constants
 import se.lublin.humla.R
 import se.lublin.humla.audio.AudioInput
 import se.lublin.humla.audio.AudioOutput
+import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.audio.NativeAudioInputEngine
 import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
@@ -106,12 +107,12 @@ class AudioHandler : HumlaNetworkListener,
     // Device-free construction (step 5a.2): the native input engine and the
     // AudioRecord capture below are acquired in initialize(), not here, so a
     // JVM test can construct this handler and drive the encode framing entry
-    // point without grabbing the mic. AudioOutput(listener) is already
+    // point without grabbing the mic. AudioOutput is already
     // device-free (its track opens in startPlaying) and stays in the
     // constructor. A production change on its own merits, not a test seam.
     private var mInput: AudioInput? = null
     private val mOutput: AudioOutput
-    private val mOutputListener: AudioOutput.AudioOutputListener
+    private val mRenderDriver: RenderDriver
     private val mEncodeListener: AudioEncodeListener
     private var mNativeEngine: NativeAudioInputEngine? = null
 
@@ -212,12 +213,12 @@ class AudioHandler : HumlaNetworkListener,
         halfDuplexEnabled: Boolean,
         preprocessorEnabled: Boolean,
         encodeListener: AudioEncodeListener,
-        outputListener: AudioOutput.AudioOutputListener,
+        renderDriver: RenderDriver,
         talkPublisher: TalkActivityPublisher
     ) : this(
         context, logger, audioStream, audioSource, sampleRate, targetBitrate, targetFramesPerPacket,
         inputMode, targetId, amplitudeBoost, halfDuplexEnabled,
-        preprocessorEnabled, true, encodeListener, outputListener, talkPublisher
+        preprocessorEnabled, true, encodeListener, renderDriver, talkPublisher
     )
 
     @Throws(AudioInitializationException::class)
@@ -228,7 +229,7 @@ class AudioHandler : HumlaNetworkListener,
         halfDuplexEnabled: Boolean,
         preprocessorEnabled: Boolean, adaptiveLevelerEnabled: Boolean,
         encodeListener: AudioEncodeListener,
-        outputListener: AudioOutput.AudioOutputListener,
+        renderDriver: RenderDriver,
         talkPublisher: TalkActivityPublisher
     ) {
         mContext = context
@@ -244,15 +245,16 @@ class AudioHandler : HumlaNetworkListener,
         mPreprocessorEnabled = preprocessorEnabled
         mAdaptiveLevelerEnabled = adaptiveLevelerEnabled
         mEncodeListener = encodeListener
-        mOutputListener = outputListener
+        mRenderDriver = renderDriver
         mTalking = false
         mTargetId = targetId
         mAudioSource = audioSource
 
-        // Device-free: AudioOutput(listener, publisher) opens no track
-        // (startPlaying does, in initialize()). The native input engine and
-        // AudioInput stay null until initialize() acquires them.
-        mOutput = AudioOutput(mContext, mOutputListener, talkPublisher)
+        // Device-free: AudioOutput opens no track (startPlaying does, in
+        // initialize()). The native input engine and AudioInput stay null
+        // until initialize() acquires them. Render drives the shared
+        // application-scoped engine through the driver but owns nothing.
+        mOutput = AudioOutput(mContext, mRenderDriver, talkPublisher)
     }
 
     /** Destroys capture + native engine made owned before a later init step failed.
@@ -465,10 +467,6 @@ class AudioHandler : HumlaNetworkListener,
         run {
             return mOutput.isPlaying()
         }
-    }
-
-    fun getAudioOutput(): AudioOutput {
-        return mOutput
     }
 
     fun getCodec(): HumlaUDPMessageType? {
@@ -733,16 +731,13 @@ class AudioHandler : HumlaNetworkListener,
         updateMuteState()
     }
 
-    override fun messageUserRemove(msg: Mumble.UserRemove) {
-        super.messageUserRemove(msg)
-        run {
-            mOutput.removeUser(msg.session)
-        }
-    }
+    // Removals reach render through VoiceLink.removeUser on the same session
+    // coroutine (native tunnel-ring control item); the base no-op covers
+    // the inherited handler method.
 
     // Voice frames no longer arrive here: the native receive thread parses
-    // and filters (5a.3b), delivering through VoiceEngine.framesSink to the
-    // rings. The base no-ops cover the inherited UDP listener methods.
+    // and filters straight into the owned VoiceIo rings (5a.3b). The base
+    // no-ops cover the inherited UDP listener methods.
 
     fun setProtobufUdp(protobufUdp: Boolean) {
         mProtobufUdp = protobufUdp
@@ -961,7 +956,7 @@ class AudioHandler : HumlaNetworkListener,
         private var mInputMode: IInputMode? = null
         private var mEncodeListener: AudioEncodeListener? = null
         private var mFramesPerPacketListener: FramesPerPacketListener? = null
-        private var mTalkingListener: AudioOutput.AudioOutputListener? = null
+        private var mRenderDriver: RenderDriver? = null
         private var mTalkPublisher: TalkActivityPublisher? = null
 
         fun setContext(context: Context): Builder {
@@ -1052,8 +1047,8 @@ class AudioHandler : HumlaNetworkListener,
             return this
         }
 
-        fun setTalkingListener(talkingListener: AudioOutput.AudioOutputListener?): Builder {
-            mTalkingListener = talkingListener
+        fun setRenderDriver(renderDriver: RenderDriver?): Builder {
+            mRenderDriver = renderDriver
             return this
         }
 
@@ -1080,10 +1075,7 @@ class AudioHandler : HumlaNetworkListener,
                 mAmplitudeBoost, mHalfDuplexEnabled,
                 /* preprocessorEnabled */ true, mAdaptiveLevelerEnabled,
                 requireNotNull(mEncodeListener),
-                // Intentional fail-fast (no original counterpart): the original
-                // passed a null talking listener through to a later NPE; every
-                // in-tree caller sets it, so this only trips misuse.
-                requireNotNull(mTalkingListener),
+                requireNotNull(mRenderDriver),
                 requireNotNull(mTalkPublisher)
             )
             handler.setFramesPerPacketListener(mFramesPerPacketListener)

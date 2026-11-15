@@ -35,6 +35,7 @@ import se.lublin.humla.client.ServerEndpoint
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.client.VoiceLifecycle
+import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.voice.VoiceEngine
@@ -329,7 +330,7 @@ private class NoUdpVoice(
     private val reportSocketFailure: Boolean,
 ) : VoiceLink by delegate,
     VoiceLifecycle by delegate {
-    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
+    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
         // UDP stays closed for the session (the format is still fixed); report
         // the socket failure the way the native socket does when connect
         // fails, or stay silent for the 20 s zero-counter giveup.

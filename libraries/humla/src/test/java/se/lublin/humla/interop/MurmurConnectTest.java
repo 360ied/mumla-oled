@@ -34,10 +34,8 @@ import java.security.cert.CertificateFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import org.mockito.Mockito;
 
@@ -53,14 +51,11 @@ import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
-import se.lublin.humla.audio.AudioOutput;
 import se.lublin.humla.audio.NativeAudioInputEngine;
 import se.lublin.humla.audio.inputmode.ContinuousInputMode;
-import se.lublin.humla.net.DecodedVoiceFrame;
 import se.lublin.humla.net.HandshakeFailure;
 import se.lublin.humla.protocol.AudioHandler;
 import se.lublin.humla.util.HumlaLogger;
-import se.lublin.humla.voice.NativeVoiceIo;
 import se.lublin.humla.voice.TalkActivityPublisher;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.IHumlaObserver;
@@ -520,15 +515,16 @@ public class MurmurConnectTest {
 
     @Test
     public void tunnelVoicePlaysThroughNativeRender() throws Exception {
-        // Step 5a.3a done-when: voice from a peer over the tunnel plays
-        // non-silent PCM through the real native render entry point. Both
+        // Step 5a.3b done-when: voice from a peer over the tunnel plays
+        // non-silent PCM through the shared native render entry point. Both
         // clients force TCP; the sender encodes synthetic PCM with the real
         // input engine, frames it through the production AudioHandler encode
-        // path, and tunnels it; the receiver parses with the production
-        // codec, pushes surviving frames into the native inbound ring, and
-        // renders. No AudioRecord/AudioTrack exists on the host: the sender
-        // replaces only capture with direct processFrame calls, and the
-        // receiver replaces only playback with direct render calls.
+        // path, and tunnels it through the live session transport; the
+        // receiver's session coroutine parses native in the shared
+        // VoiceEngine, which the test renders directly. No AudioRecord or
+        // AudioTrack exists on the host: the sender replaces only capture
+        // with direct processFrame calls, and the receiver replaces only
+        // playback with direct render calls on the shared engine.
         HumlaClientHandle receiverHandle = connectHandle(
                 "InteropAlice", null, InteropClient.Voice.FORCED_TCP);
         Session receiverSession = InteropClient.awaitConnected(
@@ -540,36 +536,10 @@ public class MurmurConnectTest {
         final int senderId = senderSession.getSessionId();
         InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender");
 
-        final ConcurrentLinkedQueue<int[]> snapshots = new ConcurrentLinkedQueue<int[]>();
-        final AtomicInteger pushedFrames = new AtomicInteger();
-        final NativeVoiceIo voiceIo = new NativeVoiceIo(
-                new NativeVoiceIo.VoiceIoListener() {
-                    @Override public void onTalkSnapshot(
-                            int[] sessions, int[] states,
-                            long droppedInbound, long droppedTunnel, long droppedJitter) {
-                        snapshots.add(sessions);
-                    }
-                });
-        // Production tunnel path (5a.3b): the session coroutine parses
-        // native in VoiceEngine and delivers survivors through framesSink;
-        // the test pushes them into a standalone render core and renders.
         // No PolicyCollector in the harness: open the native sender filter
         // for the peer directly (production pushes the mapped VoicePolicy).
         final se.lublin.humla.voice.VoiceEngine receiverVoice = receiverHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{senderId});
-        receiverVoice.setFramesSink(
-                new kotlin.jvm.functions.Function2<List<DecodedVoiceFrame>, Boolean, kotlin.Unit>() {
-                    @Override public kotlin.Unit invoke(List<DecodedVoiceFrame> frames, Boolean tunnel) {
-                        for (DecodedVoiceFrame f : frames) {
-                            if (voiceIo.pushTunnel(
-                                    f.session, f.opus, f.opus.length, f.sequence, f.flags,
-                                    f.isTerminator)) {
-                                pushedFrames.incrementAndGet();
-                            }
-                        }
-                        return kotlin.Unit.INSTANCE;
-                    }
-                });
 
         HumlaLogger quietLogger = new HumlaLogger() {
             @Override public void logInfo(String message) {}
@@ -580,7 +550,6 @@ public class MurmurConnectTest {
         // never flows in the other scenarios), so the test routes framed
         // packets into the live session transport directly — the production
         // input engine and AudioHandler framing above are what is exercised.
-        // The sink wiring itself stays unpinned until 5a.3b removes it.
         final HumlaClient senderClient = senderHandle.getClient();
         AudioHandler.AudioEncodeListener peerEncode = new AudioHandler.AudioEncodeListener() {
             @Override public void onAudioEncoded(byte[] data, int length) {
@@ -595,10 +564,11 @@ public class MurmurConnectTest {
             }
             @Override public void onTalkingStateChanged(boolean talking) {}
         };
-        AudioOutput.AudioOutputListener peerOutput = new AudioOutput.AudioOutputListener() {
-            @Override public se.lublin.humla.model.IUser getUser(int session) {
-                return null;
-            }
+        se.lublin.humla.audio.RenderDriver noRender = new se.lublin.humla.audio.RenderDriver() {
+            @Override public int render(short[] out, int offset, int length) { return 0; }
+            @Override public boolean awaitWork(int timeoutMs) { return false; }
+            @Override public boolean lastHasActiveVoices() { return false; }
+            @Override public void wakeForStop() {}
         };
         AudioHandler peerHandler = new AudioHandler(
                 Mockito.mock(Context.class),
@@ -608,7 +578,7 @@ public class MurmurConnectTest {
                 48000, 40000, 2,
                 new ContinuousInputMode(),
                 (byte) 0, 1.0f, false, false,
-                peerEncode, peerOutput, new TalkActivityPublisher());
+                peerEncode, noRender, new TalkActivityPublisher());
         peerHandler.setProtobufUdp(receiverVoice.udpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
         final AudioHandler peerRef = peerHandler;
         NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
@@ -622,74 +592,60 @@ public class MurmurConnectTest {
                     }
                     @Override public void onTalkingStateChanged(boolean talking, float peak) {}
                 });
-        try {
-            // 30 frames of 440 Hz sine at 48 kHz: continuous mode transmits
-            // everything, so encoding needs no VAD warmup.
-            short[] sine = new short[480];
-            for (int i = 0; i < sine.length; i++) {
-                sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
-            }
-            for (int i = 0; i < 30; i++) {
-                inputEngine.processFrame(sine, 0, sine.length);
-            }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
-            while (pushedFrames.get() < 8 && System.nanoTime() < deadline) {
-                Thread.sleep(50);
-            }
-            assertTrue("tunnelled voice must reach the native ring, got "
-                            + pushedFrames.get() + " frames",
-                    pushedFrames.get() >= 8);
-            // The startup gate needs margin + 1 queued frames; render several
-            // quanta and require clearly non-silent PCM out of the real
-            // output engine and Opus decoder.
-            short[] pcm = new short[960];
-            int peak = 0;
-            for (int i = 0; i < 6; i++) {
-                int rendered = voiceIo.render(pcm, 0, pcm.length);
-                for (int s = 0; s < rendered; s++) {
-                    int v = Math.abs((int) pcm[s]);
-                    if (v > peak) peak = v;
-                }
-            }
-            assertTrue("native render must play non-silent PCM, peak=" + peak,
-                    peak > 100);
-            // The sender's talk level arrives through the notifier snapshot.
-            boolean sawSender = false;
-            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (!sawSender && System.nanoTime() < deadline) {
-                for (int[] sessions : snapshots) {
-                    for (int session : sessions) {
-                        if (session == senderId) {
-                            sawSender = true;
-                            break;
-                        }
-                    }
-                    if (sawSender) break;
-                }
-                if (!sawSender) Thread.sleep(50);
-            }
-            assertTrue("notifier must report the sender talking", sawSender);
-        } finally {
-            receiverVoice.setFramesSink(null);
-            voiceIo.destroy();
-            // The input engine is intentionally left alive: its destroy is
-            // module-internal, and the encoder is a process-lifetime test
-            // resource freed at JVM exit.
+        // 30 frames of 440 Hz sine at 48 kHz: continuous mode transmits
+        // everything, so encoding needs no VAD warmup.
+        short[] sine = new short[480];
+        for (int i = 0; i < sine.length; i++) {
+            sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
         }
+        for (int i = 0; i < 30; i++) {
+            inputEngine.processFrame(sine, 0, sine.length);
+        }
+        // The startup gate needs margin + 1 queued frames; render the shared
+        // engine until clearly non-silent PCM comes out of the real output
+        // engine and Opus decoder.
+        short[] pcm = new short[960];
+        int peak = 0;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (peak <= 100 && System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > peak) peak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("native render must play non-silent PCM, peak=" + peak,
+                peak > 100);
+        // The sender's talk level arrives through the service-lifetime
+        // publisher fed by the shared notifier.
+        boolean sawSender = false;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!sawSender && System.nanoTime() < deadline) {
+            if (receiverVoice.getTalkActivity().getValue().getUsers().containsKey(senderId)) {
+                sawSender = true;
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertTrue("notifier must report the sender talking", sawSender);
+        // The input engine is intentionally left alive: its destroy is
+        // module-internal, and the encoder is a process-lifetime test
+        // resource freed at JVM exit.
     }
 
     @Test
     public void udpVoicePlaysThroughNativeReceive() throws Exception {
         // Step 5a.3b done-when: voice from a peer over UDP plays non-silent
-        // PCM. The sender encodes synthetic PCM with the real input engine,
-        // frames it through the production AudioHandler encode path, and
-        // sends it through the production send seam (native encrypt +
-        // sendto on the shared socket); the native receive thread decrypts,
-        // parses, and filters, delivering survivors through framesSink into
-        // the native inbound ring for render. No AudioRecord/AudioTrack
-        // exists on the host: the sender replaces only capture with direct
-        // processFrame calls, and the receiver replaces only playback with
-        // direct render calls.
+        // PCM through the shared native voice path. The sender encodes
+        // synthetic PCM with the real input engine, frames it through the
+        // production AudioHandler encode path, and sends it through the
+        // production send seam (native encrypt + sendto on the shared
+        // socket); the native receive thread decrypts, parses, and filters,
+        // and the test renders the shared engine directly. No
+        // AudioRecord/AudioTrack exists on the host.
         HumlaClientHandle receiverHandle = connectHandle(
                 "InteropAlice", null, InteropClient.Voice.UDP);
         Session receiverSession = InteropClient.awaitConnected(
@@ -703,37 +659,8 @@ public class MurmurConnectTest {
         InteropClient.awaitUsingUdp(receiverSession, true, "receiver on UDP", 15L);
         InteropClient.awaitUsingUdp(senderSession, true, "sender on UDP", 15L);
 
-        final ConcurrentLinkedQueue<int[]> snapshots = new ConcurrentLinkedQueue<int[]>();
-        final AtomicInteger pushedFrames = new AtomicInteger();
-        final NativeVoiceIo voiceIo = new NativeVoiceIo(
-                new NativeVoiceIo.VoiceIoListener() {
-                    @Override public void onTalkSnapshot(
-                            int[] sessions, int[] states,
-                            long droppedInbound, long droppedTunnel, long droppedJitter) {
-                        snapshots.add(sessions);
-                    }
-                });
         final se.lublin.humla.voice.VoiceEngine receiverVoice = receiverHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{senderId});
-        receiverVoice.setFramesSink(
-                new kotlin.jvm.functions.Function2<List<DecodedVoiceFrame>, Boolean, kotlin.Unit>() {
-                    @Override public kotlin.Unit invoke(List<DecodedVoiceFrame> frames, Boolean tunnel) {
-                        for (DecodedVoiceFrame f : frames) {
-                            if (tunnel) {
-                                if (voiceIo.pushTunnel(
-                                        f.session, f.opus, f.opus.length, f.sequence, f.flags,
-                                        f.isTerminator)) {
-                                    pushedFrames.incrementAndGet();
-                                }
-                            } else if (voiceIo.pushInbound(
-                                    f.session, f.opus, f.opus.length, f.sequence, f.flags,
-                                    f.isTerminator)) {
-                                pushedFrames.incrementAndGet();
-                            }
-                        }
-                        return kotlin.Unit.INSTANCE;
-                    }
-                });
 
         HumlaLogger quietLogger = new HumlaLogger() {
             @Override public void logInfo(String message) {}
@@ -750,10 +677,11 @@ public class MurmurConnectTest {
             }
             @Override public void onTalkingStateChanged(boolean talking) {}
         };
-        AudioOutput.AudioOutputListener peerOutput = new AudioOutput.AudioOutputListener() {
-            @Override public se.lublin.humla.model.IUser getUser(int session) {
-                return null;
-            }
+        se.lublin.humla.audio.RenderDriver noRender = new se.lublin.humla.audio.RenderDriver() {
+            @Override public int render(short[] out, int offset, int length) { return 0; }
+            @Override public boolean awaitWork(int timeoutMs) { return false; }
+            @Override public boolean lastHasActiveVoices() { return false; }
+            @Override public void wakeForStop() {}
         };
         AudioHandler peerHandler = new AudioHandler(
                 Mockito.mock(Context.class),
@@ -763,7 +691,7 @@ public class MurmurConnectTest {
                 48000, 40000, 2,
                 new ContinuousInputMode(),
                 (byte) 0, 1.0f, false, false,
-                peerEncode, peerOutput, new TalkActivityPublisher());
+                peerEncode, noRender, new TalkActivityPublisher());
         peerHandler.setProtobufUdp(receiverVoice.udpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
         final AudioHandler peerRef = peerHandler;
         NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
@@ -777,50 +705,38 @@ public class MurmurConnectTest {
                     }
                     @Override public void onTalkingStateChanged(boolean talking, float peak) {}
                 });
-        try {
-            short[] sine = new short[480];
-            for (int i = 0; i < sine.length; i++) {
-                sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
-            }
-            for (int i = 0; i < 30; i++) {
-                inputEngine.processFrame(sine, 0, sine.length);
-            }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
-            while (pushedFrames.get() < 8 && System.nanoTime() < deadline) {
-                Thread.sleep(50);
-            }
-            assertTrue("UDP voice must reach the native ring, got "
-                            + pushedFrames.get() + " frames",
-                    pushedFrames.get() >= 8);
-            short[] pcm = new short[960];
-            int peak = 0;
-            for (int i = 0; i < 6; i++) {
-                int rendered = voiceIo.render(pcm, 0, pcm.length);
-                for (int s = 0; s < rendered; s++) {
-                    int v = Math.abs((int) pcm[s]);
-                    if (v > peak) peak = v;
-                }
-            }
-            assertTrue("native render must play non-silent PCM, peak=" + peak,
-                    peak > 100);
-            boolean sawSender = false;
-            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            while (!sawSender && System.nanoTime() < deadline) {
-                for (int[] sessions : snapshots) {
-                    for (int session : sessions) {
-                        if (session == senderId) {
-                            sawSender = true;
-                            break;
-                        }
-                    }
-                    if (sawSender) break;
-                }
-                if (!sawSender) Thread.sleep(50);
-            }
-            assertTrue("notifier must report the sender talking", sawSender);
-        } finally {
-            receiverVoice.setFramesSink(null);
-            voiceIo.destroy();
+        short[] sine = new short[480];
+        for (int i = 0; i < sine.length; i++) {
+            sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
         }
+        for (int i = 0; i < 30; i++) {
+            inputEngine.processFrame(sine, 0, sine.length);
+        }
+        short[] pcm = new short[960];
+        int peak = 0;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (peak <= 100 && System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > peak) peak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("native render must play non-silent PCM, peak=" + peak,
+                peak > 100);
+        boolean sawSender = false;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!sawSender && System.nanoTime() < deadline) {
+            if (receiverVoice.getTalkActivity().getValue().getUsers().containsKey(senderId)) {
+                sawSender = true;
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertTrue("notifier must report the sender talking", sawSender);
     }
+
 }

@@ -24,7 +24,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import se.lublin.humla.model.IUser
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.state.SessionState
@@ -32,12 +31,11 @@ import se.lublin.humla.state.UserHandle
 import se.lublin.humla.state.applyChannelState
 import se.lublin.humla.state.applyUserState
 import se.lublin.humla.state.emptySessionState
-import se.lublin.humla.voice.NativeVoiceIo
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.TalkActivityPublisher
 
 /**
- * Talk-level tests for step 5a.3a: the service-lifetime publisher replaces
+ * Talk-level tests for the service-lifetime publisher (5a.3a+): it replaces
  * the remote table wholesale, handles read it live (absent means passive),
  * and clearing on engine teardown leaves no stale indicator.
  *
@@ -45,7 +43,7 @@ import se.lublin.humla.voice.TalkActivityPublisher
  * talkState against a new event) is structurally impossible here: nothing
  * stamps handles anymore.
  */
-class AudioOutputTalkStateTest {
+class TalkActivityPublisherTest {
 
     private fun channelMsg(id: Int, name: String, parent: Int? = null): Mumble.ChannelState {
         val b = Mumble.ChannelState.newBuilder().setChannelId(id).setName(name)
@@ -123,37 +121,6 @@ class AudioOutputTalkStateTest {
         // clears after the notifier's final read, and no stale entry lights
         // the indicator (or a different user, since Murmur reuses IDs).
         publisher.clearRemote()
-        assertTrue(publisher.talkActivity.value.users.isEmpty())
-        assertEquals(
-            TalkState.PASSIVE,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
-        )
-    }
-
-    @Test
-    fun `stopPlaying clears talk levels through production teardown`() {
-        val publisher = TalkActivityPublisher()
-        val flow = flowWithUser()
-        val output = AudioOutput(
-            object : AudioOutput.AudioOutputListener {
-                override fun getUser(session: Int): IUser? =
-                    if (session == 2) UserHandle(session, flow, publisher.talkActivity) else null
-            },
-            publisher,
-        )
-        // The notifier's JNI sink calls this same method; simulate a live remote.
-        output.onTalkSnapshot(
-            intArrayOf(2),
-            intArrayOf(NativeVoiceIo.TALK_TALKING),
-            0L, 0L, 0L,
-        )
-        assertEquals(
-            TalkState.TALKING,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
-        )
-        // Production teardown of a never-started pipeline: no thread to join
-        // and no engine to destroy, but no stale levels may survive it.
-        output.stopPlaying()
         assertTrue(publisher.talkActivity.value.users.isEmpty())
         assertEquals(
             TalkState.PASSIVE,

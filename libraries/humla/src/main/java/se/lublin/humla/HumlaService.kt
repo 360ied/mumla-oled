@@ -42,7 +42,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
-import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.audio.AndroidAudioPlatform
 import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.audio.ScoLink
@@ -258,14 +257,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
 
-    private val mAudioOutputListener: AudioOutput.AudioOutputListener =
-        object : AudioOutput.AudioOutputListener {
-            override fun getUser(session: Int): IUser? {
-                if (_sessionState.value.server.users[session] == null) return null
-                return UserHandle(session, sessionState, talkPublisher.talkActivity)
-            }
-        }
-
     private fun clientStateIsConnected(): Boolean {
         if (!::client.isInitialized) return false
         return client.state.value is ClientState.Connected
@@ -445,7 +436,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             context = this,
             logger = this,
             encodeListener = mAudioInputListener,
-            talkingListener = mAudioOutputListener,
             talkPublisher = talkPublisher,
             routeStates = routeControl.state,
             policies = policyCollector.policy,
@@ -454,10 +444,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceLink = voiceLink,
             appScope = lifecycleScope,
         )
-        // Policy push (5a.3b): the collector maps SessionState to VoicePolicy;
-        // VoiceEngine will forward it native with the receive socket. Until
-        // then it records the latest for the filter cutover without changing
-        // the live Kotlin sender filter in AudioOutput.
+        // Policy push (5a.3b): the collector maps SessionState to VoicePolicy
+        // and VoiceEngine forwards it to the native sender filter.
         lifecycleScope.launch {
             try {
                 policyCollector.policy.collect { voiceLink.setPolicy(it) }

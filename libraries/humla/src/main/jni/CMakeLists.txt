@@ -203,7 +203,6 @@ if(ANDROID)
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
-        "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
@@ -405,7 +404,6 @@ else()
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
-        "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
         "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"

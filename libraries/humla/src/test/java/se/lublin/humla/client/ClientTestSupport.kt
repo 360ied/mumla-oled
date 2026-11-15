@@ -95,7 +95,7 @@ internal class FakeVoice(
 
     val startFormats: MutableList<VoiceFormat> = Collections.synchronizedList(ArrayList())
 
-    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
+    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
         startsCount.incrementAndGet()
         startFormats.add(format)
         order.add("voice-start")
@@ -113,6 +113,8 @@ internal class FakeVoice(
     override fun queueTunnelled(packet: ByteArray) {
         tunnelled.add(packet)
     }
+
+    override fun removeUser(session: Int) = Unit
 }
 
 internal class FakeRoute(val order: MutableList<String>) : RouteLifecycle {

@@ -31,10 +31,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.checkNotMainThread
-import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.protocol.AudioHandler
@@ -57,7 +55,6 @@ class VoiceControl(
     private val context: Context,
     private val logger: HumlaLogger,
     private val encodeListener: AudioHandler.AudioEncodeListener,
-    private val talkingListener: AudioOutput.AudioOutputListener,
     private val talkPublisher: TalkActivityPublisher,
     private val routeStates: StateFlow<RouteState>,
     private val policies: StateFlow<VoicePolicy>,
@@ -226,8 +223,6 @@ class VoiceControl(
                 logger.logWarning("VoiceControl stale handler shutdown failed: $e")
             }
             handlerRef.set(null)
-            voiceLink.framesSink = null
-            voiceLink.dropProvider = null
         }
         val created = try {
             buildHandler(session, route, current, handset)
@@ -245,31 +240,6 @@ class VoiceControl(
                 logger.logWarning("VoiceControl orphan shutdown failed: $shutdownError")
             }
             return
-        }
-        // Native receive (5a.3b): parsed frames arrive through
-        // VoiceEngine.framesSink, not UDP handlers. The sink fans out to the
-        // current pipeline's rings under AudioOutput's monitor, which keeps
-        // each ring to one producer.
-        voiceLink.framesSink = { frames: List<DecodedVoiceFrame>, tunnel: Boolean ->
-            try {
-                val output = created.getAudioOutput()
-                if (tunnel) {
-                    output.queueTunnelVoiceFrames(frames)
-                } else {
-                    output.queueUdpVoiceFrames(frames)
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                logger.logWarning("VoiceControl frames sink dropped: $e")
-            }
-        }
-        voiceLink.dropProvider = {
-            try {
-                created.getAudioOutput().lastDropped()
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                Triple(0, 0, 0)
-            }
         }
         voiceLink.setTargetFramesPerPacket(created.getFramesPerPacket())
         created.setFramesPerPacketListener { fpp ->
@@ -297,10 +267,6 @@ class VoiceControl(
         } catch (e: Exception) {
             logger.logWarning("VoiceControl TCP detach failed: $e")
         }
-        if (handlerRef.get() == null) {
-            voiceLink.framesSink = null
-            voiceLink.dropProvider = null
-        }
         try {
             existing.shutdown()
         } catch (e: Exception) {
@@ -325,7 +291,7 @@ class VoiceControl(
             .setContext(context)
             .setLogger(logger)
             .setEncodeListener(encodeListener)
-            .setTalkingListener(talkingListener)
+            .setRenderDriver(voiceLink)
             .setTalkPublisher(talkPublisher)
 
         builder.setTargetBitrate(currentSettings.targetBitrate)

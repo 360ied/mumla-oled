@@ -27,30 +27,23 @@ import android.os.Process
 import android.util.Log
 import java.util.Arrays
 import se.lublin.humla.exception.AudioInitializationException
-import se.lublin.humla.model.IUser
-import se.lublin.humla.model.TalkState
-import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.protocol.AudioHandler
-import se.lublin.humla.voice.NativeVoiceIo
 import se.lublin.humla.voice.TalkActivityPublisher
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Audio output pipeline (step 5a.3a: native render).
+ * Audio output pipeline (step 5a.3b, spec-literal).
  *
- * <p>Kotlin owns transport parsing and the {@link AudioTrack} lifecycle.
- * All DSP (jitter buffering, Opus decode, loss concealment, mixing, bus
- * saturation) runs in the native voice I/O layer, which the render thread
- * alone drives. Kotlin parses with the 5a.2 codec, applies the sender
- * filter, and pushes surviving frames into the inbound ring (UDP path) or
- * the tunnel ring (tunnel path); removals travel as control items on the
- * tunnel ring. A single render thread pulls mixed PCM and writes it; there
- * is no decode pool, no Java mixer, and the track is never flushed on
- * underrun so gaps do not click. Talk state travels as levels through the
- * service-lifetime publisher, never through per-pipeline callbacks.
+ * Owns only the AudioTrack lifecycle and the render thread. The voice
+ * engine (output engine, rings, policy, socket, notifier) is
+ * application-scoped in the VoiceEngine facade; render drives it through
+ * [RenderDriver] but owns nothing. Parsing, sender filtering, and removals
+ * are native; talk state travels as levels through the service-lifetime
+ * publisher. There is no decode pool, no Java mixer, and the track is never
+ * flushed on underrun so gaps do not click.
  */
-class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
+class AudioOutput : Runnable {
     companion object {
         private val TAG: String = AudioOutput::class.java.name
 
@@ -58,13 +51,9 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         private const val RENDER_SAMPLES = AudioHandler.FRAME_SIZE * 2
     }
 
-    private val listener: AudioOutputListener
+    private val renderDriver: RenderDriver
     private val talkPublisher: TalkActivityPublisher
 
-    @Volatile
-    private var voiceIo: NativeVoiceIo? = null
-    // Volatile: written under monitor in start/stop, read on the render
-    // thread outside it; a stale fetch must never NPE the render loop.
     @Volatile
     private var audioTrack: AudioTrack? = null
     @Volatile
@@ -76,17 +65,10 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
     @Volatile
     private var halfDuplexMuted = false
 
-    // Last logged cumulative drop counts (until VoiceStatus arrives in
-    // 5a.3b, drops are logged here); read and written on the notifier
-    // thread only.
-    private var lastLoggedDroppedInbound = 0L
-    private var lastLoggedDroppedTunnel = 0L
-    private var lastLoggedDroppedJitter = 0L
+    constructor(renderDriver: RenderDriver, talkPublisher: TalkActivityPublisher) : this(null, renderDriver, talkPublisher)
 
-    constructor(listener: AudioOutputListener, talkPublisher: TalkActivityPublisher) : this(null, listener, talkPublisher)
-
-    constructor(context: Context?, listener: AudioOutputListener, talkPublisher: TalkActivityPublisher) {
-        this.listener = listener
+    constructor(context: Context?, renderDriver: RenderDriver, talkPublisher: TalkActivityPublisher) {
+        this.renderDriver = renderDriver
         this.talkPublisher = talkPublisher
         // NB: context is accepted for API compatibility but intentionally unused.
     }
@@ -150,17 +132,6 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
             throw AudioInitializationException("AudioTrack init failed")
         }
 
-        try {
-            voiceIo = NativeVoiceIo(this)
-        } catch (e: UnsatisfiedLinkError) {
-            track.release()
-            audioTrack = null
-            throw AudioInitializationException(e)
-        } catch (e: RuntimeException) {
-            track.release()
-            audioTrack = null
-            throw AudioInitializationException(e)
-        }
         running = true
         thread = Thread(this)
         val renderThread = thread ?: throw NullPointerException("render thread")
@@ -168,19 +139,22 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
     }
 
     /**
-     * Stops playback and releases the track/engine. Safe from any thread
+     * Stops playback and releases the track. Safe from any thread
      * except the render thread itself: a self-stop defers cleanup to the
      * next external call after run() exits (see below). In-tree callers
-     * always stop from the service thread.
+     * always stop from the service thread. The shared engine is untouched:
+     * VoiceEngine owns it across sessions; the publisher clear below runs
+     * after the render join, and the version-gated notifier cannot
+     * resurrect cleared levels without new renders.
      */
     fun stopPlaying() {
         val thread: Thread?
         synchronized(this) {
             if (!running && this.thread == null) {
-                // Never started (or already stopped): no thread to join and
-                // no engine to destroy, but the service-lifetime publisher
-                // may still hold levels from a previous pipeline — leave no
-                // stale indicator behind. update is lock-free, safe here.
+                // Never started (or already stopped): no thread to join, but
+                // the service-lifetime publisher may still hold levels from
+                // a previous pipeline — leave no stale indicator behind.
+                // update is lock-free, safe here.
                 talkPublisher.clearRemote()
                 return
             }
@@ -190,9 +164,7 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
         }
         // Wake the render semaphore: sem_post is remembered across a racing
         // wait entry, so no interrupt is needed (5a.3b render wake).
-        synchronized(this) {
-            voiceIo?.wakeForStop()
-        }
+        renderDriver.wakeForStop()
         if (thread != null && thread != Thread.currentThread()) {
             var interrupted = false
             while (thread.isAlive) {
@@ -228,15 +200,9 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
                 track.release()
                 audioTrack = null
             }
-            val io = voiceIo
-            if (io != null) {
-                // Destroy joins the notifier thread, so its final snapshot
-                // read happened before clearRemote below runs.
-                io.destroy()
-                voiceIo = null
-            }
-            // The output engine is gone: clear remote levels so no snapshot
-            // from the dead engine can light an indicator afterwards.
+            // The output engine is shared: VoiceEngine owns and resets it.
+            // Clear remote levels so no snapshot from the old pipeline can
+            // light an indicator afterwards.
             talkPublisher.clearRemote()
         }
     }
@@ -339,11 +305,7 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
                     }
                 }
             }
-            var rendered = 0
-            var voiceIoCopy = voiceIo
-            if (voiceIoCopy != null) {
-                rendered = voiceIoCopy.render(mix, 0, RENDER_SAMPLES)
-            }
+            val rendered = renderDriver.render(mix, 0, RENDER_SAMPLES)
             if (rendered > 0) {
                 if (halfDuplexMuted) {
                     Arrays.fill(mix, 0, rendered, 0.toShort())
@@ -381,24 +343,11 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
                 // nobody is speaking and zero voices are registered in the
                 // native engine (eliminates the 50 Hz CPU spin); 20 ms when
                 // active voices exist (startup gate or miss expiry) to keep
-                // paced ticks progressing. The post lives in the voice_io
-                // push functions, so the interim Kotlin pushes share one wake
-                // path with the future native receive thread.
-                // The last render already folded liveness; no separate
-                // engine call (5a.3a render-entry contract).
-                voiceIoCopy = voiceIo
-                val hasVoices = voiceIoCopy != null && voiceIoCopy.lastHasActiveVoices()
-                val ioForWait = voiceIoCopy
-                if (ioForWait != null) {
-                    ioForWait.awaitWork(if (hasVoices) 20 else -1)
-                } else {
-                    try {
-                        Thread.sleep(20)
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        break@renderLoop
-                    }
-                }
+                // paced ticks progressing.
+                // The last render already folded liveness; no separate engine
+                // call.
+                val hasVoices = renderDriver.lastHasActiveVoices()
+                renderDriver.awaitWork(if (hasVoices) 20 else -1)
             }
         }
 
@@ -406,156 +355,6 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
             track.stop()
         } catch (ignored: IllegalStateException) {
         }
-    }
-
-    /**
-     * Ring enqueue (step 5a.3b): the native receive thread parses and
-     * filters, delivering survivors through VoiceEngine.framesSink; the
-     * session coroutine tunnels through nativeQueueTunnelled the same way.
-     * Both land here, one call per ring, under this monitor so each ring
-     * keeps one producer and no push reaches a destroyed voice_io. The
-     * render thread never takes this monitor. Empty non-terminators never
-     * arrive; an empty terminator still forwards its marker so the voice
-     * drains instead of lingering to the miss-expiry.
-     */
-    fun queueUdpVoiceFrames(frames: List<DecodedVoiceFrame>) {
-        queueRingFrames(frames, tunnel = false)
-    }
-
-    fun queueTunnelVoiceFrames(frames: List<DecodedVoiceFrame>) {
-        queueRingFrames(frames, tunnel = true)
-    }
-
-    private fun queueRingFrames(frames: List<DecodedVoiceFrame>, tunnel: Boolean) {
-        if (frames.isEmpty()) {
-            return
-        }
-        // The whole push runs under this monitor: each ring keeps one
-        // producer at a time (serializing the old and new UDP coroutines
-        // that briefly overlap on a UDP restart), and no push can reach a
-        // destroyed voice_io (stopPlaying destroys only under this monitor
-        // after the render thread is joined). The native push posts the
-        // render semaphore when idle, so no Kotlin wake is needed here.
-        synchronized(this) {
-            val io = voiceIo
-            if (!running || io == null) {
-                return
-            }
-            for (f in frames) {
-                val user = listener.getUser(f.session)
-                if (user == null || user.isLocalMuted) {
-                    continue
-                }
-                if (f.opus.isEmpty()) {
-                    if (f.isTerminator) {
-                        if (tunnel) {
-                            io.pushTunnel(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
-                        } else {
-                            io.pushInbound(f.session, ByteArray(0), 0, f.sequence, f.flags, true)
-                        }
-                    }
-                } else {
-                    if (tunnel) {
-                        io.pushTunnel(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
-                    } else {
-                        io.pushInbound(f.session, f.opus, f.opus.size, f.sequence, f.flags, f.isTerminator)
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Talk snapshot delivery from the native notifier thread (one call per
-     * snapshot change). Replaces the table wholesale in the service-lifetime
-     * publisher; repaint hints fan out from the publisher's flow, with no
-     * snapshot comparison (the bridge carries no transition memory). Runs
-     * on the notifier thread; every write uses update, so concurrent
-     * writers cannot lose a change.
-     */
-    override fun onTalkSnapshot(
-        sessions: IntArray,
-        states: IntArray,
-        droppedInbound: Long,
-        droppedTunnel: Long,
-        droppedJitter: Long
-    ) {
-        val levels = HashMap<Int, TalkState>(sessions.size)
-        val count = min(sessions.size, states.size)
-        var index = 0
-        while (index < count) {
-            // TALK_PASSIVE never arrives: VoiceIo::setTalkLevel strips
-            // passive before publish, so absence is the only passive. Like
-            // unknown ordinals it must not insert an entry, or the
-            // absent-means-passive canonical form breaks.
-            val state = when (states[index]) {
-                NativeVoiceIo.TALK_TALKING -> TalkState.TALKING
-                NativeVoiceIo.TALK_SHOUTING -> TalkState.SHOUTING
-                NativeVoiceIo.TALK_WHISPERING -> TalkState.WHISPERING
-                else -> {
-                    Log.w(TAG, "Unknown talk state ordinal: " + states[index])
-                    null
-                }
-            }
-            if (state != null) {
-                levels[sessions[index]] = state
-            }
-            index++
-        }
-        talkPublisher.updateRemote(levels)
-        cachedDroppedInbound = droppedInbound
-        cachedDroppedTunnel = droppedTunnel
-        cachedDroppedJitter = droppedJitter
-        // Drops also feed VoiceStatus (5a.3b) via lastDropped; logging stays
-        // here, on change only.
-        if (droppedInbound != lastLoggedDroppedInbound ||
-            droppedTunnel != lastLoggedDroppedTunnel ||
-            droppedJitter != lastLoggedDroppedJitter
-        ) {
-            lastLoggedDroppedInbound = droppedInbound
-            lastLoggedDroppedTunnel = droppedTunnel
-            lastLoggedDroppedJitter = droppedJitter
-            Log.w(
-                TAG, "Voice I/O drops: inbound=" + droppedInbound +
-                    " tunnel=" + droppedTunnel + " jitter=" + droppedJitter
-            )
-        }
-    }
-
-    /**
-     * Removals reach the render thread as control items on the tunnel
-     * ring, ordered after that user's already-queued tunnelled voice.
-     * Runs on the session message coroutine, the tunnel ring's producer.
-     */
-    fun removeUser(session: Int) {
-        // Under the monitor with the pushes and the teardown: the removal
-        // can neither slip in after destroy nor race another producer on
-        // the tunnel ring.
-        synchronized(this) {
-            voiceIo?.pushRemoveUser(session)
-        }
-    }
-
-    /**
-     * Whether the last render found active voices. Read by the render
-     * thread's idle wait instead of a separate engine call.
-     */
-    fun hasActiveVoices(): Boolean {
-        val ioCopy = voiceIo
-        return ioCopy != null && ioCopy.lastHasActiveVoices()
-    }
-
-    // Latest cumulative drops, cached on the notifier thread (which also logs
-    // them) for VoiceStatus. Plain vars: written on the notifier thread only,
-    // read anywhere for telemetry; a stale or torn read only skews a counter
-    // until the next snapshot. No monitor (the render wake must stay
-    // lock-free) and no new tripwire lines.
-    private var cachedDroppedInbound = 0L
-    private var cachedDroppedTunnel = 0L
-    private var cachedDroppedJitter = 0L
-
-    fun lastDropped(): Triple<Long, Long, Long> {
-        return Triple(cachedDroppedInbound, cachedDroppedTunnel, cachedDroppedJitter)
     }
 
     /**
@@ -659,13 +458,5 @@ class AudioOutput : Runnable, NativeVoiceIo.VoiceIoListener {
             stallHead = -1
             stallCount = 0
         }
-    }
-
-    interface AudioOutputListener {
-        /**
-         * Used to set audio-related user data.
-         * @return The user for the associated session.
-         */
-        fun getUser(session: Int): IUser?
     }
 }
