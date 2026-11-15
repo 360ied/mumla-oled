@@ -127,7 +127,9 @@ public:
     bool sendDatagram(const uint8_t* plain, size_t length);
 
 private:
-    void loop();
+    // The fd arrives by value at thread creation: thread-start orders
+    // the handoff, so the loop never touches shared socket state.
+    void loop(int sock);
 
     VoiceIo* m_io;
     PolicyCell* m_policy;
@@ -136,9 +138,10 @@ private:
     uint32_t m_legacyVersion = 0;
 
     std::atomic<bool> m_running{false};
-    // Socket fd shared with the receive thread (loop + sendDatagram).
-    // Control writes, receive reads: atomic with release/acquire so stop()
-    // never races a live recv/sendto (plain int was a data race).
+    // Socket fd. Control owns its lifetime (start/stop, one thread);
+    // the interim send seam reads it from the capture thread, so the
+    // word is atomic. The receive thread takes its copy by value at
+    // creation and never reads this.
     std::atomic<int> m_sock{-1};
     std::thread m_thread;
 

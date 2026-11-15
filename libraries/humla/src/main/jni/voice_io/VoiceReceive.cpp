@@ -259,7 +259,7 @@ bool VoiceReceive::start(const char* host, uint16_t port) {
     }
     m_sock.store(sock, std::memory_order_release);
     m_running.store(true, std::memory_order_release);
-    m_thread = std::thread(&VoiceReceive::loop, this);
+    m_thread = std::thread(&VoiceReceive::loop, this, sock);
     return true;
 }
 
@@ -280,13 +280,11 @@ void VoiceReceive::stop() {
     }
 }
 
-void VoiceReceive::loop() {
+void VoiceReceive::loop(int sock) {
     if (m_onStart) m_onStart();
     uint8_t crypted[kMaxDatagram + 4];
     uint8_t plain[kMaxDatagram + 4];
     while (m_running.load(std::memory_order_acquire)) {
-        const int sock = m_sock.load(std::memory_order_acquire);
-        if (sock < 0) break;
         const ssize_t got = recv(sock, reinterpret_cast<char*>(crypted), sizeof(crypted), 0);
         if (got <= 0) {
             if (!m_running.load(std::memory_order_acquire)) break;
