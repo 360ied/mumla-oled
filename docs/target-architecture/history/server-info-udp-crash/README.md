@@ -2,7 +2,9 @@
 
 Snapshot: 2026-11-15, `master` at `a7753709` (fix commit), after the
 Information-tab crash was confirmed via logcat and fixed in
-`bugfix/server-info-udp-latency-crash`.
+`bugfix/server-info-udp-latency-crash`. The deep history of how a 2014
+poll loop survived to meet a 2026 refactor is told separately in
+[twelve years of `updateData()`](twelve-years-of-updateData.md).
 
 Opening the drawer's Information tab while connected killed the app with
 `IllegalStateException: No UDP latency yet` on the main thread. The
