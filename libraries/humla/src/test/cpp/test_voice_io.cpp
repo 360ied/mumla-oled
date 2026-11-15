@@ -465,6 +465,59 @@ void testClearEmptiesTalkLevels() {
     std::cout << "  [PASS] testClearEmptiesTalkLevels" << std::endl;
 }
 
+void testVoiceIoEnginesArePrivatelyOwned() {
+    g_testCount++;
+    // Compile-time half of the 5a.3a done-when lifecycle pin: the render
+    // core owns its output engine privately (unique_ptr, non-copyable), so
+    // no second caller path can reach the same engine instance. Fails at
+    // compile time if VoiceIo ever becomes copyable or shared.
+    static_assert(!std::is_copy_constructible<VoiceIo>::value,
+                  "VoiceIo must stay non-copyable: one render thread per engine");
+    static_assert(!std::is_copy_assignable<VoiceIo>::value,
+                  "VoiceIo must stay non-copyable: one render thread per engine");
+    // Runtime half: two instances share no engine state. Voice pushed to
+    // one never appears in the other; a shared or static engine would leak
+    // session 41 into the second render.
+    VoiceIo first(fakeFactory());
+    VoiceIo second(fakeFactory());
+    pushBurst(first, 41, 0, 8, /*inbound=*/true);
+    std::vector<int16_t> pcm(kFrame * 2);
+    VoiceIo::RenderOut result;
+    first.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_TRUE(snapshotHas(result.talk, 41, OutputTalkState::TALKING));
+    second.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_EQ(result.talk.count, 0u);
+    TEST_ASSERT_FALSE(result.hasActiveVoices);
+    TEST_ASSERT_EQ(result.samples, 0u);
+    std::cout << "  [PASS] testVoiceIoEnginesArePrivatelyOwned" << std::endl;
+}
+
+void testClearWhileStoppedPublishesEmptyAndEngineSurvives() {
+    g_testCount++;
+    // Control-plane lifecycle pin: clear() runs on the control thread only
+    // while render is stopped (the JNI layer asserts !renderActive in debug
+    // builds; Kotlin joins the render thread before destroy). It publishes
+    // the emptied table so no snapshot from the dead engine can re-light an
+    // indicator, and the engine stays usable on the next render.
+    VoiceIo io(fakeFactory());
+    TalkCell cell;
+    io.setTalkCell(&cell);
+    pushBurst(io, 77, 0, 8, /*inbound=*/true);
+    std::vector<int16_t> pcm(kFrame * 2);
+    VoiceIo::RenderOut result;
+    io.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_TRUE(snapshotHas(result.talk, 77, OutputTalkState::TALKING));
+    io.clear();
+    TalkPublication pub;
+    TEST_ASSERT_TRUE(cell.tryRead(&pub));
+    TEST_ASSERT_EQ(pub.talk.count, 0u);
+    io.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_EQ(result.talk.count, 0u);
+    TEST_ASSERT_FALSE(result.hasActiveVoices);
+    std::cout << "  [PASS] testClearWhileStoppedPublishesEmptyAndEngineSurvives"
+              << std::endl;
+}
+
 } // namespace
 
 void run_voice_io_tests() {
@@ -485,6 +538,8 @@ void run_voice_io_tests() {
     testNotifierStalledResumesWithLatest();
     testRenderPublishesTalkCell();
     testClearEmptiesTalkLevels();
+    testVoiceIoEnginesArePrivatelyOwned();
+    testClearWhileStoppedPublishesEmptyAndEngineSurvives();
 }
 
 int main() {
