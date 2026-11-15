@@ -111,6 +111,23 @@ class HandlesTest : TestCase() {
     }
 
     @Test
+    fun testTalkStateOverridePinsSelfHint() {
+        val flow = syncedFlow()
+        val talk = MutableStateFlow(TalkActivity.initial())
+        // The service fires the local user's repaint hint with an override
+        // sourced from selfTalking, since the remote table never holds self.
+        val hint = UserHandle(1, flow, talk, talkStateOverride = TalkState.TALKING)
+        assertEquals(TalkState.TALKING, hint.talkState)
+        // The override wins even if the table disagrees, and absence of an
+        // override keeps the live-table read for remote users.
+        talk.value = talk.value.copy(
+            users = kotlinx.collections.immutable.persistentMapOf(1 to TalkState.PASSIVE),
+        )
+        assertEquals(TalkState.TALKING, hint.talkState)
+        assertEquals(TalkState.PASSIVE, UserHandle(1, flow, talk).talkState)
+    }
+
+    @Test
     fun testRemovedUserKeepsScalars() {
         val flow = syncedFlow()
         // Warm the cache before removal, as StateMessageHandler does.

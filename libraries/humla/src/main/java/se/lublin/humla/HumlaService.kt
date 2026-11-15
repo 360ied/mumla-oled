@@ -75,6 +75,7 @@ import se.lublin.humla.model.IUser
 import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.model.ServerSettings
+import se.lublin.humla.model.TalkState
 import se.lublin.humla.model.WhisperTarget
 import se.lublin.humla.model.WhisperTargetList
 import se.lublin.humla.model.WhisperTargetChannel
@@ -493,12 +494,34 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         // re-reads the level on use and accepts repeated hints.
         lifecycleScope.launch {
             try {
-                talkPublisher.talkActivity.collect {
+                talkPublisher.talkActivity.collect { activity ->
                     try {
+                        // The local user's state lives in selfTalking, not
+                        // the remote table, so its hint carries an override.
+                        // Old code built the same one-off hint with a set
+                        // state; getSessionId throws while unsynced, in
+                        // which case nobody gets the override.
+                        val selfSession = try {
+                            currentSession()?.getSessionId()
+                        } catch (e: IllegalStateException) {
+                            null
+                        }
                         for (session in _sessionState.value.server.users.keys) {
-                            mCallbacks.onUserTalkStateUpdated(
+                            val hint = if (session == selfSession) {
+                                UserHandle(
+                                    session,
+                                    sessionState,
+                                    talkPublisher.talkActivity,
+                                    talkStateOverride = if (activity.selfTalking) {
+                                        TalkState.TALKING
+                                    } else {
+                                        TalkState.PASSIVE
+                                    },
+                                )
+                            } else {
                                 UserHandle(session, sessionState, talkPublisher.talkActivity)
-                            )
+                            }
+                            mCallbacks.onUserTalkStateUpdated(hint)
                         }
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e

@@ -33,13 +33,16 @@ import se.lublin.humla.voice.TalkActivity
  * the user or channel is gone from state, reads return that cached value,
  * as a departed model object does today. Navigation returns handles.
  * Equal when IDs are equal. Read-only: [talkState] reads the live talk
- * levels (absent means passive).
+ * levels (absent means passive), unless [talkStateOverride] pins it — the
+ * service uses the override for the local user's repaint hint, whose
+ * state lives in TalkActivity.selfTalking rather than the remote table.
  */
 class UserHandle(
     private val sessionId: Int,
     private val state: StateFlow<SessionState>,
     private val talkActivity: StateFlow<TalkActivity>? = null,
     seed: UserInfo? = null,
+    private val talkStateOverride: TalkState? = null,
 ) : IUser {
     override val session: Int get() = sessionId
 
@@ -48,7 +51,8 @@ class UserHandle(
     // sites without voice stay compiling and show passive, as fresh
     // handles always did).
     override val talkState: TalkState
-        get() = talkActivity?.value?.users?.get(sessionId) ?: TalkState.PASSIVE
+        get() = talkStateOverride
+            ?: talkActivity?.value?.users?.get(sessionId) ?: TalkState.PASSIVE
 
     private var cached: UserInfo? = seed
 
