@@ -81,15 +81,20 @@ class TalkActivityPublisher {
     }
 
     /**
-     * Empties the remote table when the output engine goes away (Stop, and
-     * every pipeline rebuild). Called after the notifier stopped, so no
-     * snapshot from the dead engine can land afterwards and re-light an
-     * indicator — stale entries would stick, and after a reconnect even
-     * light up a different user, since Murmur reuses session IDs.
+     * Resets the whole activity when the output engine goes away (Stop,
+     * and every pipeline rebuild). Called after the notifier stopped, so
+     * no snapshot from the dead engine can land afterwards and re-light
+     * an indicator — stale entries would stick, and after a reconnect even
+     * light up a different user, since Murmur reuses session IDs. Self
+     * talk resets too: the capture-thread false edge is funneled through
+     * a sync-gated callback that teardown can drop while unsynced, and a
+     * stuck true would survive into the next connection with no emission
+     * to correct it (a later true is a no-op dedup).
      */
     fun clearRemote() {
         _talkActivity.update { current ->
-            if (current.users.isEmpty()) current else current.copy(users = persistentMapOf())
+            val cleared = TalkActivity.initial()
+            if (current == cleared) current else cleared
         }
     }
 }

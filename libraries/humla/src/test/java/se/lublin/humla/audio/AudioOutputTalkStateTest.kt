@@ -139,4 +139,17 @@ class AudioOutputTalkStateTest {
         assertTrue(!publisher.talkActivity.value.selfTalking)
         assertEquals(1, publisher.talkActivity.value.users.size)
     }
+
+    @Test
+    fun `clearRemote resets self talking after disconnect`() {
+        val publisher = TalkActivityPublisher()
+        // Speaking exactly at disconnect: the capture-thread false edge is
+        // dropped while unsynced, so teardown must clear self talk too —
+        // otherwise true survives into the next connection with no emission
+        // to correct it (a later true is a no-op dedup).
+        publisher.setSelfTalking(true)
+        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
+        publisher.clearRemote()
+        assertEquals(TalkActivity.initial(), publisher.talkActivity.value)
+    }
 }
