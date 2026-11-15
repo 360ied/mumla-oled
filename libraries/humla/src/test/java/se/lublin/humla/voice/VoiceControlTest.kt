@@ -56,6 +56,7 @@ class VoiceControlTest {
             logger = logger,
             encodeListener = encode,
             talkingListener = talking,
+            talkPublisher = TalkActivityPublisher(),
             routeStates = route,
             policies = policy,
             settings = settings,

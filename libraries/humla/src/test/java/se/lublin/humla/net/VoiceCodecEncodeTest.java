@@ -27,6 +27,7 @@ import se.lublin.humla.audio.AudioOutput;
 import se.lublin.humla.audio.inputmode.ToggleInputMode;
 import se.lublin.humla.model.IUser;
 import se.lublin.humla.protocol.AudioHandler;
+import se.lublin.humla.voice.TalkActivityPublisher;
 import se.lublin.humla.protobuf.MumbleUDP;
 import se.lublin.humla.util.HumlaLogger;
 
@@ -58,9 +59,6 @@ public class VoiceCodecEncodeTest extends TestCase {
 
     private static class DummyOutput implements AudioOutput.AudioOutputListener {
         @Override
-        public void onUserTalkStateUpdated(IUser user) {}
-
-        @Override
         public IUser getUser(int session) {
             return null;
         }
@@ -86,7 +84,8 @@ public class VoiceCodecEncodeTest extends TestCase {
                 false,
                 true,
                 encode,
-                new DummyOutput());
+                new DummyOutput(),
+                new TalkActivityPublisher());
     }
 
     public void testLegacyEncodeMatchesPacketBuffer() throws Exception {

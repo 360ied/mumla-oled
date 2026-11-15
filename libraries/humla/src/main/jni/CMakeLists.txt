@@ -196,7 +196,6 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeAudioOutputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/NativeCrashTestJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${VOICE_IO_DIR}/VoiceIo.cpp"

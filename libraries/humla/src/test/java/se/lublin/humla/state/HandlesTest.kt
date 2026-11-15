@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.update
 import org.junit.Test
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.protobuf.Mumble
+import se.lublin.humla.voice.TalkActivity
 
 private fun channelMsg(id: Int, name: String, parent: Int? = null): Mumble.ChannelState {
     val b = Mumble.ChannelState.newBuilder().setChannelId(id).setName(name)
@@ -96,12 +97,17 @@ class HandlesTest : TestCase() {
     }
 
     @Test
-    fun testTalkStateStoredLocally() {
+    fun testTalkStateReadsLiveLevels() {
         val flow = syncedFlow()
-        val handle = UserHandle(2, flow)
+        val talk = MutableStateFlow(TalkActivity.initial())
+        val handle = UserHandle(2, flow, talk)
         assertEquals(TalkState.PASSIVE, handle.talkState)
-        handle.talkState = TalkState.TALKING
+        talk.value = talk.value.copy(
+            users = kotlinx.collections.immutable.persistentMapOf(2 to TalkState.TALKING),
+        )
         assertEquals(TalkState.TALKING, handle.talkState)
+        // A fresh handle reads the same live table, never a stamped copy.
+        assertEquals(TalkState.TALKING, UserHandle(2, flow, talk).talkState)
     }
 
     @Test

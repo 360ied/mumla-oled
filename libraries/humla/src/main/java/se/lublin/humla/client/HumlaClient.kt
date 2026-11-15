@@ -40,6 +40,7 @@ import se.lublin.humla.state.ServerState
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.voice.TalkActivity
 
 /**
  * Single entry point for connecting. Owns today's reconnect policy and
@@ -62,6 +63,7 @@ class HumlaClient(
     private val voiceLink: VoiceLink,
     private val network: NetworkMonitor,
     private val localFactsStore: LocalFactsStore,
+    private val talkActivity: StateFlow<TalkActivity>,
     private val clock: Clock,
     private val observer: IHumlaObserver,
     private val mainPoster: (Runnable) -> Unit,
@@ -288,6 +290,7 @@ class HumlaClient(
             parentScope = attemptScope,
             transport = transport,
             localFacts = facts,
+            talkActivity = talkActivity,
             voiceLink = voiceLink,
             observer = observer,
             localFactsStore = localFactsStore,

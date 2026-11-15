@@ -47,6 +47,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.model.IUser
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.HumlaTCPMessageType
@@ -281,6 +282,7 @@ class HumlaClientTest {
         voiceLink = voice,
         network = network,
         localFactsStore = localFactsStore,
+        talkActivity = MutableStateFlow(TalkActivity.initial()),
         clock = clock,
         observer = NoopObserver,
         mainPoster = { r -> r.run() },
@@ -362,6 +364,7 @@ class HumlaClientTest {
             voiceLink = voice,
             network = network,
             localFactsStore = InMemoryLocalFactsStore(),
+            talkActivity = MutableStateFlow(TalkActivity.initial()),
             clock = Clock.fixed(Instant.ofEpochMilli(1_000_000), ZoneOffset.UTC),
             observer = NoopObserver,
             mainPoster = { r -> r.run() },

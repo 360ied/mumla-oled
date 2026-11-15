@@ -35,6 +35,7 @@ import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
 import se.lublin.humla.exception.AudioException
 import se.lublin.humla.exception.AudioInitializationException
+import se.lublin.humla.voice.TalkActivityPublisher
 import se.lublin.humla.voice.VoicePolicy
 import se.lublin.humla.net.DecodedVoiceFrame
 import se.lublin.humla.net.HumlaUDPMessageType
@@ -213,11 +214,12 @@ class AudioHandler : HumlaNetworkListener,
         halfDuplexEnabled: Boolean,
         preprocessorEnabled: Boolean,
         encodeListener: AudioEncodeListener,
-        outputListener: AudioOutput.AudioOutputListener
+        outputListener: AudioOutput.AudioOutputListener,
+        talkPublisher: TalkActivityPublisher
     ) : this(
         context, logger, audioStream, audioSource, sampleRate, targetBitrate, targetFramesPerPacket,
         inputMode, targetId, amplitudeBoost, halfDuplexEnabled,
-        preprocessorEnabled, true, encodeListener, outputListener
+        preprocessorEnabled, true, encodeListener, outputListener, talkPublisher
     )
 
     @Throws(AudioInitializationException::class)
@@ -228,7 +230,8 @@ class AudioHandler : HumlaNetworkListener,
         halfDuplexEnabled: Boolean,
         preprocessorEnabled: Boolean, adaptiveLevelerEnabled: Boolean,
         encodeListener: AudioEncodeListener,
-        outputListener: AudioOutput.AudioOutputListener
+        outputListener: AudioOutput.AudioOutputListener,
+        talkPublisher: TalkActivityPublisher
     ) {
         mContext = context
         mLogger = logger
@@ -248,10 +251,10 @@ class AudioHandler : HumlaNetworkListener,
         mTargetId = targetId
         mAudioSource = audioSource
 
-        // Device-free: AudioOutput(listener) opens no track (startPlaying
-        // does, in initialize()). The native engine and AudioInput stay null
-        // until initialize() acquires them.
-        mOutput = AudioOutput(mContext, mOutputListener)
+        // Device-free: AudioOutput(listener, publisher) opens no track
+        // (startPlaying does, in initialize()). The native input engine and
+        // AudioInput stay null until initialize() acquires them.
+        mOutput = AudioOutput(mContext, mOutputListener, talkPublisher)
     }
 
     /** Destroys capture + native engine made owned before a later init step failed.
@@ -740,8 +743,17 @@ class AudioHandler : HumlaNetworkListener,
     }
 
     override fun messageDecodedVoice(frames: List<DecodedVoiceFrame>) {
+        // UDP receive coroutine: the inbound ring's producer.
         run {
-            mOutput.queueDecodedVoiceFrames(frames)
+            mOutput.queueUdpVoiceFrames(frames)
+        }
+    }
+
+    override fun messageDecodedVoiceTunnel(frames: List<DecodedVoiceFrame>) {
+        // Session message coroutine: the tunnel ring's producer, shared with
+        // messageUserRemove below.
+        run {
+            mOutput.queueTunnelVoiceFrames(frames)
         }
     }
 
@@ -967,6 +979,7 @@ class AudioHandler : HumlaNetworkListener,
         private var mEncodeListener: AudioEncodeListener? = null
         private var mFramesPerPacketListener: FramesPerPacketListener? = null
         private var mTalkingListener: AudioOutput.AudioOutputListener? = null
+        private var mTalkPublisher: TalkActivityPublisher? = null
 
         fun setContext(context: Context): Builder {
             mContext = Objects.requireNonNull(context, "context")
@@ -1061,6 +1074,11 @@ class AudioHandler : HumlaNetworkListener,
             return this
         }
 
+        fun setTalkPublisher(talkPublisher: TalkActivityPublisher): Builder {
+            mTalkPublisher = talkPublisher
+            return this
+        }
+
         fun setInputMode(inputMode: IInputMode): Builder {
             mInputMode = Objects.requireNonNull(inputMode, "inputMode")
             return this
@@ -1082,7 +1100,8 @@ class AudioHandler : HumlaNetworkListener,
                 // Intentional fail-fast (no original counterpart): the original
                 // passed a null talking listener through to a later NPE; every
                 // in-tree caller sets it, so this only trips misuse.
-                requireNotNull(mTalkingListener)
+                requireNotNull(mTalkingListener),
+                requireNotNull(mTalkPublisher)
             )
             handler.setFramesPerPacketListener(mFramesPerPacketListener)
             handler.setScoEnabled(mScoEnabled)

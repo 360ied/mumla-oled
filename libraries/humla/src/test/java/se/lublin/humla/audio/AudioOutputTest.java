@@ -19,6 +19,7 @@ package se.lublin.humla.audio;
 
 import junit.framework.TestCase;
 import se.lublin.humla.model.IUser;
+import se.lublin.humla.voice.TalkActivityPublisher;
 
 /**
  * Unit tests verifying AudioOutput defaults.
@@ -26,9 +27,6 @@ import se.lublin.humla.model.IUser;
 public class AudioOutputTest extends TestCase {
 
     private static class DummyListener implements AudioOutput.AudioOutputListener {
-        @Override
-        public void onUserTalkStateUpdated(IUser user) {}
-
         @Override
         public IUser getUser(int session) {
             return null;
@@ -38,7 +36,19 @@ public class AudioOutputTest extends TestCase {
     private static final DummyListener DUMMY_LISTENER = new DummyListener();
 
     public void testHasActiveVoicesDefault() {
-        AudioOutput output = new AudioOutput(DUMMY_LISTENER);
+        AudioOutput output = new AudioOutput(DUMMY_LISTENER, new TalkActivityPublisher());
+        assertFalse(output.hasActiveVoices());
+    }
+
+    public void testPushAfterStopIsDropped() {
+        // No startPlaying: the voice I/O layer is absent, so pushes are
+        // dropped without touching native memory (same guard as
+        // NativeVoiceIoTest, through the AudioOutput interim calls).
+        AudioOutput output = new AudioOutput(DUMMY_LISTENER, new TalkActivityPublisher());
+        output.queueUdpVoiceFrames(java.util.Collections.emptyList());
+        output.queueTunnelVoiceFrames(java.util.Collections.emptyList());
+        output.removeUser(7);
+        output.stopPlaying();
         assertFalse(output.hasActiveVoices());
     }
 }

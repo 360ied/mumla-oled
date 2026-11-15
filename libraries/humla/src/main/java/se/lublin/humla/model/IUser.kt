@@ -18,11 +18,13 @@
 package se.lublin.humla.model
 
 /**
- * Live user handle view. Read-only except [talkState], which stays
- * voice-owned until the VoiceEngine arrives. All session writes are
+ * Live user handle view. Read-only: [talkState] is voice-owned and read
+ * live from TalkActivity (absent means passive). All session writes are
  * Session intents; navigation returns interfaces.
  */
 interface IUser {
+    // Talk state is voice-owned and read live from TalkActivity (absent =
+    // passive); see UserHandle. No transition memory lives on the handle.
     val session: Int
 
     val channel: IChannel?
@@ -63,7 +65,7 @@ interface IUser {
 
     val isLocalIgnored: Boolean
 
-    var talkState: TalkState
+    val talkState: TalkState
 
     val listeningChannels: Set<Int>
 

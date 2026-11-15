@@ -117,6 +117,9 @@ open class HumlaNetworkListener : HumlaTCPMessageListener, HumlaUDPMessageListen
     override fun messageDecodedVoice(frames: List<DecodedVoiceFrame>) {
     }
 
+    override fun messageDecodedVoiceTunnel(frames: List<DecodedVoiceFrame>) {
+    }
+
     override fun messageProtobufPing(msg: MumbleUDP.Ping) {
     }
 }

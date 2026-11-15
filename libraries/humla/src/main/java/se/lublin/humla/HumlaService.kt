@@ -53,6 +53,7 @@ import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.RouteThread
 import se.lublin.humla.voice.PolicyCollector
+import se.lublin.humla.voice.TalkActivityPublisher
 import se.lublin.humla.voice.VoiceControl
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
@@ -74,7 +75,6 @@ import se.lublin.humla.model.IUser
 import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.model.ServerSettings
-import se.lublin.humla.model.TalkState
 import se.lublin.humla.model.WhisperTarget
 import se.lublin.humla.model.WhisperTargetList
 import se.lublin.humla.model.WhisperTargetChannel
@@ -192,6 +192,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     private lateinit var routeControl: RouteControl
     private lateinit var voiceControl: VoiceControl
     private lateinit var policyCollector: PolicyCollector
+    // Service-lifetime talk levels (step 5a.3a; VoiceEngine takes over in
+    // 5a.3b). Built here next to VoiceControl and HumlaClient and passed to
+    // both, so Session builds handles with it and each AudioHandler feeds it.
+    private val talkPublisher = TalkActivityPublisher()
     private val voiceSettingsFlow = MutableStateFlow(VoiceSettings.initial())
     private val routePrefsFlow = MutableStateFlow(
         RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
@@ -233,21 +237,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
 
             override fun onTalkingStateChanged(talking: Boolean) {
+                // Self talk comes from the capture thread alone. From 5a.3a
+                // it sets selfTalking in the service-lifetime publisher
+                // instead of stamping a fresh handle; repaint hints fan out
+                // from the publisher's flow below.
                 lifecycleScope.launch {
                     try {
                         if (!isSynchronized())
                             return@launch
-                        val session = currentSession() ?: return@launch
-                        val selfSession = try {
-                            session.getSessionId()
-                        } catch (e: IllegalStateException) {
-                            return@launch
-                        }
-                        if (_sessionState.value.server.users[selfSession] == null) return@launch
-                        val currentUser = UserHandle(selfSession, sessionState)
-                        currentUser.talkState =
-                            if (talking) TalkState.TALKING else TalkState.PASSIVE
-                        mCallbacks.onUserTalkStateUpdated(currentUser)
+                        talkPublisher.setSelfTalking(talking)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         Log.w(TAG, "Talking-state update after unsync", e)
@@ -258,13 +256,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     private val mAudioOutputListener: AudioOutput.AudioOutputListener =
         object : AudioOutput.AudioOutputListener {
-            override fun onUserTalkStateUpdated(user: IUser) {
-                mCallbacks.onUserTalkStateUpdated(user)
-            }
-
             override fun getUser(session: Int): IUser? {
                 if (_sessionState.value.server.users[session] == null) return null
-                return UserHandle(session, sessionState)
+                return UserHandle(session, sessionState, talkPublisher.talkActivity)
             }
         }
 
@@ -447,6 +441,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             logger = this,
             encodeListener = mAudioInputListener,
             talkingListener = mAudioOutputListener,
+            talkPublisher = talkPublisher,
             routeStates = routeControl.state,
             policies = policyCollector.policy,
             settings = voiceSettingsFlow,
@@ -480,6 +475,31 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             mCallbacks.onBluetoothScoChanged(scoActive)
                         }
                         lastScoActive = scoActive
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
+        }
+        // TalkActivity repaint hints (step 5a.3a): on every talkActivity
+        // change, a hint for every user in the session, with no snapshot
+        // comparison — the bridge carries no transition memory (the
+        // no-transition-memory rule from 1fd8940f, after the stuck-indicator
+        // fix ad164673). Users cleared from talkActivity are still in the
+        // session, so clears get hints too. talkActivity emits only when a
+        // level changes, so this is a few emissions a second. Every consumer
+        // re-reads the level on use and accepts repeated hints.
+        lifecycleScope.launch {
+            try {
+                talkPublisher.talkActivity.collect {
+                    try {
+                        for (session in _sessionState.value.server.users.keys) {
+                            mCallbacks.onUserTalkStateUpdated(
+                                UserHandle(session, sessionState, talkPublisher.talkActivity)
+                            )
+                        }
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                     }
@@ -594,6 +614,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceLink = voiceLink,
             network = networkMonitor,
             localFactsStore = localFactsStore,
+            talkActivity = talkPublisher.talkActivity,
             clock = Clock.systemUTC(),
             observer = mCallbacks,
             mainPoster = { r -> mHandler.post(r) },

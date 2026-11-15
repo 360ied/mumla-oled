@@ -166,8 +166,8 @@ Java_se_lublin_humla_audio_NativeAudioInputEngine_nativeProcessFrame(
     jsize arrayLen = env->GetArrayLength(pcmArray);
     if (arrayLen <= 0) return;
     // Overflow-safe window check: promote to 64 bits before adding so a
-    // hostile offset+length pair cannot wrap past the array end (mirrors
-    // nativeRender in NativeAudioOutputEngineJni.cpp).
+    // hostile offset+length pair cannot wrap past the array end (it mirrors
+    // the same check the deleted 5a.2 output bridge used).
     const int64_t end =
         static_cast<int64_t>(offset) + static_cast<int64_t>(length);
     if (end > static_cast<int64_t>(arrayLen)) return;

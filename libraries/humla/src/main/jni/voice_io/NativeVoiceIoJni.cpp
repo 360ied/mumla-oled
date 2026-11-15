@@ -43,12 +43,10 @@ using mumla::voice_io::TalkPublication;
 using mumla::voice_io::VoiceIo;
 using mumla::voice_io::VoiceNotifier;
 
-// No JNI_OnLoad here: NativeAudioOutputEngineJni.cpp still owns it until the
-// old bridge is deleted later in 5a.3a. The JavaVM is captured per context
-// from the creating env instead.
+// No JNI_OnLoad in this library: the JavaVM is captured per context from
+// the creating env instead.
 
-// Voice I/O JNI seam (step 5a.3a, native render). Replaces
-// NativeAudioOutputEngineJni.cpp: the render thread drains the inbound and
+// Voice I/O JNI seam (step 5a.3a, native render). The render thread drains the inbound and
 // tunnel rings and mixes through the output engine it alone drives, while
 // the notifier thread delivers talk snapshots to Kotlin. The render entry
 // point never attaches to the JVM and never calls into Kotlin — it uses the
