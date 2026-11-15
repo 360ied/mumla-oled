@@ -139,11 +139,13 @@ with the same constants:
 `TransportStats.usingUdp` and pushes it to the `VoiceEngine` with
 `VoiceCommand.SetVoiceRoute(udp: Boolean)`; the `VoiceEngine` only follows
 that command and does not report its own idea of the route. The transport
-pushes its initial route (`!forceTcp`) when it starts, before its reader
-runs, and then each switch; nothing else sets the route, and `Start` does
-not carry one (see [voice](voice.md#kotlin-facade)). The `VoiceEngine`
-outlives transports, so a closed transport submits no further voice
-commands.
+pushes its initial route (`!forceTcp`) at `ServerSync`, when its ping
+loop starts, and then each switch; nothing else sets the route, and
+`Start` does not carry one (see [voice](voice.md#kotlin-facade)). Not
+earlier: a cancelled connect attempt can still finish its TLS handshake
+after a newer attempt took over, but it never reaches `ServerSync`, so it
+cannot steer the `VoiceEngine`, which outlives transports. For the same
+reason a closed transport submits no further voice commands.
 
 ## UDP packet format
 

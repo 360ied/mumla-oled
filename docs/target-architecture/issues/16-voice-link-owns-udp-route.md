@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved 2026-11-14 (`aba7011b`): the transport pushes the initial route at start and the link only follows `SetVoiceRoute`. See [Resolution](#resolution). |
+| Status | Resolved 2026-11-14 (`aba7011b`, `6b72a255`): the transport pushes the initial route at `ServerSync` and the link only follows `SetVoiceRoute`. See [Resolution](#resolution). |
 | Category | Undocumented interim |
 | Severity | Moderate (two writers of a decision the spec gives to one owner; directly relevant to 5a.3) |
 | Verified | Yes (code read) |
@@ -109,34 +109,41 @@ Neither `startKeepalive()` nor session start pushes the initial route.
 
 ## Resolution
 
-The state at `aba7011b`.
+The state at `6b72a255`.
 
-- **One writer.** `TransportImpl.start()` submits
-  `SetVoiceRoute(!forceTcp)` before its reader runs, then only its two
-  switches do. Forced TCP no longer re-pushes at `ServerSync`; it only
-  sends the dummy `UDPTunnel` there. A closed transport submits no voice
-  commands, since the link outlives it.
-- **The link follows.** `LegacyVoiceLink` starts tunnelled; `startVoice`
-  and `stopVoice` leave the route alone, and `setForceTcp` is gone from
+- **One writer.** `TransportImpl.startKeepalive()`, run once at
+  `ServerSync`, submits `SetVoiceRoute(!forceTcp)` for both cases (before,
+  only forced TCP pushed there, redundantly); then only its two switches
+  do. A closed transport submits no voice commands, since the link
+  outlives it.
+- **The link follows.** `LegacyVoiceLink` starts each session tunnelled:
+  that is its initial value, and `stopVoice` resets it. `startVoice`
+  leaves the route alone, and `setForceTcp` is gone from
   `VoiceLifecycle`. The UDP socket opens once voice is started *and* the
   route is UDP, in whichever order they arrive, and stays open across
   tunnel switches until `stopVoice` (as before).
-- **Why push at start, not at `ServerSync`.** `HumlaClient.onSynced`
-  (client coroutine) and `startKeepalive` (session coroutine) both follow
-  `ServerSync` and are not ordered. Pushing at `ServerSync` would let a
-  forced-TCP session open UDP on a route the previous session left on
-  UDP. Pushed at start, the route is in place before any server message
-  is read.
+- **Why `ServerSync`, not transport start.** `aba7011b` first pushed from
+  `TransportImpl.start()`. That let a cancelled connect attempt steer the
+  next session: `doConnect` does not wait for the attempt it cancels, a
+  TLS handshake ignores cancellation, and the finished stale transport
+  ran `start()` (pushing its route into the shared link) before the
+  factory closed it. A quick switch from a forced-TCP target to a UDP one
+  could leave the link tunnelled under a transport reporting UDP. A stale
+  attempt never reaches `ServerSync`. `HumlaClient.onSynced` (client
+  coroutine) and `startKeepalive` (session coroutine) are not ordered,
+  which is why the link resets to tunnel at stop: until the push, no
+  socket opens, so a forced-TCP session never opens UDP on a route the
+  previous session left behind.
 - **Stats seed** (direction 3): `Session` seeds `usingUdp` from
   `transport.stats.value`. The rest of [26](26-stats-two-collectors.md)
   (one `combine` collector) stays open.
 - **Spec.** `VoiceCommand.Start` drops its `tunnel` field
   ([voice](../voice.md#kotlin-facade)): a route in `Start` would be a
   second writer, overwriting any switch submitted between the client
-  reading the transport's decision and submitting `Start`. The
-  `VoiceEngine` keeps the last route across `Stop` and `Start`.
-  [transport](../transport.md#keepalive-and-udp-health) records the
-  initial push and the closed-transport rule.
+  reading the transport's decision and submitting `Start`. `Stop` resets
+  the route to tunnel. [transport](../transport.md#keepalive-and-udp-health)
+  records the `ServerSync` push, why it is not earlier, and the
+  closed-transport rule.
 
 **Behavior change in one edge.** If sync takes more than 20 s, the first
 TCP ping reply after `ServerSync` can switch to tunnel before voice
@@ -146,11 +153,13 @@ starts (the 20 s window is anchored at transport creation; see
 order; now the session deterministically stays tunnelled, which is what
 the transport publishes.
 
-**Pinned by** `TransportImplTest.initialRouteIsPushedAtStart` and
-`forcedTcpTunnelsFromServerSyncAndNeverUsesUdp` (tunnel at start, no
-repeat), and `LegacyVoiceLinkContractTest.routeFollowsOnlySetVoiceRoute`.
-**Shown to fail** with the push removed, with `startVoice` resetting the
-route to UDP, and with the link starting on UDP. `check.sh` and murmur
+**Pinned by** `TransportImplTest.initialRouteIsPushedAtServerSync`
+(nothing at `start()`, one push at `ServerSync`) and
+`forcedTcpTunnelsFromServerSyncAndNeverUsesUdp`, and
+`LegacyVoiceLinkContractTest.routeFollowsOnlySetVoiceRoute` (follows,
+resets at stop, untouched at start). **Shown to fail** with the push
+removed, with it back in `start()`, with `stopVoice` keeping the route,
+with `startVoice` resetting it to UDP, and with the link starting on UDP. `check.sh` and murmur
 interop (14/14, including forced TCP and both UDP-blocked fallbacks)
 pass.
 

@@ -765,16 +765,17 @@ Android-backed class.
 locks; they need no ordering against stream lifecycle. `SendPing` is
 executed by the send thread (the control thread only enqueues it).
 
-`Start` carries no route. The route is whatever the transport last sent
-with `SetVoiceRoute`, which the `VoiceEngine` keeps across `Stop` and
-`Start` (tunnel until the first one). The transport sends its initial
-route when it starts, before it reads anything from the server, so the
-route is in place before `ServerSync` and therefore before `Start`,
-whichever thread each runs on. A route field in `Start` would be a second
-writer: a switch submitted between the client reading the transport's
-decision and the client submitting `Start` would be overwritten. The
-socket opens once voice is started and the route is UDP, whichever comes
-last, and stays open across tunnel switches until `Stop`. `format` and
+`Start` carries no route. Within a session the route is whatever the
+transport last sent with `SetVoiceRoute`; `Stop` resets it to tunnel, so
+each session starts tunnelled and no route carries over. The transport
+sends its initial route at `ServerSync`, which `Start` also follows, in
+either order: before the push, voice is tunnelled and opens no socket, so
+a forced-TCP session never touches UDP. A route field in `Start` would be
+a second writer: a switch submitted between the client reading the
+transport's decision and the client submitting `Start` would be
+overwritten. The socket opens once voice is started and the route is
+UDP, whichever comes last, and stays open across tunnel switches until
+`Stop`. `format` and
 `legacyServerVersion` come from the transport, which fixes them at the
 server's first `Version` (see [transport](transport.md#udp-packet-format)).
 
