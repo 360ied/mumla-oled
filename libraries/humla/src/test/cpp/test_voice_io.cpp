@@ -973,6 +973,36 @@ void testReceiveStopLeavesNothing() {
     // Second stop is safe (idempotent close, no join-from-nowhere).
     rx.stop();
     TEST_ASSERT_FALSE(rx.sendDatagram(nullptr, 0));
+    // Restart after stop: the socket is closed and the receive thread was
+    // joined, so start binds fresh and the path carries voice again.
+    // (Done-when (d): socket closed and receive/notifier threads exited.)
+    TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
+    TEST_ASSERT_TRUE(rx.running());
+    TEST_ASSERT_TRUE(rx.socketFd() >= 0);
+    const uint8_t key[16] = {51, 52, 53, 54, 55, 56, 57, 58,
+                             59, 60, 61, 62, 63, 64, 65, 66};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    const uint8_t secret[10] = {'z', 'x', 'c', 'v', 'b', 'n', 'm', '1', '2', '3'};
+    uint8_t packet[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    rx.handleCrypted(packet, 14);
+    int32_t good = 0;
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.running());
+    TEST_ASSERT_EQ(rx.socketFd(), -1);
+    // Notifier thread: start/stop joins the thread; second stop is safe
+    // and a restart works, so no thread is left behind either.
+    TalkCell cell;
+    VoiceNotifier notifier(&cell, [](const TalkPublication&) {});
+    notifier.start();
+    notifier.stop();
+    notifier.stop();
+    notifier.start();
+    notifier.stop();
     std::cout << "  [PASS] testReceiveStopLeavesNothing" << std::endl;
 }
 

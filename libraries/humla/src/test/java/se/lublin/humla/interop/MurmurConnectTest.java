@@ -329,12 +329,105 @@ public class MurmurConnectTest {
 
     @Test
     public void serverRestartReconnects() throws Exception {
-        HumlaClient alice = connect("InteropAlice", null);
+        HumlaClientHandle aliceHandle = connectHandle(
+                "InteropAlice", null, InteropClient.Voice.FORCED_TCP);
+        HumlaClient alice = aliceHandle.getClient();
         InteropClient.awaitConnected(alice, "alice sync");
         server.restart();
         InteropClient.awaitReconnecting(alice, "restart triggers reconnect");
         Session recovered = InteropClient.awaitConnected(alice, "reconnect after restart");
         assertTrue(recovered.getState().getValue().getServer().getUsers().size() >= 1);
+        // Done-when (d): the restarted session carries voice afterward.
+        // Bob joins after the restart and sends synthetic PCM through the
+        // production encode + tunnel path; Alice renders it through the
+        // shared native engine. Mirrors tunnelVoicePlaysThroughNativeRender.
+        HumlaClientHandle bobHandle = connectHandle(
+                "InteropBob", null, InteropClient.Voice.FORCED_TCP);
+        Session bobSession = InteropClient.awaitConnected(
+                bobHandle.getClient(), "bob sync after restart");
+        final int bobId = bobSession.getSessionId();
+        InteropClient.awaitUser(recovered, "InteropBob", "receiver sees sender after restart");
+        final se.lublin.humla.voice.VoiceEngine receiverVoice = aliceHandle.getVoice();
+        receiverVoice.setFilterForTests(new int[0], new int[]{bobId});
+        HumlaLogger quietLogger = new HumlaLogger() {
+            @Override public void logInfo(String message) {}
+            @Override public void logWarning(String message) {}
+            @Override public void logError(String message) {}
+        };
+        final HumlaClient bobClient = bobHandle.getClient();
+        AudioHandler.AudioEncodeListener peerEncode = new AudioHandler.AudioEncodeListener() {
+            @Override public void onAudioEncoded(byte[] data, int length) {
+                Session live = bobClient.getCurrentSession().getValue();
+                if (live != null) {
+                    try {
+                        live.getTransport().sendTunnelled(
+                                java.util.Arrays.copyOf(data, length));
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            @Override public void onTalkingStateChanged(boolean talking) {}
+        };
+        se.lublin.humla.audio.RenderDriver noRender = new se.lublin.humla.audio.RenderDriver() {
+            @Override public int render(short[] out, int offset, int length) { return 0; }
+            @Override public boolean awaitWork(int timeoutMs) { return false; }
+            @Override public boolean lastHasActiveVoices() { return false; }
+            @Override public void wakeForStop() {}
+        };
+        AudioHandler peerHandler = new AudioHandler(
+                Mockito.mock(Context.class),
+                quietLogger,
+                android.media.AudioManager.STREAM_MUSIC,
+                android.media.MediaRecorder.AudioSource.MIC,
+                48000, 40000, 2,
+                new ContinuousInputMode(),
+                (byte) 0, 1.0f, false, false,
+                peerEncode, noRender, new TalkActivityPublisher());
+        peerHandler.setProtobufUdp(receiverVoice.udpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
+        final AudioHandler peerRef = peerHandler;
+        NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
+                40000, 2, 1.0f, false,
+                NativeAudioInputEngine.INPUT_MODE_CONTINUOUS,
+                new NativeAudioInputEngine.AudioInputEngineListener() {
+                    @Override public void onAudioPacketEncoded(
+                            byte[] data, int length, int frames,
+                            boolean isTerminator, long frameNumber) {
+                        peerRef.onAudioPacketEncoded(data, length, frames, isTerminator, frameNumber);
+                    }
+                    @Override public void onTalkingStateChanged(boolean talking, float peak) {}
+                });
+        short[] sine = new short[480];
+        for (int i = 0; i < sine.length; i++) {
+            sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
+        }
+        for (int i = 0; i < 30; i++) {
+            inputEngine.processFrame(sine, 0, sine.length);
+        }
+        short[] pcm = new short[960];
+        int peak = 0;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (peak <= 100 && System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > peak) peak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("restarted session must carry voice after reconnect, peak=" + peak,
+                peak > 100);
+        boolean sawSender = false;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!sawSender && System.nanoTime() < deadline) {
+            if (receiverVoice.getTalkActivity().getValue().getUsers().containsKey(bobId)) {
+                sawSender = true;
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertTrue("notifier must report the sender talking after restart", sawSender);
     }
 
     @Test
