@@ -771,6 +771,28 @@ void testReceiveLoopbackPingFiresSink() {
     std::cout << "  [PASS] testReceiveLoopbackPingFiresSink" << std::endl;
 }
 
+void testClearDrainsRingsAndCountsResetDiscards() {
+    g_testCount++;
+    // Session-start reset: stale unrendered voice must never play into the
+    // next session. Drained packets count as drops (arrived, never heard).
+    VoiceIo io(fakeFactory());
+    for (size_t i = 0; i < 10; ++i) {
+        TEST_ASSERT_TRUE(io.pushInbound(makePacket(5, static_cast<uint32_t>(i))));
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        TEST_ASSERT_TRUE(io.pushTunnel(makePacket(6, static_cast<uint32_t>(i))));
+    }
+    io.clear();
+    std::vector<int16_t> pcm(kFrame * 2);
+    VoiceIo::RenderOut result;
+    io.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_EQ(result.samples, 0u);
+    TEST_ASSERT_EQ(result.droppedInbound, 10u);
+    TEST_ASSERT_EQ(result.droppedTunnel, 4u);
+    TEST_ASSERT_EQ(result.talk.count, 0u);
+    std::cout << "  [PASS] testClearDrainsRingsAndCountsResetDiscards" << std::endl;
+}
+
 void testReceiveStopLeavesNothing() {
     g_testCount++;
     VoiceIo io(fakeFactory());
@@ -822,6 +844,7 @@ void run_voice_io_tests() {
     testReceiveResyncGateRateLimited();
     testReceiveCryptCountsMatchKotlin();
     testReceiveLoopbackPingFiresSink();
+    testClearDrainsRingsAndCountsResetDiscards();
     testReceiveStopLeavesNothing();
 }
 

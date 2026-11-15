@@ -222,11 +222,25 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
 }
 
 void VoiceIo::clear() {
+    // Drain stale rings first (a previous session's unrendered voice must
+    // never play into the next one), counting the reset-discards as drops:
+    // the audio arrived but will never be heard. Draining queues into the
+    // engine and engine.clear() then releases the voices unmixed.
+    InboundPacket packet;
+    while (m_inbound.tryPop(&packet)) {
+        m_droppedInbound++;
+    }
+    TunnelItem item;
+    while (m_tunnel.tryPop(&item)) {
+        m_droppedTunnel++;
+    }
     m_engine->clear();
     m_levels.count = 0;
     // Publish the emptied table: a control-plane reset while the notifier
-    // runs must deliver passive, per voice.md#queues (the destroy path
-    // covers Kotlin via clearRemote; this covers the cell).
+    // runs must deliver passive, per voice.md#queues (Kotlin clears the
+    // service publisher after the render join; this covers the cell, and
+    // the version gate keeps a running notifier from resurrecting stale
+    // levels afterwards since no new renders means no new versions).
     publishTalk();
 }
 

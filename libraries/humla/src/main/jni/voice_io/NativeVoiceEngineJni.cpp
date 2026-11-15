@@ -432,9 +432,21 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
                                                         jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
+        // Stop closes the socket and joins the receive thread. It never
+        // touches the engine: the render thread is owned by the pipeline
+        // and joined there, so clearing here would race it. Reset happens
+        // in nativeReset at the next Start, when no render is live.
         ctx->receive.stop();
-        // Reset the engines while the socket is down (Stop clears queues);
-        // the control thread runs this only while render is stopped.
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeReset(JNIEnv* /*env*/, jclass /*clazz*/,
+                                                         jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx != nullptr) {
+        // Session start, when no render is live: drain stale rings, reset
+        // both engines, publish the emptied table (see VoiceIo::clear).
         ctx->io.clear();
     }
 }
