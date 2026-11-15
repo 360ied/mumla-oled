@@ -200,6 +200,7 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
+        "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
@@ -355,6 +356,7 @@ else()
     add_executable(test_voice_io
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
+        "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${TEST_CPP_DIR}/test_voice_io.cpp"
@@ -395,6 +397,7 @@ else()
         "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
+        "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/NativeVoiceIoJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"

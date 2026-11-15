@@ -20,7 +20,9 @@ package se.lublin.humla.voice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.net.VoiceCommand
@@ -51,6 +53,15 @@ class VoiceEngine @JvmOverloads constructor(
 ) : LegacyVoiceLink(tunnelSink, scope), VoiceLifecycle {
     /** Service-lifetime talk levels; the notifier feeds remote, AudioHandler feeds self. */
     val talkActivity: StateFlow<TalkActivity> = talkPublisher.talkActivity
+
+    private val _latestPolicy = MutableStateFlow<VoicePolicy?>(null)
+    /** Latest pushed policy (5a.3b receive filter source; native push lands with the socket). */
+    val latestPolicy: StateFlow<VoicePolicy?> = _latestPolicy.asStateFlow()
+
+    /** Policy collector only: publishes the mapped VoicePolicy for the native filter. */
+    fun setPolicy(policy: VoicePolicy) {
+        _latestPolicy.value = policy
+    }
 
     override fun startVoice(host: String, port: Int, format: VoiceFormat) {
         submit(VoiceCommand.Start(host, port, format))

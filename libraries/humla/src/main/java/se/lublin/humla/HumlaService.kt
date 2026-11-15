@@ -454,6 +454,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceLink = voiceLink,
             appScope = lifecycleScope,
         )
+        // Policy push (5a.3b): the collector maps SessionState to VoicePolicy;
+        // VoiceEngine will forward it native with the receive socket. Until
+        // then it records the latest for the filter cutover without changing
+        // the live Kotlin sender filter in AudioOutput.
+        lifecycleScope.launch {
+            try {
+                policyCollector.policy.collect { voiceLink.setPolicy(it) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+        }
 
         lifecycleScope.launch {
             try {

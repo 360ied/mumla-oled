@@ -23,6 +23,7 @@
 #include "TestHarness.h"
 #include "VoiceIo.h"
 #include "VoiceNotifier.h"
+#include "VoicePolicy.h"
 #include "VoiceRings.h"
 #include "VoiceTalk.h"
 
@@ -42,6 +43,8 @@ using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
 using mumla::audio::IOutputDecoder;
 using mumla::audio::OutputTalkState;
+using mumla::voice_io::PolicyCell;
+using mumla::voice_io::PolicySnapshot;
 using mumla::voice_io::SpscRing;
 using mumla::voice_io::TalkCell;
 using mumla::voice_io::TalkPublication;
@@ -594,6 +597,71 @@ void testAwaitWorkStressLosesNoWakeup() {
     std::cout << "  [PASS] testAwaitWorkStressLosesNoWakeup" << std::endl;
 }
 
+void testPolicyDropsMutedOverUdpAndTunnel() {
+    g_testCount++;
+    PolicyCell cell;
+    const int32_t muted[] = {7};
+    const int32_t known[] = {7, 8};
+    cell.publish(muted, 1, known, 2, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 7));
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 8));
+    std::cout << "  [PASS] testPolicyDropsMutedOverUdpAndTunnel" << std::endl;
+}
+
+void testPolicyUnknownHoldsNoSlot() {
+    g_testCount++;
+    PolicyCell cell;
+    const int32_t muted[] = {};
+    const int32_t known[] = {11};
+    cell.publish(muted, 0, known, 1, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 99));
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 11));
+    std::cout << "  [PASS] testPolicyUnknownHoldsNoSlot" << std::endl;
+}
+
+void testPolicyKnownOverflowFailsOpen() {
+    g_testCount++;
+    PolicyCell cell;
+    int32_t known[300];
+    for (int i = 0; i < 300; ++i) known[i] = 1000 + i;
+    cell.publish(nullptr, 0, known, 300, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(snap.knownOverflow);
+    TEST_ASSERT_EQ(snap.knownCount, mumla::voice_io::kPolicyListCapacity);
+    // Overflow fails open: unknown passes, muted still drops.
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 9999));
+    const int32_t muted[] = {9999};
+    cell.publish(muted, 1, known, 300, false);
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 9999));
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 8888));
+    std::cout << "  [PASS] testPolicyKnownOverflowFailsOpen" << std::endl;
+}
+
+void testPolicyGuardsReceiveVisibleOnly() {
+    g_testCount++;
+    // Pins the 5a.3b done-when lock-scope rule: the policy cell carries
+    // exactly the receive-visible sender-filter lists (muted + known) and
+    // nothing transmit-side (no bitrate, frames, voice target, PTT).
+    static_assert(sizeof(PolicySnapshot) <=
+                  (256 + 256) * sizeof(int32_t) + 32,
+                  "PolicySnapshot must stay the two filter lists plus flags");
+    PolicyCell cell;
+    const int32_t muted[] = {3};
+    const int32_t known[] = {3, 4};
+    cell.publish(muted, 1, known, 2, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_EQ(snap.mutedCount, 1u);
+    TEST_ASSERT_EQ(snap.knownCount, 2u);
+    std::cout << "  [PASS] testPolicyGuardsReceiveVisibleOnly" << std::endl;
+}
+
 } // namespace
 
 void run_voice_io_tests() {
@@ -621,6 +689,10 @@ void run_voice_io_tests() {
     testAwaitWorkStopWakes();
     testAwaitWorkTimeoutFires();
     testAwaitWorkStressLosesNoWakeup();
+    testPolicyDropsMutedOverUdpAndTunnel();
+    testPolicyUnknownHoldsNoSlot();
+    testPolicyKnownOverflowFailsOpen();
+    testPolicyGuardsReceiveVisibleOnly();
 }
 
 int main() {
