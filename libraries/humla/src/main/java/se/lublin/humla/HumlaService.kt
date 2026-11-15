@@ -881,9 +881,34 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             if (::routeControl.isInitialized) routeControl.close()
         } catch (ignored: Exception) {
         }
-        try {
-            if (::voiceControl.isInitialized) voiceControl.close()
+        // Voice teardown order: VoiceControl joins render (its close is
+        // async) before the native engine is destroyed, without blocking
+        // main. VoiceEngine.close is itself async; chaining keeps destroy
+        // after the render join so the RenderGuard assert never fires.
+        val voiceTeardown = try {
+            if (::voiceControl.isInitialized) voiceControl.close() else null
         } catch (ignored: Exception) {
+            null
+        }
+        if (voiceTeardown != null) {
+            try {
+                voiceTeardown.invokeOnCompletion {
+                    try {
+                        voiceLink.close()
+                    } catch (ignored: Exception) {
+                    }
+                }
+            } catch (ignored: Exception) {
+                try {
+                    voiceLink.close()
+                } catch (ignored2: Exception) {
+                }
+            }
+        } else {
+            try {
+                voiceLink.close()
+            } catch (ignored: Exception) {
+            }
         }
         try {
             if (::policyCollector.isInitialized) policyCollector.close()
@@ -892,10 +917,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         _sessionState.value = emptySessionState()
         resetVoiceTargetSilent()
         releaseWifiLock()
-        try {
-            voiceLink.close()
-        } catch (ignored: Exception) {
-        }
         super.onDestroy()
     }
 

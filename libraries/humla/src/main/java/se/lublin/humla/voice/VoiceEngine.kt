@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -37,6 +39,7 @@ import se.lublin.humla.BuildConfig
 import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.VoiceLifecycle
+import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.NativeVoiceCodec
@@ -101,7 +104,6 @@ class VoiceEngine @JvmOverloads constructor(
 
     @Volatile
     private var native: EngineNative? = null
-    private val scopeRef = scope
 
     private val _latestPolicy = MutableStateFlow<VoicePolicy?>(null)
     val latestPolicy: StateFlow<VoicePolicy?> = _latestPolicy.asStateFlow()
@@ -358,6 +360,8 @@ class VoiceEngine @JvmOverloads constructor(
     }
 
     fun sendVoice(data: ByteArray, length: Int) {
+        // Blocking send (encrypt + sendto on the shared socket): never main.
+        checkNotMainThread()
         if (length < 0 || length > data.size) {
             throw IllegalArgumentException(
                 "Requested length $length out of bounds for available data length ${data.size}!",
@@ -559,19 +563,31 @@ class VoiceEngine @JvmOverloads constructor(
         java.util.logging.Logger.getLogger(TAG).fine(message)
     }
 
-    fun close() {
-        try {
-            native?.stop()
-        } catch (ignored: Exception) {
+    /**
+     * Application end of life. Non-blocking like RouteControl and
+     * VoiceControl: the stop-join-destroy runs on the command scope so
+     * Service.onDestroy (main) never waits on thread joins, and destroy
+     * runs after the queued stops. VoiceControl's render join still
+     * precedes this via the service chaining its close first.
+     */
+    fun close(): Job {
+        val teardown = scope.launch(NonCancellable) {
+            try {
+                native?.stop()
+            } catch (ignored: Exception) {
+            }
+            try {
+                native?.destroy()
+            } catch (ignored: Exception) {
+            }
+            native = null
         }
-        try {
-            native?.destroy()
-        } catch (ignored: Exception) {
+        teardown.invokeOnCompletion {
+            try {
+                scope.cancel()
+            } catch (ignored: Exception) {
+            }
         }
-        native = null
-        try {
-            scopeRef.cancel()
-        } catch (ignored: Exception) {
-        }
+        return teardown
     }
 }
