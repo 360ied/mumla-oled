@@ -14,8 +14,9 @@
   - `app/` (`:app`): Android UI, activities, fragments, overlay, preferences.
   - `libraries/humla/` (`:libraries:humla`): Mumble protocol engine, background service, codec bindings, and native JNI audio pipeline over `AudioRecord`/`AudioTrack` (no Oboe/AAudio), organized under `libraries/humla/src/main/jni/` (`audio_engine/`, `crypto/`, `voice_codec/`, `voice_io/`, `nanopb/`).
 - **Third-Party Submodules**: Registered directly in the root `.gitmodules` (not nested inside another submodule): `libraries/humla/src/main/jni/{opus, rnnoise, nanopb}`.
-- **Target Architecture**: Check `docs/target-architecture/` (`README.md`, `PROGRESS.md`, `enforcement.md`, `testing.md`) before modifying state, networking, routing, or voice code. Migration steps start only on explicit request, and `scripts/check_architecture.py` enforces concurrency, Android-free package, and native-layer boundaries via `scripts/architecture-allowlist.txt`.
-- **Single Sources of Truth**: Dependency/plugin versions live in `gradle/libs.versions.toml`; NDK version lives in `gradle/ndk.version` (shared by Gradle and `flake.nix`).
+- **Target Architecture**: Check `docs/target-architecture/` (`README.md`, `PROGRESS.md`, `enforcement.md`, `testing.md`) before modifying state, networking, routing, or voice code. Migration steps start only on explicit request, and `scripts/check_architecture.py` enforces concurrency, Android-free package, native-layer, and `voice_io` `RenderGuard` checks; `scripts/architecture-allowlist.txt` only ratchets downward (lower a file's count in the same commit when removing matched lines).
+- **Single Sources of Truth**: Dependency/plugin versions live in `gradle/libs.versions.toml`; NDK version lives in `gradle/ndk.version` (shared by Gradle and `flake.nix`); native ABIs live in `sharedAbiFilters` in root `build.gradle`.
+- **Native Build Wiring**: `libraries/humla/build.gradle` wires the 3-ABI NDK build via `externalNativeBuild.cmake` (`buildCMake*`) and runs the host native suite only via `check`/explicit script invocation so unit-test tasks stay fast. After an AGP upgrade, re-validate with `--dry-run` that unit-test tasks exclude `buildCMake*`/`testNativeAudioEngine` while `assembleFossDebug` includes `buildCMake*`.
 - **Upstream Reference (`../mumble`)**: Reference upstream C++ code and protocol schemas in `../mumble` (sibling of the *root* repository—from inside `.worktrees/<branch>`, use the root-relative path; e.g., `../mumble/src/Mumble.proto`, `../mumble/src/MumbleUDP.proto`, connection/audio logic) to ensure exact behavioral and protocol parity.
 - **Skills**: Operational workflows live in `.agents/skills/` (`.claude/skills` symlink): `mumla-merge`, `mumla-release`, `mumla-worktree-cleanup`, `mumla-sensitive-redact`.
 
@@ -29,6 +30,7 @@
 | Task | Command | Notes |
 | --- | --- | --- |
 | Fast unit tests (dev loop) | `nix develop --command ./gradlew testFossDebugUnitTest` | JVM only; skips native suite. `CryptState` tests load `libhumlaaudio` from `build/test-native`, so run `test_native_audio.sh` or `check.sh` first on a clean tree |
+| Host native C++ suite | `nix develop --command ./scripts/test_native_audio.sh` | Fast loop for `jni/` changes (`test_audio_engine`, `test_crypt_state`, `test_voice_io`, `test_voice_codec`); also runs via `./gradlew check` and `check.sh` |
 | Pre-completion gate | `./scripts/check.sh` | Auto-enters `nix develop`; runs Python tests, `check_architecture.py`, `test_native_audio.sh`, and debug unit tests (`--full` runs `./gradlew test`) |
 | Murmur interop suite | `./scripts/test_interop.sh` | Not run by `check.sh` (>1 min, Linux `mumble-server`); run for transport/session/`voice_io` network changes |
 | Regenerate nanopb | `./scripts/gen_nanopb.sh` | Rebuilds `voice_codec/generated/MumbleUDP.pb.{c,h}` from `MumbleUDP.proto` + `MumbleUDP.options` |
