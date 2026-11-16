@@ -136,6 +136,7 @@ git push origin --delete <branch>      # remote cleanup, if pushed
 - Merging `master` into a feature branch mid-work is allowed (plain
   `git merge --no-ff master` from the feature branch) but is not this
   skill's job — this skill is only for landing a branch on `master`.
-- The AGENTS.md exception permitting direct edits on the current branch
-  applies only to `AGENTS.md` itself; everything else goes through a
-  dedicated branch and this merge flow.
+- Except when the user explicitly requests a trivial standalone doc-only
+  edit directly on `master` (per AGENTS.md "Dedicated Worktrees"),
+  everything goes through a dedicated branch/worktree and this merge
+  flow.
