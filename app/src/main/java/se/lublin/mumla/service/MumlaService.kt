@@ -1320,6 +1320,12 @@ open class MumlaService : HumlaService(),
                 settings.isHotCornerEnabled &&
                 Settings.ARRAY_INPUT_METHOD_PTT == settings.inputMethod
             hotCorner.setShown(shouldShow)
+            if (shouldShow) {
+                // Initial sync from the last self talk level, so a corner
+                // created mid-talk shows talking without waiting for the
+                // next onUserTalkStateUpdated hint.
+                hotCorner.updateTalkState(mSelfTalking)
+            }
         }
     }
 
