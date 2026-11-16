@@ -635,12 +635,14 @@ Performed by the Kotlin **voice control thread**, in command order:
   render (Kotlin threads in 5a, AAudio streams in 5b) once `RouteState` is
   `Ready` or `Fallback` (see [route](route.md#session-start)).
 - **Stop:** stop capture and render (render: clear its running flag and
-  post the render wake before the join); set the stop flag; close the socket
-  (unblocks `recvfrom`); post the send semaphore; join the three threads;
-  zero the crypt keys; clear the queues. (In 5a.3b the send thread does not
+  post the render wake before the join); set the stop flag; shut the socket
+  down to abort the blocked `recvfrom` (`close` alone does not wake it);
+  post the send semaphore; join the three threads; close the socket (only
+  after the join, so its fd number cannot be recycled under the exiting
+  receiver); zero the crypt keys; clear the queues. (In 5a.3b the send thread does not
   exist yet and capture/render are pipeline-owned Kotlin threads, so the
   native engine and rings reset at the next Start instead, when no render
-  is live; the socket close, receive/notifier join, and key zeroing still
+  is live; the socket shutdown/close, receive/notifier join, and key zeroing still
   happen at Stop.)
 - **Reconfigure:** settings go through the sequence lock and need no
   restart. The one exception is loading a new RNNoise model, which
