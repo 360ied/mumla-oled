@@ -267,20 +267,23 @@ void VoiceReceive::stop() {
     bool expected = true;
     m_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel,
                                         std::memory_order_relaxed);
-    // Shut the socket down before closing it: close() alone does not wake
-    // a thread already parked in recvfrom (Linux leaves it asleep on the
+    // Shut the socket down before joining: close() alone does not wake a
+    // thread already parked in recvfrom (Linux leaves it asleep on the
     // socket's wait queue), so join() below would hang forever on an idle
-    // connection. shutdown() aborts the blocked recv; the loop then exits
-    // on running false. Single writer (control thread only), so plain
-    // load-check-close-store suffices.
-    int toClose = m_sock.load(std::memory_order_acquire);
-    if (toClose >= 0) {
-        shutdown(toClose, SHUT_RDWR);
-        close(toClose);
+    // connection. shutdown() aborts the blocked recv and the loop exits
+    // on running false; closing only after the join keeps the fd number
+    // from being recycled while the receiver still holds its copy.
+    // Single writer (control thread only); exchange makes it idempotent.
+    int sock = m_sock.load(std::memory_order_acquire);
+    if (sock >= 0) {
+        shutdown(sock, SHUT_RDWR);
     }
-    m_sock.store(-1, std::memory_order_release);
     if (m_thread.joinable()) {
         m_thread.join();
+    }
+    int toClose = m_sock.exchange(-1, std::memory_order_acq_rel);
+    if (toClose >= 0) {
+        close(toClose);
     }
 }
 
