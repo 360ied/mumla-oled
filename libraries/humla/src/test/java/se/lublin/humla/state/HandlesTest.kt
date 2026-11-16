@@ -128,6 +128,21 @@ class HandlesTest : TestCase() {
     }
 
     @Test
+    fun testTalkStateSelfAwareBindPath() {
+        val flow = syncedFlow()
+        val talk = MutableStateFlow(TalkActivity.initial())
+        // Fresh bind with no override: self reads passive until selfTalking flips.
+        assertEquals(TalkState.PASSIVE, UserHandle(1, flow, talk).talkState)
+        talk.value = talk.value.copy(selfTalking = true)
+        // Bind path (channel list rows, overlay, talk button) initial-syncs
+        // without waiting for a repaint hint; remotes are untouched.
+        assertEquals(TalkState.TALKING, UserHandle(1, flow, talk).talkState)
+        assertEquals(TalkState.PASSIVE, UserHandle(2, flow, talk).talkState)
+        talk.value = talk.value.copy(selfTalking = false)
+        assertEquals(TalkState.PASSIVE, UserHandle(1, flow, talk).talkState)
+    }
+
+    @Test
     fun testRemovedUserKeepsScalars() {
         val flow = syncedFlow()
         // Warm the cache before removal, as StateMessageHandler does.

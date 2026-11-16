@@ -411,12 +411,18 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
             var self: IUser? = null
             try {
                 val session = service.HumlaSession()
-                talkButton.isActivated = session.isTalking()
                 self = session.getSessionUser()
+                // Initial sync from the live self talk level (matches the
+                // onUserTalkStateUpdated observer below), so a button
+                // created mid-talk shows talking without waiting for the
+                // next hint.
+                talkButton.isActivated = self?.let { isTalkingState(it.talkState) } ?: false
             } catch (e: HumlaDisconnectedException) {
                 Log.d(TAG, "exception in configureInput: $e")
+                talkButton.isActivated = false
             } catch (e: IllegalStateException) {
                 Log.d(TAG, "exception in configureInput: $e")
+                talkButton.isActivated = false
             }
             muted = self == null || self.isMuted || self.isSuppressed || self.isSelfMuted
         } else {

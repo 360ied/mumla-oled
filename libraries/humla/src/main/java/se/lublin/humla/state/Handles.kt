@@ -34,8 +34,13 @@ import se.lublin.humla.voice.TalkActivity
  * as a departed model object does today. Navigation returns handles.
  * Equal when IDs are equal. Read-only: [talkState] reads the live talk
  * levels (absent means passive), unless [talkStateOverride] pins it — the
- * service uses the override for the local user's repaint hint, whose
- * state lives in TalkActivity.selfTalking rather than the remote table.
+ * service uses the override for the local user's repaint hint. The live
+ * read itself is self-aware: the local session never appears in the
+ * remote [TalkActivity.users] table, so a handle whose session is the
+ * current self session reports TALKING while
+ * [TalkActivity.selfTalking] is true. Without this, freshly bound rows
+ * (channel list, overlay) always read the self user as passive until the
+ * next talk-activity hint arrives.
  */
 class UserHandle(
     private val sessionId: Int,
@@ -46,13 +51,24 @@ class UserHandle(
 ) : IUser {
     override val session: Int get() = sessionId
 
-    // Voice-owned, read live on every access: absent from the table means
-    // passive (which is also what a missing publisher means, so call
-    // sites without voice stay compiling and show passive, as fresh
-    // handles always did).
+    // Voice-owned, read live on every access: remote sessions read the
+    // live table (absent means passive, which is also what a missing
+    // publisher means, so call sites without voice stay compiling and show
+    // passive, as fresh handles always did). The local session never
+    // appears in the remote table — its level lives in
+    // TalkActivity.selfTalking — so a handle for the current self session
+    // reports TALKING while selfTalking is true. This gives freshly
+    // created indicators (channel list rows, overlay rows, talk button)
+    // the correct initial state without waiting for the next repaint hint.
     override val talkState: TalkState
-        get() = talkStateOverride
-            ?: talkActivity?.value?.users?.get(sessionId) ?: TalkState.PASSIVE
+        get() {
+            talkStateOverride?.let { return it }
+            val talk = talkActivity?.value ?: return TalkState.PASSIVE
+            if (talk.selfTalking && sessionId == state.value.server.selfSession) {
+                return TalkState.TALKING
+            }
+            return talk.users[sessionId] ?: TalkState.PASSIVE
+        }
 
     private var cached: UserInfo? = seed
 
