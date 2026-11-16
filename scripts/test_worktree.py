@@ -4,6 +4,7 @@ Unit tests for scripts/worktree.py.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -227,6 +228,108 @@ class TestWorktreeLifecycle(TempRepoTestBase):
         self.assertFalse(os.path.isdir(wt_path))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_dir, ".worktrees")))
 
+    def _add_mock_submodule(self):
+        """Create a mock submodule repo, add it to the superproject, and commit.
+
+        Returns (submodule repo path, cached module git dir in the superproject).
+        """
+        sub_repo = os.path.join(self.temp_dir.name, "sub_repo")
+        os.makedirs(sub_repo)
+        subprocess.run(["git", "init", "-b", "master", sub_repo], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "-C", sub_repo, "config", "user.name", "Test Agent"], check=True)
+        subprocess.run(["git", "-C", sub_repo, "config", "user.email", "agent@example.com"], check=True)
+        with open(os.path.join(sub_repo, "sub.txt"), "w", encoding="utf-8") as f:
+            f.write("submodule\n")
+        subprocess.run(["git", "-C", sub_repo, "add", "."], check=True)
+        subprocess.run(["git", "-C", sub_repo, "commit", "-m", "sub init"], check=True, stdout=subprocess.DEVNULL)
+
+        subprocess.run(
+            ["git", "-C", self.repo_dir, "-c", "protocol.file.allow=always", "submodule", "add", sub_repo, "mysub"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        subprocess.run(["git", "-C", self.repo_dir, "commit", "-m", "add submodule"], check=True, stdout=subprocess.DEVNULL)
+        return sub_repo, os.path.join(self.repo_dir, ".git", "modules", "mysub")
+
+    def test_add_worktree_submodule_from_local_module_cache(self):
+        sub_repo, cache_dir = self._add_mock_submodule()
+        self.assertTrue(os.path.isdir(cache_dir))
+
+        # Remove the upstream entirely: the pinned commit is now only reachable
+        # through the superproject's module cache, so a network clone cannot
+        # satisfy the checkout.
+        shutil.rmtree(sub_repo)
+
+        # No protocol.file.allow in the environment: the script must supply it
+        # for its own cache URLs.
+        proc_add = subprocess.run(
+            [SCRIPT_PATH, "add", "feature/cache-hit"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
+        self.assertIn("Local module cache hit: mysub", proc_add.stdout)
+        self.assertNotIn("cache miss", proc_add.stdout)
+
+        wt_path = os.path.join(self.repo_dir, ".worktrees", "feature", "cache-hit")
+        self.assertTrue(os.path.isfile(os.path.join(wt_path, "mysub", "sub.txt")))
+        sub_status = subprocess.run(
+            ["git", "-C", wt_path, "submodule", "status"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        self.assertFalse(sub_status.stdout.startswith("-"), msg=sub_status.stdout)
+
+        # The cached filesystem path must not persist in the worktree's
+        # submodule configuration; sync restores the canonical URL.
+        wt_modules = subprocess.run(
+            ["git", "-C", wt_path, "rev-parse", "--path-format=absolute", "--git-path", "modules"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        origin = subprocess.run(
+            ["git", f"--git-dir={os.path.join(wt_modules, 'mysub')}", "config", "--get", "remote.origin.url"],
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        self.assertEqual(origin, sub_repo)
+
+    def test_add_worktree_submodule_falls_back_when_uncached(self):
+        sub_repo, cache_dir = self._add_mock_submodule()
+        self.assertTrue(os.path.isdir(cache_dir))
+
+        # Drop the cache so the pinned commit is only available from the remote.
+        subprocess.run(
+            ["git", "-C", self.repo_dir, "submodule", "deinit", "-f", "mysub"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        self.assertFalse(os.path.exists(cache_dir))
+
+        proc_add = subprocess.run(
+            [SCRIPT_PATH, "add", "feature/cache-miss"],
+            cwd=self.repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            # The mock remote is a local path, which git refuses for submodules
+            # by default; the fallback path is what is under test here.
+            env=dict(os.environ, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow", GIT_CONFIG_VALUE_0="always"),
+        )
+        self.assertEqual(proc_add.returncode, 0, msg=proc_add.stderr)
+        self.assertIn("Local module cache miss (cloning from remote): mysub", proc_add.stdout)
+        self.assertNotIn("cache hit", proc_add.stdout)
+
+        wt_path = os.path.join(self.repo_dir, ".worktrees", "feature", "cache-miss")
+        self.assertTrue(os.path.isfile(os.path.join(wt_path, "mysub", "sub.txt")))
+
     def test_add_worktree_copies_rnnoise_model(self):
         # Create mock RNNoise model files in root repo
         gen_dir = os.path.join(self.repo_dir, "libraries", "humla", "src", "main", "jni", "rnnoise-build", "generated")
@@ -352,6 +455,33 @@ class TestWorktreeLifecycle(TempRepoTestBase):
 
 
 class TestWorktreeUnit(TempRepoTestBase):
+
+    def test_read_submodule_entries(self):
+        (self.repo_dir / ".gitmodules").write_text(
+            '[submodule "a/b"]\n\tpath = a/b\n\turl = https://example.com/a\n'
+            '[submodule "c"]\n\tpath = c\n\turl = https://example.com/c\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            worktree.read_submodule_entries(self.repo_dir),
+            [("a/b", "a/b"), ("c", "c")],
+        )
+
+    def test_read_submodule_entries_absent(self):
+        self.assertEqual(worktree.read_submodule_entries(self.repo_dir), [])
+
+    def test_local_module_cache_dir_points_at_root_modules(self):
+        self.assertEqual(
+            worktree.local_module_cache_dir(self.repo_dir),
+            self.repo_dir / ".git" / "modules",
+        )
+
+    def test_module_has_commit(self):
+        head = worktree.resolve_commit(self.repo_dir, "HEAD")
+        self.assertTrue(head)
+        self.assertTrue(worktree.module_has_commit(self.repo_dir / ".git", head))
+        self.assertFalse(worktree.module_has_commit(self.repo_dir / ".git", "0" * 40))
+        self.assertFalse(worktree.module_has_commit(self.repo_dir / "missing", head))
 
     def test_get_repo_root(self):
         resolved = worktree.get_repo_root(cwd=self.repo_dir)

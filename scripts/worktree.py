@@ -58,7 +58,10 @@ def print_usage(stream: TextIO) -> None:
 
 Commands:
   add       Create a new worktree under .worktrees/<branch-name> (or custom path)
-            and automatically initialize all required git submodules.
+            and automatically initialize all required git submodules. Submodules
+            are cloned from the root repository's local module cache when their
+            pinned commit is already available there, and only fall back to the
+            network for uncached commits.
             If base-ref is omitted, it defaults to 'master'.
   list      List all active worktrees and their checked-out branches.
   remove    Safely remove a worktree. Refuses if there are uncommitted changes
@@ -126,6 +129,125 @@ def get_repo_root(cwd: Optional[Path] = None) -> Path:
     # Equivalent to sed -E 's#/\.git(/.*)?$##'
     root_str = re.sub(r"/+\.git(/.*)?$", "", common_dir)
     return Path(root_str).resolve()
+
+
+def local_module_cache_dir(repo_root: Path) -> Path:
+    """Resolve the root repository's shared submodule module directory.
+
+    Submodule git dirs live in the superproject's `modules/` directory. In a
+    linked worktree the per-worktree git dir is used instead, so the root
+    repository's cache is the only copy already on disk.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--path-format=absolute", "--git-path", "modules"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return Path(proc.stdout.strip())
+    return repo_root / ".git" / "modules"
+
+
+def resolve_commit(cwd: Path, rev: str) -> str:
+    """Resolve a revision to its object id, or '' when it does not resolve.
+
+    Peeling with `^{commit}` is deliberately omitted: it is not accepted on
+    `<rev>:<path>` tree-ish expressions, which is how gitlink shas are read.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "--verify", "--quiet", rev],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def module_has_commit(module_dir: Path, sha: str) -> bool:
+    """Check whether a cached submodule repository already holds a commit."""
+    if not module_dir.is_dir() or not sha:
+        return False
+    proc = subprocess.run(
+        ["git", f"--git-dir={module_dir}", "cat-file", "-e", f"{sha}^{{commit}}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def read_submodule_entries(wt_path: Path) -> List[Tuple[str, str]]:
+    """Return (name, path) pairs declared in the worktree's .gitmodules."""
+    gitmodules = wt_path / ".gitmodules"
+    if not gitmodules.is_file():
+        return []
+    proc = subprocess.run(
+        ["git", "config", "--file", str(gitmodules), "--get-regexp", r"^submodule\..*\.path$"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    entries: List[Tuple[str, str]] = []
+    for line in proc.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        name = parts[0].strip()[len("submodule."):-len(".path")]
+        path = parts[1].strip()
+        if name and path:
+            entries.append((name, path))
+    return entries
+
+
+def build_submodule_cache_overrides(repo_root: Path, wt_path: Path) -> List[str]:
+    """Seed `git submodule update` from the root repository's module cache.
+
+    Worktrees are separate repositories, so `git submodule update` normally
+    performs fresh network clones into `.git/worktrees/<name>/modules`.
+    Pointing each submodule's URL at the root repository's cached git dir
+    turns that into a local clone, which hardlinks object packs (no network,
+    no duplicated object storage). Submodules whose pinned commit is not in
+    the cache keep their configured remote URL and fall back to the network.
+
+    Only top-level `.gitmodules` entries are considered; nested submodules keep
+    their own URLs.
+
+    Returns the `git -c` arguments to apply before the update.
+    """
+    entries = read_submodule_entries(wt_path)
+    if not entries:
+        return []
+
+    cache_dir = local_module_cache_dir(repo_root)
+    cached: List[str] = []
+    remote: List[str] = []
+    overrides: List[str] = []
+    for name, path in entries:
+        module_dir = cache_dir / name
+        pinned = resolve_commit(wt_path, f"HEAD:{path}")
+        if not module_has_commit(module_dir, pinned):
+            remote.append(name)
+            continue
+        overrides += ["-c", f"submodule.{name}.url={module_dir}"]
+        cached.append(name)
+
+    if cached:
+        _emit(f"Local module cache hit: {', '.join(cached)}")
+    if remote:
+        _emit(f"Local module cache miss (cloning from remote): {', '.join(remote)}")
+    if not cached:
+        return []
+    # `file` transport is refused for submodules by default (CVE-2022-39253);
+    # the cache URLs above are plain filesystem paths.
+    return ["-c", "protocol.file.allow=always"] + overrides
 
 
 def copy_rnnoise_model(repo_root: Path, wt_path: Path) -> None:
@@ -327,7 +449,20 @@ def cmd_add(args: List[str], repo_root: Path) -> int:
         _emit("========================================")
         _emit(" 2. Initializing Git Submodules")
         _emit("========================================")
-        subprocess.run(["git", "-C", str(wt_path), "submodule", "update", "--init", "--recursive"], check=True)
+        submodule_cmd = ["git", "-C", str(wt_path)]
+        cache_overrides = build_submodule_cache_overrides(repo_root, wt_path)
+        submodule_cmd += cache_overrides
+        submodule_cmd += ["submodule", "update", "--init", "--recursive"]
+        subprocess.run(submodule_cmd, check=True)
+        if cache_overrides:
+            # Restore the canonical URLs so the cached filesystem path never
+            # persists in the new worktree's submodule configuration.
+            subprocess.run(
+                ["git", "-C", str(wt_path), "submodule", "sync"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
         _emit("")
         _emit("========================================")
