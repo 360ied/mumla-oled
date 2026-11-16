@@ -267,11 +267,15 @@ void VoiceReceive::stop() {
     bool expected = true;
     m_running.compare_exchange_strong(expected, false, std::memory_order_acq_rel,
                                         std::memory_order_relaxed);
-    // Close the socket to unblock recvfrom (spec Stop); the loop exits on
-    // running false or the closed socket. Single writer (control thread
-    // only), so plain load-check-close-store suffices.
+    // Shut the socket down before closing it: close() alone does not wake
+    // a thread already parked in recvfrom (Linux leaves it asleep on the
+    // socket's wait queue), so join() below would hang forever on an idle
+    // connection. shutdown() aborts the blocked recv; the loop then exits
+    // on running false. Single writer (control thread only), so plain
+    // load-check-close-store suffices.
     int toClose = m_sock.load(std::memory_order_acquire);
     if (toClose >= 0) {
+        shutdown(toClose, SHUT_RDWR);
         close(toClose);
     }
     m_sock.store(-1, std::memory_order_release);
