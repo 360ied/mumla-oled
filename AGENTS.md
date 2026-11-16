@@ -8,12 +8,13 @@
   the root repository off `master`. (Trivial standalone doc-only
   edits may optionally be made on `master` when explicitly requested
   by the user.)
-- **Completion Boundary**: A code task is complete once changes are
-  verified after the final edit (`./scripts/check.sh`) and committed
-  inside the worktree. **Never** autonomously merge into `master`,
-  push, or delete worktrees—leave the branch intact and report for
-  review. Merging (`mumla-merge`), cleanup (`mumla-worktree-cleanup`),
-  and releases (`mumla-release`) happen only on explicit user request.
+- **Completion Boundary**: A task is complete once changes are
+  committed inside the worktree (for code tasks, after passing
+  `./scripts/check.sh` following the final edit). **Never**
+  autonomously merge into `master`, push, or delete worktrees—leave
+  the branch intact and report for review. Merging (`mumla-merge`),
+  cleanup (`mumla-worktree-cleanup`), and releases (`mumla-release`)
+  happen only on explicit user request.
 - **Forward-Only History**: Never rewrite, rebase, squash, amend, or
   force-push commits—pushed or not. Fix mistakes with a new commit.
 - **Public Repository & Sensitive Information**: This is a publicly
@@ -47,7 +48,8 @@
   enforces concurrency, Android-free package, native-layer, and
   `voice_io` `RenderGuard` checks;
   `scripts/architecture-allowlist.txt` only ratchets downward (lower a
-  file's count in the same commit when removing matched lines).
+  file's count in the same commit when removing matched lines, or
+  remove the entry if it reaches `0`).
 - **Single Sources of Truth**: Dependency/plugin versions live in
   `gradle/libs.versions.toml`; NDK version lives in
   `gradle/ndk.version` (shared by Gradle and `flake.nix`); native ABIs
@@ -77,7 +79,7 @@
    `.worktrees/<branch>`, initializes submodules from the local cache,
    and copies existing RNNoise model weights).
 2. **Work inside the worktree**: `cd .worktrees/<branch>` for all
-   edits, codegen, builds, and verification.
+   edits, codegen, builds, verification, and commits.
 3. **Verify**: Run `./scripts/check.sh` before finishing any code
    task. Standalone doc-only edits (`AGENTS.md`, `README.md`, `docs/`,
    `.agents/skills/`) are exempt from `./scripts/check.sh` (verify
@@ -90,10 +92,12 @@
 ### Common Commands
 
 - **Fast unit tests (dev loop)**:
-  `nix develop --command ./gradlew testFossDebugUnitTest`
-  JVM only; skips native suite. `CryptState` tests load
-  `libhumlaaudio` from `build/test-native`, so run
-  `test_native_audio.sh` or `check.sh` first on a clean tree.
+  `nix develop --command ./gradlew testFossDebugUnitTest` (`:app`);
+  append `:libraries:humla:testDebugUnitTest` for `humla` (which has
+  no `foss` flavor). JVM only; skips native suite. `CryptState` tests
+  in `humla` load `libhumlaaudio` from `build/test-native`, so run
+  `test_native_audio.sh` or `check.sh` first on a clean tree (or after
+  C++ edits).
 - **Host native C++ suite**:
   `nix develop --command ./scripts/test_native_audio.sh`
   Fast loop for `jni/` changes (`test_audio_engine`,
@@ -117,13 +121,14 @@
   requires local uncommitted `app/signing.gradle`
   (`signingConfigs.release`) for release signing, otherwise falls back
   to debug signing.
-- **Install APK (`adb`)**:
+- **Device install & `adb`**:
   `nix develop --command ./gradlew :app:installFossDebug`
   Install on device only when requested; never launch the app
   automatically (no `adb shell am start` unless asked). App ID is
   `se.lublin.mumla.oled15`; Java/Kotlin namespace is
-  `se.lublin.mumla`. Use Nix `adb`, not `~/Android/Sdk` (which cannot
-  run directly on NixOS).
+  `se.lublin.mumla`. Use Nix `adb` (for `:app:installFossDebug` or
+  `adb` commands like `logcat`), not `~/Android/Sdk` (which cannot run
+  directly on NixOS).
 
 ## Commits & Versioning
 
