@@ -399,7 +399,11 @@ behind those interfaces would compile and silently freeze screens, so step
   fresh handle — never dedup, cache, or branch on a handle's `talkState`
   across calls. Transition ownership stays with the producer (today the
   native engine's transition-only events; from step 5a
-  `VoiceEngine.talkActivity`, where absent means passive). Comparing a
+  `VoiceEngine.talkActivity`, where absent means passive). Absent covers
+  both halves of `talkActivity`: the remote `users` table and, for the
+  self session, `selfTalking` — so a fresh self handle reads `TALKING`
+  while already talking, which is the live level, not a cached transition.
+  Comparing a
   fresh handle's `talkState` against a new event swallows the teardown edge
   and sticks the indicator on; this regressed on `master` in step 2 and was
   fixed by deleting the Java-side guard.
