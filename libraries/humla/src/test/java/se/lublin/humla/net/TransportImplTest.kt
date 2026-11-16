@@ -136,6 +136,8 @@ private class RecordingVoice : VoiceLink {
         tunnelled.add(packet)
     }
 
+    override fun removeUser(session: Int) = Unit
+
     fun setLocalGood(good: Int) {
         statusFlow.value = statusFlow.value.copy(localCrypt = CryptCounts(good, 0, 0, 0))
     }

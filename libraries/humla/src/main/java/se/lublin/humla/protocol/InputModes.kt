@@ -22,7 +22,7 @@ import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
 import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
-import se.lublin.humla.net.LegacyVoiceLink
+import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.util.ConfigDelta
 
 /**
@@ -102,7 +102,7 @@ class InputModes(
         delta: ConfigDelta,
         builder: AudioHandler.Builder,
         liveHandler: AudioHandler?,
-        liveVoiceLink: LegacyVoiceLink?,
+        liveVoiceLink: VoiceEngine?,
     ) {
         validateAudioDelta(delta)
         val detectionThreshold = delta.detectionThreshold

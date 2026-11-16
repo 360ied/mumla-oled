@@ -23,9 +23,8 @@ import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 import junit.framework.TestCase;
 import org.mockito.Mockito;
-import se.lublin.humla.audio.AudioOutput;
+import se.lublin.humla.audio.RenderDriver;
 import se.lublin.humla.audio.inputmode.ToggleInputMode;
-import se.lublin.humla.model.IUser;
 import se.lublin.humla.protocol.AudioHandler;
 import se.lublin.humla.voice.TalkActivityPublisher;
 import se.lublin.humla.protobuf.MumbleUDP;
@@ -57,11 +56,11 @@ public class VoiceCodecEncodeTest extends TestCase {
         public void onTalkingStateChanged(boolean talking) {}
     }
 
-    private static class DummyOutput implements AudioOutput.AudioOutputListener {
-        @Override
-        public IUser getUser(int session) {
-            return null;
-        }
+    private static class DummyRender implements RenderDriver {
+        @Override public int render(short[] out, int offset, int length) { return 0; }
+        @Override public boolean awaitWork(int timeoutMs) { return false; }
+        @Override public boolean lastHasActiveVoices() { return false; }
+        @Override public void wakeForStop() {}
     }
 
     private static class DummyLogger implements HumlaLogger {
@@ -84,7 +83,7 @@ public class VoiceCodecEncodeTest extends TestCase {
                 false,
                 true,
                 encode,
-                new DummyOutput(),
+                new DummyRender(),
                 new TalkActivityPublisher());
     }
 

@@ -31,11 +31,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.net.HumlaUDPMessageType
-import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.route.AppliedRoute
@@ -57,13 +55,12 @@ class VoiceControl(
     private val context: Context,
     private val logger: HumlaLogger,
     private val encodeListener: AudioHandler.AudioEncodeListener,
-    private val talkingListener: AudioOutput.AudioOutputListener,
     private val talkPublisher: TalkActivityPublisher,
     private val routeStates: StateFlow<RouteState>,
     private val policies: StateFlow<VoicePolicy>,
     private val settings: StateFlow<VoiceSettings>,
     private val prefs: StateFlow<RoutePreferences>,
-    private val voiceLink: LegacyVoiceLink,
+    private val voiceLink: VoiceEngine,
     appScope: CoroutineScope,
     controlDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1),
 ) {
@@ -221,11 +218,6 @@ class VoiceControl(
                 logger.logWarning("VoiceControl dropping stale TCP handler failed: $e")
             }
             try {
-                voiceLink.removeUdpHandler(existing)
-            } catch (e: Exception) {
-                logger.logWarning("VoiceControl dropping stale UDP handler failed: $e")
-            }
-            try {
                 existing.shutdown()
             } catch (e: Exception) {
                 logger.logWarning("VoiceControl stale handler shutdown failed: $e")
@@ -249,29 +241,13 @@ class VoiceControl(
             }
             return
         }
-        try {
-            voiceLink.addUdpHandler(created)
-        } catch (e: Exception) {
-            logger.logWarning("VoiceControl UDP attach failed; detaching TCP side: $e")
-            try {
-                session.removeTcpHandler(created)
-            } catch (detachError: Exception) {
-                logger.logWarning("VoiceControl TCP detach after UDP failure failed: $detachError")
-            }
-            try {
-                created.shutdown()
-            } catch (shutdownError: Exception) {
-                logger.logWarning("VoiceControl orphan shutdown failed: $shutdownError")
-            }
-            return
-        }
         voiceLink.setTargetFramesPerPacket(created.getFramesPerPacket())
         created.setFramesPerPacketListener { fpp ->
             try {
                 voiceLink.setTargetFramesPerPacket(fpp)
             } catch (e: Exception) {
                 // Must never throw off the audio thread; counting on the
-                // target setter to be non-blocking (see LegacyVoiceLink).
+                // target setter to be non-blocking.
                 if (e is CancellationException) throw e
                 logger.logWarning("VoiceControl FPP forward failed: $e")
             }
@@ -290,11 +266,6 @@ class VoiceControl(
             session?.removeTcpHandler(existing)
         } catch (e: Exception) {
             logger.logWarning("VoiceControl TCP detach failed: $e")
-        }
-        try {
-            voiceLink.removeUdpHandler(existing)
-        } catch (e: Exception) {
-            logger.logWarning("VoiceControl UDP detach failed: $e")
         }
         try {
             existing.shutdown()
@@ -320,7 +291,7 @@ class VoiceControl(
             .setContext(context)
             .setLogger(logger)
             .setEncodeListener(encodeListener)
-            .setTalkingListener(talkingListener)
+            .setRenderDriver(voiceLink)
             .setTalkPublisher(talkPublisher)
 
         builder.setTargetBitrate(currentSettings.targetBitrate)

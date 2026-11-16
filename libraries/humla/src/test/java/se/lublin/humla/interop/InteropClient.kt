@@ -17,7 +17,6 @@
 
 package se.lublin.humla.interop
 
-import java.io.IOException
 import java.time.Clock
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CoroutineScope
@@ -36,9 +35,10 @@ import se.lublin.humla.client.ServerEndpoint
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.client.VoiceLifecycle
+import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.DefaultTransportFactory
-import se.lublin.humla.net.LegacyVoiceLink
 import se.lublin.humla.net.VoiceFormat
+import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.voice.TalkActivity
@@ -123,7 +123,12 @@ object InteropClient {
     @JvmStatic
     fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val link = LegacyVoiceLink(tunnelSink = {})
+        // Unconfined: harness commands apply synchronously like the unit
+        // tests, so no second thread exists even in the harness.
+        val link = VoiceEngine(
+            tunnelSink = {},
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+        )
         val blocked = when (voice) {
             Voice.UDP_SILENTLY_BLOCKED -> NoUdpVoice(link, reportSocketFailure = false)
             Voice.UDP_SOCKET_FAILS -> NoUdpVoice(link, reportSocketFailure = true)
@@ -326,24 +331,24 @@ object InteropClient {
  * not identical to wire-level blocking, where the client still sends.
  */
 private class NoUdpVoice(
-    private val delegate: LegacyVoiceLink,
+    private val delegate: VoiceEngine,
     private val reportSocketFailure: Boolean,
 ) : VoiceLink by delegate,
     VoiceLifecycle by delegate {
-    override fun startVoice(host: String, port: Int, format: VoiceFormat) {
+    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
         // UDP stays closed for the session (the format is still fixed); report
-        // the socket failure through the listener callback HumlaUDP itself
-        // would use, or stay silent.
+        // the socket failure the way the native socket does when connect
+        // fails, or stay silent for the 20 s zero-counter giveup.
         delegate.startVoiceWithoutUdp(format)
         if (reportSocketFailure) {
-            delegate.onUDPConnectionError(IOException("interop: UDP socket cannot be opened"))
+            delegate.onUdpUnavailable()
         }
     }
 }
 
 class HumlaClientHandle(
     val client: HumlaClient,
-    val voice: LegacyVoiceLink,
+    val voice: VoiceEngine,
     private val scope: CoroutineScope,
 ) {
     fun disconnectAndClose() {

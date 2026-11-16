@@ -33,6 +33,9 @@ import android.util.Log
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,7 +45,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
-import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.audio.AndroidAudioPlatform
 import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.audio.ScoLink
@@ -81,7 +83,7 @@ import se.lublin.humla.model.WhisperTargetList
 import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.HumlaUDPMessageType
-import se.lublin.humla.net.LegacyVoiceLink
+import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.StateEventLogger
@@ -214,7 +216,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     private var stateLogger: StateEventLogger? = null
 
-    private lateinit var voiceLink: LegacyVoiceLink
+    private lateinit var voiceLink: VoiceEngine
     private lateinit var client: HumlaClient
     private val networkFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -255,14 +257,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                     if (e is CancellationException) throw e
                     Log.w(TAG, "Talking-state update after unsync", e)
                 }
-            }
-        }
-
-    private val mAudioOutputListener: AudioOutput.AudioOutputListener =
-        object : AudioOutput.AudioOutputListener {
-            override fun getUser(session: Int): IUser? {
-                if (_sessionState.value.server.users[session] == null) return null
-                return UserHandle(session, sessionState, talkPublisher.talkActivity)
             }
         }
 
@@ -424,15 +418,22 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         routeControl.onInit()
         routeControl.start()
 
+        // One voice control thread, shared by VoiceControl (audio
+        // lifecycle) and VoiceEngine (network commands): the spec's
+        // single executor for start/stop, in command order. Sharing it
+        // keeps teardown and destroy serialized without a second thread.
+        val voiceThread = Dispatchers.IO.limitedParallelism(1)
         // Application-scoped voice link (survives reconnects). The tunnel sink
         // routes to the current session's transport (present only in tunnel mode).
-        voiceLink = LegacyVoiceLink(
+        voiceLink = VoiceEngine(
             tunnelSink = { packet ->
                 try {
                     currentSession()?.transport?.sendTunnelled(packet)
                 } catch (ignored: Exception) {
                 }
             },
+            talkPublisher = talkPublisher,
+            scope = CoroutineScope(SupervisorJob() + voiceThread),
         )
 
         policyCollector = PolicyCollector(
@@ -444,7 +445,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             context = this,
             logger = this,
             encodeListener = mAudioInputListener,
-            talkingListener = mAudioOutputListener,
             talkPublisher = talkPublisher,
             routeStates = routeControl.state,
             policies = policyCollector.policy,
@@ -452,7 +452,17 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             prefs = routePrefsFlow,
             voiceLink = voiceLink,
             appScope = lifecycleScope,
+            controlDispatcher = voiceThread,
         )
+        // Policy push (5a.3b): the collector maps SessionState to VoicePolicy
+        // and VoiceEngine forwards it to the native sender filter.
+        lifecycleScope.launch {
+            try {
+                policyCollector.policy.collect { voiceLink.setPolicy(it) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+        }
 
         lifecycleScope.launch {
             try {
@@ -881,9 +891,34 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             if (::routeControl.isInitialized) routeControl.close()
         } catch (ignored: Exception) {
         }
-        try {
-            if (::voiceControl.isInitialized) voiceControl.close()
+        // Voice teardown order: VoiceControl joins render (its close is
+        // async) before the native engine is destroyed, without blocking
+        // main. VoiceEngine.close is itself async; chaining keeps destroy
+        // after the render join so the RenderGuard assert never fires.
+        val voiceTeardown = try {
+            if (::voiceControl.isInitialized) voiceControl.close() else null
         } catch (ignored: Exception) {
+            null
+        }
+        if (voiceTeardown != null) {
+            try {
+                voiceTeardown.invokeOnCompletion {
+                    try {
+                        voiceLink.close()
+                    } catch (ignored: Exception) {
+                    }
+                }
+            } catch (ignored: Exception) {
+                try {
+                    voiceLink.close()
+                } catch (ignored2: Exception) {
+                }
+            }
+        } else {
+            try {
+                voiceLink.close()
+            } catch (ignored: Exception) {
+            }
         }
         try {
             if (::policyCollector.isInitialized) policyCollector.close()
@@ -892,10 +927,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         _sessionState.value = emptySessionState()
         resetVoiceTargetSilent()
         releaseWifiLock()
-        try {
-            voiceLink.close()
-        } catch (ignored: Exception) {
-        }
         super.onDestroy()
     }
 
@@ -1178,7 +1209,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             voiceSettingsFlow.value = nextSettings
         }
         // Interim encoder target for SessionStats.currentBandwidth until the
-        // step-5a VoicePolicy carries real values (see LegacyVoiceLink).
+        // step-5a VoicePolicy carries real values (VoiceEngine status).
         if (delta.inputQuality != null) {
             try {
                 voiceLink.setTargetBitrate(delta.inputQuality)

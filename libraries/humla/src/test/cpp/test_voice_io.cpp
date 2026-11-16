@@ -21,17 +21,25 @@
 // quanta of at most 60 ms, and folds talk transitions into a level table.
 
 #include "TestHarness.h"
+#include "CryptStateOCB2.h"
+#include "VoiceCodec.h"
 #include "VoiceIo.h"
 #include "VoiceNotifier.h"
+#include "VoicePolicy.h"
+#include "VoiceReceive.h"
 #include "VoiceRings.h"
 #include "VoiceTalk.h"
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -41,6 +49,10 @@ using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
 using mumla::audio::IOutputDecoder;
 using mumla::audio::OutputTalkState;
+using humla::crypto::CryptStateOCB2;
+using mumla::voice_io::PolicyCell;
+using mumla::voice_io::PolicySnapshot;
+using mumla::voice_io::VoiceReceive;
 using mumla::voice_io::SpscRing;
 using mumla::voice_io::TalkCell;
 using mumla::voice_io::TalkPublication;
@@ -518,6 +530,512 @@ void testClearWhileStoppedPublishesEmptyAndEngineSurvives() {
               << std::endl;
 }
 
+void testAwaitWorkPushInboundWakes() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    std::atomic<bool> woke{false};
+    std::thread waiter([&] { woke.store(io.awaitWork(-1)); });
+    // Let the waiter enter the semaphore before pushing.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    TEST_ASSERT_TRUE(io.pushInbound(makePacket(91, 0)));
+    waiter.join();
+    TEST_ASSERT_TRUE(woke.load());
+    std::cout << "  [PASS] testAwaitWorkPushInboundWakes" << std::endl;
+}
+
+void testAwaitWorkPushTunnelWakes() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    std::atomic<bool> woke{false};
+    std::thread waiter([&] { woke.store(io.awaitWork(-1)); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    TEST_ASSERT_TRUE(io.pushTunnel(makePacket(92, 0)));
+    waiter.join();
+    TEST_ASSERT_TRUE(woke.load());
+    std::cout << "  [PASS] testAwaitWorkPushTunnelWakes" << std::endl;
+}
+
+void testAwaitWorkStopWakes() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    std::atomic<bool> done{false};
+    std::thread waiter([&] {
+        io.awaitWork(-1);
+        done.store(true);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    io.wakeForStop();
+    waiter.join();
+    TEST_ASSERT_TRUE(done.load());
+    std::cout << "  [PASS] testAwaitWorkStopWakes" << std::endl;
+}
+
+void testAwaitWorkTimeoutFires() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    const auto start = std::chrono::steady_clock::now();
+    TEST_ASSERT_FALSE(io.awaitWork(20));
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    TEST_ASSERT_TRUE(elapsed >= std::chrono::milliseconds(15));
+    TEST_ASSERT_TRUE(elapsed < std::chrono::milliseconds(500));
+    std::cout << "  [PASS] testAwaitWorkTimeoutFires" << std::endl;
+}
+
+void testAwaitWorkStressLosesNoWakeup() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    constexpr int kRounds = 200;
+    for (int i = 0; i < kRounds; ++i) {
+        std::atomic<bool> woke{false};
+        std::thread waiter([&] { woke.store(io.awaitWork(1000)); });
+        // Push immediately, with and without a settle delay on alternate
+        // rounds: either the push lands before the waiter's ring check
+        // (returns without waiting) or it sees idle and posts.
+        if ((i & 1) == 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        TEST_ASSERT_TRUE(io.pushInbound(makePacket(93, static_cast<uint32_t>(i))));
+        waiter.join();
+        TEST_ASSERT_TRUE(woke.load());
+        // Drain so the next round starts empty.
+        std::vector<int16_t> pcm(kFrame * 2);
+        VoiceIo::RenderOut result;
+        io.render(pcm.data(), pcm.size(), &result);
+    }
+    std::cout << "  [PASS] testAwaitWorkStressLosesNoWakeup" << std::endl;
+}
+
+void testPolicyDropsMutedOverUdpAndTunnel() {
+    g_testCount++;
+    PolicyCell cell;
+    const int32_t muted[] = {7};
+    const int32_t known[] = {7, 8};
+    cell.publish(muted, 1, known, 2, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 7));
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 8));
+    std::cout << "  [PASS] testPolicyDropsMutedOverUdpAndTunnel" << std::endl;
+}
+
+void testPolicyUnknownHoldsNoSlot() {
+    g_testCount++;
+    PolicyCell cell;
+    const int32_t muted[] = {};
+    const int32_t known[] = {11};
+    cell.publish(muted, 0, known, 1, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 99));
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 11));
+    std::cout << "  [PASS] testPolicyUnknownHoldsNoSlot" << std::endl;
+}
+
+void testPolicyKnownOverflowFailsOpen() {
+    g_testCount++;
+    PolicyCell cell;
+    int32_t known[300];
+    for (int i = 0; i < 300; ++i) known[i] = 1000 + i;
+    cell.publish(nullptr, 0, known, 300, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(snap.knownOverflow);
+    TEST_ASSERT_EQ(snap.knownCount, mumla::voice_io::kPolicyListCapacity);
+    // Overflow fails open: unknown passes, muted still drops.
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 9999));
+    const int32_t muted[] = {9999};
+    cell.publish(muted, 1, known, 300, false);
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 9999));
+    TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 8888));
+    std::cout << "  [PASS] testPolicyKnownOverflowFailsOpen" << std::endl;
+}
+
+void testSenderFilterEndToEndUdpAndTunnel() {
+    g_testCount++;
+    // Done-when (e): muted silent over UDP and tunnel, unknown holds no
+    // slot, overflow fail-open — through handlePlaintext/handleTunnelled,
+    // not just the shouldDrop predicate.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const int32_t muted[] = {7};
+    const int32_t known[] = {7, 8};
+    policy.publish(muted, 1, known, 2, false);
+    int udpSurvivors = 0;
+    int tunnelSurvivors = 0;
+    bool lastTunnel = false;
+    rx.setVoiceSink([&](const InboundPacket* frames, size_t count, bool tunnel) {
+        (void)frames;
+        if (tunnel) tunnelSurvivors += static_cast<int>(count);
+        else udpSurvivors += static_cast<int>(count);
+        lastTunnel = tunnel;
+    });
+    // Minimal legacy receive datagram: header opus/target0, varint
+    // session, varint seq, varint size header (4-byte opus, no terminator),
+    // 4-byte opus payload. Varints are full Mumble encoding so large
+    // session IDs (e.g. 9999) travel intact, as on the wire.
+    auto putVarint = [](uint64_t u, uint8_t* out) -> size_t {
+        if (u <= 0x7FULL) {
+            out[0] = static_cast<uint8_t>(u);
+            return 1;
+        }
+        if (u <= 0x3FFFULL) {
+            out[0] = static_cast<uint8_t>((u >> 8) | 0x80);
+            out[1] = static_cast<uint8_t>(u & 0xFF);
+            return 2;
+        }
+        if (u <= 0x1FFFFFULL) {
+            out[0] = static_cast<uint8_t>((u >> 16) | 0xC0);
+            out[1] = static_cast<uint8_t>((u >> 8) & 0xFF);
+            out[2] = static_cast<uint8_t>(u & 0xFF);
+            return 3;
+        }
+        // Sessions are int32: the 4-byte form covers the whole range.
+        out[0] = 0xF0;
+        out[1] = static_cast<uint8_t>((u >> 24) & 0xFF);
+        out[2] = static_cast<uint8_t>((u >> 16) & 0xFF);
+        out[3] = static_cast<uint8_t>((u >> 8) & 0xFF);
+        out[4] = static_cast<uint8_t>(u & 0xFF);
+        return 5;
+    };
+    auto buildLegacy = [&](int32_t session, uint32_t seq, uint8_t* out) -> size_t {
+        size_t pos = 0;
+        out[pos++] = static_cast<uint8_t>((mumla::voice_codec::kLegacyVoiceOpus << 5) & 0xFF);
+        pos += putVarint(static_cast<uint64_t>(static_cast<int64_t>(session)), out + pos);
+        pos += putVarint(seq, out + pos);
+        pos += putVarint(4, out + pos);
+        out[pos++] = 0xF8; out[pos++] = 1; out[pos++] = 2; out[pos++] = 3;
+        return pos;
+    };
+    uint8_t dg[16];
+    // Muted session over UDP: understood but silent (no sink, no slot).
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(7, 1, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 0);
+    // Allowed session over UDP: one survivor on the UDP path.
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(8, 2, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 1);
+    TEST_ASSERT_FALSE(lastTunnel);
+    // Unknown session over UDP: dropped, no audio and no slot.
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(99, 3, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 1);
+    // Muted session over tunnel: silent on the tunnel path too.
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(7, 4, dg)));
+    TEST_ASSERT_EQ(tunnelSurvivors, 0);
+    // Allowed session over tunnel: one survivor flagged tunnel.
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(8, 5, dg)));
+    TEST_ASSERT_EQ(tunnelSurvivors, 1);
+    TEST_ASSERT_TRUE(lastTunnel);
+    // Overflow fail-open: unknown passes, muted still drops (both paths).
+    // Wire sessions use the real large IDs now that varints are encoded
+    // properly, mirroring the predicate test's 9999/8888 pair.
+    int32_t many[300];
+    for (int i = 0; i < 300; ++i) many[i] = 1000 + i;
+    policy.publish(nullptr, 0, many, 300, false);
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(8888, 6, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 2);
+    const int32_t muted9999[] = {9999};
+    policy.publish(muted9999, 1, many, 300, false);
+    TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(9999, 7, dg)));
+    TEST_ASSERT_EQ(udpSurvivors, 2);
+    TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(9999, 8, dg)));
+    TEST_ASSERT_EQ(tunnelSurvivors, 1);
+    std::cout << "  [PASS] testSenderFilterEndToEndUdpAndTunnel" << std::endl;
+}
+
+void testPolicyGuardsReceiveVisibleOnly() {
+    g_testCount++;
+    // Pins the 5a.3b done-when lock-scope rule: the policy cell carries
+    // exactly the receive-visible sender-filter lists (muted + known) and
+    // nothing transmit-side (no bitrate, frames, voice target, PTT).
+    static_assert(sizeof(PolicySnapshot) <=
+                  (256 + 256) * sizeof(int32_t) + 32,
+                  "PolicySnapshot must stay the two filter lists plus flags");
+    PolicyCell cell;
+    const int32_t muted[] = {3};
+    const int32_t known[] = {3, 4};
+    cell.publish(muted, 1, known, 2, false);
+    PolicySnapshot snap;
+    TEST_ASSERT_TRUE(cell.tryRead(&snap));
+    TEST_ASSERT_EQ(snap.mutedCount, 1u);
+    TEST_ASSERT_EQ(snap.knownCount, 2u);
+    std::cout << "  [PASS] testPolicyGuardsReceiveVisibleOnly" << std::endl;
+}
+
+void testReceiveResyncGateRateLimited() {
+    g_testCount++;
+    // Exactly one rate-limited request: long-good then failure fires once,
+    // an immediate second failure is suppressed, a failure after the gap
+    // fires again. Times in microseconds.
+    TEST_ASSERT_TRUE(VoiceReceive::shouldRequestResync(6000000, 6000000, 0));
+    TEST_ASSERT_FALSE(VoiceReceive::shouldRequestResync(6000001, 6000000, 6000000));
+    TEST_ASSERT_TRUE(VoiceReceive::shouldRequestResync(11000001, 9000000, 6000000));
+    // Recent good never fires, and no last-good never fires.
+    TEST_ASSERT_FALSE(VoiceReceive::shouldRequestResync(9000000, 1000000, 0));
+    TEST_ASSERT_FALSE(VoiceReceive::shouldRequestResync(9000000, -1, 0));
+    std::cout << "  [PASS] testReceiveResyncGateRateLimited" << std::endl;
+}
+
+void testReceiveCryptCountsMatchKotlin() {
+    g_testCount++;
+    // Done-when crypt-count parity, recorded in
+    // test/fixtures/crypt-counts/5a.3b-kotlin-parity.txt: the Kotlin path
+    // reports good/late/lost/resync for this scripted sequence through the
+    // same OCB2 engine, so the native path must reproduce the tuple or the
+    // transport's health check mis-falls-back. The fixture file is the
+    // record; the expectations below are asserted against both the live
+    // counters and the file so the two cannot drift apart.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {16, 32, 48, 64, 80, 96, 112, 128,
+                             144, 160, 176, 192, 208, 224, 240, 0};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    const uint8_t secret[10] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'};
+    // Six sender packets s1..s6; delivered out of order below.
+    uint8_t sent[6][14];
+    for (int i = 0; i < 6; ++i) {
+        TEST_ASSERT_TRUE(sender.encrypt(secret, sent[i], 10));
+    }
+    int32_t good = 0, late = 0, lost = 0, resync = 0;
+    // 1. In order: good=1.
+    rx.handleCrypted(sent[0], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(late, 0);
+    TEST_ASSERT_EQ(lost, 0);
+    TEST_ASSERT_EQ(resync, 0);
+    // 2. Replay rejected: counters hold.
+    rx.handleCrypted(sent[0], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(late, 0);
+    TEST_ASSERT_EQ(lost, 0);
+    // 3. Skip s2..s5, deliver s6: lost 4 on the next good.
+    rx.handleCrypted(sent[5], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 2);
+    TEST_ASSERT_EQ(lost, 4);
+    // 4. Late s4 after s6: the fixture tuple (good=3, late=1, lost=3).
+    rx.handleCrypted(sent[3], 14);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 3);
+    TEST_ASSERT_EQ(late, 1);
+    TEST_ASSERT_EQ(lost, 3);
+    TEST_ASSERT_EQ(resync, 0);
+#ifdef MUMLA_CRYPT_COUNT_FIXTURE_DIR
+    // The file is authoritative: live counters must equal the record.
+    {
+        std::filesystem::path file =
+            std::filesystem::path(MUMLA_CRYPT_COUNT_FIXTURE_DIR) /
+            "5a.3b-kotlin-parity.txt";
+        std::ifstream in(file);
+        TEST_ASSERT_TRUE(in.good());
+        int expGood = -1, expLate = -1, expLost = -1, expResync = -1;
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.rfind("good=", 0) == 0) expGood = std::stoi(line.substr(5));
+            else if (line.rfind("late=", 0) == 0) expLate = std::stoi(line.substr(5));
+            else if (line.rfind("lost=", 0) == 0) expLost = std::stoi(line.substr(5));
+            else if (line.rfind("resync=", 0) == 0) expResync = std::stoi(line.substr(7));
+        }
+        TEST_ASSERT_EQ(expGood, 3);
+        TEST_ASSERT_EQ(expLate, 1);
+        TEST_ASSERT_EQ(expLost, 3);
+        TEST_ASSERT_EQ(expResync, 0);
+        TEST_ASSERT_EQ(good, expGood);
+        TEST_ASSERT_EQ(late, expLate);
+        TEST_ASSERT_EQ(lost, expLost);
+        TEST_ASSERT_EQ(resync, expResync);
+    }
+#endif
+    // 5. Forced decrypt failure with a recent good decrypt: the rate
+    // limiter suppresses the resync request (the 5 s gate is pinned pure
+    // in testReceiveResyncGateRateLimited; firing is pinned next).
+    int resyncs = 0;
+    rx.setResyncSink([&] { resyncs++; });
+    uint8_t tampered[14];
+    memcpy(tampered, sent[5], 14);
+    tampered[5] ^= 0xFF;
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 0);
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 3);
+    // 6. Rekey (new IV after the resync round trip): voice resumes. Rekey
+    // resets the counters on both sides (as Kotlin setKeys does), so good
+    // restarts at 1 with the first post-rekey decrypt.
+    const uint8_t key2[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    TEST_ASSERT_TRUE(rx.setKeys(key2, key2, key2));
+    TEST_ASSERT_TRUE(sender.setKey(key2, key2, key2));
+    uint8_t fresh[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, fresh, 10));
+    TEST_ASSERT_TRUE(rx.handleCrypted(fresh, 14));
+    rx.getStats(&good, &late, &lost, &resync);
+    TEST_ASSERT_EQ(good, 1);
+    TEST_ASSERT_EQ(lost, 0);
+    TEST_ASSERT_EQ(late, 0);
+    std::cout << "  [PASS] testReceiveCryptCountsMatchKotlin" << std::endl;
+}
+
+void testReceiveResyncFiresExactlyOnce() {
+    g_testCount++;
+    // Done-when resync recovery (firing half): a forced decrypt failure
+    // with an old good decrypt raises exactly one rate-limited request;
+    // an immediate second failure is suppressed; after the gap it fires
+    // again; voice resumes after the new IV. Backdates the clocks instead
+    // of sleeping out the 5 s windows (test-only setters, never live).
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {21, 22, 23, 24, 25, 26, 27, 28,
+                             29, 30, 31, 32, 33, 34, 35, 36};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    const uint8_t secret[10] = {'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'};
+    uint8_t packet[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    rx.handleCrypted(packet, 14);
+    int32_t good = 0;
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    // Age the good decrypt past the 5 s window; the request clock starts
+    // at zero (long ago), so the next failure must fire exactly once.
+    rx.backdateLastGoodForTest(6000000);
+    int resyncs = 0;
+    rx.setResyncSink([&] { resyncs++; });
+    uint8_t tampered[14];
+    memcpy(tampered, packet, 14);
+    tampered[5] ^= 0xFF;
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 1);
+    // Immediate second failure: suppressed by the 5 s request gap.
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 1);
+    // After the gap (clocks rewound for determinism): fires again.
+    rx.setLastRequestUsForTest(0);
+    rx.backdateLastGoodForTest(6000000);
+    TEST_ASSERT_FALSE(rx.handleCrypted(tampered, 14));
+    TEST_ASSERT_EQ(resyncs, 2);
+    // New IV after the round trip: voice resumes at good=1.
+    const uint8_t key2[16] = {41, 42, 43, 44, 45, 46, 47, 48,
+                              49, 50, 51, 52, 53, 54, 55, 56};
+    TEST_ASSERT_TRUE(rx.setKeys(key2, key2, key2));
+    TEST_ASSERT_TRUE(sender.setKey(key2, key2, key2));
+    uint8_t fresh[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, fresh, 10));
+    rx.handleCrypted(fresh, 14);
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    std::cout << "  [PASS] testReceiveResyncFiresExactlyOnce" << std::endl;
+}
+
+void testReceiveLoopbackPingFiresSink() {
+    g_testCount++;
+    // Full native loopback without a socket: frame a legacy ping, encrypt
+    // it the way the send seam does, decrypt + parse + dispatch it the way
+    // the receive loop does. Voice-data loopback with real Opus is pinned
+    // by the UDP interop scenario instead.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 9, 8, 7, 6, 5, 4};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    uint8_t framed[64];
+    const size_t framedLen =
+        mumla::voice_codec::framePing(mumla::voice_codec::UdpFormat::LEGACY,
+                                      12345678, framed, sizeof(framed));
+    TEST_ASSERT_TRUE(framedLen > 0);
+    uint64_t gotTimestamp = 0;
+    rx.setPingSink([&](const VoiceReceive::PingReport& report) {
+        gotTimestamp = report.timestampMicros;
+    });
+    uint8_t crypted[68];
+    TEST_ASSERT_TRUE(sender.encrypt(framed, crypted, static_cast<uint32_t>(framedLen)));
+    TEST_ASSERT_TRUE(rx.handleCrypted(crypted, framedLen + 4));
+    TEST_ASSERT_EQ(gotTimestamp, 12345678u);
+    int32_t good = 0;
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    std::cout << "  [PASS] testReceiveLoopbackPingFiresSink" << std::endl;
+}
+
+void testClearDrainsRingsAndCountsResetDiscards() {
+    g_testCount++;
+    // Session-start reset: stale unrendered voice must never play into the
+    // next session. Drained packets count as drops (arrived, never heard).
+    VoiceIo io(fakeFactory());
+    for (size_t i = 0; i < 10; ++i) {
+        TEST_ASSERT_TRUE(io.pushInbound(makePacket(5, static_cast<uint32_t>(i))));
+    }
+    for (size_t i = 0; i < 4; ++i) {
+        TEST_ASSERT_TRUE(io.pushTunnel(makePacket(6, static_cast<uint32_t>(i))));
+    }
+    io.clear();
+    std::vector<int16_t> pcm(kFrame * 2);
+    VoiceIo::RenderOut result;
+    io.render(pcm.data(), pcm.size(), &result);
+    TEST_ASSERT_EQ(result.samples, 0u);
+    TEST_ASSERT_EQ(result.droppedInbound, 10u);
+    TEST_ASSERT_EQ(result.droppedTunnel, 4u);
+    TEST_ASSERT_EQ(result.talk.count, 0u);
+    std::cout << "  [PASS] testClearDrainsRingsAndCountsResetDiscards" << std::endl;
+}
+
+void testReceiveStopLeavesNothing() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
+    TEST_ASSERT_TRUE(rx.running());
+    TEST_ASSERT_TRUE(rx.socketFd() >= 0);
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.running());
+    TEST_ASSERT_EQ(rx.socketFd(), -1);
+    // Second stop is safe (idempotent close, no join-from-nowhere).
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.sendDatagram(nullptr, 0));
+    // Restart after stop: the socket is closed and the receive thread was
+    // joined, so start binds fresh and the path carries voice again.
+    // (Done-when (d) receive half: socket closed, receive thread exited.
+    // The session-lifetime notifier stops in nativeStop and restarts in
+    // nativeReset; its own start/stop/restart is pinned by the notifier
+    // unit tests, and the Reset-on-Start ordering by VoiceEngineTest.)
+    TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
+    TEST_ASSERT_TRUE(rx.running());
+    TEST_ASSERT_TRUE(rx.socketFd() >= 0);
+    const uint8_t key[16] = {51, 52, 53, 54, 55, 56, 57, 58,
+                             59, 60, 61, 62, 63, 64, 65, 66};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    CryptStateOCB2 sender;
+    TEST_ASSERT_TRUE(sender.setKey(key, key, key));
+    const uint8_t secret[10] = {'z', 'x', 'c', 'v', 'b', 'n', 'm', '1', '2', '3'};
+    uint8_t packet[14];
+    TEST_ASSERT_TRUE(sender.encrypt(secret, packet, 10));
+    rx.handleCrypted(packet, 14);
+    int32_t good = 0;
+    rx.getStats(&good, nullptr, nullptr, nullptr);
+    TEST_ASSERT_EQ(good, 1);
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.running());
+    TEST_ASSERT_EQ(rx.socketFd(), -1);
+    // Notifier thread: start/stop joins the thread; second stop is safe
+    // and a restart works, so no thread is left behind either.
+    TalkCell cell;
+    VoiceNotifier notifier(&cell, [](const TalkPublication&) {});
+    notifier.start();
+    notifier.stop();
+    notifier.stop();
+    notifier.start();
+    notifier.stop();
+    std::cout << "  [PASS] testReceiveStopLeavesNothing" << std::endl;
+}
+
 } // namespace
 
 void run_voice_io_tests() {
@@ -540,6 +1058,22 @@ void run_voice_io_tests() {
     testClearEmptiesTalkLevels();
     testVoiceIoEnginesArePrivatelyOwned();
     testClearWhileStoppedPublishesEmptyAndEngineSurvives();
+    testAwaitWorkPushInboundWakes();
+    testAwaitWorkPushTunnelWakes();
+    testAwaitWorkStopWakes();
+    testAwaitWorkTimeoutFires();
+    testAwaitWorkStressLosesNoWakeup();
+    testPolicyDropsMutedOverUdpAndTunnel();
+    testPolicyUnknownHoldsNoSlot();
+    testPolicyKnownOverflowFailsOpen();
+    testSenderFilterEndToEndUdpAndTunnel();
+    testPolicyGuardsReceiveVisibleOnly();
+    testReceiveResyncGateRateLimited();
+    testReceiveCryptCountsMatchKotlin();
+    testReceiveResyncFiresExactlyOnce();
+    testReceiveLoopbackPingFiresSink();
+    testClearDrainsRingsAndCountsResetDiscards();
+    testReceiveStopLeavesNothing();
 }
 
 int main() {

@@ -28,10 +28,10 @@ package se.lublin.humla
  * Loading happens once, on first touch of this object; the outcome is cached.
  * [ensureLoaded] throws an [IllegalStateException] carrying the original
  * error, which callers either propagate (fail loudly) or convert into their
- * own failure type. Reporting a load failure as a `VoiceEvent.PipelineError`
- * on release builds lands with the `VoiceEngine` facade (step 5a.3), which
- * owns that event type; JVM tests will inject a fake native layer there
- * instead of catching `UnsatisfiedLinkError`.
+ * own failure type. Since step 5a.3b the `VoiceEngine` facade converts that
+ * error into a `VoiceEvent.PipelineError` on release builds (throwing in
+ * debug), and JVM tests inject a fake native layer instead of catching
+ * `UnsatisfiedLinkError`.
  */
 object HumlaNative {
     const val LIBRARY_NAME = "humlaaudio"

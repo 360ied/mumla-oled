@@ -129,12 +129,13 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
 )
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
 
-# 5a.3a native render lifecycle: the JNI destroy/clear paths must keep the
+# 5a.3b native receive lifecycle: the JNI destroy/reset paths must keep the
 # debug assert that the render thread is stopped (RenderGuard protocol in
-# NativeVoiceIoJni.cpp). Absent voice_io passes trivially (master); once it
-# lands, removing an assert or the guard fails the gate.
+# NativeVoiceEngineJni.cpp: render is pipeline-owned in 5a, so reset runs at
+# the next Start when no render is live). Once the file lands, removing an
+# assert or the guard fails the gate.
 VOICE_IO_LIFECYCLE_FILE = (
-    "libraries/humla/src/main/jni/voice_io/NativeVoiceIoJni.cpp"
+    "libraries/humla/src/main/jni/voice_io/NativeVoiceEngineJni.cpp"
 )
 RE_RENDER_GUARD_USE = re.compile(r"\bRenderGuard\s+\w+")
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")

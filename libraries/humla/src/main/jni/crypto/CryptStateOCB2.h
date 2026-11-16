@@ -51,6 +51,11 @@ public:
     bool setDecryptIV(const uint8_t *div);
     bool setEncryptIV(const uint8_t *eiv);
 
+    // Session end (Stop, control thread, receive already joined): zero key
+    // material and return to the invalid state, so nothing lingers across
+    // sessions. Stats restart from zero, like a fresh setKey.
+    void clear();
+
     void getEncryptIV(uint8_t out[16]) const;
     void getDecryptIV(uint8_t out[16]) const;
     void getRawKey(uint8_t out[16]) const;
@@ -75,6 +80,11 @@ public:
     int32_t getResync() const;
 
     int64_t getLastGoodElapsedUs() const;
+
+    // Test-only: backdate the last-good timestamp so the resync gate sees
+    // an old good decrypt without a 5 s sleep. No effect when no good
+    // decrypt has happened yet. Never called on the realtime path.
+    void backdateLastGoodForTest(uint64_t micros);
 
 private:
     uint8_t raw_key[AES_KEY_SIZE_BYTES];

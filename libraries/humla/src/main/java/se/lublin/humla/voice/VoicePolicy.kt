@@ -76,6 +76,12 @@ data class VoicePolicy(
      * render-side muting stays with the legacy AudioOutput model lookup.
      */
     val locallyMuted: PersistentSet<Int>,
+    /**
+     * Senders the native filter accepts (5a.3b). Beside locallyMuted
+     * through the same policy sequence lock; overflow fails open (see
+     * voice.md sender filter).
+     */
+    val knownSessions: PersistentSet<Int>,
 ) {
     companion object {
         fun mutedFallback(settings: VoiceSettings): VoicePolicy = VoicePolicy(
@@ -85,6 +91,7 @@ data class VoicePolicy(
             bitrate = settings.targetBitrate,
             framesPerPacket = settings.targetFramesPerPacket,
             locallyMuted = persistentSetOf(),
+            knownSessions = persistentSetOf(),
         )
     }
 }
@@ -106,5 +113,6 @@ fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
         framesPerPacket = encoder.framesPerPacket,
         locallyMuted = s.server.users.values.filter { it.localMuted }
             .map { it.session }.toPersistentSet(),
+        knownSessions = s.server.users.keys.toPersistentSet(),
     )
 }

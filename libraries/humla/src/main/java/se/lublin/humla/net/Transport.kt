@@ -74,8 +74,8 @@ enum class UdpFormat { LEGACY, PROTOBUF }
 
 /**
  * The session's voice format: the UDP framing plus the server's legacy
- * version, which keys the 1.2.2 codec workaround. Interim carrier of
- * `VoiceCommand.Start`'s `format` and `legacyServerVersion` fields.
+ * version, which keys the 1.2.2 codec workaround. Carried by
+ * `VoiceCommand.Start` as `format` (5a.3b facade).
  */
 data class VoiceFormat(val udp: UdpFormat, val legacyServerVersion: Int) {
     companion object {
@@ -109,7 +109,7 @@ sealed interface Inbound {
 
 /**
  * Voice side of the transport boundary. Implemented by the VoiceEngine
- * (step 5a); until then by [LegacyVoiceLink] over HumlaUDP/CryptState.
+ * (step 5a.3b native receive and transport).
  */
 interface VoiceLink {
     fun setKeys(keys: CryptKeys)
@@ -117,6 +117,12 @@ interface VoiceLink {
     fun encryptIv(): ByteString
     fun submit(command: VoiceCommand)
     fun queueTunnelled(packet: ByteArray)
+    /**
+     * Another user left: reaches the render thread as a control item on
+     * the tunnel ring, ordered after that user's queued tunnelled voice.
+     * Called on the session message coroutine, the tunnel ring's producer.
+     */
+    fun removeUser(session: Int)
     val events: SharedFlow<VoiceEvent>
     val status: StateFlow<VoiceStatus>
 }
@@ -125,6 +131,21 @@ interface VoiceLink {
 sealed interface VoiceCommand {
     data class SetVoiceRoute(val udp: Boolean) : VoiceCommand
     data class SendPing(val timestampMicros: Long) : VoiceCommand
+    /**
+     * Start network voice (5a.3b facade). Carries the session's UDP
+     * address plus the transport's per-session decisions, fixed once:
+     * the keys (when CryptSetup already arrived) and the UDP format with
+     * the legacy server version from the first Version (issue 17).
+     * No route: voice follows the transport's SetVoiceRoute, and Stop
+     * resets to tunnel so no route carries over.
+     */
+    data class Start(
+        val host: String,
+        val port: Int,
+        val keys: CryptKeys?,
+        val format: VoiceFormat,
+    ) : VoiceCommand
+    data object Stop : VoiceCommand
 }
 
 /** Events voice pushes to the transport. */
@@ -137,6 +158,16 @@ sealed interface VoiceEvent {
 
     data object CryptResyncRequested : VoiceEvent
     data object UdpUnavailable : VoiceEvent
+
+    /** Capture or playback stream cannot open; the session stays connected. */
+    data class PipelineError(val message: String) : VoiceEvent
+
+    /** The server bandwidth cap lowered the effective encoder settings. */
+    data class EncoderLimited(
+        val maxBandwidth: Int,
+        val bitrate: Int,
+        val framesPerPacket: Int,
+    ) : VoiceEvent
 }
 
 /**
@@ -149,6 +180,11 @@ data class VoiceStatus(
     val localCrypt: CryptCounts,
     val bitrate: Int = 40000,
     val framesPerPacket: Int = 2,
+    val running: Boolean = false,
+    val droppedOutbound: Long = 0,
+    val droppedInbound: Long = 0,
+    val droppedJitter: Long = 0,
+    val lastError: String? = null,
 ) {
     companion object {
         fun initial(): VoiceStatus = VoiceStatus(localCrypt = CryptCounts.zero())

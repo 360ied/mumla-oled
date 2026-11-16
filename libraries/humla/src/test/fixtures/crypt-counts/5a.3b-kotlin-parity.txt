@@ -1,0 +1,27 @@
+# 5a.3b crypt-count parity fixture.
+#
+# Provenance: the counting core is unchanged by 5a.3b. Master's Kotlin
+# CryptState is a thin wrapper over this same native OCB2 engine (stats
+# buffer -> good/late/lost/resync) with the same 5 s resync rule in
+# HumlaUDP. The branch's additions to CryptStateOCB2.cpp are the test-only
+# backdate hook and a Stop-time clear() that zeroes key material (control
+# thread only, receive already joined, never on the decrypt path), so
+# neither touches the counting path below. The tuple is what the
+# pre-deletion path reports for this scripted sequence, and the native
+# test testReceiveCryptCountsMatchKotlin reproduces it through the same
+# core.
+#
+# Scripted sequence (one sender, one receiver, same key; s1..s6 are the
+# sender's 1st..6th encrypted packets):
+#   1. deliver s1            -> good=1
+#   2. replay s1             -> still good=1 (replay rejected, counters hold)
+#   3. deliver s6 (skip s2..s5, 4 lost) -> good=2, lost=4
+#   4. deliver s4 late       -> good=3, late=1, lost recovers one (lost=3)
+#   5. tampered packet with recent good -> suppressed, no resync, hold
+#   6. rekey (new IV)        -> counters reset, next good=1, lost=0, late=0
+#
+# Expected tuple after step 4 (before tamper/rekey):
+good=3
+late=1
+lost=3
+resync=0
