@@ -23,6 +23,20 @@
 -keepclassmembers class * implements se.lublin.humla.voice.NativeVoiceIo$VoiceIoListener {
     public void onTalkSnapshot(int[], int[], long, long, long);
 }
+# Step 5a.3b unified voice engine: the JNI entry points embed this class name
+# (Java_se_lublin_humla_voice_NativeVoiceEngine_*), and nativeCreate looks up
+# onUdpPing/onCryptResync/onUdpUnavailable/onTalkSnapshot on the listener
+# at runtime. Without these, release GetMethodID throws NoSuchMethodError
+# inside nativeCreate (an Error the Kotlin catch (Exception) does not catch),
+# SIGABRTing the transport reader on the first CryptSetup/UDP ping.
+-keep class se.lublin.humla.voice.NativeVoiceEngine { *; }
+-keep class se.lublin.humla.voice.NativeVoiceEngine$* { *; }
+-keepclassmembers class * implements se.lublin.humla.voice.NativeVoiceEngine$Listener {
+    public void onUdpPing(long, long, int);
+    public void onCryptResync();
+    public void onUdpUnavailable();
+    public void onTalkSnapshot(int[], int[], long, long, long);
+}
 # Step 5a.2 interim codec bridge: DecodedVoiceFrame/DecodedPing are
 # constructed only from native code (FindClass/GetMethodID/NewObject), so R8
 # concludes they are never instantiated and strips their <init>/fields.
