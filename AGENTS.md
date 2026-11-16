@@ -58,5 +58,5 @@ Edge Cases & Impact: <boundary conditions, blast radius>
 ## Code, Documentation & Licensing Standards
 
 - **App Naming**: Always call the application **Mumla OLED**, never "Mumla" in isolation.
-- **Markdown (GFM)**: Target GitHub Flavored Markdown (`markdownlint` and `cmark-gfm` are in `flake.nix`). Use portable relative links for repo files and canonical web URLs for upstream references—never `file:///` or local machine paths. Isolate ```` ```math ```` blocks with blank lines (never `$$ ... $$`, never inside lists), and write inline math as `$x$` without internal padding.
+- **Markdown (GFM)**: Target GitHub Flavored Markdown (`markdownlint` and `cmark-gfm` are in `flake.nix`). Use portable relative links for repo files and canonical web URLs for upstream references—never `file:///` or local machine paths. Use blank-line-isolated ```` ```math ```` blocks (not `$$ ... $$`; indent inside list items so numbering isn't split) and `$x$` without internal padding for inline math.
 - **Licensing (`GPL-3.0-or-later`)**: New source files must include the standard GPL-3.0-or-later header with `Copyright (C) <current year> Brian Zhu` (copy from a recent file in the same component) and preserve existing third-party/upstream attributions. No Apache/MIT/permissive headers.
