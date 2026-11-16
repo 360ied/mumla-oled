@@ -118,9 +118,10 @@ meaning, drop instance identity):
 
 ### 3a. Forward redaction (default)
 
-Edit the files (docs-only and skill edits go directly on `master` per the
-AGENTS.md documentation exception; code edits go through a dedicated
-worktree via `scripts/worktree.py`), stage with `git add`, and commit via
+Edit the files (use a dedicated worktree via `scripts/worktree.py` by
+default, or `master` only when the user explicitly requests a trivial
+standalone doc-only edit directly on `master` per AGENTS.md "Dedicated
+Worktrees"), stage with `git add`, and commit via
 the wrapper (see `../../../scripts/commit.py`) — never rewrite. Verify
 per §4, report, and stop without pushing.
 
