@@ -3,7 +3,7 @@
 ## Core Guardrails
 
 - **Dedicated Worktrees**: Conduct all feature, bugfix, experimental,
-  and documentation development in dedicated Git worktrees under
+  and standalone documentation development in dedicated Git worktrees under
   `.worktrees/<branch>`; never develop directly on `master` or switch
   the root repository off `master`. (Trivial standalone doc-only
   edits may optionally be made on `master` when explicitly requested
