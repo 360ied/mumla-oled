@@ -33,7 +33,7 @@
 | Murmur interop suite | `./scripts/test_interop.sh` | Not run by `check.sh` (>1 min, Linux `mumble-server`); run for transport/session/`voice_io` network changes |
 | Regenerate nanopb | `./scripts/gen_nanopb.sh` | Rebuilds `voice_codec/generated/MumbleUDP.pb.{c,h}` from `MumbleUDP.proto` + `MumbleUDP.options` |
 | Debug / Release APK | `nix develop --command ./gradlew assembleFossDebug` / `assembleFossRelease` | Release output: `app/build/outputs/apk/foss/release/mumla-foss-release.apk` (uses `app/signing.gradle` if present, else debug-signed) |
-| Install & launch (`adb`) | `nix develop --command ./gradlew :app:installFossDebug` && `nix develop --command adb shell am start -n se.lublin.mumla.oled15/se.lublin.mumla.app.MumlaActivity` | App ID is `se.lublin.mumla.oled15`; Java/Kotlin namespace is `se.lublin.mumla`. Use Nix `adb`, not `~/Android/Sdk` |
+| Install APK (`adb`) | `nix develop --command ./gradlew :app:installFossDebug` | App ID is `se.lublin.mumla.oled15`; Java/Kotlin namespace is `se.lublin.mumla`. Use Nix `adb` (not `~/Android/Sdk`); do not launch the app automatically |
 
 ## Commits & Versioning
 
