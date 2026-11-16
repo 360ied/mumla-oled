@@ -6,13 +6,14 @@
   and documentation development in dedicated Git worktrees under
   `.worktrees/<branch>`; never develop directly on `master` or switch
   the root repository off `master`. (Trivial standalone doc-only
-  edits may optionally be made on `master` when explicitly desired.)
-- **Completion Boundary**: A task is complete once changes are
-  committed and verified inside the worktree. **Never** autonomously
-  merge into `master`, push, or delete worktrees—leave the branch
-  intact and report for review. Merging (`mumla-merge`), cleanup
-  (`mumla-worktree-cleanup`), and releases (`mumla-release`) happen
-  only on explicit user request.
+  edits may optionally be made on `master` when explicitly requested
+  by the user.)
+- **Completion Boundary**: A code task is complete once changes are
+  verified after the final edit (`./scripts/check.sh`) and committed
+  inside the worktree. **Never** autonomously merge into `master`,
+  push, or delete worktrees—leave the branch intact and report for
+  review. Merging (`mumla-merge`), cleanup (`mumla-worktree-cleanup`),
+  and releases (`mumla-release`) happen only on explicit user request.
 - **Forward-Only History**: Never rewrite, rebase, squash, amend, or
   force-push commits—pushed or not. Fix mistakes with a new commit.
 - **Public Repository & Sensitive Information**: This is a publicly
@@ -59,11 +60,12 @@
   `buildCMake*`/`testNativeAudioEngine` while `assembleFossDebug`
   includes `buildCMake*`.
 - **Upstream Reference (`../mumble`)**: Reference upstream C++ code
-  and protocol schemas in `../mumble` (sibling of the *root*
-  repository—from inside `.worktrees/<branch>`, use the root-relative
-  path; e.g., `../mumble/src/Mumble.proto`,
-  `../mumble/src/MumbleUDP.proto`, connection/audio logic) to ensure
-  exact behavioral and protocol parity.
+  and protocol schemas in `../mumble` relative to the *root*
+  repository (e.g., `../mumble/src/Mumble.proto`,
+  `../mumble/src/MumbleUDP.proto`, connection/audio logic) for exact
+  behavioral and protocol parity. From inside `.worktrees/<branch>`,
+  adjust `../` depth (or resolve from the root repo), since bare
+  `../mumble` resolves inside `.worktrees/`.
 - **Skills**: Operational workflows live in `.agents/skills/`
   (`.claude/skills` symlink): `mumla-merge`, `mumla-release`,
   `mumla-worktree-cleanup`, `mumla-sensitive-redact`.
@@ -104,9 +106,10 @@
 - **Murmur interop suite**: `./scripts/test_interop.sh`
   Not run by `check.sh` (>1 min, Linux `mumble-server`); run for
   transport/session/`voice_io` network changes.
-- **Regenerate nanopb**: `./scripts/gen_nanopb.sh`
+- **Regenerate nanopb**:
+  `nix develop --command ./scripts/gen_nanopb.sh`
   Rebuilds `voice_codec/generated/MumbleUDP.pb.{c,h}` from
-  `MumbleUDP.proto` + `MumbleUDP.options`.
+  `MumbleUDP.proto` + `MumbleUDP.options`. Requires `nix develop`.
 - **Debug / Release APK**:
   `nix develop --command ./gradlew assembleFossDebug` (or
   `assembleFossRelease`). Release output is
@@ -116,9 +119,11 @@
   to debug signing.
 - **Install APK (`adb`)**:
   `nix develop --command ./gradlew :app:installFossDebug`
-  App ID is `se.lublin.mumla.oled15`; Java/Kotlin namespace is
-  `se.lublin.mumla`. Use Nix `adb` (not `~/Android/Sdk`, which cannot
-  run directly on NixOS); do not launch the app automatically.
+  Install on device only when requested; never launch the app
+  automatically (no `adb shell am start` unless asked). App ID is
+  `se.lublin.mumla.oled15`; Java/Kotlin namespace is
+  `se.lublin.mumla`. Use Nix `adb`, not `~/Android/Sdk` (which cannot
+  run directly on NixOS).
 
 ## Commits & Versioning
 
@@ -130,17 +135,17 @@
 ### Commit Messages & Detailed Descriptions
 
 - **Commit Wrapper**: Stage changes with `git add` first, then run
-  `python3 scripts/commit.py -m "<message>"`. The wrapper formats to
-  the 50/72 rule, hard-fails if the body format below is not met, and
-  commits only staged changes.
+  `python3 scripts/commit.py -m "<message>"`. The wrapper wraps body
+  lines to 72 chars automatically, hard-fails on >50-char subjects or
+  malformed body labels, and commits only staged changes.
 - **Subject Line**: Concise and imperative with a scope prefix
   (`app:`, `ui:`, `humla:`, `audio:`, `voice:`, `proto:`, `build:`,
-  `nix:`, `docs:`, `util:`), max 50 chars (merge commits are exempt
-  from the 50-char limit).
+  `nix:`, `docs:`, `util:`), max 50 chars (`chore: merge branch ...`
+  is exempt from the 50-char limit, not the body check).
 - **Detailed Body**: Separate the body from the subject with a blank
-  line, wrap lines at 72 chars, and separate the three sections from
-  each other with blank lines so each `Label:` starts its own
-  paragraph as plain text (no Markdown bullets or headings):
+  line and separate the three sections from each other with blank
+  lines so each `Label:` starts its own paragraph as plain text (no
+  Markdown bullets or headings):
 
 ```text
 Context & Motivation: <why this change is needed>
@@ -157,9 +162,11 @@ Edge Cases & Impact: <boundary conditions, blast radius, parity>
 
 ## Code, Documentation & Licensing Standards
 
-- **Application Naming**: Always call the application **Mumla OLED**,
-  never "Mumla" in isolation (it is a hard fork of Mumla that has not
-  yet been comprehensively rebranded).
+- **Application Naming**: In documentation and user-facing text,
+  always call the application **Mumla OLED**, never "Mumla" in
+  isolation (it is a hard fork of Mumla not yet comprehensively
+  rebranded). Do not rename existing `se.lublin.mumla` package or
+  `Mumla*` code symbols unless requested.
 - **Markdown (GFM)**: Target GitHub Flavored Markdown (`markdownlint`
   and `cmark-gfm` are in `flake.nix`).
   - **Portable Links**: Use relative Markdown links for in-tree files
