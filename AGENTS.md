@@ -119,8 +119,8 @@
   `assembleFossRelease`). Release output is
   `app/build/outputs/apk/foss/release/mumla-foss-release.apk`;
   requires local uncommitted `app/signing.gradle`
-  (`signingConfigs.release`) for release signing, otherwise falls back
-  to debug signing.
+  (`signingConfigs.release`), otherwise the release build fails
+  (debug builds are unaffected).
 - **Device install & `adb`**:
   `nix develop --command ./gradlew :app:installFossDebug`
   Install on device only when requested; never launch the app
