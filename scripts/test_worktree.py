@@ -877,6 +877,11 @@ class TestWorktreeCleanup(TempRepoTestBase):
         # worktree's parent: `remove` must sweep both like `cleanup` does.
         os.makedirs(os.path.join(self.repo_str, ".worktrees", "stray", "a", "b"))
         os.makedirs(os.path.join(self.repo_str, ".worktrees", "feature", "sibling-empty"))
+        # A non-empty sibling must survive the sweep.
+        keep_file = os.path.join(self.repo_str, ".worktrees", "keep", "data.txt")
+        os.makedirs(os.path.dirname(keep_file))
+        with open(keep_file, "w", encoding="utf-8") as f:
+            f.write("keep\n")
         proc = subprocess.run(
             [SCRIPT_PATH, "remove", "feature/rm-sweep"],
             cwd=self.repo_dir,
@@ -886,7 +891,8 @@ class TestWorktreeCleanup(TempRepoTestBase):
         self.assertFalse(os.path.isdir(wt))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_str, ".worktrees", "stray")))
         self.assertFalse(os.path.isdir(os.path.join(self.repo_str, ".worktrees", "feature", "sibling-empty")))
-        self.assertFalse(os.path.isdir(os.path.join(self.repo_str, ".worktrees")))
+        self.assertTrue(os.path.isfile(keep_file))
+        self.assertTrue(os.path.isdir(os.path.join(self.repo_str, ".worktrees")))
         self.assertFalse(self._branch_exists("feature/rm-sweep"))
 
 
