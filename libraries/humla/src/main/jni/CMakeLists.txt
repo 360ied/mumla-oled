@@ -28,6 +28,23 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # the other silently uncached; a directory-valued NDK_CCACHE is ignored rather
 # than failing obscurely as a launcher.
 find_program(_HUMLA_CCACHE_PROGRAM ccache)
+# Pin ccache to this checkout (main repo or linked worktree): the shell's
+# CCACHE_BASEDIR is frozen at `nix develop` entry and goes stale across
+# checkouts, fragmenting the shared cache. Launcher KEY=VALUE settings
+# outrank the environment, so these hold for NDK and host builds alike
+# (both go through this file). base_dir makes absolute paths hash
+# identically across checkouts; hash_dir=false keeps the
+# CCACHE_NOHASHDIR=1 behavior for differing build directories.
+execute_process(
+    COMMAND git rev-parse --show-toplevel
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE _HUMLA_REPO_ROOT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT _HUMLA_REPO_ROOT OR NOT IS_DIRECTORY "${_HUMLA_REPO_ROOT}")
+    # No git (e.g. exported sources): jni is <root>/libraries/humla/src/main/jni.
+    get_filename_component(_HUMLA_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
+endif()
 foreach(_HUMLA_LANG C CXX)
     if(NOT CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER)
         if(DEFINED ENV{NDK_CCACHE} AND EXISTS "$ENV{NDK_CCACHE}" AND NOT IS_DIRECTORY "$ENV{NDK_CCACHE}")
@@ -35,9 +52,14 @@ foreach(_HUMLA_LANG C CXX)
         elseif(_HUMLA_CCACHE_PROGRAM)
             set(CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER "${_HUMLA_CCACHE_PROGRAM}")
         endif()
+        if(CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER)
+            list(APPEND CMAKE_${_HUMLA_LANG}_COMPILER_LAUNCHER
+                "base_dir=${_HUMLA_REPO_ROOT}" "hash_dir=false")
+        endif()
     endif()
 endforeach()
 unset(_HUMLA_LANG)
+unset(_HUMLA_REPO_ROOT)
 
 set(JNI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 set(OPUS_DIR "${JNI_ROOT}/opus")

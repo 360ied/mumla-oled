@@ -101,7 +101,11 @@
               export CCACHE_DIR="''${REPO_ROOT}/.gradle-home/ccache"
               # Keep in sync: build.gradle cmake version, test_native_audio.sh fallback.
               export PATH="${androidSdkRoot}/cmake/4.1.2/bin:$PATH"
-              export CCACHE_BASEDIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              # No CCACHE_BASEDIR here: it would freeze at shell entry and go
+              # stale across worktrees, fragmenting the shared cache.
+              # libraries/humla/.../CMakeLists.txt pins base_dir per checkout
+              # (launcher KEY=VALUE outranks env) for all C/C++ builds, NDK
+              # and host alike.
               export CCACHE_NOHASHDIR=1
               echo "Mumla OLED Development Environment Loaded"
               echo "Java Version: $(${jdk}/bin/java -version 2>&1 | head -n 1)"
