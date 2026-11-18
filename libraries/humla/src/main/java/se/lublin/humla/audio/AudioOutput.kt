@@ -42,7 +42,7 @@ import kotlin.math.min
  * publisher. There is no decode pool, no Java mixer, and the track is never
  * flushed on underrun so gaps do not click.
  */
-class AudioOutput : Runnable {
+class AudioOutput : Runnable, OutputPipeline {
     companion object {
         private val TAG: String = AudioOutput::class.java.name
 
@@ -77,7 +77,7 @@ class AudioOutput : Runnable {
 
     @Throws(AudioInitializationException::class)
     @Synchronized
-    fun startPlaying(audioStream: Int) {
+    override fun startPlaying(audioStream: Int) {
         if (thread != null || running) {
             return
         }
@@ -149,7 +149,7 @@ class AudioOutput : Runnable {
      * after the render join, and the version-gated notifier cannot
      * resurrect cleared levels without new renders.
      */
-    fun stopPlaying() {
+    override fun stopPlaying() {
         val thread: Thread?
         synchronized(this) {
             if (!running && this.thread == null) {

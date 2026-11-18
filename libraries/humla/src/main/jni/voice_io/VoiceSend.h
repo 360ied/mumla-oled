@@ -29,6 +29,7 @@
 #include "AudioInputEngine.h"
 #include "VoiceCodec.h"
 #include "VoiceConfig.h"
+#include "VoicePolicy.h"
 #include "VoiceRings.h"
 
 namespace mumla {
@@ -94,7 +95,7 @@ public:
     // start; never called on the realtime path.
     using TunnelSink = std::function<void(const uint8_t* data, size_t length)>;
 
-    VoiceSend(GateCell* gate, SettingsCell* settings, VoiceReceive* receive,
+    VoiceSend(PolicyCell* policy, SettingsCell* settings, VoiceReceive* receive,
               EncoderFactory encoderFactory = nullptr,
               DenoiserFactory denoiserFactory = nullptr);
     ~VoiceSend();
@@ -166,7 +167,7 @@ private:
 
     mumla::audio::AudioInputEngine* engine() { return m_engine.get(); }
 
-    GateCell* m_gate;
+    PolicyCell* m_policy;
     SettingsCell* m_settings;
     VoiceReceive* m_receive; // socket + crypt owner (control lifetime)
 
@@ -196,7 +197,7 @@ private:
 
     // Last good gate/settings copies for the realtime path: when the
     // seqlock reports a torn read, capture keeps these instead of waiting.
-    GateSnapshot m_lastGate;
+    PolicySnapshot m_lastGate;
     SettingsSnapshot m_lastSettings;
 
     // Remainder carry: captureFrame accepts any block size; whole 10 ms

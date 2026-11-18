@@ -33,8 +33,7 @@ import se.lublin.humla.HumlaNative
  */
 interface EngineNative {
     fun setFormat(udpFormat: Int, legacyVersion: Int)
-    fun setPolicy(muted: IntArray?, known: IntArray?)
-    fun setGate(transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
+    fun setPolicy(muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
     fun setSettings(inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean)
     fun setVoiceRoute(udp: Boolean)
     fun setRnnoiseModel(model: ByteArray?): Boolean
@@ -76,10 +75,7 @@ class NativeVoiceEngine : EngineNative {
         private external fun nativeSetFormat(handle: Long, udpFormat: Int, legacyVersion: Int)
 
         @JvmStatic
-        private external fun nativeSetPolicy(handle: Long, muted: IntArray?, known: IntArray?)
-
-        @JvmStatic
-        private external fun nativeSetGate(handle: Long, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
+        private external fun nativeSetPolicy(handle: Long, muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
 
         @JvmStatic
         private external fun nativeSetSettings(handle: Long, inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean)
@@ -181,17 +177,10 @@ class NativeVoiceEngine : EngineNative {
         }
     }
 
-    override fun setPolicy(muted: IntArray?, known: IntArray?) {
+    override fun setPolicy(muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
         val handle = nativeHandle
         if (handle != 0L) {
-            nativeSetPolicy(handle, muted, known)
-        }
-    }
-
-    override fun setGate(transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
-        val handle = nativeHandle
-        if (handle != 0L) {
-            nativeSetGate(handle, transmitAllowed, pttPressed, voiceTarget, bitrate, framesPerPacket)
+            nativeSetPolicy(handle, muted, known, transmitAllowed, pttPressed, voiceTarget, bitrate, framesPerPacket)
         }
     }
 

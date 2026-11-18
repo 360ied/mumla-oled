@@ -24,7 +24,8 @@ namespace voice_io {
 
 void PolicyCell::publish(const int32_t* muted, size_t mutedCount,
                          const int32_t* known, size_t knownCount,
-                         bool knownOverflow) {
+                         bool knownOverflow, bool transmitAllowed, bool pttPressed,
+                         int32_t voiceTarget, int32_t bitrate, int32_t framesPerPacket) {
     const uint32_t seq = m_seq.load(std::memory_order_relaxed);
     m_seq.store(seq + 1, std::memory_order_release); // odd: writing
     PolicySnapshot next;
@@ -41,6 +42,11 @@ void PolicyCell::publish(const int32_t* muted, size_t mutedCount,
     // Overflow flag is sticky truth: truncated known fails open even when
     // the caller also passes the flag from its own truncation.
     next.knownOverflow = knownOverflow || knownCount > kPolicyListCapacity;
+    next.transmitAllowed = transmitAllowed;
+    next.pttPressed = pttPressed;
+    next.voiceTarget = voiceTarget;
+    next.bitrate = bitrate;
+    next.framesPerPacket = framesPerPacket;
     m_data = next;
     m_seq.store(seq + 2, std::memory_order_release); // even: done
 }

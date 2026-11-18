@@ -28,19 +28,70 @@
 #include "VoiceSend.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <new>
+#include <thread>
 #include <vector>
+
+namespace {
+size_t g_allocations = 0;
+} // namespace
+
+extern "C" {
+void* __real_malloc(size_t size);
+void* __real_calloc(size_t count, size_t size);
+void* __real_realloc(void* ptr, size_t size);
+void __real_free(void* ptr);
+
+void* __wrap_malloc(size_t size) {
+    ++g_allocations;
+    return __real_malloc(size);
+}
+
+void* __wrap_calloc(size_t count, size_t size) {
+    ++g_allocations;
+    return __real_calloc(count, size);
+}
+
+void* __wrap_realloc(void* ptr, size_t size) {
+    ++g_allocations;
+    return __real_realloc(ptr, size);
+}
+
+void __wrap_free(void* ptr) { __real_free(ptr); }
+} // extern "C"
+
+void* operator new(size_t size) {
+    ++g_allocations;
+    void* ptr = __real_malloc(size == 0 ? 1 : size);
+    if (ptr == nullptr) throw std::bad_alloc();
+    return ptr;
+}
+
+void* operator new[](size_t size) {
+    ++g_allocations;
+    void* ptr = __real_malloc(size == 0 ? 1 : size);
+    if (ptr == nullptr) throw std::bad_alloc();
+    return ptr;
+}
+
+void operator delete(void* ptr) noexcept { __real_free(ptr); }
+void operator delete[](void* ptr) noexcept { __real_free(ptr); }
+void operator delete(void* ptr, size_t) noexcept { __real_free(ptr); }
+void operator delete[](void* ptr, size_t) noexcept { __real_free(ptr); }
 
 namespace {
 
 using mumla::audio::AudioInputEngine;
 using mumla::audio::IDenoiser;
 using mumla::audio::IVoiceEncoder;
-using mumla::voice_io::GateCell;
-using mumla::voice_io::GateSnapshot;
+using mumla::voice_io::PolicyCell;
+using mumla::voice_io::PolicySnapshot;
 using mumla::voice_io::OutboundPacket;
 using mumla::voice_io::SettingsCell;
 using mumla::voice_io::SettingsSnapshot;
@@ -82,9 +133,11 @@ VoiceSend::EncoderFactory fakeEncoderFactory() {
     return [] { return std::make_unique<FakeVoiceEncoder>(); };
 }
 
-void publishOpenGate(GateCell* gate, int32_t fpp = 2) {
-    gate->publish(/*transmitAllowed=*/true, /*pttPressed=*/false,
-                  /*voiceTarget=*/0, /*bitrate=*/40000, fpp);
+void publishOpenGate(PolicyCell* policy, int32_t fpp = 2) {
+    int32_t empty[1] = {0};
+    policy->publish(empty, 0, empty, 0, false,
+                    /*transmitAllowed=*/true, /*pttPressed=*/false,
+                    /*voiceTarget=*/0, /*bitrate=*/40000, fpp);
 }
 
 void publishContinuousSettings(SettingsCell* settings) {
@@ -93,20 +146,21 @@ void publishContinuousSettings(SettingsCell* settings) {
                       /*adaptiveLevelerEnabled=*/true, /*halfDuplex=*/false);
 }
 
-void testGateCellPublishesAndReads() {
+void testPolicyGatePublishesAndReads() {
     g_testCount++;
-    GateCell cell;
-    GateSnapshot out;
+    PolicyCell cell;
+    PolicySnapshot out;
     TEST_ASSERT_TRUE(cell.tryRead(&out));
     TEST_ASSERT_FALSE(out.transmitAllowed);
-    cell.publish(true, true, 7, 24000, 4);
+    int32_t empty[1] = {0};
+    cell.publish(empty, 0, empty, 0, false, true, true, 7, 24000, 4);
     TEST_ASSERT_TRUE(cell.tryRead(&out));
     TEST_ASSERT_TRUE(out.transmitAllowed);
     TEST_ASSERT_TRUE(out.pttPressed);
     TEST_ASSERT_EQ(out.voiceTarget, 7);
     TEST_ASSERT_EQ(out.bitrate, 24000);
     TEST_ASSERT_EQ(out.framesPerPacket, 4);
-    std::cout << "  [PASS] testGateCellPublishesAndReads" << std::endl;
+    std::cout << "  [PASS] testPolicyGatePublishesAndReads" << std::endl;
 }
 
 void testSettingsCellPublishesAndReads() {
@@ -132,12 +186,12 @@ void testCaptureAcceptsAnyBlockSize() {
     // produce packets regardless of how the caller slices the blocks. Feed
     // 100 + 380 (one frame across two calls) + 960 (two frames) + 20 (tail
     // carried, no frame yet): exactly 3 frames processed, tail held.
-    GateCell gate;
+    PolicyCell policy;
     SettingsCell settings;
-    publishOpenGate(&gate, 2);
+    publishOpenGate(&policy, 2);
     publishContinuousSettings(&settings);
     VoiceReceive* noReceive = nullptr;
-    VoiceSend send(&gate, &settings, noReceive, fakeEncoderFactory(), nullptr);
+    VoiceSend send(&policy, &settings, noReceive, fakeEncoderFactory(), nullptr);
     send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
     std::vector<int16_t> block(480, 1000);
     // 100 samples: no frame yet.
@@ -168,11 +222,11 @@ void testCaptureGateClosesOnMute() {
     // Continuous mode with an open gate transmits; closing transmitAllowed
     // mid-utterance flushes one terminator and then goes silent. The
     // self-talking flag follows the same edge.
-    GateCell gate;
+    PolicyCell policy;
     SettingsCell settings;
-    publishOpenGate(&gate, 1);
+    publishOpenGate(&policy, 1);
     publishContinuousSettings(&settings);
-    VoiceSend send(&gate, &settings, nullptr, fakeEncoderFactory(), nullptr);
+    VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
     send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
     std::vector<int16_t> pcm(480, 2000);
     for (int i = 0; i < 4; ++i) {
@@ -185,7 +239,8 @@ void testCaptureGateClosesOnMute() {
     while (send.popOutboundForTest(&tmp)) {
     }
     const uint64_t dropsBefore = send.droppedOutbound();
-    gate.publish(false, false, 0, 40000, 1);
+    int32_t emptyMute[1] = {0};
+    policy.publish(emptyMute, 0, emptyMute, 0, false, false, false, 0, 40000, 1);
     send.captureFrame(pcm.data(), pcm.size());
     TEST_ASSERT_FALSE(send.selfTalking());
     // Exactly one terminator for the mute edge, then silence.
@@ -201,11 +256,11 @@ void testOutboundFullDropsNewest() {
     // Ring holds 40; the 41st push drops the new item and counts it. The
     // send thread is not running here, so no drop-oldest interferes: this
     // pins the drop-newest counter alone.
-    GateCell gate;
+    PolicyCell policy;
     SettingsCell settings;
-    publishOpenGate(&gate, 1);
+    publishOpenGate(&policy, 1);
     publishContinuousSettings(&settings);
-    VoiceSend send(&gate, &settings, nullptr, fakeEncoderFactory(), nullptr);
+    VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
     send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
     std::vector<int16_t> pcm(480, 3000);
     // FPP=1: every frame emits one packet. 40 frames fill the ring exactly.
@@ -222,33 +277,81 @@ void testOutboundFullDropsNewest() {
 
 void testDropOldestKeeps200ms() {
     g_testCount++;
-    // Done-when pin: a full queue under the send thread's 200 ms rule keeps
-    // at most ceil(200 / (FPP*10)) packets and counts the rest as dropped.
-    // FPP=2 -> 20 ms per packet -> keep 10, drop 30 of 40.
-    GateCell gate;
-    gate.publish(true, false, 0, 40000, 2);
-    GateSnapshot snap;
-    TEST_ASSERT_TRUE(gate.tryRead(&snap));
-    const int perPacketMs = snap.framesPerPacket * 10;
-    const size_t maxKeep =
-        static_cast<size_t>((200 + perPacketMs - 1) / perPacketMs);
-    TEST_ASSERT_EQ(maxKeep, 10u);
-    // Simulate the send thread's drop-oldest pass over a full ring.
-    size_t simulatedSize = kOutboundRingCapacity;
-    size_t dropped = 0;
-    while (simulatedSize > maxKeep) {
-        simulatedSize--;
-        dropped++;
+    // Done-when pin (spec: skip every queued packet older than 200 ms):
+    // fill the ring with send stopped, then start the send thread with a
+    // recording tunnel sink and assert the kept newest suffix plus the
+    // dropped prefix. Age = sum of newer durations (each packet carries its
+    // FPP), keep while age <= 200 ms.
+    // FPP=1 (10 ms): 40 packets fill the ring; keep newest 21 (ages 0..200),
+    // drop oldest 19. Count-bound would keep 20 — duration keeps 21.
+    {
+        PolicyCell policy;
+        SettingsCell settings;
+        publishOpenGate(&policy, 1);
+        publishContinuousSettings(&settings);
+        VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
+        send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+        send.setUseUdp(false);
+        std::vector<OutboundPacket> sent;
+        // NOTE: send thread not running yet, so the tunnel sink below only
+        // runs after start(); no locking needed for the test's own vector
+        // because the test waits for the drain before reading it.
+        send.setTunnelSink([&](const uint8_t* data, size_t length) {
+            OutboundPacket pkt;
+            pkt.length = length > sizeof(pkt.data) ? sizeof(pkt.data) : length;
+            std::memcpy(pkt.data, data, pkt.length);
+            sent.push_back(pkt);
+        });
+        std::vector<int16_t> pcm(480, 3000);
+        for (size_t i = 0; i < kOutboundRingCapacity; ++i) {
+            send.captureFrame(pcm.data(), pcm.size());
+        }
+        TEST_ASSERT_EQ(send.outboundSizeForTest(), kOutboundRingCapacity);
+        TEST_ASSERT_EQ(send.droppedOutbound(), 0u);
+        send.start();
+        // Wait for the drain (send thread pops all, keeps newest 200 ms).
+        for (int i = 0; i < 200 && send.outboundSizeForTest() > 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        // Extra tick so the final sink append lands before we read `sent`.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        send.stop();
+        TEST_ASSERT_EQ(sent.size(), 21u);
+        TEST_ASSERT_EQ(send.droppedOutbound(), 19u);
+        TEST_ASSERT_EQ(send.outboundSizeForTest(), 0u);
     }
-    TEST_ASSERT_EQ(simulatedSize, 10u);
-    TEST_ASSERT_EQ(dropped, 30u);
-    // FPP=6 -> 60 ms per packet -> keep 4 (ceil 200/60).
-    gate.publish(true, false, 0, 40000, 6);
-    TEST_ASSERT_TRUE(gate.tryRead(&snap));
-    const int perPacketMs6 = snap.framesPerPacket * 10;
-    const size_t maxKeep6 =
-        static_cast<size_t>((200 + perPacketMs6 - 1) / perPacketMs6);
-    TEST_ASSERT_EQ(maxKeep6, 4u);
+    // FPP=6 (60 ms): keep newest 4 (ages 0,60,120,180), drop 36 of 40.
+    {
+        PolicyCell policy;
+        SettingsCell settings;
+        publishOpenGate(&policy, 6);
+        publishContinuousSettings(&settings);
+        VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
+        send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+        send.setUseUdp(false);
+        std::vector<OutboundPacket> sent;
+        send.setTunnelSink([&](const uint8_t* data, size_t length) {
+            OutboundPacket pkt;
+            pkt.length = length > sizeof(pkt.data) ? sizeof(pkt.data) : length;
+            std::memcpy(pkt.data, data, pkt.length);
+            sent.push_back(pkt);
+        });
+        std::vector<int16_t> pcm(480, 3000);
+        // 40 packets at FPP=6 needs 240 frames (2400 ms audio).
+        for (size_t i = 0; i < kOutboundRingCapacity * 6; ++i) {
+            send.captureFrame(pcm.data(), pcm.size());
+        }
+        TEST_ASSERT_EQ(send.outboundSizeForTest(), kOutboundRingCapacity);
+        send.start();
+        for (int i = 0; i < 200 && send.outboundSizeForTest() > 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        send.stop();
+        TEST_ASSERT_EQ(sent.size(), 4u);
+        // 40 staged, 4 kept and sent, 36 dropped as older than 200 ms.
+        TEST_ASSERT_EQ(send.droppedOutbound(), 36u);
+    }
     std::cout << "  [PASS] testDropOldestKeeps200ms" << std::endl;
 }
 
@@ -322,14 +425,40 @@ void testHalfDuplexRenderSilences() {
     std::cout << "  [PASS] testHalfDuplexRenderSilences" << std::endl;
 }
 
+void testAllocationFreeSteadyState() {
+    g_testCount++;
+    // Done-when pin: the realtime capture path allocates nothing after
+    // warmup. The binary replaces global new/delete and wraps malloc/calloc/
+    // realloc (see top of file), so any heap use by processFrame, framing,
+    // or ring push changes the count. Setup (construction, model-free fake
+    // encoder, first frames, ring drain) happens before recording.
+    PolicyCell policy;
+    SettingsCell settings;
+    publishOpenGate(&policy, 2);
+    publishContinuousSettings(&settings);
+    VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
+    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    int16_t pcm[480];
+    for (int i = 0; i < 480; ++i) pcm[i] = 1000;
+    for (int i = 0; i < 5; ++i) send.captureFrame(pcm, 480);
+    OutboundPacket drain;
+    while (send.popOutboundForTest(&drain)) {
+    }
+    const size_t before = g_allocations;
+    for (int i = 0; i < 20; ++i) send.captureFrame(pcm, 480);
+    TEST_ASSERT_EQ(g_allocations, before);
+    std::cout << "  [PASS] testAllocationFreeSteadyState" << std::endl;
+}
+
 } // namespace
 
 void run_voice_send_tests() {
-    testGateCellPublishesAndReads();
+    testPolicyGatePublishesAndReads();
     testSettingsCellPublishesAndReads();
     testCaptureAcceptsAnyBlockSize();
     testCaptureGateClosesOnMute();
     testOutboundFullDropsNewest();
     testDropOldestKeeps200ms();
     testHalfDuplexRenderSilences();
+    testAllocationFreeSteadyState();
 }

@@ -40,7 +40,8 @@ import android.media.AudioManager
 import android.media.MediaRecorder
 import se.lublin.humla.BuildConfig
 import se.lublin.humla.audio.AudioInput
-import se.lublin.humla.audio.AudioOutput
+import se.lublin.humla.audio.InputPipeline
+import se.lublin.humla.audio.OutputPipeline
 import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.VoiceLifecycle
@@ -91,6 +92,10 @@ class VoiceEngine @JvmOverloads constructor(
     private val context: Context? = null,
     private val routeStates: StateFlow<RouteState>? = null,
     private val prefs: StateFlow<RoutePreferences>? = null,
+    private val inputFactory: (AudioInput.AudioInputListener, Int) -> InputPipeline =
+        { listener, source -> AudioInput(listener, source) },
+    private val outputFactory: (Context?, RenderDriver, TalkActivityPublisher) -> OutputPipeline =
+        { ctx, driver, pub -> se.lublin.humla.audio.AudioOutput(ctx, driver, pub) },
 ) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener,
     AudioInput.AudioInputListener {
     companion object {
@@ -100,15 +105,18 @@ class VoiceEngine @JvmOverloads constructor(
     /** Service-lifetime talk levels; the native notifier is the only writer from 5a.4. */
     val talkActivity: StateFlow<TalkActivity> = talkPublisher.talkActivity
 
-    private data class BuiltPipeline(
-        val input: AudioInput,
-        val output: AudioOutput,
+    internal data class BuiltPipeline(
+        val input: InputPipeline,
+        val output: OutputPipeline,
         val route: AppliedRoute,
         val profile: StreamProfile,
         val audioSource: Int,
         val audioStream: Int,
     )
     private val pipelineRef = AtomicReference<BuiltPipeline?>(null)
+
+    /** Test-only: current pipeline for route-following assertions (issue 03). */
+    internal fun pipelineForTests(): BuiltPipeline? = pipelineRef.get()
 
     private val _events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
     override val events: SharedFlow<VoiceEvent> = _events.asSharedFlow()
@@ -131,6 +139,11 @@ class VoiceEngine @JvmOverloads constructor(
 
     private val _latestSettings = MutableStateFlow<VoiceSettings?>(null)
     val latestSettings: StateFlow<VoiceSettings?> = _latestSettings.asStateFlow()
+
+    // Last filter for test-only gate pushes (single native publish needs
+    // both filter and gate; harness has no collector to provide the pair).
+    private var lastTestMuted: IntArray = intArrayOf()
+    private var lastTestKnown: IntArray = intArrayOf()
 
     private var lastLoggedDroppedInbound = 0L
     private var lastLoggedDroppedTunnel = 0L
@@ -185,12 +198,6 @@ class VoiceEngine @JvmOverloads constructor(
             engine.setPolicy(
                 policy.locallyMuted.toIntArray(),
                 policy.knownSessions.toIntArray(),
-            )
-        } catch (e: Exception) {
-            loggerFine("Dropping policy push: $e")
-        }
-        try {
-            engine.setGate(
                 policy.transmitAllowed,
                 policy.pttPressed,
                 policy.voiceTarget,
@@ -198,7 +205,7 @@ class VoiceEngine @JvmOverloads constructor(
                 policy.framesPerPacket,
             )
         } catch (e: Exception) {
-            loggerFine("Dropping gate push: $e")
+            loggerFine("Dropping policy push: $e")
         }
     }
 
@@ -235,10 +242,11 @@ class VoiceEngine @JvmOverloads constructor(
      * always goes through [setPolicy] and [setSettings].
      */
     fun setFilterForTests(muted: IntArray, known: IntArray) {
+        lastTestMuted = muted.copyOf()
+        lastTestKnown = known.copyOf()
         try {
             ensureNative()
-            native?.setPolicy(muted, known)
-            native?.setGate(true, false, 0, 40000, 2)
+            native?.setPolicy(muted, known, true, false, 0, 40000, 2)
             native?.setSettings(2, 1.0f, 0.7f, 1.0f, true, false)
         } catch (e: Exception) {
             loggerFine("Dropping test filter push: $e")
@@ -249,7 +257,7 @@ class VoiceEngine @JvmOverloads constructor(
     fun setGateForTests(transmitAllowed: Boolean, pttPressed: Boolean) {
         try {
             ensureNative()
-            native?.setGate(transmitAllowed, pttPressed, 0, 40000, 2)
+            native?.setPolicy(lastTestMuted, lastTestKnown, transmitAllowed, pttPressed, 0, 40000, 2)
         } catch (e: Exception) {
             loggerFine("Dropping test gate push: $e")
         }
@@ -455,17 +463,21 @@ class VoiceEngine @JvmOverloads constructor(
                 endpointRef.set(null)
                 usingUdp.set(false)
                 runningFlag.set(false)
-                // Pipeline first (joins capture/render), then native stop:
-                // destroy asserts both threads are joined.
-                try {
-                    tearDownPipeline()
-                } catch (e: Exception) {
-                    loggerFine("Dropping pipeline teardown: $e")
-                }
+                // Native first (stops receive/send/notifier, joins them),
+                // then pipeline (joins capture/render, clears publisher):
+                // the talk clear runs after the notifier's final read, so no
+                // snapshot can resurrect a cleared indicator (voice.md).
+                // Render/capture joins still precede native destroy (in
+                // close), satisfying RenderGuard/CaptureGuard.
                 try {
                     native?.stop()
                 } catch (e: Exception) {
                     loggerFine("Dropping native stop: $e")
+                }
+                try {
+                    tearDownPipeline()
+                } catch (e: Exception) {
+                    loggerFine("Dropping pipeline teardown: $e")
                 }
             }
             is VoiceCommand.SetVoiceRoute -> {
@@ -750,6 +762,11 @@ class VoiceEngine @JvmOverloads constructor(
             loggerFine("Dropping route read: $e")
             return
         }
+        // Settling keeps current streams (spec route.md: never observed in
+        // practice, never tears down); Idle (and null) stops them.
+        if (state is RouteState.Settling) {
+            return
+        }
         val (route, profile) = when (state) {
             is RouteState.Ready -> state.route to state.profile
             is RouteState.Fallback -> state.route to state.profile
@@ -776,12 +793,14 @@ class VoiceEngine @JvmOverloads constructor(
             return
         }
         tearDownPipeline()
-        // Build: AudioInput acquires the mic, AudioOutput acquires the track.
+        // Build: input acquires the mic, output acquires the track (via
+        // injectable factories so route-following is unit-testable without
+        // AudioRecord/Track hardware; production passes the real owners).
         // Failures report PipelineError and retry on the next route event
         // (spec failures: session stays connected without audio).
-        val input: AudioInput
+        val input: InputPipeline
         try {
-            input = AudioInput(this, audioSource)
+            input = inputFactory(this, audioSource)
         } catch (e: Exception) {
             Log.w(TAG, "Voice pipeline input build failed; retry on next event: $e")
             if (!_events.tryEmit(VoiceEvent.PipelineError("capture open failed"))) {
@@ -789,7 +808,7 @@ class VoiceEngine @JvmOverloads constructor(
             }
             return
         }
-        val output = AudioOutput(context, this, talkPublisher)
+        val output: OutputPipeline = outputFactory(context, this, talkPublisher)
         try {
             output.startPlaying(audioStream)
         } catch (e: Exception) {
@@ -866,12 +885,6 @@ class VoiceEngine @JvmOverloads constructor(
             native?.setPolicy(
                 policy.locallyMuted.toIntArray(),
                 policy.knownSessions.toIntArray(),
-            )
-        } catch (e: Exception) {
-            loggerFine("Dropping policy push: $e")
-        }
-        try {
-            native?.setGate(
                 policy.transmitAllowed,
                 policy.pttPressed,
                 policy.voiceTarget,
@@ -879,7 +892,7 @@ class VoiceEngine @JvmOverloads constructor(
                 policy.framesPerPacket,
             )
         } catch (e: Exception) {
-            loggerFine("Dropping gate push: $e")
+            loggerFine("Dropping policy push: $e")
         }
     }
 
@@ -916,11 +929,16 @@ class VoiceEngine @JvmOverloads constructor(
         } else {
             _status.value.localCrypt
         }
+        // Effective encoder values (server cap applied) when a policy is
+        // published; fall back to the raw targets before the first policy.
+        // Fixes 5a.4 regression where `getCurrentBandwidth` read targets and
+        // over-reported under a cap (issue 15: VoiceStatus replaces handler).
+        val effective = _latestPolicy.value
         val prev = _status.value
         _status.value = VoiceStatus(
             localCrypt = crypt,
-            bitrate = targetBitrate.get(),
-            framesPerPacket = targetFramesPerPacket.get(),
+            bitrate = effective?.bitrate ?: targetBitrate.get(),
+            framesPerPacket = effective?.framesPerPacket ?: targetFramesPerPacket.get(),
             running = runningFlag.get(),
             droppedOutbound = try {
                 native?.lastDroppedOutbound() ?: prev.droppedOutbound
@@ -955,11 +973,11 @@ class VoiceEngine @JvmOverloads constructor(
     fun close(): Job {
         val teardown = scope.launch(NonCancellable) {
             try {
-                tearDownPipeline()
+                native?.stop()
             } catch (ignored: Exception) {
             }
             try {
-                native?.stop()
+                tearDownPipeline()
             } catch (ignored: Exception) {
             }
             try {

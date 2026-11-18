@@ -403,10 +403,23 @@ else()
         "${TEST_CPP_DIR}"
     )
     target_compile_options(test_voice_io PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    # The allocation harness measures the C/C++ allocators through --wrap; keep
+    # the compiler from turning probes into builtins with different symbols.
+    set_source_files_properties("${TEST_CPP_DIR}/test_voice_send.cpp"
+        PROPERTIES COMPILE_OPTIONS "-fno-builtin")
     target_compile_definitions(test_voice_io PRIVATE
         MUMLA_CRYPT_COUNT_FIXTURE_DIR="${JNI_ROOT}/../../test/fixtures/crypt-counts"
     )
     target_link_libraries(test_voice_io PRIVATE humlavoicecodec humlanpb Threads::Threads m)
+    # Counting allocator: test_voice_send.cpp replaces operator new/delete
+    # and wraps the C allocator, so steady-state capture can be shown to
+    # allocate nothing.
+    target_link_options(test_voice_io PRIVATE
+        -Wl,--wrap=malloc
+        -Wl,--wrap=calloc
+        -Wl,--wrap=realloc
+        -Wl,--wrap=free
+    )
     add_test(NAME test_voice_io COMMAND test_voice_io)
 
     add_executable(test_voice_codec

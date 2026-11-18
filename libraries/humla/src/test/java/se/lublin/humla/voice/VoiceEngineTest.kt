@@ -74,12 +74,9 @@ class VoiceEngineTest {
             formatLegacy = legacyVersion
         }
 
-        override fun setPolicy(muted: IntArray?, known: IntArray?) {
+        override fun setPolicy(muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
             this.muted = muted
             this.known = known
-        }
-
-        override fun setGate(transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
             gateTransmit = transmitAllowed
             gatePtt = pttPressed
             gateTarget = voiceTarget

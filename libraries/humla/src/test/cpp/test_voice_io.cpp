@@ -610,7 +610,7 @@ void testPolicyDropsMutedOverUdpAndTunnel() {
     PolicyCell cell;
     const int32_t muted[] = {7};
     const int32_t known[] = {7, 8};
-    cell.publish(muted, 1, known, 2, false);
+    cell.publish(muted, 1, known, 2, false, false, false, 0, 40000, 2);
     PolicySnapshot snap;
     TEST_ASSERT_TRUE(cell.tryRead(&snap));
     TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 7));
@@ -623,7 +623,7 @@ void testPolicyUnknownHoldsNoSlot() {
     PolicyCell cell;
     const int32_t muted[] = {};
     const int32_t known[] = {11};
-    cell.publish(muted, 0, known, 1, false);
+    cell.publish(muted, 0, known, 1, false, false, false, 0, 40000, 2);
     PolicySnapshot snap;
     TEST_ASSERT_TRUE(cell.tryRead(&snap));
     TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 99));
@@ -636,7 +636,7 @@ void testPolicyKnownOverflowFailsOpen() {
     PolicyCell cell;
     int32_t known[300];
     for (int i = 0; i < 300; ++i) known[i] = 1000 + i;
-    cell.publish(nullptr, 0, known, 300, false);
+    cell.publish(nullptr, 0, known, 300, false, false, false, 0, 40000, 2);
     PolicySnapshot snap;
     TEST_ASSERT_TRUE(cell.tryRead(&snap));
     TEST_ASSERT_TRUE(snap.knownOverflow);
@@ -644,7 +644,7 @@ void testPolicyKnownOverflowFailsOpen() {
     // Overflow fails open: unknown passes, muted still drops.
     TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 9999));
     const int32_t muted[] = {9999};
-    cell.publish(muted, 1, known, 300, false);
+    cell.publish(muted, 1, known, 300, false, false, false, 0, 40000, 2);
     TEST_ASSERT_TRUE(cell.tryRead(&snap));
     TEST_ASSERT_TRUE(PolicyCell::shouldDrop(snap, 9999));
     TEST_ASSERT_FALSE(PolicyCell::shouldDrop(snap, 8888));
@@ -661,7 +661,7 @@ void testSenderFilterEndToEndUdpAndTunnel() {
     VoiceReceive rx(&io, &policy);
     const int32_t muted[] = {7};
     const int32_t known[] = {7, 8};
-    policy.publish(muted, 1, known, 2, false);
+    policy.publish(muted, 1, known, 2, false, false, false, 0, 40000, 2);
     int udpSurvivors = 0;
     int tunnelSurvivors = 0;
     bool lastTunnel = false;
@@ -731,11 +731,11 @@ void testSenderFilterEndToEndUdpAndTunnel() {
     // properly, mirroring the predicate test's 9999/8888 pair.
     int32_t many[300];
     for (int i = 0; i < 300; ++i) many[i] = 1000 + i;
-    policy.publish(nullptr, 0, many, 300, false);
+    policy.publish(nullptr, 0, many, 300, false, false, false, 0, 40000, 2);
     TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(8888, 6, dg)));
     TEST_ASSERT_EQ(udpSurvivors, 2);
     const int32_t muted9999[] = {9999};
-    policy.publish(muted9999, 1, many, 300, false);
+    policy.publish(muted9999, 1, many, 300, false, false, false, 0, 40000, 2);
     TEST_ASSERT_TRUE(rx.handlePlaintext(dg, buildLegacy(9999, 7, dg)));
     TEST_ASSERT_EQ(udpSurvivors, 2);
     TEST_ASSERT_TRUE(rx.handleTunnelled(dg, buildLegacy(9999, 8, dg)));
@@ -745,16 +745,17 @@ void testSenderFilterEndToEndUdpAndTunnel() {
 
 void testPolicyGuardsReceiveVisibleOnly() {
     g_testCount++;
-    // Pins the 5a.3b done-when lock-scope rule: the policy cell carries
-    // exactly the receive-visible sender-filter lists (muted + known) and
-    // nothing transmit-side (no bitrate, frames, voice target, PTT).
+    // Pins the 5a.4 lock-scope rule: the policy cell carries VoicePolicy
+    // (filter lists plus transmit gate: allowed, PTT, target, bitrate, FPP)
+    // and nothing settings-side (no input mode, VAD, boost, leveler,
+    // half-duplex — those live in SettingsCell).
     static_assert(sizeof(PolicySnapshot) <=
-                  (256 + 256) * sizeof(int32_t) + 32,
-                  "PolicySnapshot must stay the two filter lists plus flags");
+                  (256 + 256) * sizeof(int32_t) + 64,
+                  "PolicySnapshot must stay filter lists plus gate words");
     PolicyCell cell;
     const int32_t muted[] = {3};
     const int32_t known[] = {3, 4};
-    cell.publish(muted, 1, known, 2, false);
+    cell.publish(muted, 1, known, 2, false, false, false, 0, 40000, 2);
     PolicySnapshot snap;
     TEST_ASSERT_TRUE(cell.tryRead(&snap));
     TEST_ASSERT_EQ(snap.mutedCount, 1u);

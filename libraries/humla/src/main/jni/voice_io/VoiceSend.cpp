@@ -48,29 +48,17 @@ InputMode mapInputMode(int32_t mode) {
 }
 
 // Frames-per-packet validity mirrors the engine's own rule (1, 2, 4, 6);
-// anything else keeps the last good value instead of stalling the queue
-// math below on a zero divisor.
+// anything else keeps the last good value instead of stalling the realtime
+// path on a zero divisor.
 bool validFpp(int32_t fpp) {
     return fpp == 1 || fpp == 2 || fpp == 4 || fpp == 6;
 }
 
-// Drop-oldest bound in packets for the current FPP: keep at most 200 ms.
-// Ceiling division so FPP=6 keeps 4 packets (240 ms) rather than 3 (180 ms)
-// starving the send; the ring still holds far more, so the bound is the
-// only dropper in practice.
-size_t maxKeepPackets(int32_t fpp) {
-    if (!validFpp(fpp) || fpp <= 0) {
-        fpp = 2;
-    }
-    const int perPacketMs = fpp * 10;
-    return static_cast<size_t>((kOutboundKeepMs + perPacketMs - 1) / perPacketMs);
-}
-
 } // namespace
 
-VoiceSend::VoiceSend(GateCell* gate, SettingsCell* settings, VoiceReceive* receive,
+VoiceSend::VoiceSend(PolicyCell* policy, SettingsCell* settings, VoiceReceive* receive,
                      EncoderFactory encoderFactory, DenoiserFactory denoiserFactory)
-    : m_gate(gate), m_settings(settings), m_receive(receive) {
+    : m_policy(policy), m_settings(settings), m_receive(receive) {
     std::unique_ptr<mumla::audio::IVoiceEncoder> encoder;
     if (encoderFactory) {
         encoder = encoderFactory();
@@ -127,10 +115,10 @@ void VoiceSend::captureFrame(const int16_t* pcm, size_t samples) {
     }
     // Lock-free config read: keep the last good copy when the writer is
     // mid-update, so the realtime path never waits.
-    GateSnapshot gate = m_lastGate;
-    if (m_gate != nullptr) {
-        GateSnapshot fresh;
-        if (m_gate->tryRead(&fresh)) {
+    PolicySnapshot gate = m_lastGate;
+    if (m_policy != nullptr) {
+        PolicySnapshot fresh;
+        if (m_policy->tryRead(&fresh)) {
             gate = fresh;
             m_lastGate = fresh;
         }
@@ -326,31 +314,54 @@ void VoiceSend::loop() {
         }
         (void)hadPing;
 
-        // Drop-oldest: keep at most 200 ms of audio. The bound uses the
-        // latest FPP; packets framed with an older FPP carry their own
-        // frame count, but the queue depth check below is in packets, so
-        // read the current FPP once per wake (non-realtime, may retry).
-        GateSnapshot gate = m_lastGate;
-        if (m_gate != nullptr) {
-            GateSnapshot fresh;
-            while (!m_gate->tryRead(&fresh)) {
+        // Drop-oldest by audio age (spec: skip every queued packet older than
+        // 200 ms of audio). Drain the ring, keep the newest suffix whose
+        // older packets are all within 200 ms (age = sum of newer durations,
+        // each packet carrying the FPP it was framed with), drop the older
+        // prefix and count it. Non-realtime here, may retry the seqlock and
+        // may use a stack scratch: no realtime constraints on this thread.
+        // The scratch is fixed-size (40 slots, the ring capacity); the ring
+        // itself stays the only allocation-free queue — this drain buffer
+        // never leaves the send thread.
+        OutboundPacket staged[kOutboundRingCapacity];
+        size_t stagedCount = 0;
+        {
+            OutboundPacket popped;
+            while (m_outbound.tryPop(&popped)) {
+                if (stagedCount < kOutboundRingCapacity) {
+                    staged[stagedCount++] = popped;
+                } else {
+                    // Should not happen (ring capacity bounds it), but drop
+                    // and count rather than overrun the scratch.
+                    m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
+                }
             }
-            gate = fresh;
-            m_lastGate = fresh;
         }
-        const size_t maxKeep = maxKeepPackets(gate.framesPerPacket);
-        while (m_outbound.size() > maxKeep) {
-            OutboundPacket dropped;
-            if (!m_outbound.tryPop(&dropped)) {
-                break;
+        size_t keepFrom = stagedCount; // index of oldest kept (drain all if empty)
+        {
+            int newerMs = 0;
+            // Newest-first: age 0 always kept; older kept while its age
+            // (sum of newer durations) is within 200 ms.
+            for (size_t i = stagedCount; i > 0; --i) {
+                if (newerMs > kOutboundKeepMs) {
+                    break;
+                }
+                keepFrom = i - 1;
+                int frames = staged[i - 1].frames;
+                if (frames < 1 || frames > 6) {
+                    frames = 2; // defensive: valid FPP is 1/2/4/6; never 0 live
+                }
+                newerMs += frames * 10;
             }
-            m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
+            // Count the dropped prefix (older than 200 ms).
+            m_droppedOutbound.fetch_add(static_cast<uint64_t>(keepFrom),
+                                        std::memory_order_relaxed);
         }
 
-        // Send everything queued (usually one packet per wake while
+        // Send the kept suffix in order (usually one packet per wake while
         // talking; a burst after an idle drain).
-        OutboundPacket packet;
-        while (m_outbound.tryPop(&packet)) {
+        for (size_t i = keepFrom; i < stagedCount; ++i) {
+            OutboundPacket packet = staged[i];
             if (packet.length == 0 || packet.length > sizeof(packet.data)) {
                 m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
                 continue;

@@ -53,7 +53,6 @@
 
 using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
-using mumla::voice_io::GateCell;
 using mumla::voice_io::PolicyCell;
 using mumla::voice_io::SettingsCell;
 using mumla::voice_io::TalkCell;
@@ -65,7 +64,7 @@ using mumla::voice_io::VoiceSend;
 
 // Unified voice I/O context (step 5a.3b facade, 5a.4 send half): the output
 // engine and both inbound rings, the sender-filter policy cell, the capture
-// gate and settings cells, the UDP receive half, the capture/send half, and
+// policy (filter + gate) and settings cells, the UDP receive half, the capture/send half, and
 // the talk notifier — one application-scoped native object owned by the
 // VoiceEngine facade, kept across sessions. The render thread is the only
 // thread that touches the output engine and the capture thread the only one
@@ -79,7 +78,6 @@ struct VoiceEngineContext {
     VoiceIo io;
     TalkCell cell;
     PolicyCell policy;
-    GateCell gate;
     SettingsCell settings;
     VoiceReceive receive;
     VoiceSend send;
@@ -112,7 +110,7 @@ struct VoiceEngineContext {
                        jmethodID onTunnel)
         : io(mumla::audio::makeOpusOutputDecoder),
           receive(&io, &policy),
-          send(&gate, &settings, &receive,
+          send(&policy, &settings, &receive,
                [] { return mumla::audio::makeOpusVoiceEncoder(); },
                [] {
                    return mumla::audio::makeRnnoiseProcessor(true, nullptr, 0);
@@ -429,20 +427,6 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetFormat(JNIEnv* /*env*/,
 }
 
 JNIEXPORT void JNICALL
-Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetGate(JNIEnv* /*env*/,
-                                                          jclass /*clazz*/, jlong handle,
-                                                          jboolean transmitAllowed,
-                                                          jboolean pttPressed,
-                                                          jint voiceTarget,
-                                                          jint bitrate,
-                                                          jint framesPerPacket) {
-    VoiceEngineContext* ctx = getContext(handle);
-    if (ctx == nullptr) return;
-    ctx->gate.publish(transmitAllowed == JNI_TRUE, pttPressed == JNI_TRUE,
-                      voiceTarget, bitrate, framesPerPacket);
-}
-
-JNIEXPORT void JNICALL
 Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetSettings(JNIEnv* /*env*/,
                                                               jclass /*clazz*/, jlong handle,
                                                               jint inputMode, jfloat vadMax,
@@ -514,7 +498,12 @@ JNIEXPORT void JNICALL
 Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetPolicy(JNIEnv* env, jclass /*clazz*/,
                                                              jlong handle,
                                                              jintArray muted,
-                                                             jintArray known) {
+                                                             jintArray known,
+                                                             jboolean transmitAllowed,
+                                                             jboolean pttPressed,
+                                                             jint voiceTarget,
+                                                             jint bitrate,
+                                                             jint framesPerPacket) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx == nullptr) return;
     int32_t mutedBuf[256];
@@ -542,7 +531,9 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetPolicy(JNIEnv* env, jclass
             knownCount = static_cast<size_t>(take);
         }
     }
-    ctx->policy.publish(mutedBuf, mutedCount, knownBuf, knownCount, overflow);
+    ctx->policy.publish(mutedBuf, mutedCount, knownBuf, knownCount, overflow,
+                         transmitAllowed == JNI_TRUE, pttPressed == JNI_TRUE,
+                         voiceTarget, bitrate, framesPerPacket);
 }
 
 JNIEXPORT jboolean JNICALL
