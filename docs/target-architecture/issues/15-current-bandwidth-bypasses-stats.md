@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Documented as an interim in `migration.md` (ground rules, "Other recorded interims"). Choosing one source remains. |
+| Status | Resolved (5a.4): `getCurrentBandwidth` reads `VoiceEngine.status` (`VoiceStatus` bitrate/FPP via `calculateAudioBandwidth`); `AudioHandler` deleted. |
 | Category | Undocumented interim |
 | Severity | Low (a display value from a second source) |
 | Verified | Yes |
