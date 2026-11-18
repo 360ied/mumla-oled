@@ -21,7 +21,7 @@ import junit.framework.TestCase;
 
 /**
  * Unit tests verifying the pure bandwidth-degradation decision in
- * {@link AudioHandler} (ODD-09). The table pins the branch behavior of
+ * {@link se.lublin.humla.voice.VoicePolicy} (ODD-09, moved from AudioHandler in 5a.4). The table pins the branch behavior of
  * {@code computeEffectiveConfig} so the encoder-degradation logic that drives
  * the UDP send-queue rescale cannot drift silently.
  */
@@ -29,8 +29,8 @@ public class AudioBandwidthDegradationTest extends TestCase {
 
     private static void assertConfig(int expectedBitrate, int expectedFpp,
                                      int bitrate, int fpp, int maxBandwidth) {
-        AudioHandler.EffectiveAudioConfig config =
-                AudioHandler.computeEffectiveConfig(bitrate, fpp, maxBandwidth);
+        se.lublin.humla.voice.EffectiveAudioConfig config =
+                se.lublin.humla.voice.VoicePolicyKt.computeEffectiveConfig(bitrate, fpp, maxBandwidth);
         assertEquals(expectedBitrate, config.bitrate);
         assertEquals(expectedFpp, config.framesPerPacket);
     }

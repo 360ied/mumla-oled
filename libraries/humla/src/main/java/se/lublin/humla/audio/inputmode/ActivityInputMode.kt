@@ -18,7 +18,6 @@
 
 package se.lublin.humla.audio.inputmode
 
-import se.lublin.humla.audio.NativeAudioInputEngine
 import kotlin.math.max
 import kotlin.math.min
 
@@ -30,9 +29,9 @@ import kotlin.math.min
  */
 class ActivityInputMode(detectionThreshold: Float) : IInputMode {
     companion object {
-        const val DEFAULT_VAD_MAX = NativeAudioInputEngine.DEFAULT_VAD_MAX
-        const val DEFAULT_VAD_MIN = NativeAudioInputEngine.DEFAULT_VAD_MIN
-        const val DEFAULT_HOLD_FRAMES = NativeAudioInputEngine.DEFAULT_HOLD_FRAMES
+        const val DEFAULT_VAD_MAX = 0.35f
+        const val DEFAULT_VAD_MIN = 0.25f
+        const val DEFAULT_HOLD_FRAMES = 25
     }
 
     var vadMax: Float
@@ -48,7 +47,7 @@ class ActivityInputMode(detectionThreshold: Float) : IInputMode {
 
     /**
      * Unused in the active pipeline. Voice activity detection and speech-gating
-     * are executed natively in C++ via {@link se.lublin.humla.audio.NativeAudioInputEngine}.
+     * are executed natively in C++ via the voice_io send half.
      * Always returns false: no in-tree caller uses it (verified by grep).
      * Any future caller must route through the native VAD instead.
      */

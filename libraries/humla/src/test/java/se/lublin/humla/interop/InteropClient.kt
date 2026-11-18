@@ -124,7 +124,9 @@ object InteropClient {
     fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         // Unconfined: harness commands apply synchronously like the unit
-        // tests, so no second thread exists even in the harness.
+        // tests, so no second thread exists even in the harness. The tunnel
+        // sink routes to the current session's transport (present only in
+        // tunnel mode), exactly like production HumlaService.
         val link = VoiceEngine(
             tunnelSink = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
@@ -156,6 +158,16 @@ object InteropClient {
             mainPoster = { r -> r.run() },
             denyFormatter = { "denied" },
         )
+        // Tunnel sink routes to the current session's transport (present
+        // only in tunnel mode), exactly like production HumlaService. Wired
+        // after the client exists; the send thread calls it for tunnelled
+        // voice (non-realtime).
+        link.setTunnelSink { packet ->
+            try {
+                client.currentSession.value?.transport?.sendTunnelled(packet)
+            } catch (ignored: Exception) {
+            }
+        }
         return HumlaClientHandle(client, link, scope)
     }
 

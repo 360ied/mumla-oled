@@ -35,11 +35,20 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import android.content.Context
+import android.media.AudioManager
+import android.media.MediaRecorder
 import se.lublin.humla.BuildConfig
+import se.lublin.humla.audio.AudioInput
+import se.lublin.humla.audio.AudioOutput
 import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.client.checkNotMainThread
+import se.lublin.humla.route.AppliedRoute
+import se.lublin.humla.route.RoutePreferences
+import se.lublin.humla.route.RouteState
+import se.lublin.humla.route.StreamProfile
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.UdpFormat
@@ -51,7 +60,7 @@ import se.lublin.humla.net.VoiceStatus
 import kotlin.math.min
 
 /**
- * Kotlin VoiceEngine facade (step 5a.3b, spec-literal).
+ * Kotlin VoiceEngine facade (step 5a.4, spec-literal).
  *
  * Implements the client's [VoiceLifecycle], the transport's [VoiceLink],
  * and the render [RenderDriver]. Owns the application-scoped native voice
@@ -75,17 +84,31 @@ import kotlin.math.min
  * already logs the same way).
  */
 class VoiceEngine @JvmOverloads constructor(
-    private val tunnelSink: (ByteArray) -> Unit = {},
+    private var tunnelSink: (ByteArray) -> Unit = {},
     private val talkPublisher: TalkActivityPublisher = TalkActivityPublisher(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)),
     private val engineFactory: (NativeVoiceEngine.Listener) -> EngineNative = { NativeVoiceEngine(it) },
-) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener {
+    private val context: Context? = null,
+    private val routeStates: StateFlow<RouteState>? = null,
+    private val prefs: StateFlow<RoutePreferences>? = null,
+) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener,
+    AudioInput.AudioInputListener {
     companion object {
         private val TAG: String = VoiceEngine::class.java.name
     }
 
-    /** Service-lifetime talk levels; the notifier feeds remote, AudioHandler feeds self. */
+    /** Service-lifetime talk levels; the native notifier is the only writer from 5a.4. */
     val talkActivity: StateFlow<TalkActivity> = talkPublisher.talkActivity
+
+    private data class BuiltPipeline(
+        val input: AudioInput,
+        val output: AudioOutput,
+        val route: AppliedRoute,
+        val profile: StreamProfile,
+        val audioSource: Int,
+        val audioStream: Int,
+    )
+    private val pipelineRef = AtomicReference<BuiltPipeline?>(null)
 
     private val _events = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 64)
     override val events: SharedFlow<VoiceEvent> = _events.asSharedFlow()
@@ -112,6 +135,47 @@ class VoiceEngine @JvmOverloads constructor(
     private var lastLoggedDroppedInbound = 0L
     private var lastLoggedDroppedTunnel = 0L
     private var lastLoggedDroppedJitter = 0L
+    private var lastLoggedDroppedOutbound = 0L
+
+    init {
+        // Voice follows route state (route.md): open capture and render in
+        // Ready/Fallback, restart on route/profile change, stop on Idle.
+        // Runs on the shared voice control thread, in command order with
+        // Start/Stop, so teardown and destroy serialize without a second
+        // thread. Null in unit tests and the interop harness, which drive
+        // native render/capture directly without AudioRecord/Track.
+        val routes = routeStates
+        if (routes != null) {
+            scope.launch {
+                try {
+                    routes.collect {
+                        tryEnsurePipeline()
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Log.w(TAG, "Voice route collection ended: $e")
+                }
+            }
+            val prefsFlow = prefs
+            if (prefsFlow != null) {
+                scope.launch {
+                    try {
+                        prefsFlow.collect {
+                            tryEnsurePipeline()
+                        }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Log.w(TAG, "Voice prefs collection ended: $e")
+                    }
+                }
+            }
+        }
+    }
+
+    /** Test and service hook: replaces the tunnel sink after construction. */
+    fun setTunnelSink(sink: (ByteArray) -> Unit) {
+        tunnelSink = sink
+    }
 
     /** Policy collector only: publishes the mapped VoicePolicy for the native filter and gate. */
     fun setPolicy(policy: VoicePolicy) {
@@ -181,6 +245,44 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
+    /** Java-friendly gate push for interop gating tests (no PersistentSet). */
+    fun setGateForTests(transmitAllowed: Boolean, pttPressed: Boolean) {
+        try {
+            ensureNative()
+            native?.setGate(transmitAllowed, pttPressed, 0, 40000, 2)
+        } catch (e: Exception) {
+            loggerFine("Dropping test gate push: $e")
+        }
+    }
+
+    /** Java-friendly settings push for interop PTT tests. */
+    fun setSettingsForTests(inputMode: InputMode, halfDuplex: Boolean) {
+        try {
+            ensureNative()
+            val effectiveHalfDuplex = halfDuplex && inputMode == InputMode.PUSH_TO_TALK
+            native?.setSettings(
+                when (inputMode) {
+                    InputMode.VOICE_ACTIVITY -> 0
+                    InputMode.PUSH_TO_TALK -> 1
+                    InputMode.CONTINUOUS -> 2
+                },
+                1.0f, 0.7f, 1.0f, true, effectiveHalfDuplex,
+            )
+        } catch (e: Exception) {
+            loggerFine("Dropping test settings push: $e")
+        }
+        _latestSettings.value = VoiceSettings(
+            inputMode = inputMode,
+            vadMax = 1.0f,
+            vadMin = 0.7f,
+            amplitudeBoost = 1.0f,
+            targetBitrate = 40000,
+            targetFramesPerPacket = 2,
+            halfDuplex = halfDuplex,
+            adaptiveLeveler = true,
+        )
+    }
+
     fun setTargetFramesPerPacket(fpp: Int) {
         targetFramesPerPacket.set(se.lublin.humla.Constants.sanitizeFramesPerPacket(fpp))
         refreshStatus()
@@ -231,6 +333,11 @@ class VoiceEngine @JvmOverloads constructor(
             native?.setVoiceRoute(false)
         } catch (e: Exception) {
             loggerFine("Dropping route push: $e")
+        }
+        try {
+            tryEnsurePipeline()
+        } catch (e: Exception) {
+            loggerFine("Dropping pipeline ensure: $e")
         }
         refreshStatus()
     }
@@ -294,8 +401,24 @@ class VoiceEngine @JvmOverloads constructor(
                         loggerFine("Dropping Start keys: $e")
                     }
                 }
-                // Reset while no render is live (pipelines build after
-                // Start; the previous one joined in its teardown).
+                // RNNoise model (control thread, while capture is stopped):
+                // load once from assets and push to the native input engine.
+                // Missing model leaves the denoiser bypassing (process copies
+                // input, returns -1), which the continuous-mode tests pin.
+                try {
+                    val ctx = context
+                    if (ctx != null) {
+                        RnnoiseModel.load(ctx)
+                        val model = RnnoiseModel.cached()
+                        if (model != null) {
+                            engine.setRnnoiseModel(model)
+                        }
+                    }
+                } catch (e: Exception) {
+                    loggerFine("Dropping RNNoise model push: $e")
+                }
+                // Reset while no render or capture is live (pipelines build
+                // after Start; the previous one joined in its teardown).
                 try {
                     engine.reset()
                 } catch (e: Exception) {
@@ -307,6 +430,11 @@ class VoiceEngine @JvmOverloads constructor(
                     native?.setVoiceRoute(usingUdp.get())
                 } catch (e: Exception) {
                     loggerFine("Dropping route push: $e")
+                }
+                try {
+                    tryEnsurePipeline()
+                } catch (e: Exception) {
+                    loggerFine("Dropping pipeline ensure: $e")
                 }
                 if (usingUdp.get()) {
                     val endpoint = endpointRef.get()
@@ -327,6 +455,13 @@ class VoiceEngine @JvmOverloads constructor(
                 endpointRef.set(null)
                 usingUdp.set(false)
                 runningFlag.set(false)
+                // Pipeline first (joins capture/render), then native stop:
+                // destroy asserts both threads are joined.
+                try {
+                    tearDownPipeline()
+                } catch (e: Exception) {
+                    loggerFine("Dropping pipeline teardown: $e")
+                }
                 try {
                     native?.stop()
                 } catch (e: Exception) {
@@ -563,17 +698,150 @@ class VoiceEngine @JvmOverloads constructor(
         // Step 5a.4: the notifier is the only writer, publishing remote and
         // self atomically so collectors never see a half-applied snapshot.
         talkPublisher.updateAll(levels, selfTalking)
+        val droppedOutbound = try {
+            native?.lastDroppedOutbound() ?: lastLoggedDroppedOutbound
+        } catch (e: Exception) {
+            lastLoggedDroppedOutbound
+        }
         if (droppedInbound != lastLoggedDroppedInbound ||
             droppedTunnel != lastLoggedDroppedTunnel ||
-            droppedJitter != lastLoggedDroppedJitter
+            droppedJitter != lastLoggedDroppedJitter ||
+            droppedOutbound != lastLoggedDroppedOutbound
         ) {
             lastLoggedDroppedInbound = droppedInbound
             lastLoggedDroppedTunnel = droppedTunnel
             lastLoggedDroppedJitter = droppedJitter
+            lastLoggedDroppedOutbound = droppedOutbound
             Log.w(
                 TAG, "Voice I/O drops: inbound=" + droppedInbound +
-                    " tunnel=" + droppedTunnel + " jitter=" + droppedJitter
+                    " tunnel=" + droppedTunnel + " jitter=" + droppedJitter +
+                    " outbound=" + droppedOutbound
             )
+        }
+        refreshStatus()
+    }
+
+    // AudioInput capture thread only: forwards PCM to the native input engine.
+    // The buffer is reused by AudioInput: native copies before returning, so
+    // no copy is needed here. Partial reads (frameSize < FRAME_SIZE) are
+    // carried inside VoiceSend into exact 10 ms frames.
+    override fun onAudioInputReceived(frame: ShortArray?, frameSize: Int) {
+        if (frame == null || frameSize <= 0) return
+        try {
+            native?.captureFrame(frame, 0, frameSize)
+        } catch (e: Exception) {
+            loggerFine("Dropping capture frame: $e")
+        }
+    }
+
+    private fun tryEnsurePipeline() {
+        // Runs on the voice control thread only (route collects + Start).
+        // Every blocking call below starts with checkNotMainThread via the
+        // pipeline entries (AudioInput shutdown join, AudioOutput stop join).
+        checkNotMainThread()
+        if (!runningFlag.get()) {
+            tearDownPipeline()
+            return
+        }
+        val routes = routeStates ?: return
+        val state = try {
+            routes.value
+        } catch (e: Exception) {
+            loggerFine("Dropping route read: $e")
+            return
+        }
+        val (route, profile) = when (state) {
+            is RouteState.Ready -> state.route to state.profile
+            is RouteState.Fallback -> state.route to state.profile
+            else -> {
+                tearDownPipeline()
+                return
+            }
+        }
+        val handset = try {
+            prefs?.value?.handsetStream ?: AudioManager.STREAM_MUSIC
+        } catch (e: Exception) {
+            loggerFine("Dropping prefs read: $e")
+            AudioManager.STREAM_MUSIC
+        }
+        val (audioSource, audioStream) = when (route) {
+            AppliedRoute.VOICE_SCO -> MediaRecorder.AudioSource.VOICE_COMMUNICATION to AudioManager.STREAM_VOICE_CALL
+            AppliedRoute.VOICE_HANDSET -> MediaRecorder.AudioSource.VOICE_COMMUNICATION to handset
+            AppliedRoute.MEDIA -> MediaRecorder.AudioSource.MIC to AudioManager.STREAM_MUSIC
+        }
+        val existing = pipelineRef.get()
+        if (existing != null && existing.route == route && existing.profile == profile &&
+            existing.audioSource == audioSource && existing.audioStream == audioStream
+        ) {
+            return
+        }
+        tearDownPipeline()
+        // Build: AudioInput acquires the mic, AudioOutput acquires the track.
+        // Failures report PipelineError and retry on the next route event
+        // (spec failures: session stays connected without audio).
+        val input: AudioInput
+        try {
+            input = AudioInput(this, audioSource)
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice pipeline input build failed; retry on next event: $e")
+            if (!_events.tryEmit(VoiceEvent.PipelineError("capture open failed"))) {
+                loggerFine("Dropping PipelineError (event buffer full)")
+            }
+            return
+        }
+        val output = AudioOutput(context, this, talkPublisher)
+        try {
+            output.startPlaying(audioStream)
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice pipeline output build failed; retry on next event: $e")
+            try {
+                input.shutdown()
+            } catch (ignored: Exception) {
+            }
+            if (!_events.tryEmit(VoiceEvent.PipelineError("playback open failed"))) {
+                loggerFine("Dropping PipelineError (event buffer full)")
+            }
+            return
+        }
+        // Route intent, not a literal stream: on the voice route, VOICE_CALL
+        // selects earpiece, anything else speakerphone. Media routes clear
+        // for hygiene (voice-call routing ignores it there).
+        setSpeakerphone(route != AppliedRoute.MEDIA && route != AppliedRoute.VOICE_SCO && audioStream != AudioManager.STREAM_VOICE_CALL)
+        try {
+            input.startRecording()
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice pipeline capture start failed; retry on next event: $e")
+        }
+        pipelineRef.set(BuiltPipeline(input, output, route, profile, audioSource, audioStream))
+    }
+
+    private fun tearDownPipeline() {
+        checkNotMainThread()
+        val existing = pipelineRef.getAndSet(null) ?: return
+        try {
+            existing.input.shutdown()
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice pipeline input shutdown failed: $e")
+        }
+        try {
+            existing.output.stopPlaying()
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice pipeline output shutdown failed: $e")
+        }
+    }
+
+    private fun setSpeakerphone(on: Boolean) {
+        val ctx = context ?: return
+        try {
+            val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager?
+            if (audioManager == null) return
+            try {
+                audioManager.isSpeakerphoneOn = on
+            } catch (e: Exception) {
+                Log.w(TAG, "VoIP route: setSpeakerphoneOn threw (" + e.message + ")")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "VoIP route: no AudioManager (" + e.message + ")")
         }
     }
 
@@ -678,14 +946,18 @@ class VoiceEngine @JvmOverloads constructor(
     }
 
     /**
-     * Application end of life. Non-blocking like RouteControl and
-     * VoiceControl: the stop-join-destroy runs on the command scope so
+     * Application end of life. Non-blocking like RouteControl: the
+     * pipeline-teardown + stop-join-destroy runs on the command scope so
      * Service.onDestroy (main) never waits on thread joins, and destroy
-     * runs after the queued stops. VoiceControl's render join still
-     * precedes this via the service chaining its close first.
+     * runs after the queued stops. Render and capture joins precede native
+     * destroy so the RenderGuard/CaptureGuard asserts never fire.
      */
     fun close(): Job {
         val teardown = scope.launch(NonCancellable) {
+            try {
+                tearDownPipeline()
+            } catch (ignored: Exception) {
+            }
             try {
                 native?.stop()
             } catch (ignored: Exception) {

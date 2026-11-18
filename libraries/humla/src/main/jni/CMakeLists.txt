@@ -215,10 +215,9 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/RnnoiseProcessor.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceEncoder.cpp"
         "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeCrashTestJni.cpp"
+        "${JNI_ROOT}/diagnostics/NativeCrashTestJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
@@ -228,7 +227,6 @@ if(ANDROID)
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
-        "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
     )
     target_include_directories(humlaaudio PRIVATE
@@ -433,7 +431,6 @@ else()
     # non-silent PCM through the production render path on the host.
     add_library(humlaaudio SHARED
         $<TARGET_OBJECTS:humlacrypto_obj>
-        "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
@@ -449,7 +446,6 @@ else()
         "${AUDIO_ENGINE_DIR}/AdaptiveLeveler.cpp"
         "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
         "${AUDIO_ENGINE_DIR}/RnnoiseProcessor.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
     )
     target_include_directories(humlaaudio PRIVATE
@@ -462,9 +458,5 @@ else()
         ${JNI_INCLUDE_DIRS}
     )
     target_compile_options(humlaaudio PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
-    # The input-engine JNI seam predates host -Werror (unused JNI params);
-    # snapshots are Android-built, so silence only the host test library.
-    set_source_files_properties("${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
-        PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
     target_link_libraries(humlaaudio PRIVATE humlavoicecodec humlanpb humlaopus humlarnnoise Threads::Threads m)
 endif()

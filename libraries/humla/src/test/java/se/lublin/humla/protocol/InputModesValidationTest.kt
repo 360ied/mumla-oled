@@ -22,18 +22,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyBoolean
-import org.mockito.ArgumentMatchers.anyFloat
-import org.mockito.ArgumentMatchers.anyInt
-import org.mockito.ArgumentMatchers.eq
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoInteractions
-import org.mockito.Mockito.`when`
 import se.lublin.humla.Constants
 import se.lublin.humla.audio.inputmode.ActivityInputMode
-import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.util.ConfigDelta
 
 /**
@@ -163,19 +153,11 @@ class InputModesValidationTest {
     }
 
     @Test
-    fun applierPushesModeAndKnobsToBuilderAndLive() {
+    fun applierPushesModeAndKnobsToHolder() {
+        // Step 5a.4: the holder is UI state only; no builder, handler, or
+        // voice-link pushes ride along (live paths read RouteState and
+        // VoiceSettings/VoicePolicy instead).
         val modes = InputModes()
-        val builder = mock(AudioHandler.Builder::class.java)
-        // Specific instance (not any()): Kotlin non-null param + any() null
-        // would NPE at the stub call site.
-        `when`(builder.setInputMode(modes.toggle)).thenReturn(builder)
-        `when`(builder.setTargetBitrate(anyInt())).thenReturn(builder)
-        `when`(builder.setTargetFramesPerPacket(anyInt())).thenReturn(builder)
-        `when`(builder.setAmplitudeBoost(anyFloat())).thenReturn(builder)
-        `when`(builder.setHalfDuplexEnabled(anyBoolean())).thenReturn(builder)
-        `when`(builder.setAdaptiveLevelerEnabled(anyBoolean())).thenReturn(builder)
-        val liveHandler = mock(AudioHandler::class.java)
-        val liveConnection = mock(VoiceEngine::class.java)
         modes.applyAudioDelta(
             ConfigDelta(
                 transmitMode = Constants.TRANSMIT_PUSH_TO_TALK,
@@ -186,59 +168,36 @@ class InputModesValidationTest {
                 framesPerPacket = 4,
                 adaptiveLeveler = true,
             ),
-            builder,
-            liveHandler,
-            liveConnection,
         )
         assertEquals(Constants.TRANSMIT_PUSH_TO_TALK, modes.transmitMode)
         assertTrue(modes.halfDuplex)
-        // The live VAD push must ride along: a regression dropping it would
-        // leave the running pipeline on stale thresholds.
         assertEquals(0.5f, modes.activity.vadMax, 1e-6f)
-        verify(liveHandler).setVadThresholds(eq(modes.activity.vadMax), eq(modes.activity.vadMin))
-        verify(builder).setInputMode(modes.toggle)
-        verify(builder).setHalfDuplexEnabled(true)
-        verify(builder).setTargetBitrate(64000)
-        verify(builder).setTargetFramesPerPacket(4)
-        verify(builder).setAmplitudeBoost(2.0f)
-        verify(builder).setAdaptiveLevelerEnabled(true)
-        verify(liveConnection).setTargetFramesPerPacket(4)
     }
 
     @Test
     fun applierRejectsInfiniteBoostWithoutMutating() {
         val modes = InputModes()
-        val builder = mock(AudioHandler.Builder::class.java)
         val before = modes.activity.vadMax
         assertThrows(IllegalArgumentException::class.java) {
             modes.applyAudioDelta(
                 ConfigDelta(amplitudeBoost = Float.POSITIVE_INFINITY),
-                builder,
-                null,
-                null,
             )
         }
         // Validate-before-commit covers the mutating entry too: the holder
-        // keeps its thresholds and the builder sees no boost.
+        // keeps its thresholds.
         assertEquals(before, modes.activity.vadMax, 1e-6f)
-        verify(builder, never()).setAmplitudeBoost(anyFloat())
     }
 
     @Test
     fun applierRejectsBadModeWithoutMutating() {
         val modes = InputModes()
-        val builder = mock(AudioHandler.Builder::class.java)
         val before = modes.transmitMode
         assertThrows(IllegalArgumentException::class.java) {
             modes.applyAudioDelta(
                 ConfigDelta(transmitMode = 999),
-                builder,
-                null,
-                null,
             )
         }
         assertEquals(before, modes.transmitMode)
-        verifyNoInteractions(builder)
     }
 
     @Test
@@ -250,16 +209,10 @@ class InputModesValidationTest {
         modes.validateAudioDelta(ConfigDelta(detectionThreshold = -1.0f))
         modes.applyAudioDelta(
             ConfigDelta(detectionThreshold = 2.0f),
-            mock(AudioHandler.Builder::class.java),
-            null,
-            null,
         )
         assertEquals(1.0f, modes.activity.vadMax, 1e-6f)
         modes.applyAudioDelta(
             ConfigDelta(detectionThreshold = -1.0f),
-            mock(AudioHandler.Builder::class.java),
-            null,
-            null,
         )
         assertEquals(0.0f, modes.activity.vadMax, 1e-6f)
     }

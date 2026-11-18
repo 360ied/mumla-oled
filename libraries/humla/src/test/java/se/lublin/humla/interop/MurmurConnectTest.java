@@ -37,9 +37,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import org.mockito.Mockito;
 
-import android.content.Context;
 
 import se.lublin.humla.client.ClientError;
 import se.lublin.humla.client.ClientState;
@@ -51,12 +49,7 @@ import se.lublin.humla.protobuf.Mumble;
 import se.lublin.humla.model.IChannel;
 import se.lublin.humla.model.IMessage;
 import se.lublin.humla.model.IUser;
-import se.lublin.humla.audio.NativeAudioInputEngine;
-import se.lublin.humla.audio.inputmode.ContinuousInputMode;
 import se.lublin.humla.net.HandshakeFailure;
-import se.lublin.humla.protocol.AudioHandler;
-import se.lublin.humla.util.HumlaLogger;
-import se.lublin.humla.voice.TalkActivityPublisher;
 import se.lublin.humla.util.HumlaException;
 import se.lublin.humla.util.IHumlaObserver;
 import se.lublin.humla.util.VoiceTargetMode;
@@ -349,59 +342,17 @@ public class MurmurConnectTest {
         InteropClient.awaitUser(recovered, "InteropBob", "receiver sees sender after restart");
         final se.lublin.humla.voice.VoiceEngine receiverVoice = aliceHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{bobId});
-        HumlaLogger quietLogger = new HumlaLogger() {
-            @Override public void logInfo(String message) {}
-            @Override public void logWarning(String message) {}
-            @Override public void logError(String message) {}
-        };
-        final HumlaClient bobClient = bobHandle.getClient();
-        AudioHandler.AudioEncodeListener peerEncode = new AudioHandler.AudioEncodeListener() {
-            @Override public void onAudioEncoded(byte[] data, int length) {
-                Session live = bobClient.getCurrentSession().getValue();
-                if (live != null) {
-                    try {
-                        live.getTransport().sendTunnelled(
-                                java.util.Arrays.copyOf(data, length));
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-            @Override public void onTalkingStateChanged(boolean talking) {}
-        };
-        se.lublin.humla.audio.RenderDriver noRender = new se.lublin.humla.audio.RenderDriver() {
-            @Override public int render(short[] out, int offset, int length) { return 0; }
-            @Override public boolean awaitWork(int timeoutMs) { return false; }
-            @Override public boolean lastHasActiveVoices() { return false; }
-            @Override public void wakeForStop() {}
-        };
-        AudioHandler peerHandler = new AudioHandler(
-                Mockito.mock(Context.class),
-                quietLogger,
-                android.media.AudioManager.STREAM_MUSIC,
-                android.media.MediaRecorder.AudioSource.MIC,
-                48000, 40000, 2,
-                new ContinuousInputMode(),
-                (byte) 0, 1.0f, false, false,
-                peerEncode, noRender, new TalkActivityPublisher());
-        peerHandler.setProtobufUdp(receiverVoice.udpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
-        final AudioHandler peerRef = peerHandler;
-        NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
-                40000, 2, 1.0f, false,
-                NativeAudioInputEngine.INPUT_MODE_CONTINUOUS,
-                new NativeAudioInputEngine.AudioInputEngineListener() {
-                    @Override public void onAudioPacketEncoded(
-                            byte[] data, int length, int frames,
-                            boolean isTerminator, long frameNumber) {
-                        peerRef.onAudioPacketEncoded(data, length, frames, isTerminator, frameNumber);
-                    }
-                    @Override public void onTalkingStateChanged(boolean talking, float peak) {}
-                });
+        // Step 5a.4: the sender drives the native capture entry directly;
+        // the send thread tunnels through the live session transport (wired
+        // in InteropClient), and the receiver renders the shared engine.
+        final se.lublin.humla.voice.VoiceEngine senderVoice = bobHandle.getVoice();
+        senderVoice.setFilterForTests(new int[0], new int[0]);
         short[] sine = new short[480];
         for (int i = 0; i < sine.length; i++) {
             sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
         }
         for (int i = 0; i < 30; i++) {
-            inputEngine.processFrame(sine, 0, sine.length);
+            senderVoice.captureFrame(sine, 0, sine.length);
         }
         short[] pcm = new short[960];
         int peak = 0;
@@ -608,16 +559,12 @@ public class MurmurConnectTest {
 
     @Test
     public void tunnelVoicePlaysThroughNativeRender() throws Exception {
-        // Step 5a.3b done-when: voice from a peer over the tunnel plays
-        // non-silent PCM through the shared native render entry point. Both
-        // clients force TCP; the sender encodes synthetic PCM with the real
-        // input engine, frames it through the production AudioHandler encode
-        // path, and tunnels it through the live session transport; the
-        // receiver's session coroutine parses native in the shared
-        // VoiceEngine, which the test renders directly. No AudioRecord or
-        // AudioTrack exists on the host: the sender replaces only capture
-        // with direct processFrame calls, and the receiver replaces only
-        // playback with direct render calls on the shared engine.
+        // Step 5a.4 done-when: voice from a peer over the tunnel plays
+        // non-silent PCM through the shared native voice path. Both clients
+        // force TCP; the sender drives the native capture entry with
+        // synthetic PCM, the send thread tunnels it, the native receive
+        // parses and filters, and the test renders the shared engine.
+        // No AudioRecord/AudioTrack exists on the host.
         HumlaClientHandle receiverHandle = connectHandle(
                 "InteropAlice", null, InteropClient.Voice.FORCED_TCP);
         Session receiverSession = InteropClient.awaitConnected(
@@ -630,69 +577,23 @@ public class MurmurConnectTest {
         InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender");
 
         // No PolicyCollector in the harness: open the native sender filter
-        // for the peer directly (production pushes the mapped VoicePolicy).
+        // for the peer directly (production pushes the mapped VoicePolicy),
+        // plus an open gate for the sender so its capture transmits without
+        // a collector.
         final se.lublin.humla.voice.VoiceEngine receiverVoice = receiverHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{senderId});
-
-        HumlaLogger quietLogger = new HumlaLogger() {
-            @Override public void logInfo(String message) {}
-            @Override public void logWarning(String message) {}
-            @Override public void logError(String message) {}
-        };
-        // The interop link is built with a no-op tunnel sink (voice media
-        // never flows in the other scenarios), so the test routes framed
-        // packets into the live session transport directly — the production
-        // input engine and AudioHandler framing above are what is exercised.
-        final HumlaClient senderClient = senderHandle.getClient();
-        AudioHandler.AudioEncodeListener peerEncode = new AudioHandler.AudioEncodeListener() {
-            @Override public void onAudioEncoded(byte[] data, int length) {
-                Session live = senderClient.getCurrentSession().getValue();
-                if (live != null) {
-                    try {
-                        live.getTransport().sendTunnelled(
-                                java.util.Arrays.copyOf(data, length));
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-            @Override public void onTalkingStateChanged(boolean talking) {}
-        };
-        se.lublin.humla.audio.RenderDriver noRender = new se.lublin.humla.audio.RenderDriver() {
-            @Override public int render(short[] out, int offset, int length) { return 0; }
-            @Override public boolean awaitWork(int timeoutMs) { return false; }
-            @Override public boolean lastHasActiveVoices() { return false; }
-            @Override public void wakeForStop() {}
-        };
-        AudioHandler peerHandler = new AudioHandler(
-                Mockito.mock(Context.class),
-                quietLogger,
-                android.media.AudioManager.STREAM_MUSIC,
-                android.media.MediaRecorder.AudioSource.MIC,
-                48000, 40000, 2,
-                new ContinuousInputMode(),
-                (byte) 0, 1.0f, false, false,
-                peerEncode, noRender, new TalkActivityPublisher());
-        peerHandler.setProtobufUdp(receiverVoice.udpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
-        final AudioHandler peerRef = peerHandler;
-        NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
-                40000, 2, 1.0f, false,
-                NativeAudioInputEngine.INPUT_MODE_CONTINUOUS,
-                new NativeAudioInputEngine.AudioInputEngineListener() {
-                    @Override public void onAudioPacketEncoded(
-                            byte[] data, int length, int frames,
-                            boolean isTerminator, long frameNumber) {
-                        peerRef.onAudioPacketEncoded(data, length, frames, isTerminator, frameNumber);
-                    }
-                    @Override public void onTalkingStateChanged(boolean talking, float peak) {}
-                });
+        final se.lublin.humla.voice.VoiceEngine senderVoice = senderHandle.getVoice();
+        senderVoice.setFilterForTests(new int[0], new int[0]);
         // 30 frames of 440 Hz sine at 48 kHz: continuous mode transmits
-        // everything, so encoding needs no VAD warmup.
+        // everything, so encoding needs no VAD warmup. Step 5a.4 drives the
+        // native capture entry; the send thread tunnels via InteropClient's
+        // sink and the receiver renders the shared engine.
         short[] sine = new short[480];
         for (int i = 0; i < sine.length; i++) {
             sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
         }
         for (int i = 0; i < 30; i++) {
-            inputEngine.processFrame(sine, 0, sine.length);
+            senderVoice.captureFrame(sine, 0, sine.length);
         }
         // The startup gate needs margin + 1 queued frames; render the shared
         // engine until clearly non-silent PCM comes out of the real output
@@ -724,21 +625,40 @@ public class MurmurConnectTest {
             Thread.sleep(50);
         }
         assertTrue("notifier must report the sender talking", sawSender);
-        // The input engine is intentionally left alive: its destroy is
-        // module-internal, and the encoder is a process-lifetime test
-        // resource freed at JVM exit.
+        // Both directions over the tunnel: reverse Alice -> Bob through the
+        // same native path.
+        final int receiverId = receiverSession.getSessionId();
+        InteropClient.awaitUser(senderSession, "InteropAlice", "sender sees receiver");
+        senderVoice.setFilterForTests(new int[0], new int[]{receiverId});
+        receiverVoice.setFilterForTests(new int[0], new int[0]);
+        for (int i = 0; i < 30; i++) {
+            receiverVoice.captureFrame(sine, 0, sine.length);
+        }
+        short[] pcmRev = new short[960];
+        int peakRev = 0;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (peakRev <= 100 && System.nanoTime() < deadline) {
+            int rendered = senderVoice.render(pcmRev, 0, pcmRev.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcmRev[s]);
+                if (v > peakRev) peakRev = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("reverse tunnel voice must play non-silent PCM, peak=" + peakRev,
+                peakRev > 100);
     }
 
     @Test
     public void udpVoicePlaysThroughNativeReceive() throws Exception {
-        // Step 5a.3b done-when: voice from a peer over UDP plays non-silent
-        // PCM through the shared native voice path. The sender encodes
-        // synthetic PCM with the real input engine, frames it through the
-        // production AudioHandler encode path, and sends it through the
-        // production send seam (native encrypt + sendto on the shared
-        // socket); the native receive thread decrypts, parses, and filters,
-        // and the test renders the shared engine directly. No
-        // AudioRecord/AudioTrack exists on the host.
+        // Step 5a.4 done-when: voice from a peer over UDP plays non-silent
+        // PCM through the shared native voice path. The sender drives the
+        // native capture entry with synthetic PCM; the send thread encrypts
+        // and sends on the shared socket; the native receive thread
+        // decrypts, parses, and filters; the test renders the shared engine
+        // directly. No AudioRecord/AudioTrack exists on the host.
         HumlaClientHandle receiverHandle = connectHandle(
                 "InteropAlice", null, InteropClient.Voice.UDP);
         Session receiverSession = InteropClient.awaitConnected(
@@ -754,56 +674,14 @@ public class MurmurConnectTest {
 
         final se.lublin.humla.voice.VoiceEngine receiverVoice = receiverHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{senderId});
-
-        HumlaLogger quietLogger = new HumlaLogger() {
-            @Override public void logInfo(String message) {}
-            @Override public void logWarning(String message) {}
-            @Override public void logError(String message) {}
-        };
         final se.lublin.humla.voice.VoiceEngine senderVoice = senderHandle.getVoice();
-        AudioHandler.AudioEncodeListener peerEncode = new AudioHandler.AudioEncodeListener() {
-            @Override public void onAudioEncoded(byte[] data, int length) {
-                try {
-                    senderVoice.sendVoice(data, length);
-                } catch (Exception ignored) {
-                }
-            }
-            @Override public void onTalkingStateChanged(boolean talking) {}
-        };
-        se.lublin.humla.audio.RenderDriver noRender = new se.lublin.humla.audio.RenderDriver() {
-            @Override public int render(short[] out, int offset, int length) { return 0; }
-            @Override public boolean awaitWork(int timeoutMs) { return false; }
-            @Override public boolean lastHasActiveVoices() { return false; }
-            @Override public void wakeForStop() {}
-        };
-        AudioHandler peerHandler = new AudioHandler(
-                Mockito.mock(Context.class),
-                quietLogger,
-                android.media.AudioManager.STREAM_MUSIC,
-                android.media.MediaRecorder.AudioSource.MIC,
-                48000, 40000, 2,
-                new ContinuousInputMode(),
-                (byte) 0, 1.0f, false, false,
-                peerEncode, noRender, new TalkActivityPublisher());
-        peerHandler.setProtobufUdp(receiverVoice.udpFormat() == se.lublin.humla.net.UdpFormat.PROTOBUF);
-        final AudioHandler peerRef = peerHandler;
-        NativeAudioInputEngine inputEngine = new NativeAudioInputEngine(
-                40000, 2, 1.0f, false,
-                NativeAudioInputEngine.INPUT_MODE_CONTINUOUS,
-                new NativeAudioInputEngine.AudioInputEngineListener() {
-                    @Override public void onAudioPacketEncoded(
-                            byte[] data, int length, int frames,
-                            boolean isTerminator, long frameNumber) {
-                        peerRef.onAudioPacketEncoded(data, length, frames, isTerminator, frameNumber);
-                    }
-                    @Override public void onTalkingStateChanged(boolean talking, float peak) {}
-                });
+        senderVoice.setFilterForTests(new int[0], new int[0]);
         short[] sine = new short[480];
         for (int i = 0; i < sine.length; i++) {
             sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
         }
         for (int i = 0; i < 30; i++) {
-            inputEngine.processFrame(sine, 0, sine.length);
+            senderVoice.captureFrame(sine, 0, sine.length);
         }
         short[] pcm = new short[960];
         int peak = 0;
@@ -830,6 +708,178 @@ public class MurmurConnectTest {
             Thread.sleep(50);
         }
         assertTrue("notifier must report the sender talking", sawSender);
+        // Both directions over UDP: reverse Alice -> Bob through the same
+        // native path (sender gate already open via setFilterForTests).
+        final int receiverId = receiverSession.getSessionId();
+        senderVoice.setFilterForTests(new int[0], new int[]{receiverId});
+        receiverVoice.setFilterForTests(new int[0], new int[0]);
+        for (int i = 0; i < 30; i++) {
+            receiverVoice.captureFrame(sine, 0, sine.length);
+        }
+        short[] pcmRev = new short[960];
+        int peakRev = 0;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (peakRev <= 100 && System.nanoTime() < deadline) {
+            int rendered = senderVoice.render(pcmRev, 0, pcmRev.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcmRev[s]);
+                if (v > peakRev) peakRev = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("reverse UDP voice must play non-silent PCM, peak=" + peakRev,
+                peakRev > 100);
+    }
+
+    @Test
+    public void voiceGatingMutesDeafensAndPtt() throws Exception {
+        // Step 5a.4 done-when: mute, deafen, and push-to-talk gate
+        // transmission in interop (tunnel). The native gate is the single
+        // enforcement point; VoicePolicyTest pins the SessionState mapping
+        // (desired mute wins, echo deafen closes, PTT pressed flows), so
+        // here the harness drives the gate directly and asserts no audio
+        // traverses, then reopens and asserts voice returns.
+        HumlaClientHandle receiverHandle = connectHandle(
+                "InteropAlice", null, InteropClient.Voice.FORCED_TCP);
+        Session receiverSession = InteropClient.awaitConnected(
+                receiverHandle.getClient(), "receiver sync");
+        HumlaClientHandle senderHandle = connectHandle(
+                "InteropBob", null, InteropClient.Voice.FORCED_TCP);
+        Session senderSession = InteropClient.awaitConnected(
+                senderHandle.getClient(), "sender sync");
+        final int senderId = senderSession.getSessionId();
+        InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender");
+        final se.lublin.humla.voice.VoiceEngine receiverVoice = receiverHandle.getVoice();
+        receiverVoice.setFilterForTests(new int[0], new int[]{senderId});
+        final se.lublin.humla.voice.VoiceEngine senderVoice = senderHandle.getVoice();
+        senderVoice.setFilterForTests(new int[0], new int[0]);
+        short[] sine = new short[480];
+        for (int i = 0; i < sine.length; i++) {
+            sine[i] = (short) (10000.0 * Math.sin(2.0 * Math.PI * 440.0 * i / 48000.0));
+        }
+        // Baseline open gate transmits.
+        for (int i = 0; i < 30; i++) {
+            senderVoice.captureFrame(sine, 0, sine.length);
+        }
+        short[] pcm = new short[960];
+        int peak = 0;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (peak <= 100 && System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > peak) peak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("open gate must transmit, peak=" + peak, peak > 100);
+        // Drain the burst so the mute phase starts silent: render until the
+        // inbound ring and jitter empty (no new captures during the drain).
+        // Without this, leftover baseline voice would play into the mute
+        // window and falsely trip the silence assert.
+        long drainDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < drainDeadline) {
+            receiverVoice.render(pcm, 0, pcm.length);
+            Thread.sleep(20);
+        }
+        // Mute closes the gate: terminator only, then silence. Push a closed
+        // gate (transmitAllowed false) and capture; the receiver must stay
+        // silent (peak <= 100) over 3 s of render.
+        senderVoice.setGateForTests(false, false);
+        for (int i = 0; i < 30; i++) {
+            senderVoice.captureFrame(sine, 0, sine.length);
+        }
+        // Skip the first second: baseline tail + terminator transit + PLC
+        // (loud for ~100 ms) must drain before silence is pinned.
+        long muteSkip = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (System.nanoTime() < muteSkip) {
+            receiverVoice.render(pcm, 0, pcm.length);
+            Thread.sleep(20);
+        }
+        int mutePeak = 0;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > mutePeak) mutePeak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        boolean muteSelf = senderVoice.getTalkActivity().getValue().getSelfTalking();
+        assertTrue("muted gate must stay silent, peak=" + mutePeak + " self=" + muteSelf, mutePeak <= 100);
+        // Deafen closes the same gate (server also stops forwarding, but the
+        // client-side gate is what this pins): same closed gate stays silent.
+        senderVoice.setGateForTests(false, false);
+        for (int i = 0; i < 10; i++) {
+            senderVoice.captureFrame(sine, 0, sine.length);
+        }
+        long deafSkip = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (System.nanoTime() < deafSkip) {
+            receiverVoice.render(pcm, 0, pcm.length);
+            Thread.sleep(20);
+        }
+        int deafPeak = 0;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > deafPeak) deafPeak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("deafened gate must stay silent, peak=" + deafPeak, deafPeak <= 100);
+        // Push-to-talk: PTT mode with pttPressed false stays silent; pressed
+        // transmits. Settings switch to PTT, gate carries pttPressed.
+        senderVoice.setSettingsForTests(se.lublin.humla.voice.InputMode.PUSH_TO_TALK, false);
+        senderVoice.setGateForTests(true, false);
+        for (int i = 0; i < 10; i++) {
+            senderVoice.captureFrame(sine, 0, sine.length);
+        }
+        long pttSkip = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (System.nanoTime() < pttSkip) {
+            receiverVoice.render(pcm, 0, pcm.length);
+            Thread.sleep(20);
+        }
+        int pttIdlePeak = 0;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > pttIdlePeak) pttIdlePeak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("PTT idle must stay silent, peak=" + pttIdlePeak, pttIdlePeak <= 100);
+        senderVoice.setGateForTests(true, true);
+        for (int i = 0; i < 30; i++) {
+            senderVoice.captureFrame(sine, 0, sine.length);
+        }
+        int pttPeak = 0;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (pttPeak <= 100 && System.nanoTime() < deadline) {
+            int rendered = receiverVoice.render(pcm, 0, pcm.length);
+            for (int s = 0; s < rendered; s++) {
+                int v = Math.abs((int) pcm[s]);
+                if (v > pttPeak) pttPeak = v;
+            }
+            if (rendered == 0) {
+                Thread.sleep(20);
+            }
+        }
+        assertTrue("PTT pressed must transmit, peak=" + pttPeak, pttPeak > 100);
     }
 
 }

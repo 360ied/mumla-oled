@@ -20,7 +20,8 @@ package se.lublin.humla.voice
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toPersistentSet
-import se.lublin.humla.protocol.AudioHandler
+import se.lublin.humla.Constants
+import se.lublin.humla.net.ProtobufMessages
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.effectiveSelfMute
@@ -70,10 +71,8 @@ data class VoicePolicy(
     val bitrate: Int,
     val framesPerPacket: Int,
     /**
-     * Output-side local mutes, published for step-5a output gating. The
-     * interim capture path ([AudioHandler.applyInterimPolicy]) consumes
-     * only transmitAllowed/pttPressed/bitrate/framesPerPacket/voiceTarget;
-     * render-side muting stays with the legacy AudioOutput model lookup.
+     * Output-side local mutes for the native sender filter. Render-side
+     * muting stays native; no Kotlin model lookup remains.
      */
     val locallyMuted: PersistentSet<Int>,
     /**
@@ -100,7 +99,7 @@ fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
     val self = s.server.self
     val transmit = s.server.phase == SyncPhase.SYNCED && self != null &&
         !effectiveSelfMute(s) && !self.muted && !self.deafened && !self.suppressed
-    val encoder = AudioHandler.computeEffectiveConfig(
+    val encoder = computeEffectiveConfig(
         v.targetBitrate,
         v.targetFramesPerPacket,
         s.server.info.maxBandwidth ?: -1,
@@ -116,3 +115,44 @@ fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
         knownSessions = s.server.users.keys.toPersistentSet(),
     )
 }
+
+private fun sanitizeFramesPerPacket(fpp: Int): Int {
+    return Constants.sanitizeFramesPerPacket(fpp)
+}
+
+/**
+ * Pure bandwidth-degradation decision, moved from AudioHandler in 5a.4:
+ * does not call Android APIs, so JVM tests cover it. Do not add logging,
+ * native calls, or context access here.
+ */
+fun computeEffectiveConfig(bitrate: Int, framesPerPacket: Int, maxBandwidth: Int): EffectiveAudioConfig {
+    if (maxBandwidth == -1) {
+        return EffectiveAudioConfig(bitrate, sanitizeFramesPerPacket(framesPerPacket))
+    }
+    var degradedBitrate = bitrate
+    var degradedFpp = framesPerPacket
+
+    // fpp==6 is already the largest packet: no growth branch applies by
+    // design, so only the bitrate loop below degrades (pinned by test).
+    if (ProtobufMessages.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth) {
+        if (degradedFpp <= 4 && maxBandwidth <= 32000) {
+            degradedFpp = 4
+        } else if (degradedFpp == 1 && maxBandwidth <= 64000) {
+            degradedFpp = 2
+        } else if (degradedFpp == 2 && maxBandwidth <= 48000) {
+            degradedFpp = 4
+        }
+        while (ProtobufMessages.calculateAudioBandwidth(degradedBitrate, degradedFpp) > maxBandwidth && degradedBitrate > 8000) {
+            degradedBitrate -= 1000
+        }
+    }
+    degradedBitrate = Math.max(8000, degradedBitrate)
+    degradedFpp = sanitizeFramesPerPacket(degradedFpp)
+    return EffectiveAudioConfig(degradedBitrate, degradedFpp)
+}
+
+/** Degraded effective audio config produced by bandwidth adaptation. Pure value type. */
+class EffectiveAudioConfig(
+    @JvmField val bitrate: Int,
+    @JvmField val framesPerPacket: Int
+)

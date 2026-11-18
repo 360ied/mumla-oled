@@ -56,7 +56,6 @@ import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.RouteThread
 import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.TalkActivityPublisher
-import se.lublin.humla.voice.VoiceControl
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
 import se.lublin.humla.Constants
@@ -84,7 +83,6 @@ import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.voice.VoiceEngine
-import se.lublin.humla.protocol.AudioHandler
 import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.StateEventLogger
 import se.lublin.humla.protocol.validateAudioDelta
@@ -193,11 +191,10 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     private val inputModes = InputModes()
     private lateinit var routeControl: RouteControl
-    private lateinit var voiceControl: VoiceControl
     private lateinit var policyCollector: PolicyCollector
-    // Service-lifetime talk levels (step 5a.3a; VoiceEngine takes over in
-    // 5a.3b). Built here next to VoiceControl and HumlaClient and passed to
-    // both, so Session builds handles with it and each AudioHandler feeds it.
+    // Service-lifetime talk levels (step 5a.3a; VoiceEngine owns them from
+    // 5a.3b, sole writer from 5a.4). Built here next to VoiceEngine and
+    // HumlaClient and passed to both, so Session builds handles with it.
     private val talkPublisher = TalkActivityPublisher()
     private val voiceSettingsFlow = MutableStateFlow(VoiceSettings.initial())
     private val routePrefsFlow = MutableStateFlow(
@@ -225,40 +222,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     private val pendingConnection = AtomicReference(PendingConnection())
     private val pendingVoiceTarget = AtomicInteger(0)
     private val lastServer = AtomicReference<Server?>(null)
-
-    private val mAudioInputListener: AudioHandler.AudioEncodeListener =
-        object : AudioHandler.AudioEncodeListener {
-            override fun onAudioEncoded(data: ByteArray, length: Int) {
-                try {
-                    val session = currentSession()
-                    if (session != null && session.state.value.server.phase == SyncPhase.SYNCED) {
-                        voiceLink.sendVoice(data, length)
-                    }
-                } catch (e: Exception) {
-                    // Best effort; transport failure is reported via Session.failure.
-                }
-            }
-
-            override fun onTalkingStateChanged(talking: Boolean) {
-                // Self talk comes from the capture thread alone. From 5a.3a
-                // it sets selfTalking in the service-lifetime publisher
-                // instead of stamping a fresh handle; repaint hints fan out
-                // from the publisher's flow below. Written synchronously:
-                // MutableStateFlow.update is lock-free and thread-safe, and
-                // queuing through lifecycleScope would let a stale true
-                // overtake shutdown's clear + synthetic false and stick
-                // selfTalking (AudioHandler.shutdown orders its reset and
-                // report after the capture join; the funnel must not undo it).
-                try {
-                    if (!isSynchronized())
-                        return
-                    talkPublisher.setSelfTalking(talking)
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    Log.w(TAG, "Talking-state update after unsync", e)
-                }
-            }
-        }
 
     private fun clientStateIsConnected(): Boolean {
         if (!::client.isInitialized) return false
@@ -418,13 +381,16 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         routeControl.onInit()
         routeControl.start()
 
-        // One voice control thread, shared by VoiceControl (audio
-        // lifecycle) and VoiceEngine (network commands): the spec's
-        // single executor for start/stop, in command order. Sharing it
-        // keeps teardown and destroy serialized without a second thread.
+        // One voice control thread for VoiceEngine (network + pipeline
+        // commands): the spec's single executor for start/stop, in command
+        // order. Sharing it keeps teardown and destroy serialized without
+        // a second thread.
         val voiceThread = Dispatchers.IO.limitedParallelism(1)
-        // Application-scoped voice link (survives reconnects). The tunnel sink
-        // routes to the current session's transport (present only in tunnel mode).
+        // Application-scoped voice engine (survives reconnects). Owns the
+        // native voice path plus the Kotlin capture/render pipeline, following
+        // RouteState on the shared voice control thread. The tunnel sink
+        // routes to the current session's transport (present only in tunnel
+        // mode).
         voiceLink = VoiceEngine(
             tunnelSink = { packet ->
                 try {
@@ -434,6 +400,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             },
             talkPublisher = talkPublisher,
             scope = CoroutineScope(SupervisorJob() + voiceThread),
+            context = this,
+            routeStates = routeControl.state,
+            prefs = routePrefsFlow,
         )
 
         policyCollector = PolicyCollector(
@@ -441,24 +410,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             settings = voiceSettingsFlow,
             appScope = lifecycleScope,
         )
-        voiceControl = VoiceControl(
-            context = this,
-            logger = this,
-            encodeListener = mAudioInputListener,
-            talkPublisher = talkPublisher,
-            routeStates = routeControl.state,
-            policies = policyCollector.policy,
-            settings = voiceSettingsFlow,
-            prefs = routePrefsFlow,
-            voiceLink = voiceLink,
-            appScope = lifecycleScope,
-            controlDispatcher = voiceThread,
-        )
-        // Policy push (5a.3b): the collector maps SessionState to VoicePolicy
-        // and VoiceEngine forwards it to the native sender filter.
+        // Policy push (5a.3b gate + filter) and settings push (5a.4 capture
+        // and render): the collector maps SessionState to VoicePolicy and
+        // VoiceEngine forwards both to native sequence locks.
         lifecycleScope.launch {
             try {
                 policyCollector.policy.collect { voiceLink.setPolicy(it) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+        }
+        lifecycleScope.launch {
+            try {
+                voiceSettingsFlow.collect { voiceLink.setSettings(it) }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
             }
@@ -724,10 +688,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             releaseWifiLock()
-                            try {
-                                if (::voiceControl.isInitialized) voiceControl.sessionEnded()
-                            } catch (_: Exception) {
-                            }
                             _sessionState.value = emptySessionState()
                             resetVoiceTargetSilent()
                             onConnectionDisconnected(null)
@@ -762,20 +722,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                                 lastServer.get()?.setResolved(remoteHost, remotePort)
                             } catch (ignored: Exception) {
                             }
-                            // Apply a voice-target set while disconnected.
+                            // Apply a voice-target set while disconnected (policy carries
+                            // it to native; no handler to seed).
                             try {
                                 val pending = pendingVoiceTarget.get()
                                 if (pending != 0) {
                                     s.session.setVoiceTarget(pending)
-                                    if (::voiceControl.isInitialized) {
-                                        voiceControl.currentHandler()?.setVoiceTargetId(pending.toByte())
-                                    }
                                 }
                             } catch (ignored: Exception) {
-                            }
-                            try {
-                                if (::voiceControl.isInitialized) voiceControl.sessionStarted(s.session)
-                            } catch (_: Exception) {
                             }
                             onConnectionSynchronized()
                         }
@@ -790,10 +744,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             acquireWifiLock()
-                            try {
-                                if (::voiceControl.isInitialized) voiceControl.sessionEnded()
-                            } catch (_: Exception) {
-                            }
                             _sessionState.value = emptySessionState()
                             resetVoiceTargetSilent()
                             onConnectionDisconnected(s.lastError.toHumlaException())
@@ -805,10 +755,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             releaseWifiLock()
-                            try {
-                                if (::voiceControl.isInitialized) voiceControl.sessionEnded()
-                            } catch (_: Exception) {
-                            }
                             _sessionState.value = emptySessionState()
                             resetVoiceTargetSilent()
                             // Trust failures surface via onTLSHandshakeFailed below;
@@ -891,34 +837,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             if (::routeControl.isInitialized) routeControl.close()
         } catch (ignored: Exception) {
         }
-        // Voice teardown order: VoiceControl joins render (its close is
-        // async) before the native engine is destroyed, without blocking
-        // main. VoiceEngine.close is itself async; chaining keeps destroy
-        // after the render join so the RenderGuard assert never fires.
-        val voiceTeardown = try {
-            if (::voiceControl.isInitialized) voiceControl.close() else null
+        // Voice teardown: VoiceEngine.close joins capture/render on the
+        // control thread, then stops and destroys native, without blocking
+        // main, so the RenderGuard/CaptureGuard asserts never fire.
+        try {
+            voiceLink.close()
         } catch (ignored: Exception) {
-            null
-        }
-        if (voiceTeardown != null) {
-            try {
-                voiceTeardown.invokeOnCompletion {
-                    try {
-                        voiceLink.close()
-                    } catch (ignored: Exception) {
-                    }
-                }
-            } catch (ignored: Exception) {
-                try {
-                    voiceLink.close()
-                } catch (ignored2: Exception) {
-                }
-            }
-        } else {
-            try {
-                voiceLink.close()
-            } catch (ignored: Exception) {
-            }
         }
         try {
             if (::policyCollector.isInitialized) policyCollector.close()
@@ -1245,7 +1169,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
 
-        // 5. VoiceControl and RouteControl follow flows and recreate as needed.
+        // 5. VoiceEngine and RouteControl follow flows and recreate as needed.
         return reconnectNeeded
     }
 
@@ -1332,14 +1256,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun getCurrentBandwidth(): Int {
+        // Step 5a.4: the native VoicePolicy carries the effective encoder
+        // values (server cap applied); SessionStats.currentBandwidth is the
+        // same source, but the status is already on this thread.
         if (!isSynchronized()) throw IllegalStateException("Not synchronized")
-        try {
-            val handler = if (::voiceControl.isInitialized) voiceControl.currentHandler() else null
-            if (handler != null) return handler.getCurrentBandwidth()
+        return try {
+            val status = voiceLink.status.value
+            se.lublin.humla.net.ProtobufMessages.calculateAudioBandwidth(
+                status.bitrate, status.framesPerPacket,
+            )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            -1
         }
-        return -1
     }
 
     open override fun getServerVersion(): Int {
@@ -1428,14 +1357,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun setTalkingState(talking: Boolean) {
+        // Step 5a.4: PTT reaches native through SessionState -> VoicePolicy;
+        // no handler to seed. The toggle stays for UI state.
         inputModes.toggle.isTalkingOn = talking
         try {
             currentSession()?.setPtt(talking)
         } catch (ignored: Exception) {
-        }
-        try {
-            if (::voiceControl.isInitialized) voiceControl.currentHandler()?.setPttTalking(talking)
-        } catch (_: Exception) {
         }
     }
 
@@ -1513,14 +1440,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             // via the app's explicit post-sync call).
             return
         }
+        // Step 5a.4: the mute gate is VoicePolicy.transmitAllowed from
+        // SessionState (desired wins over echo); no optimistic handler seed.
         session.setSelfMuteDeaf(mute, deaf)
-        try {
-            val self = session.state.value.server.self
-            if (self != null && ::voiceControl.isInitialized) {
-                voiceControl.currentHandler()?.setSelfMutedOptimistic(self.selfMuted)
-            }
-        } catch (ignored: Exception) {
-        }
         val selfSession = session.state.value.server.selfSession
         if (selfSession != null && session.state.value.server.users.containsKey(selfSession)) {
             // Self hint shape, like the talkActivity fanout below: the local
@@ -1604,10 +1526,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         try {
             currentSession()?.setVoiceTarget(targetId.toInt() and 0xFF)
         } catch (ignored: Exception) {
-        }
-        try {
-            if (::voiceControl.isInitialized) voiceControl.currentHandler()?.setVoiceTargetId(targetId)
-        } catch (_: Exception) {
         }
         mCallbacks.onVoiceTargetChanged(VoiceTargetMode.fromId(targetId))
     }
