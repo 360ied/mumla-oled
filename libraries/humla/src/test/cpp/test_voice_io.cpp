@@ -1038,6 +1038,8 @@ void testReceiveStopLeavesNothing() {
 
 } // namespace
 
+void run_voice_send_tests();
+
 void run_voice_io_tests() {
     testRingPreservesOrder();
     testRingFullDropsNewest();
@@ -1078,9 +1080,10 @@ void run_voice_io_tests() {
 
 int main() {
     std::cout << "========================================" << std::endl;
-    std::cout << " Mumla Voice I/O (5a.3a render) Tests" << std::endl;
+    std::cout << " Mumla Voice I/O (5a.3a render, 5a.4 send) Tests" << std::endl;
     std::cout << "========================================" << std::endl;
     run_voice_io_tests();
+    run_voice_send_tests();
     std::cout << "========================================" << std::endl;
     if (g_testFailures == 0) {
         std::cout << " ALL " << g_testCount << " VOICE I/O TESTS PASSED!" << std::endl;

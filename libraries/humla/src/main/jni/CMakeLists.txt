@@ -372,18 +372,26 @@ else()
     target_link_libraries(test_crypt_state PRIVATE Threads::Threads)
     add_test(NAME test_crypt_state COMMAND test_crypt_state)
 
-    # Native render core (step 5a.3a): rings plus the VoiceIo render entry
-    # point. Links the real output engine with an injected fake decoder, so
-    # no libopus is needed; production passes makeOpusOutputDecoder.
+    # Native voice I/O core (step 5a.3a render, 5a.4 send): rings plus the
+    # VoiceIo render entry and the VoiceSend capture/send halves. Links the
+    # real engines with injected fakes, so no libopus is needed;
+    # production passes makeOpusOutputDecoder/makeOpusVoiceEncoder.
     add_executable(test_voice_io
         $<TARGET_OBJECTS:humlacrypto_obj>
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/VoiceSend.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
+        "${AUDIO_ENGINE_DIR}/AdaptiveLeveler.cpp"
+        "${AUDIO_ENGINE_DIR}/PreSpeechRingBuffer.cpp"
+        "${AUDIO_ENGINE_DIR}/SoftLimiter.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${TEST_CPP_DIR}/test_voice_io.cpp"
+        "${TEST_CPP_DIR}/test_voice_send.cpp"
     )
     target_include_directories(test_voice_io PRIVATE
         "${VOICE_IO_DIR}"
