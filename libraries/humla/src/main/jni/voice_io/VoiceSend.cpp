@@ -283,6 +283,9 @@ void VoiceSend::stop() {
 }
 
 void VoiceSend::loop() {
+    if (m_onStart) {
+        m_onStart();
+    }
     while (true) {
         int r;
         do {
@@ -369,6 +372,9 @@ void VoiceSend::loop() {
                 }
             }
         }
+    }
+    if (m_onExit) {
+        m_onExit();
     }
 }
 

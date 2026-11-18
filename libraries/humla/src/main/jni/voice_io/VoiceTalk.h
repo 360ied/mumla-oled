@@ -27,14 +27,18 @@ namespace mumla {
 namespace voice_io {
 
 // Talk snapshot plus cumulative drop counts as one publishable unit. The
-// version counts publications; the notifier delivers only when it changes,
-// so one delivery is exactly one Kotlin call.
+// version counts publications; the notifier delivers only when it changes
+// (or self-talking flips), so one delivery is exactly one Kotlin call.
+// Self-talking rides alongside (step 5a.4): the capture thread owns the
+// atomic, the notifier is its only reader for delivery, and the version
+// gate still covers the remote table.
 struct TalkPublication {
     uint64_t version = 0;
     VoiceIo::TalkSnapshot talk;
     uint64_t droppedInbound = 0;
     uint64_t droppedTunnel = 0;
     uint64_t droppedJitter = 0;
+    bool selfTalking = false;
 };
 
 /**

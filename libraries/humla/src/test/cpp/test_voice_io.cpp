@@ -396,7 +396,7 @@ void testNotifierDeliversOncePerChange() {
     TalkCell cell;
     int calls = 0;
     TalkPublication last;
-    VoiceNotifier notifier(&cell, [&](const TalkPublication& pub) {
+    VoiceNotifier notifier(&cell, nullptr, [&](const TalkPublication& pub) {
         calls++;
         last = pub;
     });
@@ -424,7 +424,7 @@ void testNotifierStalledResumesWithLatest() {
     TalkCell cell;
     int calls = 0;
     TalkPublication last;
-    VoiceNotifier notifier(&cell, [&](const TalkPublication& pub) {
+    VoiceNotifier notifier(&cell, nullptr, [&](const TalkPublication& pub) {
         calls++;
         last = pub;
     });
@@ -1027,7 +1027,7 @@ void testReceiveStopLeavesNothing() {
     // Notifier thread: start/stop joins the thread; second stop is safe
     // and a restart works, so no thread is left behind either.
     TalkCell cell;
-    VoiceNotifier notifier(&cell, [](const TalkPublication&) {});
+    VoiceNotifier notifier(&cell, nullptr, [](const TalkPublication&) {});
     notifier.start();
     notifier.stop();
     notifier.stop();

@@ -133,6 +133,13 @@ public:
     // Send thread lifetime (control thread). Start creates the send thread;
     // stop clears running, posts the semaphore, and joins. The socket itself
     // stays owned by VoiceReceive (control stops receive separately).
+    // Thread hooks run on the send thread around the loop (start before the
+    // first send, exit after). The JNI layer attaches to the JVM here once
+    // per thread lifetime so tunnel callbacks can GetEnv safely.
+    void setThreadHooks(std::function<void()> onStart, std::function<void()> onExit) {
+        m_onStart = std::move(onStart);
+        m_onExit = std::move(onExit);
+    }
     void start();
     void stop();
     bool running() const { return m_running.load(std::memory_order_acquire); }
@@ -184,6 +191,8 @@ private:
     std::atomic<bool> m_selfTalking{false};
 
     std::atomic<uint64_t> m_droppedOutbound{0};
+    std::function<void()> m_onStart;
+    std::function<void()> m_onExit;
 
     // Last good gate/settings copies for the realtime path: when the
     // seqlock reports a torn read, capture keeps these instead of waiting.

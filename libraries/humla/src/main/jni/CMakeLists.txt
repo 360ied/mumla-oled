@@ -224,6 +224,7 @@ if(ANDROID)
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/VoiceSend.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
@@ -234,6 +235,7 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}"
         "${AUDIO_ENGINE_DIR}/jitter"
         "${VOICE_CODEC_DIR}"
+        "${VOICE_IO_DIR}"
         "${NANOPB_DIR}"
         "${CRYPTO_DIR}"
     )
@@ -436,6 +438,7 @@ else()
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/VoiceSend.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"

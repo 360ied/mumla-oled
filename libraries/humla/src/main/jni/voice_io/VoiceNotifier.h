@@ -51,7 +51,8 @@ public:
     using Sink = std::function<void(const TalkPublication&)>;
     static constexpr std::chrono::milliseconds kInterval{20};
 
-    VoiceNotifier(const TalkCell* cell, Sink sink,
+    VoiceNotifier(const TalkCell* cell, const std::atomic<bool>* selfTalking,
+                  Sink sink,
                   std::chrono::milliseconds interval = kInterval);
 
     VoiceNotifier(const VoiceNotifier&) = delete;
@@ -75,6 +76,7 @@ private:
     void loop();
 
     const TalkCell* m_cell;
+    const std::atomic<bool>* m_selfTalking = nullptr;
     Sink m_sink;
     std::chrono::milliseconds m_interval;
     std::function<void()> m_onStart;
@@ -82,6 +84,7 @@ private:
     std::thread m_thread;
     std::atomic<bool> m_running{false};
     uint64_t m_deliveredVersion = 0;
+    bool m_deliveredSelfTalking = false;
 };
 
 } // namespace voice_io

@@ -64,7 +64,8 @@ class TalkActivityPublisher {
 
     /**
      * Replaces the remote table wholesale. Called on the native notifier
-     * thread, at most once per snapshot change.
+     * thread, at most once per snapshot change (step 5a.3a source; 5a.4
+     * routes through [updateAll] so remote and self land atomically).
      */
     fun updateRemote(users: Map<Int, TalkState>) {
         val persistent = users.toPersistentMap()
@@ -73,10 +74,23 @@ class TalkActivityPublisher {
         }
     }
 
-    /** Called on the capture thread via AudioHandler's talking callback. */
+    /** Called on the capture thread via AudioHandler's talking callback (pre-5a.4). */
     fun setSelfTalking(talking: Boolean) {
         _talkActivity.update { current ->
             if (current.selfTalking == talking) current else current.copy(selfTalking = talking)
+        }
+    }
+
+    /**
+     * Single-writer update from 5a.4: the notifier is the only writer of
+     * talkActivity, publishing remote levels and self-talking together so
+     * collectors never observe a half-applied snapshot.
+     */
+    fun updateAll(users: Map<Int, TalkState>, selfTalking: Boolean) {
+        val persistent = users.toPersistentMap()
+        _talkActivity.update { current ->
+            if (current.users == persistent && current.selfTalking == selfTalking) current
+            else current.copy(users = persistent, selfTalking = selfTalking)
         }
     }
 

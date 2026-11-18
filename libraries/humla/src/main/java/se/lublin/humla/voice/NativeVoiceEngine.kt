@@ -20,18 +20,24 @@ package se.lublin.humla.voice
 import se.lublin.humla.HumlaNative
 
 /**
- * Native voice engine surface (step 5a.3b, unified context).
+ * Native voice engine surface (step 5a.3b facade, 5a.4 send half).
  *
  * One application-scoped object owns the output engine, both inbound rings,
- * the sender-filter policy cell, the UDP receive half, and the talk
- * notifier. Voice stays native-direct: the receive thread and the tunnel
- * caller push straight into the owned rings. The only Kotlin calls are
- * pings, resync, unavailability (receive thread, non-realtime) and talk
- * snapshots (notifier thread). Render never calls into Kotlin.
+ * the sender-filter policy cell, the capture gate and settings cells, the
+ * UDP receive half, the capture/send half, and the talk notifier. Voice
+ * stays native-direct: the receive thread and the tunnel caller push
+ * straight into the owned rings, capture pushes into the outbound ring. The
+ * only Kotlin calls are pings, resync, unavailability (receive thread),
+ * tunnelled packets (send thread), and talk snapshots with self-talking
+ * (notifier thread). Render and capture never call into Kotlin.
  */
 interface EngineNative {
     fun setFormat(udpFormat: Int, legacyVersion: Int)
     fun setPolicy(muted: IntArray?, known: IntArray?)
+    fun setGate(transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
+    fun setSettings(inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean)
+    fun setVoiceRoute(udp: Boolean)
+    fun setRnnoiseModel(model: ByteArray?): Boolean
     fun setKeys(key: ByteArray?, eiv: ByteArray?, div: ByteArray?): Boolean
     fun setDecryptIv(div: ByteArray?): Boolean
     fun getEncryptIv(): ByteArray?
@@ -39,6 +45,8 @@ interface EngineNative {
     fun stop()
     fun reset()
     fun sendDatagram(plain: ByteArray?, length: Int): Boolean
+    fun enqueuePing(timestampMicros: Long): Boolean
+    fun captureFrame(pcm: ShortArray?, offset: Int, length: Int)
     fun queueTunnelled(packet: ByteArray?): Boolean
     fun pushRemoveUser(session: Int): Boolean
     fun render(out: ShortArray?, offset: Int, length: Int): Int
@@ -48,6 +56,7 @@ interface EngineNative {
     fun lastDroppedInbound(): Long
     fun lastDroppedTunnel(): Long
     fun lastDroppedJitter(): Long
+    fun lastDroppedOutbound(): Long
     fun getStats(): IntArray?
     fun destroy()
 }
@@ -68,6 +77,24 @@ class NativeVoiceEngine : EngineNative {
 
         @JvmStatic
         private external fun nativeSetPolicy(handle: Long, muted: IntArray?, known: IntArray?)
+
+        @JvmStatic
+        private external fun nativeSetGate(handle: Long, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
+
+        @JvmStatic
+        private external fun nativeSetSettings(handle: Long, inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean)
+
+        @JvmStatic
+        private external fun nativeSetVoiceRoute(handle: Long, udp: Boolean)
+
+        @JvmStatic
+        private external fun nativeSetRnnoiseModel(handle: Long, model: ByteArray?): Boolean
+
+        @JvmStatic
+        private external fun nativeEnqueuePing(handle: Long, timestampMicros: Long): Boolean
+
+        @JvmStatic
+        private external fun nativeCaptureFrame(handle: Long, pcm: ShortArray?, offset: Int, length: Int)
 
         @JvmStatic
         private external fun nativeSetKeys(
@@ -123,6 +150,9 @@ class NativeVoiceEngine : EngineNative {
         private external fun nativeLastDroppedJitter(handle: Long): Long
 
         @JvmStatic
+        private external fun nativeLastDroppedOutbound(handle: Long): Long
+
+        @JvmStatic
         private external fun nativeGetStats(handle: Long): IntArray?
     }
 
@@ -155,6 +185,46 @@ class NativeVoiceEngine : EngineNative {
         val handle = nativeHandle
         if (handle != 0L) {
             nativeSetPolicy(handle, muted, known)
+        }
+    }
+
+    override fun setGate(transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
+        val handle = nativeHandle
+        if (handle != 0L) {
+            nativeSetGate(handle, transmitAllowed, pttPressed, voiceTarget, bitrate, framesPerPacket)
+        }
+    }
+
+    override fun setSettings(inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean) {
+        val handle = nativeHandle
+        if (handle != 0L) {
+            nativeSetSettings(handle, inputMode, vadMax, vadMin, amplitudeBoost, adaptiveLeveler, halfDuplex)
+        }
+    }
+
+    override fun setVoiceRoute(udp: Boolean) {
+        val handle = nativeHandle
+        if (handle != 0L) {
+            nativeSetVoiceRoute(handle, udp)
+        }
+    }
+
+    override fun setRnnoiseModel(model: ByteArray?): Boolean {
+        val handle = nativeHandle
+        return handle != 0L && nativeSetRnnoiseModel(handle, model)
+    }
+
+    override fun enqueuePing(timestampMicros: Long): Boolean {
+        val handle = nativeHandle
+        return handle != 0L && nativeEnqueuePing(handle, timestampMicros)
+    }
+
+    override fun captureFrame(pcm: ShortArray?, offset: Int, length: Int) {
+        val handle = nativeHandle
+        if (handle != 0L && pcm != null && offset >= 0 && length > 0 &&
+            offset <= pcm.size && length <= pcm.size - offset
+        ) {
+            nativeCaptureFrame(handle, pcm, offset, length)
         }
     }
 
@@ -249,6 +319,11 @@ class NativeVoiceEngine : EngineNative {
         return if (handle != 0L) nativeLastDroppedJitter(handle) else 0
     }
 
+    override fun lastDroppedOutbound(): Long {
+        val handle = nativeHandle
+        return if (handle != 0L) nativeLastDroppedOutbound(handle) else 0
+    }
+
     override fun getStats(): IntArray? {
         val handle = nativeHandle
         return if (handle != 0L) nativeGetStats(handle) else null
@@ -271,7 +346,9 @@ class NativeVoiceEngine : EngineNative {
             states: IntArray,
             droppedInbound: Long,
             droppedTunnel: Long,
-            droppedJitter: Long
+            droppedJitter: Long,
+            selfTalking: Boolean
         )
+        fun onTunnelPacket(packet: ByteArray)
     }
 }

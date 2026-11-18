@@ -26,11 +26,16 @@
 #include <new>
 #include <vector>
 
+#include "AudioInputEngine.h"
 #include "OpusVoiceDecoder.h"
+#include "OpusVoiceEncoder.h"
+#include "RnnoiseProcessor.h"
+#include "VoiceConfig.h"
 #include "VoiceIo.h"
 #include "VoiceNotifier.h"
 #include "VoicePolicy.h"
 #include "VoiceReceive.h"
+#include "VoiceSend.h"
 #include "VoiceTalk.h"
 
 #ifdef __ANDROID__
@@ -48,57 +53,82 @@
 
 using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
+using mumla::voice_io::GateCell;
 using mumla::voice_io::PolicyCell;
+using mumla::voice_io::SettingsCell;
 using mumla::voice_io::TalkCell;
 using mumla::voice_io::TalkPublication;
 using mumla::voice_io::VoiceIo;
 using mumla::voice_io::VoiceNotifier;
 using mumla::voice_io::VoiceReceive;
+using mumla::voice_io::VoiceSend;
 
-// Unified voice I/O context (step 5a.3b, spec-literal): the output engine
-// and both inbound rings, the sender-filter policy cell, the UDP receive
-// half, and the talk notifier — one application-scoped native object owned
-// by the VoiceEngine facade, kept across sessions. The render thread is the
-// only thread that touches the engine; producers never reach it: UDP frames
+// Unified voice I/O context (step 5a.3b facade, 5a.4 send half): the output
+// engine and both inbound rings, the sender-filter policy cell, the capture
+// gate and settings cells, the UDP receive half, the capture/send half, and
+// the talk notifier — one application-scoped native object owned by the
+// VoiceEngine facade, kept across sessions. The render thread is the only
+// thread that touches the output engine and the capture thread the only one
+// that touches the input engine; producers never reach either: UDP frames
 // arrive via the receive thread, tunnelled frames via the session message
-// coroutine, removals as control items on the tunnel ring. Talk travels as
-// levels through the sequence lock to the notifier thread, which calls
-// Kotlin; render never calls into Kotlin.
+// coroutine, removals as control items on the tunnel ring, capture PCM via
+// the capture entry. Talk travels as levels through the sequence lock plus
+// the capture self-talking flag to the notifier thread, which calls Kotlin;
+// render and capture never call into Kotlin (send calls only for tunnel).
 struct VoiceEngineContext {
     VoiceIo io;
     TalkCell cell;
-    VoiceNotifier notifier;
     PolicyCell policy;
+    GateCell gate;
+    SettingsCell settings;
     VoiceReceive receive;
+    VoiceSend send;
+    VoiceNotifier notifier;
     JavaVM* vm = nullptr;
     jobject listenerGlobalRef = nullptr;
     jmethodID onPingMethod = nullptr;
     jmethodID onResyncMethod = nullptr;
     jmethodID onUnavailableMethod = nullptr;
     jmethodID onTalkSnapshotMethod = nullptr;
+    jmethodID onTunnelPacketMethod = nullptr;
     // Debug lifecycle pin: render sets this while inside VoiceIo::render;
     // destroy asserts it is clear, so tearing down under a live render
     // thread fails loudly in debug builds instead of freeing the engine
     // under it. Release builds rely on the Kotlin join ordering (control
     // thread destroys only after the render thread is joined).
     std::atomic<bool> renderActive{false};
+    // Capture thread pin (step 5a.4): capture sets this while inside
+    // VoiceSend::captureFrame; destroy asserts it is clear, so tearing down
+    // under a live capture thread fails loudly in debug builds.
+    std::atomic<bool> captureActive{false};
     std::atomic<bool> lastHasActiveVoices{false};
     std::atomic<uint64_t> lastDroppedInbound{0};
     std::atomic<uint64_t> lastDroppedTunnel{0};
     std::atomic<uint64_t> lastDroppedJitter{0};
+    std::atomic<uint64_t> lastDroppedOutbound{0};
 
     VoiceEngineContext(JavaVM* javaVm, jobject listener, jmethodID onPing,
-                       jmethodID onResync, jmethodID onUnavailable, jmethodID onTalk)
+                       jmethodID onResync, jmethodID onUnavailable, jmethodID onTalk,
+                       jmethodID onTunnel)
         : io(mumla::audio::makeOpusOutputDecoder),
-          notifier(&cell, [this](const TalkPublication& pub) { deliverTalk(pub); }),
           receive(&io, &policy),
+          send(&gate, &settings, &receive,
+               [] { return mumla::audio::makeOpusVoiceEncoder(); },
+               [] {
+                   return mumla::audio::makeRnnoiseProcessor(true, nullptr, 0);
+               }),
+          notifier(&cell, send.selfTalkingAtomic(),
+                   [this](const TalkPublication& pub) { deliverTalk(pub); }),
           vm(javaVm),
           listenerGlobalRef(listener),
           onPingMethod(onPing),
           onResyncMethod(onResync),
           onUnavailableMethod(onUnavailable),
-          onTalkSnapshotMethod(onTalk) {
+          onTalkSnapshotMethod(onTalk),
+          onTunnelPacketMethod(onTunnel) {
         io.setTalkCell(&cell);
+        io.setSettingsCell(&settings);
+        io.setSelfTalking(send.selfTalkingAtomic());
         notifier.setThreadHooks(
             [this] {
                 JNIEnv* env = nullptr;
@@ -135,13 +165,32 @@ struct VoiceEngineContext {
         // NOTE: no voice-frames sink. Voice stays native-direct (receive and
         // tunnel push straight into the owned VoiceIo rings); the receive
         // thread never calls into Kotlin for voice, only for pings, resync,
-        // and unavailability (all non-realtime).
+        // and unavailability (all non-realtime). The send thread calls into
+        // Kotlin only for tunnelled packets (non-realtime).
+        send.setTunnelSink([this](const uint8_t* data, size_t length) {
+            deliverTunnel(data, length);
+        });
+        send.setThreadHooks(
+            [this] {
+                JNIEnv* env = nullptr;
+#ifdef __ANDROID__
+                const jint attached = vm->AttachCurrentThreadAsDaemon(&env, nullptr);
+#else
+                const jint attached = vm->AttachCurrentThreadAsDaemon(
+                    reinterpret_cast<void**>(&env), nullptr);
+#endif
+                if (attached != JNI_OK) {
+                    LOGE("send attach failed; no tunnel callbacks this run");
+                }
+            },
+            [this] { vm->DetachCurrentThread(); });
     }
 
     void deliverTalk(const TalkPublication& pub);
     void deliverPing(const VoiceReceive::PingReport& report);
     void deliverResync();
     void deliverUnavailable();
+    void deliverTunnel(const uint8_t* data, size_t length);
 };
 
 void VoiceEngineContext::deliverTalk(const TalkPublication& pub) {
@@ -186,13 +235,44 @@ void VoiceEngineContext::deliverTalk(const TalkPublication& pub) {
     env->CallVoidMethod(listenerGlobalRef, onTalkSnapshotMethod, sessions, states,
                         static_cast<jlong>(pub.droppedInbound),
                         static_cast<jlong>(pub.droppedTunnel),
-                        static_cast<jlong>(pub.droppedJitter));
+                        static_cast<jlong>(pub.droppedJitter),
+                        pub.selfTalking ? JNI_TRUE : JNI_FALSE);
     if (env->ExceptionCheck()) {
         LOGE("onTalkSnapshot threw; clearing to protect the notifier thread");
         env->ExceptionClear();
     }
     env->DeleteLocalRef(sessions);
     env->DeleteLocalRef(states);
+}
+
+void VoiceEngineContext::deliverTunnel(const uint8_t* data, size_t length) {
+    if (data == nullptr || length == 0) {
+        return;
+    }
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK ||
+        env == nullptr) {
+        return;
+    }
+    jbyteArray packet = env->NewByteArray(static_cast<jsize>(length));
+    if (packet == nullptr) {
+        env->ExceptionClear();
+        return;
+    }
+    env->SetByteArrayRegion(packet, 0, static_cast<jsize>(length),
+                            reinterpret_cast<const jbyte*>(data));
+    if (env->ExceptionCheck()) {
+        LOGE("SetByteArrayRegion(tunnel) failed; dropping packet");
+        env->ExceptionClear();
+        env->DeleteLocalRef(packet);
+        return;
+    }
+    env->CallVoidMethod(listenerGlobalRef, onTunnelPacketMethod, packet);
+    if (env->ExceptionCheck()) {
+        LOGE("onTunnelPacket threw; clearing to protect the send thread");
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(packet);
 }
 
 void VoiceEngineContext::deliverPing(const VoiceReceive::PingReport& report) {
@@ -256,6 +336,13 @@ struct RenderGuard {
     ~RenderGuard() { m_flag->store(false, std::memory_order_release); }
     std::atomic<bool>* m_flag;
 };
+struct CaptureGuard {
+    explicit CaptureGuard(std::atomic<bool>* flag) : m_flag(flag) {
+        m_flag->store(true, std::memory_order_release);
+    }
+    ~CaptureGuard() { m_flag->store(false, std::memory_order_release); }
+    std::atomic<bool>* m_flag;
+};
 } // namespace
 
 extern "C" {
@@ -280,18 +367,19 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCreate(JNIEnv* env, jclass /*
     jmethodID onPing = env->GetMethodID(cls, "onUdpPing", "(JJI)V");
     jmethodID onResync = env->GetMethodID(cls, "onCryptResync", "()V");
     jmethodID onUnavailable = env->GetMethodID(cls, "onUdpUnavailable", "()V");
-    jmethodID onTalk = env->GetMethodID(cls, "onTalkSnapshot", "([I[IJJJ)V");
+    jmethodID onTalk = env->GetMethodID(cls, "onTalkSnapshot", "([I[IJJJZ)V");
+    jmethodID onTunnel = env->GetMethodID(cls, "onTunnelPacket", "([B)V");
     env->DeleteLocalRef(cls);
     if (onPing == nullptr || onResync == nullptr || onUnavailable == nullptr ||
-        onTalk == nullptr) {
+        onTalk == nullptr || onTunnel == nullptr) {
         env->ExceptionClear();
         env->DeleteGlobalRef(ref);
         return 0;
     }
     VoiceEngineContext* ctx = nullptr;
     try {
-        ctx = new (std::nothrow)
-            VoiceEngineContext(vm, ref, onPing, onResync, onUnavailable, onTalk);
+        ctx = new (std::nothrow) VoiceEngineContext(vm, ref, onPing, onResync,
+                                                    onUnavailable, onTalk, onTunnel);
     } catch (...) {
         ctx = nullptr;
     }
@@ -314,10 +402,12 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeDestroy(JNIEnv* env, jclass /
     if (ctx == nullptr) {
         return;
     }
-    // The control thread destroys only after the render thread is joined: a
-    // live render here is a lifecycle bug, loud in debug builds.
+    // The control thread destroys only after the render and capture threads
+    // are joined: a live entry here is a lifecycle bug, loud in debug builds.
     assert(!ctx->renderActive.load(std::memory_order_acquire));
+    assert(!ctx->captureActive.load(std::memory_order_acquire));
     ctx->receive.stop();
+    ctx->send.stop();
     ctx->notifier.stop();
     if (ctx->listenerGlobalRef != nullptr) {
         env->DeleteGlobalRef(ctx->listenerGlobalRef);
@@ -335,6 +425,89 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetFormat(JNIEnv* /*env*/,
     auto format = udpFormat == 1 ? mumla::voice_codec::UdpFormat::PROTOBUF
                                  : mumla::voice_codec::UdpFormat::LEGACY;
     ctx->receive.setFormat(format, static_cast<uint32_t>(legacyVersion));
+    ctx->send.setFormat(format, static_cast<uint32_t>(legacyVersion));
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetGate(JNIEnv* /*env*/,
+                                                          jclass /*clazz*/, jlong handle,
+                                                          jboolean transmitAllowed,
+                                                          jboolean pttPressed,
+                                                          jint voiceTarget,
+                                                          jint bitrate,
+                                                          jint framesPerPacket) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) return;
+    ctx->gate.publish(transmitAllowed == JNI_TRUE, pttPressed == JNI_TRUE,
+                      voiceTarget, bitrate, framesPerPacket);
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetSettings(JNIEnv* /*env*/,
+                                                              jclass /*clazz*/, jlong handle,
+                                                              jint inputMode, jfloat vadMax,
+                                                              jfloat vadMin,
+                                                              jfloat amplitudeBoost,
+                                                              jboolean adaptiveLeveler,
+                                                              jboolean halfDuplex) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) return;
+    ctx->settings.publish(inputMode, vadMax, vadMin, amplitudeBoost,
+                          adaptiveLeveler == JNI_TRUE, halfDuplex == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetVoiceRoute(JNIEnv* /*env*/,
+                                                                 jclass /*clazz*/,
+                                                                 jlong handle,
+                                                                 jboolean udp) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) return;
+    ctx->send.setUseUdp(udp == JNI_TRUE);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetRnnoiseModel(JNIEnv* env,
+                                                                  jclass /*clazz*/,
+                                                                  jlong handle,
+                                                                  jbyteArray model) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) return JNI_FALSE;
+    if (model == nullptr) {
+        ctx->send.setDenoiserModel(nullptr, 0);
+        return JNI_TRUE;
+    }
+    const jsize len = env->GetArrayLength(model);
+    if (len <= 0) {
+        ctx->send.setDenoiserModel(nullptr, 0);
+        return JNI_TRUE;
+    }
+    jbyte* bytes = env->GetByteArrayElements(model, nullptr);
+    if (bytes == nullptr) return JNI_FALSE;
+    ctx->send.setDenoiserModel(reinterpret_cast<uint8_t*>(bytes),
+                               static_cast<size_t>(len));
+    env->ReleaseByteArrayElements(model, bytes, JNI_ABORT);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeEnqueuePing(JNIEnv* /*env*/,
+                                                              jclass /*clazz*/,
+                                                              jlong handle,
+                                                              jlong timestampMicros) {
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr) return JNI_FALSE;
+    return ctx->send.enqueuePing(static_cast<uint64_t>(timestampMicros)) ? JNI_TRUE
+                                                                          : JNI_FALSE;
+}
+
+JNIEXPORT jlong JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeLastDroppedOutbound(JNIEnv* /*env*/,
+                                                                      jclass /*clazz*/,
+                                                                      jlong handle) {
+    VoiceEngineContext* ctx = getContext(handle);
+    return ctx == nullptr ? 0
+                          : static_cast<jlong>(ctx->send.droppedOutbound());
 }
 
 JNIEXPORT void JNICALL
@@ -437,11 +610,13 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
                                                         jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
-        // Stop closes the socket and joins the receive thread, stops the
-        // session-lifetime notifier, and zeroes the crypt keys. It never
-        // touches the engine or rings: the render thread is owned by the
-        // pipeline and joined there, so clearing here would race it. Reset
-        // happens in nativeReset at the next Start, when no render is live.
+        // Stop closes the socket and joins the receive and send threads,
+        // stops the session-lifetime notifier, and zeroes the crypt keys. It
+        // never touches the engines or rings: the render and capture threads
+        // are owned by the pipeline and joined there, so clearing here would
+        // race them. Reset happens in nativeReset at the next Start, when no
+        // render or capture is live.
+        ctx->send.stop();
         ctx->receive.stop();
         ctx->notifier.stop();
         ctx->receive.clearKeys();
@@ -453,13 +628,17 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeReset(JNIEnv* /*env*/, jclass
                                                          jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
-        // Session start, when no render is live: drain stale rings, reset
-        // both engines, publish the emptied table (see VoiceIo::clear),
-        // and (re)start the session-lifetime notifier. The render thread
-        // does not exist yet at this point, so the debug assert below must
-        // hold; a violation fails loudly in debug builds.
+        // Session start, when no render or capture is live: drain stale
+        // rings, reset both engines, publish the emptied table (see
+        // VoiceIo::clear), clear the send queue, and (re)start the
+        // session-lifetime notifier and send thread. Neither thread exists
+        // yet at this point, so both debug asserts below must hold; a
+        // violation fails loudly in debug builds.
         assert(!ctx->renderActive.load(std::memory_order_acquire));
+        assert(!ctx->captureActive.load(std::memory_order_acquire));
         ctx->io.clear();
+        ctx->send.clear();
+        ctx->send.start();
         ctx->notifier.start();
     }
 }
@@ -513,6 +692,43 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativePushRemoveUser(JNIEnv* /*env*
     return ctx->io.pushRemoveUser(session) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT void JNICALL
+Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCaptureFrame(JNIEnv* env,
+                                                              jclass /*clazz*/,
+                                                              jlong handle,
+                                                              jshortArray pcm,
+                                                              jint offset, jint length) {
+    if (env->ExceptionCheck()) {
+        return;
+    }
+    VoiceEngineContext* ctx = getContext(handle);
+    if (ctx == nullptr || pcm == nullptr || length <= 0 || offset < 0) {
+        return;
+    }
+    const jsize arrayLen = env->GetArrayLength(pcm);
+    if (arrayLen <= 0) {
+        return;
+    }
+    const int64_t end = static_cast<int64_t>(offset) + static_cast<int64_t>(length);
+    if (end > static_cast<int64_t>(arrayLen)) {
+        return;
+    }
+    jshort* ptr = env->GetShortArrayElements(pcm, nullptr);
+    if (ptr == nullptr) {
+        return;
+    }
+    CaptureGuard guard(&ctx->captureActive);
+    // Never attaches to the JVM and never calls into Kotlin: the caller's env
+    // touches only the PCM array, and framing pushes into the outbound ring.
+    ctx->send.captureFrame(reinterpret_cast<int16_t*>(ptr + offset),
+                           static_cast<size_t>(length));
+    // Capture owns the PCM copy (engine copies per frame, remainder carried
+    // inside VoiceSend), so the Java array is never written back.
+    env->ReleaseShortArrayElements(pcm, ptr, JNI_ABORT);
+    ctx->lastDroppedOutbound.store(ctx->send.droppedOutbound(),
+                                   std::memory_order_relaxed);
+}
+
 JNIEXPORT jint JNICALL
 Java_se_lublin_humla_voice_NativeVoiceEngine_nativeRender(JNIEnv* env, jclass /*clazz*/,
                                                           jlong handle, jshortArray out,
@@ -549,6 +765,8 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeRender(JNIEnv* env, jclass /*
     ctx->lastDroppedInbound.store(result.droppedInbound, std::memory_order_relaxed);
     ctx->lastDroppedTunnel.store(result.droppedTunnel, std::memory_order_relaxed);
     ctx->lastDroppedJitter.store(result.droppedJitter, std::memory_order_relaxed);
+    ctx->lastDroppedOutbound.store(ctx->send.droppedOutbound(),
+                                   std::memory_order_relaxed);
     if (result.samples > 0) {
         env->SetShortArrayRegion(out, offset, static_cast<jsize>(result.samples),
                                  t_renderScratch.data());

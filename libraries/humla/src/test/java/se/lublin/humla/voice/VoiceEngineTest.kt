@@ -45,6 +45,17 @@ class VoiceEngineTest {
         var formatLegacy = -1
         var muted: IntArray? = null
         var known: IntArray? = null
+        var gateTransmit = false
+        var gatePtt = false
+        var gateTarget = -1
+        var gateBitrate = -1
+        var gateFpp = -1
+        var settingsMode = -1
+        var settingsHalfDuplex = false
+        var voiceRouteUdp = false
+        var rnnoiseModel: ByteArray? = null
+        var enqueuedPings = mutableListOf<Long>()
+        var capturedFrames = 0
         var keys: Triple<ByteArray, ByteArray, ByteArray>? = null
         var decryptIv: ByteArray? = null
         var encryptIvOut: ByteArray? = ByteArray(16) { it.toByte() }
@@ -55,6 +66,7 @@ class VoiceEngineTest {
         val tunnelled = mutableListOf<ByteArray>()
         val removed = mutableListOf<Int>()
         var cryptStats = intArrayOf(1, 2, 3, 4)
+        var droppedOutbound = 0L
         var destroyed = false
 
         override fun setFormat(udpFormat: Int, legacyVersion: Int) {
@@ -65,6 +77,37 @@ class VoiceEngineTest {
         override fun setPolicy(muted: IntArray?, known: IntArray?) {
             this.muted = muted
             this.known = known
+        }
+
+        override fun setGate(transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
+            gateTransmit = transmitAllowed
+            gatePtt = pttPressed
+            gateTarget = voiceTarget
+            gateBitrate = bitrate
+            gateFpp = framesPerPacket
+        }
+
+        override fun setSettings(inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean) {
+            settingsMode = inputMode
+            settingsHalfDuplex = halfDuplex
+        }
+
+        override fun setVoiceRoute(udp: Boolean) {
+            voiceRouteUdp = udp
+        }
+
+        override fun setRnnoiseModel(model: ByteArray?): Boolean {
+            rnnoiseModel = model
+            return true
+        }
+
+        override fun enqueuePing(timestampMicros: Long): Boolean {
+            enqueuedPings.add(timestampMicros)
+            return true
+        }
+
+        override fun captureFrame(pcm: ShortArray?, offset: Int, length: Int) {
+            capturedFrames++
         }
 
         override fun setKeys(key: ByteArray?, eiv: ByteArray?, div: ByteArray?): Boolean {
@@ -114,6 +157,7 @@ class VoiceEngineTest {
         override fun lastDroppedInbound(): Long = 0
         override fun lastDroppedTunnel(): Long = 0
         override fun lastDroppedJitter(): Long = 0
+        override fun lastDroppedOutbound(): Long = droppedOutbound
         override fun getStats(): IntArray = cryptStats
         override fun destroy() {
             destroyed = true
@@ -197,6 +241,16 @@ class VoiceEngineTest {
     }
 
     @Test
+    fun `sendPing enqueues native ping when UDP`() {
+        val fake = FakeEngineNative()
+        val engine = newEngine(fake)
+        engine.startVoice("example.org", 64738, protobufFormat(), keys())
+        engine.submit(VoiceCommand.SetVoiceRoute(true))
+        engine.submit(VoiceCommand.SendPing(12345L))
+        assertEquals(listOf(12345L), fake.enqueuedPings)
+    }
+
+    @Test
     fun `setPolicy pushes muted and known lists`() {
         val fake = FakeEngineNative()
         val engine = newEngine(fake)
@@ -214,6 +268,30 @@ class VoiceEngineTest {
         )
         assertArrayEquals(intArrayOf(7), fake.muted)
         assertArrayEquals(intArrayOf(7, 8), fake.known!!.sortedArray())
+        assertTrue(fake.gateTransmit)
+        assertEquals(40000, fake.gateBitrate)
+        assertEquals(2, fake.gateFpp)
+    }
+
+    @Test
+    fun `setSettings pushes native capture settings`() {
+        val fake = FakeEngineNative()
+        val engine = newEngine(fake)
+        engine.startVoice("example.org", 64738, protobufFormat(), keys())
+        engine.setSettings(
+            VoiceSettings(
+                inputMode = InputMode.PUSH_TO_TALK,
+                vadMax = 0.8f,
+                vadMin = 0.56f,
+                amplitudeBoost = 1.5f,
+                targetBitrate = 32000,
+                targetFramesPerPacket = 4,
+                halfDuplex = true,
+                adaptiveLeveler = false,
+            )
+        )
+        assertEquals(1, fake.settingsMode)
+        assertTrue(fake.settingsHalfDuplex)
     }
 
     @Test
@@ -228,6 +306,7 @@ class VoiceEngineTest {
             intArrayOf(1, 2, 3, 4, 5),
             intArrayOf(0, 1, 3, 2, 99),
             0L, 0L, 0L,
+            false,
         )
         val users = publisher.talkActivity.value.users
         assertEquals(TalkState.TALKING, users[1])
@@ -236,8 +315,11 @@ class VoiceEngineTest {
         // PASSIVE (2) and unknown ordinals never insert: absence is passive.
         assertFalse(users.containsKey(4))
         assertFalse(users.containsKey(5))
-        engine.onTalkSnapshot(intArrayOf(), intArrayOf(), 0L, 0L, 0L)
+        engine.onTalkSnapshot(intArrayOf(), intArrayOf(), 0L, 0L, 0L, false)
         assertTrue(publisher.talkActivity.value.users.isEmpty())
+        engine.onTalkSnapshot(intArrayOf(), intArrayOf(), 0L, 0L, 0L, true)
+        assertTrue(publisher.talkActivity.value.selfTalking)
+        engine.onTunnelPacket(byteArrayOf(1, 2, 3))
     }
 
     @Test

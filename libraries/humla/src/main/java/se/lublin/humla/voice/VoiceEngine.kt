@@ -42,7 +42,6 @@ import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.CryptKeys
-import se.lublin.humla.net.NativeVoiceCodec
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceEvent
@@ -107,11 +106,14 @@ class VoiceEngine @JvmOverloads constructor(
     private val _latestPolicy = MutableStateFlow<VoicePolicy?>(null)
     val latestPolicy: StateFlow<VoicePolicy?> = _latestPolicy.asStateFlow()
 
+    private val _latestSettings = MutableStateFlow<VoiceSettings?>(null)
+    val latestSettings: StateFlow<VoiceSettings?> = _latestSettings.asStateFlow()
+
     private var lastLoggedDroppedInbound = 0L
     private var lastLoggedDroppedTunnel = 0L
     private var lastLoggedDroppedJitter = 0L
 
-    /** Policy collector only: publishes the mapped VoicePolicy for the native filter. */
+    /** Policy collector only: publishes the mapped VoicePolicy for the native filter and gate. */
     fun setPolicy(policy: VoicePolicy) {
         _latestPolicy.value = policy
         val engine = native ?: return
@@ -123,17 +125,57 @@ class VoiceEngine @JvmOverloads constructor(
         } catch (e: Exception) {
             loggerFine("Dropping policy push: $e")
         }
+        try {
+            engine.setGate(
+                policy.transmitAllowed,
+                policy.pttPressed,
+                policy.voiceTarget,
+                policy.bitrate,
+                policy.framesPerPacket,
+            )
+        } catch (e: Exception) {
+            loggerFine("Dropping gate push: $e")
+        }
+    }
+
+    /** Settings flow only: publishes VoiceSettings for the native capture and render. */
+    fun setSettings(settings: VoiceSettings) {
+        _latestSettings.value = settings
+        val engine = native ?: return
+        try {
+            // Effective half-duplex (raw && PTT), gated like the deleted
+            // builder path so native render reads one flag.
+            val effectiveHalfDuplex =
+                settings.halfDuplex && settings.inputMode == InputMode.PUSH_TO_TALK
+            engine.setSettings(
+                when (settings.inputMode) {
+                    InputMode.VOICE_ACTIVITY -> 0
+                    InputMode.PUSH_TO_TALK -> 1
+                    InputMode.CONTINUOUS -> 2
+                },
+                settings.vadMax,
+                settings.vadMin,
+                settings.amplitudeBoost,
+                settings.adaptiveLeveler,
+                effectiveHalfDuplex,
+            )
+        } catch (e: Exception) {
+            loggerFine("Dropping settings push: $e")
+        }
     }
 
     /**
      * Test-only filter push (the interop harness has no PolicyCollector):
-     * publishes the muted/known lists straight to the native cell.
-     * Production always goes through [setPolicy].
+     * publishes the muted/known lists straight to the native cell, plus an
+     * open gate so a test sender transmits without a collector. Production
+     * always goes through [setPolicy] and [setSettings].
      */
     fun setFilterForTests(muted: IntArray, known: IntArray) {
         try {
             ensureNative()
             native?.setPolicy(muted, known)
+            native?.setGate(true, false, 0, 40000, 2)
+            native?.setSettings(2, 1.0f, 0.7f, 1.0f, true, false)
         } catch (e: Exception) {
             loggerFine("Dropping test filter push: $e")
         }
@@ -169,7 +211,8 @@ class VoiceEngine @JvmOverloads constructor(
         try {
             ensureNative()
             // Like Start: drain stale state and (re)start the
-            // session-lifetime notifier while no render is live.
+            // session-lifetime notifier and send thread while no render or
+            // capture is live.
             try {
                 native?.reset()
             } catch (e: Exception) {
@@ -183,6 +226,12 @@ class VoiceEngine @JvmOverloads constructor(
             loggerFine("Dropping format push: $e")
         }
         pushPolicy()
+        pushSettings()
+        try {
+            native?.setVoiceRoute(false)
+        } catch (e: Exception) {
+            loggerFine("Dropping route push: $e")
+        }
         refreshStatus()
     }
 
@@ -253,6 +302,12 @@ class VoiceEngine @JvmOverloads constructor(
                     loggerFine("Dropping engine reset: $e")
                 }
                 pushPolicy()
+                pushSettings()
+                try {
+                    native?.setVoiceRoute(usingUdp.get())
+                } catch (e: Exception) {
+                    loggerFine("Dropping route push: $e")
+                }
                 if (usingUdp.get()) {
                     val endpoint = endpointRef.get()
                     if (endpoint != null) {
@@ -280,6 +335,11 @@ class VoiceEngine @JvmOverloads constructor(
             }
             is VoiceCommand.SetVoiceRoute -> {
                 usingUdp.set(command.udp)
+                try {
+                    native?.setVoiceRoute(command.udp)
+                } catch (e: Exception) {
+                    loggerFine("Dropping route push: $e")
+                }
                 if (command.udp) {
                     val endpoint = endpointRef.get()
                     if (runningFlag.get() && endpoint != null) {
@@ -413,24 +473,28 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
+    /** Capture entry (realtime capture thread): forwards PCM to the native input engine. */
+    fun captureFrame(pcm: ShortArray, offset: Int, length: Int) {
+        try {
+            native?.captureFrame(pcm, offset, length)
+        } catch (e: Exception) {
+            loggerFine("Dropping capture frame: $e")
+        }
+        // Drop counts ride the render path (nativeRender refreshes them);
+        // no status refresh here to keep the realtime thread allocation-free.
+    }
+
     private fun sendUdpPing(timestampMicros: Long) {
         if (!usingUdp.get()) return
         if (!runningFlag.get()) return
         val engine = native ?: return
-        val packet = try {
-            if (formatRef.get().udp == UdpFormat.PROTOBUF) {
-                NativeVoiceCodec.frameProtobufPing(timestampMicros)
-            } else {
-                NativeVoiceCodec.frameLegacyPing(timestampMicros)
-            }
-        } catch (e: Exception) {
-            loggerFine("Dropping ping after codec failure: $e")
-            null
-        } ?: return
+        // Step 5a.4: the control thread only enqueues; the send thread
+        // frames and sends. Ping framing is native, so the interim Kotlin
+        // codec bridge is no longer on this path.
         try {
-            engine.sendDatagram(packet, packet.size)
+            engine.enqueuePing(timestampMicros)
         } catch (e: Exception) {
-            loggerFine("Dropping ping send: $e")
+            loggerFine("Dropping ping enqueue: $e")
         }
     }
 
@@ -454,12 +518,26 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
+    override fun onTunnelPacket(packet: ByteArray) {
+        if (packet.isEmpty()) {
+            loggerFine("Dropping empty tunnel packet from send thread")
+            return
+        }
+        try {
+            tunnelSink(packet)
+        } catch (e: Exception) {
+            loggerFine("Dropping tunnel sink: $e")
+        }
+        refreshStatus()
+    }
+
     override fun onTalkSnapshot(
         sessions: IntArray,
         states: IntArray,
         droppedInbound: Long,
         droppedTunnel: Long,
-        droppedJitter: Long
+        droppedJitter: Long,
+        selfTalking: Boolean
     ) {
         val levels = HashMap<Int, TalkState>(sessions.size)
         val count = min(sessions.size, states.size)
@@ -482,7 +560,9 @@ class VoiceEngine @JvmOverloads constructor(
             }
             index++
         }
-        talkPublisher.updateRemote(levels)
+        // Step 5a.4: the notifier is the only writer, publishing remote and
+        // self atomically so collectors never see a half-applied snapshot.
+        talkPublisher.updateAll(levels, selfTalking)
         if (droppedInbound != lastLoggedDroppedInbound ||
             droppedTunnel != lastLoggedDroppedTunnel ||
             droppedJitter != lastLoggedDroppedJitter
@@ -522,6 +602,39 @@ class VoiceEngine @JvmOverloads constructor(
         } catch (e: Exception) {
             loggerFine("Dropping policy push: $e")
         }
+        try {
+            native?.setGate(
+                policy.transmitAllowed,
+                policy.pttPressed,
+                policy.voiceTarget,
+                policy.bitrate,
+                policy.framesPerPacket,
+            )
+        } catch (e: Exception) {
+            loggerFine("Dropping gate push: $e")
+        }
+    }
+
+    private fun pushSettings() {
+        val settings = _latestSettings.value ?: return
+        try {
+            val effectiveHalfDuplex =
+                settings.halfDuplex && settings.inputMode == InputMode.PUSH_TO_TALK
+            native?.setSettings(
+                when (settings.inputMode) {
+                    InputMode.VOICE_ACTIVITY -> 0
+                    InputMode.PUSH_TO_TALK -> 1
+                    InputMode.CONTINUOUS -> 2
+                },
+                settings.vadMax,
+                settings.vadMin,
+                settings.amplitudeBoost,
+                settings.adaptiveLeveler,
+                effectiveHalfDuplex,
+            )
+        } catch (e: Exception) {
+            loggerFine("Dropping settings push: $e")
+        }
     }
 
     private fun refreshStatus() {
@@ -541,7 +654,11 @@ class VoiceEngine @JvmOverloads constructor(
             bitrate = targetBitrate.get(),
             framesPerPacket = targetFramesPerPacket.get(),
             running = runningFlag.get(),
-            droppedOutbound = prev.droppedOutbound,
+            droppedOutbound = try {
+                native?.lastDroppedOutbound() ?: prev.droppedOutbound
+            } catch (e: Exception) {
+                prev.droppedOutbound
+            },
             droppedInbound = try {
                 native?.lastDroppedInbound() ?: prev.droppedInbound
             } catch (e: Exception) {
