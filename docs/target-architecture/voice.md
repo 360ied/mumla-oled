@@ -422,7 +422,8 @@ flowchart LR
   changes between 5a and 5b.
 - **Half duplex** (today's `AudioOutput.setHalfDuplexMuted`): the capture
   thread publishes "self is talking" in one atomic flag owned by the I/O
-  layer; while `VoiceSettings.halfDuplex` is set and the flag is set, the
+  layer; while the effective half-duplex flag (raw `VoiceSettings.halfDuplex`
+  gated to push-to-talk at the native push) is set and the flag is set, the
   render thread writes silence instead of the mix. As today, half duplex
   only applies in push-to-talk mode. The engines are unaware of it.
 - The capture entry point accepts any block size (AAudio bursts vary by
@@ -553,14 +554,21 @@ data class VoiceSettings(
     val amplitudeBoost: Float,                // Settings.amplitudeBoostMultiplier
     val targetBitrate: Int,                   // Settings.inputQuality (today's ConfigDelta.inputQuality)
     val targetFramesPerPacket: Int,           // Settings.framesPerPacket
-    val halfDuplex: Boolean,                  // Settings.isHalfDuplex && inputMode == PUSH_TO_TALK
+    val halfDuplex: Boolean,                  // Raw Settings.isHalfDuplex preference; the effective value sent to native is raw && inputMode == PUSH_TO_TALK, derived at the push
     val adaptiveLeveler: Boolean,             // Settings.isAdaptiveLevelerEnabled
 )
 ```
 
 A `VoiceSettings` mapper in `:libraries:humla` builds this from the
 settings flow, reusing today's conversion code from `InputModes` and
-`ActivityInputMode`. Everything today's engine sets at creation and never
+`ActivityInputMode`. The mapper stores the raw half-duplex preference so a
+transmit-mode round trip preserves it (`PUSH_TO_TALK` with half duplex on,
+away to another mode, and back stays on); storing the effective value would
+collapse the middle step to false and lose the preference. Today
+`VoiceControl` gates the raw flag to push-to-talk when building the pipeline;
+from 5a.4 `VoiceEngine` derives the effective value at each native push
+(`setSettings` / `pushSettings`), so Kotlin keeps intent while native render
+reads one gated flag. Everything today's engine sets at creation and never
 changes (RNNoise enabled when its model loads, VAD hold frames, squelch
 floor, jitter margin of 4 frames) stays a constant of the I/O layer.
 

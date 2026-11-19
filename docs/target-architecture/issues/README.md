@@ -125,7 +125,7 @@ the same state in its `Status` row.
 | [26](26-stats-two-collectors.md) | Stats from two collectors; `usingUdp` seeded from the target | Seed fixed (`aba7011b`); single collector open, not gating |
 | [27](27-failed-with-connection-error.md) | `Failed` can carry a `ClientError.Connection` | Decided; `client.md` updated, `ClientError.Internal` code change open |
 | [28](28-local-facts-load-failure-silent.md) | A failed `LocalFacts` load is not logged | Resolved (`7459c0de`) |
-| [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Open; small |
+| [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Resolved (spec) |
 | [30](30-connected-races-sync-tail.md) | `Connected` can run before the session's `ServerSync` tail | Open; revisit once 14 restores self-mute in the session |
 | [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved (spec); `HumlaTCP` boundary question in [open items](../open-items.md) |
 | [33](33-route-control-unused-bridge-api.md) | `RouteControl`'s `ConfigDelta` bridge setters and getters have no callers | Open; small |
@@ -150,7 +150,7 @@ a decision, made 2026-11-12). Rows 2 to 4 gate only 5a.3b (see [open items](../o
 
 | Batch | Issues | Notes |
 |---|---|---|
-| Small library fixes (one worktree) | [29](29-half-duplex-raw-preference.md), [27](27-failed-with-connection-error.md), [19](19-pre-sync-local-intents-published.md) together with [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda | All in `libraries/humla`. 29 touches `VoiceSettingsMapper` and `VoiceControl`. 27 adds `ClientError.Internal`; `HumlaService`'s exhaustive `when` must handle it, and the app has no `ClientError` switches. 19 and 06 are the same branch of `Session.handleMessage`. `HumlaClientTest` already drives sync through a fake transport, so 19's test needs no new harness. |
+| Small library fixes (one worktree) | [27](27-failed-with-connection-error.md), [19](19-pre-sync-local-intents-published.md) together with [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda | All in `libraries/humla`. 27 adds `ClientError.Internal`; `HumlaService`'s exhaustive `when` must handle it, and the app has no `ClientError` switches. 19 and 06 are the same branch of `Session.handleMessage`. `HumlaClientTest` already drives sync through a fake transport, so 19's test needs no new harness. |
 | Service destroy leak | [02](02-service-destroy-leaks-transport.md) | Independent bugfix. |
 | Rule-2 review sweep | [06](06-update-conventions-not-enforced.md) | Read-then-act pass over `Session`, `PolicyCollector`, and `RouteControl` (the audit did not do it). Sweep `RouteControl` after row 1, since confinement changes its reads. |
 | Spike test | [07](07-channel-adapter-spike-weaker.md) | Test-only. |
