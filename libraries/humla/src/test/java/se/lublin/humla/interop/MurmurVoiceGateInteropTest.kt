@@ -137,6 +137,15 @@ class MurmurVoiceGateInteropTest {
                 if (e is kotlinx.coroutines.CancellationException) throw e
             }
         }
+        // Mirror HumlaService: settings ride the same production path into
+        // the native SettingsCell (serialized on the voice control thread).
+        val settingsFanout = collectorScope.launch {
+            try {
+                settingsFlow.collect { senderVoice.setSettings(it) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+        }
         try {
             assertGate(senderVoice, true, "collector opens gate for synced unmuted session")
             // Baseline over UDP through the real collector-fed gate.
@@ -175,6 +184,10 @@ class MurmurVoiceGateInteropTest {
         } finally {
             try {
                 fanout.cancel()
+            } catch (ignored: Exception) {
+            }
+            try {
+                settingsFanout.cancel()
             } catch (ignored: Exception) {
             }
             try {
