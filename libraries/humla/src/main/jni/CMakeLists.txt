@@ -215,25 +215,25 @@ if(ANDROID)
         "${AUDIO_ENGINE_DIR}/RnnoiseProcessor.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceEncoder.cpp"
         "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeCrashTestJni.cpp"
+        "${JNI_ROOT}/diagnostics/NativeCrashTestJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/VoiceSend.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
-        "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
     )
     target_include_directories(humlaaudio PRIVATE
         "${AUDIO_ENGINE_DIR}"
         "${AUDIO_ENGINE_DIR}/jitter"
         "${VOICE_CODEC_DIR}"
+        "${VOICE_IO_DIR}"
         "${NANOPB_DIR}"
         "${CRYPTO_DIR}"
     )
@@ -372,18 +372,26 @@ else()
     target_link_libraries(test_crypt_state PRIVATE Threads::Threads)
     add_test(NAME test_crypt_state COMMAND test_crypt_state)
 
-    # Native render core (step 5a.3a): rings plus the VoiceIo render entry
-    # point. Links the real output engine with an injected fake decoder, so
-    # no libopus is needed; production passes makeOpusOutputDecoder.
+    # Native voice I/O core (step 5a.3a render, 5a.4 send): rings plus the
+    # VoiceIo render entry and the VoiceSend capture/send halves. Links the
+    # real engines with injected fakes, so no libopus is needed;
+    # production passes makeOpusOutputDecoder/makeOpusVoiceEncoder.
     add_executable(test_voice_io
         $<TARGET_OBJECTS:humlacrypto_obj>
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/VoiceSend.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"
+        "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
+        "${AUDIO_ENGINE_DIR}/AdaptiveLeveler.cpp"
+        "${AUDIO_ENGINE_DIR}/PreSpeechRingBuffer.cpp"
+        "${AUDIO_ENGINE_DIR}/SoftLimiter.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
         "${TEST_CPP_DIR}/test_voice_io.cpp"
+        "${TEST_CPP_DIR}/test_voice_send.cpp"
     )
     target_include_directories(test_voice_io PRIVATE
         "${VOICE_IO_DIR}"
@@ -395,10 +403,23 @@ else()
         "${TEST_CPP_DIR}"
     )
     target_compile_options(test_voice_io PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
+    # The allocation harness measures the C/C++ allocators through --wrap; keep
+    # the compiler from turning probes into builtins with different symbols.
+    set_source_files_properties("${TEST_CPP_DIR}/test_voice_send.cpp"
+        PROPERTIES COMPILE_OPTIONS "-fno-builtin")
     target_compile_definitions(test_voice_io PRIVATE
         MUMLA_CRYPT_COUNT_FIXTURE_DIR="${JNI_ROOT}/../../test/fixtures/crypt-counts"
     )
     target_link_libraries(test_voice_io PRIVATE humlavoicecodec humlanpb Threads::Threads m)
+    # Counting allocator: test_voice_send.cpp replaces operator new/delete
+    # and wraps the C allocator, so steady-state capture can be shown to
+    # allocate nothing.
+    target_link_options(test_voice_io PRIVATE
+        -Wl,--wrap=malloc
+        -Wl,--wrap=calloc
+        -Wl,--wrap=realloc
+        -Wl,--wrap=free
+    )
     add_test(NAME test_voice_io COMMAND test_voice_io)
 
     add_executable(test_voice_codec
@@ -423,11 +444,11 @@ else()
     # non-silent PCM through the production render path on the host.
     add_library(humlaaudio SHARED
         $<TARGET_OBJECTS:humlacrypto_obj>
-        "${VOICE_CODEC_DIR}/NativeVoiceCodecJni.cpp"
         "${VOICE_IO_DIR}/VoiceIo.cpp"
         "${VOICE_IO_DIR}/VoiceNotifier.cpp"
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
+        "${VOICE_IO_DIR}/VoiceSend.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"
@@ -438,7 +459,6 @@ else()
         "${AUDIO_ENGINE_DIR}/AdaptiveLeveler.cpp"
         "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
         "${AUDIO_ENGINE_DIR}/RnnoiseProcessor.cpp"
-        "${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/jitter/jitter.c"
     )
     target_include_directories(humlaaudio PRIVATE
@@ -451,9 +471,5 @@ else()
         ${JNI_INCLUDE_DIRS}
     )
     target_compile_options(humlaaudio PRIVATE ${HOST_FLAGS} ${OPUS_COMPILE_FLAGS})
-    # The input-engine JNI seam predates host -Werror (unused JNI params);
-    # snapshots are Android-built, so silence only the host test library.
-    set_source_files_properties("${AUDIO_ENGINE_DIR}/NativeAudioInputEngineJni.cpp"
-        PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter")
     target_link_libraries(humlaaudio PRIVATE humlavoicecodec humlanpb humlaopus humlarnnoise Threads::Threads m)
 endif()

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Documented as an interim in `migration.md` (ground rules, "Other recorded interims"). Choosing one source remains. |
+| Status | Resolved (5a.4): `getCurrentBandwidth` reads session stats (`Session.getCurrentBandwidth` from `SessionStats.currentBandwidth`); `HumlaService` delegates to the session; `AudioHandler` deleted. |
 | Category | Undocumented interim |
 | Severity | Low (a display value from a second source) |
 | Verified | Yes |

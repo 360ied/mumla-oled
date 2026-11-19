@@ -22,6 +22,7 @@
 #include <cerrno>
 #include <ctime>
 
+#include "VoiceConfig.h"
 #include "VoiceTalk.h"
 
 namespace mumla {
@@ -190,6 +191,22 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     assert(out != nullptr || samples == 0);
     assert(result != nullptr);
     drainRings();
+    // Half duplex (step 5a.4): while the effective flag is set and the
+    // capture thread reports self-talking, write silence instead of the
+    // mix. The engines stay unaware of it. Seqlock try-once keeps a torn
+    // read from stalling render; the atomic needs no lock on any thread.
+    bool halfDuplex = m_lastHalfDuplex;
+    if (m_settingsCell != nullptr) {
+        SettingsSnapshot fresh;
+        if (m_settingsCell->tryRead(&fresh)) {
+            halfDuplex = fresh.halfDuplex;
+            m_lastHalfDuplex = halfDuplex;
+        }
+    }
+    const bool selfTalking =
+        m_selfTalking != nullptr &&
+        m_selfTalking->load(std::memory_order_acquire);
+    const bool duplexMuted = halfDuplex && selfTalking;
     size_t written = 0;
     bool silent = true;
     // The engine covers quanta up to MAX_QUANTUM_SAMPLES (60 ms); larger
@@ -205,7 +222,17 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
         m_engine->render(out + written, want, &engineResult);
         applyTalkEvents(engineResult);
         m_droppedJitter += engineResult.droppedPackets;
-        if (engineResult.samples > 0) {
+        if (duplexMuted) {
+            // Half-duplex self-talk: silence the mix, but still fold talk
+            // events above so remote levels keep updating underneath.
+            // Report non-silent when the engine had audio, preserving the
+            // Kotlin pacing contract (rendered > 0 drives the pacer, not
+            // the idle wait), exactly as AudioOutput's fill-after-render.
+            std::fill(out + written, out + written + want, 0);
+            if (engineResult.samples > 0) {
+                silent = false;
+            }
+        } else if (engineResult.samples > 0) {
             silent = false;
         } else {
             std::fill(out + written, out + written + want, 0);

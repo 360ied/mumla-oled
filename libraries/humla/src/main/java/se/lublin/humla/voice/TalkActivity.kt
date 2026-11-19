@@ -27,8 +27,8 @@ import kotlinx.coroutines.flow.update
 import se.lublin.humla.model.TalkState
 
 /**
- * Service-lifetime remote and self talk levels (step 5a.3a; taken over by
- * the VoiceEngine facade in 5a.3b, which only changes the sources).
+ * Service-lifetime remote and self talk levels (step 5a.4: the native
+ * notifier is the only writer, publishing remote and self atomically).
  *
  * Talk state travels as levels, never events: [users] holds every
  * currently talking remote session, and absence means passive, so a slow
@@ -36,8 +36,7 @@ import se.lublin.humla.model.TalkState
  * docs/target-architecture/voice.md#outputs.
  *
  * Android-free, so the mapping and the immutability walk run in plain JVM
- * tests. Every write uses [update], because the notifier and the talking
- * callback can write at the same moment.
+ * tests.
  */
 data class TalkActivity(
     val selfTalking: Boolean,
@@ -54,47 +53,25 @@ data class TalkActivity(
 /**
  * Production publisher for [TalkActivity]. Owned by HumlaService (one
  * instance for the service lifetime, so subscribers never sit on a dead
- * flow); fed by the native notifier (remote users) and AudioHandler's
- * Kotlin talking callback (self); cleared whenever the output engine is
- * destroyed, after the notifier's final read.
+ * flow); fed only by the native notifier via [updateAll] (remote levels
+ * plus self-talking in one atomic write). Session Stop clears through the
+ * same path: native clears the engines/rings and the notifier delivers the
+ * final empty snapshot — no Kotlin writer touches this flow.
  */
 class TalkActivityPublisher {
     private val _talkActivity = MutableStateFlow(TalkActivity.initial())
     val talkActivity: StateFlow<TalkActivity> = _talkActivity.asStateFlow()
 
     /**
-     * Replaces the remote table wholesale. Called on the native notifier
-     * thread, at most once per snapshot change.
+     * Single-writer update from 5a.4: the notifier is the only writer of
+     * talkActivity, publishing remote levels and self-talking together so
+     * collectors never observe a half-applied snapshot.
      */
-    fun updateRemote(users: Map<Int, TalkState>) {
+    fun updateAll(users: Map<Int, TalkState>, selfTalking: Boolean) {
         val persistent = users.toPersistentMap()
         _talkActivity.update { current ->
-            if (current.users == persistent) current else current.copy(users = persistent)
-        }
-    }
-
-    /** Called on the capture thread via AudioHandler's talking callback. */
-    fun setSelfTalking(talking: Boolean) {
-        _talkActivity.update { current ->
-            if (current.selfTalking == talking) current else current.copy(selfTalking = talking)
-        }
-    }
-
-    /**
-     * Resets the whole activity when the output engine goes away (Stop,
-     * and every pipeline rebuild). Called after the notifier stopped, so
-     * no snapshot from the dead engine can land afterwards and re-light
-     * an indicator — stale entries would stick, and after a reconnect even
-     * light up a different user, since Murmur reuses session IDs. Self
-     * talk resets too: the capture-thread false edge is funneled through
-     * a sync-gated callback that teardown can drop while unsynced, and a
-     * stuck true would survive into the next connection with no emission
-     * to correct it (a later true is a no-op dedup).
-     */
-    fun clearRemote() {
-        _talkActivity.update { current ->
-            val cleared = TalkActivity.initial()
-            if (current == cleared) current else cleared
+            if (current.users == persistent && current.selfTalking == selfTalking) current
+            else current.copy(users = persistent, selfTalking = selfTalking)
         }
     }
 }

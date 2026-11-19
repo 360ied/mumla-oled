@@ -41,15 +41,24 @@ struct PolicySnapshot {
     size_t knownCount = 0;
     // True when the known list was truncated: fail open on unknown senders.
     bool knownOverflow = false;
+    // Capture gate (step 5a.4, same VoicePolicy, same sequence lock so
+    // filter and gate stay atomic): transmit side published together with
+    // the lists in one JNI call; readers get a consistent pair.
+    bool transmitAllowed = false;
+    bool pttPressed = false;
+    int32_t voiceTarget = 0;
+    int32_t bitrate = 40000;
+    int32_t framesPerPacket = 2;
 };
 
 /**
- * Single-writer sequence lock for the sender-filter policy.
+ * Single-writer sequence lock for VoicePolicy (filter + gate, step 5a.4).
  *
- * One writer (the JNI setPolicy call), any number of readers (receive,
- * tunnel caller). The writer never waits; readers copy and retry when they
- * catch the writer mid-update, so they never observe a torn list. At most
- * a few dozen entries plus counters: cheap to copy per datagram.
+ * One writer (the JNI setPolicy call publishes filter and gate together),
+ * any number of readers (receive, tunnel caller, capture, send). The writer
+ * never waits; readers copy and retry when they catch the writer mid-update,
+ * so they never observe a torn pair. At most a few dozen entries plus a
+ * handful of gate words: cheap to copy per datagram/frame.
  */
 class PolicyCell {
 public:
@@ -58,9 +67,12 @@ public:
     PolicyCell(const PolicyCell&) = delete;
     PolicyCell& operator=(const PolicyCell&) = delete;
 
-    // Writer (JNI) only. Truncates overlong lists per the overflow rule.
+    // Writer (JNI) only. Truncates overlong lists per the overflow rule;
+    // gate published atomically with the lists.
     void publish(const int32_t* muted, size_t mutedCount, const int32_t* known,
-                 size_t knownCount, bool knownOverflow);
+                 size_t knownCount, bool knownOverflow, bool transmitAllowed,
+                 bool pttPressed, int32_t voiceTarget, int32_t bitrate,
+                 int32_t framesPerPacket);
 
     // Reader only. Returns false when the writer was mid-update; the caller
     // retries (receive path) or drops (never blocks a realtime thread).

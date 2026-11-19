@@ -22,7 +22,6 @@ import se.lublin.humla.audio.inputmode.ActivityInputMode
 import se.lublin.humla.audio.inputmode.ContinuousInputMode
 import se.lublin.humla.audio.inputmode.IInputMode
 import se.lublin.humla.audio.inputmode.ToggleInputMode
-import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.util.ConfigDelta
 
 /**
@@ -49,14 +48,14 @@ class InputModes(
     halfDuplex: Boolean = false,
 ) {
     // Direct assignment to activity/toggle/continuous internals bypasses the
-    // builder recompute in [applyAudioDelta]; all CONFIG writes go through
+    // holder recompute in [applyAudioDelta]; all CONFIG writes go through
     // the applier (verified by grep). The single live exception is
     // [HumlaService.setTalkingState], which flips toggle.isTalkingOn
     // directly as immediate PTT state (and forwards to the live handler) —
-    // it never touches thresholds, so the builder cannot strand. Keep it
-    // that way: new direct writers must go through the applier.
+    // it never touches thresholds. Keep it that way: new direct writers
+    // must go through the applier.
     // halfDuplex/transmitMode stay private-set so a future direct write can
-    // never strand AudioHandler.Builder state.
+    // never strand holder state.
     // Documented here (not on each field) to keep the primary-ctor readable.
 
     /**
@@ -94,58 +93,29 @@ class InputModes(
     }
 
     /**
-     * Applies the audio half of [ConfigDelta]. Validates first (see
-     * [validateAudioDelta]), so a bad delta never commits: the holder is
-     * only assigned once the resolver returns, and builder knobs only after.
+     * Applies the audio half of [ConfigDelta] to the holder. Validates first
+     * (see [validateAudioDelta]), so a bad delta never commits. Step 5a.4:
+     * the holder is UI state only; the live pipeline reads RouteState and
+     * the native path reads VoiceSettings/VoicePolicy, so no builder,
+     * handler, or voice-link pushes ride along.
      */
-    fun applyAudioDelta(
-        delta: ConfigDelta,
-        builder: AudioHandler.Builder,
-        liveHandler: AudioHandler?,
-        liveVoiceLink: VoiceEngine?,
-    ) {
+    fun applyAudioDelta(delta: ConfigDelta) {
         validateAudioDelta(delta)
         val detectionThreshold = delta.detectionThreshold
         if (detectionThreshold != null) {
             activity.setThreshold(detectionThreshold)
-            if (liveHandler != null) {
-                liveHandler.setVadThresholds(activity.vadMax, activity.vadMin)
-            }
-        }
-        val amplitudeBoost = delta.amplitudeBoost
-        if (amplitudeBoost != null) {
-            builder.setAmplitudeBoost(amplitudeBoost)
         }
         val transmitMode = delta.transmitMode
         if (transmitMode != null) {
             // Validated by validateAudioDelta before any commit; the holder is
             // only assigned once the resolver returns, so a bad value can never
             // poison it for a later half-duplex-only delta.
-            val inputMode = resolveInputMode(transmitMode)
+            resolveInputMode(transmitMode)
             this.transmitMode = transmitMode
-            builder.setInputMode(inputMode)
-        }
-        val inputQuality = delta.inputQuality
-        if (inputQuality != null) {
-            builder.setTargetBitrate(inputQuality)
-        }
-        val framesPerPacket = delta.framesPerPacket
-        if (framesPerPacket != null) {
-            builder.setTargetFramesPerPacket(framesPerPacket)
-            liveVoiceLink?.setTargetFramesPerPacket(framesPerPacket)
         }
         val halfDuplex = delta.halfDuplex
         if (halfDuplex != null) {
             this.halfDuplex = halfDuplex
-        }
-        if (delta.halfDuplex != null || delta.transmitMode != null) {
-            builder.setHalfDuplexEnabled(
-                this.transmitMode == Constants.TRANSMIT_PUSH_TO_TALK && this.halfDuplex
-            )
-        }
-        val adaptiveLeveler = delta.adaptiveLeveler
-        if (adaptiveLeveler != null) {
-            builder.setAdaptiveLevelerEnabled(adaptiveLeveler)
         }
     }
 }

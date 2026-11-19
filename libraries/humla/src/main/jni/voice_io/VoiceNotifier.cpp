@@ -20,9 +20,13 @@
 namespace mumla {
 namespace voice_io {
 
-VoiceNotifier::VoiceNotifier(const TalkCell* cell, Sink sink,
+VoiceNotifier::VoiceNotifier(const TalkCell* cell,
+                             const std::atomic<bool>* selfTalking, Sink sink,
                              std::chrono::milliseconds interval)
-    : m_cell(cell), m_sink(std::move(sink)), m_interval(interval) {}
+    : m_cell(cell),
+      m_selfTalking(selfTalking),
+      m_sink(std::move(sink)),
+      m_interval(interval) {}
 
 VoiceNotifier::~VoiceNotifier() { stop(); }
 
@@ -49,10 +53,14 @@ bool VoiceNotifier::notifyNow() {
     if (!m_cell->tryRead(&pub)) {
         return false;
     }
-    if (pub.version == m_deliveredVersion) {
+    const bool self = m_selfTalking != nullptr &&
+                      m_selfTalking->load(std::memory_order_acquire);
+    if (pub.version == m_deliveredVersion && self == m_deliveredSelfTalking) {
         return false;
     }
     m_deliveredVersion = pub.version;
+    m_deliveredSelfTalking = self;
+    pub.selfTalking = self;
     m_sink(pub);
     return true;
 }

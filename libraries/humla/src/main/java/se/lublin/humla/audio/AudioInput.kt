@@ -34,7 +34,7 @@ import se.lublin.humla.exception.AudioInitializationException
  * Captures 16-bit PCM audio natively at 48,000 Hz (10ms frame slices = 480 samples).
  * Uses low-latency audio capture and hardware audio effects.
  */
-class AudioInput : Runnable {
+class AudioInput : Runnable, InputPipeline {
     companion object {
         private const val TAG = "AudioInput"
 
@@ -207,7 +207,7 @@ class AudioInput : Runnable {
         }
     }
 
-    fun startRecording() {
+    override fun startRecording() {
         val stale: Thread = synchronized(this) {
             if (recording) return
             val current = recordThread
@@ -270,7 +270,7 @@ class AudioInput : Runnable {
         thread?.interrupt()
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         val thread: Thread?
         val recordToStop: AudioRecord?
         synchronized(this) {

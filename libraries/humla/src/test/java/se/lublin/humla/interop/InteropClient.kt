@@ -37,6 +37,7 @@ import se.lublin.humla.client.TrustStoreRef
 import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.DefaultTransportFactory
+import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.net.VoiceLink
@@ -124,7 +125,9 @@ object InteropClient {
     fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         // Unconfined: harness commands apply synchronously like the unit
-        // tests, so no second thread exists even in the harness.
+        // tests, so no second thread exists even in the harness. The tunnel
+        // sink routes to the current session's transport (present only in
+        // tunnel mode), exactly like production HumlaService.
         val link = VoiceEngine(
             tunnelSink = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
@@ -156,6 +159,16 @@ object InteropClient {
             mainPoster = { r -> r.run() },
             denyFormatter = { "denied" },
         )
+        // Tunnel sink routes to the current session's transport (present
+        // only in tunnel mode), exactly like production HumlaService. Wired
+        // after the client exists; the send thread calls it for tunnelled
+        // voice (non-realtime).
+        link.setTunnelSink { packet ->
+            try {
+                client.currentSession.value?.transport?.sendTunnelled(packet)
+            } catch (ignored: Exception) {
+            }
+        }
         return HumlaClientHandle(client, link, scope)
     }
 
@@ -330,19 +343,28 @@ object InteropClient {
  * equivalent at the decision — the giveup is an OR over the two counters — but
  * not identical to wire-level blocking, where the client still sends.
  */
-private class NoUdpVoice(
+internal class NoUdpVoice(
     private val delegate: VoiceEngine,
     private val reportSocketFailure: Boolean,
 ) : VoiceLink by delegate,
     VoiceLifecycle by delegate {
     override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
-        // UDP stays closed for the session (the format is still fixed); report
-        // the socket failure the way the native socket does when connect
-        // fails, or stay silent for the 20 s zero-counter giveup.
-        delegate.startVoiceWithoutUdp(format)
+        // UDP stays closed for the session: start normally, then force the
+        // tunnel route. A later switch-to-UDP is dropped in submit, so the
+        // socket the blocked mode closes never opens. Format and keys flow
+        // through the normal Start path.
+        delegate.submit(VoiceCommand.Start(host, port, keys, format))
+        delegate.submit(VoiceCommand.SetVoiceRoute(false))
         if (reportSocketFailure) {
             delegate.onUdpUnavailable()
         }
+    }
+
+    override fun submit(command: VoiceCommand) {
+        // Blocked modes never route to UDP (see startVoice): drop the
+        // switch so the transport's health rule cannot open the socket.
+        if (command is VoiceCommand.SetVoiceRoute && command.udp) return
+        delegate.submit(command)
     }
 }
 

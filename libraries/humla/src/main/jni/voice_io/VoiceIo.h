@@ -30,6 +30,7 @@ namespace mumla {
 namespace voice_io {
 
 class TalkCell;
+class SettingsCell;
 
 /**
  * Native voice I/O core (step 5a.3a native render, 5a.3b render wake).
@@ -51,7 +52,8 @@ class TalkCell;
  * render has one consumer (the render thread). No locks, no allocation on
  * the render path, no Kotlin calls from render (the notifier calls Kotlin,
  * never render). Jitter margin is the I/O layer's constant; half duplex
- * stays in Kotlin's AudioOutput until capture moves in 5a.4.
+ * is native from 5a.4 (render reads the settings cell and the capture
+ * self-talking flag, both lock-free).
  *
  * Render wake (5a.3b item 1): a POSIX semaphore owned here. Render waits in
  * awaitWork between render calls after a silent quantum; every producer
@@ -138,6 +140,12 @@ public:
     // Control thread only, while render is stopped (no race: render is the
     // only reader of this pointer and it never runs concurrently).
     void setTalkCell(TalkCell* cell) { m_talkCell = cell; }
+    // Half-duplex inputs (step 5a.4): the settings cell (effective
+    // halfDuplex, gated to PTT in Kotlin) and the capture self-talking
+    // flag. Control sets both while render is stopped; render reads them
+    // lock-free (seqlock try-once with last-good fallback, atomic load).
+    void setSettingsCell(SettingsCell* cell) { m_settingsCell = cell; }
+    void setSelfTalking(const std::atomic<bool>* flag) { m_selfTalking = flag; }
 
     // Destroys queued state; called on the control thread only while render
     // is stopped (asserted in debug builds by the JNI lifecycle in commit 2).
@@ -164,6 +172,11 @@ private:
     std::atomic<bool> m_idle{false};
     sem_t m_sem;
     TalkCell* m_talkCell = nullptr;
+    SettingsCell* m_settingsCell = nullptr;
+    const std::atomic<bool>* m_selfTalking = nullptr;
+    // Last good half-duplex for the realtime path: seqlock try-once keeps
+    // a torn read from stalling render; effective value only (PTT-gated).
+    bool m_lastHalfDuplex = false;
     // Level table parallel to the engine's voices, render-thread only.
     TalkSnapshot m_levels;
     uint64_t m_droppedInbound = 0;

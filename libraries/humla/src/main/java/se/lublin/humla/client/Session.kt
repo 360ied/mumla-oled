@@ -1073,6 +1073,8 @@ class Session internal constructor(
 
     fun getMaxBandwidth(): Int = state.value.server.info.maxBandwidth ?: -1
 
+    fun getCurrentBandwidth(): Int = stats.value.currentBandwidth ?: -1
+
     fun getServerVersion(): Int {
         val v2 = state.value.server.info.versionV2 ?: throw IllegalStateException("Not synced")
         return Constants.toLegacyVersion(v2)
