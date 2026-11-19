@@ -1037,6 +1037,44 @@ void testReceiveStopLeavesNothing() {
     std::cout << "  [PASS] testReceiveStopLeavesNothing" << std::endl;
 }
 
+void testReceiveSocketErrorClearsRunning() {
+    g_testCount++;
+    // Mid-session UDP death (ICMP refused on a connected socket): the
+    // loop must report once and mark the receiver dead so a later start()
+    // recreates it. A stranded running flag would make start() a no-op
+    // success on a dead socket, leaving UDP silently dead until Stop.
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    const uint8_t key[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    TEST_ASSERT_TRUE(rx.setKeys(key, key, key));
+    // Port 9 (discard) is closed on the test host; connecting succeeds
+    // (UDP), and the first send provokes ICMP refused, which surfaces as
+    // a recv error on the connected socket.
+    TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
+    TEST_ASSERT_TRUE(rx.running());
+    bool unavailableFired = false;
+    rx.setUnavailableSink([&]() { unavailableFired = true; });
+    const uint8_t plain[4] = {'p', 'i', 'n', 'g'};
+    for (int i = 0; i < 50 && rx.running(); ++i) {
+        rx.sendDatagram(plain, sizeof(plain));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    TEST_ASSERT_TRUE(unavailableFired);
+    TEST_ASSERT_FALSE(rx.running());
+    // The loop never closes: single-close ownership stays in stop().
+    TEST_ASSERT_TRUE(rx.socketFd() >= 0);
+    // Recreate after the error: Start-after-error rebinds fresh (the
+    // switchback path depends on exactly this).
+    TEST_ASSERT_TRUE(rx.start("127.0.0.1", 9));
+    TEST_ASSERT_TRUE(rx.running());
+    TEST_ASSERT_TRUE(rx.socketFd() >= 0);
+    rx.stop();
+    TEST_ASSERT_FALSE(rx.running());
+    TEST_ASSERT_EQ(rx.socketFd(), -1);
+    std::cout << "  [PASS] testReceiveSocketErrorClearsRunning" << std::endl;
+}
+
 } // namespace
 
 void run_voice_send_tests();
@@ -1077,6 +1115,7 @@ void run_voice_io_tests() {
     testReceiveLoopbackPingFiresSink();
     testClearDrainsRingsAndCountsResetDiscards();
     testReceiveStopLeavesNothing();
+    testReceiveSocketErrorClearsRunning();
 }
 
 int main() {

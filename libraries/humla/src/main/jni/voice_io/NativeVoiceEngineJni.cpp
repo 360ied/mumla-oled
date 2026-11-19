@@ -639,14 +639,18 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeReset(JNIEnv* /*env*/, jclass
                                                          jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
-        // Session start, when no render or capture is live: drain stale
-        // rings, reset both engines, publish the emptied table (see
-        // VoiceIo::clear), clear the send queue, and (re)start the
-        // session-lifetime notifier and send thread. Neither thread exists
-        // yet at this point, so both debug asserts below must hold; a
+        // Session start, when no render or capture is live: join the send
+        // thread, drain stale rings, reset both engines, publish the emptied
+        // table (see VoiceIo::clear), and (re)start the session-lifetime
+        // notifier and send thread. The stop-before-clear joins a send
+        // thread left running by a previous Start without an intervening
+        // Stop, so clear() never races the loop's drain (stop() is
+        // idempotent and a no-op when already stopped, mirroring
+        // nativeStop's order). Both debug asserts below must hold; a
         // violation fails loudly in debug builds.
         assert(!ctx->renderActive.load(std::memory_order_acquire));
         assert(!ctx->captureActive.load(std::memory_order_acquire));
+        ctx->send.stop();
         ctx->io.clear();
         ctx->send.clear();
         ctx->send.start();

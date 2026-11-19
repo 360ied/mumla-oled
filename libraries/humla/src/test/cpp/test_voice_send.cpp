@@ -452,6 +452,41 @@ void testAllocationFreeSteadyState() {
     std::cout << "  [PASS] testAllocationFreeSteadyState" << std::endl;
 }
 
+void testSendStartStopIdempotent() {
+    g_testCount++;
+    // nativeReset's stop-before-clear and nativeStop both rely on this:
+    // start() while running is a no-op (no second thread), stop() when
+    // stopped only joins if joinable, and a restart works.
+    PolicyCell policy;
+    SettingsCell settings;
+    publishOpenGate(&policy, 2);
+    publishContinuousSettings(&settings);
+    VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
+    int starts = 0;
+    send.setThreadHooks([&]() { ++starts; }, []() {});
+    send.start();
+    TEST_ASSERT_TRUE(send.running());
+    for (int i = 0; i < 200 && starts == 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    send.start();
+    TEST_ASSERT_TRUE(send.running());
+    TEST_ASSERT_EQ(starts, 1);
+    send.stop();
+    TEST_ASSERT_FALSE(send.running());
+    send.stop();
+    TEST_ASSERT_FALSE(send.running());
+    send.start();
+    TEST_ASSERT_TRUE(send.running());
+    for (int i = 0; i < 200 && starts == 1; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    TEST_ASSERT_EQ(starts, 2);
+    send.stop();
+    TEST_ASSERT_FALSE(send.running());
+    std::cout << "  [PASS] testSendStartStopIdempotent" << std::endl;
+}
+
 } // namespace
 
 void run_voice_send_tests() {
@@ -463,4 +498,5 @@ void run_voice_send_tests() {
     testDropOldestKeeps200ms();
     testHalfDuplexRenderSilences();
     testAllocationFreeSteadyState();
+    testSendStartStopIdempotent();
 }

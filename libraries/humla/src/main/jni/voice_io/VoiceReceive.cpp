@@ -259,6 +259,14 @@ bool VoiceReceive::start(const char* host, uint16_t port) {
     }
     m_sock.store(sock, std::memory_order_release);
     m_running.store(true, std::memory_order_release);
+    // Reap a thread left behind by the socket-error exit: that path marks
+    // the receiver dead without joining (a thread cannot join itself), so
+    // the finished-but-joinable thread is still here on restart.
+    // Move-assigning over it would terminate; joining a finished thread
+    // returns at once. stop() stays the only closer of the old fd.
+    if (m_thread.joinable()) {
+        m_thread.join();
+    }
     m_thread = std::thread(&VoiceReceive::loop, this, sock);
     return true;
 }
@@ -295,10 +303,15 @@ void VoiceReceive::loop(int sock) {
         const ssize_t got = recv(sock, reinterpret_cast<char*>(crypted), sizeof(crypted), 0);
         if (got <= 0) {
             if (!m_running.load(std::memory_order_acquire)) break;
-            // Socket error while running: report once; the transport
-            // switches to tunnel, as after its 20 s rule. Teardown
-            // always stops before the next start, which heals this.
+            // Socket error while running: report once and mark the
+            // receiver dead so a later start() recreates it (a switchback
+            // to UDP re-enters start(); returning early on a stranded
+            // running flag would leave UDP silently dead). Only shutdown
+            // here — close() stays in stop() on the control thread, so a
+            // loop-thread close can never race it and recycle the fd.
             if (m_unavailableSink) m_unavailableSink();
+            m_running.store(false, std::memory_order_release);
+            shutdown(sock, SHUT_RDWR);
             break;
         }
         if (!m_crypt.isValid() || got < 5) {
