@@ -1256,19 +1256,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun getCurrentBandwidth(): Int {
-        // Step 5a.4: the native VoicePolicy carries the effective encoder
-        // values (server cap applied); SessionStats.currentBandwidth is the
-        // same source, but the status is already on this thread.
-        if (!isSynchronized()) throw IllegalStateException("Not synchronized")
-        return try {
-            val status = voiceLink.status.value
-            se.lublin.humla.net.ProtobufMessages.calculateAudioBandwidth(
-                status.bitrate, status.framesPerPacket,
-            )
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            -1
-        }
+        // Spec client.md: read stats.value; Session combines transport.stats
+        // and voice.status into SessionStats.currentBandwidth on its scope.
+        return requireSession().getCurrentBandwidth()
     }
 
     open override fun getServerVersion(): Int {

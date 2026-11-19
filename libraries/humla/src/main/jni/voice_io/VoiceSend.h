@@ -46,10 +46,12 @@ inline constexpr size_t kOutboundRingCapacity = 40;
 // Ping queue capacity: pings are infrequent (UDP keepalive cadence); 4
 // slots cover a burst without ever blocking the control thread.
 inline constexpr size_t kPingRingCapacity = 4;
-// Framed packet ceiling: protobuf voice with a full 1024-byte Opus payload
-// plus headers stays under this; legacy is smaller. Matches the 2048-byte
-// protobuf buffer the deleted Kotlin bridge used.
-inline constexpr size_t kMaxFramedBytes = 2048;
+// Framed packet ceiling (spec voice.md queues table): one full 1024-byte Opus
+// payload (AudioInputEngine::kMaxOpusBufferBytes) plus the 1-byte type and
+// varint/protobuf headers stays under 1100; legacy is smaller. Sizing from
+// the payload bound instead of the deleted Kotlin bridge's 2048-byte buffer
+// keeps 40 ring slots at ~44 KB instead of ~82 KB on the realtime path.
+inline constexpr size_t kMaxFramedBytes = 1100;
 // 200 ms drop-oldest bound (today's HumlaUDP head-drop queue).
 inline constexpr int kOutboundKeepMs = 200;
 
