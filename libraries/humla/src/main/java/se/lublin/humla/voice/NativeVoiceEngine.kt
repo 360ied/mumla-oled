@@ -43,7 +43,6 @@ interface EngineNative {
     fun start(host: String, port: Int): Boolean
     fun stop()
     fun reset()
-    fun sendDatagram(plain: ByteArray?, length: Int): Boolean
     fun enqueuePing(timestampMicros: Long): Boolean
     fun captureFrame(pcm: ShortArray?, offset: Int, length: Int)
     fun queueTunnelled(packet: ByteArray?): Boolean
@@ -114,9 +113,6 @@ class NativeVoiceEngine : EngineNative {
 
         @JvmStatic
         private external fun nativeReset(handle: Long)
-
-        @JvmStatic
-        private external fun nativeSendDatagram(handle: Long, plain: ByteArray?, length: Int): Boolean
 
         @JvmStatic
         private external fun nativeQueueTunnelled(handle: Long, packet: ByteArray?): Boolean
@@ -249,11 +245,6 @@ class NativeVoiceEngine : EngineNative {
         if (handle != 0L) {
             nativeReset(handle)
         }
-    }
-
-    override fun sendDatagram(plain: ByteArray?, length: Int): Boolean {
-        val handle = nativeHandle
-        return handle != 0L && nativeSendDatagram(handle, plain, length)
     }
 
     override fun queueTunnelled(packet: ByteArray?): Boolean {

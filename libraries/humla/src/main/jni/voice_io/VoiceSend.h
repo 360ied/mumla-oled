@@ -187,8 +187,11 @@ private:
     std::atomic<uint32_t> m_legacyVersion{0};
     std::atomic<bool> m_useUdp{false};
 
-    // Self-talking flag: capture stores on every talk transition; render
-    // (half duplex) and the notifier read it. Single writer, lock-free.
+    // Self-talking flag (capture writer; render and notifier readers).
+    // Atomic, lock-free on all three threads. The control thread resets it
+    // in clear() only while capture is stopped (Stop/Reset ordering), so
+    // the reset is a serialized lifecycle handoff, never a concurrent
+    // second writer: no capture frame is in flight when it runs.
     std::atomic<bool> m_selfTalking{false};
 
     std::atomic<uint64_t> m_droppedOutbound{0};

@@ -359,7 +359,9 @@ void VoiceSend::loop() {
         }
 
         // Send the kept suffix in order (usually one packet per wake while
-        // talking; a burst after an idle drain).
+        // talking; a burst after an idle drain). The tunnel sink is copied
+        // once per wake (non-realtime thread), not per packet.
+        TunnelSink sink = m_tunnelSink;
         for (size_t i = keepFrom; i < stagedCount; ++i) {
             OutboundPacket packet = staged[i];
             if (packet.length == 0 || packet.length > sizeof(packet.data)) {
@@ -375,7 +377,6 @@ void VoiceSend::loop() {
                     m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
                 }
             } else {
-                TunnelSink sink = m_tunnelSink;
                 if (sink) {
                     sink(packet.data, packet.length);
                 } else {

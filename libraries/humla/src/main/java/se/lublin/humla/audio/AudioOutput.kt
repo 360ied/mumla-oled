@@ -25,9 +25,7 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Process
 import android.util.Log
-import java.util.Arrays
 import se.lublin.humla.exception.AudioInitializationException
-import se.lublin.humla.voice.TalkActivityPublisher
 import kotlin.math.max
 import kotlin.math.min
 
@@ -39,7 +37,8 @@ import kotlin.math.min
  * application-scoped in the VoiceEngine facade; render drives it through
  * [RenderDriver] but owns nothing. Parsing, sender filtering, and removals
  * are native; talk state travels as levels through the service-lifetime
- * publisher. There is no decode pool, no Java mixer, and the track is never
+ * publisher owned by VoiceEngine (the notifier is its only writer).
+ * There is no decode pool, no Java mixer, and the track is never
  * flushed on underrun so gaps do not click.
  */
 class AudioOutput : Runnable, OutputPipeline {
@@ -54,7 +53,6 @@ class AudioOutput : Runnable, OutputPipeline {
     }
 
     private val renderDriver: RenderDriver
-    private val talkPublisher: TalkActivityPublisher
 
     @Volatile
     private var audioTrack: AudioTrack? = null
@@ -64,14 +62,10 @@ class AudioOutput : Runnable, OutputPipeline {
     @Volatile
     private var running = false
 
-    @Volatile
-    private var halfDuplexMuted = false
+    constructor(renderDriver: RenderDriver) : this(null, renderDriver)
 
-    constructor(renderDriver: RenderDriver, talkPublisher: TalkActivityPublisher) : this(null, renderDriver, talkPublisher)
-
-    constructor(context: Context?, renderDriver: RenderDriver, talkPublisher: TalkActivityPublisher) {
+    constructor(context: Context?, renderDriver: RenderDriver) {
         this.renderDriver = renderDriver
-        this.talkPublisher = talkPublisher
         // NB: context is accepted for API compatibility but intentionally unused.
     }
 
@@ -81,7 +75,6 @@ class AudioOutput : Runnable, OutputPipeline {
         if (thread != null || running) {
             return
         }
-        halfDuplexMuted = false
 
         val quantumBytes = RENDER_SAMPLES * 2
         var minBytes = AudioTrack.getMinBufferSize(
@@ -145,23 +138,21 @@ class AudioOutput : Runnable, OutputPipeline {
      * except the render thread itself: a self-stop defers cleanup to the
      * next external call after run() exits (see below). In-tree callers
      * always stop from the service thread. The shared engine is untouched:
-     * VoiceEngine owns it across sessions; the publisher clear below runs
-     * after the render join, and the version-gated notifier cannot
-     * resurrect cleared levels without new renders.
+     * VoiceEngine owns it across sessions and across route rebuilds, so no
+     * talk clear happens here — the notifier is the only writer of
+     * talkActivity, and a pipeline rebuild must not wipe remote levels
+     * while the output engine keeps its voices.
      */
     override fun stopPlaying() {
         val thread: Thread?
         synchronized(this) {
             if (!running && this.thread == null) {
-                // Never started (or already stopped): no thread to join, but
-                // the service-lifetime publisher may still hold levels from
-                // a previous pipeline — leave no stale indicator behind.
-                // update is lock-free, safe here.
-                talkPublisher.clearRemote()
+                // Never started (or already stopped): nothing to join or
+                // release. No publisher touch: talk state is the
+                // notifier's alone.
                 return
             }
             running = false
-            halfDuplexMuted = false
             thread = this.thread
         }
         // Wake the render semaphore: sem_post is remembered across a racing
@@ -202,24 +193,15 @@ class AudioOutput : Runnable, OutputPipeline {
                 track.release()
                 audioTrack = null
             }
-            // The output engine is shared: VoiceEngine owns and resets it.
-            // Clear remote levels so no snapshot from the old pipeline can
-            // light an indicator afterwards.
-            talkPublisher.clearRemote()
+            // No talk clear: the output engine is shared across sessions
+            // and route rebuilds; only the native notifier writes
+            // talkActivity (Stop clears via VoiceIo::clear + final notify).
         }
     }
 
     @Synchronized
     fun isPlaying(): Boolean {
         return running
-    }
-
-    fun setHalfDuplexMuted(muted: Boolean) {
-        halfDuplexMuted = muted
-    }
-
-    fun isHalfDuplexMuted(): Boolean {
-        return halfDuplexMuted
     }
 
     override fun run() {
@@ -309,9 +291,6 @@ class AudioOutput : Runnable, OutputPipeline {
             }
             val rendered = renderDriver.render(mix, 0, RENDER_SAMPLES)
             if (rendered > 0) {
-                if (halfDuplexMuted) {
-                    Arrays.fill(mix, 0, rendered, 0.toShort())
-                }
                 var offset = 0
                 while (offset < rendered) {
                     val written = track.write(mix, offset, rendered - offset)

@@ -79,7 +79,7 @@ class VoiceEnginePipelineTest {
                 if (failInput) throw RuntimeException("no mic")
                 FakeInput().also { inputBuilds.add(it) }
             },
-            outputFactory = { _, _, _ ->
+            outputFactory = { _, _ ->
                 FakeOutput().also { outputBuilds.add(it) }
             },
         )

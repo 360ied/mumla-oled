@@ -35,9 +35,11 @@ import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.TalkActivityPublisher
 
 /**
- * Talk-level tests for the service-lifetime publisher (5a.3a+): it replaces
- * the remote table wholesale, handles read it live (absent means passive),
- * and clearing on engine teardown leaves no stale indicator.
+ * Talk-level tests for the service-lifetime publisher (5a.4): the native
+ * notifier is the only writer, publishing remote and self atomically via
+ * [TalkActivityPublisher.updateAll]; Stop clears through the same path
+ * (native clears engines/rings, notifier delivers the final empty
+ * snapshot). Handles read live (absent means passive).
  *
  * The step-2 stuck-indicator regression (comparing a fresh handle's
  * talkState against a new event) is structurally impossible here: nothing
@@ -72,18 +74,18 @@ class TalkActivityPublisherTest {
             TalkState.PASSIVE,
             UserHandle(2, flow, publisher.talkActivity).talkState,
         )
-        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), false)
         assertEquals(
             TalkState.TALKING,
             UserHandle(2, flow, publisher.talkActivity).talkState,
         )
-        publisher.updateRemote(mapOf(2 to TalkState.SHOUTING))
+        publisher.updateAll(mapOf(2 to TalkState.SHOUTING), false)
         assertEquals(
             TalkState.SHOUTING,
             UserHandle(2, flow, publisher.talkActivity).talkState,
         )
         // A fresh table without the user reads passive, no event needed.
-        publisher.updateRemote(emptyMap())
+        publisher.updateAll(emptyMap(), false)
         assertEquals(
             TalkState.PASSIVE,
             UserHandle(2, flow, publisher.talkActivity).talkState,
@@ -97,9 +99,9 @@ class TalkActivityPublisherTest {
         val job = launch(Dispatchers.Unconfined) {
             publisher.talkActivity.collect { emissions.add(it.users.toMap()) }
         }
-        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
-        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
-        publisher.updateRemote(mapOf(2 to TalkState.WHISPERING))
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), false)
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), false)
+        publisher.updateAll(mapOf(2 to TalkState.WHISPERING), false)
         job.cancel()
         // Initial + TALKING + WHISPERING: the repeated table emits nothing.
         assertEquals(3, emissions.size)
@@ -109,18 +111,19 @@ class TalkActivityPublisherTest {
     }
 
     @Test
-    fun `clearRemote ends with empty users after talking`() {
+    fun `notifier empty snapshot clears users after talking`() {
         val publisher = TalkActivityPublisher()
         val flow = flowWithUser()
-        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), true)
         assertEquals(
             TalkState.TALKING,
             UserHandle(2, flow, publisher.talkActivity).talkState,
         )
-        // Rebuild-while-talking: the engine is destroyed, the publisher
-        // clears after the notifier's final read, and no stale entry lights
-        // the indicator (or a different user, since Murmur reuses IDs).
-        publisher.clearRemote()
+        // Stop: native clears engines/rings and the notifier delivers the
+        // final empty snapshot (remote + self atomically); no stale entry
+        // lights the indicator (or a different user, since Murmur reuses
+        // IDs), and no Kotlin writer is involved.
+        publisher.updateAll(emptyMap(), false)
         assertTrue(publisher.talkActivity.value.users.isEmpty())
         assertEquals(
             TalkState.PASSIVE,
@@ -131,26 +134,24 @@ class TalkActivityPublisherTest {
     @Test
     fun `self talking toggles without touching remote`() {
         val publisher = TalkActivityPublisher()
-        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
-        publisher.setSelfTalking(true)
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), true)
         assertTrue(publisher.talkActivity.value.selfTalking)
         assertEquals(1, publisher.talkActivity.value.users.size)
-        publisher.setSelfTalking(true)
-        publisher.setSelfTalking(false)
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), true)
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), false)
         assertTrue(!publisher.talkActivity.value.selfTalking)
         assertEquals(1, publisher.talkActivity.value.users.size)
     }
 
     @Test
-    fun `clearRemote resets self talking after disconnect`() {
+    fun `stop snapshot resets self talking after disconnect`() {
         val publisher = TalkActivityPublisher()
-        // Speaking exactly at disconnect: the capture-thread false edge is
-        // dropped while unsynced, so teardown must clear self talk too —
-        // otherwise true survives into the next connection with no emission
-        // to correct it (a later true is a no-op dedup).
-        publisher.setSelfTalking(true)
-        publisher.updateRemote(mapOf(2 to TalkState.TALKING))
-        publisher.clearRemote()
+        // Speaking exactly at disconnect: the final notifier snapshot
+        // carries self false atomically with the emptied remote table, so
+        // true cannot survive into the next connection with no emission to
+        // correct it (a later true is a no-op dedup).
+        publisher.updateAll(mapOf(2 to TalkState.TALKING), true)
+        publisher.updateAll(emptyMap(), false)
         assertEquals(TalkActivity.initial(), publisher.talkActivity.value)
     }
 }

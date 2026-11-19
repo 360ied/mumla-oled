@@ -62,7 +62,6 @@ class VoiceEngineTest {
         val started = mutableListOf<Pair<String, Int>>()
         var stopCalls = 0
         var resetCalls = 0
-        val sent = mutableListOf<ByteArray>()
         val tunnelled = mutableListOf<ByteArray>()
         val removed = mutableListOf<Int>()
         var cryptStats = intArrayOf(1, 2, 3, 4)
@@ -130,11 +129,6 @@ class VoiceEngineTest {
 
         override fun reset() {
             resetCalls++
-        }
-
-        override fun sendDatagram(plain: ByteArray?, length: Int): Boolean {
-            sent.add(plain!!.copyOf(length))
-            return true
         }
 
         override fun queueTunnelled(packet: ByteArray?): Boolean {
@@ -208,22 +202,6 @@ class VoiceEngineTest {
         // A late route push after stop opens nothing.
         engine.submit(VoiceCommand.SetVoiceRoute(true))
         assertEquals(1, fake.started.size)
-    }
-
-    @Test
-    fun `sendVoice tunnels when forced TCP and uses native when UDP`() {
-        val fake = FakeEngineNative()
-        val sunk = mutableListOf<ByteArray>()
-        val engine = newEngine(fake, sunk)
-        engine.startVoice("example.org", 64738, protobufFormat(), keys())
-        engine.sendVoice(byteArrayOf(1, 2, 3), 3)
-        assertEquals(1, sunk.size)
-        assertTrue(fake.sent.isEmpty())
-        engine.submit(VoiceCommand.SetVoiceRoute(true))
-        engine.sendVoice(byteArrayOf(4, 5), 2)
-        assertEquals(1, sunk.size)
-        assertEquals(1, fake.sent.size)
-        assertArrayEquals(byteArrayOf(4, 5), fake.sent[0])
     }
 
     @Test

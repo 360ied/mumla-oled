@@ -77,9 +77,11 @@ import kotlin.math.min
  * `Start` carries the session's UDP address plus the transport's
  * per-session decisions, fixed once: keys (when CryptSetup arrived) and
  * the UDP format with the legacy version. No route: voice follows the
- * transport's `SetVoiceRoute`; `Stop` resets to tunnel and closes the
- * socket without touching the engines (reset happens at the next Start,
- * when no render is live). Engines keep their state across route changes.
+ * transport's `SetVoiceRoute`; `Stop` joins capture/render first, then
+ * stops native, clears both engines/rings and delivers the final empty
+ * talk snapshot via the notifier (the only `talkActivity` writer), and
+ * resets the route to tunnel with the socket closed. Engines keep their
+ * state across route changes (no clear on pipeline rebuild).
  *
  * Android-free except android.util.Log for the drop log (the audio layer
  * already logs the same way).
@@ -94,8 +96,8 @@ class VoiceEngine @JvmOverloads constructor(
     private val prefs: StateFlow<RoutePreferences>? = null,
     private val inputFactory: (AudioInput.AudioInputListener, Int) -> InputPipeline =
         { listener, source -> AudioInput(listener, source) },
-    private val outputFactory: (Context?, RenderDriver, TalkActivityPublisher) -> OutputPipeline =
-        { ctx, driver, pub -> se.lublin.humla.audio.AudioOutput(ctx, driver, pub) },
+    private val outputFactory: (Context?, RenderDriver) -> OutputPipeline =
+        { ctx, driver -> se.lublin.humla.audio.AudioOutput(ctx, driver) },
 ) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener,
     AudioInput.AudioInputListener {
     companion object {
@@ -463,21 +465,23 @@ class VoiceEngine @JvmOverloads constructor(
                 endpointRef.set(null)
                 usingUdp.set(false)
                 runningFlag.set(false)
-                // Native first (stops receive/send/notifier, joins them),
-                // then pipeline (joins capture/render, clears publisher):
-                // the talk clear runs after the notifier's final read, so no
-                // snapshot can resurrect a cleared indicator (voice.md).
-                // Render/capture joins still precede native destroy (in
-                // close), satisfying RenderGuard/CaptureGuard.
-                try {
-                    native?.stop()
-                } catch (e: Exception) {
-                    loggerFine("Dropping native stop: $e")
-                }
+                // Pipeline first (joins capture/render), then native stop
+                // (joins send/receive/notifier, clears both engines/rings,
+                // delivers the final empty snapshot via the notifier and
+                // resets the route to tunnel): the talk clear is the
+                // notifier's own delivery after the last render, so no
+                // Kotlin writer can resurrect or duplicate it (voice.md).
+                // Render/capture joins precede native destroy (in close),
+                // satisfying RenderGuard/CaptureGuard.
                 try {
                     tearDownPipeline()
                 } catch (e: Exception) {
                     loggerFine("Dropping pipeline teardown: $e")
+                }
+                try {
+                    native?.stop()
+                } catch (e: Exception) {
+                    loggerFine("Dropping native stop: $e")
                 }
             }
             is VoiceCommand.SetVoiceRoute -> {
@@ -561,30 +565,6 @@ class VoiceEngine @JvmOverloads constructor(
         } catch (e: Exception) {
             loggerFine("Dropping removeUser: $e")
         }
-    }
-
-    fun sendVoice(data: ByteArray, length: Int) {
-        // Blocking send (encrypt + sendto on the shared socket): never main.
-        checkNotMainThread()
-        if (length < 0 || length > data.size) {
-            throw IllegalArgumentException(
-                "Requested length $length out of bounds for available data length ${data.size}!",
-            )
-        }
-        if (!usingUdp.get()) {
-            tunnelSink(data.copyOf(length))
-            refreshStatus()
-            return
-        }
-        if (!runningFlag.get() || endpointRef.get() == null) {
-            return
-        }
-        try {
-            native?.sendDatagram(data, length)
-        } catch (e: Exception) {
-            loggerFine("Dropping voice send: $e")
-        }
-        refreshStatus()
     }
 
     // RenderDriver: the render thread's only path into the owned engine.
@@ -808,7 +788,7 @@ class VoiceEngine @JvmOverloads constructor(
             }
             return
         }
-        val output: OutputPipeline = outputFactory(context, this, talkPublisher)
+        val output: OutputPipeline = outputFactory(context, this)
         try {
             output.startPlaying(audioStream)
         } catch (e: Exception) {
@@ -973,11 +953,11 @@ class VoiceEngine @JvmOverloads constructor(
     fun close(): Job {
         val teardown = scope.launch(NonCancellable) {
             try {
-                native?.stop()
+                tearDownPipeline()
             } catch (ignored: Exception) {
             }
             try {
-                tearDownPipeline()
+                native?.stop()
             } catch (ignored: Exception) {
             }
             try {

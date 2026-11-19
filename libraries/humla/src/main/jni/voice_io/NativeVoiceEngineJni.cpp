@@ -601,15 +601,24 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
                                                         jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
-        // Stop closes the socket and joins the receive and send threads,
-        // stops the session-lifetime notifier, and zeroes the crypt keys. It
-        // never touches the engines or rings: the render and capture threads
-        // are owned by the pipeline and joined there, so clearing here would
-        // race them. Reset happens in nativeReset at the next Start, when no
-        // render or capture is live.
+        // Session stop, after Kotlin tore down capture/render (see
+        // VoiceEngine.apply Stop): both debug guards below must hold, so a
+        // teardown-ordering regression fails loudly in debug builds.
+        // Stop threads, then clear both halves while no realtime thread is
+        // live (send selfTalking false, io empty publish), deliver the final
+        // empty snapshot synchronously, then stop the notifier. The notifier
+        // loop is joined before the final notifyNow so the version gate has
+        // a single writer. Route resets to tunnel; the socket stays closed
+        // until the next Start pushes UDP with an endpoint.
+        assert(!ctx->renderActive.load(std::memory_order_acquire));
+        assert(!ctx->captureActive.load(std::memory_order_acquire));
         ctx->send.stop();
         ctx->receive.stop();
         ctx->notifier.stop();
+        ctx->send.setUseUdp(false);
+        ctx->send.clear();
+        ctx->io.clear();
+        ctx->notifier.notifyNow();
         ctx->receive.clearKeys();
     }
 }
@@ -632,25 +641,6 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeReset(JNIEnv* /*env*/, jclass
         ctx->send.start();
         ctx->notifier.start();
     }
-}
-
-JNIEXPORT jboolean JNICALL
-Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSendDatagram(JNIEnv* env, jclass /*clazz*/,
-                                                                jlong handle,
-                                                                jbyteArray plain,
-                                                                jint length) {
-    VoiceEngineContext* ctx = getContext(handle);
-    if (ctx == nullptr || plain == nullptr || length <= 0) {
-        return JNI_FALSE;
-    }
-    const jsize arrayLen = env->GetArrayLength(plain);
-    if (arrayLen < length) return JNI_FALSE;
-    jbyte* bytes = env->GetByteArrayElements(plain, nullptr);
-    if (bytes == nullptr) return JNI_FALSE;
-    const bool ok = ctx->receive.sendDatagram(reinterpret_cast<uint8_t*>(bytes),
-                                              static_cast<size_t>(length));
-    env->ReleaseByteArrayElements(plain, bytes, JNI_ABORT);
-    return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
