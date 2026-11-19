@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved (5a.4): `getCurrentBandwidth` reads `VoiceEngine.status` (`VoiceStatus` bitrate/FPP via `calculateAudioBandwidth`); `AudioHandler` deleted. |
+| Status | Resolved (5a.4): `getCurrentBandwidth` reads session stats (`Session.getCurrentBandwidth` from `SessionStats.currentBandwidth`); `HumlaService` delegates to the session; `AudioHandler` deleted. |
 | Category | Undocumented interim |
 | Severity | Low (a display value from a second source) |
 | Verified | Yes |

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved (5a.4): `VoiceControl` and its test deleted; `VoiceEngine` owns capture/render following `RouteState` with `VoiceEngineTest` (fake native, route, send routing, gate/settings/ping/self-talk/tunnel) plus interop voice both directions and gating. |
+| Status | Resolved (5a.4): `VoiceControl` and its test deleted; `VoiceEngine` owns capture/render following `RouteState` with `VoiceEngineTest` (fake native, commands, gate/settings/ping/self-talk/tunnel/status) plus `VoiceEnginePipelineTest` (Idle/Settling/Ready, rebuild, teardown, retry) and interop voice both directions and gating. |
 | Category | Verification gap |
 | Severity | Harmful (step 4's central class is behaviorally untested) |
 | Verified | Yes, by reading the test and the class |

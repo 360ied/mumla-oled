@@ -83,7 +83,7 @@ the same state in its `Status` row.
 
 | # | Issue | State |
 |---|---|---|
-| [03](03-voice-control-test-vacuous.md) | `VoiceControlTest` never starts a session, so the pipeline lifecycle is untested | Resolved (5a.4): `VoiceControl` deleted; `VoiceEngine` pipeline pinned by facade and interop |
+| [03](03-voice-control-test-vacuous.md) | `VoiceControlTest` never starts a session, so the pipeline lifecycle is untested | Resolved (5a.4): `VoiceControl` deleted; `VoiceEngine` pipeline pinned by `VoiceEngineTest` + `VoiceEnginePipelineTest` and interop |
 | [04](04-session-transport-virtual-time-gaps.md) | Most specified virtual-time scenarios missing; no `Session` or `TransportImpl` tests | Resolved (`bf1b37a3`..`cc3a673f`) |
 | [05](05-client-edge-invariants-weak.md) | Per-step invariants not asserted; edge check looser than the diagram | Resolved (`26b6c8c4`, `02e68f97`) |
 | [06](06-update-conventions-not-enforced.md) | The two `update {}` conventions have no enforcement artifact; one violation in `Session` | Split: `ServerSync` lambda fixed on `session-serversync-update-hygiene`; review skills deleted, so enforcement is open (tripwire not written); rule-2 sweep undone |
@@ -106,10 +106,10 @@ the same state in its `Status` row.
 | # | Issue | State |
 |---|---|---|
 | [14](14-local-facts-self-mute-stub.md) | Persisted self-mute/deafen never reaches the session; `LocalFactsStore` self-mute half is a stub | Interim documented; code fix at step 6 |
-| [15](15-current-bandwidth-bypasses-stats.md) | `getCurrentBandwidth` reads `AudioHandler`, not session stats | Resolved (5a.4): reads `VoiceEngine.status` (`VoiceStatus` bitrate/FPP via `calculateAudioBandwidth`) |
+| [15](15-current-bandwidth-bypasses-stats.md) | `getCurrentBandwidth` reads `AudioHandler`, not session stats | Resolved (5a.4): reads session stats (`Session.getCurrentBandwidth`) |
 | [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Resolved (`aba7011b`, `6b72a255`); teardown-window residual documented |
 | [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Resolved (`aba7011b`, `7a439caf`) |
-| [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Resolved (5a.4): single writer via `VoicePolicy` native gate |
+| [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Resolved (5a.4): single writer via `VoiceEngine.setPolicy` (serialized) |
 | [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved on `session-serversync-update-hygiene` (`89dd9b57`), pending merge |
 
 ### Benign drift
