@@ -4,11 +4,11 @@
 |---|---|
 | Status | Resolved (spec): `VoiceSettings.halfDuplex` is the raw preference by design; the effective value is derived at the native push. |
 | Category | Spec drift |
-| Severity | Benign (spec wording only; behavior correct in 5a.4, where the native push gates and no pipeline rebuild follows) |
+| Severity | Benign (spec wording only; behavior correct today via `VoiceControl` gating, and in 5a.4 via the native push with no pipeline rebuild) |
 | Verified | Yes (code read) |
 | Area | Step-4 voice settings |
 | Spec | [voice.md § Policy and settings handoff](../voice.md#policy-and-settings-handoff) (`VoiceSettings` data class) |
-| Code | `libraries/humla/src/main/java/se/lublin/humla/voice/VoiceSettingsMapper.kt` (raw store; `halfDuplexFor` helper documents the effective predicate); `voice/VoiceEngine.kt` (`setSettings` / `pushSettings` gate `raw && PUSH_TO_TALK` before the native seqlock) |
+| Code | `libraries/humla/src/main/java/se/lublin/humla/voice/VoiceSettingsMapper.kt` (raw store; `halfDuplexFor` helper documents the effective predicate); today `voice/VoiceControl.kt` gates at build time, from 5a.4 `voice/VoiceEngine.kt` (`setSettings` / `pushSettings`) gates before the native seqlock |
 | Gates | Not gating |
 
 Line numbers below refer to `master` at `092d9dc8`.
@@ -17,10 +17,11 @@ Line numbers below refer to `master` at `092d9dc8`.
 
 The spec defined `VoiceSettings.halfDuplex` as the effective value
 `Settings.isHalfDuplex && inputMode == PUSH_TO_TALK`. The mapper stores the
-raw preference instead, and `VoiceEngine` derives the effective value at each
-native push, so behavior is correct and a transmit-mode round trip preserves
-the preference. The spec now documents raw storage with push-time gating.
-`VoiceControl` no longer exists in 5a.4, so the cited rebuild cost is moot:
+raw preference instead; today `VoiceControl` derives the effective value when
+building the pipeline, and from 5a.4 `VoiceEngine` derives it at each native
+push, so behavior is correct and a transmit-mode round trip preserves the
+preference. The spec now documents raw storage with push-time gating.
+`VoiceControl` is deleted in 5a.4, so the cited rebuild cost goes away there:
 the native push is a seqlock write, not a microphone reacquire.
 
 ## What the spec says
