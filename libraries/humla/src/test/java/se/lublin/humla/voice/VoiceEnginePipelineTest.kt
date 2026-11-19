@@ -85,8 +85,11 @@ class VoiceEnginePipelineTest {
         )
 
         fun start() {
-            engine.startVoiceWithoutUdp(
-                VoiceFormat(UdpFormat.PROTOBUF, 0x10500)
+            engine.startVoice(
+                "example.org",
+                64738,
+                VoiceFormat(UdpFormat.PROTOBUF, 0x10500),
+                null,
             )
         }
 
@@ -151,6 +154,31 @@ class VoiceEnginePipelineTest {
         assertTrue(first !== second)
         assertEquals(2, h.inputBuilds.size)
         assertEquals(2, h.outputBuilds.size)
+        assertTrue(h.inputBuilds[0].shut)
+        assertTrue(h.outputBuilds[0].stopped)
+        assertTrue(h.inputBuilds[1].started)
+    }
+
+    @Test
+    fun `changed Start tears down live pipeline before reset`() {
+        val h = Harness()
+        h.start()
+        h.routeStates.value = RouteState.Ready(AppliedRoute.VOICE_HANDSET, StreamProfile.VOICE)
+        val first = h.engine.pipelineForTests()
+        assertNotNull(first)
+        // Same session, new endpoint: the live pipeline is joined first,
+        // then a full Start rebuilds it, so reset() never races in-flight
+        // capture on the old pipeline.
+        h.engine.startVoice(
+            "other.example",
+            64739,
+            VoiceFormat(UdpFormat.PROTOBUF, 0x10500),
+            null,
+        )
+        val second = h.engine.pipelineForTests()
+        assertNotNull(second)
+        assertTrue(first !== second)
+        assertEquals(2, h.inputBuilds.size)
         assertTrue(h.inputBuilds[0].shut)
         assertTrue(h.outputBuilds[0].stopped)
         assertTrue(h.inputBuilds[1].started)

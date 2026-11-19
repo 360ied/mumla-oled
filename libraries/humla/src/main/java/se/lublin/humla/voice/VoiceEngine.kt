@@ -39,6 +39,7 @@ import android.content.Context
 import android.media.AudioManager
 import android.media.MediaRecorder
 import se.lublin.humla.BuildConfig
+import se.lublin.humla.HumlaNative
 import se.lublin.humla.audio.AudioInput
 import se.lublin.humla.audio.InputPipeline
 import se.lublin.humla.audio.OutputPipeline
@@ -87,7 +88,7 @@ import kotlin.math.min
  * already logs the same way).
  */
 class VoiceEngine @JvmOverloads constructor(
-    private var tunnelSink: (ByteArray) -> Unit = {},
+    private val tunnelSink: (ByteArray) -> Unit = {},
     private val talkPublisher: TalkActivityPublisher = TalkActivityPublisher(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)),
     private val engineFactory: (NativeVoiceEngine.Listener) -> EngineNative = { NativeVoiceEngine(it) },
@@ -134,7 +135,23 @@ class VoiceEngine @JvmOverloads constructor(
     private val targetBitrate = AtomicInteger(40000)
     private val runningFlag = AtomicBoolean(false)
 
-    private var native: EngineNative? = null
+    private val nativeRef = AtomicReference<EngineNative?>(null)
+    // Latest tunnel sink, published once at construction or via
+    // setTunnelSink and read on the native send thread: no join ordering
+    // covers it, so it gets the atomic the ordering-covered fields skip.
+    private val tunnelSinkRef = AtomicReference(tunnelSink)
+    // Set once the application ends: late Start commands are dropped instead
+    // of creating an engine nobody will destroy (submit/close race).
+    private val closed = AtomicBoolean(false)
+    // Last Start decision plus whether its socket open succeeded: an
+    // identical healthy Start is a no-op, anything else tears the live
+    // pipeline down first so reset() never races in-flight capture.
+    private val lastStartRef = AtomicReference<VoiceCommand.Start?>(null)
+    private val startHealthy = AtomicBoolean(false)
+    // Keys that arrived before the engine existed (CryptSetup can beat the
+    // SYNCED Start): applied with the Start decision, so setKeys never
+    // creates the engine off the control thread.
+    private val pendingKeys = AtomicReference<Triple<ByteArray, ByteArray, ByteArray>?>(null)
 
     private val _latestPolicy = MutableStateFlow<VoicePolicy?>(null)
     val latestPolicy: StateFlow<VoicePolicy?> = _latestPolicy.asStateFlow()
@@ -189,7 +206,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     /** Test and service hook: replaces the tunnel sink after construction. */
     fun setTunnelSink(sink: (ByteArray) -> Unit) {
-        tunnelSink = sink
+        tunnelSinkRef.set(sink)
     }
 
     /** Policy collector only: publishes the mapped VoicePolicy for the native filter and gate. */
@@ -229,30 +246,39 @@ class VoiceEngine @JvmOverloads constructor(
     fun setFilterForTests(muted: IntArray, known: IntArray) {
         lastTestMuted = muted.copyOf()
         lastTestKnown = known.copyOf()
-        try {
-            ensureNative()
-            native?.setPolicy(muted, known, true, false, 0, 40000, 2)
-            native?.setSettings(2, 1.0f, 0.7f, 1.0f, true, false)
-        } catch (e: Exception) {
-            loggerFine("Dropping test filter push: $e")
+        // Same control-thread serialization as setPolicy: the native cells
+        // are single-writer. Unconfined test scopes run this synchronously.
+        scope.launch {
+            try {
+                ensureNative()
+                nativeRef.get()?.setPolicy(muted, known, true, false, 0, 40000, 2)
+                nativeRef.get()?.setSettings(2, 1.0f, 0.7f, 1.0f, true, false)
+            } catch (e: Exception) {
+                loggerFine("Dropping test filter push: $e")
+            }
         }
     }
 
     /** Java-friendly gate push for interop gating tests (no PersistentSet). */
     fun setGateForTests(transmitAllowed: Boolean, pttPressed: Boolean) {
-        try {
-            ensureNative()
-            native?.setPolicy(lastTestMuted, lastTestKnown, transmitAllowed, pttPressed, 0, 40000, 2)
-        } catch (e: Exception) {
-            loggerFine("Dropping test gate push: $e")
+        // Control-thread serialization, like setFilterForTests.
+        scope.launch {
+            try {
+                ensureNative()
+                nativeRef.get()?.setPolicy(lastTestMuted, lastTestKnown, transmitAllowed, pttPressed, 0, 40000, 2)
+            } catch (e: Exception) {
+                loggerFine("Dropping test gate push: $e")
+            }
         }
     }
 
     /** Java-friendly settings push for interop PTT tests. */
     fun setSettingsForTests(inputMode: InputMode, halfDuplex: Boolean) {
-        try {
-            ensureNative()
-            native?.setSettings(
+        // Control-thread serialization, like setFilterForTests.
+        scope.launch {
+            try {
+                ensureNative()
+                nativeRef.get()?.setSettings(
                 when (inputMode) {
                     InputMode.VOICE_ACTIVITY -> 0
                     InputMode.PUSH_TO_TALK -> 1
@@ -262,6 +288,7 @@ class VoiceEngine @JvmOverloads constructor(
             )
         } catch (e: Exception) {
             loggerFine("Dropping test settings push: $e")
+        }
         }
         _latestSettings.value = VoiceSettings(
             inputMode = inputMode,
@@ -294,46 +321,6 @@ class VoiceEngine @JvmOverloads constructor(
         submit(VoiceCommand.Start(host, port, keys, format))
     }
 
-    /**
-     * Voice started without ever opening UDP (interop harness: a network
-     * that drops UDP). Fixes the format like [startVoice] but never touches
-     * the socket; the transport's 20 s zero-counter giveup still applies.
-     */
-    fun startVoiceWithoutUdp(format: VoiceFormat) {
-        formatRef.set(format)
-        runningFlag.set(true)
-        try {
-            ensureNative()
-            // Like Start: drain stale state and (re)start the
-            // session-lifetime notifier and send thread while no render or
-            // capture is live.
-            try {
-                native?.reset()
-            } catch (e: Exception) {
-                loggerFine("Dropping engine reset: $e")
-            }
-            native?.setFormat(
-                if (format.udp == UdpFormat.PROTOBUF) 1 else 0,
-                format.legacyServerVersion,
-            )
-        } catch (e: Exception) {
-            loggerFine("Dropping format push: $e")
-        }
-        pushPolicy()
-        pushSettings()
-        try {
-            native?.setVoiceRoute(false)
-        } catch (e: Exception) {
-            loggerFine("Dropping route push: $e")
-        }
-        try {
-            tryEnsurePipeline()
-        } catch (e: Exception) {
-            loggerFine("Dropping pipeline ensure: $e")
-        }
-        refreshStatus()
-    }
-
     override fun stopVoice() {
         submit(VoiceCommand.Stop)
     }
@@ -343,11 +330,13 @@ class VoiceEngine @JvmOverloads constructor(
         // shared voice control thread (VoiceControl's dispatcher), in
         // queue order. The transport reader and the client dispatcher
         // share this entry, so inline execution would stall TCP framing
-        // on DNS/connect. Fallible native creation stays inline so a
-        // debug load failure still throws to the submitter.
+        // on DNS/connect. Only the library load stays inline so a debug
+        // load failure still throws to the submitter; the engine itself is
+        // created on the control thread (see createNativeOnControl), so no
+        // caller thread ever touches the native handle's lifetime.
         if (command is VoiceCommand.Start) {
             try {
-                ensureNative()
+                HumlaNative.ensureLoaded()
             } catch (t: Throwable) {
                 // Debug load failure must stay loud to the submitter
                 // (the failure mode that killed the first 5a attempt).
@@ -367,10 +356,37 @@ class VoiceEngine @JvmOverloads constructor(
         // protocol and Start-vs-initial-route stays either-order.
         when (command) {
             is VoiceCommand.Start -> {
-                val engine = native ?: run {
+                if (closed.get()) {
                     refreshStatus()
                     return
                 }
+                if (!createNativeOnControl()) {
+                    refreshStatus()
+                    return
+                }
+                val engine = nativeRef.get() ?: run {
+                    refreshStatus()
+                    return
+                }
+                // A healthy session starting twice with identical decisions
+                // is a no-op; anything else tears the live pipeline down
+                // first, so reset() never races in-flight capture (Stop
+                // always separates production sessions; this covers retries
+                // and harness paths).
+                val prev = lastStartRef.get()
+                if (runningFlag.get() && prev != null && prev == command && startHealthy.get()) {
+                    refreshStatus()
+                    return
+                }
+                if (runningFlag.get()) {
+                    try {
+                        tearDownPipeline()
+                    } catch (e: Exception) {
+                        loggerFine("Dropping pipeline teardown on re-start: $e")
+                    }
+                }
+                lastStartRef.set(command)
+                startHealthy.set(false)
                 formatRef.set(command.format)
                 endpointRef.set(Endpoint(command.host, command.port))
                 runningFlag.set(true)
@@ -383,12 +399,24 @@ class VoiceEngine @JvmOverloads constructor(
                     loggerFine("Dropping format push: $e")
                 }
                 if (command.keys != null) {
-                    try {
-                        engine.setKeys(
+                    pendingKeys.set(
+                        Triple(
                             command.keys.key.toByteArray(),
                             command.keys.clientNonce.toByteArray(),
                             command.keys.serverNonce.toByteArray(),
-                        )
+                        ),
+                    )
+                }
+                val startKeys = command.keys?.let {
+                    Triple(
+                        it.key.toByteArray(),
+                        it.clientNonce.toByteArray(),
+                        it.serverNonce.toByteArray(),
+                    )
+                } ?: pendingKeys.get()
+                if (startKeys != null) {
+                    try {
+                        engine.setKeys(startKeys.first, startKeys.second, startKeys.third)
                     } catch (e: Exception) {
                         loggerFine("Dropping Start keys: $e")
                     }
@@ -419,7 +447,7 @@ class VoiceEngine @JvmOverloads constructor(
                 pushPolicy()
                 pushSettings()
                 try {
-                    native?.setVoiceRoute(usingUdp.get())
+                    nativeRef.get()?.setVoiceRoute(usingUdp.get())
                 } catch (e: Exception) {
                     loggerFine("Dropping route push: $e")
                 }
@@ -432,7 +460,9 @@ class VoiceEngine @JvmOverloads constructor(
                     val endpoint = endpointRef.get()
                     if (endpoint != null) {
                         try {
-                            if (!engine.start(endpoint.host, endpoint.port)) {
+                            if (engine.start(endpoint.host, endpoint.port)) {
+                                startHealthy.set(true)
+                            } else {
                                 if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
                                     loggerFine("Dropping UdpUnavailable (event buffer full)")
                                 }
@@ -441,12 +471,17 @@ class VoiceEngine @JvmOverloads constructor(
                             loggerFine("Dropping native start: $e")
                         }
                     }
+                } else {
+                    // Tunnelled session: no socket to fail, Start is done.
+                    startHealthy.set(true)
                 }
             }
             is VoiceCommand.Stop -> {
                 endpointRef.set(null)
                 usingUdp.set(false)
                 runningFlag.set(false)
+                startHealthy.set(false)
+                lastStartRef.set(null)
                 // Pipeline first (joins capture/render), then native stop
                 // (joins send/receive/notifier, clears both engines/rings,
                 // delivers the final empty snapshot via the notifier and
@@ -461,7 +496,7 @@ class VoiceEngine @JvmOverloads constructor(
                     loggerFine("Dropping pipeline teardown: $e")
                 }
                 try {
-                    native?.stop()
+                    nativeRef.get()?.stop()
                 } catch (e: Exception) {
                     loggerFine("Dropping native stop: $e")
                 }
@@ -469,7 +504,7 @@ class VoiceEngine @JvmOverloads constructor(
             is VoiceCommand.SetVoiceRoute -> {
                 usingUdp.set(command.udp)
                 try {
-                    native?.setVoiceRoute(command.udp)
+                    nativeRef.get()?.setVoiceRoute(command.udp)
                 } catch (e: Exception) {
                     loggerFine("Dropping route push: $e")
                 }
@@ -477,7 +512,7 @@ class VoiceEngine @JvmOverloads constructor(
                     val endpoint = endpointRef.get()
                     if (runningFlag.get() && endpoint != null) {
                         try {
-                            if (native?.start(endpoint.host, endpoint.port) == false) {
+                            if (nativeRef.get()?.start(endpoint.host, endpoint.port) == false) {
                                 if (!_events.tryEmit(VoiceEvent.UdpUnavailable)) {
                                     loggerFine("Dropping UdpUnavailable (event buffer full)")
                                 }
@@ -496,9 +531,19 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun setKeys(keys: CryptKeys) {
         if (!keys.isWellFormed()) return
+        // Stash first: CryptSetup can beat the SYNCED Start, and the stash
+        // is what apply(Start) falls back to. The live push is best-effort
+        // (no engine yet before the first Start); Start carries the session
+        // keys, so nothing is lost.
+        pendingKeys.set(
+            Triple(
+                keys.key.toByteArray(),
+                keys.clientNonce.toByteArray(),
+                keys.serverNonce.toByteArray(),
+            ),
+        )
         try {
-            ensureNative()
-            native?.setKeys(
+            nativeRef.get()?.setKeys(
                 keys.key.toByteArray(),
                 keys.clientNonce.toByteArray(),
                 keys.serverNonce.toByteArray(),
@@ -512,7 +557,7 @@ class VoiceEngine @JvmOverloads constructor(
     override fun setDecryptIv(iv: ByteString) {
         if (iv.size() != 16) return
         try {
-            native?.setDecryptIv(iv.toByteArray())
+            nativeRef.get()?.setDecryptIv(iv.toByteArray())
         } catch (e: Exception) {
             loggerFine("Dropping native setDecryptIv: $e")
         }
@@ -520,7 +565,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun encryptIv(): ByteString {
         return try {
-            val raw = native?.getEncryptIv()
+            val raw = nativeRef.get()?.getEncryptIv()
             if (raw != null && raw.size == 16) ByteString.copyFrom(raw)
             else ByteString.EMPTY
         } catch (e: Exception) {
@@ -534,7 +579,7 @@ class VoiceEngine @JvmOverloads constructor(
             return
         }
         try {
-            native?.queueTunnelled(packet)
+            nativeRef.get()?.queueTunnelled(packet)
         } catch (e: Exception) {
             loggerFine("Dropping tunnelled packet: $e")
         }
@@ -543,7 +588,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun removeUser(session: Int) {
         try {
-            native?.pushRemoveUser(session)
+            nativeRef.get()?.pushRemoveUser(session)
         } catch (e: Exception) {
             loggerFine("Dropping removeUser: $e")
         }
@@ -553,7 +598,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun render(out: ShortArray?, offset: Int, length: Int): Int {
         return try {
-            native?.render(out, offset, length) ?: 0
+            nativeRef.get()?.render(out, offset, length) ?: 0
         } catch (e: Exception) {
             0
         }
@@ -561,7 +606,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun awaitWork(timeoutMs: Int): Boolean {
         return try {
-            native?.awaitWork(timeoutMs) ?: false
+            nativeRef.get()?.awaitWork(timeoutMs) ?: false
         } catch (e: Exception) {
             false
         }
@@ -569,7 +614,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun lastHasActiveVoices(): Boolean {
         return try {
-            native?.lastHasActiveVoices() ?: false
+            nativeRef.get()?.lastHasActiveVoices() ?: false
         } catch (e: Exception) {
             false
         }
@@ -577,7 +622,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     override fun wakeForStop() {
         try {
-            native?.wakeForStop()
+            nativeRef.get()?.wakeForStop()
         } catch (ignored: Exception) {
         }
     }
@@ -585,7 +630,7 @@ class VoiceEngine @JvmOverloads constructor(
     /** Capture entry (realtime capture thread): forwards PCM to the native input engine. */
     fun captureFrame(pcm: ShortArray, offset: Int, length: Int) {
         try {
-            native?.captureFrame(pcm, offset, length)
+            nativeRef.get()?.captureFrame(pcm, offset, length)
         } catch (e: Exception) {
             loggerFine("Dropping capture frame: $e")
         }
@@ -596,7 +641,7 @@ class VoiceEngine @JvmOverloads constructor(
     private fun sendUdpPing(timestampMicros: Long) {
         if (!usingUdp.get()) return
         if (!runningFlag.get()) return
-        val engine = native ?: return
+        val engine = nativeRef.get() ?: return
         // Step 5a.4: the control thread only enqueues; the send thread
         // frames and sends. Ping framing is native, so the interim Kotlin
         // codec bridge is no longer on this path.
@@ -633,7 +678,7 @@ class VoiceEngine @JvmOverloads constructor(
             return
         }
         try {
-            tunnelSink(packet)
+            tunnelSinkRef.get()(packet)
         } catch (e: Exception) {
             loggerFine("Dropping tunnel sink: $e")
         }
@@ -673,7 +718,7 @@ class VoiceEngine @JvmOverloads constructor(
         // self atomically so collectors never see a half-applied snapshot.
         talkPublisher.updateAll(levels, selfTalking)
         val droppedOutbound = try {
-            native?.lastDroppedOutbound() ?: lastLoggedDroppedOutbound
+            nativeRef.get()?.lastDroppedOutbound() ?: lastLoggedDroppedOutbound
         } catch (e: Exception) {
             lastLoggedDroppedOutbound
         }
@@ -702,7 +747,7 @@ class VoiceEngine @JvmOverloads constructor(
     override fun onAudioInputReceived(frame: ShortArray?, frameSize: Int) {
         if (frame == null || frameSize <= 0) return
         try {
-            native?.captureFrame(frame, 0, frameSize)
+            nativeRef.get()?.captureFrame(frame, 0, frameSize)
         } catch (e: Exception) {
             loggerFine("Dropping capture frame: $e")
         }
@@ -826,10 +871,31 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Control-thread-only native creation (the single writer of nativeRef).
+     * Failure maps to PipelineError plus status, exactly like ensureNative's
+     * release path, since a scope-thread throw could never reach the
+     * submitter (see submit).
+     */
+    private fun createNativeOnControl(): Boolean {
+        if (nativeRef.get() != null) return true
+        return try {
+            nativeRef.set(engineFactory(this))
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "Native voice engine creation failed", t)
+            if (!_events.tryEmit(VoiceEvent.PipelineError("voice engine unavailable"))) {
+                loggerFine("Dropping PipelineError (event buffer full)")
+            }
+            _status.value = _status.value.copy(lastError = "voice engine unavailable")
+            false
+        }
+    }
+
     private fun ensureNative() {
-        if (native != null) return
+        if (nativeRef.get() != null) return
         try {
-            native = engineFactory(this)
+            nativeRef.set(engineFactory(this))
         } catch (t: Throwable) {
             if (BuildConfig.DEBUG) {
                 throw IllegalStateException("Native voice engine failed to load", t)
@@ -844,7 +910,7 @@ class VoiceEngine @JvmOverloads constructor(
     private fun pushPolicy() {
         val policy = _latestPolicy.value ?: return
         try {
-            native?.setPolicy(
+            nativeRef.get()?.setPolicy(
                 policy.locallyMuted.toIntArray(),
                 policy.knownSessions.toIntArray(),
                 policy.transmitAllowed,
@@ -861,7 +927,7 @@ class VoiceEngine @JvmOverloads constructor(
     private fun pushSettings() {
         val settings = _latestSettings.value ?: return
         try {
-            native?.setSettings(
+            nativeRef.get()?.setSettings(
                 when (settings.inputMode) {
                     InputMode.VOICE_ACTIVITY -> 0
                     InputMode.PUSH_TO_TALK -> 1
@@ -880,7 +946,7 @@ class VoiceEngine @JvmOverloads constructor(
 
     private fun refreshStatus() {
         val stats = try {
-            native?.getStats()
+            nativeRef.get()?.getStats()
         } catch (e: Exception) {
             null
         }
@@ -901,17 +967,17 @@ class VoiceEngine @JvmOverloads constructor(
             framesPerPacket = effective?.framesPerPacket ?: targetFramesPerPacket.get(),
             running = runningFlag.get(),
             droppedOutbound = try {
-                native?.lastDroppedOutbound() ?: prev.droppedOutbound
+                nativeRef.get()?.lastDroppedOutbound() ?: prev.droppedOutbound
             } catch (e: Exception) {
                 prev.droppedOutbound
             },
             droppedInbound = try {
-                native?.lastDroppedInbound() ?: prev.droppedInbound
+                nativeRef.get()?.lastDroppedInbound() ?: prev.droppedInbound
             } catch (e: Exception) {
                 prev.droppedInbound
             },
             droppedJitter = try {
-                native?.lastDroppedJitter() ?: prev.droppedJitter
+                nativeRef.get()?.lastDroppedJitter() ?: prev.droppedJitter
             } catch (e: Exception) {
                 prev.droppedJitter
             },
@@ -931,20 +997,23 @@ class VoiceEngine @JvmOverloads constructor(
      * destroy so the RenderGuard/CaptureGuard asserts never fire.
      */
     fun close(): Job {
+        // Mark closed first: a Start submitted concurrently is dropped in
+        // apply() instead of creating an engine this teardown will never
+        // destroy (submit/close race).
+        closed.set(true)
         val teardown = scope.launch(NonCancellable) {
             try {
                 tearDownPipeline()
             } catch (ignored: Exception) {
             }
             try {
-                native?.stop()
+                nativeRef.get()?.stop()
             } catch (ignored: Exception) {
             }
             try {
-                native?.destroy()
+                nativeRef.getAndSet(null)?.destroy()
             } catch (ignored: Exception) {
             }
-            native = null
         }
         teardown.invokeOnCompletion {
             try {

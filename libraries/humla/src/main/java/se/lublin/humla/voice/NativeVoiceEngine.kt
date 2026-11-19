@@ -17,6 +17,7 @@
 
 package se.lublin.humla.voice
 
+import java.util.concurrent.atomic.AtomicLong
 import se.lublin.humla.HumlaNative
 
 /**
@@ -148,14 +149,14 @@ class NativeVoiceEngine : EngineNative {
         private external fun nativeGetStats(handle: Long): IntArray?
     }
 
-    private var nativeHandle: Long = 0
+    private val nativeHandle = AtomicLong(0)
     private val listener: Listener?
 
     constructor(listener: Listener?) {
         HumlaNative.ensureLoaded()
         this.listener = listener
-        nativeHandle = nativeCreate(listener as Any)
-        if (nativeHandle == 0L) {
+        nativeHandle.set(nativeCreate(listener as Any))
+        if (nativeHandle.get() == 0L) {
             throw IllegalStateException("Native voice engine creation failed")
         }
     }
@@ -163,49 +164,49 @@ class NativeVoiceEngine : EngineNative {
     /** Public for unit testing handle guards without native loading. */
     constructor(handle: Long) {
         listener = null
-        nativeHandle = handle
+        nativeHandle.set(handle)
     }
 
     override fun setFormat(udpFormat: Int, legacyVersion: Int) {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeSetFormat(handle, udpFormat, legacyVersion)
         }
     }
 
     override fun setPolicy(muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeSetPolicy(handle, muted, known, transmitAllowed, pttPressed, voiceTarget, bitrate, framesPerPacket)
         }
     }
 
     override fun setSettings(inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean) {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeSetSettings(handle, inputMode, vadMax, vadMin, amplitudeBoost, adaptiveLeveler, halfDuplex)
         }
     }
 
     override fun setVoiceRoute(udp: Boolean) {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeSetVoiceRoute(handle, udp)
         }
     }
 
     override fun setRnnoiseModel(model: ByteArray?): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeSetRnnoiseModel(handle, model)
     }
 
     override fun enqueuePing(timestampMicros: Long): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeEnqueuePing(handle, timestampMicros)
     }
 
     override fun captureFrame(pcm: ShortArray?, offset: Int, length: Int) {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L && pcm != null && offset >= 0 && length > 0 &&
             offset <= pcm.size && length <= pcm.size - offset
         ) {
@@ -214,51 +215,51 @@ class NativeVoiceEngine : EngineNative {
     }
 
     override fun setKeys(key: ByteArray?, eiv: ByteArray?, div: ByteArray?): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeSetKeys(handle, key, eiv, div)
     }
 
     override fun setDecryptIv(div: ByteArray?): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeSetDecryptIv(handle, div)
     }
 
     override fun getEncryptIv(): ByteArray? {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return if (handle != 0L) nativeGetEncryptIv(handle) else null
     }
 
     override fun start(host: String, port: Int): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeStart(handle, host, port)
     }
 
     override fun stop() {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeStop(handle)
         }
     }
 
     override fun reset() {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeReset(handle)
         }
     }
 
     override fun queueTunnelled(packet: ByteArray?): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeQueueTunnelled(handle, packet)
     }
 
     override fun pushRemoveUser(session: Int): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativePushRemoveUser(handle, session)
     }
 
     override fun render(out: ShortArray?, offset: Int, length: Int): Int {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L && out != null && offset >= 0 && length > 0 &&
             offset <= out.size && length <= out.size - offset
         ) {
@@ -268,50 +269,50 @@ class NativeVoiceEngine : EngineNative {
     }
 
     override fun awaitWork(timeoutMs: Int): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeAwaitWork(handle, timeoutMs)
     }
 
     override fun wakeForStop() {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         if (handle != 0L) {
             nativeWakeForStop(handle)
         }
     }
 
     override fun lastHasActiveVoices(): Boolean {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return handle != 0L && nativeLastHasActiveVoices(handle)
     }
 
     override fun lastDroppedInbound(): Long {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return if (handle != 0L) nativeLastDroppedInbound(handle) else 0
     }
 
     override fun lastDroppedTunnel(): Long {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return if (handle != 0L) nativeLastDroppedTunnel(handle) else 0
     }
 
     override fun lastDroppedJitter(): Long {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return if (handle != 0L) nativeLastDroppedJitter(handle) else 0
     }
 
     override fun lastDroppedOutbound(): Long {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return if (handle != 0L) nativeLastDroppedOutbound(handle) else 0
     }
 
     override fun getStats(): IntArray? {
-        val handle = nativeHandle
+        val handle = nativeHandle.get()
         return if (handle != 0L) nativeGetStats(handle) else null
     }
 
     override fun destroy() {
-        val handle = nativeHandle
-        nativeHandle = 0
+        val handle = nativeHandle.get()
+        nativeHandle.set(0)
         if (handle != 0L) {
             nativeDestroy(handle)
         }

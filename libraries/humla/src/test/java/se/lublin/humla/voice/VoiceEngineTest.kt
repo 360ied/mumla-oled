@@ -28,6 +28,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import se.lublin.humla.interop.NoUdpVoice
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.UdpFormat
@@ -60,6 +61,7 @@ class VoiceEngineTest {
         var decryptIv: ByteArray? = null
         var encryptIvOut: ByteArray? = ByteArray(16) { it.toByte() }
         val started = mutableListOf<Pair<String, Int>>()
+        var startOk = true
         var stopCalls = 0
         var resetCalls = 0
         val tunnelled = mutableListOf<ByteArray>()
@@ -120,7 +122,7 @@ class VoiceEngineTest {
 
         override fun start(host: String, port: Int): Boolean {
             started.add(host to port)
-            return true
+            return startOk
         }
 
         override fun stop() {
@@ -312,31 +314,78 @@ class VoiceEngineTest {
     }
 
     @Test
-    fun `native load failure throws in debug builds`() {
+    fun `native creation failure reports PipelineError without dead voice`() {
         val engine = VoiceEngine(
             talkPublisher = TalkActivityPublisher(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
             engineFactory = { throw RuntimeException("no lib") },
         )
-        try {
-            engine.startVoice("example.org", 64738, protobufFormat(), keys())
-            fail("expected IllegalStateException in debug builds")
-        } catch (e: IllegalStateException) {
-            // expected: the failure mode that killed the first 5a attempt,
-            // loud instead of dead voice.
-        }
+        // Creation runs on the control thread, so there is no synchronous
+        // throw (the old inline contract died with caller-thread creation).
+        // The failure maps to PipelineError plus status, and the session is
+        // left stopped rather than half-started: loud, without dead voice.
+        engine.startVoice("example.org", 64738, protobufFormat(), keys())
+        assertEquals("voice engine unavailable", engine.status.value.lastError)
+        assertFalse(engine.status.value.running)
     }
 
     @Test
-    fun `startVoiceWithoutUdp fixes format without opening UDP`() {
+    fun `start without UDP route fixes format without opening socket`() {
         val fake = FakeEngineNative()
         val engine = newEngine(fake)
-        engine.startVoiceWithoutUdp(protobufFormat())
+        engine.startVoice("example.org", 64738, protobufFormat(), keys())
+        engine.submit(VoiceCommand.SetVoiceRoute(false))
         assertTrue(engine.status.value.running)
         assertTrue(fake.started.isEmpty())
         assertEquals(1, fake.formatUdp)
         // Session start drains stale state like Start (notifier restart).
         assertEquals(1, fake.resetCalls)
+    }
+
+    @Test
+    fun `duplicate healthy Start is a no-op, changed Start restarts`() {
+        val fake = FakeEngineNative()
+        val engine = newEngine(fake)
+        val keys = keys()
+        val format = protobufFormat()
+        engine.submit(VoiceCommand.Start("example.org", 64738, keys, format))
+        assertEquals(1, fake.resetCalls)
+        // Identical healthy Start: dropped before reset, capture untouched.
+        engine.submit(VoiceCommand.Start("example.org", 64738, keys, format))
+        assertEquals(1, fake.resetCalls)
+        // Changed endpoint: live state torn down first, then a full Start.
+        engine.submit(VoiceCommand.Start("other.example", 64739, keys, format))
+        assertEquals(2, fake.resetCalls)
+    }
+
+    @Test
+    fun `failed socket Start retries on identical resubmit`() {
+        val fake = FakeEngineNative().also { it.startOk = false }
+        val engine = newEngine(fake)
+        val keys = keys()
+        val format = protobufFormat()
+        engine.submit(VoiceCommand.SetVoiceRoute(true))
+        engine.submit(VoiceCommand.Start("example.org", 64738, keys, format))
+        assertEquals(1, fake.started.size)
+        // Unhealthy session: the identical retry must proceed (tear down
+        // and re-drive the socket open), not skip as a duplicate.
+        engine.submit(VoiceCommand.Start("example.org", 64738, keys, format))
+        assertEquals(2, fake.resetCalls)
+        assertEquals(2, fake.started.size)
+    }
+
+    @Test
+    fun `blocked voice drops switchback to UDP`() {
+        val fake = FakeEngineNative()
+        val engine = newEngine(fake)
+        val blocked = NoUdpVoice(engine, reportSocketFailure = false)
+        blocked.startVoice("example.org", 64738, protobufFormat(), keys())
+        assertTrue(fake.started.isEmpty())
+        assertFalse(fake.voiceRouteUdp)
+        // A later transport switch-to-UDP must not open the socket.
+        blocked.submit(VoiceCommand.SetVoiceRoute(true))
+        assertTrue(fake.started.isEmpty())
+        assertFalse(fake.voiceRouteUdp)
     }
 
     @Test

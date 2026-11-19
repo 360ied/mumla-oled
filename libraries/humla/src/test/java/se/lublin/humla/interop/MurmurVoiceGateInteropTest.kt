@@ -168,6 +168,20 @@ class MurmurVoiceGateInteropTest {
             captureSine(senderVoice, 30)
             assertPeak(receiverVoice, true, "unmuted gate transmits again")
 
+            // Deafen via session intent: the transmit gate closes the same
+            // way (server echo of self-deafen always closes it).
+            senderSession.setSelfMuteDeaf(false, true)
+            assertGate(senderVoice, false, "session deafen closes gate")
+            drain(receiverVoice)
+            skip(receiverVoice, 1)
+            assertPeak(receiverVoice, false, "deafened gate stays silent on UDP")
+
+            // Recovery through the same intent path.
+            senderSession.setSelfMuteDeaf(false, false)
+            assertGate(senderVoice, true, "undeafen reopens gate")
+            captureSine(senderVoice, 30)
+            assertPeak(receiverVoice, true, "undeafened gate transmits again")
+
             // PTT via session intent: switch to PTT (idle = silent).
             settingsFlow.value =
                 settingsFlow.value.copy(inputMode = InputMode.PUSH_TO_TALK)
