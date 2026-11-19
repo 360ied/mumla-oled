@@ -2,25 +2,27 @@
 
 | | |
 |---|---|
-| Status | Open — small. |
+| Status | Resolved (spec): `VoiceSettings.halfDuplex` is the raw preference by design; the effective value is derived at the native push. |
 | Category | Spec drift |
-| Severity | Benign (effective behavior correct; causes unnecessary pipeline rebuilds) |
+| Severity | Benign (spec wording only; behavior correct today via `VoiceControl` gating, and in 5a.4 via the native push with no pipeline rebuild) |
 | Verified | Yes (code read) |
 | Area | Step-4 voice settings |
 | Spec | [voice.md § Policy and settings handoff](../voice.md#policy-and-settings-handoff) (`VoiceSettings` data class) |
-| Code | `libraries/humla/src/main/java/se/lublin/humla/voice/VoiceSettingsMapper.kt` (`halfDuplexFor` lines 52-53, unused; `initialFromDefaults` line ~81; `update` lines ~123-124); `voice/VoiceControl.kt` (line 191 in `maybeReconfigure`, line 339 in `buildHandler`) |
+| Code | `libraries/humla/src/main/java/se/lublin/humla/voice/VoiceSettingsMapper.kt` (raw store; `halfDuplexFor` helper documents the effective predicate); today `voice/VoiceControl.kt` gates at build time, from 5a.4 `voice/VoiceEngine.kt` (`setSettings` / `pushSettings`) gates before the native seqlock |
 | Gates | Not gating |
 
 Line numbers below refer to `master` at `092d9dc8`.
 
 ## Summary
 
-The spec defines `VoiceSettings.halfDuplex` as the effective value
-`Settings.isHalfDuplex && inputMode == PUSH_TO_TALK`. The mapper has a
-helper for exactly that (`halfDuplexFor`) but does not use it; it stores
-the raw preference. `VoiceControl` applies the PTT condition itself when
-building the pipeline, so behavior is correct, but the published settings
-differ from the spec's meaning.
+The spec defined `VoiceSettings.halfDuplex` as the effective value
+`Settings.isHalfDuplex && inputMode == PUSH_TO_TALK`. The mapper stores the
+raw preference instead; today `VoiceControl` derives the effective value when
+building the pipeline, and from 5a.4 `VoiceEngine` derives it at each native
+push, so behavior is correct and a transmit-mode round trip preserves the
+preference. The spec now documents raw storage with push-time gating.
+`VoiceControl` is deleted in 5a.4, so the cited rebuild cost goes away there:
+the native push is a seqlock write, not a microphone reacquire.
 
 ## What the spec says
 
@@ -57,12 +59,15 @@ spec's meaning would see the raw preference.
 
 ## Fix directions
 
-Store `halfDuplexFor(transmitMode, halfDuplex)` in the mapper (recompute
-when either input changes), and drop the extra PTT condition at
-`VoiceControl` line 339. Add a mapper test.
+Fix the spec, not the code: document raw storage with push-time gating in
+[voice.md § Policy and settings handoff](../voice.md#policy-and-settings-handoff).
+Storing the effective value in the mapper would collapse a `PUSH_TO_TALK` with
+half duplex on, away to another mode, and back to off. Optionally call
+`halfDuplexFor` at the `VoiceEngine` push sites or delete the now-duplicated
+predicate.
 
 ## Acceptance
 
-`VoiceSettings.halfDuplex` is false whenever input mode is not PTT; toggling
-the preference outside PTT does not rebuild the pipeline;
+`voice.md` states Kotlin `halfDuplex` is raw with effective derived at the
+push; the half-duplex round-trip mapper test passes;
 `./scripts/check.sh` passes.
