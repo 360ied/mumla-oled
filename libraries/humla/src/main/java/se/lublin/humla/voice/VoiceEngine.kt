@@ -195,47 +195,30 @@ class VoiceEngine @JvmOverloads constructor(
     /** Policy collector only: publishes the mapped VoicePolicy for the native filter and gate. */
     fun setPolicy(policy: VoicePolicy) {
         _latestPolicy.value = policy
-        val engine = native ?: return
-        try {
-            engine.setPolicy(
-                policy.locallyMuted.toIntArray(),
-                policy.knownSessions.toIntArray(),
-                policy.transmitAllowed,
-                policy.pttPressed,
-                policy.voiceTarget,
-                policy.bitrate,
-                policy.framesPerPacket,
-            )
-        } catch (e: Exception) {
-            loggerFine("Dropping policy push: $e")
+        // Serialize with Start/Stop on the voice control thread: the native
+        // PolicyCell is single-writer, so collector emissions must not race
+        // the control thread's pushPolicy. Unconfined test scopes run this
+        // synchronously, keeping existing assertions order-stable.
+        scope.launch {
+            pushPolicy()
+            refreshStatus()
         }
     }
 
     /** Settings flow only: publishes VoiceSettings for the native capture and render. */
     fun setSettings(settings: VoiceSettings) {
         _latestSettings.value = settings
-        val engine = native ?: return
-        try {
-            // Effective half-duplex (raw && PTT), gated like the deleted
-            // builder path so native render reads one flag.
-            val effectiveHalfDuplex =
-                settings.halfDuplex && settings.inputMode == InputMode.PUSH_TO_TALK
-            engine.setSettings(
-                when (settings.inputMode) {
-                    InputMode.VOICE_ACTIVITY -> 0
-                    InputMode.PUSH_TO_TALK -> 1
-                    InputMode.CONTINUOUS -> 2
-                },
-                settings.vadMax,
-                settings.vadMin,
-                settings.amplitudeBoost,
-                settings.adaptiveLeveler,
-                effectiveHalfDuplex,
-            )
-        } catch (e: Exception) {
-            loggerFine("Dropping settings push: $e")
+        // Same serialization as setPolicy: native SettingsCell is
+        // single-writer; schedule the push plus status refresh on the voice
+        // control thread so collector emissions cannot race Start/Stop.
+        scope.launch {
+            pushSettings()
+            refreshStatus()
         }
     }
+
+    private fun effectiveHalfDuplex(halfDuplex: Boolean, inputMode: InputMode): Boolean =
+        halfDuplex && inputMode == InputMode.PUSH_TO_TALK
 
     /**
      * Test-only filter push (the interop harness has no PolicyCollector):
@@ -269,14 +252,13 @@ class VoiceEngine @JvmOverloads constructor(
     fun setSettingsForTests(inputMode: InputMode, halfDuplex: Boolean) {
         try {
             ensureNative()
-            val effectiveHalfDuplex = halfDuplex && inputMode == InputMode.PUSH_TO_TALK
             native?.setSettings(
                 when (inputMode) {
                     InputMode.VOICE_ACTIVITY -> 0
                     InputMode.PUSH_TO_TALK -> 1
                     InputMode.CONTINUOUS -> 2
                 },
-                1.0f, 0.7f, 1.0f, true, effectiveHalfDuplex,
+                1.0f, 0.7f, 1.0f, true, effectiveHalfDuplex(halfDuplex, inputMode),
             )
         } catch (e: Exception) {
             loggerFine("Dropping test settings push: $e")
@@ -879,8 +861,6 @@ class VoiceEngine @JvmOverloads constructor(
     private fun pushSettings() {
         val settings = _latestSettings.value ?: return
         try {
-            val effectiveHalfDuplex =
-                settings.halfDuplex && settings.inputMode == InputMode.PUSH_TO_TALK
             native?.setSettings(
                 when (settings.inputMode) {
                     InputMode.VOICE_ACTIVITY -> 0
@@ -891,7 +871,7 @@ class VoiceEngine @JvmOverloads constructor(
                 settings.vadMin,
                 settings.amplitudeBoost,
                 settings.adaptiveLeveler,
-                effectiveHalfDuplex,
+                effectiveHalfDuplex(settings.halfDuplex, settings.inputMode),
             )
         } catch (e: Exception) {
             loggerFine("Dropping settings push: $e")

@@ -40,8 +40,8 @@ class VoiceReceive;
 // Outbound queue capacity (step 5a.4): 400 ms of packets at the smallest
 // frame size (1 frame per packet, 10 ms each) is 40 packets, the largest
 // count any valid FPP needs. At larger FPP the same 40 slots hold more
-// than 400 ms, so the drop-newest path below never runs in practice: the
-// send thread keeps the queue within its 200 ms drop-oldest bound first.
+// than 400 ms; the drop-newest path is not expected in steady state, but a
+// >400 ms send stall can still fill the ring, so it stays counted.
 inline constexpr size_t kOutboundRingCapacity = 40;
 // Ping queue capacity: pings are infrequent (UDP keepalive cadence); 4
 // slots cover a burst without ever blocking the control thread.
@@ -59,7 +59,7 @@ inline constexpr int kOutboundKeepMs = 200;
 // duration pins the drop-oldest bound when the frames-per-packet changes
 // mid-queue: each packet carries the FPP it was framed with.
 struct OutboundPacket {
-    uint8_t data[kMaxFramedBytes] = {};
+    uint8_t data[kMaxFramedBytes];
     size_t length = 0;
     uint8_t frames = 2;
 };
@@ -184,9 +184,9 @@ private:
     TunnelSink m_tunnelSink;
 
     // Per-session framing (control writes while capture stopped; capture
-    // and send read lock-free).
+    // and send read lock-free). Framing itself is version-independent, so
+    // no legacy version is stored here; the receive half owns its copy.
     std::atomic<int> m_format{0}; // 0 legacy, 1 protobuf
-    std::atomic<uint32_t> m_legacyVersion{0};
     std::atomic<bool> m_useUdp{false};
 
     // Self-talking flag (capture writer; render and notifier readers).

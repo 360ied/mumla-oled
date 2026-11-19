@@ -207,13 +207,15 @@ void testCaptureAcceptsAnyBlockSize() {
     // per packet, 1 frame remainder carried).
     send.captureFrame(block.data(), 960);
     const size_t afterThree = send.outboundSizeForTest();
-    TEST_ASSERT_TRUE(afterThree >= afterOne);
+    TEST_ASSERT_EQ(afterOne, 0u);
+    TEST_ASSERT_EQ(afterThree, 1u);
     // 20-sample tail: carried, no new frame.
     send.captureFrame(block.data(), 20);
     TEST_ASSERT_EQ(send.outboundSizeForTest(), afterThree);
     // Flush the carry with 460 more (20 + 460 = 480): one more frame.
+    // Total 4 frames at FPP=2 -> 2 packets, no remainder.
     send.captureFrame(block.data(), 460);
-    TEST_ASSERT_TRUE(send.outboundSizeForTest() >= afterThree);
+    TEST_ASSERT_EQ(send.outboundSizeForTest(), 2u);
     std::cout << "  [PASS] testCaptureAcceptsAnyBlockSize" << std::endl;
 }
 

@@ -250,6 +250,7 @@ void VoiceEngineContext::deliverTunnel(const uint8_t* data, size_t length) {
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK ||
         env == nullptr) {
+        LOGE("deliverTunnel: not attached; dropping packet");
         return;
     }
     jbyteArray packet = env->NewByteArray(static_cast<jsize>(length));
@@ -457,6 +458,11 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetRnnoiseModel(JNIEnv* env,
                                                                   jbyteArray model) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx == nullptr) return JNI_FALSE;
+    // Control-plane only while capture is stopped (Start/Stop ordering):
+    // the input engine is single-threaded, so a model swap racing a frame
+    // would tear inside AudioInputEngine. Kotlin applies this at Start and
+    // on model-load restarts, never from the capture thread.
+    assert(!ctx->captureActive.load(std::memory_order_acquire));
     if (model == nullptr) {
         ctx->send.setDenoiserModel(nullptr, 0);
         return JNI_TRUE;
@@ -602,14 +608,19 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
         // Session stop, after Kotlin tore down capture/render (see
-        // VoiceEngine.apply Stop): both debug guards below must hold, so a
-        // teardown-ordering regression fails loudly in debug builds.
-        // Stop threads, then clear both halves while no realtime thread is
-        // live (send selfTalking false, io empty publish), deliver the final
-        // empty snapshot synchronously, then stop the notifier. The notifier
-        // loop is joined before the final notifyNow so the version gate has
-        // a single writer. Route resets to tunnel; the socket stays closed
-        // until the next Start pushes UDP with an endpoint.
+        // VoiceEngine.apply Stop, which joins both pipelines on the voice
+        // control thread before calling here): both debug guards below must
+        // hold, so a teardown-ordering regression fails loudly in debug
+        // builds. Release builds rely on that same Kotlin join ordering; the
+        // guards are check-then-act by design, since a lock on the realtime
+        // path would be worse. Stop threads, then clear both halves while no
+        // realtime thread is live (send selfTalking false, io empty publish),
+        // deliver the final empty snapshot synchronously, then stop the
+        // notifier. The notifier loop is joined before the final notifyNow
+        // so the version gate has a single writer; the join itself blocks up
+        // to one 20 ms interval, accepted as Stop-time latency. Route resets
+        // to tunnel; the socket stays closed until the next Start pushes UDP
+        // with an endpoint.
         assert(!ctx->renderActive.load(std::memory_order_acquire));
         assert(!ctx->captureActive.load(std::memory_order_acquire));
         ctx->send.stop();

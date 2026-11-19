@@ -76,10 +76,12 @@ VoiceSend::~VoiceSend() {
     sem_destroy(&m_sendSem);
 }
 
-void VoiceSend::setFormat(voice_codec::UdpFormat format, uint32_t legacyVersion) {
+void VoiceSend::setFormat(voice_codec::UdpFormat format, uint32_t /*legacyVersion*/) {
+    // Framing is version-independent (frameVoice takes no version; the
+    // receive side consumes the legacy version for parsing). The parameter
+    // is retained so one setFormat covers both halves through the JNI.
     m_format.store(format == voice_codec::UdpFormat::PROTOBUF ? 1 : 0,
                    std::memory_order_release);
-    m_legacyVersion.store(legacyVersion, std::memory_order_release);
 }
 
 void VoiceSend::setDenoiserEnabled(bool enabled) {
@@ -99,8 +101,11 @@ void VoiceSend::clear() {
     while (m_outbound.tryPop(&packet)) {
         m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
     }
+    // Ping discards count the same way: arrived, never sent. Voice and ping
+    // share the counter, so lifecycle clears never lose a drop silently.
     uint64_t ping;
     while (m_pingQueue.tryPop(&ping)) {
+        m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
     }
     m_carryCount = 0;
     m_selfTalking.store(false, std::memory_order_release);
@@ -315,26 +320,25 @@ void VoiceSend::loop() {
         (void)hadPing;
 
         // Drop-oldest by audio age (spec: skip every queued packet older than
-        // 200 ms of audio). Drain the ring, keep the newest suffix whose
-        // older packets are all within 200 ms (age = sum of newer durations,
-        // each packet carrying the FPP it was framed with), drop the older
-        // prefix and count it. Non-realtime here, may retry the seqlock and
-        // may use a stack scratch: no realtime constraints on this thread.
+        // 200 ms of audio). Drain at most one ring-capacity batch, keep the
+        // newest suffix whose older packets are all within 200 ms (age = sum
+        // of newer durations, each packet carrying the FPP it was framed
+        // with), drop the older prefix and count it. Non-realtime here, so a
+        // stack scratch is fine: no realtime constraints on this thread.
         // The scratch is fixed-size (40 slots, the ring capacity); the ring
         // itself stays the only allocation-free queue — this drain buffer
-        // never leaves the send thread.
+        // never leaves the send thread. Anything beyond one batch stays in
+        // the ring for the next wake, preserving oldest-first order under a
+        // concurrent producer.
         OutboundPacket staged[kOutboundRingCapacity];
         size_t stagedCount = 0;
         {
             OutboundPacket popped;
-            while (m_outbound.tryPop(&popped)) {
-                if (stagedCount < kOutboundRingCapacity) {
-                    staged[stagedCount++] = popped;
-                } else {
-                    // Should not happen (ring capacity bounds it), but drop
-                    // and count rather than overrun the scratch.
-                    m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
-                }
+            // Bounded drain: stop at capacity so a concurrent capture push
+            // can never overflow the scratch; the remainder stays queued in
+            // send order for the next pass.
+            while (stagedCount < kOutboundRingCapacity && m_outbound.tryPop(&popped)) {
+                staged[stagedCount++] = popped;
             }
         }
         size_t keepFrom = stagedCount; // index of oldest kept (drain all if empty)

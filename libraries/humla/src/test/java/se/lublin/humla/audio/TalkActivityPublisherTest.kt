@@ -154,4 +154,18 @@ class TalkActivityPublisherTest {
         publisher.updateAll(emptyMap(), false)
         assertEquals(TalkActivity.initial(), publisher.talkActivity.value)
     }
+
+    @Test
+    fun `publisher exposes a single mutator`() {
+        // 5a.4 notifier-only-writer invariant: updateAll must remain the
+        // sole public mutator. A second writer (capture callback, stop
+        // clear) would resurrect the step-2 stuck-indicator class, so fail
+        // here if one is added instead of routing through the notifier.
+        val mutators = TalkActivityPublisher::class.members.filter {
+            it.name.startsWith("update") ||
+                it.name.startsWith("clear") ||
+                it.name.startsWith("set")
+        }.map { it.name }.toSet()
+        assertEquals(setOf("updateAll"), mutators)
+    }
 }

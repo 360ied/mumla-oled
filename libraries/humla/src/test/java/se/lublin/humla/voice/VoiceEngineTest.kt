@@ -338,4 +338,31 @@ class VoiceEngineTest {
         // Session start drains stale state like Start (notifier restart).
         assertEquals(1, fake.resetCalls)
     }
+
+    @Test
+    fun `setPolicy refreshes status from effective policy`() {
+        // Bandwidth source pin: status bitrate/FPP follow the effective
+        // (server-cap-applied) policy, not the raw targets, so
+        // getCurrentBandwidth via stats reports the degraded values.
+        val fake = FakeEngineNative()
+        val engine = newEngine(fake)
+        engine.startVoice("example.org", 64738, protobufFormat(), keys())
+        engine.setPolicy(
+            VoicePolicy(
+                transmitAllowed = false,
+                pttPressed = false,
+                voiceTarget = 0,
+                bitrate = 16000,
+                framesPerPacket = 4,
+                locallyMuted = emptySet<Int>().toPersistentSet(),
+                knownSessions = emptySet<Int>().toPersistentSet(),
+            )
+        )
+        // Unconfined scope: the control-thread publish already ran.
+        assertFalse(fake.gateTransmit)
+        assertEquals(16000, fake.gateBitrate)
+        assertEquals(4, fake.gateFpp)
+        assertEquals(16000, engine.status.value.bitrate)
+        assertEquals(4, engine.status.value.framesPerPacket)
+    }
 }
