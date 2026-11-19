@@ -51,6 +51,10 @@ def oledAppName = "Mumla OLED"
 android {
     namespace = 'se.lublin.mumla'
     compileSdk = 36
+    // Required even though :app has no native sources of its own: AGP strips the
+    // native libs merged from :libraries:humla using this module's NDK, and skips
+    // stripping entirely (with only a warning) when the NDK cannot be resolved.
+    ndkVersion = rootProject.ext.sharedNdkVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21

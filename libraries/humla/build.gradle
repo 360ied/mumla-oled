@@ -31,9 +31,7 @@ repositories {
     google()
 }
 
-// Single source of truth is gradle/ndk.version (also read by flake.nix).
-def humlaNdkVersion = file("$rootDir/gradle/ndk.version").text.trim()
-
+// Single source of truth is gradle/ndk.version, exposed as rootProject.ext.sharedNdkVersion.
 dependencies {
     api libs.protobuf.javalite
 
@@ -77,7 +75,7 @@ android {
     namespace = 'se.lublin.humla'
 
     compileSdk = 36
-    ndkVersion = humlaNdkVersion
+    ndkVersion = rootProject.ext.sharedNdkVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21

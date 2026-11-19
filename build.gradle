@@ -54,8 +54,13 @@ plugins {
 
 // Single source of truth for the native ABIs packaged into the APK/AAR.
 // Both :app and :libraries:humla consume this via rootProject.ext.sharedAbiFilters.
+// gradle/ndk.version stays the single source of truth for the NDK (also read by
+// flake.nix); :app needs it as well, because AGP resolves the strip tool from the
+// *module's* NDK and, without it, silently packages unstripped native libraries
+// into the release APK ("missing strip tool for ABI ...").
 ext {
     sharedAbiFilters = ["armeabi-v7a", "arm64-v8a", "x86_64"]
+    sharedNdkVersion = file("$rootDir/gradle/ndk.version").text.trim()
 }
 
 // Shared javac lint for all modules (hoisted: an `allprojects` block inside a
