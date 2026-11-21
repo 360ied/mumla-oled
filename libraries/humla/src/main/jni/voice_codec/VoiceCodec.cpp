@@ -174,27 +174,11 @@ bool readVarint(const uint8_t* data, size_t length, size_t* offset, int64_t* val
     return true;
 }
 
-uint8_t applyLegacyCodecWorkaround(uint8_t header, uint32_t version) {
-    if (version != kLegacyCodecWorkaroundVersion) {
-        return header;
-    }
-    uint8_t ordinal = static_cast<uint8_t>((header >> 5) & 0x07);
-    if (ordinal == kLegacyVoiceCeltBeta) {
-        ordinal = kLegacyVoiceCeltAlpha;
-    } else if (ordinal == kLegacyVoiceCeltAlpha) {
-        ordinal = kLegacyVoiceCeltBeta;
-    } else {
-        return header;
-    }
-    return static_cast<uint8_t>(((ordinal << 5) & 0xFF) | (header & 0x1F));
-}
-
 bool parseLegacyVoice(const uint8_t* data,
                       size_t length,
-                      uint32_t workaroundVersion,
                       ParsedDatagram* out) {
     if (length < 1) return false;
-    uint8_t header = applyLegacyCodecWorkaround(data[0], workaroundVersion);
+    uint8_t header = data[0];
     uint8_t dataType = static_cast<uint8_t>((header >> 5) & 0x07);
     if (dataType != kLegacyVoiceOpus) {
         out->kind = ParsedDatagram::UNKNOWN;
@@ -438,18 +422,17 @@ size_t framePing(UdpFormat format, uint64_t timestampMicros, uint8_t* out, size_
 bool parseDatagram(UdpFormat format,
                    const uint8_t* data,
                    size_t length,
-                   uint32_t legacyCodecWorkaroundVersion,
                    ParsedDatagram* out) {
     if (data == nullptr || out == nullptr) return false;
     *out = ParsedDatagram();
     if (length == 0) return false;
     if (format == UdpFormat::LEGACY) {
-        uint8_t header = applyLegacyCodecWorkaround(data[0], legacyCodecWorkaroundVersion);
+        uint8_t header = data[0];
         uint8_t dataType = static_cast<uint8_t>((header >> 5) & 0x07);
         if (dataType == kLegacyPing) {
             return parseLegacyPing(data, length, out);
         } else if (dataType == kLegacyVoiceOpus) {
-            return parseLegacyVoice(data, length, legacyCodecWorkaroundVersion, out);
+            return parseLegacyVoice(data, length, out);
         }
         out->kind = ParsedDatagram::UNKNOWN;
         return true;

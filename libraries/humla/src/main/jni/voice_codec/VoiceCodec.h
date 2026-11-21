@@ -45,14 +45,10 @@ enum class UdpFormat {
 // Kotlin parser lacks.
 inline constexpr size_t kMaxFramesPerDatagram = 12;
 
-// 1.2.2 legacy codec workaround version (applyLegacyCodecWorkaround).
-inline constexpr uint32_t kLegacyCodecWorkaroundVersion = 0x10202;
-
-// Legacy wire types (HumlaUDPMessageType order is the wire value).
-inline constexpr uint8_t kLegacyVoiceCeltAlpha = 0;
+// Legacy wire types (HumlaUDPMessageType order is the wire value). Only
+// Opus voice and pings are accepted: upstream 1.5 drops non-Opus legacy
+// voice, so the CELT ordinals carry no special handling (no 1.2.2 swap).
 inline constexpr uint8_t kLegacyPing = 1;
-inline constexpr uint8_t kLegacyVoiceSpeex = 2;
-inline constexpr uint8_t kLegacyVoiceCeltBeta = 3;
 inline constexpr uint8_t kLegacyVoiceOpus = 4;
 
 // Outbound voice: one EncodedPacket -> one datagram payload (unencrypted).
@@ -88,14 +84,14 @@ struct ParsedDatagram {
 };
 
 // Inbound: one decrypted datagram -> voice frames, a ping, or nothing.
-// legacyCodecWorkaroundVersion keys the 1.2.2 swap (0 disables).
+// Version-independent: no legacy codec swap is applied (upstream 1.5 drops
+// non-Opus legacy voice).
 // Returns true when the datagram was understood (voice, ping, or a
 // deliberate drop such as an unknown sender handled by the caller);
 // false only for malformed input the caller must drop.
 bool parseDatagram(UdpFormat format,
                    const uint8_t* data,
                    size_t length,
-                   uint32_t legacyCodecWorkaroundVersion,
                    ParsedDatagram* out);
 
 }  // namespace voice_codec

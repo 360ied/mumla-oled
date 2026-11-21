@@ -161,7 +161,7 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::PROTOBUF, data.data(), data.size(), 0, &parsed));
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
             TEST_ASSERT_EQ(parsed.session, 42);
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
@@ -181,7 +181,7 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::PROTOBUF, data.data(), data.size(), 0, &parsed));
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::PING);
             TEST_ASSERT_EQ(parsed.pingTimestamp, static_cast<uint64_t>(987654321));
             TEST_ASSERT_EQ(parsed.serverVersionV2, static_cast<uint64_t>(0x0001000500010000ULL));
@@ -193,7 +193,7 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::LEGACY, data.data(), data.size(), 0, &parsed));
+                UdpFormat::LEGACY, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
             TEST_ASSERT_EQ(parsed.session, 42);
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(2));
@@ -214,7 +214,7 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::LEGACY, data.data(), data.size(), 0, &parsed));
+                UdpFormat::LEGACY, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
             TEST_ASSERT_EQ(parsed.frames[0].length, static_cast<uint16_t>(0));
@@ -235,7 +235,7 @@ void run_voice_codec_tests() {
             TEST_ASSERT_TRUE(n >= 2 && n <= 10);
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::LEGACY, out, n, 0, &parsed));
+                UdpFormat::LEGACY, out, n, &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::PING);
             TEST_ASSERT_EQ(parsed.pingTimestamp, static_cast<uint64_t>(stamp));
         }
@@ -246,14 +246,14 @@ void run_voice_codec_tests() {
         const uint8_t protobufUnknown[] = {0x02, 0x00};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-            UdpFormat::PROTOBUF, protobufUnknown, sizeof(protobufUnknown), 0, &parsed));
+            UdpFormat::PROTOBUF, protobufUnknown, sizeof(protobufUnknown), &parsed));
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::UNKNOWN);
     }
     {
         const uint8_t legacyCeltAlpha[] = {0x00, 0x00};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-            UdpFormat::LEGACY, legacyCeltAlpha, sizeof(legacyCeltAlpha), 0, &parsed));
+            UdpFormat::LEGACY, legacyCeltAlpha, sizeof(legacyCeltAlpha), &parsed));
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::UNKNOWN);
     }
 
@@ -262,13 +262,13 @@ void run_voice_codec_tests() {
         const uint8_t truncated[] = {0x80};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(!mumla::voice_codec::parseDatagram(
-            UdpFormat::LEGACY, truncated, sizeof(truncated), 0, &parsed));
+            UdpFormat::LEGACY, truncated, sizeof(truncated), &parsed));
     }
     {
         const uint8_t badProtobuf[] = {0x00, 0xFF, 0xFF, 0xFF};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(!mumla::voice_codec::parseDatagram(
-            UdpFormat::PROTOBUF, badProtobuf, sizeof(badProtobuf), 0, &parsed));
+            UdpFormat::PROTOBUF, badProtobuf, sizeof(badProtobuf), &parsed));
     }
 
     // Twelve-frame bound: frames past the twelfth drop and count. Twenty
@@ -290,7 +290,7 @@ void run_voice_codec_tests() {
         }
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-            UdpFormat::LEGACY, bundled, pos, 0, &parsed));
+            UdpFormat::LEGACY, bundled, pos, &parsed));
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
         TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(12));
         TEST_ASSERT_EQ(parsed.frames[11].sequence, static_cast<uint32_t>(61));
