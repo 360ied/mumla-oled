@@ -24,15 +24,24 @@ them.
 | Item | Notes |
 |---|---|
 | Interop harness growth | Deliverable work inside each sub-step, not a gate: 5a.2 adds the codec JNI to the host `libhumlaaudio` and drives UDP ping framing end to end, with text kept as a no-regression check, 5a.3a adds the voice JNI and the tunnel voice scenario through the native render entry point, 5a.3b adds inbound UDP voice, reconnect with voice, and drives `VoiceEngine`, 5a.4 covers both directions (see [testing](testing.md#murmur-interop)) |
+| Legacy chaining tolerance | Deferred by decision (2026-11-20): keep the tolerant chain — frames past the twelfth are dropped and counted — and the [codec](voice.md#packet-codec) text that calls it an intentional divergence from upstream, which rejects a legacy datagram with anything but one frame and an optional 12-byte positional trailer. Revisit only if a real server or client needs the stricter reading |
 | Jitter slot pool size (1024 slots proposed) | Settled *during* step 5a by the pool stress test in the native suite (see [testing](testing.md#native-host-suite)); part of the step's done-when, not a precondition for starting it |
 | TCP reader as a coroutine | Could take `HumlaTCP` off the allowlist; possible after step 8. Until then it stays in `BOUNDARY_FILES` even though the reader thread it is named for now lives in `TransportImpl` (see [issue 31](issues/31-boundary-files-mismatch.md)) |
 | Trace replay fixtures | Planned after the harness exists (see [testing](testing.md#test-layers)) |
 | `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling); the step-1 validation now fails the stale-callback tests when either guard is removed (see [testing](testing.md#murmur-interop)) |
 | Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3a for remote and self, through the service-lifetime `talkActivity` publisher that `VoiceEngine` takes over in 5a.3b (see [migration](migration.md#5a3a--native-render)) |
 | `HumlaNative` failure reporting and fake native layer | [HumlaNative](../../libraries/humla/src/main/java/se/lublin/humla/HumlaNative.kt) owns the single `System.loadLibrary("humlaaudio")` from 5a.1 and every `external` class goes through it, but its two remaining spec duties need 5a.3b machinery (an item of that sub-step): reporting a load failure as `VoiceEvent.PipelineError` on release builds (the event type arrives with the `VoiceEngine` facade) and JVM tests injecting a fake native layer instead of catching `UnsatisfiedLinkError` (they use zero-handle guards today) |
-| Upstream-parity codec changes | Found during the first 5a attempt, deferred out of 5a (no behavior changes inside the step): honor `volume_adjustment`; drop the 1.2.2 CELT workaround; empty `opus_data` terminator handling; legacy chaining tolerance. Land after 5a.4 as their own commits |
+| Legacy server version plumbing | `VoiceFormat.legacyServerVersion` and the native `setFormat` parameter it feeds are unread now that the 1.2.2 workaround is gone (see [issue 35](issues/35-legacy-server-version-unread.md)) |
 
 ## Resolved
+
+Items resolved while closing the 5a codec tail (2026-11-20):
+
+| Item | Resolution | Where |
+|---|---|---|
+| Honor `volume_adjustment` | Per-packet and unsmoothed, as upstream: the parser fills `InboundPacket.volumeAdjustment` (`1.0` when the field is `0`, its own "unset"), the jitter buffer keeps it with the packet, and render applies it to that packet's decoded samples before the mix. FEC and concealment chunks use the voice's last seen factor, so a loss keeps the sender's volume. Legacy packets carry no factor; applying local per-channel volumes against pre-1.5 servers stays out of scope as a separate upstream branch. Pinned by a codec fixture round trip and an engine render test | [voice](voice.md#packet-codec), [voice](voice.md#output-engine) |
+| Drop the 1.2.2 CELT workaround | Deleted with its constants and the legacy-version plumbing inside the codec: the legacy format only ever yields `VoiceOpus`, so the ordinal swap was dead, and upstream 1.5 drops non-Opus legacy voice instead. The version stays recorded in `VoiceFormat` and unread; the residual plumbing is [issue 35](issues/35-legacy-server-version-unread.md) | [voice](voice.md#packet-codec) |
+| Empty `opus_data` terminator | Dropped, upstream parity: a protobuf `Audio` message with empty `opus_data` yields no frame, with or without `is_terminator`. Our encoder never emits one (a terminator with nothing accumulated encodes a full silence packet), so Mumla peers lose nothing; a deviant third-party terminator ends as a dead-voice expiry about 100 ms later instead of an immediate drain | [voice](voice.md#packet-codec) |
 
 Items resolved while checking the 5a.3 gates (2026-11-14):
 

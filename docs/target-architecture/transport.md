@@ -159,9 +159,11 @@ protobuf UDP ping, which is only reported (`VoiceEvent.UdpPing`, then
 `ServerState.info`). The transport exposes the choice, with the server's
 legacy version, as `voiceFormat`; the client passes both to the
 `VoiceEngine` in `VoiceCommand.Start`. `ServerState.info.versionV2` is not
-a source for the format, since UDP pings rewrite it. The 1.2.2 legacy codec workaround
-(`applyLegacyCodecWorkaround`) moves into the native packet codec, keyed by
-the same version.
+a source for the format, since UDP pings rewrite it. The legacy version is
+recorded in `VoiceFormat` and reaches the voice layer, but nothing there
+reads it: the 1.2.2 legacy codec workaround was deleted with upstream 1.5,
+which drops non-Opus legacy voice instead of swapping its ordinals (see
+[issue 35](issues/35-legacy-server-version-unread.md)).
 
 ## Crypt setup
 

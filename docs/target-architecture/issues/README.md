@@ -129,6 +129,7 @@ the same state in its `Status` row.
 | [30](30-connected-races-sync-tail.md) | `Connected` can run before the session's `ServerSync` tail | Open; revisit once 14 restores self-mute in the session |
 | [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved (spec); `HumlaTCP` boundary question in [open items](../open-items.md) |
 | [33](33-route-control-unused-bridge-api.md) | `RouteControl`'s `ConfigDelta` bridge setters and getters have no callers | Open; small |
+| [35](35-legacy-server-version-unread.md) | The legacy server version reaches the voice layer but nothing reads it | Open; deletion only |
 
 ## Remaining work
 
@@ -155,6 +156,7 @@ a decision, made 2026-11-12). Rows 2 to 4 gate only 5a.3b (see [open items](../o
 | Rule-2 review sweep | [06](06-update-conventions-not-enforced.md) | Read-then-act pass over `Session`, `PolicyCollector`, and `RouteControl` (the audit did not do it). Sweep `RouteControl` after row 1, since confinement changes its reads. |
 | Spike test | [07](07-channel-adapter-spike-weaker.md) | Test-only. |
 | Unused route API | [33](33-route-control-unused-bridge-api.md) | Deletion only. Easiest after the issue 01 branch merges, since its confinement test calls one of the setters. |
+| Legacy version plumbing | [35](35-legacy-server-version-unread.md) | Deletion only, or keep the chain for a future version-keyed branch. Independent of everything else. |
 
 ### Blocked
 
