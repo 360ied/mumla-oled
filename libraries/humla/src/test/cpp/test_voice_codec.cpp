@@ -224,6 +224,18 @@ void run_voice_codec_tests() {
         }
     }
     {
+        // Empty opus_data is invalid upstream, terminator flag or not: no frame.
+        auto data = readFixture("parse-protobuf-voice-empty-terminator.bin");
+        if (!data.empty()) {
+            ParsedDatagram parsed;
+            TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
+            TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
+            TEST_ASSERT_EQ(parsed.session, 42);
+            TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(0));
+        }
+    }
+    {
         auto data = readFixture("parse-legacy-voice-empty-terminator.bin");
         if (!data.empty()) {
             ParsedDatagram parsed;

@@ -303,7 +303,11 @@ bool parseProtobufVoice(const uint8_t* data, size_t length, ParsedDatagram* out)
     // gain at all.
     const float gain =
         msg.volume_adjustment > 0.0f ? msg.volume_adjustment : 1.0f;
-    if (msg.opus_data.size == 0 && !msg.is_terminator) {
+    if (msg.opus_data.size == 0) {
+        // No audio data: upstream rejects such a packet as invalid, whether or
+        // not it is flagged as a terminator, so it yields no frame here
+        // either. A conforming sender never emits one — a terminator with
+        // nothing accumulated is a full packet of encoded silence.
         out->kind = ParsedDatagram::VOICE;
         out->session = static_cast<int32_t>(msg.sender_session);
         out->frameCount = 0;
