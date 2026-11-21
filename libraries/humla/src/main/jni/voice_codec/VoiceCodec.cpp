@@ -297,7 +297,12 @@ bool parseProtobufVoice(const uint8_t* data, size_t length, ParsedDatagram* out)
     if (!pb_decode(&stream, MumbleUDP_Audio_fields, &msg)) {
         return false;
     }
-    // Positional data and volume_adjustment are parsed and ignored, as today.
+    // The field's own contract: 0 means unset, i.e. no adjustment. Any other
+    // value is the server's gain for this listener and rides the packet to
+    // render. Positional data is parsed and ignored, legacy packets carry no
+    // gain at all.
+    const float gain =
+        msg.volume_adjustment > 0.0f ? msg.volume_adjustment : 1.0f;
     if (msg.opus_data.size == 0 && !msg.is_terminator) {
         out->kind = ParsedDatagram::VOICE;
         out->session = static_cast<int32_t>(msg.sender_session);
@@ -313,6 +318,7 @@ bool parseProtobufVoice(const uint8_t* data, size_t length, ParsedDatagram* out)
     audio::InboundPacket& frame = out->frames[0];
     frame.session = static_cast<int32_t>(msg.sender_session);
     frame.sequence = static_cast<uint32_t>(msg.frame_number);
+    frame.volumeAdjustment = gain;
     if (msg.which_Header == MumbleUDP_Audio_context_tag) {
         frame.flags = static_cast<int>(msg.Header.context);
     } else {

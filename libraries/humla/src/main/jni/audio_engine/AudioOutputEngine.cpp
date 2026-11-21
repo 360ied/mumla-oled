@@ -42,6 +42,28 @@ constexpr float kQuietGateLevel = 0.1f;
 constexpr float kSaturationKnee = 0.5f;
 constexpr size_t kRenderEventCapacity = AudioOutputEngine::MAX_VOICES * 2;
 
+// Sanitized server gain for one packet. The protobuf field's own contract
+// makes 0 mean "unset", which arrives as 1.0 already from the parser; a peer
+// can still send a negative, zero or non-finite value, and the engine keeps
+// unity for anything that is not a positive number. Clamping the upper end
+// is the server's business (it computes the listener's adjustment), as in
+// upstream, whose client multiplies the factor without a range check.
+float packetGain(float volumeAdjustment) {
+    return (volumeAdjustment > 0.0f && std::isfinite(volumeAdjustment))
+               ? volumeAdjustment
+               : 1.0f;
+}
+
+// Applies a packet's gain in place before the samples join the mix.
+void applyGain(float* pcm, int count, float gain) {
+    if (gain == 1.0f) {
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        pcm[i] *= gain;
+    }
+}
+
 } // namespace
 
 struct AudioOutputEngine::Voice {
@@ -80,6 +102,10 @@ struct AudioOutputEngine::Voice {
     float carry[MAX_DECODE_SAMPLES] = {};
     size_t carrySize = 0;
     size_t carryPos = 0;
+    // Gain applied to this voice's decoded audio: the last packet's server
+    // volume adjustment, so concealment and FEC stand-ins keep the
+    // listener's adjustment instead of snapping back to unity.
+    float volumeFactor = 1.0f;
     // Whether the carried-over tail is concealment (vs real decode); served
     // chunks blend at real<->concealment boundaries like any other chunk.
     bool carryConcealed = false;
@@ -118,6 +144,7 @@ struct AudioOutputEngine::Voice {
         consecutiveErrors = 0;
         carrySize = 0;
         carryPos = 0;
+        volumeFactor = 1.0f;
         carryConcealed = false;
         hasPrevChunk = false;
         prevChunkConcealed = false;
@@ -574,6 +601,9 @@ void AudioOutputEngine::queuePacket(const InboundPacket& packet) {
     jitterPacket.sequence = static_cast<uint16_t>(packet.sequence & 0xFFFFu);
     jitterPacket.user_data =
         (packet.flags & 0xFF) | (packet.isTerminator ? kTerminatorFlagBit : 0);
+    // The server's gain for this packet rides the jitter buffer so render can
+    // apply it when the packet is decoded (see InboundPacket).
+    jitterPacket.volume_adjustment = packet.volumeAdjustment;
     // The jitter buffer copies packet bytes into the shared slot pool.
     if (jitter_buffer_put(voice->jitter, &jitterPacket) != JITTER_BUFFER_OK) {
         // Pool exhausted: the packet is dropped and counted. The gate must not
@@ -727,12 +757,16 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
             JitterBufferPacket packet;
             packet.data = packetBytes;
             packet.len = sizeof(packetBytes);
+            // Unity unless the dequeued packet carries a server gain; the
+            // insertion/missing returns never set one.
+            packet.volume_adjustment = 1.0f;
             int32_t startOffset = 0;
             const int getResult = jitter_buffer_get(voice->jitter, &packet,
                                                     FRAME_SIZE, &startOffset);
             if (getResult == JITTER_BUFFER_OK) {
                 voice->missCount = 0;
                 voice->lastFlags = packet.user_data & 0xFF;
+                voice->volumeFactor = packetGain(packet.volume_adjustment);
                 if (packet.user_data & kTerminatorFlagBit) {
                     voice->hasTerminator = true;
                 }
@@ -753,6 +787,8 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                             reinterpret_cast<uint8_t*>(packet.data),
                             packet.len, m_frameScratch, FRAME_SIZE, 1);
                         if (fec == FRAME_SIZE) {
+                            applyGain(m_frameScratch, fec,
+                                      voice->volumeFactor);
                             writeChunkAt(voice, m_voiceScratch, debtPos,
                                          m_frameScratch, fec, false, m_xfadeIn,
                                          m_xfadeOut);
@@ -764,6 +800,8 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                             voice->decoder->decodeConcealment(m_frameScratch,
                                                               FRAME_SIZE);
                         if (debtPlc > 0) {
+                            applyGain(m_frameScratch, debtPlc,
+                                      voice->volumeFactor);
                             writeChunkAt(voice, m_voiceScratch, debtPos,
                                          m_frameScratch, debtPlc, true,
                                          m_xfadeIn, m_xfadeOut);
@@ -785,6 +823,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                         jitter_buffer_update_delay(voice->jitter, nullptr,
                                                    nullptr);
                     }
+                    applyGain(m_frameScratch, decoded, voice->volumeFactor);
                     appendVoiceChunk(voice, m_frameScratch, decoded,
                                      m_voiceScratch, samples, filled, false,
                                      m_xfadeIn, m_xfadeOut);
@@ -807,6 +846,8 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                     jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
                     jitter_buffer_tick(voice->jitter);
                     if (concealed > 0) {
+                        applyGain(m_frameScratch, concealed,
+                                  voice->volumeFactor);
                         appendVoiceChunk(voice, m_frameScratch, concealed,
                                          m_voiceScratch, samples, filled, true,
                                          m_xfadeIn, m_xfadeOut);
@@ -836,6 +877,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                 const int debtPlc = voice->decoder->decodeConcealment(
                     m_frameScratch, FRAME_SIZE);
                 if (debtPlc > 0) {
+                    applyGain(m_frameScratch, debtPlc, voice->volumeFactor);
                     writeChunkAt(voice, m_voiceScratch, debtPos, m_frameScratch,
                                  debtPlc, true, m_xfadeIn, m_xfadeOut);
                 }
@@ -858,6 +900,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
             jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
             jitter_buffer_tick(voice->jitter);
             if (concealed > 0) {
+                applyGain(m_frameScratch, concealed, voice->volumeFactor);
                 appendVoiceChunk(voice, m_frameScratch, concealed,
                                  m_voiceScratch, samples, filled, true,
                                  m_xfadeIn, m_xfadeOut);
@@ -879,6 +922,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
             const int debtPlc =
                 voice->decoder->decodeConcealment(m_frameScratch, FRAME_SIZE);
             if (debtPlc > 0) {
+                applyGain(m_frameScratch, debtPlc, voice->volumeFactor);
                 writeChunkAt(voice, m_voiceScratch, debtPos, m_frameScratch,
                              debtPlc, true, m_xfadeIn, m_xfadeOut);
             }

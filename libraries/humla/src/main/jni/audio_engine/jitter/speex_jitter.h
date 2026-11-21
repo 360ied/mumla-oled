@@ -57,6 +57,7 @@ struct _JitterBufferPacket {
    spx_uint32_t span;       /**< Time covered by the packet (same units as timestamp) */
    spx_uint16_t sequence;   /**< RTP Sequence number if available (0 otherwise) */
    spx_uint32_t user_data;  /**< User data / flags */
+   float        volume_adjustment; /**< Output gain for this packet (1.0 = none) */
 };
 
 /** Packet has been retrieved */

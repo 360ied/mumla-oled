@@ -155,7 +155,8 @@ void run_voice_codec_tests() {
         if (!expected.empty()) checkBytes(out, n, expected);
     }
 
-    // Inbound parsing (positional data and volume ignored, extended ping kept).
+    // Inbound parsing (positional data ignored, server volume adjustment kept,
+    // extended ping kept).
     {
         auto data = readFixture("parse-protobuf-voice-positional.bin");
         if (!data.empty()) {
@@ -173,7 +174,20 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frames[0].data[1], 0x0B);
             TEST_ASSERT_EQ(parsed.frames[0].data[2], 0x0C);
             TEST_ASSERT_TRUE(!parsed.frames[0].isTerminator);
+            // The fixture sets volume_adjustment 0.5f.
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 0.5f);
             TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
+        }
+    }
+    {
+        // No volume_adjustment field on the wire: unity gain, not zero.
+        auto data = readFixture("frame-protobuf-voice-basic.bin");
+        if (!data.empty()) {
+            ParsedDatagram parsed;
+            TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
+            TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 1.0f);
         }
     }
     {
