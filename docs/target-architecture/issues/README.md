@@ -54,17 +54,17 @@ ground rules).
 
 ## Issues
 
-State is current as of 2026-11-15, after the published-policy fix (`49b80378`) and its docs (`486a2241`) resolving [34](34-published-policy-not-an-invariant.md), on top of the three spec commits that
+State is current as of 2026-11-20, after the published-policy fix (`49b80378`) and its docs (`486a2241`) resolving [34](34-published-policy-not-an-invariant.md), on top of the three spec commits that
 followed the audit (`028d2222`, `ec9faf63`, `4e9474c7`) and the first code
 batch (`5ac34784`). [32](32-route-decision-cached-sco-state.md) came later,
-from a device check of the SCO exit path, and
+from a device check of the SCO exit path,
 [34](34-published-policy-not-an-invariant.md) from the review of 05's
-resolution; they are the only entries in this queue that the audit
-snapshot could not have seen. The spec-only fixes (12,
-13, 24, 25, 27, 31, and the interim entries for 14, 15, 18) are applied on
-`master`, and 08, 23, and
-28 are now fixed and tested; the decisions for 09, 10, 11, and 19 are
-recorded; 19 and 06's `ServerSync` lambda are fixed on branch
+resolution, and [35](35-legacy-server-version-unread.md) from the 5a codec
+tail; they are the entries in this queue that the audit snapshot could not
+have seen. The spec-only fixes (12, 13, 24, 25, 27, 31, and the interim
+entries for 14, 15, 18) are applied on `master`, and 08, 23, and 28 are
+fixed and tested; the decisions for 09, 10, 11, and 19 are recorded; 19
+and 06's `ServerSync` lambda are fixed on branch
 `session-serversync-update-hygiene`, pending merge, and the review skills
 that were to carry 06's two rules were deleted (`8e88589f`), leaving rule 1
 with no enforcement artifact. What remains
