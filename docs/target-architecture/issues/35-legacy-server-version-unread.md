@@ -7,7 +7,7 @@
 | Severity | Benign (dead parameter chain) |
 | Verified | Yes, by search of `libraries/humla/src/main` for `legacyServerVersion` and `m_legacyVersion` after the codec tail commits |
 | Area | Transport, voice |
-| Spec | [voice.md § Kotlin facade](../voice.md#kotlin-facade), [transport.md § UDP packet format](../transport.md#udp-packet-format), [client.md § Intents](../client.md#intents) (all corrected in the review follow-up) |
+| Spec | [voice.md § Kotlin facade](../voice.md#kotlin-facade), [transport.md § UDP packet format](../transport.md#udp-packet-format), [client.md § Start sequence](../client.md#start-sequence) (all corrected in the review follow-up) |
 | Code | `net/Transport.kt` (`VoiceFormat.legacyServerVersion`), `client/HumlaClient.kt` (`transportVoiceFormat`), `voice/VoiceEngine.kt`, `voice/NativeVoiceEngine.kt` (`setFormat`), `jni/voice_io/NativeVoiceEngineJni.cpp` (`nativeSetFormat`), `jni/voice_io/VoiceReceive.{h,cpp}`, `jni/voice_io/VoiceSend.{h,cpp}` |
 | Gates | Not gating |
 
@@ -27,7 +27,7 @@ halves through the JNI.
 
 The transport still *decides* the format from the same `Version` message,
 so the decision itself stays; only the version carried beside it is
-unused. The `VoiceFormat` KDoc and `client.md`'s `Start` sketch still
+unused. The `VoiceFormat` KDoc and `client.md`'s start-sequence sketch had
 described the version as keying the workaround; both were corrected in the
 review follow-up.
 

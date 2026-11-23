@@ -69,7 +69,7 @@ struct InboundPacket {
     // Server-computed per-packet gain (MumbleUDP.Audio.volume_adjustment):
     // the listener's adjustment for this packet, 1.0 when unset. Only the
     // protobuf format carries one; legacy frames leave it at unity. The
-    // parser rejects non-positive and non-finite wire values.
+    // parser normalizes non-positive and non-finite wire values to unity.
     float volumeAdjustment = 1.0f;
     uint16_t length = 0;
     uint8_t data[2048]; // MAX_PACKET_BYTES; unused when length is 0

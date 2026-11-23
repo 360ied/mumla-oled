@@ -382,10 +382,10 @@ change therefore steps at a packet boundary); and upstream multiplies
 whatever factor arrives, while here anything that is not positive and
 finite falls back to unity. With a constant, valid factor the two agree.
 Applying the listener's local per-channel volume against pre-1.5 servers
-is a separate upstream branch and remains absent (see the [feature gap
-audit](../../upstream-feature-gap-audit/01-protocol-transport.md)).
+is a separate upstream branch and remains absent (see the historical
+[feature gap audit](../upstream-feature-gap-audit/01-protocol-transport.md)).
 
-There is no 1.2.2 codec workaround. Today's `applyLegacyCodecWorkaround`
+There is no 1.2.2 codec workaround. The former `applyLegacyCodecWorkaround`
 swapped the CELT Alpha/Beta ordinals for servers reporting `0x10202`; the
 legacy format only ever yields `VoiceOpus` here, so both CELT variants were
 dropped either way, and upstream 1.5 drops non-Opus legacy voice instead of
