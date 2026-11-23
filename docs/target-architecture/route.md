@@ -113,7 +113,7 @@ sealed interface RouteState {
 }
 
 enum class StreamProfile {
-    VOICE,   // capture VOICE_COMMUNICATION; playback USAGE_VOICE_COMMUNICATION; echo cancellation on; mode IN_COMMUNICATION held
+    VOICE,   // capture VOICE_COMMUNICATION; playback per route (see stream parameters); echo cancellation on; mode IN_COMMUNICATION held
     MEDIA,   // capture MIC; playback USAGE_MEDIA (STREAM_MUSIC); mode untouched
 }
 ```
@@ -184,6 +184,27 @@ under the definition above, always coincides with entering or staying in
 including changes made by a settle recheck. A feature shows the SCO
 failure message (today's `scoFailureMessage` bucketing in `MumlaService`);
 screens and features read the current route from `state`.
+
+### Stream parameters
+
+How voice opens its streams for each route. Rows match today's
+`VoiceEngine` pipeline rebuild; 5a passes them to `AudioRecord` and
+`AudioTrack`, and 5b to AAudio.
+
+| Route | Capture (5a source / 5b input preset) | Playback (5a usage / 5b usage) |
+|---|---|---|
+| `VOICE_SCO` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION` |
+| `VOICE_HANDSET` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | From the `handsetStream` preference: `STREAM_VOICE_CALL` gives `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION`; `STREAM_MUSIC` (the default) gives `USAGE_MEDIA` / `AAUDIO_USAGE_MEDIA` |
+| `MEDIA` | `MIC` / `AAUDIO_INPUT_PRESET_GENERIC` | `USAGE_MEDIA` / `AAUDIO_USAGE_MEDIA` |
+
+Every route also uses: 48 kHz, mono, 16-bit PCM (`AAUDIO_FORMAT_PCM_I16`),
+content type speech (`AAUDIO_CONTENT_TYPE_SPEECH`), low-latency
+performance mode, shared sharing mode, and device ID left unspecified so
+`setCommunicationDevice` and the speakerphone setting decide the device.
+In 5b the buffer size stays at AAudio's default; raise it with
+`AAudioStream_setBufferSizeInFrames` only if logged xruns call for it. An
+open that cannot deliver 48 kHz mono 16-bit fails like any stream open
+(see [voice failures](voice.md#failures)).
 
 ## Session start
 

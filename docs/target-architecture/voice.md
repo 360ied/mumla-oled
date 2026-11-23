@@ -452,11 +452,11 @@ flowchart LR
 
 | Thread | Realtime | Loop |
 |---|---|---|
-| Capture | Yes | Read 10 ms of PCM; read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; store the self-talking flag |
+| Capture | Yes | Read 10 ms of PCM (in 5b, take whatever burst the callback delivers and feed it in 10 ms frames); read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; store the self-talking flag |
 | Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device (zeros when silent in 5b); in 5a, after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
 | Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
-| Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag (from 5b, also the stream-disconnected flag) and deliver them to Kotlin in one call |
+| Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call. From 5b it also reads the stream-disconnect atomic on every tick and calls Kotlin when either it or the talk version changed |
 
 - In **step 5a**, the capture and render loops are entry points called by
   today's Kotlin `AudioRecord` and `AudioTrack` threads
@@ -558,7 +558,8 @@ spinning at 50 Hz (`b1a1118e`), with the same rule as before 5a.3b: no
 timeout when the output engine reports no active voices, 20 ms when it
 does (voices filling their startup gate or waiting out the miss expiry).
 The output stream stays started and underruns; in 5a nothing writes zeros
-(see [keep-alive shields](#keep-alive-shields)). The pacer is unchanged.
+(see [keep-alive shields](#keep-alive-shields)). The pacer is unchanged
+in 5a.
 
 The wait is a POSIX semaphore owned by `voice_io`, entered through
 `awaitWork(timeoutMs)` between render calls, never inside one. Timeouts
@@ -670,14 +671,18 @@ frames into the rings (5a.3a).
 
 ### Realtime rules
 
-1. **The capture and render threads never wait on a lock, allocate, or
-   call into Kotlin.** Their only system calls are the audio read or write
-   and `sem_post` to wake the send thread. `sem_post` never blocks and
-   never allocates, and is the one deliberate exception. The render
+1. **The capture and render paths never wait on a lock, allocate, or
+   call into Kotlin.** In 5a these are the Kotlin-driven threads; in 5b,
+   the AAudio data callbacks. Their only system calls are `sem_post` to
+   wake the send thread and, in 5a, the audio read or write (in 5b AAudio
+   hands the callback its buffer). `sem_post` never blocks and never
+   allocates, and is the one deliberate exception. In 5a the render
    thread's [idle wait](#render-idle-and-wake) is not a lock: it blocks
-   only between render calls, after a quantum with no audio.
+   only between render calls, after a quantum with no audio. 5b has no
+   idle wait.
 2. **Each engine instance is driven by exactly one thread**: the input
-   engine by capture, the output engine by render. Every other thread
+   engine by capture, the output engine by render (in 5b, the thread
+   AAudio runs each callback on). Every other thread
    reaches them through the queues or the sequence locks.
 3. **Only non-realtime native threads call into Kotlin.**
 
@@ -696,24 +701,26 @@ Performed by the Kotlin **voice control thread**, in command order:
   [route](route.md#session-start)).
 - **Stop:** stop capture and render (5a: clear the render running flag and
   post the render wake before the join; 5b: request stop on both AAudio
-  streams and wait for `AAUDIO_STREAM_STATE_STOPPED`); set the stop flag;
-  shut the socket down to abort the blocked `recvfrom` (`close` alone does
-  not wake it); post the send semaphore; join the three threads; close the
-  socket (only after the join, so its fd number cannot be recycled under
-  the exiting receiver); zero the crypt keys; clear the queues. (In 5a.3b
-  the send thread does not exist yet and capture/render are pipeline-owned
-  Kotlin threads, so the native engine and rings reset at the next Start
-  instead, when no render is live; the socket shutdown/close,
-  receive/notifier join, and key zeroing still happen at Stop.)
+  streams, wait for `AAUDIO_STREAM_STATE_STOPPED`, release the capture
+  effects, and close both streams); set the stop flag; shut the socket
+  down to abort the blocked `recvfrom` (`close` alone does not wake it);
+  post the send semaphore; join the three threads; close the socket (only
+  after the join, so its fd number cannot be recycled under the exiting
+  receiver); zero the crypt keys; clear the queues. (In 5a.3b the send
+  thread does not exist yet and capture/render are pipeline-owned Kotlin
+  threads, so the native engine and rings reset at the next Start instead,
+  when no render is live; the socket shutdown/close, receive/notifier
+  join, and key zeroing still happen at Stop.)
 - **Reconfigure:** settings go through the sequence lock and need no
   restart. The one exception is loading a new RNNoise model, which
   allocates, so it stops capture, loads the model on the control thread,
   and restarts capture.
 - **Route change:** restart capture and render streams on the new route;
   the engines keep their state (voices and jitter buffers survive). In 5b
-  the streams are closed and reopened with the new profile, and the
-  capture effects (echo canceller, noise suppressor, gain control) are
-  attached to the new input session.
+  both streams are stopped and closed as at Stop, then reopened with the
+  route's [stream parameters](route.md#stream-parameters), and the capture
+  effects (echo canceller, noise suppressor, gain control) are attached to
+  the new input session before the streams start.
 
 The control thread is the only caller of start and stop, so they never race
 each other, and it is never the main thread.
@@ -738,7 +745,7 @@ and chat log show the error.
 | Failure | Handling |
 |---|---|
 | Capture or playback stream cannot open (including a missing microphone permission; the activity requests permissions before connecting, as today) | `VoiceEvent.PipelineError`, `VoiceStatus.lastError`; the control thread retries on the next route change or settings change |
-| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only sets an atomic flag, because AAudio forbids reopening a stream from that callback; the notifier delivers it with the next snapshot, and Kotlin posts one reopen to the control thread, which drops it if a route change already reopened the streams |
+| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only stores its stream's generation in an atomic; AAudio's documentation says not to stop, close, or reopen a stream from that callback. The notifier delivers it on its next tick, and Kotlin posts one reopen of both streams to the control thread, which drops it if the generation is no longer current (a route change already reopened them) |
 | UDP socket cannot be created or connected | `VoiceEvent.UdpUnavailable`; the transport switches to tunnel mode at once, as it would after its 20 s rule |
 | Crypt key setup rejected (`setKeys` returns false) | Treated as a protocol violation: the transport fails the session, as today's invalid-key path does |
 

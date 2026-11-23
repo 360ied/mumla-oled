@@ -488,44 +488,75 @@ step: the choices are made, and on a single device the on-device check
 and daily use below are the evidence that counts. Android 11–12 is not
 tested.
 
-1. **AAudio streams in `voice_io`.**
-   - The data callbacks call the existing capture and render entry points
-     with whatever frame count AAudio delivers; both already accept any
-     size. The render callback always returns a full buffer, writing
-     zeros through silence (see
-     [keep-alive shields](voice.md#keep-alive-shields)).
-   - The voice control thread opens both streams with the profile from
-     `RouteState` (input preset and usage per
-     [route](route.md#routestate)) and reopens them on a route change. The
-     device ID stays unspecified, so `setCommunicationDevice` and the
-     speakerphone routing keep applying. Before touching an engine, the
-     control thread stops its stream and waits for
-     `AAUDIO_STREAM_STATE_STOPPED`.
-   - It deletes `AudioOutput`'s `Pacer` with `AudioOutputPacerTest`, and the
-     [render wake](voice.md#render-idle-and-wake) (semaphore, `idle` flag,
-     `awaitWork`, the producer posts).
-2. **Echo cancellation.** The input stream is opened with
-   `AAUDIO_SESSION_ID_ALLOCATE`; the control thread hands its session ID to
-   Kotlin, which attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and
-   `AutomaticGainControl` before the stream starts and releases them after
-   it stops, as `AudioInput` does today.
-3. **Disconnect recovery.** AAudio's error callback only sets an atomic
-   flag; the notifier delivers it with the next snapshot, and Kotlin posts
-   one reopen to the voice control thread, which drops it if a route
-   change already reopened the streams. Failure handling follows the
-   [voice failure table](voice.md#failures).
-4. **Delete `AudioInput` and `AudioOutput`** (and their allowlist entries);
-   update the audio pipeline description in `AGENTS.md` and the
-   [decisions table](#decisions-this-reverses).
+Three items, each a checkpoint that keeps voice working. Item 1 adds
+AAudio code that nothing uses yet, item 2 switches voice over to it in
+one commit, and item 3 deletes the old path.
+
+1. **Native stream layer in `voice_io`, not yet used.**
+   - Open, start, stop, and close calls for both streams, with JNI entry
+     points for Kotlin's voice control thread. Open takes the route's
+     [stream parameters](route.md#stream-parameters) and returns the input
+     stream's session ID, allocated with `AAUDIO_SESSION_ID_ALLOCATE`; each
+     open bumps a stream generation counter. Start and stop are separate
+     from open and close so Kotlin can attach the capture effects before
+     the streams start and release them before they close. Stop requests
+     stop on both streams and waits for `AAUDIO_STREAM_STATE_STOPPED`.
+   - Data callbacks that call the C++ entry points directly, not the JNI
+     functions, since callbacks never touch the JVM. Render calls
+     `VoiceIo::render` on AAudio's buffer, which already zero-fills silent
+     stretches. Capture calls `VoiceSend::captureFrame` with whatever burst
+     arrives; `VoiceSend` already carries the remainder between calls. Each
+     callback sets the same `renderActive` or `captureActive` flag through
+     `RenderGuard` or `CaptureGuard` as the JNI path does, so the lifecycle
+     asserts keep holding. The guards move into a header shared by
+     `NativeVoiceEngineJni.cpp` and the new stream code.
+   - An error callback that only stores its stream's generation in a
+     disconnect atomic; AAudio's documentation says not to stop, close, or
+     reopen a stream from that callback. The notifier reads that atomic on
+     every tick and calls Kotlin when it or the talk version changed, so a
+     disconnect during silence is still delivered.
+   - The callback bodies take plain buffers and frame counts and use no
+     AAudio types, so the host suite compiles and tests them; the AAudio
+     calls live in an Android-only file, and the CMake build links
+     `libaaudio` for the Android ABIs only. Host tests: render with burst
+     sizes such as 96, 192, 441, and 960 frames writes exactly that many
+     frames, zeros in silence, without allocating; the notifier delivers a
+     disconnect with no talk change.
+2. **Switch voice to AAudio.** In one commit, `VoiceEngine` opens the
+   AAudio streams wherever it builds `AudioInput` and `AudioOutput` today
+   (the pipeline rebuild on start and route change). Its `inputFactory` and
+   `outputFactory` seams become one stream factory, so the facade JVM tests
+   keep a fake. It attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and
+   `AutomaticGainControl` to the returned session ID before the streams
+   start, and releases them after the streams stop and before they close,
+   as `AudioInput` does today. On a disconnect it reopens both streams
+   once, unless the reported generation is no longer current (a route
+   change already reopened them); a facade JVM test pins that a stale
+   generation is ignored. Failure handling follows the [voice failure
+   table](voice.md#failures). From this commit the old classes are
+   unreferenced.
+3. **Delete the old path.**
+   - Kotlin: `AudioInput`, `AudioOutput` with its `Pacer`,
+     `AudioOutputPacerTest`, `Pipeline.kt`, `RenderDriver.kt`, and
+     `awaitWork` in `VoiceEngine` and `NativeVoiceEngine`; their allowlist
+     entries go.
+   - Native: `nativeRender`, `nativeCaptureFrame`, the render scratch
+     buffer, and the [render wake](voice.md#render-idle-and-wake)
+     (semaphore, `idle` flag, `awaitWork`, the producer posts).
+     `check_architecture.py`'s `RenderGuard` check follows the render
+     callback into its new file; the two `renderActive` asserts stay in
+     `NativeVoiceEngineJni.cpp`.
+   - Docs: update the audio pipeline description in `AGENTS.md` and the
+     [decisions table](#decisions-this-reverses).
 
 AAudio xrun counts (`AAudioStream_getXRunCount`) and stream errors are
 logged, for diagnosis only; they gate nothing.
 
-**Done when:** `AudioInput` and `AudioOutput` are deleted; on-device
-debug and release pass (connect, voice both ways, mute, deafen,
-push-to-talk, Bluetooth SCO and A2DP, speakerphone echo); and the AAudio
-path is in daily use without regressions the developer notices against
-5a.
+**Done when:** `AudioInput` and `AudioOutput` are deleted; the host tests
+above pass; on-device debug and release pass (connect, voice both ways,
+mute, deafen, push-to-talk, Bluetooth SCO and A2DP, handset with both
+handset-stream settings, speakerphone echo); and the AAudio path is in
+daily use without regressions the developer notices against 5a.
 
 ## Step 6 — Container, storage, and features
 
@@ -600,9 +631,9 @@ Delete `IHumlaObserver`, `HumlaCallbacks`, the live handles, `IUser`,
   name (locks on realtime threads, extra threads, cross-thread engine
   access), stop and revise `voice.md` on `master` before continuing.
 - **Step 5b** regresses latency, glitches, echo cancellation, routing, or
-  connection survival in daily use and cannot be fixed. Revert to 5a: keep
-  `AudioRecord` and `AudioTrack`, which still leaves all transmit state on
-  the native side.
+  connection survival in daily use and cannot be fixed. Revert the 5b
+  commits with `git revert` and stay on 5a's `AudioRecord` and
+  `AudioTrack`, which still leaves all transmit state on the native side.
 - **Any step:** if a file cannot leave the allowlist without new
   coordination machinery, treat it as a design problem and revisit the
   spec, not the code.
