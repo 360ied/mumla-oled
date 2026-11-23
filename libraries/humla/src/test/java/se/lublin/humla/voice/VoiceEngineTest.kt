@@ -41,7 +41,7 @@ import se.lublin.humla.net.VoiceFormat
  * push, removal delegation, talk mapping, and status.
  */
 class VoiceEngineTest {
-    private class FakeEngineNative : EngineNative {
+    internal class FakeEngineNative : EngineNative {
         var formatUdp = -1
         var formatLegacy = -1
         var muted: IntArray? = null
@@ -69,6 +69,15 @@ class VoiceEngineTest {
         var cryptStats = intArrayOf(1, 2, 3, 4)
         var droppedOutbound = 0L
         var destroyed = false
+        // Step 5b stream calls, shared with the route-following tests.
+        val streamOpens = mutableListOf<Pair<Int, Int>>()
+        var openStreamsOk = true
+        var startStreamsOk = true
+        var sessionId = -1L
+        var nextGeneration = 1L
+        var streamStarts = 0
+        var streamStops = 0
+        var streamCloses = 0
 
         override fun setFormat(udpFormat: Int, legacyVersion: Int) {
             formatUdp = udpFormat
@@ -144,11 +153,23 @@ class VoiceEngineTest {
         }
 
         override fun render(out: ShortArray?, offset: Int, length: Int): Int = 0
-        // Step 5b item 1 stubs: the live 5a path opens no AAudio streams.
-        override fun openStreams(inputPreset: Int, usage: Int): LongArray? = null
-        override fun startStreams(): Boolean = false
-        override fun stopStreams() = Unit
-        override fun closeStreams() = Unit
+        override fun openStreams(inputPreset: Int, usage: Int): LongArray? {
+            streamOpens.add(inputPreset to usage)
+            return if (openStreamsOk) longArrayOf(sessionId, nextGeneration++) else null
+        }
+
+        override fun startStreams(): Boolean {
+            streamStarts++
+            return startStreamsOk
+        }
+
+        override fun stopStreams() {
+            streamStops++
+        }
+
+        override fun closeStreams() {
+            streamCloses++
+        }
         override fun awaitWork(timeoutMs: Int): Boolean = false
         override fun lastHasActiveVoices(): Boolean = false
         override fun wakeForStop() = Unit

@@ -37,12 +37,14 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import android.content.Context
 import android.media.AudioManager
-import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
+import android.os.SystemClock
 import se.lublin.humla.BuildConfig
 import se.lublin.humla.HumlaNative
 import se.lublin.humla.audio.AudioInput
-import se.lublin.humla.audio.InputPipeline
-import se.lublin.humla.audio.OutputPipeline
 import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.VoiceLifecycle
@@ -62,30 +64,31 @@ import se.lublin.humla.net.VoiceStatus
 import kotlin.math.min
 
 /**
- * Kotlin VoiceEngine facade (step 5a.4, spec-literal).
+ * Kotlin VoiceEngine facade (step 5a.4; step 5b AAudio streams).
  *
- * Implements the client's [VoiceLifecycle], the transport's [VoiceLink],
- * and the render [RenderDriver]. Owns the application-scoped native voice
- * engine (output engine, rings, policy cell, UDP socket and receive
- * thread, notifier) across sessions. Takes over the service-lifetime
- * [TalkActivity] publisher from 5a.3a (same instance, new owner).
+ * Implements the client's [VoiceLifecycle] and the transport's [VoiceLink].
+ * Owns the application-scoped native voice engine (output engine, rings,
+ * policy cell, UDP socket and receive thread, notifier) across sessions.
+ * Takes over the service-lifetime [TalkActivity] publisher from 5a.3a.
  *
  * Voice stays native-direct throughout: the receive thread and the tunnel
  * caller push straight into the owned rings; removals arrive as control
- * items on the tunnel ring from the session message coroutine. Render is
- * driven per-pipeline through [RenderDriver] but owns nothing.
+ * items on the tunnel ring from the session message coroutine. From step
+ * 5b, AAudio callbacks drive render and capture natively; the Kotlin
+ * [RenderDriver] and [AudioInput.AudioInputListener] supertypes remain
+ * only until item 3 deletes the old pipeline.
  *
  * `Start` carries the session's UDP address plus the transport's
  * per-session decisions, fixed once: keys (when CryptSetup arrived) and
- * the UDP format with the legacy version. No route: voice follows the
- * transport's `SetVoiceRoute`; `Stop` joins capture/render first, then
+ * the UDP format with the legacy version. Voice follows the transport's
+ * `SetVoiceRoute`; `Stop` stops and closes the AAudio streams first, then
  * stops native, clears both engines/rings and delivers the final empty
  * talk snapshot via the notifier (the only `talkActivity` writer), and
  * resets the route to tunnel with the socket closed. Engines keep their
  * state across route changes (no clear on pipeline rebuild).
  *
- * Android-free except android.util.Log for the drop log (the audio layer
- * already logs the same way).
+ * Android-touching by design: stream routing, capture effects, and the
+ * drop log all use platform APIs.
  */
 class VoiceEngine @JvmOverloads constructor(
     private val tunnelSink: (ByteArray) -> Unit = {},
@@ -95,28 +98,39 @@ class VoiceEngine @JvmOverloads constructor(
     private val context: Context? = null,
     private val routeStates: StateFlow<RouteState>? = null,
     private val prefs: StateFlow<RoutePreferences>? = null,
-    private val inputFactory: (AudioInput.AudioInputListener, Int) -> InputPipeline =
-        { listener, source -> AudioInput(listener, source) },
-    private val outputFactory: (Context?, RenderDriver) -> OutputPipeline =
-        { ctx, driver -> se.lublin.humla.audio.AudioOutput(ctx, driver) },
 ) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener,
     AudioInput.AudioInputListener {
     companion object {
         private val TAG: String = VoiceEngine::class.java.name
+
+        // AAudio enum values from the NDK's aaudio/AAudio.h (API 30+): the
+        // native open call maps them straight onto the stream builder.
+        private const val INPUT_PRESET_GENERIC = 1
+        private const val INPUT_PRESET_VOICE_COMMUNICATION = 7
+        private const val USAGE_MEDIA = 1
+        private const val USAGE_VOICE_COMMUNICATION = 2
+        private const val AAUDIO_SESSION_ID_NONE = -1L
+        private const val REOPEN_FAILURE_WINDOW_MS = 5_000L
     }
 
     /** Service-lifetime talk levels; the native notifier is the only writer from 5a.4. */
     val talkActivity: StateFlow<TalkActivity> = talkPublisher.talkActivity
 
     internal data class BuiltPipeline(
-        val input: InputPipeline,
-        val output: OutputPipeline,
         val route: AppliedRoute,
         val profile: StreamProfile,
-        val audioSource: Int,
-        val audioStream: Int,
+        val inputPreset: Int,
+        val usage: Int,
+        val attachedEffects: List<String>,
+        val generation: Long,
     )
     private val pipelineRef = AtomicReference<BuiltPipeline?>(null)
+    // Control-thread-only capture effects, released after the streams stop
+    // and before they close.
+    private val attachedEffects = mutableListOf<AudioEffect>()
+    // When the last successful disconnect reopen happened; a second
+    // disconnect within 5 s of it counts as a failed reopen.
+    private var lastReopenAt: Long? = null
 
     /** Test-only: current pipeline for route-following assertions (issue 03). */
     internal fun pipelineForTests(): BuiltPipeline? = pipelineRef.get()
@@ -482,14 +496,15 @@ class VoiceEngine @JvmOverloads constructor(
                 runningFlag.set(false)
                 startHealthy.set(false)
                 lastStartRef.set(null)
-                // Pipeline first (joins capture/render), then native stop
-                // (joins send/receive/notifier, clears both engines/rings,
+                lastReopenAt = null
+                // Streams first (stop, release effects, close), then native
+                // stop (joins send/receive/notifier, clears both engines/rings,
                 // delivers the final empty snapshot via the notifier and
                 // resets the route to tunnel): the talk clear is the
                 // notifier's own delivery after the last render, so no
                 // Kotlin writer can resurrect or duplicate it (voice.md).
-                // Render/capture joins precede native destroy (in close),
-                // satisfying RenderGuard/CaptureGuard.
+                // Closing the streams guarantees no callback is live when
+                // native destroy runs.
                 try {
                     tearDownPipeline()
                 } catch (e: Exception) {
@@ -672,9 +687,12 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
-    // Step 5b item 1: the native notifier delivers AAudio disconnects, but
-    // the live 5a path has no streams yet. Item 2 posts the reopen here.
-    override fun onStreamDisconnect(generation: Long) = Unit
+    // Native delivers each disconnect generation once, even during silence.
+    // The error callback cannot reopen streams itself, so post one reopen to
+    // the voice control thread (which owns every stream lifecycle call).
+    override fun onStreamDisconnect(generation: Long) {
+        scope.launch { handleDisconnect(generation) }
+    }
 
     override fun onTunnelPacket(packet: ByteArray) {
         if (packet.isEmpty()) {
@@ -757,33 +775,36 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
-    private fun tryEnsurePipeline() {
-        // Runs on the voice control thread only (route collects + Start).
-        // Every blocking call below starts with checkNotMainThread via the
-        // pipeline entries (AudioInput shutdown join, AudioOutput stop join).
+    /**
+     * Opens both AAudio streams for the current route. Runs on the voice
+     * control thread only (route collects, Start, disconnect reopens); the
+     * blocking stream calls never run on main. Returns false when the open
+     * or start failed, so a disconnect reopen can follow the failure table.
+     */
+    private fun tryEnsurePipeline(force: Boolean = false): Boolean {
         checkNotMainThread()
         if (!runningFlag.get()) {
             tearDownPipeline()
-            return
+            return true
         }
-        val routes = routeStates ?: return
+        val routes = routeStates ?: return true
         val state = try {
             routes.value
         } catch (e: Exception) {
             loggerFine("Dropping route read: $e")
-            return
+            return true
         }
         // Settling keeps current streams (spec route.md: never observed in
         // practice, never tears down); Idle (and null) stops them.
         if (state is RouteState.Settling) {
-            return
+            return true
         }
         val (route, profile) = when (state) {
             is RouteState.Ready -> state.route to state.profile
             is RouteState.Fallback -> state.route to state.profile
             else -> {
                 tearDownPipeline()
-                return
+                return true
             }
         }
         val handset = try {
@@ -792,72 +813,174 @@ class VoiceEngine @JvmOverloads constructor(
             loggerFine("Dropping prefs read: $e")
             AudioManager.STREAM_MUSIC
         }
-        val (audioSource, audioStream) = when (route) {
-            AppliedRoute.VOICE_SCO -> MediaRecorder.AudioSource.VOICE_COMMUNICATION to AudioManager.STREAM_VOICE_CALL
-            AppliedRoute.VOICE_HANDSET -> MediaRecorder.AudioSource.VOICE_COMMUNICATION to handset
-            AppliedRoute.MEDIA -> MediaRecorder.AudioSource.MIC to AudioManager.STREAM_MUSIC
+        val inputPreset = when (route) {
+            AppliedRoute.MEDIA -> INPUT_PRESET_GENERIC
+            else -> INPUT_PRESET_VOICE_COMMUNICATION
+        }
+        val usage = when (route) {
+            AppliedRoute.VOICE_SCO -> USAGE_VOICE_COMMUNICATION
+            AppliedRoute.VOICE_HANDSET ->
+                if (handset == AudioManager.STREAM_VOICE_CALL) USAGE_VOICE_COMMUNICATION
+                else USAGE_MEDIA
+            AppliedRoute.MEDIA -> USAGE_MEDIA
         }
         val existing = pipelineRef.get()
-        if (existing != null && existing.route == route && existing.profile == profile &&
-            existing.audioSource == audioSource && existing.audioStream == audioStream
+        if (!force && existing != null && existing.route == route &&
+            existing.profile == profile && existing.inputPreset == inputPreset &&
+            existing.usage == usage
         ) {
-            return
+            return true
         }
         tearDownPipeline()
-        // Build: input acquires the mic, output acquires the track (via
-        // injectable factories so route-following is unit-testable without
-        // AudioRecord/Track hardware; production passes the real owners).
-        // Failures report PipelineError and retry on the next route event
-        // (spec failures: session stays connected without audio).
-        val input: InputPipeline
-        try {
-            input = inputFactory(this, audioSource)
-        } catch (e: Exception) {
-            Log.w(TAG, "Voice pipeline input build failed; retry on next event: $e")
-            if (!_events.tryEmit(VoiceEvent.PipelineError("capture open failed"))) {
-                loggerFine("Dropping PipelineError (event buffer full)")
-            }
-            return
+        // The route must be final before open: changing speakerphone after
+        // the streams exist can disconnect them. VOICE_CALL selects the
+        // earpiece, anything else speakerphone; media routes clear it.
+        setSpeakerphone(
+            route != AppliedRoute.MEDIA && route != AppliedRoute.VOICE_SCO &&
+                usage != USAGE_VOICE_COMMUNICATION
+        )
+        val engine = nativeRef.get()
+        if (engine == null) {
+            failPipeline("voice engine unavailable")
+            return false
         }
-        val output: OutputPipeline = outputFactory(context, this)
-        try {
-            output.startPlaying(audioStream)
+        val opened = try {
+            engine.openStreams(inputPreset, usage)
         } catch (e: Exception) {
-            Log.w(TAG, "Voice pipeline output build failed; retry on next event: $e")
-            try {
-                input.shutdown()
-            } catch (ignored: Exception) {
-            }
-            if (!_events.tryEmit(VoiceEvent.PipelineError("playback open failed"))) {
-                loggerFine("Dropping PipelineError (event buffer full)")
-            }
-            return
+            loggerFine("Dropping stream open: $e")
+            null
         }
-        // Route intent, not a literal stream: on the voice route, VOICE_CALL
-        // selects earpiece, anything else speakerphone. Media routes clear
-        // for hygiene (voice-call routing ignores it there).
-        setSpeakerphone(route != AppliedRoute.MEDIA && route != AppliedRoute.VOICE_SCO && audioStream != AudioManager.STREAM_VOICE_CALL)
-        try {
-            input.startRecording()
+        if (opened == null || opened.size < 2) {
+            failPipeline("capture open failed")
+            return false
+        }
+        // Effects are attached on every route before the streams start and
+        // released after they stop, before they close.
+        val effects = attachCaptureEffects(opened[0])
+        val started = try {
+            engine.startStreams()
         } catch (e: Exception) {
-            Log.w(TAG, "Voice pipeline capture start failed; retry on next event: $e")
+            loggerFine("Dropping stream start: $e")
+            false
         }
-        pipelineRef.set(BuiltPipeline(input, output, route, profile, audioSource, audioStream))
+        if (!started) {
+            failPipeline("playback open failed")
+            return false
+        }
+        pipelineRef.set(
+            BuiltPipeline(route, profile, inputPreset, usage, effects, opened[1])
+        )
+        return true
     }
 
+    /** Stops and closes the live streams, releasing effects between them. */
     private fun tearDownPipeline() {
         checkNotMainThread()
-        val existing = pipelineRef.getAndSet(null) ?: return
+        if (pipelineRef.getAndSet(null) == null) return
+        val engine = nativeRef.get()
         try {
-            existing.input.shutdown()
+            engine?.stopStreams()
         } catch (e: Exception) {
-            Log.w(TAG, "Voice pipeline input shutdown failed: $e")
+            Log.w(TAG, "Voice stream stop failed: $e")
         }
+        releaseCaptureEffects()
         try {
-            existing.output.stopPlaying()
+            engine?.closeStreams()
         } catch (e: Exception) {
-            Log.w(TAG, "Voice pipeline output shutdown failed: $e")
+            Log.w(TAG, "Voice stream close failed: $e")
         }
+    }
+
+    /**
+     * Failure table: leave voice without streams, report PipelineError, and
+     * clear the stored record so the next route or preference change rebuilds
+     * instead of returning early on unchanged parameters.
+     */
+    private fun failPipeline(message: String) {
+        pipelineRef.set(null)
+        val engine = nativeRef.get()
+        try {
+            engine?.stopStreams()
+        } catch (ignored: Exception) {
+        }
+        releaseCaptureEffects()
+        try {
+            engine?.closeStreams()
+        } catch (ignored: Exception) {
+        }
+        Log.w(TAG, "Voice stream failure; retry on next route event: $message")
+        if (!_events.tryEmit(VoiceEvent.PipelineError(message))) {
+            loggerFine("Dropping PipelineError (event buffer full)")
+        }
+    }
+
+    private fun attachCaptureEffects(sessionId: Long): List<String> {
+        releaseCaptureEffects()
+        // AAUDIO_SESSION_ID_NONE (and never-allocated IDs) have no session to
+        // attach to. AAudio allocates the ID either way, so production takes
+        // the other path on every route.
+        if (sessionId <= AAUDIO_SESSION_ID_NONE) return emptyList()
+        val id = sessionId.toInt()
+        val names = mutableListOf<String>()
+        tryEffect(
+            "AEC", names,
+            { AcousticEchoCanceler.isAvailable() },
+        ) { AcousticEchoCanceler.create(id) }
+        tryEffect(
+            "NS", names,
+            { NoiseSuppressor.isAvailable() },
+        ) { NoiseSuppressor.create(id) }
+        tryEffect(
+            "AGC", names,
+            { AutomaticGainControl.isAvailable() },
+        ) { AutomaticGainControl.create(id) }
+        return names
+    }
+
+    private fun tryEffect(
+        name: String,
+        names: MutableList<String>,
+        available: () -> Boolean,
+        create: () -> AudioEffect?,
+    ) {
+        try {
+            if (!available()) return
+            val effect = create() ?: return
+            if (effect.setEnabled(true) == AudioEffect.SUCCESS) {
+                attachedEffects.add(effect)
+                names.add(name)
+            } else {
+                effect.release()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Capture effect $name unavailable: $e")
+        }
+    }
+
+    private fun releaseCaptureEffects() {
+        for (effect in attachedEffects) {
+            try {
+                effect.release()
+            } catch (ignored: Exception) {
+            }
+        }
+        attachedEffects.clear()
+    }
+
+    /** One reopen per disconnect, serialized with Start/Stop and route work. */
+    private fun handleDisconnect(generation: Long) {
+        checkNotMainThread()
+        val current = pipelineRef.get() ?: return
+        if (!runningFlag.get()) return
+        if (generation < current.generation) return
+        val now = SystemClock.elapsedRealtime()
+        val reopenedAt = lastReopenAt
+        if (reopenedAt != null && now - reopenedAt < REOPEN_FAILURE_WINDOW_MS) {
+            failPipeline("stream reopen failed")
+            return
+        }
+        if (!tryEnsurePipeline(force = true)) return
+        lastReopenAt = now
     }
 
     private fun setSpeakerphone(on: Boolean) {
@@ -995,10 +1118,10 @@ class VoiceEngine @JvmOverloads constructor(
 
     /**
      * Application end of life. Non-blocking like RouteControl: the
-     * pipeline-teardown + stop-join-destroy runs on the command scope so
-     * Service.onDestroy (main) never waits on thread joins, and destroy
-     * runs after the queued stops. Render and capture joins precede native
-     * destroy so the RenderGuard/CaptureGuard asserts never fire.
+     * stream teardown + stop-join-destroy runs on the command scope so
+     * Service.onDestroy (main) never waits on it, and destroy runs after
+     * the queued stops. Closing the AAudio streams stops every render and
+     * capture callback before native destroy.
      */
     fun close(): Job {
         // Mark closed first: a Start submitted concurrently is dropped in

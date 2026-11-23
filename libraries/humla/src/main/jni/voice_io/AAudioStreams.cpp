@@ -153,14 +153,34 @@ bool openStream(AAudioStream** out, aaudio_direction_t direction,
     return true;
 }
 
-void stopStream(AAudioStream* stream, const char* which) {
-    const aaudio_result_t requested = AAudioStream_requestStop(stream);
-    if (requested != AAUDIO_OK) {
-        logError(which, requested);
+// States that no longer need a stop request or a wait: a stream that never
+// started (its pair failed to open) is already final, and a disconnected
+// stream may never report STOPPED.
+bool stopIsFinal(aaudio_stream_state_t state) {
+    switch (state) {
+        case AAUDIO_STREAM_STATE_UNINITIALIZED:
+        case AAUDIO_STREAM_STATE_UNKNOWN:
+        case AAUDIO_STREAM_STATE_OPEN:
+        case AAUDIO_STREAM_STATE_STOPPED:
+        case AAUDIO_STREAM_STATE_CLOSING:
+        case AAUDIO_STREAM_STATE_CLOSED:
+        case AAUDIO_STREAM_STATE_DISCONNECTED:
+            return true;
+        default:
+            return false;
     }
+}
+
+void stopStream(AAudioStream* stream, const char* which) {
     aaudio_stream_state_t state = AAudioStream_getState(stream);
-    while (state != AAUDIO_STREAM_STATE_STOPPED &&
-           state != AAUDIO_STREAM_STATE_DISCONNECTED) {
+    if (!stopIsFinal(state)) {
+        const aaudio_result_t requested = AAudioStream_requestStop(stream);
+        if (requested != AAUDIO_OK) {
+            logError(which, requested);
+        }
+        state = AAudioStream_getState(stream);
+    }
+    while (!stopIsFinal(state)) {
         aaudio_stream_state_t next = AAUDIO_STREAM_STATE_UNKNOWN;
         const aaudio_result_t result = AAudioStream_waitForStateChange(
             stream, state, &next, kStopTimeoutNanos);
