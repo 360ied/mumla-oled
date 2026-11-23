@@ -51,8 +51,7 @@ question. Its power saving is small today. Since the mic shield, the
 capture thread reads the microphone every 10 ms for the whole connection,
 so the CPU wakes regardless, and the Doze investigation's worry about a
 fully quiescent process does not apply while capture runs. That changes
-neither rule above. Step 5b removes the wait altogether: the render
-callback runs at the burst rate for the whole connection.
+neither rule above.
 
 These failures appear only on an untethered device, on battery, with the
 screen off, after minutes to hours, and sometimes on one OEM only. USB
@@ -62,14 +61,14 @@ both hide them. Green host tests say nothing here.
 Step 5b keeps every shield. The AAudio input stream stays open for the
 whole connection, as the microphone does today. The output stream stays
 started, and its callback writes zeros through silence instead of
-underrunning. That is the most proven state on record: 0.21.7 wrote
-silence continuously with its render loop waking every 20 ms, with no
-disconnects or watchdog kills. It also restores the two signals the Doze
-investigation found missing today: output that the OS counts as active
-playback, and a render path that is never fully quiescent. The cost is
-the callback's wakeups at the burst rate, small beside a capture path
-that already wakes every 10 ms. Daily use on battery is the check, as for
-every shield.
+underrunning, so the render wait above goes away. This output behavior
+has the best field record: 0.21.7 wrote silence continuously, its render
+loop waking every 20 ms, and had no disconnects or watchdog kills. It also
+restores two signals the Doze investigation found absent, and that are
+still absent today: playback the OS counts as active, and a render path
+that is never fully idle. The cost is one callback per AAudio burst,
+small beside a capture path that already wakes every 10 ms. Daily use on
+battery is the check, as for every shield.
 
 The investigations:
 [zero-audio standby](../power-draw-optimizations/zero-audio-standby-regression-investigation.md)
@@ -463,10 +462,10 @@ flowchart LR
   today's Kotlin `AudioRecord` and `AudioTrack` threads
   (`nativeCaptureFrame(pcm)`, `nativeRender(out)`). In **step 5b**, the
   AAudio data callbacks call the same entry points, and the render wake is
-  deleted (see [render idle](#render-idle-and-wake)). Beyond that, the
-  stream plumbing, and the disconnect flag, nothing changes between 5a
-  and 5b. The callbacks run on AAudio's threads, never attach
-  to the JVM, and follow the [realtime rules](#realtime-rules).
+  deleted (see [render idle](#render-idle-and-wake)). Apart from the
+  stream code and the disconnect flag, nothing else changes between 5a
+  and 5b. The callbacks run on AAudio's threads, never attach to the JVM,
+  and follow the [realtime rules](#realtime-rules).
 - **Half duplex** (today's `AudioOutput.setHalfDuplexMuted`): the capture
   thread publishes "self is talking" in one atomic flag owned by the I/O
   layer; while the effective half-duplex flag (raw `VoiceSettings.halfDuplex`
@@ -552,12 +551,14 @@ queued.
 
 ### Render idle and wake
 
+This is the 5a mechanism; step 5b deletes it (see the last bullet).
+
 When a render returns no audio, the render thread waits instead of
 spinning at 50 Hz (`b1a1118e`), with the same rule as before 5a.3b: no
 timeout when the output engine reports no active voices, 20 ms when it
 does (voices filling their startup gate or waiting out the miss expiry).
-The output stream stays started and underruns; nothing writes zeros (see
-[keep-alive shields](#keep-alive-shields)). The pacer is unchanged.
+The output stream stays started and underruns; in 5a nothing writes zeros
+(see [keep-alive shields](#keep-alive-shields)). The pacer is unchanged.
 
 The wait is a POSIX semaphore owned by `voice_io`, entered through
 `awaitWork(timeoutMs)` between render calls, never inside one. Timeouts
@@ -577,10 +578,11 @@ use `sem_clockwait` on `CLOCK_MONOTONIC` (API 30, the minimum SDK).
 - **Stop.** Clear the running flag, then post. The semaphore remembers
   the post, so a stop racing the wait's entry cannot strand the render
   thread, and no thread interrupt is needed.
-- **Step 5b deletes it.** In callback mode no idle state exists: AAudio
-  calls render at the burst rate and the callback writes zeros through
-  silence (see [keep-alive shields](#keep-alive-shields)). The semaphore,
-  the `idle` flag, `awaitWork`, and the producer posts go, with the pacer.
+- **Step 5b.** Callback mode has no idle state: AAudio calls render once
+  per burst, and the callback writes zeros through silence (see
+  [keep-alive shields](#keep-alive-shields)). The semaphore, the `idle`
+  flag, `awaitWork`, and the producer posts are deleted, along with the
+  pacer.
 
 Rejected: a Kotlin wake called from native (a JNI call on the receive
 path that needs the same idle protocol, and dies in 5b); in 5a, writing
@@ -692,7 +694,7 @@ Performed by the Kotlin **voice control thread**, in command order:
   and render (Kotlin threads in 5a, AAudio callback streams in 5b) once
   `RouteState` is `Ready` or `Fallback` (see
   [route](route.md#session-start)).
-- **Stop:** stop capture and render (5a render: clear its running flag and
+- **Stop:** stop capture and render (5a: clear the render running flag and
   post the render wake before the join; 5b: request stop on both AAudio
   streams and wait for `AAUDIO_STREAM_STATE_STOPPED`); set the stop flag;
   shut the socket down to abort the blocked `recvfrom` (`close` alone does
@@ -709,9 +711,9 @@ Performed by the Kotlin **voice control thread**, in command order:
   and restarts capture.
 - **Route change:** restart capture and render streams on the new route;
   the engines keep their state (voices and jitter buffers survive). In 5b
-  the streams are closed and reopened with the new profile, and the echo
-  canceller and the other capture effects are reattached to the new
-  input session.
+  the streams are closed and reopened with the new profile, and the
+  capture effects (echo canceller, noise suppressor, gain control) are
+  attached to the new input session.
 
 The control thread is the only caller of start and stop, so they never race
 each other, and it is never the main thread.
@@ -736,7 +738,7 @@ and chat log show the error.
 | Failure | Handling |
 |---|---|
 | Capture or playback stream cannot open (including a missing microphone permission; the activity requests permissions before connecting, as today) | `VoiceEvent.PipelineError`, `VoiceStatus.lastError`; the control thread retries on the next route change or settings change |
-| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only sets an atomic flag (it may not reopen the stream itself); the notifier delivers it with the next snapshot, and Kotlin posts one reopen to the control thread, which drops it if a route change already reopened the streams |
+| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only sets an atomic flag, because AAudio forbids reopening a stream from that callback; the notifier delivers it with the next snapshot, and Kotlin posts one reopen to the control thread, which drops it if a route change already reopened the streams |
 | UDP socket cannot be created or connected | `VoiceEvent.UdpUnavailable`; the transport switches to tunnel mode at once, as it would after its 20 s rule |
 | Crypt key setup rejected (`setKeys` returns false) | Treated as a protocol violation: the transport fails the session, as today's invalid-key path does |
 

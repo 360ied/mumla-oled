@@ -43,9 +43,10 @@ steps, the kill criteria, and the decisions this work reverses.
   code, a fix regressing an earlier fix), stop and re-slice the step
   instead of running a fourth.
 - Every step leaves a working app. Steps 2–5 are each worth landing
-  alone. Step 6 needs step 3; step 7 needs step 6. Step 5b is independent of
-  steps 6 and 7; step 8 needs it, because `AudioInput` and `AudioOutput`
-  are allowlist entries outside the boundary files.
+  alone. Step 6 needs step 3; step 7 needs step 6. Step 5b is independent
+  of steps 6 and 7. Step 8 needs it: step 8's done-when allows only
+  boundary files on the allowlist, and `AudioInput` and `AudioOutput` are
+  not boundary files.
 - Until step 7, today's `ConfigDelta` path keeps applying settings live:
   `HumlaService.apply` stays as a bridge that forwards each delta to the
   new components as they appear (the client in step 3; voice, route, and
@@ -482,23 +483,27 @@ the allowlist; the input engine bridge's interim `<mutex>` entry from
 ## Step 5b — AAudio
 
 AAudio directly (not Oboe), in callback mode, for both streams (decided
-2026-11-23; see [open items](open-items.md#resolved)). No spike gates the
-step: every choice is made, and the only evidence one device can give is
-the on-device check and daily use below. Android 11–12 is not tested.
+2026-11-23; see [open items](open-items.md#resolved)). No spikes gate the
+step: the choices are made, and on a single device the on-device check
+and daily use below are the evidence that counts. Android 11–12 is not
+tested.
 
-1. **AAudio streams in `voice_io`.** The data callbacks call the existing
-   capture and render entry points with whatever frame count AAudio
-   delivers (both already accept any size). The render callback always
-   returns a full buffer, writing zeros through silence (see
-   [keep-alive shields](voice.md#keep-alive-shields)). The control thread
-   opens both streams with the profile from `RouteState` (input preset and
-   usage per [route](route.md#routestate), device ID left unspecified so
-   `setCommunicationDevice` and the speakerphone routing still apply),
-   reopens them on a route change, and stops each stream and waits for
-   `AAUDIO_STREAM_STATE_STOPPED` before touching its engine.
-   Deletes `AudioOutput`'s `Pacer` with `AudioOutputPacerTest`, and the
-   [render wake](voice.md#render-idle-and-wake) (semaphore, `idle` flag,
-   `awaitWork`, the producer posts).
+1. **AAudio streams in `voice_io`.**
+   - The data callbacks call the existing capture and render entry points
+     with whatever frame count AAudio delivers; both already accept any
+     size. The render callback always returns a full buffer, writing
+     zeros through silence (see
+     [keep-alive shields](voice.md#keep-alive-shields)).
+   - The voice control thread opens both streams with the profile from
+     `RouteState` (input preset and usage per
+     [route](route.md#routestate)) and reopens them on a route change. The
+     device ID stays unspecified, so `setCommunicationDevice` and the
+     speakerphone routing keep applying. Before touching an engine, the
+     control thread stops its stream and waits for
+     `AAUDIO_STREAM_STATE_STOPPED`.
+   - It deletes `AudioOutput`'s `Pacer` with `AudioOutputPacerTest`, and the
+     [render wake](voice.md#render-idle-and-wake) (semaphore, `idle` flag,
+     `awaitWork`, the producer posts).
 2. **Echo cancellation.** The input stream is opened with
    `AAUDIO_SESSION_ID_ALLOCATE`; the control thread hands its session ID to
    Kotlin, which attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and
