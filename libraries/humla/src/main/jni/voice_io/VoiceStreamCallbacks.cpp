@@ -29,6 +29,24 @@
 namespace mumla {
 namespace voice_io {
 
+namespace {
+
+bool rangeTouchesNonSilentFrame(uint64_t mask, size_t begin, size_t end) {
+    if (begin >= end) {
+        return false;
+    }
+    const size_t first = begin / kStreamFrameSamples;
+    const size_t last = (end - 1) / kStreamFrameSamples;
+    for (size_t frame = first; frame <= last; ++frame) {
+        if (frame < 64 && (mask & (1ULL << frame)) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 bool renderStreamFrames(VoiceStreamContext* ctx, int16_t* out, size_t samples) {
     if (ctx == nullptr || ctx->io == nullptr || out == nullptr || samples == 0) {
         return true;
@@ -54,16 +72,19 @@ bool renderStreamFrames(VoiceStreamContext* ctx, int16_t* out, size_t samples) {
                                                std::memory_order_relaxed);
             }
             // VoiceIo::render zero-fills a silent quantum, so copying the
-            // carry buffer writes silence too. The AAudio callback ignores
-            // the silence report and always returns the full buffer.
-            ctx->renderCarrySilent = result.samples == 0;
+            // carry buffer writes silence too. The callback consults the
+            // per-frame report for exactly the samples it copies.
+            ctx->renderCarryNonSilentFrames = result.nonSilentFrames;
             ctx->renderCarryOffset = 0;
             ctx->renderCarryRemaining = kStreamChunkSamples;
         }
-        if (!ctx->renderCarrySilent) {
+        const size_t take = std::min(samples - written, ctx->renderCarryRemaining);
+        const size_t begin = ctx->renderCarryOffset;
+        const size_t end = begin + take;
+        if (rangeTouchesNonSilentFrame(ctx->renderCarryNonSilentFrames, begin,
+                                       end)) {
             silent = false;
         }
-        const size_t take = std::min(samples - written, ctx->renderCarryRemaining);
         std::memcpy(out + written, ctx->renderCarry + ctx->renderCarryOffset,
                     take * sizeof(int16_t));
         ctx->renderCarryOffset += take;
@@ -92,7 +113,7 @@ void resetRenderCarry(VoiceStreamContext* ctx) {
     std::memset(ctx->renderCarry, 0, sizeof(ctx->renderCarry));
     ctx->renderCarryOffset = 0;
     ctx->renderCarryRemaining = 0;
-    ctx->renderCarrySilent = true;
+    ctx->renderCarryNonSilentFrames = 0;
 }
 
 } // namespace voice_io

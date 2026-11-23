@@ -135,6 +135,20 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     const bool duplexMuted = halfDuplex && selfTalking;
     size_t written = 0;
     bool silent = true;
+    result->nonSilentFrames = 0;
+    constexpr size_t kFrameSamples =
+        static_cast<size_t>(AudioOutputEngine::FRAME_SIZE);
+    auto markAllFrames = [&](size_t start, size_t sampleCount) {
+        const size_t frameCount =
+            (sampleCount + kFrameSamples - 1) / kFrameSamples;
+        const size_t baseFrame = start / kFrameSamples;
+        for (size_t frame = 0; frame < frameCount; ++frame) {
+            const size_t bit = baseFrame + frame;
+            if (bit < 64) {
+                result->nonSilentFrames |= 1ULL << bit;
+            }
+        }
+    };
     // The engine covers quanta up to MAX_QUANTUM_SAMPLES (60 ms); larger
     // requests split into several render calls. Every quantum's talk events
     // fold into the same level table, so nothing is lost across the split.
@@ -142,6 +156,11 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     // here; result->samples is 0 only when every quantum was silent. The
     // AAudio callback writes these zeros through silence so the output
     // stream stays active, and the JNI test entry reports silence as 0.
+    // nonSilentFrames pins which 10 ms frames within a quantum must be
+    // reported as non-silent, so a burst that copies only a silent carried
+    // frame can still return 0. A quantum with reported audio but all-zero
+    // PCM (startup gating, half duplex, or decoded silence) marks every
+    // frame, preserving 5a's pacing contract.
     while (written < samples) {
         size_t want = std::min(samples - written,
                                AudioOutputEngine::MAX_QUANTUM_SAMPLES);
@@ -158,8 +177,33 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
             std::fill(out + written, out + written + want, 0);
             if (engineResult.samples > 0) {
                 silent = false;
+                markAllFrames(written, want);
             }
         } else if (engineResult.samples > 0) {
+            bool sawNonZero = false;
+            const size_t frameCount =
+                (want + kFrameSamples - 1) / kFrameSamples;
+            for (size_t frame = 0; frame < frameCount; ++frame) {
+                const size_t begin = frame * kFrameSamples;
+                const size_t end = std::min(want, begin + kFrameSamples);
+                bool nonZero = false;
+                for (size_t i = begin; i < end; ++i) {
+                    if (out[written + i] != 0) {
+                        nonZero = true;
+                        break;
+                    }
+                }
+                if (nonZero) {
+                    sawNonZero = true;
+                    const size_t bit = written / kFrameSamples + frame;
+                    if (bit < 64) {
+                        result->nonSilentFrames |= 1ULL << bit;
+                    }
+                }
+            }
+            if (!sawNonZero) {
+                markAllFrames(written, want);
+            }
             silent = false;
         } else {
             std::fill(out + written, out + written + want, 0);

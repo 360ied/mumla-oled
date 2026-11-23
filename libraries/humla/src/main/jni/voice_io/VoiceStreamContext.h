@@ -113,9 +113,10 @@ struct VoiceStreamContext {
     int16_t renderCarry[kStreamChunkSamples] = {};
     size_t renderCarryOffset = 0;
     size_t renderCarryRemaining = 0;
-    // Whether the current carry chunk is silent; a burst that only consumes
-    // leftover audio still reports what it actually wrote.
-    bool renderCarrySilent = true;
+    // Bit i is set when carried frame i must be reported as non-silent.
+    // The callback consults only the frames its burst actually copies, so a
+    // silent prefix of an otherwise audible chunk still returns silence.
+    uint64_t renderCarryNonSilentFrames = 0;
 
     // Bumped at every open (starts at 0, so the first open returns 1) and
     // rolled back if either stream fails to open. Kotlin stores the value

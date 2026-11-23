@@ -82,9 +82,15 @@ public:
         size_t count = 0;
     };
 
-    // Render result for the Kotlin idle wait and the drop-count log.
+    // Render result for the JNI test entry and the drop-count log.
     struct RenderOut {
         size_t samples = 0; // mixed PCM samples written to out (0 when silent)
+        // Bit i is set when frame i * AudioOutputEngine::FRAME_SIZE must be
+        // reported as non-silent. The AAudio callback uses it to answer for
+        // the exact carried range it copies, not for the whole 20 ms chunk.
+        // Gated or half-duplex zero-PCM quanta set every frame they cover,
+        // preserving 5a's pacing contract.
+        uint64_t nonSilentFrames = 0;
         uint64_t droppedInbound = 0; // cumulative full-ring drops
         uint64_t droppedTunnel = 0; // cumulative full-ring drops (voice + removals)
         uint64_t droppedJitter = 0; // cumulative pool-exhausted drops from the engine
