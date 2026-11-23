@@ -224,7 +224,9 @@ if(ANDROID)
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/VoiceSend.cpp"
+        "${VOICE_IO_DIR}/VoiceStreamCallbacks.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
+        "${VOICE_IO_DIR}/AAudioStreams.cpp"
         ${VOICE_CODEC_SOURCES}
         ${NANOPB_SOURCES}
         "${CRYPTO_DIR}/CryptStateOCB2.cpp"
@@ -250,10 +252,13 @@ if(ANDROID)
         -Wl,--exclude-libs,ALL
         -Wl,-z,relro,-z,now
     )
+    # Step 5b: only the Android target links AAudio. The host library and
+    # host tests compile the callback bodies but never open a stream.
     target_link_libraries(humlaaudio PRIVATE
         humlaopus
         humlarnnoise
         log
+        aaudio
     )
 else()
     # Host native test executables & host JNI shared library.
@@ -383,6 +388,7 @@ else()
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/VoiceSend.cpp"
+        "${VOICE_IO_DIR}/VoiceStreamCallbacks.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/AudioInputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/HysteresisVad.cpp"
@@ -449,6 +455,7 @@ else()
         "${VOICE_IO_DIR}/VoicePolicy.cpp"
         "${VOICE_IO_DIR}/VoiceReceive.cpp"
         "${VOICE_IO_DIR}/VoiceSend.cpp"
+        "${VOICE_IO_DIR}/VoiceStreamCallbacks.cpp"
         "${VOICE_IO_DIR}/NativeVoiceEngineJni.cpp"
         "${AUDIO_ENGINE_DIR}/AudioOutputEngine.cpp"
         "${AUDIO_ENGINE_DIR}/OpusVoiceDecoder.cpp"

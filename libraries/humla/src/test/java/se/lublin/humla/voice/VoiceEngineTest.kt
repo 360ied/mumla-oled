@@ -144,6 +144,11 @@ class VoiceEngineTest {
         }
 
         override fun render(out: ShortArray?, offset: Int, length: Int): Int = 0
+        // Step 5b item 1 stubs: the live 5a path opens no AAudio streams.
+        override fun openStreams(inputPreset: Int, usage: Int): LongArray? = null
+        override fun startStreams(): Boolean = false
+        override fun stopStreams() = Unit
+        override fun closeStreams() = Unit
         override fun awaitWork(timeoutMs: Int): Boolean = false
         override fun lastHasActiveVoices(): Boolean = false
         override fun wakeForStop() = Unit

@@ -49,6 +49,12 @@ interface EngineNative {
     fun queueTunnelled(packet: ByteArray?): Boolean
     fun pushRemoveUser(session: Int): Boolean
     fun render(out: ShortArray?, offset: Int, length: Int): Int
+    // Step 5b AAudio streams. Open returns the input session ID and the new
+    // stream generation, or null when either stream fails to open.
+    fun openStreams(inputPreset: Int, usage: Int): LongArray?
+    fun startStreams(): Boolean
+    fun stopStreams()
+    fun closeStreams()
     fun awaitWork(timeoutMs: Int): Boolean
     fun wakeForStop()
     fun lastHasActiveVoices(): Boolean
@@ -123,6 +129,18 @@ class NativeVoiceEngine : EngineNative {
 
         @JvmStatic
         private external fun nativeRender(handle: Long, out: ShortArray?, offset: Int, length: Int): Int
+
+        @JvmStatic
+        private external fun nativeOpenStreams(handle: Long, inputPreset: Int, usage: Int): LongArray?
+
+        @JvmStatic
+        private external fun nativeStartStreams(handle: Long): Boolean
+
+        @JvmStatic
+        private external fun nativeStopStreams(handle: Long)
+
+        @JvmStatic
+        private external fun nativeCloseStreams(handle: Long)
 
         @JvmStatic
         private external fun nativeAwaitWork(handle: Long, timeoutMs: Int): Boolean
@@ -268,6 +286,30 @@ class NativeVoiceEngine : EngineNative {
         return 0
     }
 
+    override fun openStreams(inputPreset: Int, usage: Int): LongArray? {
+        val handle = nativeHandle.get()
+        return if (handle != 0L) nativeOpenStreams(handle, inputPreset, usage) else null
+    }
+
+    override fun startStreams(): Boolean {
+        val handle = nativeHandle.get()
+        return handle != 0L && nativeStartStreams(handle)
+    }
+
+    override fun stopStreams() {
+        val handle = nativeHandle.get()
+        if (handle != 0L) {
+            nativeStopStreams(handle)
+        }
+    }
+
+    override fun closeStreams() {
+        val handle = nativeHandle.get()
+        if (handle != 0L) {
+            nativeCloseStreams(handle)
+        }
+    }
+
     override fun awaitWork(timeoutMs: Int): Boolean {
         val handle = nativeHandle.get()
         return handle != 0L && nativeAwaitWork(handle, timeoutMs)
@@ -331,5 +373,6 @@ class NativeVoiceEngine : EngineNative {
             selfTalking: Boolean
         )
         fun onTunnelPacket(packet: ByteArray)
+        fun onStreamDisconnect(generation: Long)
     }
 }

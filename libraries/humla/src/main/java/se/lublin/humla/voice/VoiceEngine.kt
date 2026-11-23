@@ -672,6 +672,10 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
+    // Step 5b item 1: the native notifier delivers AAudio disconnects, but
+    // the live 5a path has no streams yet. Item 2 posts the reopen here.
+    override fun onStreamDisconnect(generation: Long) = Unit
+
     override fun onTunnelPacket(packet: ByteArray) {
         if (packet.isEmpty()) {
             loggerFine("Dropping empty tunnel packet from send thread")
