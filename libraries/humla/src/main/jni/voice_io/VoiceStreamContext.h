@@ -103,11 +103,13 @@ struct VoiceStreamContext {
     std::atomic<uint64_t> lastDroppedTunnel{0};
     std::atomic<uint64_t> lastDroppedJitter{0};
     std::atomic<uint64_t> lastDroppedOutbound{0};
-    std::atomic<bool> lastHasActiveVoices{false};
 
     int16_t renderCarry[kStreamFrameSamples] = {};
     size_t renderCarryOffset = 0;
     size_t renderCarryRemaining = 0;
+    // Whether the current carry frame is silent; a burst that only consumes
+    // leftover audio still reports what it actually wrote.
+    bool renderCarrySilent = true;
 
     // Bumped at every open (starts at 0, so the first open returns 1) and
     // rolled back if either stream fails to open. Kotlin stores the value

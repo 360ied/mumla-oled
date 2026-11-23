@@ -44,8 +44,6 @@ import android.media.audiofx.NoiseSuppressor
 import android.os.SystemClock
 import se.lublin.humla.BuildConfig
 import se.lublin.humla.HumlaNative
-import se.lublin.humla.audio.AudioInput
-import se.lublin.humla.audio.RenderDriver
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.client.checkNotMainThread
@@ -73,10 +71,9 @@ import kotlin.math.min
  *
  * Voice stays native-direct throughout: the receive thread and the tunnel
  * caller push straight into the owned rings; removals arrive as control
- * items on the tunnel ring from the session message coroutine. From step
- * 5b, AAudio callbacks drive render and capture natively; the Kotlin
- * [RenderDriver] and [AudioInput.AudioInputListener] supertypes remain
- * only until item 3 deletes the old pipeline.
+ * items on the tunnel ring from the session message coroutine. AAudio
+ * callbacks drive render and capture natively; the JNI render and capture
+ * entries exist only so host and interop tests exercise the same bodies.
  *
  * `Start` carries the session's UDP address plus the transport's
  * per-session decisions, fixed once: keys (when CryptSetup arrived) and
@@ -98,8 +95,7 @@ class VoiceEngine @JvmOverloads constructor(
     private val context: Context? = null,
     private val routeStates: StateFlow<RouteState>? = null,
     private val prefs: StateFlow<RoutePreferences>? = null,
-) : VoiceLink, VoiceLifecycle, RenderDriver, NativeVoiceEngine.Listener,
-    AudioInput.AudioInputListener {
+) : VoiceLink, VoiceLifecycle, NativeVoiceEngine.Listener {
     companion object {
         private val TAG: String = VoiceEngine::class.java.name
 
@@ -609,9 +605,8 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
-    // RenderDriver: the render thread's only path into the owned engine.
-
-    override fun render(out: ShortArray?, offset: Int, length: Int): Int {
+    /** Test-only render entry: drives the AAudio callback body through JNI. */
+    fun render(out: ShortArray?, offset: Int, length: Int): Int {
         return try {
             nativeRef.get()?.render(out, offset, length) ?: 0
         } catch (e: Exception) {
@@ -619,30 +614,7 @@ class VoiceEngine @JvmOverloads constructor(
         }
     }
 
-    override fun awaitWork(timeoutMs: Int): Boolean {
-        return try {
-            nativeRef.get()?.awaitWork(timeoutMs) ?: false
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    override fun lastHasActiveVoices(): Boolean {
-        return try {
-            nativeRef.get()?.lastHasActiveVoices() ?: false
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    override fun wakeForStop() {
-        try {
-            nativeRef.get()?.wakeForStop()
-        } catch (ignored: Exception) {
-        }
-    }
-
-    /** Capture entry (realtime capture thread): forwards PCM to the native input engine. */
+    /** Test-only capture entry: drives the AAudio callback body through JNI. */
     fun captureFrame(pcm: ShortArray, offset: Int, length: Int) {
         try {
             nativeRef.get()?.captureFrame(pcm, offset, length)
@@ -760,19 +732,6 @@ class VoiceEngine @JvmOverloads constructor(
             )
         }
         refreshStatus()
-    }
-
-    // AudioInput capture thread only: forwards PCM to the native input engine.
-    // The buffer is reused by AudioInput: native copies before returning, so
-    // no copy is needed here. Partial reads (frameSize < FRAME_SIZE) are
-    // carried inside VoiceSend into exact 10 ms frames.
-    override fun onAudioInputReceived(frame: ShortArray?, frameSize: Int) {
-        if (frame == null || frameSize <= 0) return
-        try {
-            nativeRef.get()?.captureFrame(frame, 0, frameSize)
-        } catch (e: Exception) {
-            loggerFine("Dropping capture frame: $e")
-        }
     }
 
     /**

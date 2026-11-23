@@ -170,9 +170,6 @@ class VoiceEngineTest {
         override fun closeStreams() {
             streamCloses++
         }
-        override fun awaitWork(timeoutMs: Int): Boolean = false
-        override fun lastHasActiveVoices(): Boolean = false
-        override fun wakeForStop() = Unit
         override fun lastDroppedInbound(): Long = 0
         override fun lastDroppedTunnel(): Long = 0
         override fun lastDroppedJitter(): Long = 0

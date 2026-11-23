@@ -46,20 +46,19 @@ bool renderStreamFrames(VoiceStreamContext* ctx, int16_t* out, size_t samples) {
                                          std::memory_order_relaxed);
             ctx->lastDroppedJitter.store(result.droppedJitter,
                                          std::memory_order_relaxed);
-            ctx->lastHasActiveVoices.store(result.hasActiveVoices,
-                                           std::memory_order_relaxed);
             if (ctx->send != nullptr) {
                 ctx->lastDroppedOutbound.store(ctx->send->droppedOutbound(),
                                                std::memory_order_relaxed);
             }
             // VoiceIo::render zero-fills a silent quantum, so copying the
             // carry buffer writes silence too. The AAudio callback ignores
-            // this report and always returns the full buffer.
-            if (result.samples > 0) {
-                silent = false;
-            }
+            // the silence report and always returns the full buffer.
+            ctx->renderCarrySilent = result.samples == 0;
             ctx->renderCarryOffset = 0;
             ctx->renderCarryRemaining = kStreamFrameSamples;
+        }
+        if (!ctx->renderCarrySilent) {
+            silent = false;
         }
         const size_t take = std::min(samples - written, ctx->renderCarryRemaining);
         std::memcpy(out + written, ctx->renderCarry + ctx->renderCarryOffset,
@@ -90,6 +89,7 @@ void resetRenderCarry(VoiceStreamContext* ctx) {
     std::memset(ctx->renderCarry, 0, sizeof(ctx->renderCarry));
     ctx->renderCarryOffset = 0;
     ctx->renderCarryRemaining = 0;
+    ctx->renderCarrySilent = true;
 }
 
 } // namespace voice_io

@@ -55,9 +55,6 @@ interface EngineNative {
     fun startStreams(): Boolean
     fun stopStreams()
     fun closeStreams()
-    fun awaitWork(timeoutMs: Int): Boolean
-    fun wakeForStop()
-    fun lastHasActiveVoices(): Boolean
     fun lastDroppedInbound(): Long
     fun lastDroppedTunnel(): Long
     fun lastDroppedJitter(): Long
@@ -141,15 +138,6 @@ class NativeVoiceEngine : EngineNative {
 
         @JvmStatic
         private external fun nativeCloseStreams(handle: Long)
-
-        @JvmStatic
-        private external fun nativeAwaitWork(handle: Long, timeoutMs: Int): Boolean
-
-        @JvmStatic
-        private external fun nativeWakeForStop(handle: Long)
-
-        @JvmStatic
-        private external fun nativeLastHasActiveVoices(handle: Long): Boolean
 
         @JvmStatic
         private external fun nativeLastDroppedInbound(handle: Long): Long
@@ -308,23 +296,6 @@ class NativeVoiceEngine : EngineNative {
         if (handle != 0L) {
             nativeCloseStreams(handle)
         }
-    }
-
-    override fun awaitWork(timeoutMs: Int): Boolean {
-        val handle = nativeHandle.get()
-        return handle != 0L && nativeAwaitWork(handle, timeoutMs)
-    }
-
-    override fun wakeForStop() {
-        val handle = nativeHandle.get()
-        if (handle != 0L) {
-            nativeWakeForStop(handle)
-        }
-    }
-
-    override fun lastHasActiveVoices(): Boolean {
-        val handle = nativeHandle.get()
-        return handle != 0L && nativeLastHasActiveVoices(handle)
     }
 
     override fun lastDroppedInbound(): Long {

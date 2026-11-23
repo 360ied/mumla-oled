@@ -54,9 +54,7 @@
 
 using mumla::audio::AudioOutputEngine;
 using mumla::audio::InboundPacket;
-using mumla::voice_io::CaptureGuard;
 using mumla::voice_io::PolicyCell;
-using mumla::voice_io::RenderGuard;
 using mumla::voice_io::SettingsCell;
 using mumla::voice_io::TalkCell;
 using mumla::voice_io::TalkPublication;
@@ -734,16 +732,15 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCaptureFrame(JNIEnv* env,
     if (ptr == nullptr) {
         return;
     }
-    CaptureGuard guard(&ctx->streams.captureActive);
-    // Never attaches to the JVM and never calls into Kotlin: the caller's env
-    // touches only the PCM array, and framing pushes into the outbound ring.
-    ctx->send.captureFrame(reinterpret_cast<int16_t*>(ptr + offset),
-                           static_cast<size_t>(length));
+    // Step 5b: the JNI test entry drives exactly the body AAudio's capture
+    // callback runs. It owns the debug guard and the status counter, and
+    // never attaches to the JVM or calls into Kotlin.
+    mumla::voice_io::captureStreamFrames(
+        &ctx->streams, reinterpret_cast<int16_t*>(ptr + offset),
+        static_cast<size_t>(length));
     // Capture owns the PCM copy (engine copies per frame, remainder carried
     // inside VoiceSend), so the Java array is never written back.
     env->ReleaseShortArrayElements(pcm, ptr, JNI_ABORT);
-    ctx->streams.lastDroppedOutbound.store(ctx->send.droppedOutbound(),
-                                           std::memory_order_relaxed);
 }
 
 JNIEXPORT jint JNICALL
@@ -772,68 +769,23 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeRender(JNIEnv* env, jclass /*
     if (t_renderScratch.size() < static_cast<size_t>(length)) {
         t_renderScratch.resize(static_cast<size_t>(length));
     }
-    RenderGuard guard(&ctx->streams.renderActive);
-    VoiceIo::RenderOut result;
-    // Never attaches to the JVM and never calls into Kotlin: the caller's
-    // env touches only the PCM array below, and the talk snapshot waits in
-    // the sequence lock for the notifier thread.
-    ctx->io.render(t_renderScratch.data(), static_cast<size_t>(length), &result);
-    ctx->streams.lastHasActiveVoices.store(result.hasActiveVoices,
-                                           std::memory_order_relaxed);
-    ctx->streams.lastDroppedInbound.store(result.droppedInbound,
-                                          std::memory_order_relaxed);
-    ctx->streams.lastDroppedTunnel.store(result.droppedTunnel,
-                                         std::memory_order_relaxed);
-    ctx->streams.lastDroppedJitter.store(result.droppedJitter,
-                                         std::memory_order_relaxed);
-    ctx->streams.lastDroppedOutbound.store(ctx->send.droppedOutbound(),
-                                           std::memory_order_relaxed);
-    if (result.samples > 0) {
-        env->SetShortArrayRegion(out, offset, static_cast<jsize>(result.samples),
-                                 t_renderScratch.data());
-        if (env->ExceptionCheck()) {
-            LOGE("nativeRender: SetShortArrayRegion failed, dropping %zu samples",
-                 result.samples);
-            env->ExceptionClear();
-            return 0;
-        }
+    // Step 5b: the JNI test entry drives exactly the body AAudio's render
+    // callback runs, including whole-frame quanta, the carry buffer, the
+    // debug guard, and the status counters. It never calls into Kotlin.
+    const bool silent = mumla::voice_io::renderStreamFrames(
+        &ctx->streams, t_renderScratch.data(), static_cast<size_t>(length));
+    if (silent) {
+        return 0;
     }
-    return static_cast<jint>(result.samples);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_se_lublin_humla_voice_NativeVoiceEngine_nativeAwaitWork(JNIEnv* /*env*/,
-                                                             jclass /*clazz*/,
-                                                             jlong handle,
-                                                             jint timeoutMs) {
-    VoiceEngineContext* ctx = getContext(handle);
-    if (ctx == nullptr) {
-        return JNI_FALSE;
+    env->SetShortArrayRegion(out, offset, static_cast<jsize>(length),
+                             t_renderScratch.data());
+    if (env->ExceptionCheck()) {
+        LOGE("nativeRender: SetShortArrayRegion failed, dropping %d samples",
+             length);
+        env->ExceptionClear();
+        return 0;
     }
-    return ctx->io.awaitWork(timeoutMs) ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_se_lublin_humla_voice_NativeVoiceEngine_nativeWakeForStop(JNIEnv* /*env*/,
-                                                               jclass /*clazz*/,
-                                                               jlong handle) {
-    VoiceEngineContext* ctx = getContext(handle);
-    if (ctx != nullptr) {
-        ctx->io.wakeForStop();
-    }
-}
-
-JNIEXPORT jboolean JNICALL
-Java_se_lublin_humla_voice_NativeVoiceEngine_nativeLastHasActiveVoices(JNIEnv* /*env*/,
-                                                                       jclass /*clazz*/,
-                                                                       jlong handle) {
-    VoiceEngineContext* ctx = getContext(handle);
-    if (ctx == nullptr) {
-        return JNI_FALSE;
-    }
-    return ctx->streams.lastHasActiveVoices.load(std::memory_order_relaxed)
-               ? JNI_TRUE
-               : JNI_FALSE;
+    return static_cast<jint>(length);
 }
 
 JNIEXPORT jlong JNICALL

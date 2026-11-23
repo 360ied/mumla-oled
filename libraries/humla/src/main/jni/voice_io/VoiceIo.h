@@ -21,7 +21,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <semaphore.h>
 
 #include "AudioOutputEngine.h"
 #include "VoiceRings.h"
@@ -33,7 +32,7 @@ class TalkCell;
 class SettingsCell;
 
 /**
- * Native voice I/O core (step 5a.3a native render, 5a.3b render wake).
+ * Native voice I/O core (step 5a.3a native render; step 5b callback mode).
  *
  * Owns the output engine and the two inbound rings; the render thread is the
  * only thread that touches the engine. Producers never reach the engine:
@@ -55,14 +54,9 @@ class SettingsCell;
  * is native from 5a.4 (render reads the settings cell and the capture
  * self-talking flag, both lock-free).
  *
- * Render wake (5a.3b item 1): a POSIX semaphore owned here. Render waits in
- * awaitWork between render calls after a silent quantum; every producer
- * pushes first, then posts only if it clears the idle flag, so one push
- * either lands before render's ring check or carries the post. Stop posts
- * unconditionally. The semaphore remembers the post, so a stop racing the
- * wait entry cannot strand render and no thread interrupt is needed. The
- * wait is not a lock: it blocks only between render calls, after a quantum
- * with no audio. The only realtime syscalls remain audio I/O plus sem_post.
+ * In step 5b AAudio calls render once per burst, so there is no idle state,
+ * no render wake, and no producer posts: the callback writes zeros through
+ * silence and the engine is fed whole 10 ms frames by the stream layer.
  */
 class VoiceIo {
 public:
@@ -90,7 +84,6 @@ public:
     // Render result for the Kotlin idle wait and the drop-count log.
     struct RenderOut {
         size_t samples = 0; // mixed PCM samples written to out (0 when silent)
-        bool hasActiveVoices = false; // the idle wait reads this, not an engine call
         uint64_t droppedInbound = 0; // cumulative full-ring drops
         uint64_t droppedTunnel = 0; // cumulative full-ring drops (voice + removals)
         uint64_t droppedJitter = 0; // cumulative pool-exhausted drops from the engine
@@ -123,19 +116,6 @@ public:
      */
     void render(int16_t* out, size_t samples, RenderOut* result);
 
-    // Waits for work after a silent quantum (render thread only, between
-    // render calls, never inside one). Sets idle, rechecks both rings, and
-    // skips the wait when either is non-empty. timeoutMs < 0 waits
-    // indefinitely (no active voices); otherwise waits at most timeoutMs
-    // (20 ms with active voices). Returns true when either ring is
-    // non-empty after the wait, false on a timeout with both still empty.
-    // Timeouts use sem_clockwait on CLOCK_MONOTONIC (API 30, the minimum
-    // SDK). Never attaches to the JVM, never calls into Kotlin.
-    bool awaitWork(int timeoutMs);
-    // Unconditional post for Stop (control thread): clears no flag, the
-    // semaphore remembers the post across a racing wait entry.
-    void wakeForStop();
-
     // Attaches the talk cell render publishes into after every render.
     // Control thread only, while render is stopped (no race: render is the
     // only reader of this pointer and it never runs concurrently).
@@ -161,16 +141,9 @@ private:
     void publishTalk();
     static bool talkEqual(const TalkSnapshot& a, const TalkSnapshot& b);
 
-    void postIfIdle();
-
     std::unique_ptr<mumla::audio::AudioOutputEngine> m_engine;
     SpscRing<mumla::audio::InboundPacket, kInboundRingCapacity> m_inbound;
     SpscRing<TunnelItem, kTunnelRingCapacity> m_tunnel;
-    // Render-wake state (5a.3b item 1). idle is sequentially consistent on
-    // both sides so a push either lands before render's ring check or sees
-    // the flag; at most one post per idle period.
-    std::atomic<bool> m_idle{false};
-    sem_t m_sem;
     TalkCell* m_talkCell = nullptr;
     SettingsCell* m_settingsCell = nullptr;
     const std::atomic<bool>* m_selfTalking = nullptr;

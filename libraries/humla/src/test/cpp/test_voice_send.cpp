@@ -436,7 +436,6 @@ void testHalfDuplexRenderSilences() {
     for (size_t i = 0; i < result.samples; ++i) {
         TEST_ASSERT_EQ(pcm[i], 0);
     }
-    TEST_ASSERT_TRUE(result.hasActiveVoices);
     std::cout << "  [PASS] testHalfDuplexRenderSilences" << std::endl;
 }
 
@@ -655,6 +654,33 @@ void testRenderCallbackWholeFramesGateAndFec() {
     std::cout << "  [PASS] testRenderCallbackWholeFramesGateAndFec" << std::endl;
 }
 
+void testRenderCallbackSilenceReportCoversCarry() {
+    g_testCount++;
+    // A burst that only consumes leftover PCM from a non-silent carry frame
+    // must not report silence: nativeRender returns 0 on silence, so that
+    // would hide the audio from the host and interop test entries.
+    StreamFixture fixture;
+    for (uint32_t seq = 0; seq <= 5; ++seq) {
+        TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(13, seq)));
+    }
+    std::vector<int16_t> out(96);
+    int audibleBursts = 0;
+    for (int i = 0; i < 5 * 8; ++i) {
+        const bool silent =
+            renderStreamFrames(&fixture.streams, out.data(), 96);
+        int peak = 0;
+        for (int16_t sample : out) {
+            peak = std::max<int>(peak, std::abs(static_cast<int>(sample)));
+        }
+        if (peak > 100) {
+            ++audibleBursts;
+            TEST_ASSERT_FALSE(silent);
+        }
+    }
+    TEST_ASSERT_TRUE(audibleBursts > 0);
+    std::cout << "  [PASS] testRenderCallbackSilenceReportCoversCarry" << std::endl;
+}
+
 void testCaptureCallbackForwardsAnyBlock() {
     g_testCount++;
     StreamFixture fixture;
@@ -720,6 +746,7 @@ void run_voice_send_tests() {
     testSendStartStopIdempotent();
     testRenderCallbackBurstsWriteExactly();
     testRenderCallbackWholeFramesGateAndFec();
+    testRenderCallbackSilenceReportCoversCarry();
     testCaptureCallbackForwardsAnyBlock();
     testNotifierDeliversDisconnectWithoutTalkChange();
 }

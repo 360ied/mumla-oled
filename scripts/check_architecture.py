@@ -21,7 +21,8 @@ Four checks (see docs/target-architecture/enforcement.md):
   2. Android-free packages: state/client/net must not import android(x)/R.
   3. Native tripwire: forbidden I/O/thread/JNI headers in no-I/O native dirs.
   4. Voice lifecycle: the voice_io JNI destroy/clear paths keep the debug
-     assert that the render thread is stopped (RenderGuard protocol).
+     assert that render is stopped, and the AAudio callback bodies set
+     renderActive through RenderGuard.
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -129,38 +130,51 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
 )
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
 
-# 5a.3b native receive lifecycle: the JNI destroy/reset paths must keep the
-# debug assert that the render thread is stopped (RenderGuard protocol in
-# NativeVoiceEngineJni.cpp: render is pipeline-owned in 5a, so reset runs at
-# the next Start when no render is live). Once the file lands, removing an
-# assert or the guard fails the gate.
+# 5a.3b native receive lifecycle, split in 5b: the JNI destroy/reset paths
+# keep the debug assert that render is stopped, while the AAudio callback
+# bodies (also used by the JNI test entries) own the RenderGuard itself.
+# Once both files land, removing an assert or the guard fails the gate.
 VOICE_IO_LIFECYCLE_FILE = (
     "libraries/humla/src/main/jni/voice_io/NativeVoiceEngineJni.cpp"
+)
+VOICE_IO_CALLBACKS_FILE = (
+    "libraries/humla/src/main/jni/voice_io/VoiceStreamCallbacks.cpp"
 )
 RE_RENDER_GUARD_USE = re.compile(r"\bRenderGuard\s+\w+")
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 
 
 def check_voice_lifecycle(root: Path):
-    """Return list of error strings for the voice_io lifecycle asserts."""
-    f = root / VOICE_IO_LIFECYCLE_FILE
-    if not f.is_file():
+    """Return list of error strings for the voice_io lifecycle pins."""
+    lifecycle = root / VOICE_IO_LIFECYCLE_FILE
+    callbacks = root / VOICE_IO_CALLBACKS_FILE
+    if not lifecycle.is_file() and not callbacks.is_file():
         return []
-    try:
-        text = f.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return [f"voice-lifecycle: cannot read {VOICE_IO_LIFECYCLE_FILE}"]
     errors = []
-    if not RE_RENDER_GUARD_USE.search(text):
+    try:
+        lifecycle_text = lifecycle.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        lifecycle_text = ""
         errors.append(
-            f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has no RenderGuard; "
-            f"render must set renderActive while inside VoiceIo::render"
+            f"voice-lifecycle: cannot read {VOICE_IO_LIFECYCLE_FILE}"
         )
-    asserts = RE_RENDER_ACTIVE_ASSERT.findall(text)
+    try:
+        callbacks_text = callbacks.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        callbacks_text = ""
+        errors.append(
+            f"voice-lifecycle: cannot read {VOICE_IO_CALLBACKS_FILE}"
+        )
+    asserts = RE_RENDER_ACTIVE_ASSERT.findall(lifecycle_text)
     if len(asserts) < 2:
         errors.append(
             f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has {len(asserts)} "
             f"renderActive assert(s), expected >= 2 (destroy and clear paths)"
+        )
+    if not RE_RENDER_GUARD_USE.search(callbacks_text):
+        errors.append(
+            f"voice-lifecycle: {VOICE_IO_CALLBACKS_FILE} has no RenderGuard; "
+            f"the render callback must set renderActive while inside VoiceIo::render"
         )
     return errors
 
