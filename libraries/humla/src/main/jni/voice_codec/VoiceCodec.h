@@ -52,7 +52,8 @@ inline constexpr uint8_t kLegacyPing = 1;
 inline constexpr uint8_t kLegacyVoiceOpus = 4;
 
 // Outbound voice: one EncodedPacket -> one datagram payload (unencrypted).
-// Returns bytes written, 0 on failure (capacity too small, oversize opus).
+// Returns bytes written, 0 on failure (capacity too small, oversize opus, or
+// an empty protobuf payload, which upstream rejects on receive).
 size_t frameVoice(UdpFormat format,
                   const audio::EncodedPacket& packet,
                   uint32_t voiceTarget,

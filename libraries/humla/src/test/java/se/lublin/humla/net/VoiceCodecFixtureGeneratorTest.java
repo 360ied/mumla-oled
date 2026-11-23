@@ -144,8 +144,9 @@ public class VoiceCodecFixtureGeneratorTest extends TestCase {
         byte[] protoWhisper = protobufVoiceBytes(7, 999L, opusPattern(100), true);
         write("frame-protobuf-voice-whisper-terminator.bin", protoWhisper, protoWhisper.length);
 
-        byte[] protoEmpty = protobufVoiceBytes(0, 999L, new byte[0], true);
-        write("frame-protobuf-voice-empty-terminator.bin", protoEmpty, protoEmpty.length);
+        // No protobuf empty-payload fixture: upstream rejects an Audio message
+        // without opus_data, and frameVoice(PROTOBUF) refuses to frame one.
+        // Only the legacy format has an empty terminator (above).
 
         byte[] legacyPing = legacyPingBytes(987654321L);
         write("frame-legacy-ping-basic.bin", legacyPing, legacyPing.length);

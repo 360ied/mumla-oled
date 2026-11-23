@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,21 @@ mumla::audio::EncodedPacket makePacket(const uint8_t* opus,
     packet.isTerminator = terminator;
     packet.frameNumber = frameNumber;
     return packet;
+}
+
+// Minimal MumbleUDP.Audio with one Opus byte and a float
+// volume_adjustment (field 7, wire type 5/fixed32). Built here rather than
+// as a JVM fixture because these are edge and malformed wire values.
+std::vector<uint8_t> protobufAudioWithGain(float gain) {
+    // 0x00 type byte; 0x2A 0x01 0x0A = opus_data (field 5) of one byte;
+    // 0x3D = volume_adjustment (field 7), fixed32.
+    std::vector<uint8_t> datagram = {0x00, 0x2A, 0x01, 0x0A, 0x3D};
+    uint32_t bits = 0;
+    std::memcpy(&bits, &gain, sizeof(bits));
+    for (int i = 0; i < 4; ++i) {
+        datagram.push_back(static_cast<uint8_t>((bits >> (8 * i)) & 0xFFu));
+    }
+    return datagram;
 }
 
 void checkBytes(const uint8_t* actual,
@@ -133,12 +149,16 @@ void run_voice_codec_tests() {
         if (!expected.empty()) checkBytes(out, n, expected);
     }
     {
+        // An empty protobuf payload is invalid on the wire (upstream rejects
+        // it on receive), so framing refuses to produce one. The legacy
+        // format still allows an empty terminator, as the test above pins.
         auto packet = makePacket(nullptr, 0, 999, true);
         uint8_t out[4096];
-        size_t n = mumla::voice_codec::frameVoice(UdpFormat::PROTOBUF, packet, 0, out, sizeof(out));
-        TEST_ASSERT_TRUE(n > 0);
-        auto expected = readFixture("frame-protobuf-voice-empty-terminator.bin");
-        if (!expected.empty()) checkBytes(out, n, expected);
+        TEST_ASSERT_EQ(mumla::voice_codec::frameVoice(
+                           UdpFormat::PROTOBUF, packet, 0, out, sizeof(out)),
+                       static_cast<size_t>(0));
+        TEST_ASSERT_TRUE(mumla::voice_codec::frameVoice(
+                             UdpFormat::LEGACY, packet, 0, out, sizeof(out)) > 0);
     }
     {
         uint8_t out[32];
@@ -177,6 +197,35 @@ void run_voice_codec_tests() {
             // The fixture sets volume_adjustment 0.5f.
             TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 0.5f);
             TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
+        }
+    }
+    {
+        // Only a positive finite factor survives the wire: 0 means unset,
+        // and a peer can send a negative or non-finite value. Anything else
+        // falls back to unity before it reaches InboundPacket.
+        struct GainCase {
+            float wire;
+            float expected;
+        };
+        const GainCase cases[] = {
+            {0.0f, 1.0f},
+            {-0.0f, 1.0f},
+            {-1.0f, 1.0f},
+            {std::numeric_limits<float>::quiet_NaN(), 1.0f},
+            {std::numeric_limits<float>::infinity(), 1.0f},
+            {-std::numeric_limits<float>::infinity(), 1.0f},
+            {0.25f, 0.25f},
+            {2.0f, 2.0f},
+            {8.0f, 8.0f},
+        };
+        for (const auto& gainCase : cases) {
+            auto data = protobufAudioWithGain(gainCase.wire);
+            ParsedDatagram parsed;
+            TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
+            TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment ==
+                             gainCase.expected);
         }
     }
     {
@@ -220,6 +269,9 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frames[1].sequence, static_cast<uint32_t>(101));
             TEST_ASSERT_EQ(parsed.frames[1].length, static_cast<uint16_t>(4));
             TEST_ASSERT_TRUE(parsed.frames[1].isTerminator);
+            // Legacy datagrams carry no gain at all: every frame stays 1.0.
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 1.0f);
+            TEST_ASSERT_TRUE(parsed.frames[1].volumeAdjustment == 1.0f);
             TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
         }
     }
@@ -245,6 +297,7 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
             TEST_ASSERT_EQ(parsed.frames[0].length, static_cast<uint16_t>(0));
             TEST_ASSERT_TRUE(parsed.frames[0].isTerminator);
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 1.0f);
         }
     }
 

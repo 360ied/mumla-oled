@@ -46,13 +46,14 @@ void testJitterBufferPutAndGet() {
     TEST_ASSERT(jb != nullptr);
 
     char payload[] = "opus_packet_sample_data_12345678";
-    JitterBufferPacket putPkt;
+    JitterBufferPacket putPkt = {};
     putPkt.data = payload;
     putPkt.len = sizeof(payload);
     putPkt.timestamp = 0;
     putPkt.span = 480;
     putPkt.sequence = 1;
     putPkt.user_data = 42;
+    putPkt.volume_adjustment = 0.25f;
 
     jitter_buffer_put(jb, &putPkt);
 
@@ -61,7 +62,7 @@ void testJitterBufferPutAndGet() {
     TEST_ASSERT_EQ(1, avail);
 
     char outBuf[128];
-    JitterBufferPacket getPkt;
+    JitterBufferPacket getPkt = {};
     getPkt.data = outBuf;
     getPkt.len = sizeof(outBuf);
 
@@ -71,6 +72,8 @@ void testJitterBufferPutAndGet() {
     TEST_ASSERT_EQ(sizeof(payload), getPkt.len);
     TEST_ASSERT(std::memcmp(payload, outBuf, sizeof(payload)) == 0);
     TEST_ASSERT_EQ(42u, getPkt.user_data);
+    // The packet's server gain survives the round trip with its own bytes.
+    TEST_ASSERT_EQ(0.25f, getPkt.volume_adjustment);
 
     jitter_buffer_destroy(jb);
     std::cout << "  [PASS] testJitterBufferPutAndGet" << std::endl;
@@ -85,27 +88,29 @@ void testJitterBufferOutOfOrderPackets() {
     char data2[] = "packet_two";
 
     // Insert packet 2 first (ts=480)
-    JitterBufferPacket pkt2;
+    JitterBufferPacket pkt2 = {};
     pkt2.data = data2;
     pkt2.len = sizeof(data2);
     pkt2.timestamp = 480;
     pkt2.span = 480;
     pkt2.sequence = 2;
     pkt2.user_data = 2;
+    pkt2.volume_adjustment = 4.0f;
     jitter_buffer_put(jb, &pkt2);
 
     // Insert packet 1 second (ts=0)
-    JitterBufferPacket pkt1;
+    JitterBufferPacket pkt1 = {};
     pkt1.data = data1;
     pkt1.len = sizeof(data1);
     pkt1.timestamp = 0;
     pkt1.span = 480;
     pkt1.sequence = 1;
     pkt1.user_data = 1;
+    pkt1.volume_adjustment = 0.5f;
     jitter_buffer_put(jb, &pkt1);
 
     char outBuf[128];
-    JitterBufferPacket getPkt;
+    JitterBufferPacket getPkt = {};
     getPkt.data = outBuf;
     getPkt.len = sizeof(outBuf);
 
@@ -114,6 +119,7 @@ void testJitterBufferOutOfOrderPackets() {
     int res1 = jitter_buffer_get(jb, &getPkt, 480, &startOffset);
     TEST_ASSERT_EQ(JITTER_BUFFER_OK, res1);
     TEST_ASSERT_EQ(1u, getPkt.user_data);
+    TEST_ASSERT_EQ(0.5f, getPkt.volume_adjustment);
     TEST_ASSERT(std::memcmp(data1, outBuf, sizeof(data1)) == 0);
 
     // Retrieve second packet: should be packet 2
@@ -121,6 +127,7 @@ void testJitterBufferOutOfOrderPackets() {
     int res2 = jitter_buffer_get(jb, &getPkt, 480, &startOffset);
     TEST_ASSERT_EQ(JITTER_BUFFER_OK, res2);
     TEST_ASSERT_EQ(2u, getPkt.user_data);
+    TEST_ASSERT_EQ(4.0f, getPkt.volume_adjustment);
     TEST_ASSERT(std::memcmp(data2, outBuf, sizeof(data2)) == 0);
 
     jitter_buffer_destroy(jb);
@@ -143,7 +150,7 @@ void testJitterBufferMarginAndTick() {
 
     // Put a packet at ts=0, span=480
     char payload[] = "frame";
-    JitterBufferPacket putPkt;
+    JitterBufferPacket putPkt = {};
     putPkt.data = payload;
     putPkt.len = sizeof(payload);
     putPkt.timestamp = 0;
@@ -154,7 +161,7 @@ void testJitterBufferMarginAndTick() {
 
     // Get the packet
     char outBuf[128];
-    JitterBufferPacket getPkt;
+    JitterBufferPacket getPkt = {};
     getPkt.data = outBuf;
     getPkt.len = sizeof(outBuf);
     spx_int32_t startOffset = 0;
@@ -182,7 +189,7 @@ void testJitterBufferAdaptiveTimingHistogram() {
     // and the SPEEX_MOVE macro that shifts elements in the timing buffer.
     char dummyPayload[] = "test_payload_for_timing_histogram";
     for (int i = 0; i < 50; i++) {
-        JitterBufferPacket pkt;
+        JitterBufferPacket pkt = {};
         pkt.data = dummyPayload;
         pkt.len = sizeof(dummyPayload);
         pkt.timestamp = i * 480;
@@ -193,7 +200,7 @@ void testJitterBufferAdaptiveTimingHistogram() {
         jitter_buffer_put(jb, &pkt);
 
         char outBuf[128];
-        JitterBufferPacket getPkt;
+        JitterBufferPacket getPkt = {};
         getPkt.data = outBuf;
         getPkt.len = sizeof(outBuf);
         spx_int32_t startOffset = 0;
@@ -254,7 +261,7 @@ void testJitterBufferPacketAllocator() {
     TEST_ASSERT(jb != nullptr);
     jitter_buffer_set_packet_allocator(jb, &testPoolAlloc, &testPoolFree, &pool);
 
-    JitterBufferPacket pkt;
+    JitterBufferPacket pkt = {};
     char payload[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     pkt.data = payload;
     pkt.len = sizeof(payload);
@@ -273,7 +280,7 @@ void testJitterBufferPacketAllocator() {
     TEST_ASSERT_EQ(pool.allocs, 2);
 
     // Consuming a packet returns its slot to the pool.
-    JitterBufferPacket out;
+    JitterBufferPacket out = {};
     char outBytes[32];
     out.data = outBytes;
     out.len = sizeof(outBytes);

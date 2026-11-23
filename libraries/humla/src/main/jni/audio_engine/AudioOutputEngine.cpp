@@ -43,11 +43,12 @@ constexpr float kSaturationKnee = 0.5f;
 constexpr size_t kRenderEventCapacity = AudioOutputEngine::MAX_VOICES * 2;
 
 // Sanitized server gain for one packet. The protobuf field's own contract
-// makes 0 mean "unset", which arrives as 1.0 already from the parser; a peer
-// can still send a negative, zero or non-finite value, and the engine keeps
-// unity for anything that is not a positive number. Clamping the upper end
-// is the server's business (it computes the listener's adjustment), as in
-// upstream, whose client multiplies the factor without a range check.
+// makes 0 mean "unset", which arrives as 1.0 already from the parser; a
+// direct caller can still pass a negative, zero or non-finite value, and the
+// engine keeps unity for anything that is not a positive finite number.
+// Clamping the upper end is the server's business (it computes the listener's
+// adjustment), as in upstream, whose client multiplies the factor without a
+// range check.
 float packetGain(float volumeAdjustment) {
     return (volumeAdjustment > 0.0f && std::isfinite(volumeAdjustment))
                ? volumeAdjustment

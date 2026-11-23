@@ -1075,6 +1075,31 @@ void testReceiveSocketErrorClearsRunning() {
     std::cout << "  [PASS] testReceiveSocketErrorClearsRunning" << std::endl;
 }
 
+void testEmptyProtobufTerminatorDeliversNoFrames() {
+    g_testCount++;
+    VoiceIo io(fakeFactory());
+    PolicyCell policy;
+    VoiceReceive rx(&io, &policy);
+    rx.setFormat(mumla::voice_codec::UdpFormat::PROTOBUF, 0);
+    const int32_t known[] = {42};
+    policy.publish(nullptr, 0, known, 1, false, false, false, 0, 40000, 2);
+    size_t delivered = 0;
+    rx.setVoiceSink([&](const InboundPacket* /*frames*/, size_t count,
+                        bool /*tunnel*/) { delivered += count; });
+    // MumbleUDP.Audio { sender_session = 42, frame_number = 999,
+    // is_terminator = true } with no opus_data. Upstream rejects such a
+    // packet, so nothing reaches the UDP or tunnel ingest rings: the voice
+    // ends by dead-miss expiry instead of an immediate drain.
+    const uint8_t empty[] = {0x00, 0x18, 0x2A, 0x20, 0xE7, 0x07,
+                             0x80, 0x01, 0x01};
+    TEST_ASSERT_TRUE(rx.handlePlaintext(empty, sizeof(empty)));
+    TEST_ASSERT_EQ(delivered, static_cast<size_t>(0));
+    TEST_ASSERT_TRUE(rx.handleTunnelled(empty, sizeof(empty)));
+    TEST_ASSERT_EQ(delivered, static_cast<size_t>(0));
+    std::cout << "  [PASS] testEmptyProtobufTerminatorDeliversNoFrames"
+              << std::endl;
+}
+
 } // namespace
 
 void run_voice_send_tests();
@@ -1116,6 +1141,7 @@ void run_voice_io_tests() {
     testClearDrainsRingsAndCountsResetDiscards();
     testReceiveStopLeavesNothing();
     testReceiveSocketErrorClearsRunning();
+    testEmptyProtobufTerminatorDeliversNoFrames();
 }
 
 int main() {

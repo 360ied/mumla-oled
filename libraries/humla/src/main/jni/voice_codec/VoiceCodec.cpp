@@ -17,6 +17,7 @@
 
 #include "VoiceCodec.h"
 
+#include <cmath>
 #include <cstring>
 
 #include <pb_decode.h>
@@ -297,12 +298,16 @@ bool parseProtobufVoice(const uint8_t* data, size_t length, ParsedDatagram* out)
     if (!pb_decode(&stream, MumbleUDP_Audio_fields, &msg)) {
         return false;
     }
-    // The field's own contract: 0 means unset, i.e. no adjustment. Any other
-    // value is the server's gain for this listener and rides the packet to
-    // render. Positional data is parsed and ignored, legacy packets carry no
-    // gain at all.
+    // The field's own contract: 0 means unset, i.e. no adjustment. Only a
+    // positive finite value is a usable gain; anything else (unset, a peer's
+    // negative or non-finite value) falls back to unity here, so an
+    // InboundPacket never carries an invalid factor. packetGain in the output
+    // engine repeats the check for callers that bypass the parser. Positional
+    // data is parsed and ignored; legacy packets carry no gain at all.
     const float gain =
-        msg.volume_adjustment > 0.0f ? msg.volume_adjustment : 1.0f;
+        (msg.volume_adjustment > 0.0f && std::isfinite(msg.volume_adjustment))
+            ? msg.volume_adjustment
+            : 1.0f;
     if (msg.opus_data.size == 0) {
         // No audio data: upstream rejects such a packet as invalid, whether or
         // not it is flagged as a terminator, so it yields no frame here
@@ -386,6 +391,12 @@ size_t frameVoice(UdpFormat format,
         return total;
     }
     if (packet.size > audio::kMaxOpusBufferBytes) return 0;
+    // Upstream rejects an Audio message without opus_data, and the receive
+    // side now drops one as invalid. Never frame it: the input engine encodes
+    // a full packet of silence for a terminator with an empty accumulator, so
+    // no live sender produces this shape. Legacy framing still allows an
+    // empty terminator, which is how legacy peers end a burst.
+    if (packet.size == 0) return 0;
     MumbleUDP_Audio msg = MumbleUDP_Audio_init_zero;
     if (voiceTarget != 0) {
         msg.which_Header = MumbleUDP_Audio_target_tag;

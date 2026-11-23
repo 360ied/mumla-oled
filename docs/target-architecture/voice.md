@@ -216,7 +216,7 @@ struct InboundPacket {
     uint32_t sequence;
     int flags;                   // talk context
     bool isTerminator;
-    float volumeAdjustment;      // server factor, 1.0 when unset
+    float volumeAdjustment;      // server factor, 1.0 when unset or invalid
     uint16_t length;
     uint8_t data[AudioOutputEngine::MAX_PACKET_BYTES];
 };
@@ -358,22 +358,31 @@ Formats, ported byte-for-byte from today's Kotlin:
   empty `opus_data` yields no frame whether or not `is_terminator` is set:
   upstream rejects audio packets without data, and no conforming sender
   emits one (our encoder zero-fills a full silence packet for a
-  terminator).
+  terminator). Outbound protobuf framing refuses an empty payload too, so
+  the codec never emits a packet its own parser drops; the legacy format
+  still allows an empty terminator.
 - **Pings**: legacy (`UDPPing` type byte, then the timestamp) and protobuf
   (`0x01` type byte, then `MumbleUDP.Ping`).
 
 **Volume adjustment.** `MumbleUDP.Audio.volume_adjustment` is a per-packet
 factor the server computes for this listener (channel listening volumes on
 a protobuf server); the field's own contract makes `0` mean unset. The
-parser carries it in `InboundPacket.volumeAdjustment`, `1.0` when unset;
-the jitter buffer keeps it with the packet; render multiplies that packet's
-decoded samples by it as they are written into the voice scratch. Per
-packet and unsmoothed, which is upstream's behavior (it applies the last
-received packet's factor to the whole mixed quantum). Concealment and FEC
+parser carries it in `InboundPacket.volumeAdjustment`, `1.0` when unset or
+when a peer sends a non-positive or non-finite value; the jitter buffer
+keeps it with the packet; render multiplies that packet's decoded samples
+by it as they are written into the voice scratch. Concealment and FEC
 chunks stand in for a lost packet and use the voice's last seen factor.
-Legacy packets carry no factor. Applying the listener's local per-channel
-volume against pre-1.5 servers is a separate upstream branch and remains
-absent (see the [feature gap
+Legacy packets carry no factor.
+
+Two deliberate divergences from upstream's client, both recorded in [open
+items](open-items.md): upstream applies the last dequeued packet's factor
+to the whole mixed quantum, after its own fades, while here each packet
+carries its own factor and is scaled before the crossfades (a mid-quantum
+change therefore steps at a packet boundary); and upstream multiplies
+whatever factor arrives, while here anything that is not positive and
+finite falls back to unity. With a constant, valid factor the two agree.
+Applying the listener's local per-channel volume against pre-1.5 servers
+is a separate upstream branch and remains absent (see the [feature gap
 audit](../../upstream-feature-gap-audit/01-protocol-transport.md)).
 
 There is no 1.2.2 codec workaround. Today's `applyLegacyCodecWorkaround`
@@ -819,7 +828,8 @@ UDP, whichever comes last, and stays open across tunnel switches until
 `Stop`. `format` and
 `legacyServerVersion` come from the transport, which fixes them at the
 server's first `Version` (see [transport](transport.md#udp-packet-format)).
-The version is recorded for the session; no codec path reads it (see
+The version is retained in `VoiceFormat` and passed to `nativeSetFormat`,
+which discards it; no codec path reads it (see
 [issue 35](issues/35-legacy-server-version-unread.md)).
 
 ### Outputs

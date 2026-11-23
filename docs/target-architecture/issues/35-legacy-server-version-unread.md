@@ -4,10 +4,10 @@
 |---|---|
 | Status | Open; deletion only |
 | Category | Benign drift |
-| Severity | Benign (dead parameter chain; one misleading spec sentence) |
-| Verified | Yes, by search of `libraries/humla/src/main` for `legacyServerVersion` after the codec tail commits |
+| Severity | Benign (dead parameter chain) |
+| Verified | Yes, by search of `libraries/humla/src/main` for `legacyServerVersion` and `m_legacyVersion` after the codec tail commits |
 | Area | Transport, voice |
-| Spec | [voice.md § Kotlin facade](../voice.md#kotlin-facade), [transport.md § UDP packet format](../transport.md#udp-packet-format) |
+| Spec | [voice.md § Kotlin facade](../voice.md#kotlin-facade), [transport.md § UDP packet format](../transport.md#udp-packet-format), [client.md § Intents](../client.md#intents) (all corrected in the review follow-up) |
 | Code | `net/Transport.kt` (`VoiceFormat.legacyServerVersion`), `client/HumlaClient.kt` (`transportVoiceFormat`), `voice/VoiceEngine.kt`, `voice/NativeVoiceEngine.kt` (`setFormat`), `jni/voice_io/NativeVoiceEngineJni.cpp` (`nativeSetFormat`), `jni/voice_io/VoiceReceive.{h,cpp}`, `jni/voice_io/VoiceSend.{h,cpp}` |
 | Gates | Not gating |
 
@@ -19,14 +19,17 @@ was dead (the legacy format only ever yields `VoiceOpus`) and was deleted
 with the [codec tail](../open-items.md#resolved), so nothing reads the
 version any more. What remains is a parameter chain with no reader:
 `VoiceFormat.legacyServerVersion` → `VoiceCommand.Start` →
-`NativeVoiceEngine.setFormat` → `nativeSetFormat` →
-`VoiceReceive::m_legacyVersion` (stored, never consulted; `VoiceSend`
-already documents its copy as retained only so one `setFormat` covers both
-halves).
+`NativeVoiceEngine.setFormat` → `nativeSetFormat` → `VoiceReceive::setFormat`
+and `VoiceSend::setFormat`, where both native halves ignore the argument.
+The `m_legacyVersion` member that once stored it was deleted with the
+workaround; the parameters remain only so one `setFormat` covers both
+halves through the JNI.
 
 The transport still *decides* the format from the same `Version` message,
 so the decision itself stays; only the version carried beside it is
-unused.
+unused. The `VoiceFormat` KDoc and `client.md`'s `Start` sketch still
+described the version as keying the workaround; both were corrected in the
+review follow-up.
 
 ## Fix directions
 
@@ -44,5 +47,6 @@ choice explicit instead of leaving the parameter chain to rot.
 ## Acceptance criteria
 
 No `legacyServerVersion` in `libraries/humla/src/main`, or a reader for it
-in the codec or an explicitly documented deferred home; `transport.md` and
-`voice.md` sketches match the code; `./scripts/check.sh` green.
+in the codec or an explicitly documented deferred home; `client.md`,
+`transport.md`, and `voice.md` sketches match the code;
+`./scripts/check.sh` green.

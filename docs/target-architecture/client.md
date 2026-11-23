@@ -250,8 +250,9 @@ class Session internal constructor(
 7. The client publishes `Connected(session)`, sends `SessionStarted` to
    `RouteControl`, and submits `VoiceCommand.Start` with the server's UDP
    address, the crypt keys, the UDP packet format and the server's legacy
-   version (for the 1.2.2 codec workaround), both from the transport's
-   `voiceFormat`, and the tunnel sink, which is the transport's `sendTunnelled`
+   version (retained from `Version` but unread now that the 1.2.2 workaround
+   is gone), both from the transport's `voiceFormat`, and the tunnel sink,
+   which is the transport's `sendTunnelled`
    (see [voice](voice.md#kotlin-facade)).
    Codec and input settings reach the `VoiceEngine` from the settings flow,
    not through the client.
