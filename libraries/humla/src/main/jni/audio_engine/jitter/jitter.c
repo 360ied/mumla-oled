@@ -504,6 +504,7 @@ EXPORT int jitter_buffer_put(JitterBuffer *jitter, const JitterBufferPacket *pac
       jitter->packets[i].len=packet->len;
       jitter->packets[i].sequence=packet->sequence;
       jitter->packets[i].user_data=packet->user_data;
+      jitter->packets[i].volume_adjustment=packet->volume_adjustment;
       if (jitter->reset_state || late)
          jitter->arrival[i] = 0;
       else
@@ -674,6 +675,7 @@ EXPORT int jitter_buffer_get(JitterBuffer *jitter, JitterBufferPacket *packet, s
       packet->span = jitter->packets[i].span;
       packet->sequence = jitter->packets[i].sequence;
       packet->user_data = jitter->packets[i].user_data;
+      packet->volume_adjustment = jitter->packets[i].volume_adjustment;
       /* Point to the end of the current packet */
       jitter->pointer_timestamp = jitter->packets[i].timestamp+jitter->packets[i].span;
 
@@ -755,6 +757,7 @@ EXPORT int jitter_buffer_get_another(JitterBuffer *jitter, JitterBufferPacket *p
       packet->span = jitter->packets[i].span;
       packet->sequence = jitter->packets[i].sequence;
       packet->user_data = jitter->packets[i].user_data;
+      packet->volume_adjustment = jitter->packets[i].volume_adjustment;
       return JITTER_BUFFER_OK;
    } else {
       packet->data = NULL;

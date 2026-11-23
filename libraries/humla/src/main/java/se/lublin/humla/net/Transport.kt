@@ -74,8 +74,9 @@ enum class UdpFormat { LEGACY, PROTOBUF }
 
 /**
  * The session's voice format: the UDP framing plus the server's legacy
- * version, which keys the 1.2.2 codec workaround. Carried by
- * `VoiceCommand.Start` as `format` (5a.3b facade).
+ * version, retained from the first `Version`. The version used to key the
+ * 1.2.2 codec workaround; that workaround is gone, so no codec path reads it
+ * (issue 35). Carried by `VoiceCommand.Start` as `format` (5a.3b facade).
  */
 data class VoiceFormat(val udp: UdpFormat, val legacyServerVersion: Int) {
     companion object {

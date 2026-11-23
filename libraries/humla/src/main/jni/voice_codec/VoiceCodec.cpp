@@ -17,6 +17,7 @@
 
 #include "VoiceCodec.h"
 
+#include <cmath>
 #include <cstring>
 
 #include <pb_decode.h>
@@ -174,27 +175,11 @@ bool readVarint(const uint8_t* data, size_t length, size_t* offset, int64_t* val
     return true;
 }
 
-uint8_t applyLegacyCodecWorkaround(uint8_t header, uint32_t version) {
-    if (version != kLegacyCodecWorkaroundVersion) {
-        return header;
-    }
-    uint8_t ordinal = static_cast<uint8_t>((header >> 5) & 0x07);
-    if (ordinal == kLegacyVoiceCeltBeta) {
-        ordinal = kLegacyVoiceCeltAlpha;
-    } else if (ordinal == kLegacyVoiceCeltAlpha) {
-        ordinal = kLegacyVoiceCeltBeta;
-    } else {
-        return header;
-    }
-    return static_cast<uint8_t>(((ordinal << 5) & 0xFF) | (header & 0x1F));
-}
-
 bool parseLegacyVoice(const uint8_t* data,
                       size_t length,
-                      uint32_t workaroundVersion,
                       ParsedDatagram* out) {
     if (length < 1) return false;
-    uint8_t header = applyLegacyCodecWorkaround(data[0], workaroundVersion);
+    uint8_t header = data[0];
     uint8_t dataType = static_cast<uint8_t>((header >> 5) & 0x07);
     if (dataType != kLegacyVoiceOpus) {
         out->kind = ParsedDatagram::UNKNOWN;
@@ -313,8 +298,21 @@ bool parseProtobufVoice(const uint8_t* data, size_t length, ParsedDatagram* out)
     if (!pb_decode(&stream, MumbleUDP_Audio_fields, &msg)) {
         return false;
     }
-    // Positional data and volume_adjustment are parsed and ignored, as today.
-    if (msg.opus_data.size == 0 && !msg.is_terminator) {
+    // The field's own contract: 0 means unset, i.e. no adjustment. Only a
+    // positive finite value is a usable gain; anything else (unset, a peer's
+    // negative or non-finite value) falls back to unity here, so an
+    // InboundPacket never carries an invalid factor. packetGain in the output
+    // engine repeats the check for callers that bypass the parser. Positional
+    // data is parsed and ignored; legacy packets carry no gain at all.
+    const float gain =
+        (msg.volume_adjustment > 0.0f && std::isfinite(msg.volume_adjustment))
+            ? msg.volume_adjustment
+            : 1.0f;
+    if (msg.opus_data.size == 0) {
+        // No audio data: upstream rejects such a packet as invalid, whether or
+        // not it is flagged as a terminator, so it yields no frame here
+        // either. A conforming sender never emits one — a terminator with
+        // nothing accumulated is a full packet of encoded silence.
         out->kind = ParsedDatagram::VOICE;
         out->session = static_cast<int32_t>(msg.sender_session);
         out->frameCount = 0;
@@ -329,6 +327,7 @@ bool parseProtobufVoice(const uint8_t* data, size_t length, ParsedDatagram* out)
     audio::InboundPacket& frame = out->frames[0];
     frame.session = static_cast<int32_t>(msg.sender_session);
     frame.sequence = static_cast<uint32_t>(msg.frame_number);
+    frame.volumeAdjustment = gain;
     if (msg.which_Header == MumbleUDP_Audio_context_tag) {
         frame.flags = static_cast<int>(msg.Header.context);
     } else {
@@ -392,6 +391,12 @@ size_t frameVoice(UdpFormat format,
         return total;
     }
     if (packet.size > audio::kMaxOpusBufferBytes) return 0;
+    // Upstream rejects an Audio message without opus_data, and the receive
+    // side now drops one as invalid. Never frame it: the input engine encodes
+    // a full packet of silence for a terminator with an empty accumulator, so
+    // no live sender produces this shape. Legacy framing still allows an
+    // empty terminator, which is how legacy peers end a burst.
+    if (packet.size == 0) return 0;
     MumbleUDP_Audio msg = MumbleUDP_Audio_init_zero;
     if (voiceTarget != 0) {
         msg.which_Header = MumbleUDP_Audio_target_tag;
@@ -438,18 +443,17 @@ size_t framePing(UdpFormat format, uint64_t timestampMicros, uint8_t* out, size_
 bool parseDatagram(UdpFormat format,
                    const uint8_t* data,
                    size_t length,
-                   uint32_t legacyCodecWorkaroundVersion,
                    ParsedDatagram* out) {
     if (data == nullptr || out == nullptr) return false;
     *out = ParsedDatagram();
     if (length == 0) return false;
     if (format == UdpFormat::LEGACY) {
-        uint8_t header = applyLegacyCodecWorkaround(data[0], legacyCodecWorkaroundVersion);
+        uint8_t header = data[0];
         uint8_t dataType = static_cast<uint8_t>((header >> 5) & 0x07);
         if (dataType == kLegacyPing) {
             return parseLegacyPing(data, length, out);
         } else if (dataType == kLegacyVoiceOpus) {
-            return parseLegacyVoice(data, length, legacyCodecWorkaroundVersion, out);
+            return parseLegacyVoice(data, length, out);
         }
         out->kind = ParsedDatagram::UNKNOWN;
         return true;

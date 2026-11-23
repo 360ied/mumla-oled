@@ -216,6 +216,7 @@ struct InboundPacket {
     uint32_t sequence;
     int flags;                   // talk context
     bool isTerminator;
+    float volumeAdjustment;      // server factor, 1.0 when unset or invalid
     uint16_t length;
     uint8_t data[AudioOutputEngine::MAX_PACKET_BYTES];
 };
@@ -259,6 +260,11 @@ public:
   adaptation (see [testing](testing.md#native-host-suite)): loss,
   reordering and compression bursts for 60 simulated seconds at the
   production margin peak at 140 of 1024 slots with zero drops.
+- **Volume adjustment.** `InboundPacket.volumeAdjustment` rides the packet
+  into the jitter buffer and is applied when that packet's decoded samples
+  are written into the voice scratch, before the mix. FEC and concealment
+  chunks stand in for a lost packet and use the voice's last seen factor,
+  so a loss never snaps a listener's adjustment back to unity.
 - **Render quantum.** The I/O layer never calls `render` with more than
   `MAX_QUANTUM_SAMPLES` (60 ms), so the scratch buffers' slow-path resize
   never runs. The engine asserts this in debug builds.
@@ -325,7 +331,7 @@ struct ParsedDatagram {
     uint32_t maxBandwidthPerUser;                    // protobuf ping, 0 if absent
 };
 bool parseDatagram(UdpFormat, const uint8_t* data, size_t length,
-                   uint32_t legacyCodecWorkaroundVersion, ParsedDatagram* out);
+                   ParsedDatagram* out);
 ```
 
 `kMaxFramesPerDatagram` is 12, the output engine's largest bundle
@@ -347,13 +353,43 @@ Formats, ported byte-for-byte from today's Kotlin:
 - **Protobuf voice**: a `0x00` type byte, then a `MumbleUDP.Audio` message
   with `target` (only when non-zero), `frame_number`, `opus_data`, and
   `is_terminator` (only when set). Inbound messages use `context`,
-  `sender_session`, `frame_number`, `opus_data`, and `is_terminator`; an
-  empty `opus_data` with `is_terminator` is still delivered, as today.
-  Positional data and `volume_adjustment` are parsed and ignored, as today.
+  `sender_session`, `frame_number`, `opus_data`, `volume_adjustment`, and
+  `is_terminator`. Positional data is parsed and ignored, as today. An
+  empty `opus_data` yields no frame whether or not `is_terminator` is set:
+  upstream rejects audio packets without data, and no conforming sender
+  emits one (our encoder zero-fills a full silence packet for a
+  terminator). Outbound protobuf framing refuses an empty payload too, so
+  the codec never emits a packet its own parser drops; the legacy format
+  still allows an empty terminator.
 - **Pings**: legacy (`UDPPing` type byte, then the timestamp) and protobuf
   (`0x01` type byte, then `MumbleUDP.Ping`).
-- **1.2.2 workaround**: today's `applyLegacyCodecWorkaround`, applied when
-  the server's legacy version is `0x10202`.
+
+**Volume adjustment.** `MumbleUDP.Audio.volume_adjustment` is a per-packet
+factor the server computes for this listener (channel listening volumes on
+a protobuf server); the field's own contract makes `0` mean unset. The
+parser carries it in `InboundPacket.volumeAdjustment`, `1.0` when unset or
+when a peer sends a non-positive or non-finite value; the jitter buffer
+keeps it with the packet; render multiplies that packet's decoded samples
+by it as they are written into the voice scratch. Concealment and FEC
+chunks stand in for a lost packet and use the voice's last seen factor.
+Legacy packets carry no factor.
+
+Two deliberate divergences from upstream's client, both recorded in [open
+items](open-items.md): upstream applies the last dequeued packet's factor
+to the whole mixed quantum, after its own fades, while here each packet
+carries its own factor and is scaled before the crossfades (a mid-quantum
+change therefore steps at a packet boundary); and upstream multiplies
+whatever factor arrives, while here anything that is not positive and
+finite falls back to unity. With a constant, valid factor the two agree.
+Applying the listener's local per-channel volume against pre-1.5 servers
+is a separate upstream branch and remains absent (see the historical
+[feature gap audit](../upstream-feature-gap-audit/01-protocol-transport.md)).
+
+There is no 1.2.2 codec workaround. The former `applyLegacyCodecWorkaround`
+swapped the CELT Alpha/Beta ordinals for servers reporting `0x10202`; the
+legacy format only ever yields `VoiceOpus` here, so both CELT variants were
+dropped either way, and upstream 1.5 drops non-Opus legacy voice instead of
+swapping it.
 
 ### Protobuf through nanopb
 
@@ -792,6 +828,9 @@ UDP, whichever comes last, and stays open across tunnel switches until
 `Stop`. `format` and
 `legacyServerVersion` come from the transport, which fixes them at the
 server's first `Version` (see [transport](transport.md#udp-packet-format)).
+The version is retained in `VoiceFormat` and passed to `nativeSetFormat`,
+which discards it; no codec path reads it (see
+[issue 35](issues/35-legacy-server-version-unread.md)).
 
 ### Outputs
 

@@ -135,7 +135,6 @@ private:
     PolicyCell* m_policy;
     humla::crypto::CryptStateOCB2 m_crypt;
     voice_codec::UdpFormat m_format = voice_codec::UdpFormat::LEGACY;
-    uint32_t m_legacyVersion = 0;
 
     std::atomic<bool> m_running{false};
     // Socket fd. Control owns its lifetime (start/stop, one thread);

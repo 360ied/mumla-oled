@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,21 @@ mumla::audio::EncodedPacket makePacket(const uint8_t* opus,
     packet.isTerminator = terminator;
     packet.frameNumber = frameNumber;
     return packet;
+}
+
+// Minimal MumbleUDP.Audio with one Opus byte and a float
+// volume_adjustment (field 7, wire type 5/fixed32). Built here rather than
+// as a JVM fixture because these are edge and malformed wire values.
+std::vector<uint8_t> protobufAudioWithGain(float gain) {
+    // 0x00 type byte; 0x2A 0x01 0x0A = opus_data (field 5) of one byte;
+    // 0x3D = volume_adjustment (field 7), fixed32.
+    std::vector<uint8_t> datagram = {0x00, 0x2A, 0x01, 0x0A, 0x3D};
+    uint32_t bits = 0;
+    std::memcpy(&bits, &gain, sizeof(bits));
+    for (int i = 0; i < 4; ++i) {
+        datagram.push_back(static_cast<uint8_t>((bits >> (8 * i)) & 0xFFu));
+    }
+    return datagram;
 }
 
 void checkBytes(const uint8_t* actual,
@@ -133,12 +149,16 @@ void run_voice_codec_tests() {
         if (!expected.empty()) checkBytes(out, n, expected);
     }
     {
+        // An empty protobuf payload is invalid on the wire (upstream rejects
+        // it on receive), so framing refuses to produce one. The legacy
+        // format still allows an empty terminator, as the test above pins.
         auto packet = makePacket(nullptr, 0, 999, true);
         uint8_t out[4096];
-        size_t n = mumla::voice_codec::frameVoice(UdpFormat::PROTOBUF, packet, 0, out, sizeof(out));
-        TEST_ASSERT_TRUE(n > 0);
-        auto expected = readFixture("frame-protobuf-voice-empty-terminator.bin");
-        if (!expected.empty()) checkBytes(out, n, expected);
+        TEST_ASSERT_EQ(mumla::voice_codec::frameVoice(
+                           UdpFormat::PROTOBUF, packet, 0, out, sizeof(out)),
+                       static_cast<size_t>(0));
+        TEST_ASSERT_TRUE(mumla::voice_codec::frameVoice(
+                             UdpFormat::LEGACY, packet, 0, out, sizeof(out)) > 0);
     }
     {
         uint8_t out[32];
@@ -155,13 +175,14 @@ void run_voice_codec_tests() {
         if (!expected.empty()) checkBytes(out, n, expected);
     }
 
-    // Inbound parsing (positional data and volume ignored, extended ping kept).
+    // Inbound parsing (positional data ignored, server volume adjustment kept,
+    // extended ping kept).
     {
         auto data = readFixture("parse-protobuf-voice-positional.bin");
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::PROTOBUF, data.data(), data.size(), 0, &parsed));
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
             TEST_ASSERT_EQ(parsed.session, 42);
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
@@ -173,7 +194,49 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frames[0].data[1], 0x0B);
             TEST_ASSERT_EQ(parsed.frames[0].data[2], 0x0C);
             TEST_ASSERT_TRUE(!parsed.frames[0].isTerminator);
+            // The fixture sets volume_adjustment 0.5f.
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 0.5f);
             TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
+        }
+    }
+    {
+        // Only a positive finite factor survives the wire: 0 means unset,
+        // and a peer can send a negative or non-finite value. Anything else
+        // falls back to unity before it reaches InboundPacket.
+        struct GainCase {
+            float wire;
+            float expected;
+        };
+        const GainCase cases[] = {
+            {0.0f, 1.0f},
+            {-0.0f, 1.0f},
+            {-1.0f, 1.0f},
+            {std::numeric_limits<float>::quiet_NaN(), 1.0f},
+            {std::numeric_limits<float>::infinity(), 1.0f},
+            {-std::numeric_limits<float>::infinity(), 1.0f},
+            {0.25f, 0.25f},
+            {2.0f, 2.0f},
+            {8.0f, 8.0f},
+        };
+        for (const auto& gainCase : cases) {
+            auto data = protobufAudioWithGain(gainCase.wire);
+            ParsedDatagram parsed;
+            TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
+            TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment ==
+                             gainCase.expected);
+        }
+    }
+    {
+        // No volume_adjustment field on the wire: unity gain, not zero.
+        auto data = readFixture("frame-protobuf-voice-basic.bin");
+        if (!data.empty()) {
+            ParsedDatagram parsed;
+            TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
+            TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 1.0f);
         }
     }
     {
@@ -181,7 +244,7 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::PROTOBUF, data.data(), data.size(), 0, &parsed));
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::PING);
             TEST_ASSERT_EQ(parsed.pingTimestamp, static_cast<uint64_t>(987654321));
             TEST_ASSERT_EQ(parsed.serverVersionV2, static_cast<uint64_t>(0x0001000500010000ULL));
@@ -193,7 +256,7 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::LEGACY, data.data(), data.size(), 0, &parsed));
+                UdpFormat::LEGACY, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
             TEST_ASSERT_EQ(parsed.session, 42);
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(2));
@@ -206,7 +269,22 @@ void run_voice_codec_tests() {
             TEST_ASSERT_EQ(parsed.frames[1].sequence, static_cast<uint32_t>(101));
             TEST_ASSERT_EQ(parsed.frames[1].length, static_cast<uint16_t>(4));
             TEST_ASSERT_TRUE(parsed.frames[1].isTerminator);
+            // Legacy datagrams carry no gain at all: every frame stays 1.0.
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 1.0f);
+            TEST_ASSERT_TRUE(parsed.frames[1].volumeAdjustment == 1.0f);
             TEST_ASSERT_EQ(parsed.droppedFrames, static_cast<uint32_t>(0));
+        }
+    }
+    {
+        // Empty opus_data is invalid upstream, terminator flag or not: no frame.
+        auto data = readFixture("parse-protobuf-voice-empty-terminator.bin");
+        if (!data.empty()) {
+            ParsedDatagram parsed;
+            TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
+                UdpFormat::PROTOBUF, data.data(), data.size(), &parsed));
+            TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
+            TEST_ASSERT_EQ(parsed.session, 42);
+            TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(0));
         }
     }
     {
@@ -214,11 +292,12 @@ void run_voice_codec_tests() {
         if (!data.empty()) {
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::LEGACY, data.data(), data.size(), 0, &parsed));
+                UdpFormat::LEGACY, data.data(), data.size(), &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
             TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(1));
             TEST_ASSERT_EQ(parsed.frames[0].length, static_cast<uint16_t>(0));
             TEST_ASSERT_TRUE(parsed.frames[0].isTerminator);
+            TEST_ASSERT_TRUE(parsed.frames[0].volumeAdjustment == 1.0f);
         }
     }
 
@@ -235,7 +314,7 @@ void run_voice_codec_tests() {
             TEST_ASSERT_TRUE(n >= 2 && n <= 10);
             ParsedDatagram parsed;
             TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-                UdpFormat::LEGACY, out, n, 0, &parsed));
+                UdpFormat::LEGACY, out, n, &parsed));
             TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::PING);
             TEST_ASSERT_EQ(parsed.pingTimestamp, static_cast<uint64_t>(stamp));
         }
@@ -246,14 +325,14 @@ void run_voice_codec_tests() {
         const uint8_t protobufUnknown[] = {0x02, 0x00};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-            UdpFormat::PROTOBUF, protobufUnknown, sizeof(protobufUnknown), 0, &parsed));
+            UdpFormat::PROTOBUF, protobufUnknown, sizeof(protobufUnknown), &parsed));
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::UNKNOWN);
     }
     {
         const uint8_t legacyCeltAlpha[] = {0x00, 0x00};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-            UdpFormat::LEGACY, legacyCeltAlpha, sizeof(legacyCeltAlpha), 0, &parsed));
+            UdpFormat::LEGACY, legacyCeltAlpha, sizeof(legacyCeltAlpha), &parsed));
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::UNKNOWN);
     }
 
@@ -262,13 +341,13 @@ void run_voice_codec_tests() {
         const uint8_t truncated[] = {0x80};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(!mumla::voice_codec::parseDatagram(
-            UdpFormat::LEGACY, truncated, sizeof(truncated), 0, &parsed));
+            UdpFormat::LEGACY, truncated, sizeof(truncated), &parsed));
     }
     {
         const uint8_t badProtobuf[] = {0x00, 0xFF, 0xFF, 0xFF};
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(!mumla::voice_codec::parseDatagram(
-            UdpFormat::PROTOBUF, badProtobuf, sizeof(badProtobuf), 0, &parsed));
+            UdpFormat::PROTOBUF, badProtobuf, sizeof(badProtobuf), &parsed));
     }
 
     // Twelve-frame bound: frames past the twelfth drop and count. Twenty
@@ -290,7 +369,7 @@ void run_voice_codec_tests() {
         }
         ParsedDatagram parsed;
         TEST_ASSERT_TRUE(mumla::voice_codec::parseDatagram(
-            UdpFormat::LEGACY, bundled, pos, 0, &parsed));
+            UdpFormat::LEGACY, bundled, pos, &parsed));
         TEST_ASSERT_TRUE(parsed.kind == ParsedDatagram::VOICE);
         TEST_ASSERT_EQ(parsed.frameCount, static_cast<size_t>(12));
         TEST_ASSERT_EQ(parsed.frames[11].sequence, static_cast<uint32_t>(61));

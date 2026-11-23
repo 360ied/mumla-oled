@@ -144,8 +144,10 @@ public class VoiceCodecFixtureGeneratorTest extends TestCase {
         byte[] protoWhisper = protobufVoiceBytes(7, 999L, opusPattern(100), true);
         write("frame-protobuf-voice-whisper-terminator.bin", protoWhisper, protoWhisper.length);
 
-        byte[] protoEmpty = protobufVoiceBytes(0, 999L, new byte[0], true);
-        write("frame-protobuf-voice-empty-terminator.bin", protoEmpty, protoEmpty.length);
+        // No outbound protobuf empty-payload framing fixture: upstream rejects
+        // an Audio message without opus_data, and frameVoice(PROTOBUF) refuses
+        // to frame one. The legacy format still frames an empty terminator;
+        // an inbound protobuf empty terminator parse fixture is written below.
 
         byte[] legacyPing = legacyPingBytes(987654321L);
         write("frame-legacy-ping-basic.bin", legacyPing, legacyPing.length);
@@ -169,6 +171,17 @@ public class VoiceCodecFixtureGeneratorTest extends TestCase {
         positionalPacket[0] = 0x00;
         System.arraycopy(positionalProto, 0, positionalPacket, 1, positionalProto.length);
         write("parse-protobuf-voice-positional.bin", positionalPacket, positionalPacket.length);
+
+        MumbleUDP.Audio emptyTerminator = MumbleUDP.Audio.newBuilder()
+                .setSenderSession(42)
+                .setFrameNumber(999L)
+                .setIsTerminator(true)
+                .build();
+        byte[] emptyTerminatorProto = emptyTerminator.toByteArray();
+        byte[] emptyTerminatorPacket = new byte[1 + emptyTerminatorProto.length];
+        emptyTerminatorPacket[0] = 0x00;
+        System.arraycopy(emptyTerminatorProto, 0, emptyTerminatorPacket, 1, emptyTerminatorProto.length);
+        write("parse-protobuf-voice-empty-terminator.bin", emptyTerminatorPacket, emptyTerminatorPacket.length);
 
         long v2 = Constants.toVersionV2(1, 5, 1);
         MumbleUDP.Ping extended = MumbleUDP.Ping.newBuilder()

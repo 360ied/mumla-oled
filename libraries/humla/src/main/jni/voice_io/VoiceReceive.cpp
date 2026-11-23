@@ -53,9 +53,14 @@ VoiceReceive::VoiceReceive(VoiceIo* io, PolicyCell* policy)
 
 VoiceReceive::~VoiceReceive() { stop(); }
 
-void VoiceReceive::setFormat(voice_codec::UdpFormat format, uint32_t legacyVersion) {
+void VoiceReceive::setFormat(voice_codec::UdpFormat format,
+                             uint32_t /*legacyVersion*/) {
+    // Framing and parsing are version-independent: the 1.2.2 CELT ordinal
+    // swap that keyed on the server version was dead (only VoiceOpus is
+    // accepted from the legacy format) and is gone, as upstream 1.5 drops
+    // non-Opus legacy voice. The parameter is retained so one setFormat
+    // covers both halves through the JNI.
     m_format = format;
-    m_legacyVersion = legacyVersion;
 }
 
 bool VoiceReceive::setKeys(const uint8_t key[16], const uint8_t eiv[16],
@@ -88,7 +93,7 @@ bool VoiceReceive::handlePlaintext(const uint8_t* data, size_t length) {
         return false;
     }
     voice_codec::ParsedDatagram parsed;
-    if (!voice_codec::parseDatagram(m_format, data, length, m_legacyVersion, &parsed)) {
+    if (!voice_codec::parseDatagram(m_format, data, length, &parsed)) {
         return false;
     }
     if (parsed.kind == voice_codec::ParsedDatagram::PING) {
@@ -165,7 +170,7 @@ bool VoiceReceive::handleTunnelled(const uint8_t* data, size_t length) {
         return false;
     }
     voice_codec::ParsedDatagram parsed;
-    if (!voice_codec::parseDatagram(m_format, data, length, m_legacyVersion, &parsed)) {
+    if (!voice_codec::parseDatagram(m_format, data, length, &parsed)) {
         return false;
     }
     if (parsed.kind == voice_codec::ParsedDatagram::PING) {

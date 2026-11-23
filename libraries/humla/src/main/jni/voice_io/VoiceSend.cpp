@@ -77,9 +77,9 @@ VoiceSend::~VoiceSend() {
 }
 
 void VoiceSend::setFormat(voice_codec::UdpFormat format, uint32_t /*legacyVersion*/) {
-    // Framing is version-independent (frameVoice takes no version; the
-    // receive side consumes the legacy version for parsing). The parameter
-    // is retained so one setFormat covers both halves through the JNI.
+    // Framing and parsing are version-independent; both native halves discard
+    // the legacy version. The parameter is retained so one setFormat covers
+    // both halves through the JNI.
     m_format.store(format == voice_codec::UdpFormat::PROTOBUF ? 1 : 0,
                    std::memory_order_release);
 }

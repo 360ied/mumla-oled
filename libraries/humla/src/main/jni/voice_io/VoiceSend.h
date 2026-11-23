@@ -184,8 +184,9 @@ private:
     TunnelSink m_tunnelSink;
 
     // Per-session framing (control writes while capture stopped; capture
-    // and send read lock-free). Framing itself is version-independent, so
-    // no legacy version is stored here; the receive half owns its copy.
+    // and send read lock-free). Framing and parsing are version-independent;
+    // neither half stores the legacy version. The setFormat parameter stays
+    // only so one JNI call covers both halves.
     std::atomic<int> m_format{0}; // 0 legacy, 1 protobuf
     std::atomic<bool> m_useUdp{false};
 

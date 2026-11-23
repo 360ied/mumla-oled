@@ -25,6 +25,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -208,11 +209,19 @@ public:
 
     void queuePacket(int32_t session, const uint8_t* data, size_t len,
                      uint32_t sequence, int flags, bool isTerminator) {
+        queuePacketGain(session, data, len, sequence, flags, isTerminator,
+                        1.0f);
+    }
+
+    void queuePacketGain(int32_t session, const uint8_t* data, size_t len,
+                         uint32_t sequence, int flags, bool isTerminator,
+                         float volumeAdjustment) {
         InboundPacket packet;
         packet.session = session;
         packet.sequence = sequence;
         packet.flags = flags;
         packet.isTerminator = isTerminator;
+        packet.volumeAdjustment = volumeAdjustment;
         if (data != nullptr && len > 0 && len <= AudioOutputEngine::MAX_PACKET_BYTES) {
             std::memcpy(packet.data, data, len);
             packet.length = static_cast<uint16_t>(len);
@@ -300,6 +309,14 @@ void queueOne(TestEngine& engine, int32_t session, uint32_t seq,
     uint8_t payload[8] = {0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68};
     engine.queuePacket(session, payload, sizeof(payload), seq, flags,
                        terminator);
+}
+
+void queueOneGain(TestEngine& engine, int32_t session, uint32_t seq,
+                  float volumeAdjustment, int flags = 0,
+                  bool terminator = false) {
+    uint8_t payload[8] = {0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68};
+    engine.queuePacketGain(session, payload, sizeof(payload), seq, flags,
+                           terminator, volumeAdjustment);
 }
 
 int peakAbs(const std::vector<int16_t>& out) {
@@ -639,10 +656,11 @@ void testDecodeCappedAt120ms() {
 
 void testEmptyTerminatorDrainsVoice() {
     g_testCount++;
-    // End-of-speech with no Opus payload (empty protobuf/UDP terminator)
+    // End-of-speech with no Opus payload (the legacy zero-length terminator)
     // must still end the voice as PASSIVE instead of lingering to the
     // miss-expiry: queue speech, flag the empty terminator, then render
-    // until the voice drains.
+    // until the voice drains. A protobuf empty terminator is dropped by the
+    // codec and never reaches the engine.
     std::vector<TalkEvent> events;
     auto engine = makeEngine(0.5f, &events);
     queueOne(*engine, 91, 0);
@@ -1213,6 +1231,182 @@ void testTalkEventCapacityContract() {
     std::cout << "  [PASS] testTalkEventCapacityContract" << std::endl;
 }
 
+// The server's per-packet volume adjustment is a plain gain on that packet's
+// decoded audio: half in, half out, with the same fades and mix path.
+void testVolumeAdjustmentScalesDecodedAudio() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto unity = makeEngine(0.5f, &events);
+    auto half = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*unity);
+    openGateOnFirstFrame(*half);
+    queueOneGain(*unity, 21, 0, 1.0f);
+    queueOneGain(*half, 21, 0, 0.5f);
+    std::vector<int16_t> loud(kFrame, 0);
+    std::vector<int16_t> quiet(kFrame, 0);
+    TEST_ASSERT_EQ(unity->renderMix(loud.data(), loud.size()),
+                   static_cast<size_t>(kFrame));
+    TEST_ASSERT_EQ(half->renderMix(quiet.data(), quiet.size()),
+                   static_cast<size_t>(kFrame));
+    // Fades are identical on both sides, so every sample halves, to within
+    // the int16 rounding at the output stage.
+    for (size_t i = 0; i < loud.size(); ++i) {
+        const int expected = loud[i] / 2;
+        TEST_ASSERT_TRUE(std::abs(static_cast<int>(quiet[i]) - expected) <= 1);
+    }
+    TEST_ASSERT_TRUE(peakAbs(quiet) > 0);
+    std::cout << "  [PASS] testVolumeAdjustmentScalesDecodedAudio" << std::endl;
+}
+
+// A loss keeps the sender's last adjustment: concealment stands in for a
+// missing packet, and snapping back to unity there would pump the volume.
+void testVolumeAdjustmentSurvivesLoss() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto unity = makeEngine(0.5f, &events);
+    auto quarter = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*unity);
+    openGateOnFirstFrame(*quarter);
+    queueOneGain(*unity, 22, 0, 1.0f);
+    queueOneGain(*quarter, 22, 0, 0.25f);
+    std::vector<int16_t> scratch(kFrame, 0);
+    unity->renderMix(scratch.data(), scratch.size());
+    quarter->renderMix(scratch.data(), scratch.size());
+    // No packet for the next slot: concealment carries the last gain.
+    std::vector<int16_t> loud(kFrame, 0);
+    std::vector<int16_t> quiet(kFrame, 0);
+    unity->renderMix(loud.data(), loud.size());
+    quarter->renderMix(quiet.data(), quiet.size());
+    TEST_ASSERT_TRUE(peakAbs(quiet) > 0);
+    // Within a tenth: the concealed chunk passes the same fades and the int16
+    // output stage rounds, so the quarter gain shows up as a quarter, not
+    // exactly.
+    const int quarterPeak = peakAbs(quiet) * 4;
+    TEST_ASSERT_TRUE(std::abs(quarterPeak - peakAbs(loud)) <=
+                     peakAbs(loud) / 10);
+    std::cout << "  [PASS] testVolumeAdjustmentSurvivesLoss" << std::endl;
+}
+
+// A peer can send a negative, zero or non-finite factor; the engine keeps
+// unity rather than inverting or silencing the voice. The parser filters the
+// same values, but direct engine callers (and interop) must be safe too.
+void testVolumeAdjustmentRejectsInvalidGain() {
+    g_testCount++;
+    const float invalid[] = {0.0f,
+                             -1.0f,
+                             -0.0f,
+                             std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::infinity(),
+                             -std::numeric_limits<float>::infinity()};
+    for (float gain : invalid) {
+        std::vector<TalkEvent> events;
+        auto unity = makeEngine(0.5f, &events);
+        auto odd = makeEngine(0.5f, &events);
+        openGateOnFirstFrame(*unity);
+        openGateOnFirstFrame(*odd);
+        queueOneGain(*unity, 23, 0, 1.0f);
+        queueOneGain(*odd, 23, 0, gain);
+        std::vector<int16_t> loud(kFrame, 0);
+        std::vector<int16_t> same(kFrame, 0);
+        unity->renderMix(loud.data(), loud.size());
+        odd->renderMix(same.data(), same.size());
+        for (size_t i = 0; i < loud.size(); ++i) {
+            TEST_ASSERT_EQ(same[i], loud[i]);
+        }
+    }
+    std::cout << "  [PASS] testVolumeAdjustmentRejectsInvalidGain" << std::endl;
+}
+
+// Gains above unity are legal (the server can boost a listener). Below the
+// saturation knee the output is linear, so doubling the gain doubles every
+// sample through the same fade-in.
+void testVolumeAdjustmentAmplifiesAudio() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto unity = makeEngine(0.2f, &events);
+    auto louder = makeEngine(0.2f, &events);
+    openGateOnFirstFrame(*unity);
+    openGateOnFirstFrame(*louder);
+    queueOneGain(*unity, 25, 0, 1.0f);
+    queueOneGain(*louder, 25, 0, 2.0f);
+    std::vector<int16_t> base(kFrame, 0);
+    std::vector<int16_t> doubled(kFrame, 0);
+    TEST_ASSERT_EQ(unity->renderMix(base.data(), base.size()),
+                   static_cast<size_t>(kFrame));
+    TEST_ASSERT_EQ(louder->renderMix(doubled.data(), doubled.size()),
+                   static_cast<size_t>(kFrame));
+    for (size_t i = 0; i < base.size(); ++i) {
+        TEST_ASSERT_TRUE(std::abs(static_cast<int>(doubled[i]) -
+                                  static_cast<int>(base[i]) * 2) <= 1);
+    }
+    TEST_ASSERT_TRUE(peakAbs(doubled) > peakAbs(base));
+    std::cout << "  [PASS] testVolumeAdjustmentAmplifiesAudio" << std::endl;
+}
+
+// Two packets with different gains sit in the jitter buffer at once and are
+// dequeued in sequence order even when inserted out of order: the gain must
+// follow its own packet, not the insertion order or the last arrival.
+void testVolumeAdjustmentFollowsPacketThroughJitter() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto reference = makeEngine(0.5f, &events);
+    auto mixed = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*reference);
+    openGateOnFirstFrame(*mixed);
+    // Insert the later frame first on both engines; the jitter buffer must
+    // return the earlier frame first, with its own gain.
+    queueOneGain(*reference, 26, 1, 1.0f);
+    queueOneGain(*reference, 26, 0, 1.0f);
+    queueOneGain(*mixed, 26, 1, 0.25f);
+    queueOneGain(*mixed, 26, 0, 1.0f);
+    const size_t count = 2 * kFrame;
+    std::vector<int16_t> base(count, 0);
+    std::vector<int16_t> scaled(count, 0);
+    TEST_ASSERT_EQ(reference->renderMix(base.data(), base.size()), count);
+    TEST_ASSERT_EQ(mixed->renderMix(scaled.data(), scaled.size()), count);
+    // First 10 ms: both gains are unity, so the frame matches exactly despite
+    // the shared fade-in. Second 10 ms: only the mixed engine's later frame
+    // carries 0.25, to within the int16 output rounding.
+    for (int i = 0; i < kFrame; ++i) {
+        TEST_ASSERT_EQ(scaled[i], base[i]);
+    }
+    for (int i = kFrame; i < 2 * kFrame; ++i) {
+        TEST_ASSERT_TRUE(std::abs(static_cast<int>(scaled[i]) -
+                                  static_cast<int>(base[i]) / 4) <= 1);
+    }
+    std::cout << "  [PASS] testVolumeAdjustmentFollowsPacketThroughJitter"
+              << std::endl;
+}
+
+// With no terminator at all (what an empty protobuf terminator now becomes,
+// since the codec drops it), the voice ends by the dead-miss expiry rather
+// than an immediate drain. Contrast testEmptyTerminatorDrainsVoice, which
+// feeds a legacy zero-length terminator straight to the engine.
+void testMissingTerminatorExpiresByDeadMiss() {
+    g_testCount++;
+    std::vector<TalkEvent> events;
+    auto engine = makeEngine(0.5f, &events);
+    openGateOnFirstFrame(*engine);
+    queueOne(*engine, 93, 0);
+    std::vector<int16_t> out(kFrame, 0);
+    int quanta = 0;
+    for (int i = 0; i < 60; ++i) {
+        ++quanta;
+        engine->renderMix(out.data(), out.size());
+        if (engine->activeUserCount() == 0) {
+            break;
+        }
+    }
+    TEST_ASSERT_EQ(engine->activeUserCount(), static_cast<size_t>(0));
+    // One 10 ms miss per quantum: never the first quantum, and at least the
+    // DEAD_MISS_FRAMES misses (~100 ms) that upstream parity accepts.
+    TEST_ASSERT_TRUE(quanta > 1);
+    TEST_ASSERT_TRUE(quanta >= AudioOutputEngine::DEAD_MISS_FRAMES);
+    TEST_ASSERT_TRUE(!events.empty());
+    TEST_ASSERT_EQ(events.back().state, 2); // PASSIVE
+    std::cout << "  [PASS] testMissingTerminatorExpiresByDeadMiss" << std::endl;
+}
+
 } // namespace
 
 void run_audio_output_engine_tests() {
@@ -1246,6 +1440,12 @@ void run_audio_output_engine_tests() {
     testUnrecoverableLossConcealsSilently();
     testLossBoundaryCrossfadeSmoothsStep();
     testLosslessMixHasNoCrossfade();
+    testVolumeAdjustmentScalesDecodedAudio();
+    testVolumeAdjustmentSurvivesLoss();
+    testVolumeAdjustmentRejectsInvalidGain();
+    testVolumeAdjustmentAmplifiesAudio();
+    testVolumeAdjustmentFollowsPacketThroughJitter();
+    testMissingTerminatorExpiresByDeadMiss();
     testJitterPoolExhaustionDropsAndCounts();
     testReleasedVoiceReturnsPoolSlots();
     testJitterPoolStress();
