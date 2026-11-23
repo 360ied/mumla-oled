@@ -188,9 +188,10 @@ libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>
   sets input configuration, a render thread mixes). The bridge, not the
   engine, serializes and holds the lock, and it is the only reason these
   files keep the header. Both exceptions disappear with the bridge files.
-- The JNI bridges are deleted in step 5a (5b for anything `AudioInput` and
-  `AudioOutput` still need), and `NativeCrashTestJni.cpp` moves to
-  `jni/diagnostics/`.
+- The JNI bridges were deleted in step 5a (the last in 5a.4), and
+  `NativeCrashTestJni.cpp` moved to `jni/diagnostics/`. The block above is
+  the step-1 seed; the live list is the `[native]` section of
+  `scripts/architecture-allowlist.txt`.
 - Logging through `<android/log.h>` is not forbidden.
 
 `voice_io/` is the only native directory allowed to include socket,

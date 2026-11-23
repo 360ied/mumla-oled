@@ -43,7 +43,10 @@ steps, the kill criteria, and the decisions this work reverses.
   code, a fix regressing an earlier fix), stop and re-slice the step
   instead of running a fourth.
 - Every step leaves a working app. Steps 2–5 are each worth landing
-  alone. Step 6 needs step 3; step 7 needs steps 5b and 6.
+  alone. Step 6 needs step 3; step 7 needs step 6. Step 5b is independent
+  of steps 6 and 7. Step 8 needs it: step 8's done-when allows only
+  boundary files on the allowlist, and `AudioInput` and `AudioOutput` are
+  not boundary files.
 - Until step 7, today's `ConfigDelta` path keeps applying settings live:
   `HumlaService.apply` stays as a bridge that forwards each delta to the
   new components as they appear (the client in step 3; voice, route, and
@@ -89,9 +92,9 @@ flowchart LR
     S4 --> S5a["5a Engine refactor,<br/>codec, network threads"]
     S5a --> S5b["5b AAudio"]
     S3 --> S6["6 Container, storage,<br/>and features"]
-    S5b --> S7["7 Screens and service cut-over"]
-    S6 --> S7
+    S6 --> S7["7 Screens and service cut-over"]
     S7 --> S8["8 Clean up"]
+    S5b --> S8
 ```
 
 ## Step 1 — Harness and gate
@@ -479,21 +482,182 @@ the allowlist; the input engine bridge's interim `<mutex>` entry from
 
 ## Step 5b — AAudio
 
-**Spikes first:** AAudio or Oboe; callback or blocking mode; echo
-cancellation through an AAudio session ID (see [open items](open-items.md)).
-Spikes run on the developer's device; Android 11–12 is not tested.
+AAudio directly (not Oboe), in callback mode, for both streams (decided
+2026-11-23; see [open items](open-items.md#resolved)). No spikes gate the
+step: the choices are made, and on a single device the on-device check and
+daily use below are the evidence that counts. Android 11–12 is not tested.
 
-1. Native capture and render threads (or AAudio callbacks), opening
-   streams with the profile from `RouteState`, reopening them when the
-   route changes, and reopening them when AAudio reports a disconnected
-   stream (`AAUDIO_ERROR_DISCONNECTED`).
-2. Echo cancellation attached to the AAudio session.
-3. Delete `AudioInput` and `AudioOutput`; update the audio pipeline
-   description in `AGENTS.md`.
+Three items, each a checkpoint that keeps voice working. Item 1 adds AAudio
+code that nothing uses yet and leaves the live 5a path untouched, item 2
+switches voice over to it in one commit, and item 3 deletes the old path
+and points the JNI render and capture entry points at the new code for
+tests.
 
-**Done when:** `AudioInput` and `AudioOutput` are deleted and the AAudio
-path is in daily use without regressions the developer notices against
-5a.
+**Files.** A new header, `voice_io/VoiceStreamContext.h`, defines the state
+the callbacks share with the rest of `voice_io`. The callback bodies go in
+a new host-compiled file, `voice_io/VoiceStreamCallbacks.cpp`, added to the
+explicit source lists of the Android `humlaaudio` target, the host
+`humlaaudio` target, and `test_voice_io`. Everything that calls AAudio,
+including the stream JNI functions, goes in an Android-only file,
+`voice_io/AAudioStreams.cpp`, and only the Android target links `aaudio`.
+The host library never sees AAudio, so it still links; host tests never
+open streams.
+
+1. **Native stream layer in `voice_io`, not yet used.**
+   - **Shared state.** `VoiceStreamContext` holds pointers to the `VoiceIo`
+     and `VoiceSend` instances, the `renderActive` and `captureActive`
+     flags with `RenderGuard` and `CaptureGuard`, the status counters
+     (`lastDroppedInbound`, `lastDroppedTunnel`, `lastDroppedJitter`,
+     `lastDroppedOutbound`, `lastHasActiveVoices`), the render carry
+     buffer, the stream generation counter, and the disconnect atomic.
+     These move out of the JNI-private `VoiceEngineContext`, which now owns
+     one `VoiceStreamContext`, created with it in `nativeCreate`. The
+     header declares `streamContextFromHandle(jlong)`, defined in
+     `NativeVoiceEngineJni.cpp`, so `AAudioStreams.cpp` can reach it. The
+     existing JNI entry points and lifecycle asserts read and write the
+     same fields, so 5a behavior is unchanged.
+   - **Stream calls.** `openStreams`, `startStreams`, `stopStreams`, and
+     `closeStreams` for both streams, as JNI functions in
+     `AAudioStreams.cpp` and methods on `EngineNative`. Open takes the
+     route's [stream parameters](route.md#stream-parameters), clears the
+     carry buffer, bumps the generation before building the streams (it
+     starts at 0, so the first open returns 1) and rolls it back if either
+     open fails, and returns a `LongArray` of the input stream's session ID
+     (allocated with `AAUDIO_SESSION_ID_ALLOCATE`) and the new generation,
+     or `null` on failure. Start returns `false` if either stream fails to
+     start. Start and stop are separate from open and close so Kotlin can
+     attach the capture effects before the streams start and release them
+     before they close. Stop also reads each stream's
+     `AAudioStream_getXRunCount` and logs it on the control thread; nothing
+     logs from a callback.
+   - **Stop and the engine handoff.** Stop requests stop on both streams
+     and waits, with a 500 ms timeout, for `AAUDIO_STREAM_STATE_STOPPED`,
+     treating `AAUDIO_STREAM_STATE_DISCONNECTED` as final too, since a
+     disconnected stream may never report stopped. Close calls
+     `AAudioStream_close`, after which no callback runs; the control thread
+     touches an engine only after close (see [engine
+     lifecycle](voice.md#start-stop-reconfigure)).
+   - **Render callback body.** The output engine assumes whole 10 ms
+     frames: its startup-gate timeout counts `samples / FRAME_SIZE`, and
+     its FEC slot needs a full frame, so sub-frame requests would never
+     time the gate out. The render body therefore calls `VoiceIo::render`
+     only in 480-sample frames, into the one-frame carry buffer, and copies
+     out exactly the frames requested, keeping the remainder for the next
+     call. This adds less than 10 ms of output latency. It reports whether
+     everything it wrote was silence and stores the status counters. The
+     AAudio callback ignores the silence report and always returns the full
+     buffer.
+   - **Capture callback body.** Calls `VoiceSend::captureFrame` with
+     whatever burst arrives; `VoiceSend` already carries the remainder in
+     10 ms frames. It stores `lastDroppedOutbound`.
+   - **Both callbacks** are C++ functions, never JNI (callbacks never touch
+     the JVM), and set `renderActive` or `captureActive` through their
+     guard for the whole call.
+   - **Disconnects.** The error callback only stores its stream's
+     generation in the disconnect atomic (initially 0; `nativeReset` sets
+     it back to 0); AAudio's documentation says not to stop, close, or
+     reopen a stream from that callback, and it does not log.
+     `VoiceNotifier` gains two constructor parameters, a pointer to the
+     atomic and a second sink, both defaulting to `nullptr`/empty so the
+     existing three-argument constructions in `test_voice_io.cpp` still
+     compile. On every tick, before the talk-cell read that can return
+     early, the notifier compares the atomic with the last value delivered
+     and, when it changed, calls the sink, which calls a new listener
+     method, `NativeVoiceEngine.Listener.onStreamDisconnect(generation:
+     Long)`, separate from `onTalkSnapshot`. `nativeCreate` looks the
+     method up as `(J)V` and fails creation if it is missing, as for the
+     other listener methods. A disconnect during silence is therefore still
+     delivered.
+   - **Kotlin stubs.** So item 1 compiles and the interop tests that create
+     a real `NativeVoiceEngine` still pass, `VoiceEngine` gets an empty
+     `onStreamDisconnect` and `VoiceEngineTest`'s `FakeEngineNative` gets
+     stub stream methods; item 2 fills them in.
+   - **Host tests** go in `test_voice_send.cpp`, which already installs the
+     counting allocator (`--wrap` link options and `-fno-builtin` on that
+     file), and drive the callback bodies directly: render with burst sizes
+     such as 96, 192, 441, and 960 frames writes exactly that many frames
+     and allocates nothing; under 96-frame bursts a trickling voice's
+     startup gate still times out and FEC recovery still runs; `notifyNow`
+     delivers a disconnect with no talk change.
+
+2. **Switch voice to AAudio.** In one commit, `VoiceEngine` opens the
+   AAudio streams through `EngineNative` wherever it builds `AudioInput`
+   and `AudioOutput` today (the pipeline rebuild on start, route change,
+   and handset-stream preference change). The `inputFactory` and
+   `outputFactory` seams go. `VoiceEngineTest` fakes the stream calls in
+   its existing `FakeEngineNative`; `VoiceEnginePipelineTest`, which uses a
+   zero-handle `NativeVoiceEngine` today, gets a fake `EngineNative` that
+   records opens, starts, stops, and closes. `VoiceEngine` calls
+   `setSpeakerphone` before `openStreams`, so the route is final when the
+   streams open and the speakerphone change cannot disconnect them. It
+   attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and
+   `AutomaticGainControl` to the returned session ID before the streams
+   start (skipping them if the ID is `AAUDIO_SESSION_ID_NONE`), and
+   releases them after the streams stop and before they close, as
+   `AudioInput` does today, on every route (the session ID is allocated
+   either way). `BuiltPipeline` drops its `InputPipeline` and
+   `OutputPipeline` fields and records the route, profile, input preset and
+   usage, the attached effects, and the generation the last open returned;
+   `pipelineForTests()` returns that record.
+
+   - **On `onStreamDisconnect(generation)`** it posts one reopen of both
+     streams to the voice control thread. The control thread skips it if
+     voice is not running, no streams are open, or the generation is older
+     than the current one (a route change already reopened them). If the
+     reopened streams disconnect again within 5 s, that counts as a failed
+     reopen.
+   - **A failed open, start, or reopen** stops and closes whatever streams
+     are open, releases the capture effects, and leaves voice without
+     streams. It follows the [voice failure table](voice.md#failures):
+     `PipelineError`, and the stored pipeline record is cleared so the next
+     route or route-preference change rebuilds (today's `tryEnsurePipeline`
+     returns early when nothing changed).
+   - A facade JVM test pins the skips and the failure paths. From this
+     commit `AudioInput` and `AudioOutput` are unused at runtime;
+     `VoiceEngine` still implements `AudioInput.AudioInputListener` and
+     `RenderDriver` until item 3.
+
+3. **Delete the old path.**
+   - Kotlin: `AudioInput.kt` and `AudioOutput.kt` (with their allowlist
+     entries), the `Pacer` and `AudioOutputPacerTest`, `Pipeline.kt`,
+     `RenderDriver.kt`, and `VoiceEngine`'s `AudioInput.AudioInputListener`
+     and `RenderDriver` supertypes: `onAudioInputReceived` goes, and
+     `render` stays without `override` for the tests. In `VoiceEngine`,
+     `NativeVoiceEngine`, and `VoiceEngineTest`'s fake, the members only
+     the old path used go: `awaitWork`, `wakeForStop`, and
+     `lastHasActiveVoices`.
+   - Native: `nativeAwaitWork`, `nativeWakeForStop`, `lastHasActiveVoices`
+     and the `hasActiveVoices` field, and the [render
+     wake](voice.md#render-idle-and-wake) (semaphore, `idle` flag,
+     `awaitWork`, the producer posts). Tests: delete the render-wake tests
+     in `test_voice_io.cpp`, and edit out the `hasActiveVoices` assertions
+     in its ordinary render tests and the one use in `test_voice_send.cpp`.
+   - Test entry points: `nativeRender` and `nativeCaptureFrame` stay,
+     rewired to call the callback bodies, so the host tests that drive
+     voice through `VoiceEngine.render` and `captureFrame`
+     (`VoiceEngineTest`, `MurmurVoiceGateInteropTest`, `MurmurConnectTest`)
+     exercise the same code AAudio runs. `nativeRender` keeps today's
+     return value, 0 when the render body reports silence. `RenderGuard` is
+     now used only in the callback bodies, so `check_architecture.py`'s
+     voice lifecycle check splits in the same commit: the `RenderGuard`-use
+     rule targets `VoiceStreamCallbacks.cpp`, the `renderActive`-assert
+     rule keeps targeting `NativeVoiceEngineJni.cpp`, and the fixtures in
+     `scripts/test_check_architecture.py` follow.
+   - Docs: update the audio pipeline description in `AGENTS.md` and the
+     [decisions table](#decisions-this-reverses).
+
+AAudio xrun counts (read at stop, see item 1) and stream errors are logged
+on the control thread, for diagnosis only; they gate nothing. Allocating a
+session ID can give the input stream a higher-latency path (AAudio's
+documentation warns of this), so the input may never get very short
+callbacks; if capture xruns show up anyway, the input stream may drop to
+`AAUDIO_PERFORMANCE_MODE_NONE`.
+
+**Done when:** `AudioInput` and `AudioOutput` are deleted; the host tests
+above pass; on-device debug and release pass (connect, voice both ways,
+mute, deafen, push-to-talk, Bluetooth SCO and A2DP, handset with both
+handset-stream settings, speakerphone echo); and the AAudio path is in
+daily use without regressions the developer notices against 5a.
 
 ## Step 6 — Container, storage, and features
 
@@ -567,8 +731,9 @@ Delete `IHumlaObserver`, `HumlaCallbacks`, the live handles, `IUser`,
   pass without coordination machinery the [voice](voice.md) spec does not
   name (locks on realtime threads, extra threads, cross-thread engine
   access), stop and revise `voice.md` on `master` before continuing.
-- **Step 5b** regresses latency, glitches, echo cancellation, or routing in
-  daily use and cannot be fixed. Stop at 5a: keep `AudioRecord` and
+- **Step 5b** regresses latency, glitches, echo cancellation, routing, or
+  connection survival in daily use and cannot be fixed. Revert the 5b
+  commits with `git revert` and stay on 5a's `AudioRecord` and
   `AudioTrack`, which still leaves all transmit state on the native side.
 - **Any step:** if a file cannot leave the allowlist without new
   coordination machinery, treat it as a design problem and revisit the
@@ -581,6 +746,6 @@ Updated in the branch of the step that reverses them:
 | Decision (where recorded) | Replaced by | Step |
 |---|---|---|
 | Native fence: "C++ frozen, no behavior touch" ([migration README](../migration/README.md)) | The engine stays free of I/O; it may be refactored, pinned by golden outputs | 5a (recorded), 7 (README updated) |
-| "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio (or Oboe, per spike) for capture and playback | 5b |
+| "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio, callback mode, for capture and playback | 5b |
 | Frozen binder surface `IMumlaService`/`IHumlaService`/`IHumlaSession` ([migration README](../migration/README.md)) | Removed; screens and features collect flows | 7 |
 | Hilt as the DI framework ([migration slices](../migration/slices.md)) | Hand-written `AppContainer` | 7 |
