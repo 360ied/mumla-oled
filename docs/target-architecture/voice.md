@@ -456,16 +456,18 @@ flowchart LR
 | Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device (zeros when silent in 5b); in 5a, after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
 | Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
-| Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call. From 5b it also reads the stream-disconnect atomic on every tick and calls Kotlin when either it or the talk version changed |
+| Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call. From 5b it also reads the stream-disconnect atomic on every tick and, when it changed, calls `onStreamDisconnect(generation)`, a separate Kotlin call |
 
 - In **step 5a**, the capture and render loops are entry points called by
   today's Kotlin `AudioRecord` and `AudioTrack` threads
   (`nativeCaptureFrame(pcm)`, `nativeRender(out)`). In **step 5b**, the
-  AAudio data callbacks call the same entry points, and the render wake is
-  deleted (see [render idle](#render-idle-and-wake)). Apart from the
-  stream code and the disconnect flag, nothing else changes between 5a
-  and 5b. The callbacks run on AAudio's threads, never attach to the JVM,
-  and follow the [realtime rules](#realtime-rules).
+  AAudio data callbacks call the C++ functions behind them directly
+  (`VoiceSend::captureFrame`, and `VoiceIo::render` in whole 10 ms frames
+  through a carry buffer), the JNI entry points stay for host tests only,
+  and the render wake is deleted (see [render idle](#render-idle-and-wake)).
+  Apart from the stream code and the disconnect flag, nothing else changes
+  between 5a and 5b. The callbacks run on AAudio's threads, never attach
+  to the JVM, and follow the [realtime rules](#realtime-rules).
 - **Half duplex** (today's `AudioOutput.setHalfDuplexMuted`): the capture
   thread publishes "self is talking" in one atomic flag owned by the I/O
   layer; while the effective half-duplex flag (raw `VoiceSettings.halfDuplex`
@@ -683,8 +685,8 @@ frames into the rings (5a.3a).
 2. **Each engine instance is driven by exactly one thread**: the input
    engine by capture, the output engine by render. In 5b that is the
    thread AAudio runs each callback on, for one stream's lifetime; after a
-   reopen a different thread may take over, ordered by the control
-   thread's stop-and-wait (see [engine
+   reopen a different thread may take over, ordered by the control thread
+   closing the old streams first (see [engine
    lifecycle](#start-stop-reconfigure)). Every other thread reaches them
    through the queues or the sequence locks.
 3. **Only non-realtime native threads call into Kotlin.**
@@ -704,16 +706,17 @@ Performed by the Kotlin **voice control thread**, in command order:
   [route](route.md#session-start)).
 - **Stop:** stop capture and render (5a: clear the render running flag and
   post the render wake before the join; 5b: request stop on both AAudio
-  streams, wait for `AAUDIO_STREAM_STATE_STOPPED`, release the capture
-  effects, and close both streams); set the stop flag; shut the socket
-  down to abort the blocked `recvfrom` (`close` alone does not wake it);
-  post the send semaphore; join the three threads; close the socket (only
-  after the join, so its fd number cannot be recycled under the exiting
-  receiver); zero the crypt keys; clear the queues. (In 5a.3b the send
-  thread does not exist yet and capture/render are pipeline-owned Kotlin
-  threads, so the native engine and rings reset at the next Start instead,
-  when no render is live; the socket shutdown/close, receive/notifier
-  join, and key zeroing still happen at Stop.)
+  streams, wait up to 500 ms for `AAUDIO_STREAM_STATE_STOPPED` or
+  `AAUDIO_STREAM_STATE_DISCONNECTED`, release the capture effects, and
+  close both streams); set the stop flag; shut the socket down to abort
+  the blocked `recvfrom` (`close` alone does not wake it); post the send
+  semaphore; join the three threads; close the socket (only after the
+  join, so its fd number cannot be recycled under the exiting receiver);
+  zero the crypt keys; clear the queues. (In 5a.3b the send thread does
+  not exist yet and capture/render are pipeline-owned Kotlin threads, so
+  the native engine and rings reset at the next Start instead, when no
+  render is live; the socket shutdown/close, receive/notifier join, and
+  key zeroing still happen at Stop.)
 - **Reconfigure:** settings go through the sequence lock and need no
   restart. The one exception is loading a new RNNoise model, which
   allocates, so it stops capture, loads the model on the control thread,
@@ -733,11 +736,11 @@ caller of the input engine; while render runs, the render thread is the
 only caller of the output engine. The control thread constructs, resets,
 and destroys an engine only while its thread is stopped. Starting and
 stopping that thread orders the handoff: `Thread.start` and `join` in 5a,
-and in 5b stopping the AAudio stream and waiting until it reports stopped
-(the request is asynchronous). Lifecycle calls assert in debug builds
-that the thread is stopped. Until `VoiceEngine` keeps the engines across
-sessions (5a.3b), each start constructs a fresh output engine, as
-`AudioOutput.startPlaying` does today, so 5a.3a needs no reset.
+and in 5b `AAudioStream_close`, after which no callback runs (stop alone
+may never report stopped on a disconnected stream). Lifecycle calls assert
+in debug builds that the thread is stopped. Until `VoiceEngine` keeps the
+engines across sessions (5a.3b), each start constructs a fresh output
+engine, as `AudioOutput.startPlaying` does today, so 5a.3a needs no reset.
 
 ### Failures
 
@@ -747,8 +750,8 @@ and chat log show the error.
 
 | Failure | Handling |
 |---|---|
-| Capture or playback stream cannot open (including a missing microphone permission; the activity requests permissions before connecting, as today) | `VoiceEvent.PipelineError`, `VoiceStatus.lastError`; the control thread retries on the next route change or settings change |
-| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only stores its stream's generation in an atomic; AAudio's documentation says not to stop, close, or reopen a stream from that callback. The notifier delivers it on its next tick, and Kotlin posts one reopen of both streams to the control thread, which skips it if the generation is older than the one the last open returned (a route change already reopened them). One attempt per disconnect |
+| Capture or playback stream cannot open (including a missing microphone permission; the activity requests permissions before connecting, as today) | `VoiceEvent.PipelineError`, `VoiceStatus.lastError`; the control thread clears its record of the built pipeline and retries on the next route or route-preference change |
+| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only stores its stream's generation in an atomic; AAudio's documentation says not to stop, close, or reopen a stream from that callback. The notifier delivers it on its next tick, and Kotlin posts one reopen of both streams to the control thread, which skips it if voice is not running, no streams are open, or the generation is older than the one the last open returned (a route change already reopened them). One attempt per disconnect; a second disconnect within 5 s of a reopen counts as a failed reopen |
 | UDP socket cannot be created or connected | `VoiceEvent.UdpUnavailable`; the transport switches to tunnel mode at once, as it would after its 20 s rule |
 | Crypt key setup rejected (`setKeys` returns false) | Treated as a protocol violation: the transport fails the session, as today's invalid-key path does |
 

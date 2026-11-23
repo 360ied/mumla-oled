@@ -201,8 +201,12 @@ Every route also uses: 48 kHz, mono, 16-bit PCM (`AAUDIO_FORMAT_PCM_I16`),
 content type speech (`AAUDIO_CONTENT_TYPE_SPEECH`), low-latency
 performance mode, shared sharing mode, and device ID left unspecified so
 `setCommunicationDevice` and the speakerphone setting decide the device.
-In 5b the buffer size stays at AAudio's default; raise it with
-`AAudioStream_setBufferSizeInFrames` only if logged xruns call for it. An
+In 5b the buffer size stays at AAudio's default, usually a couple of
+bursts. That is a deliberate change from 5a's `AudioTrack` floor of two
+20 ms quanta (about 40 ms), and lowers output latency; raise it with
+`AAudioStream_setBufferSizeInFrames` only if logged xruns call for it.
+Capture may likewise drop to `AAUDIO_PERFORMANCE_MODE_NONE` if capture
+xruns show up. An
 open that cannot deliver 48 kHz mono 16-bit fails like any stream open
 (see [voice failures](voice.md#failures)).
 
