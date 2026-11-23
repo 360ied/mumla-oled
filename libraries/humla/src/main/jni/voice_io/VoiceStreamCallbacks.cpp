@@ -39,7 +39,10 @@ bool renderStreamFrames(VoiceStreamContext* ctx, int16_t* out, size_t samples) {
     while (written < samples) {
         if (ctx->renderCarryRemaining == 0) {
             VoiceIo::RenderOut result;
-            ctx->io->render(ctx->renderCarry, kStreamFrameSamples, &result);
+            // Two whole 10 ms frames per call (5a's quantum): the startup
+            // gate counts samples / FRAME_SIZE and a first-frame loss can be
+            // recovered from the successor's in-band FEC in the same call.
+            ctx->io->render(ctx->renderCarry, kStreamChunkSamples, &result);
             ctx->lastDroppedInbound.store(result.droppedInbound,
                                           std::memory_order_relaxed);
             ctx->lastDroppedTunnel.store(result.droppedTunnel,
@@ -55,7 +58,7 @@ bool renderStreamFrames(VoiceStreamContext* ctx, int16_t* out, size_t samples) {
             // the silence report and always returns the full buffer.
             ctx->renderCarrySilent = result.samples == 0;
             ctx->renderCarryOffset = 0;
-            ctx->renderCarryRemaining = kStreamFrameSamples;
+            ctx->renderCarryRemaining = kStreamChunkSamples;
         }
         if (!ctx->renderCarrySilent) {
             silent = false;

@@ -31,11 +31,15 @@ class VoiceIo;
 class VoiceSend;
 struct VoiceStreamContext;
 
-// One 10 ms quantum at 48 kHz. The output engine's startup gate counts
-// samples / FRAME_SIZE and its FEC slot needs a whole frame, so the render
-// callback feeds it only whole frames and carries the remainder.
+// One 10 ms frame at 48 kHz. The output engine's startup gate counts
+// samples / FRAME_SIZE, so a render call must cover whole frames.
 constexpr size_t kStreamFrameSamples =
     static_cast<size_t>(mumla::audio::AudioOutputEngine::FRAME_SIZE);
+// 5a's 20 ms render quantum: two whole frames per engine call. In-band FEC
+// recovery needs the lost frame and its successor decoded in the same call,
+// because an unrecovered FEC debt slot is concealed at the end of the call.
+// One-frame calls would conceal every loss.
+constexpr size_t kStreamChunkSamples = 2 * kStreamFrameSamples;
 
 /**
  * Debug lifecycle pins (5a.3a render, 5a.4 capture, 5b callbacks).
@@ -104,10 +108,12 @@ struct VoiceStreamContext {
     std::atomic<uint64_t> lastDroppedJitter{0};
     std::atomic<uint64_t> lastDroppedOutbound{0};
 
-    int16_t renderCarry[kStreamFrameSamples] = {};
+    // Two-frame carry: one 20 ms chunk rendered at a time, copied out in
+    // whatever burst sizes AAudio delivers.
+    int16_t renderCarry[kStreamChunkSamples] = {};
     size_t renderCarryOffset = 0;
     size_t renderCarryRemaining = 0;
-    // Whether the current carry frame is silent; a burst that only consumes
+    // Whether the current carry chunk is silent; a burst that only consumes
     // leftover audio still reports what it actually wrote.
     bool renderCarrySilent = true;
 

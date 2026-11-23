@@ -19,7 +19,8 @@
 // entry point (any block size, exact 10 ms frames, self-talking flag), the
 // outbound queue (full-ring drop-newest, 200 ms drop-oldest), and the native
 // half-duplex render rule. Step 5b adds the AAudio callback bodies: render
-// through the one-frame carry buffer and disconnect delivery by the notifier.
+// through the two-frame (20 ms) carry buffer and disconnect delivery by the
+// notifier.
 
 #include "TestHarness.h"
 #include "AudioInputEngine.h"
@@ -110,7 +111,7 @@ using mumla::voice_io::VoiceReceive;
 using mumla::voice_io::VoiceSend;
 using mumla::voice_io::VoiceStreamContext;
 using mumla::voice_io::kOutboundRingCapacity;
-using mumla::voice_io::kStreamFrameSamples;
+using mumla::voice_io::kStreamChunkSamples;
 using mumla::voice_io::renderStreamFrames;
 
 /** Deterministic fake encoder: 32 bytes per encode, no allocation. */
@@ -568,7 +569,7 @@ struct StreamFixture {
 void testRenderCallbackBurstsWriteExactly() {
     g_testCount++;
     // AAudio hands the render callback whatever burst size the device picks.
-    // The body always renders whole 10 ms frames and copies out exactly the
+    // The body renders one 20 ms chunk at a time and copies out exactly the
     // requested number of samples, keeping the remainder for the next call.
     StreamFixture fixture;
     std::vector<int16_t> out(960, 0x1234);
@@ -587,33 +588,33 @@ void testRenderCallbackBurstsWriteExactly() {
         }
     }
     TEST_ASSERT_EQ(g_allocations, before);
-    // 96 samples five times consumes exactly one carry frame; one more 96
-    // leaves 384 samples of the next frame for later calls.
+    // 96 samples ten times consumes exactly one 960-sample carry chunk; one
+    // more 96 leaves 864 samples of the next chunk for later calls.
     mumla::voice_io::resetRenderCarry(&fixture.streams);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 10; ++i) {
         renderStreamFrames(&fixture.streams, out.data(), 96);
     }
     TEST_ASSERT_EQ(fixture.streams.renderCarryRemaining, 0u);
     renderStreamFrames(&fixture.streams, out.data(), 96);
     TEST_ASSERT_EQ(fixture.streams.renderCarryRemaining,
-                   kStreamFrameSamples - 96u);
+                   kStreamChunkSamples - 96u);
     std::cout << "  [PASS] testRenderCallbackBurstsWriteExactly" << std::endl;
 }
 
-void testRenderCallbackWholeFramesGateAndFec() {
+void testRenderCallbackChunksGateAndFec() {
     g_testCount++;
-    // The output engine assumes a whole 10 ms frame: its startup gate counts
-    // samples / FRAME_SIZE and its FEC slot needs a full frame. Sub-frame
-    // requests would never time the gate out. Drive 96-sample bursts instead.
+    // A 20 ms chunk is two whole 10 ms frames: the startup gate counts
+    // samples / FRAME_SIZE (so two per chunk), and a first-frame loss can be
+    // recovered from the successor's in-band FEC in the same render call.
     {
         StreamFixture fixture;
         TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(9, 0)));
         std::vector<int16_t> out(96);
-        int audioFrame = -1;
-        constexpr int kCallsPerFrame =
-            static_cast<int>(kStreamFrameSamples) / 96;
-        constexpr int kFrames = AudioOutputEngine::GATE_TIMEOUT_FRAMES + 2;
-        for (int i = 0; i < kCallsPerFrame * kFrames; ++i) {
+        int audioChunk = -1;
+        constexpr int kCallsPerChunk =
+            static_cast<int>(kStreamChunkSamples) / 96;
+        constexpr int kChunks = AudioOutputEngine::GATE_TIMEOUT_FRAMES / 2 + 2;
+        for (int i = 0; i < kCallsPerChunk * kChunks; ++i) {
             (void)renderStreamFrames(&fixture.streams, out.data(), 96);
             // Gated quanta are reported as non-silent (they keep a sink fed
             // with zeros), so the pin scans PCM instead of the silence flag.
@@ -621,37 +622,58 @@ void testRenderCallbackWholeFramesGateAndFec() {
             for (int16_t sample : out) {
                 peak = std::max<int>(peak, std::abs(static_cast<int>(sample)));
             }
-            if (peak > 100 && audioFrame < 0) {
-                audioFrame = i / kCallsPerFrame + 1;
+            if (peak > 100 && audioChunk < 0) {
+                audioChunk = i / kCallsPerChunk + 1;
             }
         }
-        TEST_ASSERT_EQ(audioFrame, AudioOutputEngine::GATE_TIMEOUT_FRAMES);
+        TEST_ASSERT_EQ(audioChunk,
+                       AudioOutputEngine::GATE_TIMEOUT_FRAMES / 2);
     }
-    {
+    // A gap in a chunk's first frame is recovered by an FEC decode; a gap in
+    // its second frame is concealed, because the unrecovered debt slot is
+    // settled at the end of the call and the successor arrives in the next
+    // chunk. Playback starts at seq 0, so chunks are [0,1], [2,3], [4,5],
+    // [6,7], ...: even gaps land in the first frame, odd in the second.
+    struct FecOutcome {
+        int fec;
+        int concealed;
+    };
+    constexpr int kCallsPerChunk =
+        static_cast<int>(kStreamChunkSamples) / 96;
+    auto runGap = [kCallsPerChunk](uint32_t gap) {
         int fecAttempts = 0;
         int concealedFrames = 0;
         StreamFixture fixture(&fecAttempts, &concealedFrames);
-        // Five queued frames open the default startup gate; seq 5 is missing,
-        // so the engine reserves a whole-frame FEC debt slot for it. A
-        // one-frame quantum settles that slot with concealment (in-band LBRR
-        // needs the successor in the same quantum), but the slot machinery
-        // still runs: a sub-frame request would skip it entirely.
-        for (uint32_t seq = 0; seq <= 4; ++seq) {
-            TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(11, seq)));
+        for (uint32_t seq = 0; seq <= 12; ++seq) {
+            if (seq == gap) continue;
+            TEST_ASSERT_TRUE(
+                fixture.io.pushInbound(makeInboundPacket(11, seq)));
         }
-        TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(11, 6)));
-        TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(11, 7)));
         std::vector<int16_t> out(96);
-        bool sawAudio = false;
-        for (int i = 0; i < 5 * 15; ++i) {
-            if (!renderStreamFrames(&fixture.streams, out.data(), 96)) {
-                sawAudio = true;
-            }
+        for (int i = 0; i < kCallsPerChunk * 12; ++i) {
+            (void)renderStreamFrames(&fixture.streams, out.data(), 96);
         }
-        TEST_ASSERT_TRUE(sawAudio);
-        TEST_ASSERT_TRUE(concealedFrames > 0);
+        return FecOutcome{fecAttempts, concealedFrames};
+    };
+    // First-frame loss (gap 6, successor 7 in the same chunk): an FEC decode.
+    const FecOutcome firstFrameLoss = runGap(6);
+    TEST_ASSERT_EQ(firstFrameLoss.fec, 1);
+    // Second-frame loss (gap 7, successor 8 in the next chunk): concealment,
+    // no FEC decode.
+    const FecOutcome secondFrameLoss = runGap(7);
+    TEST_ASSERT_EQ(secondFrameLoss.fec, 0);
+    TEST_ASSERT_TRUE(secondFrameLoss.concealed > 0);
+    // The split alternates with chunk parity across several gaps, so the pin
+    // is about the two-frame chunk structure, not one lucky packet pattern.
+    for (uint32_t gap = 2; gap <= 11; ++gap) {
+        const FecOutcome outcome = runGap(gap);
+        if (gap % 2u == 0u) {
+            TEST_ASSERT_TRUE(outcome.fec > 0);
+        } else {
+            TEST_ASSERT_EQ(outcome.fec, 0);
+        }
     }
-    std::cout << "  [PASS] testRenderCallbackWholeFramesGateAndFec" << std::endl;
+    std::cout << "  [PASS] testRenderCallbackChunksGateAndFec" << std::endl;
 }
 
 void testRenderCallbackSilenceReportCoversCarry() {
@@ -665,7 +687,7 @@ void testRenderCallbackSilenceReportCoversCarry() {
     }
     std::vector<int16_t> out(96);
     int audibleBursts = 0;
-    for (int i = 0; i < 5 * 8; ++i) {
+    for (int i = 0; i < 10 * 6; ++i) {
         const bool silent =
             renderStreamFrames(&fixture.streams, out.data(), 96);
         int peak = 0;
@@ -745,7 +767,7 @@ void run_voice_send_tests() {
     testAllocationFreeSteadyState();
     testSendStartStopIdempotent();
     testRenderCallbackBurstsWriteExactly();
-    testRenderCallbackWholeFramesGateAndFec();
+    testRenderCallbackChunksGateAndFec();
     testRenderCallbackSilenceReportCoversCarry();
     testCaptureCallbackForwardsAnyBlock();
     testNotifierDeliversDisconnectWithoutTalkChange();

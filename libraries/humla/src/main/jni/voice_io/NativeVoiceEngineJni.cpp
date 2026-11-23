@@ -770,8 +770,8 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeRender(JNIEnv* env, jclass /*
         t_renderScratch.resize(static_cast<size_t>(length));
     }
     // Step 5b: the JNI test entry drives exactly the body AAudio's render
-    // callback runs, including whole-frame quanta, the carry buffer, the
-    // debug guard, and the status counters. It never calls into Kotlin.
+    // callback runs, including 20 ms chunks, the carry buffer, the debug
+    // guard, and the status counters. It never calls into Kotlin.
     const bool silent = mumla::voice_io::renderStreamFrames(
         &ctx->streams, t_renderScratch.data(), static_cast<size_t>(length));
     if (silent) {

@@ -56,7 +56,8 @@ class SettingsCell;
  *
  * In step 5b AAudio calls render once per burst, so there is no idle state,
  * no render wake, and no producer posts: the callback writes zeros through
- * silence and the engine is fed whole 10 ms frames by the stream layer.
+ * silence and the engine is fed 20 ms chunks (two whole 10 ms frames) by
+ * the stream layer, so a first-frame loss can use in-band FEC.
  */
 class VoiceIo {
 public:
