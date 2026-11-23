@@ -537,16 +537,21 @@ open streams.
      `AAudioStream_close`, after which no callback runs; the control thread
      touches an engine only after close (see [engine
      lifecycle](voice.md#start-stop-reconfigure)).
-   - **Render callback body.** The output engine assumes whole 10 ms
-     frames: its startup-gate timeout counts `samples / FRAME_SIZE`, and
-     its FEC slot needs a full frame, so sub-frame requests would never
-     time the gate out. The render body therefore calls `VoiceIo::render`
-     only in 480-sample frames, into the one-frame carry buffer, and copies
+   - **Render callback body.** Each render call must cover whole 10 ms
+     frames, and FEC needs at least two per call: the output engine's gate
+     timeout counts `samples / FRAME_SIZE`, so sub-frame requests would
+     never time the gate out, and a missing frame is recovered from its
+     successor's in-band FEC only when both fall in the same render call
+     (an unrecovered slot is concealed at the end of the call). The render
+     body therefore calls `VoiceIo::render` only in 960-sample (20 ms)
+     chunks, 5a's render quantum, into a two-frame carry buffer, and copies
      out exactly the frames requested, keeping the remainder for the next
-     call. This adds less than 10 ms of output latency. It reports whether
-     everything it wrote was silence and stores the status counters. The
-     AAudio callback ignores the silence report and always returns the full
-     buffer.
+     call. A loss in a chunk's first frame is recovered from FEC and a loss
+     in its second is concealed, as in 5a; one-frame chunks would conceal
+     every loss. This adds up to 20 ms of output latency. It reports
+     whether everything it wrote was silence and stores the status
+     counters. The AAudio callback ignores the silence report and always
+     returns the full buffer.
    - **Capture callback body.** Calls `VoiceSend::captureFrame` with
      whatever burst arrives; `VoiceSend` already carries the remainder in
      10 ms frames. It stores `lastDroppedOutbound`.
@@ -577,8 +582,10 @@ open streams.
      file), and drive the callback bodies directly: render with burst sizes
      such as 96, 192, 441, and 960 frames writes exactly that many frames
      and allocates nothing; under 96-frame bursts a trickling voice's
-     startup gate still times out and FEC recovery still runs; `notifyNow`
-     delivers a disconnect with no talk change.
+     startup gate still times out, a loss in a chunk's first frame is
+     recovered from FEC (the decoder sees an FEC decode), and a loss in a
+     chunk's second frame is concealed; `notifyNow` delivers a disconnect
+     with no talk change.
 
 2. **Switch voice to AAudio.** In one commit, `VoiceEngine` opens the
    AAudio streams through `EngineNative` wherever it builds `AudioInput`

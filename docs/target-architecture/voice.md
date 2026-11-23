@@ -453,7 +453,7 @@ flowchart LR
 | Thread | Realtime | Loop |
 |---|---|---|
 | Capture | Yes | Read 10 ms of PCM (in 5b, take whatever burst the callback delivers and feed it in 10 ms frames); read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; store the self-talking flag |
-| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms; in 5b, 10 ms frames through the carry buffer); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device (zeros when silent in 5b); in 5a, after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
+| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms; in 5b, 20 ms chunks through the carry buffer); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device (zeros when silent in 5b); in 5a, after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
 | Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
 | Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call. From 5b it also reads the stream-disconnect atomic on every tick and, when it changed, calls `onStreamDisconnect(generation)`, a separate Kotlin call |
@@ -462,7 +462,7 @@ flowchart LR
   today's Kotlin `AudioRecord` and `AudioTrack` threads
   (`nativeCaptureFrame(pcm)`, `nativeRender(out)`). In **step 5b**, the
   AAudio data callbacks call the C++ functions behind them directly
-  (`VoiceSend::captureFrame`, and `VoiceIo::render` in whole 10 ms frames
+  (`VoiceSend::captureFrame`, and `VoiceIo::render` in 20 ms chunks
   through a carry buffer), the JNI entry points stay for host tests only,
   and the render wake is deleted (see [render idle](#render-idle-and-wake)).
   Apart from the stream code and the disconnect flag, nothing else changes
