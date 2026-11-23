@@ -681,9 +681,12 @@ frames into the rings (5a.3a).
    only between render calls, after a quantum with no audio. 5b has no
    idle wait.
 2. **Each engine instance is driven by exactly one thread**: the input
-   engine by capture, the output engine by render (in 5b, the thread
-   AAudio runs each callback on). Every other thread
-   reaches them through the queues or the sequence locks.
+   engine by capture, the output engine by render. In 5b that is the
+   thread AAudio runs each callback on, for one stream's lifetime; after a
+   reopen a different thread may take over, ordered by the control
+   thread's stop-and-wait (see [engine
+   lifecycle](#start-stop-reconfigure)). Every other thread reaches them
+   through the queues or the sequence locks.
 3. **Only non-realtime native threads call into Kotlin.**
 
 OCB2's encrypt and decrypt locks stay: they are taken only by the send and
@@ -745,7 +748,7 @@ and chat log show the error.
 | Failure | Handling |
 |---|---|
 | Capture or playback stream cannot open (including a missing microphone permission; the activity requests permissions before connecting, as today) | `VoiceEvent.PipelineError`, `VoiceStatus.lastError`; the control thread retries on the next route change or settings change |
-| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only stores its stream's generation in an atomic; AAudio's documentation says not to stop, close, or reopen a stream from that callback. The notifier delivers it on its next tick, and Kotlin posts one reopen of both streams to the control thread, which drops it if the generation is no longer current (a route change already reopened them) |
+| A stream fails while running (AAudio disconnect, `AudioRecord` error) | Reopen once on the control thread; if that fails, as above. In 5b, AAudio's error callback only stores its stream's generation in an atomic; AAudio's documentation says not to stop, close, or reopen a stream from that callback. The notifier delivers it on its next tick, and Kotlin posts one reopen of both streams to the control thread, which skips it if the generation is older than the one the last open returned (a route change already reopened them). One attempt per disconnect |
 | UDP socket cannot be created or connected | `VoiceEvent.UdpUnavailable`; the transport switches to tunnel mode at once, as it would after its 20 s rule |
 | Crypt key setup rejected (`setKeys` returns false) | Treated as a protocol violation: the transport fails the session, as today's invalid-key path does |
 

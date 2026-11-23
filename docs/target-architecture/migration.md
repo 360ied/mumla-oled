@@ -495,21 +495,23 @@ one commit, and item 3 deletes the old path.
 1. **Native stream layer in `voice_io`, not yet used.**
    - Open, start, stop, and close calls for both streams, with JNI entry
      points for Kotlin's voice control thread. Open takes the route's
-     [stream parameters](route.md#stream-parameters) and returns the input
-     stream's session ID, allocated with `AAUDIO_SESSION_ID_ALLOCATE`; each
-     open bumps a stream generation counter. Start and stop are separate
-     from open and close so Kotlin can attach the capture effects before
-     the streams start and release them before they close. Stop requests
-     stop on both streams and waits for `AAUDIO_STREAM_STATE_STOPPED`.
+     [stream parameters](route.md#stream-parameters), bumps a stream
+     generation counter, and returns the input stream's session ID
+     (allocated with `AAUDIO_SESSION_ID_ALLOCATE`) and the new generation.
+     Start and stop are separate from open and close so Kotlin can attach
+     the capture effects before the streams start and release them before
+     they close. Stop requests stop on both streams and waits for
+     `AAUDIO_STREAM_STATE_STOPPED`.
    - Data callbacks that call the C++ entry points directly, not the JNI
      functions, since callbacks never touch the JVM. Render calls
      `VoiceIo::render` on AAudio's buffer, which already zero-fills silent
      stretches. Capture calls `VoiceSend::captureFrame` with whatever burst
      arrives; `VoiceSend` already carries the remainder between calls. Each
-     callback sets the same `renderActive` or `captureActive` flag through
-     `RenderGuard` or `CaptureGuard` as the JNI path does, so the lifecycle
-     asserts keep holding. The guards move into a header shared by
-     `NativeVoiceEngineJni.cpp` and the new stream code.
+     callback sets `renderActive` or `captureActive` through `RenderGuard`
+     or `CaptureGuard`, as the JNI path does, so the lifecycle asserts keep
+     holding. The two flags and the guards move out of the JNI-side
+     `VoiceEngineContext` into a non-JNI struct that the callback bodies
+     receive and the JNI asserts read.
    - An error callback that only stores its stream's generation in a
      disconnect atomic; AAudio's documentation says not to stop, close, or
      reopen a stream from that callback. The notifier reads that atomic on
@@ -524,16 +526,18 @@ one commit, and item 3 deletes the old path.
      disconnect with no talk change.
 2. **Switch voice to AAudio.** In one commit, `VoiceEngine` opens the
    AAudio streams wherever it builds `AudioInput` and `AudioOutput` today
-   (the pipeline rebuild on start and route change). Its `inputFactory` and
-   `outputFactory` seams become one stream factory, so the facade JVM tests
-   keep a fake. It attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and
-   `AutomaticGainControl` to the returned session ID before the streams
-   start, and releases them after the streams stop and before they close,
-   as `AudioInput` does today. On a disconnect it reopens both streams
-   once, unless the reported generation is no longer current (a route
-   change already reopened them); a facade JVM test pins that a stale
-   generation is ignored. Failure handling follows the [voice failure
-   table](voice.md#failures). From this commit the old classes are
+   (the pipeline rebuild on start, route change, and handset-stream
+   preference change). Its `inputFactory` and `outputFactory` seams become
+   one stream factory, so the facade JVM tests keep a fake. It attaches
+   `AcousticEchoCanceler`, `NoiseSuppressor`, and `AutomaticGainControl` to
+   the returned session ID before the streams start, and releases them
+   after the streams stop and before they close, as `AudioInput` does
+   today. It keeps the generation the last open returned. Each disconnect
+   gets one reopen attempt of both streams, skipped if the reported
+   generation is older than that (a route change already reopened them); a
+   facade JVM test pins the skip. A failed reopen follows the [voice
+   failure table](voice.md#failures): `PipelineError`, and a retry on the
+   next route or settings change. From this commit the old classes are
    unreferenced.
 3. **Delete the old path.**
    - Kotlin: `AudioInput`, `AudioOutput` with its `Pacer`,
