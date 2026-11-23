@@ -501,7 +501,9 @@ explicit source lists of the Android `humlaaudio` target, the host
 including the stream JNI functions, goes in an Android-only file,
 `voice_io/AAudioStreams.cpp`, and only the Android target links `aaudio`.
 The host library never sees AAudio, so it still links; host tests never
-open streams.
+open streams. `nativeDestroy` also stops and closes any streams
+defensively before deleting the context, so a missed Kotlin teardown
+cannot leave callback user data dangling.
 
 1. **Native stream layer in `voice_io`, not yet used.**
    - **Shared state.** `VoiceStreamContext` holds pointers to the `VoiceIo`
@@ -538,9 +540,7 @@ open streams.
      disconnected stream may never report stopped. Close calls
      `AAudioStream_close`, after which no callback runs; the control thread
      touches an engine only after close (see [engine
-     lifecycle](voice.md#start-stop-reconfigure)). `nativeDestroy` also
-     stops and closes any streams defensively before deleting the context,
-     so a missed Kotlin teardown cannot leave callback user data dangling.
+     lifecycle](voice.md#start-stop-reconfigure)).
    - **Render callback body.** Each render call must cover whole 10 ms
      frames, and FEC needs at least two per call: the output engine's gate
      timeout counts `samples / FRAME_SIZE`, so sub-frame requests would
