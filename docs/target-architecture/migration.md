@@ -43,7 +43,9 @@ steps, the kill criteria, and the decisions this work reverses.
   code, a fix regressing an earlier fix), stop and re-slice the step
   instead of running a fourth.
 - Every step leaves a working app. Steps 2–5 are each worth landing
-  alone. Step 6 needs step 3; step 7 needs steps 5b and 6.
+  alone. Step 6 needs step 3; step 7 needs step 6. Step 5b is independent of
+  steps 6 and 7; step 8 needs it, because `AudioInput` and `AudioOutput`
+  are allowlist entries outside the boundary files.
 - Until step 7, today's `ConfigDelta` path keeps applying settings live:
   `HumlaService.apply` stays as a bridge that forwards each delta to the
   new components as they appear (the client in step 3; voice, route, and
@@ -89,9 +91,9 @@ flowchart LR
     S4 --> S5a["5a Engine refactor,<br/>codec, network threads"]
     S5a --> S5b["5b AAudio"]
     S3 --> S6["6 Container, storage,<br/>and features"]
-    S5b --> S7["7 Screens and service cut-over"]
-    S6 --> S7
+    S6 --> S7["7 Screens and service cut-over"]
     S7 --> S8["8 Clean up"]
+    S5b --> S8
 ```
 
 ## Step 1 — Harness and gate
@@ -479,19 +481,44 @@ the allowlist; the input engine bridge's interim `<mutex>` entry from
 
 ## Step 5b — AAudio
 
-**Spikes first:** AAudio or Oboe; callback or blocking mode; echo
-cancellation through an AAudio session ID (see [open items](open-items.md)).
-Spikes run on the developer's device; Android 11–12 is not tested.
+AAudio directly (not Oboe), in callback mode, for both streams (decided
+2026-11-23; see [open items](open-items.md#resolved)). No spike gates the
+step: every choice is made, and the only evidence one device can give is
+the on-device check and daily use below. Android 11–12 is not tested.
 
-1. Native capture and render threads (or AAudio callbacks), opening
-   streams with the profile from `RouteState`, reopening them when the
-   route changes, and reopening them when AAudio reports a disconnected
-   stream (`AAUDIO_ERROR_DISCONNECTED`).
-2. Echo cancellation attached to the AAudio session.
-3. Delete `AudioInput` and `AudioOutput`; update the audio pipeline
-   description in `AGENTS.md`.
+1. **AAudio streams in `voice_io`.** The data callbacks call the existing
+   capture and render entry points with whatever frame count AAudio
+   delivers (both already accept any size). The render callback always
+   returns a full buffer, writing zeros through silence (see
+   [keep-alive shields](voice.md#keep-alive-shields)). The control thread
+   opens both streams with the profile from `RouteState` (input preset and
+   usage per [route](route.md#routestate), device ID left unspecified so
+   `setCommunicationDevice` and the speakerphone routing still apply),
+   reopens them on a route change, and stops each stream and waits for
+   `AAUDIO_STREAM_STATE_STOPPED` before touching its engine.
+   Deletes `AudioOutput`'s `Pacer` with `AudioOutputPacerTest`, and the
+   [render wake](voice.md#render-idle-and-wake) (semaphore, `idle` flag,
+   `awaitWork`, the producer posts).
+2. **Echo cancellation.** The input stream is opened with
+   `AAUDIO_SESSION_ID_ALLOCATE`; the control thread hands its session ID to
+   Kotlin, which attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and
+   `AutomaticGainControl` before the stream starts and releases them after
+   it stops, as `AudioInput` does today.
+3. **Disconnect recovery.** AAudio's error callback only sets an atomic
+   flag; the notifier delivers it with the next snapshot, and Kotlin posts
+   one reopen to the voice control thread, which drops it if a route
+   change already reopened the streams. Failure handling follows the
+   [voice failure table](voice.md#failures).
+4. **Delete `AudioInput` and `AudioOutput`** (and their allowlist entries);
+   update the audio pipeline description in `AGENTS.md` and the
+   [decisions table](#decisions-this-reverses).
 
-**Done when:** `AudioInput` and `AudioOutput` are deleted and the AAudio
+AAudio xrun counts (`AAudioStream_getXRunCount`) and stream errors are
+logged, for diagnosis only; they gate nothing.
+
+**Done when:** `AudioInput` and `AudioOutput` are deleted; on-device
+debug and release pass (connect, voice both ways, mute, deafen,
+push-to-talk, Bluetooth SCO and A2DP, speakerphone echo); and the AAudio
 path is in daily use without regressions the developer notices against
 5a.
 
@@ -567,9 +594,10 @@ Delete `IHumlaObserver`, `HumlaCallbacks`, the live handles, `IUser`,
   pass without coordination machinery the [voice](voice.md) spec does not
   name (locks on realtime threads, extra threads, cross-thread engine
   access), stop and revise `voice.md` on `master` before continuing.
-- **Step 5b** regresses latency, glitches, echo cancellation, or routing in
-  daily use and cannot be fixed. Stop at 5a: keep `AudioRecord` and
-  `AudioTrack`, which still leaves all transmit state on the native side.
+- **Step 5b** regresses latency, glitches, echo cancellation, routing, or
+  connection survival in daily use and cannot be fixed. Revert to 5a: keep
+  `AudioRecord` and `AudioTrack`, which still leaves all transmit state on
+  the native side.
 - **Any step:** if a file cannot leave the allowlist without new
   coordination machinery, treat it as a design problem and revisit the
   spec, not the code.
@@ -581,6 +609,6 @@ Updated in the branch of the step that reverses them:
 | Decision (where recorded) | Replaced by | Step |
 |---|---|---|
 | Native fence: "C++ frozen, no behavior touch" ([migration README](../migration/README.md)) | The engine stays free of I/O; it may be refactored, pinned by golden outputs | 5a (recorded), 7 (README updated) |
-| "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio (or Oboe, per spike) for capture and playback | 5b |
+| "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio, callback mode, for capture and playback | 5b |
 | Frozen binder surface `IMumlaService`/`IHumlaService`/`IHumlaSession` ([migration README](../migration/README.md)) | Removed; screens and features collect flows | 7 |
 | Hilt as the DI framework ([migration slices](../migration/slices.md)) | Hand-written `AppContainer` | 7 |

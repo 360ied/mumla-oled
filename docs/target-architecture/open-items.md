@@ -13,11 +13,8 @@ them.
 
 ## Open (gating)
 
-| Item | How it gets resolved | Gates |
-|---|---|---|
-| AAudio directly or through Oboe | Spike: stream reopening on device change, device quirks, binary size. Reopening must leave both streams started, never closed for longer than today's brief restarts (see [keep-alive shields](voice.md#keep-alive-shields)) | Step 5b |
-| AAudio callback or blocking mode | Spike: glitch rate and latency for both on the developer's device. Also the [keep-alive shields](voice.md#keep-alive-shields): the input stream still registers as recording-active, the output stream stays started through silence, and whether callback mode's zero feeding changes how the OS counts playback, observed untethered on battery with the screen off. Decides whether the render idle state exists at all; the [render wake](voice.md#render-idle-and-wake) serves blocking mode and goes unused in callback mode | Step 5b |
-| Echo cancellation with AAudio | Spike: allocate an AAudio session ID, attach `AcousticEchoCanceler`, confirm it works on the `VOICE` profile | Step 5b |
+None. Step 5b's three spikes were resolved without spiking (see
+[resolved](#resolved)).
 
 ## Open (not gating)
 
@@ -35,6 +32,15 @@ them.
 | Legacy server version plumbing | `VoiceFormat.legacyServerVersion` and the native `setFormat` parameter it feeds are unread now that the 1.2.2 workaround is gone (see [issue 35](issues/35-legacy-server-version-unread.md)) |
 
 ## Resolved
+
+Items resolved while rethinking step 5b (2026-11-23):
+
+| Item | Resolution | Where |
+|---|---|---|
+| AAudio directly or through Oboe | AAudio directly. With the minimum SDK at 30, Oboe's main value (the OpenSL ES fallback and the Android 8.0/8.1 workarounds) does not apply, and it would add a submodule and a C++ layer between `voice_io` and the stream. Reopening on route change and disconnect goes through the voice control thread | [migration](migration.md#step-5b--aaudio), [voice](voice.md#failures) |
+| AAudio callback or blocking mode | Callback mode for both streams, no spike. The only argument for blocking mode was the output shield's "nothing writes zeros" wording, which came from the `b1a1118e` power wait, not from field evidence: 0.21.7 wrote silence continuously and was the most stable state on record, while today's starved track is not counted as active playback (no `+audio`). Callback mode keeps the shield (output started for the whole connection), deletes the pacer and the render wake, and needs no Kotlin realtime thread. Per-callback CPU deadlines are watched through logged xrun counts, not gated on | [voice](voice.md#keep-alive-shields), [voice](voice.md#render-idle-and-wake) |
+| Echo cancellation with AAudio | No spike: the input stream is opened with `AAUDIO_SESSION_ID_ALLOCATE`, and Kotlin attaches `AcousticEchoCanceler`, `NoiseSuppressor`, and `AutomaticGainControl` to that session ID as `AudioInput` does today. Checked by ear on speakerphone in 5b's on-device pass | [migration](migration.md#step-5b--aaudio) |
+| Measurement before 5b | None gates the step. One device cannot rule out the OEM-specific shield failures, so formal measurements add little beyond the on-device check and daily use on battery; xrun counts and stream errors are logged for diagnosis | [migration](migration.md#step-5b--aaudio) |
 
 Items resolved while closing the 5a codec tail (2026-11-20):
 

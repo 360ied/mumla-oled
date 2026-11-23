@@ -230,8 +230,9 @@ When testing on a device, the steps most likely to show problems only
 there are:
 - **step 4**, Bluetooth headset routing (connect, flap, failure at
   connect, mute while the route settles);
-- **step 5b**, AAudio latency, glitches, and echo cancellation on the
-  speaker.
+- **step 5b**, AAudio glitches (xrun counts are logged), echo
+  cancellation on the speaker, Bluetooth reopening, and connection
+  survival on battery with the screen off.
 
 Android 11–12 support (the minSdk 30 floor) is theoretical and stays
 untested; the spec does not plan device work for it.
