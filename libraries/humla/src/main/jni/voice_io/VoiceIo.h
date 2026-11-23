@@ -34,8 +34,9 @@ class SettingsCell;
 /**
  * Native voice I/O core (step 5a.3a native render; step 5b callback mode).
  *
- * Owns the output engine and the two inbound rings; the render thread is the
- * only thread that touches the engine. Producers never reach the engine:
+ * Owns the output engine and the two inbound rings; the AAudio render
+ * callback is the only caller that touches the engine. Producers never reach
+ * the engine:
  * UDP frames arrive via pushInbound, tunnelled frames via pushTunnel, and
  * user removals via pushRemoveUser as a control item on the tunnel ring, so
  * a removal stays ordered after that user's already-queued tunnelled voice.
@@ -48,9 +49,10 @@ class SettingsCell;
  *
  * Threading: pushInbound has one producer (the UDP path), pushTunnel and
  * pushRemoveUser share one logical producer (the session message coroutine),
- * render has one consumer (the render thread). No locks, no allocation on
- * the render path, no Kotlin calls from render (the notifier calls Kotlin,
- * never render). Jitter margin is the I/O layer's constant; half duplex
+ * render has one consumer (the AAudio render callback). No locks, no
+ * allocation on the render path, and no Kotlin calls from render (the
+ * notifier calls Kotlin; render never does). Jitter margin is the I/O
+ * layer's constant; half duplex
  * is native from 5a.4 (render reads the settings cell and the capture
  * self-talking flag, both lock-free).
  *
@@ -103,7 +105,7 @@ public:
     VoiceIo(const VoiceIo&) = delete;
     VoiceIo& operator=(const VoiceIo&) = delete;
 
-    // Producer side (never the render thread). Each ring keeps one producer:
+    // Producer side (never the render callback). Each ring keeps one producer:
     // overlapping old and new UDP coroutines during a UDP restart are
     // serialized by AudioOutput's monitor in Kotlin, and the tunnel callers
     // share the session message coroutine. False means the ring was full;
@@ -113,7 +115,8 @@ public:
     bool pushRemoveUser(int32_t session);
 
     /**
-     * Render entry point (render thread only).
+     * Render entry point (AAudio render callback only; the JNI test entry
+     * drives the same body synchronously).
      *
      * Drains the inbound ring then the tunnel ring into queuePacket,
      * applying removals inline, then renders up to `samples` PCM into `out`

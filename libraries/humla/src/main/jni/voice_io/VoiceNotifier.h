@@ -42,8 +42,8 @@ namespace voice_io {
  * stale state survives a miss.
  *
  * The sink is a callback so the core stays host-testable: the JNI layer
- * passes a callback that posts the snapshot to Kotlin, and the render thread
- * never calls it. notifyNow() runs one delivery synchronously for tests;
+ * passes a callback that posts the snapshot to Kotlin, and the AAudio render
+ * callback never calls it. notifyNow() runs one delivery synchronously for tests;
  * production also runs the thread loop. Stop joins the thread; delivery
  * after stop never happens.
  *

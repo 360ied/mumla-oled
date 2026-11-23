@@ -118,13 +118,16 @@ struct VoiceStreamContext {
     // silent prefix of an otherwise audible chunk still returns silence.
     uint64_t renderCarryNonSilentFrames = 0;
 
-    // Bumped at every open (starts at 0, so the first open returns 1) and
-    // rolled back if either stream fails to open. Kotlin stores the value
-    // and ignores disconnects from older generations.
+    // Bumped on every open attempt (starts at 0, so the first returns 1)
+    // and never rolled back: a failed attempt consumes its generation, so a
+    // late disconnect can never match a later stream pair. Kotlin accepts
+    // only the exact generation its live pipeline recorded.
     std::atomic<uint64_t> streamGeneration{0};
-    // Written only by AAudio's error callback, read by the notifier thread.
-    // 0 means no disconnect; nativeReset clears it at each session start.
+    // Written only by AAudio's error callback. 0 means no disconnect; open
+    // and nativeReset clear both fields. The notifier reads the generation;
+    // the control thread logs the error when it tears the streams down.
     std::atomic<uint64_t> streamDisconnect{0};
+    std::atomic<int32_t> streamError{0};
 
     // Opaque AAudioStream* handles, touched by the control thread only. The
     // host build never sees AAudio, so these stay void* here.
@@ -137,6 +140,11 @@ struct VoiceStreamContext {
 // Defined in NativeVoiceEngineJni.cpp. int64_t keeps this host-compiled
 // header free of <jni.h>; AAudioStreams.cpp passes its jlong handle directly.
 VoiceStreamContext* streamContextFromHandle(int64_t handle);
+
+// Android-only in AAudioStreams.cpp. Stops and closes any streams still
+// attached to the context so nativeDestroy cannot free callback user data
+// while AAudio owns it. The host build never calls this.
+void stopAndCloseVoiceStreams(VoiceStreamContext* ctx);
 
 // Callback bodies shared by the AAudio data callbacks and the JNI test entry
 // points. Both are allocation-free and never attach to the JVM. The render

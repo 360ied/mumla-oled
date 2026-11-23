@@ -124,9 +124,11 @@ class VoiceEngine @JvmOverloads constructor(
     // Control-thread-only capture effects, released after the streams stop
     // and before they close.
     private val attachedEffects = mutableListOf<AudioEffect>()
-    // When the last successful disconnect reopen happened; a second
-    // disconnect within 5 s of it counts as a failed reopen.
+    // When the last successful disconnect reopen happened and which pair it
+    // built; only a disconnect of that exact generation counts as a failed
+    // reopen. Route/preference rebuilds and failures clear both.
     private var lastReopenAt: Long? = null
+    private var lastReopenGeneration: Long? = null
 
     /** Test-only: current pipeline for route-following assertions (issue 03). */
     internal fun pipelineForTests(): BuiltPipeline? = pipelineRef.get()
@@ -185,7 +187,7 @@ class VoiceEngine @JvmOverloads constructor(
         // Runs on the shared voice control thread, in command order with
         // Start/Stop, so teardown and destroy serialize without a second
         // thread. Null in unit tests and the interop harness, which drive
-        // native render/capture directly without AudioRecord/Track.
+        // native render/capture directly without AAudio streams.
         val routes = routeStates
         if (routes != null) {
             scope.launch {
@@ -493,6 +495,7 @@ class VoiceEngine @JvmOverloads constructor(
                 startHealthy.set(false)
                 lastStartRef.set(null)
                 lastReopenAt = null
+                lastReopenGeneration = null
                 // Streams first (stop, release effects, close), then native
                 // stop (joins send/receive/notifier, clears both engines/rings,
                 // delivers the final empty snapshot via the notifier and
@@ -742,6 +745,14 @@ class VoiceEngine @JvmOverloads constructor(
      */
     private fun tryEnsurePipeline(force: Boolean = false): Boolean {
         checkNotMainThread()
+        if (closed.get()) {
+            tearDownPipeline()
+            return true
+        }
+        if (!force) {
+            lastReopenAt = null
+            lastReopenGeneration = null
+        }
         if (!runningFlag.get()) {
             tearDownPipeline()
             return true
@@ -857,6 +868,8 @@ class VoiceEngine @JvmOverloads constructor(
      */
     private fun failPipeline(message: String) {
         pipelineRef.set(null)
+        lastReopenAt = null
+        lastReopenGeneration = null
         val engine = nativeRef.get()
         try {
             engine?.stopStreams()
@@ -929,17 +942,21 @@ class VoiceEngine @JvmOverloads constructor(
     /** One reopen per disconnect, serialized with Start/Stop and route work. */
     private fun handleDisconnect(generation: Long) {
         checkNotMainThread()
+        if (closed.get()) return
         val current = pipelineRef.get() ?: return
         if (!runningFlag.get()) return
-        if (generation < current.generation) return
+        if (generation != current.generation) return
         val now = SystemClock.elapsedRealtime()
         val reopenedAt = lastReopenAt
-        if (reopenedAt != null && now - reopenedAt < REOPEN_FAILURE_WINDOW_MS) {
+        if (reopenedAt != null && lastReopenGeneration == current.generation &&
+            now - reopenedAt < REOPEN_FAILURE_WINDOW_MS
+        ) {
             failPipeline("stream reopen failed")
             return
         }
         if (!tryEnsurePipeline(force = true)) return
         lastReopenAt = now
+        lastReopenGeneration = pipelineRef.get()?.generation
     }
 
     private fun setSpeakerphone(on: Boolean) {
@@ -1087,6 +1104,8 @@ class VoiceEngine @JvmOverloads constructor(
         // apply() instead of creating an engine this teardown will never
         // destroy (submit/close race).
         closed.set(true)
+        lastReopenAt = null
+        lastReopenGeneration = null
         val teardown = scope.launch(NonCancellable) {
             try {
                 tearDownPipeline()

@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -71,8 +72,11 @@ class VoiceEngineStreamTest {
             )
         }
 
-        fun ready() {
-            routes.value = RouteState.Ready(AppliedRoute.VOICE_HANDSET, StreamProfile.VOICE)
+        fun ready(
+            route: AppliedRoute = AppliedRoute.VOICE_HANDSET,
+            profile: StreamProfile = StreamProfile.VOICE,
+        ) {
+            routes.value = RouteState.Ready(route, profile)
         }
 
         fun idle() {
@@ -183,5 +187,67 @@ class VoiceEngineStreamTest {
         assertEquals(1, h.fake.streamCloses)
         assertTrue(h.pipelineErrors().any { it.message == "playback open failed" })
         assertTrue(h.engine.status.value.running) // session stays up
+    }
+
+    @Test
+    fun `disconnect skips a future generation`() {
+        val h = Harness()
+        h.start()
+        h.ready()
+        val first = h.engine.pipelineForTests()!!
+        h.engine.onStreamDisconnect(first.generation + 1)
+        assertEquals(1, h.fake.streamOpens.size)
+        assertEquals(1, h.fake.streamStarts)
+        assertEquals(first, h.engine.pipelineForTests())
+    }
+
+    @Test
+    fun `failed open consumes its generation`() {
+        val h = Harness()
+        h.fake.openStreamsOk = false
+        h.start()
+        h.ready()
+        h.fake.openStreamsOk = true
+        h.idle()
+        h.ready()
+        val built = h.engine.pipelineForTests()!!
+        assertEquals(2L, built.generation)
+        // Generation 1 belonged to the failed attempt and must be ignored.
+        h.engine.onStreamDisconnect(1L)
+        assertEquals(2, h.fake.streamOpens.size)
+        assertEquals(1, h.fake.streamStarts)
+    }
+
+    @Test
+    fun `disconnect after route rebuild is not a failed reopen`() {
+        val h = Harness()
+        h.start()
+        h.ready()
+        val first = h.engine.pipelineForTests()!!
+        h.engine.onStreamDisconnect(first.generation)
+        assertNotNull(h.engine.pipelineForTests())
+        // A later route rebuild is not the reopened pair, so its 5 s window
+        // must not carry over to this disconnect.
+        h.ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
+        val rebuilt = h.engine.pipelineForTests()!!
+        h.engine.onStreamDisconnect(rebuilt.generation)
+        assertNotNull(h.engine.pipelineForTests())
+        assertEquals(4, h.fake.streamOpens.size)
+        assertEquals(4, h.fake.streamStarts)
+        assertTrue(h.pipelineErrors().none { it.message == "stream reopen failed" })
+    }
+
+    @Test
+    fun `close suppresses later route rebuilds`() {
+        val h = Harness()
+        h.start()
+        h.ready()
+        assertEquals(1, h.fake.streamOpens.size)
+        runBlocking { h.engine.close().join() }
+        h.idle()
+        h.ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
+        assertEquals(1, h.fake.streamOpens.size)
+        assertEquals(1, h.fake.streamCloses)
+        assertNull(h.engine.pipelineForTests())
     }
 }

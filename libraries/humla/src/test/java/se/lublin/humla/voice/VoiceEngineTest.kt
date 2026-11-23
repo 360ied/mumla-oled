@@ -155,7 +155,10 @@ class VoiceEngineTest {
         override fun render(out: ShortArray?, offset: Int, length: Int): Int = 0
         override fun openStreams(inputPreset: Int, usage: Int): LongArray? {
             streamOpens.add(inputPreset to usage)
-            return if (openStreamsOk) longArrayOf(sessionId, nextGeneration++) else null
+            // Native consumes a generation on every attempt, including a
+            // failed open, so a dead pair's generation is never reused.
+            val generation = nextGeneration++
+            return if (openStreamsOk) longArrayOf(sessionId, generation) else null
         }
 
         override fun startStreams(): Boolean {

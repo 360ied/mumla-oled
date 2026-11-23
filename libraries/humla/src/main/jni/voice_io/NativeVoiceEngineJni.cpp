@@ -68,9 +68,9 @@ using mumla::voice_io::VoiceStreamContext;
 // engine and both inbound rings, the sender-filter policy cell, the capture
 // policy (filter + gate) and settings cells, the UDP receive half, the capture/send half, and
 // the talk notifier — one application-scoped native object owned by the
-// VoiceEngine facade, kept across sessions. The render thread is the only
-// thread that touches the output engine and the capture thread the only one
-// that touches the input engine; producers never reach either: UDP frames
+// VoiceEngine facade, kept across sessions. The AAudio render callback is
+// the only caller of the output engine and the capture callback the only
+// caller of the input engine; producers never reach either: UDP frames
 // arrive via the receive thread, tunnelled frames via the session message
 // coroutine, removals as control items on the tunnel ring, capture PCM via
 // the capture entry. Talk travels as levels through the sequence lock plus
@@ -416,8 +416,13 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeDestroy(JNIEnv* env, jclass /
     if (ctx == nullptr) {
         return;
     }
-    // The control thread destroys only after the render and capture threads
-    // are joined: a live entry here is a lifecycle bug, loud in debug builds.
+    // Defensive Android cleanup: normal Kotlin teardown already closed the
+    // streams, but destroying with live streams would leave AAudio callback
+    // user data pointing at freed context. close joins any in-flight
+    // callback before the asserts below and the delete.
+#ifdef __ANDROID__
+    mumla::voice_io::stopAndCloseVoiceStreams(&ctx->streams);
+#endif
     assert(!ctx->streams.renderActive.load(std::memory_order_acquire));
     assert(!ctx->streams.captureActive.load(std::memory_order_acquire));
     ctx->receive.stop();
@@ -476,7 +481,7 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetRnnoiseModel(JNIEnv* env,
     // Control-plane only while capture is stopped (Start/Stop ordering):
     // the input engine is single-threaded, so a model swap racing a frame
     // would tear inside AudioInputEngine. Kotlin applies this at Start and
-    // on model-load restarts, never from the capture thread.
+    // on model-load restarts, never from the capture callback.
     assert(!ctx->streams.captureActive.load(std::memory_order_acquire));
     if (model == nullptr) {
         ctx->send.setDenoiserModel(nullptr, 0);
@@ -622,14 +627,14 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStop(JNIEnv* /*env*/, jclass 
                                                         jlong handle) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx != nullptr) {
-        // Session stop, after Kotlin tore down capture/render (see
-        // VoiceEngine.apply Stop, which joins both pipelines on the voice
-        // control thread before calling here): both debug guards below must
-        // hold, so a teardown-ordering regression fails loudly in debug
-        // builds. Release builds rely on that same Kotlin join ordering; the
+        // Session stop, after Kotlin closed the AAudio streams (see
+        // VoiceEngine.apply Stop, which stops and closes both streams on the
+        // voice control thread before calling here): both debug guards below
+        // must hold, so a teardown-ordering regression fails loudly in debug
+        // builds. Release builds rely on that same Kotlin close ordering; the
         // guards are check-then-act by design, since a lock on the realtime
         // path would be worse. Stop threads, then clear both halves while no
-        // realtime thread is live (send selfTalking false, io empty publish),
+        // callback is live (send selfTalking false, io empty publish),
         // deliver the final empty snapshot synchronously, then stop the
         // notifier. The notifier loop is joined before the final notifyNow
         // so the version gate has a single writer; the join itself blocks up
@@ -665,10 +670,11 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeReset(JNIEnv* /*env*/, jclass
         // violation fails loudly in debug builds.
         assert(!ctx->streams.renderActive.load(std::memory_order_acquire));
         assert(!ctx->streams.captureActive.load(std::memory_order_acquire));
-        // A new session starts with no disconnect: the notifier delivers
-        // generation 0 on its next tick, which Kotlin skips as older than
-        // the generation the first open returns.
+        // A new session starts with no disconnect or stream error: the
+        // notifier delivers generation 0 on its next tick, which Kotlin
+        // skips because it is not the live pipeline's generation.
         ctx->streams.streamDisconnect.store(0, std::memory_order_release);
+        ctx->streams.streamError.store(0, std::memory_order_release);
         ctx->send.stop();
         ctx->io.clear();
         ctx->send.clear();

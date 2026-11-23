@@ -365,21 +365,24 @@ class TestNative(unittest.TestCase):
 
 
 class TestVoiceLifecycle(unittest.TestCase):
-    # Step 5b splits the pin: asserts live in the JNI lifecycle file, the
-    # RenderGuard use lives in the host-compiled AAudio callback bodies.
+    # Step 5b splits the pin: asserts live in the JNI lifecycle file, both
+    # guards live in the host-compiled AAudio callback bodies.
     LIFECYCLE = (
         "#include <cassert>\n"
         "void nativeDestroy() {\n"
         "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+        "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
         "}\n"
         "void nativeClear() {\n"
         "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+        "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
         "}\n"
     )
     CALLBACKS = (
         "#include \"VoiceStreamContext.h\"\n"
         "bool renderStreamFrames() { RenderGuard guard(&ctx->renderActive);\n"
         "  return true; }\n"
+        "void captureStreamFrames() { CaptureGuard guard(&ctx->captureActive); }\n"
     )
 
     def write_lifecycle(self, root, lifecycle=None, callbacks=None):
@@ -413,13 +416,33 @@ class TestVoiceLifecycle(unittest.TestCase):
             text = self.LIFECYCLE.replace(
                 "void nativeClear() {\n"
                 "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+                "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
                 "}\n",
-                "void nativeClear() {}\n",
+                "void nativeClear() {\n"
+                "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
+                "}\n",
             )
             self.write_lifecycle(root, text, self.CALLBACKS)
             errors = ca.check_voice_lifecycle(root)
             self.assertEqual(len(errors), 1)
             self.assertTrue(any("voice-lifecycle" in e for e in errors))
+
+    def test_missing_capture_assert_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = self.LIFECYCLE.replace(
+                "void nativeClear() {\n"
+                "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+                "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
+                "}\n",
+                "void nativeClear() {\n"
+                "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+                "}\n",
+            )
+            self.write_lifecycle(root, text, self.CALLBACKS)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(any("captureActive" in e for e in errors))
 
     def test_missing_guard_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -432,12 +455,23 @@ class TestVoiceLifecycle(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertTrue(any("RenderGuard" in e for e in errors))
 
+    def test_missing_capture_guard_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = self.CALLBACKS.replace(
+                "CaptureGuard guard(&ctx->captureActive);", "/* guard removed */"
+            )
+            self.write_lifecycle(root, self.LIFECYCLE, text)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(any("CaptureGuard" in e for e in errors))
+
     def test_missing_callbacks_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write_lifecycle(root, self.LIFECYCLE)
             errors = ca.check_voice_lifecycle(root)
-            self.assertEqual(len(errors), 2)
+            self.assertEqual(len(errors), 3)
             self.assertTrue(any("VoiceStreamCallbacks.cpp" in e for e in errors))
 
     def test_missing_lifecycle_file_fails(self):
@@ -445,7 +479,7 @@ class TestVoiceLifecycle(unittest.TestCase):
             root = Path(tmp)
             self.write_lifecycle(root, callbacks=self.CALLBACKS)
             errors = ca.check_voice_lifecycle(root)
-            self.assertEqual(len(errors), 2)
+            self.assertEqual(len(errors), 3)
             self.assertTrue(any("NativeVoiceEngineJni.cpp" in e for e in errors))
 
 

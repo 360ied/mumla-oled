@@ -25,6 +25,7 @@
 #include <aaudio/AAudio.h>
 #include <android/log.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 
@@ -45,15 +46,16 @@ void logError(const char* what, aaudio_result_t result) {
 }
 
 // AAudio's documentation forbids stopping, closing, or reopening a stream
-// from its error callback, and callbacks must not log either. Record only
-// the generation of the stream pair that failed; the notifier delivers it
-// on its next tick and Kotlin reopens on the voice control thread.
+// from its error callback, and callbacks must not log either. Record the
+// generation and error; the notifier delivers the generation on its next
+// tick and the control thread logs the error when it tears the streams down.
 void streamErrorCallback(AAudioStream* /*stream*/, void* userData,
-                         aaudio_result_t /*error*/) {
+                         aaudio_result_t error) {
     auto* data = static_cast<mumla::voice_io::VoiceStreamCallbackData*>(userData);
     if (data == nullptr || data->context == nullptr) {
         return;
     }
+    data->context->streamError.store(error, std::memory_order_relaxed);
     data->context->streamDisconnect.store(data->generation,
                                           std::memory_order_release);
 }
@@ -155,11 +157,11 @@ bool openStream(AAudioStream** out, aaudio_direction_t direction,
 
 // States that no longer need a stop request or a wait: a stream that never
 // started (its pair failed to open) is already final, and a disconnected
-// stream may never report STOPPED.
+// stream may never report STOPPED. UNKNOWN is deliberately absent: the
+// client-side state is refreshed with a zero-timeout wait first.
 bool stopIsFinal(aaudio_stream_state_t state) {
     switch (state) {
         case AAUDIO_STREAM_STATE_UNINITIALIZED:
-        case AAUDIO_STREAM_STATE_UNKNOWN:
         case AAUDIO_STREAM_STATE_OPEN:
         case AAUDIO_STREAM_STATE_STOPPED:
         case AAUDIO_STREAM_STATE_CLOSING:
@@ -173,6 +175,12 @@ bool stopIsFinal(aaudio_stream_state_t state) {
 
 void stopStream(AAudioStream* stream, const char* which) {
     aaudio_stream_state_t state = AAudioStream_getState(stream);
+    if (state == AAUDIO_STREAM_STATE_UNKNOWN) {
+        aaudio_stream_state_t refreshed = AAUDIO_STREAM_STATE_UNKNOWN;
+        (void)AAudioStream_waitForStateChange(
+            stream, AAUDIO_STREAM_STATE_UNKNOWN, &refreshed, 0);
+        state = refreshed;
+    }
     if (!stopIsFinal(state)) {
         const aaudio_result_t requested = AAudioStream_requestStop(stream);
         if (requested != AAUDIO_OK) {
@@ -180,21 +188,45 @@ void stopStream(AAudioStream* stream, const char* which) {
         }
         state = AAudioStream_getState(stream);
     }
-    while (!stopIsFinal(state)) {
-        aaudio_stream_state_t next = AAUDIO_STREAM_STATE_UNKNOWN;
+    int64_t remaining = kStopTimeoutNanos;
+    while (!stopIsFinal(state) && remaining > 0) {
+        const auto before = std::chrono::steady_clock::now();
+        aaudio_stream_state_t next = state;
         const aaudio_result_t result = AAudioStream_waitForStateChange(
-            stream, state, &next, kStopTimeoutNanos);
+            stream, state, &next, remaining);
+        const auto after = std::chrono::steady_clock::now();
+        const int64_t elapsed =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(after - before)
+                .count();
+        remaining -= elapsed;
+        if (remaining < 0) {
+            remaining = 0;
+        }
         if (result != AAUDIO_OK || next == state) {
             break;
         }
         state = next;
     }
-    // XRuns and stream errors are logged on the control thread, never from
-    // a callback, and gate nothing.
+    // XRuns are logged on the control thread, never from a callback, and
+    // gate nothing. The stream error itself is logged once by the caller.
     __android_log_print(ANDROID_LOG_INFO, kLogTag,
                         "%s stopped: state=%d xruns=%d", which,
                         static_cast<int>(state),
                         AAudioStream_getXRunCount(stream));
+}
+
+void logStreamError(mumla::voice_io::VoiceStreamContext* ctx) {
+    if (ctx == nullptr) {
+        return;
+    }
+    const int32_t error =
+        ctx->streamError.exchange(0, std::memory_order_acq_rel);
+    if (error != 0) {
+        __android_log_print(
+            ANDROID_LOG_WARN, kLogTag, "stream error: %s (%d)",
+            AAudio_convertResultToText(static_cast<aaudio_result_t>(error)),
+            error);
+    }
 }
 
 void closeStream(AAudioStream* stream, const char* which) {
@@ -214,7 +246,37 @@ void closeBoth(mumla::voice_io::VoiceStreamContext* ctx) {
     ctx->outputStream = nullptr;
 }
 
+void failOpen(mumla::voice_io::VoiceStreamContext* ctx, AAudioStream* input,
+              AAudioStream* output) {
+    closeStream(input, "close input after failed open");
+    closeStream(output, "close output after failed open");
+    ctx->inputStream = nullptr;
+    ctx->outputStream = nullptr;
+    ctx->streamDisconnect.store(0, std::memory_order_release);
+    ctx->streamError.store(0, std::memory_order_release);
+}
+
 } // namespace
+
+namespace mumla {
+namespace voice_io {
+
+void stopAndCloseVoiceStreams(VoiceStreamContext* ctx) {
+    if (ctx == nullptr) {
+        return;
+    }
+    if (ctx->inputStream != nullptr) {
+        stopStream(static_cast<AAudioStream*>(ctx->inputStream), "input");
+    }
+    if (ctx->outputStream != nullptr) {
+        stopStream(static_cast<AAudioStream*>(ctx->outputStream), "output");
+    }
+    logStreamError(ctx);
+    closeBoth(ctx);
+}
+
+} // namespace voice_io
+} // namespace mumla
 
 extern "C" {
 
@@ -226,10 +288,16 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeOpenStreams(
         return nullptr;
     }
     // Kotlin closes before reopening; clean up defensively so a failure in
-    // the previous teardown cannot leak a stream.
+    // the previous teardown cannot leak a stream. Clear the disconnect slot
+    // before registering callbacks; any error from this attempt writes the
+    // new generation, while a stale value from a dead pair can never match.
     if (ctx->inputStream != nullptr || ctx->outputStream != nullptr) {
         closeBoth(ctx);
     }
+    ctx->streamDisconnect.store(0, std::memory_order_release);
+    ctx->streamError.store(0, std::memory_order_release);
+    // Each attempt consumes a generation, including failures. Never rolling
+    // back keeps a late disconnect from a dead pair from being reused.
     const uint64_t generation =
         ctx->streamGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     mumla::voice_io::resetRenderCarry(ctx);
@@ -244,11 +312,7 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeOpenStreams(
                     inputDataCallback, &ctx->inputCallback) ||
         !openStream(&output, AAUDIO_DIRECTION_OUTPUT, usage, outputDataCallback,
                     &ctx->outputCallback)) {
-        closeStream(input, "close input after failed open");
-        closeStream(output, "close output after failed open");
-        ctx->inputStream = nullptr;
-        ctx->outputStream = nullptr;
-        ctx->streamGeneration.store(generation - 1, std::memory_order_release);
+        failOpen(ctx, input, output);
         return nullptr;
     }
     ctx->inputStream = input;
@@ -256,6 +320,10 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeOpenStreams(
     const aaudio_session_id_t sessionId = AAudioStream_getSessionId(input);
     jlongArray result = env->NewLongArray(2);
     if (result == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        failOpen(ctx, input, output);
         return nullptr;
     }
     const jlong values[2] = {static_cast<jlong>(sessionId),
@@ -263,6 +331,8 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeOpenStreams(
     env->SetLongArrayRegion(result, 0, 2, values);
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
+        env->DeleteLocalRef(result);
+        failOpen(ctx, input, output);
         return nullptr;
     }
     return result;
@@ -302,6 +372,7 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStopStreams(
     if (ctx->outputStream != nullptr) {
         stopStream(static_cast<AAudioStream*>(ctx->outputStream), "output");
     }
+    logStreamError(ctx);
 }
 
 JNIEXPORT void JNICALL
@@ -309,6 +380,7 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeCloseStreams(
     JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
     auto* ctx = mumla::voice_io::streamContextFromHandle(handle);
     if (ctx != nullptr) {
+        logStreamError(ctx);
         closeBoth(ctx);
     }
 }

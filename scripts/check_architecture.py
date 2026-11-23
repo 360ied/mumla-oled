@@ -21,8 +21,8 @@ Four checks (see docs/target-architecture/enforcement.md):
   2. Android-free packages: state/client/net must not import android(x)/R.
   3. Native tripwire: forbidden I/O/thread/JNI headers in no-I/O native dirs.
   4. Voice lifecycle: the voice_io JNI destroy/clear paths keep the debug
-     assert that render is stopped, and the AAudio callback bodies set
-     renderActive through RenderGuard.
+     asserts that render and capture are stopped, and the AAudio callback
+     bodies set renderActive/captureActive through their guards.
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -131,9 +131,9 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
 
 # 5a.3b native receive lifecycle, split in 5b: the JNI destroy/reset paths
-# keep the debug assert that render is stopped, while the AAudio callback
-# bodies (also used by the JNI test entries) own the RenderGuard itself.
-# Once both files land, removing an assert or the guard fails the gate.
+# keep the debug asserts that render and capture are stopped, while the
+# AAudio callback bodies (also used by the JNI test entries) own both guards.
+# Once both files land, removing an assert or a guard fails the gate.
 VOICE_IO_LIFECYCLE_FILE = (
     "libraries/humla/src/main/jni/voice_io/NativeVoiceEngineJni.cpp"
 )
@@ -141,7 +141,9 @@ VOICE_IO_CALLBACKS_FILE = (
     "libraries/humla/src/main/jni/voice_io/VoiceStreamCallbacks.cpp"
 )
 RE_RENDER_GUARD_USE = re.compile(r"\bRenderGuard\s+\w+")
+RE_CAPTURE_GUARD_USE = re.compile(r"\bCaptureGuard\s+\w+")
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
+RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
 
 
 def check_voice_lifecycle(root: Path):
@@ -165,16 +167,29 @@ def check_voice_lifecycle(root: Path):
         errors.append(
             f"voice-lifecycle: cannot read {VOICE_IO_CALLBACKS_FILE}"
         )
-    asserts = RE_RENDER_ACTIVE_ASSERT.findall(lifecycle_text)
-    if len(asserts) < 2:
+    render_asserts = RE_RENDER_ACTIVE_ASSERT.findall(lifecycle_text)
+    capture_asserts = RE_CAPTURE_ACTIVE_ASSERT.findall(lifecycle_text)
+    if len(render_asserts) < 2:
         errors.append(
-            f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has {len(asserts)} "
-            f"renderActive assert(s), expected >= 2 (destroy and clear paths)"
+            f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has "
+            f"{len(render_asserts)} renderActive assert(s), expected >= 2 "
+            f"(destroy and clear paths)"
+        )
+    if len(capture_asserts) < 2:
+        errors.append(
+            f"voice-lifecycle: {VOICE_IO_LIFECYCLE_FILE} has "
+            f"{len(capture_asserts)} captureActive assert(s), expected >= 2 "
+            f"(destroy and clear paths)"
         )
     if not RE_RENDER_GUARD_USE.search(callbacks_text):
         errors.append(
             f"voice-lifecycle: {VOICE_IO_CALLBACKS_FILE} has no RenderGuard; "
             f"the render callback must set renderActive while inside VoiceIo::render"
+        )
+    if not RE_CAPTURE_GUARD_USE.search(callbacks_text):
+        errors.append(
+            f"voice-lifecycle: {VOICE_IO_CALLBACKS_FILE} has no CaptureGuard; "
+            f"the capture callback must set captureActive while inside VoiceSend"
         )
     return errors
 
