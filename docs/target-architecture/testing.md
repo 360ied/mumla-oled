@@ -233,7 +233,13 @@ Added in step 6 (see [migration](steps/6-container-storage-and-features.md#step-
   `HumlaRuntime` commit, which starts the lifetime rule; the chat-log and
   connection-notification commits add the feature-events and
   notification-removal assertions. Step 7 rewrites it for
-  `ConnectionService`.
+  `ConnectionService` (start, foreground, self-stop on `Idle` and
+  `Failed`, no service after an instant failure, disconnect on destroy).
+- **ViewModels (step 7).** Each ViewModel takes flows and intent
+  functions, like a feature, and its test drives it with plain flows under
+  virtual time. The channel list also gets a screen-level Robolectric test
+  of the real adapter over scripted state transitions (see
+  [issue 07](issues/07-channel-adapter-spike-weaker.md)).
 - **Shared fakes.** `FakeTransport`, `FakeFactory`, `FakeVoice`, and the
   message builders in `ClientTestSupport.kt` move to a new Android library
   module, `:libraries:humla-testing`, as public classes, and both modules'

@@ -181,6 +181,14 @@ flow, such as the `talkKeys`, `speech`, and `appLog` hand-off flows.
 Same-package references need no import, so the check matches class names,
 not imports.
 
+## No service binding
+
+From step 7, `check_architecture.py` fails if a file under `app/src/main`
+contains `bindService(` or `ServiceConnection`. Screens and features
+collect the container's flows; `ConnectionService` holds only the
+foreground lifetime, and its `onBind` returns `null` (see
+[app](app.md#connectionservice)).
+
 ## Local-facts writer
 
 From step 6, `check_architecture.py` fails if a file under `app/src/main`
