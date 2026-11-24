@@ -24,7 +24,7 @@ class HumlaClient(
     private val clock: Clock,
 ) {
     val state: StateFlow<ClientState>
-    val events: SharedFlow<SessionEvent>      // every session's events, client lifetime (state.md#events)
+    val events: SharedFlow<SessionEventRecord> // every session's events, client lifetime (state.md#events)
 
     fun connect(target: ConnectTarget)        // non-blocking
     fun disconnect()                          // non-blocking
@@ -268,7 +268,7 @@ is non-blocking: one atomic state update and/or one enqueued TCP message
 | `getSessionId`, `getSessionUser`, `getSessionChannel`, `getUser`, `getChannel`, `getRootChannel`, `getPermissions`, `getServerSettings`, `getServerVersion*`, `getServerRelease`, `getServerOS*` | Read `state.value` (`server.self`, `users`, `channels`, `rootPermissions`, `info`) |
 | `getTCPLatency`, `getUDPLatency`, `getMaxBandwidth`, `getCurrentBandwidth` | Read `stats.value` |
 | `getTransmitMode`, `getCodec` | Settings (transmit mode) and `state.value.server.info.opus` |
-| `isTalking`, `setTalkingState` | `VoiceEngine` talk activity; `setPtt(pressed)` |
+| `isTalking`, `setTalkingState` | `state.local.pttPressed`, the only record of whether the user is talking (from step 6); `setPtt(pressed)`, and `togglePtt()` for toggle mode |
 | `joinChannel`, `moveUserToChannel` | `joinChannel(id)`, `moveUser(session, channel)` |
 | `sendAccessTokens` | `sendAccessTokens(tokens)` |
 | `requestPermissions`, `requestComment`, `requestAvatar`, `requestChannelDescription` | `requestPermissions(channel)`, `requestComment(session)`, `requestTexture(session)`, `requestDescription(channel)` |

@@ -221,14 +221,22 @@ throwaway break was reverted without committing. Recorded in
 Added in step 6 (see [migration](migration.md#step-6--container-storage-and-features)).
 
 - **Container lifetime.** `AppContainerLifecycleTest` (Robolectric) builds
-  the real `AppContainer` with fakes only at the platform edges: the native
-  engine factory, because Robolectric cannot load `libhumlaaudio`, and the
-  transport factory. The fake transport is the virtual-time tests'
-  `FakeTransport` (`ClientTestSupport.kt`), moved into a `testFixtures`
-  source set of `:libraries:humla` so that `:app` tests can use it. It
-  creates and destroys the service twice and checks that the second
-  instance gets the same, still working objects (the exact assertions are
-  in step 6's done-when). Step 7 rewrites it for `ConnectionService`.
+  the real `AppContainer` through a test `MumlaApplication` that overrides
+  `createContainer()` and passes fake `HumlaRuntime.Edges`: a fake engine
+  factory, because Robolectric cannot load `libhumlaaudio`, and a fake
+  transport factory. It creates and destroys the service twice and checks
+  that the second instance gets the same, still working objects (the
+  exact assertions are in step 6's done-when). The container runs real
+  dispatchers and a real route thread, so the test waits on flows with a
+  timeout instead of using virtual time. Step 7 rewrites it for
+  `ConnectionService`.
+- **Shared fakes.** `FakeTransport`, `FakeFactory`, `FakeVoice`, and the
+  message builders in `ClientTestSupport.kt` move to a new Android library
+  module, `:libraries:humla-testing`, as public classes, and both modules'
+  unit tests depend on it (`testImplementation`). They implement only
+  public interfaces (`Transport`, `TransportFactory`, `VoiceLifecycle`,
+  `VoiceLink`), so the move needs no `internal` access and no test
+  fixtures support from the build plugin.
 - **Features over fake flows.** A feature's constructor takes the flows
   and intent functions it uses, never the container or `HumlaClient`
   itself, so its test passes `MutableStateFlow`s and
@@ -239,14 +247,25 @@ Added in step 6 (see [migration](migration.md#step-6--container-storage-and-feat
 - **Backpressure.** For each feature that collects `client.events`, a test
   emits 300 events (more than the 256-event buffer) while the feature's
   slow dependency is blocked, and fails if the emitter suspends.
-- **Chat-log goldens.** Recorded from `StateEventLogger` on the current
-  resources before step 6 deletes it, one string per `SessionEvent` case
-  and filter branch, and replayed against the chat log feature. As with
-  the 5a engine goldens, a changed string is a failing test, never a
-  re-recorded fixture.
-- **Settings current-value API.** A write is visible in `snapshot` on the
-  next line; two racing `update` calls on the same key leave the store at
-  the in-memory value; a failed write keeps the in-memory value and logs.
+- **Chat-log goldens.** Recorded in `:app` (Robolectric loads the merged
+  resources there; `:libraries:humla` tests do not load Android resources)
+  from `StateEventLogger` before step 6 deletes it, one string per
+  `SessionEvent` case and filter branch, and replayed against the chat log
+  feature. As with the 5a engine goldens, a changed string is a failing
+  test, never a re-recorded fixture. The `EncoderLimited` and
+  `PipelineError` lines, which `StateEventLogger` does not produce, get
+  their own expected-string tests from the moved resources.
+- **Tests move with their code.** Each feature commit turns the
+  `MumlaService` tests for the code it takes over into feature tests in
+  the same commit (`MumlaServiceChatLogTest`, `MumlaServiceTalkKeyTest`,
+  `MumlaConnectionNotificationTest`, `MumlaConnectionNotificationMediaKeyTest`).
+  `HumlaService` tests that read its private fields by reflection build a
+  `HumlaRuntime` with fake edges instead.
+- **Settings current-value API.** A write is visible in `state` on the
+  next line; racing `update` calls leave the store equal to the in-memory
+  value; a failed write keeps the in-memory value, logs, and is written by
+  the next signal; `DataStorePreferenceDataStore` returns the widget's
+  default for an absent key.
 
 ## On-device testing
 

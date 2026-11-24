@@ -20,70 +20,122 @@ keeps its current owner and behavior.
 
 ## `AppContainer`
 
-Created in `MumlaApplication.onCreate` and reachable from any component as
+Created in `MumlaApplication.onCreate`, through an overridable
+`createContainer()` that tests replace, and reachable from any component as
 `(application as MumlaApplication).container`. Constructs every
 application-scoped object by hand, in this order:
 
-1. `appScope` (`SupervisorJob` + `Dispatchers.Default`) and the main-thread
-   poster (`ContextCompat.getMainExecutor`, so no `Handler`).
+1. `appScope`: `SupervisorJob` + `Dispatchers.Default` + a
+   `CoroutineExceptionHandler` that throws in debug builds and logs in
+   release builds, the same split as `checkNotMainThread()`. The
+   main-thread poster is `ContextCompat.getMainExecutor`, so no `Handler`.
 2. Storage: the settings `DataStore` (with today's
    `SharedPreferencesMigration`), `SettingsRepository`, and
    `MumlaRoomDatabase`, each built once here; their singleton accessors
-   are gone. The repository's first snapshot is loaded with the app's one
-   **blocking startup read** (`runBlocking { first() }`), because the theme
-   and locale must be applied before the first activity draws. Today's
-   first `Settings` read already blocks there, so startup costs the same.
-   `AppContainer.kt` is a boundary file for this one line (see
+   are gone. The repository's first value is loaded with the app's one
+   **blocking startup read** (`runBlocking { store.data.first() }`, which
+   also runs the migration), because the theme and locale must be applied
+   before the first activity draws. Today's first `Settings` read already
+   blocks there, so startup costs the same. `AppContainer.kt` is a
+   boundary file for this one line (see
    [enforcement](enforcement.md#concurrency-tripwire)).
-3. Settings-derived flows: `VoiceSettings` and `RoutePreferences`, mapped
-   from `SettingsRepository.snapshot` with `distinctUntilChanged`.
+3. Settings-derived inputs for the runtime, each a `StateFlow` (`stateIn`
+   on `appScope`, seeded from the snapshot read in step 2):
+   - `VoiceSettings`, mapped with `VoiceSettingsMapper`. A snapshot the
+     mapper rejects keeps the previous value and logs a warning.
+   - `RoutePreferences`. Bluetooth SCO is on only when the setting is on
+     and the `BLUETOOTH_CONNECT` grant is held. Android kills the process
+     when a grant is revoked, so at runtime a grant only appears, and the
+     permission guard has already turned the setting off by then.
 4. Platform signals: `configuration`, a `StateFlow<Configuration>` that
    `MumlaApplication.onConfigurationChanged` updates (the overlay and hot
    corner reposition on rotation, as `MumlaService.onConfigurationChanged`
    does today).
 5. `LocalFactsStore` over the database and settings (local mute and
    ignore lists, persisted self-mute and self-deafen).
-6. `TalkActivityPublisher`.
-7. `RouteControl`, through `RouteControl.create`, with `AndroidAudioPlatform`
-   and a factory that builds `BluetoothScoManager` on the application
-   context (see [route](route.md#api)).
-8. `VoiceEngine`, given the publisher, `RouteControl.state`, the voice
-   settings and route preference flows, and a tunnel sink that reads the
-   client's current session. The sink refers to the client lazily (it is
-   built in the next steps) and runs only while a session exists.
-9. `NetworkMonitor` over `ConnectivityManager`, registered once.
-10. `HumlaClient`, with `DefaultTransportFactory`. Until step 7 it also
-    takes the interim observer bridge, which the container owns because the
-    client outlives every service instance: `HumlaCallbacks`, the
-    main-thread poster, and the deny formatter from the chat-log strings.
-11. The session-state mirror, a `StateFlow<SessionState>` that follows
-    `client.currentSession` and is empty without one. The policy collector
-    and, until step 8, the live handles read it.
-12. The voice policy collector (see [voice](voice.md#voicepolicy)), with
-    its pushes of `VoicePolicy` and `VoiceSettings` into `VoiceEngine`.
-13. Features (below), each started with `appScope`.
+6. The deny formatter, from the `deny_reason_*` strings.
+7. `HumlaRuntime`, through `HumlaRuntime.create` (below), given the
+   application context, `appScope`, the inputs from steps 3, 5, and 6,
+   and the edges (production edges unless a test passes fakes).
+8. Features (below), each started with `appScope`.
 
 **Lifetime.** Everything the container builds lives as long as the
 process and is **never closed**. Services, screens, and features borrow
 these objects; none of them may close one, because the next service or
 screen in the same process gets the same instance. Idle, this costs an
 idle route thread and voice control dispatcher, and two registered platform
-callbacks (audio devices, default network). The native engine is created
-on the first voice start and kept, as `VoiceEngine` already keeps it
-across reconnects.
+callbacks (audio devices, default network). Heavy resources wait for use:
+the native engine is created on the first voice start and kept, as
+`VoiceEngine` already keeps it across reconnects, and features create
+theirs on the first connect (see [features](#features)).
 
 **Interim hand-off (step 6 only).** `HumlaService` still exists in step 6
-and gets the library objects as one `HumlaRuntime` value from an abstract
-`runtime()` that `MumlaService` implements from the container. `HumlaService`
-keeps only service-lifetime work: the wake lock and Wi-Fi lock, posting the
-connection notification, the binder delegations, and the connect half of
-`ConfigDelta`. Step 7 deletes `HumlaRuntime` along with the service.
+and gets the runtime from an abstract `runtime()` that `MumlaService`
+implements from the container. `HumlaService` keeps only service-lifetime
+work: the wake lock and Wi-Fi lock, posting the connection notification,
+the binder delegations (including registering and, on destroy,
+unregistering observers on the runtime's `HumlaCallbacks`), and the
+connect half of `ConfigDelta`.
 
 Screens get dependencies through one `ViewModelProvider.Factory` that reads
 the container from `application`. There is no DI framework: Hilt is removed
 from both modules in [step 6](migration.md#step-6--container-storage-and-features).
 `:app` keeps kapt only for the Room compiler, until a stable KSP for the
 project's Kotlin version replaces it.
+
+### `HumlaRuntime`
+
+The library's public assembly point. `RouteControl`, `AudioPlatform`,
+`ScoLink`, `RouteThread`, and the policy collector stay `internal` to
+`:libraries:humla`; `HumlaRuntime.create` builds them, so `:app` never
+names them:
+
+```kotlin
+class HumlaRuntime private constructor(/* … */) {
+    data class Inputs(
+        val voiceSettings: StateFlow<VoiceSettings>,
+        val routePreferences: StateFlow<RoutePreferences>,
+        val localFacts: LocalFactsStore,
+        val denyFormatter: (SessionEvent.PermissionDenied) -> String,  // interim, until step 7
+        val clock: Clock,
+    )
+    data class Edges(
+        val engineFactory: (NativeVoiceEngine.Listener) -> EngineNative,
+        val transports: TransportFactory,
+    ) { companion object { fun production(): Edges } }
+
+    companion object {
+        fun create(context: Context, scope: CoroutineScope, inputs: Inputs, edges: Edges): HumlaRuntime
+    }
+
+    val client: HumlaClient
+    val routeState: StateFlow<RouteState>
+    val routeEvents: SharedFlow<RouteEvent>
+    fun retrySco()
+    val voiceEvents: SharedFlow<VoiceEvent>
+    val talkActivity: StateFlow<TalkActivity>
+    val sessionState: StateFlow<SessionState>   // the mirror; empty without a session
+    val callbacks: HumlaCallbacks               // interim, until step 8
+}
+```
+
+`create` builds, in order: the `TalkActivityPublisher`; `RouteControl`
+through `RouteControl.create` with `AndroidAudioPlatform` and a factory
+that builds `BluetoothScoManager` on the application context (see
+[route](route.md#api)), then calls its `onInit` and `start`; `VoiceEngine`
+on its own single-thread control dispatcher, with a tunnel sink that reads
+the client's current session lazily (the client is built after it, and the
+sink runs only while a session exists); the `NetworkMonitor` over
+`ConnectivityManager`, registered once; `HumlaCallbacks`; `HumlaClient`
+with the interim observer bridge (the callbacks, the main-thread poster,
+the deny formatter); the session-state mirror; the policy collector (see
+[voice](voice.md#voicepolicy)) with its pushes of `VoicePolicy` and
+`VoiceSettings` into `VoiceEngine`; and the observer-bridge collectors
+that forward route, SCO, and talk hints into the callbacks. The runtime's
+own collectors run in `scope` under the same exception rule as `appScope`.
+
+Step 7 removes the interim members with `IHumlaObserver`. The runtime
+itself stays.
 
 ## `ConnectionService`
 
@@ -130,6 +182,16 @@ container builds and starts every feature once, at process start.
   calls (`setPtt`, `setSelfMuteDeaf`, `disconnect`), never the container
   or `HumlaClient` itself, so its tests drive it with plain flows (see
   [testing](testing.md#app-layer-tests)).
+- **Features run on the main thread.** Each feature collects on
+  `Dispatchers.Main.immediate` in its own child `SupervisorJob`, so one
+  failing feature stops alone and the `appScope` handler reports it. That
+  is where all of `MumlaService` runs today, and windows, toasts,
+  `SoundPool`, and `MediaSession` need it.
+- **Heavy resources wait for the first connect.** `TextToSpeech` and
+  `SoundPool` are created the first time `client.state` leaves `Idle`,
+  then kept for the process. The media session, overlay windows, and the
+  proximity wake lock follow today's show and hide rules. A process that
+  never connects creates none of them.
 - **Features own no Android component.** A feature uses the application
   context (for example for overlay windows, `TextToSpeech`, `SoundPool`,
   and toasts) and never holds a service or an activity. Anything that needs
@@ -137,18 +199,18 @@ container builds and starts every feature once, at process start.
 
 | Feature | Replaces (today) | Collects | Does |
 |---|---|---|---|
-| Connection notification and media session | `MumlaConnectionNotification` (including its `MediaSession`, custom actions, and headset-hook and claimed-key dispatch), `updateConnectedNotification`, `onMuteToggled`, `onDeafenToggled`, `onOverlayToggled`, `onDisconnect`, `onCancelReconnect`, `setSuppressNotifications` | `client.state`, session-state mirror (self, channel), `client.events` (`PermissionDenied`), `talkActivity`, overlay setting, notification style setting | Builds the foreground notification in its connecting, connected, and reconnecting variants and exposes it as a `StateFlow`; the service posts it with `startForeground` (`HumlaService` in step 6, `ConnectionService` from step 7). Owns the media session; actions call session and client intents. A permission denial re-shows the notification, as `MumlaService.onPermissionDenied` does today, except while the activity is in the foreground (today's `setSuppressNotifications`) |
-| Message notifications | `MumlaMessageNotification`, `clearChatNotifications` | `client.events` (`TextMessageReceived`), `chatNotify` setting | Posts and clears message notifications. Never suppressed by chat visibility, as today |
-| Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `client.events`, session-state mirror (for filters), `voice.events` (`EncoderLimited`, `PipelineError`) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`). Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings, and applies today's filters: moves only when they enter or leave the self user's channel (with today's wording when the user moved themselves), recordings only in the same or a linked channel. `ConnectionWarning` and `PipelineError` are logged as warnings |
-| TTS | `speakTts`, `initTts`, TTS parts of `handleUserTalkStateUpdated` | `client.events`, TTS settings, self deafen state | Speaks messages with today's rules (HTML stripped, links shortened, short form when configured, the 250-character threshold, nothing while deafened), plus today's connection announcements and engine-failure messages |
-| PTT sounds | `initSoundPool`, `playPttSound`, `releaseSoundPool` | `talkActivity.selfTalking`, `route.state`, `pttSound` setting | Plays the PTT beeps on the stream today's code picks (voice call stream on the voice route, music otherwise); reloads on route change |
-| Talk keys | `onTalkKeyDown`, `onTalkKeyUp`, `onTalkKeyCancel` | Key events from the activity, the media session, and the on-screen PTT button, PTT settings | Calls `session.setPtt`, with toggle mode as today. A cancel (today's `ChannelFragment.onPause` and `ACTION_CANCEL` paths call `onTalkKeyCancel`) always ends a press, so leaving or rotating the screen mid-press never leaves transmit on |
+| Connection notification and media session | `MumlaConnectionNotification` (including its `MediaSession`, custom actions, and headset-hook and claimed-key dispatch), `updateConnectedNotification`, `onMuteToggled`, `onDeafenToggled`, `onOverlayToggled`, `onDisconnect`, `onCancelReconnect`, `setSuppressNotifications` | `client.state`, session-state mirror (self, channel), `client.events` (`PermissionDenied`), `talkActivity`, overlay setting, notification style setting | Builds the foreground notification in its connecting, connected, and reconnecting variants and exposes it as a `StateFlow<Notification>` that always has a value (`Idle` maps to the connecting variant, since a service only asks while connecting or later). The service calls `startForeground` with the current value as soon as it starts, which meets Android's five-second rule however late `client.state` moves, and then posts each update (`HumlaService` in step 6, `ConnectionService` from step 7). Its actions are explicit `PendingIntent`s to a non-exported `NotificationActionReceiver` (in `se.lublin.mumla.service`, not a feature) that calls the feature through the container, so they work with or without a service. Owns the media session; actions call session and client intents. A permission denial re-shows the notification, as `MumlaService.onPermissionDenied` does today, except while the activity is in the foreground (today's `setSuppressNotifications`) |
+| Message notifications | `MumlaMessageNotification`, `clearChatNotifications` | `client.events` (`TextMessageReceived`), `chatNotify` setting | Posts and clears message notifications. Never suppressed by chat visibility, as today. Clears them when `client.state` returns to `Idle`; today they go when the service is destroyed, which follows the disconnect |
+| Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `client.events` (filters read each record's state), `client.state` (today's connecting, connected, disconnected, and reconnecting lines), the runtime's `voiceEvents` (`EncoderLimited`, `PipelineError`); until step 7 also `onMessageLogged` and `MumlaService`'s send delegations (see [migration](migration.md#step-6--container-storage-and-features)) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`), for the life of the process (today the log goes when the service is destroyed). Until step 7 it forwards each line it appends to `HumlaCallbacks` for the open chat screen. Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings, and applies today's filters: moves only when they enter or leave the self user's channel (with today's wording when the user moved themselves), recordings only in the same or a linked channel. `ConnectionWarning` and `PipelineError` are logged as warnings |
+| TTS | `speakTts`, `initTts`, TTS parts of `handleUserTalkStateUpdated` | `client.events`, `client.state` (connection announcements), TTS settings, self deafen state | Speaks messages with today's rules (HTML stripped, links shortened, short form when configured, the 250-character threshold, nothing while deafened), plus today's connection announcements and engine-failure messages |
+| PTT sounds | `initSoundPool`, `playPttSound`, `releaseSoundPool` | `talkActivity.selfTalking`, `route.state`, input method and `pttSound` settings | Plays the PTT beeps in push-to-talk mode on the stream today's code picks (voice call stream on the voice route, music otherwise); reloads on route change. The mode comes from the setting: on `master` the check reads `getTransmitMode`, which always says voice activity, so the beeps never play (see [migration](migration.md#step-6--container-storage-and-features)) |
+| Talk keys | `onTalkKeyDown`, `onTalkKeyUp`, `onTalkKeyCancel` | Key events from the activity, the media session, and the on-screen PTT button, PTT settings | Calls `session.setPtt`, or `session.togglePtt` in toggle mode, as today. A cancel (today's `ChannelFragment.onPause` and `ACTION_CANCEL` paths call `onTalkKeyCancel`) always ends a press, so leaving or rotating the screen mid-press never leaves transmit on |
 | Media key mute | `onMediaKeyMuteToggled` | Media session events, settings | Toggles self-mute; optional TTS announcement |
 | Hot corner | `MumlaHotCorner`, `onHotCorner*`, `updateHotCornerVisibility` | `client.state`, `configuration`, hot corner settings | Shows the overlay window; calls `session.setPtt`; refreshes its gesture exclusion after rotation, deferred past the relayout as today |
 | Overlay | `MumlaOverlay`, `setOverlayShown`, `isOverlayShown`, `updateOverlayVisibility`, `checkAndRequestOverlayPermission` | Session-state mirror, `talkActivity`, `configuration`, overlay settings | Shows who is talking in a system overlay; repositions on rotation and on a placement change, as today |
 | Proximity | `shouldUseProximitySensor`, `setProximitySensorOn` | `route.state`, `client.state`, handset-mode setting | Holds `PROXIMITY_SCREEN_OFF_WAKE_LOCK` while connected in handset mode without SCO, as today's condition, with today's guards for devices without the sensor |
-| Talk broadcast | `TalkBroadcastReceiver`, `registerTalkReceiver`, `unregisterTalkReceiver` | `client.state`, `allowTalkBroadcast` setting, input mode | Registers the receiver while connected; maps on, off, and toggle to `session.setPtt` with today's guards (connected, push-to-talk mode only, unknown values ignored) |
-| Bluetooth permission guard | `MumlaService`'s `hasBluetoothConnectGrant` check when the Bluetooth headset preference changes | Bluetooth headset setting | When the preference is turned on without the `BLUETOOTH_CONNECT` grant, turns it back off and shows today's toast |
+| Talk broadcast | `TalkBroadcastReceiver`, `registerTalkReceiver`, `unregisterTalkReceiver` | `client.state`, `allowTalkBroadcast` and input method settings | Registers the receiver while connected; maps on and off to `session.setPtt` and toggle to `session.togglePtt`, with today's guards (connected, push-to-talk mode only, unknown values ignored). The mode comes from the setting, which also restores the receiver: on `master` its `getTransmitMode` guard rejects every request |
+| Bluetooth permission guard | `MumlaService`'s `hasBluetoothConnectGrant` check when the Bluetooth headset preference changes | Bluetooth headset setting | When the preference is turned on without the `BLUETOOTH_CONNECT` grant, turns it back off and shows today's toast. The route never sees the ungranted value, because the container gates `RoutePreferences` on the grant |
 | SCO failure message | `MumlaService.onBluetoothScoFailed` (Toast) | `route.events` | Shows the toast, with today's `scoFailureMessage` bucketing |
 | Avatar requests | `MumlaService`'s `requestAvatar` calls in `onUserConnected` and `onUserStateUpdated` | Session-state mirror | For each user with a texture hash and no texture, calls `session.requestTexture` once per user and hash value; forgets a user when they leave and everything when the session ends. Today's code repeats the request on every state update until the texture arrives. The server answers each request over TCP, so one request per hash is enough |
 | Reconnect-required notice | `MumlaService.onSettingChanged`'s `change_requires_reconnect` toast | `certificateId` and `forceTcp` settings, `client.state` | Shows today's toast when either setting changes while connected |
@@ -199,27 +261,32 @@ with `repeatOnLifecycle(STARTED)`.
 ## Settings
 
 Settings stay in the existing DataStore file and key space. Each consumer
-collects only the keys it uses, mapped from one current-value API on
+collects only the keys it uses, from one current-value API on
 `SettingsRepository`:
 
-- **`snapshot: StateFlow<PrefSnapshot>`** holds every key. The container
-  seeds it with the blocking startup read (see
+- **`state: StateFlow<SettingsState>`**, where `SettingsState` holds the raw
+  `Preferences` and the typed `PrefSnapshot` derived from it, always
+  together. The container seeds it with the blocking startup read (see
   [`AppContainer`](#appcontainer)), so it always has a value, and reading
-  `snapshot.value` never blocks. The `Settings` facade's getters and
-  `DataStorePreferenceDataStore` (whose `PreferenceDataStore` contract is
-  synchronous) read it.
-- **`update(block)`** is not `suspend` and never blocks. It applies the
-  change to `snapshot` at once (an atomic `update {}`), so every reader,
-  including the caller's next line, sees it. It then queues the names of the
-  keys the block touched to one writer coroutine in `appScope`, which
-  writes those keys with their values in `snapshot` at the time it writes.
-  Two racing updates may queue in either order, but the store still ends
-  at the in-memory value. The repository is the store's only writer (one instance, built
-  by the container), so the in-memory value is the truth and nothing reads
-  the store back. A failed write is logged and the in-memory value stays,
-  so the setting holds for the rest of the process. A change made in the
-  last milliseconds before the process dies can be lost; today's blocking
-  write cannot lose it, and that difference is accepted.
+  it never blocks. The `Settings` facade's getters read the snapshot.
+  `DataStorePreferenceDataStore`, whose `PreferenceDataStore` contract is
+  synchronous and raw-keyed with the widget's default, reads the raw
+  `Preferences`.
+- **`update(block: (MutablePreferences) -> Unit)`** is not `suspend` and
+  never blocks. Inside an atomic `update {}` it copies the current raw
+  value, applies the block to the copy, and derives the new snapshot, so
+  every reader, including the caller's next line, sees the change. It then
+  signals one writer coroutine in `appScope` through a conflated channel.
+  The writer replaces the store's contents with the latest in-memory raw
+  value (`store.updateData { latest }`). Writing the whole value, not the
+  changed keys, means racing updates and coalesced signals always leave
+  the store equal to memory, with no per-key bookkeeping.
+- The repository is the store's only writer (one instance, built by the
+  container), so the in-memory value is the truth and nothing reads the
+  store back after startup. A failed write is logged; the in-memory value
+  stays, and the next signal writes it again. A change made in the last
+  milliseconds before the process dies can be lost; today's blocking write
+  cannot lose it, and that difference is accepted.
 - Until step 7, the legacy listener bridge diffs consecutive snapshots for
   the screens that still register `OnSettingChangedListener`.
 

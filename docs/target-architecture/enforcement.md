@@ -145,9 +145,12 @@ in step 3, which is a strictness increase, not a relaxation.
 
 ## Feature isolation
 
-From step 6, `check_architecture.py` lists the classes declared in
-`app/src/main/java/se/lublin/mumla/feature/` and fails if any file there
-names another file's feature class. Features get everything they share
+From step 6, `check_architecture.py` lists the feature classes in
+`app/src/main/java/se/lublin/mumla/feature/` (the classes that declare
+`fun start(scope: CoroutineScope)`) and fails if any file there names
+another file's feature class. Shared helpers in that package that are not
+features, such as the connection-line formatter that the chat log and TTS
+both use, may be referenced freely. Features get everything they share
 from the container (see [app](app.md#features)); a feature that needs
 another feature's output means that output belongs in the container as a
 flow. Same-package references need no import, so the check matches class
@@ -155,10 +158,13 @@ names, not imports.
 
 ## Local-facts writer
 
-From step 6, `check_architecture.py` fails if any `:app` file other than
-the `LocalFactsStore` implementation calls `addLocalMutedUser`,
-`removeLocalMutedUser`, `addLocalIgnoredUser`, `removeLocalIgnoredUser`, or
-`setMutedAndDeafened`. The session decides local mute, ignore, and
+From step 6, `check_architecture.py` fails if a file under `app/src/main`
+other than the `LocalFactsStore` implementation and the `db` package (which
+declares these methods) contains a call to `.addLocalMutedUser(`,
+`.removeLocalMutedUser(`, `.addLocalIgnoredUser(`, `.removeLocalIgnoredUser(`,
+`localMuteDao()`, `localIgnoreDao()`, or `.setMutedAndDeafened(`. The
+patterns are call sites, so declarations and tests never match, and the
+store's `suspend` path through the DAOs is covered by the DAO patterns. The session decides local mute, ignore, and
 self-mute, and its store is their only writer (see
 [state](state.md#self-mute-and-deafen)); before step 6, the adapter, the
 service, and the store all wrote them.
