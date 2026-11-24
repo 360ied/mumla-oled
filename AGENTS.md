@@ -2,6 +2,8 @@
 
 ## Core Guardrails
 
+- **User Precedence**: Explicit user instructions override the project
+  guardrails in this document.
 - **Dedicated Worktrees**: Conduct all feature, bugfix, experimental,
   and standalone documentation development in dedicated Git worktrees under
   `.worktrees/<branch>`; never develop directly on `master` or switch
