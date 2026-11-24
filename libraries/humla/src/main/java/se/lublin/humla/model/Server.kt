@@ -150,12 +150,6 @@ class Server(
     }
 
     @Synchronized
-    fun setResolved(host: String?, port: Int) {
-        resolvedHost = host
-        resolvedPort = port
-    }
-
-    @Synchronized
     private fun srvResolve() {
         if (resolvedHost != null) {
             return

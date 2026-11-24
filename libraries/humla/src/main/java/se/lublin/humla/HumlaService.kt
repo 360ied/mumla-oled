@@ -413,14 +413,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             acquireWifiLock()
-                            // Record the resolved host for the app's Server row.
-                            try {
-                                val session = s.session
-                                val remoteHost = session.transport.remoteHost
-                                val remotePort = session.transport.remotePort
-                                lastServer.get()?.setResolved(remoteHost, remotePort)
-                            } catch (ignored: Exception) {
-                            }
                             // Apply a voice-target set while disconnected (policy carries
                             // it to native; no handler to seed).
                             try {
