@@ -181,9 +181,14 @@ class AppContainerLifecycleTest {
     @Test fun idleServiceDoesNotPostAConnectingPlaceholder() {
         val controller = Robolectric.buildService(MumlaService::class.java).create()
         val shadow = Shadows.shadowOf(controller.get())
-        assertFalse(
+        // Only startForeground sets the id and nothing resets it, so 0 means
+        // the service never posted. isLastForegroundNotificationAttached()
+        // cannot pin this: the collector's Idle stopForeground(REMOVE) clears
+        // it even after a placeholder was posted.
+        assertEquals(
             "a bound-but-Idle service must not post the connecting notification",
-            shadow.isLastForegroundNotificationAttached(),
+            0,
+            shadow.lastForegroundNotificationId,
         )
         controller.destroy()
     }

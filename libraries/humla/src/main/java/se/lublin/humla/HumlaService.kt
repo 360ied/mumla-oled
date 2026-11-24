@@ -345,14 +345,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         mCallbacks = appRuntime.callbacks
 
         // The connection notification comes from an application-lifetime
-        // feature. Start in the foreground immediately (Android's five-second
-        // rule), post every update, and remove it on Idle or Failed: a bound
-        // service outlives the connection.
+        // feature. Post every update while connecting or connected, and
+        // remove it on Idle or Failed: a bound service outlives the
+        // connection. Callers use startService, not startForegroundService,
+        // so there is no five-second deadline and a bound-but-Idle service
+        // need not flash the connecting placeholder; the collector promotes
+        // it on the first non-Idle state. Switching callers to
+        // startForegroundService requires posting here unconditionally.
         val foreground = foregroundNotification()
         if (foreground != null) {
-            // A bound-but-Idle service must not flash the connecting
-            // placeholder. The collector below promotes the notification
-            // on the first non-Idle state and removes it on Idle/Failed.
             val initial = appRuntime.client.state.value
             if (initial !is ClientState.Idle && initial !is ClientState.Failed) {
                 postForeground(foreground.value)
