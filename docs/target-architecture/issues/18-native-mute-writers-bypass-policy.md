@@ -7,7 +7,7 @@
 | Severity | Moderate (two owners of the transmit gate; possible latched divergence) |
 | Verified | Code paths verified; a concrete latching sequence was not constructed |
 | Area | Step-4 voice control / `AudioHandler` |
-| Spec | [voice.md § Interim mute (step 4, before 5a)](../voice.md#interim-mute-step-4-before-5a), [migration.md § Step 4](../migration.md#step-4--voice-control-and-route) item 3 |
+| Spec | [voice.md § Interim mute (step 4, before 5a)](../voice.md#interim-mute-step-4-before-5a), [migration.md § Step 4](../steps/4-voice-control-and-route.md#step-4--voice-control-and-route) item 3 |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/protocol/AudioHandler.kt` (`updateMuteState` line 394, `setSelfMutedOptimistic` line 440, `applyInterimPolicy` line 752, `setPttTalking` line 896, `messageUserState` around line 700); `HumlaService.kt` (`setTalkingState` line 1351, `setSelfMuteDeafState` around line 1441); `audio/NativeAudioInputEngine.kt` (`@Synchronized` setters) |
 | Gates | Ends with 5a.4 (policy pushed natively); worth documenting now |
 

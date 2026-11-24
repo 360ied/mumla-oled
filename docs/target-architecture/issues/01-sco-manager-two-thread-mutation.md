@@ -7,7 +7,7 @@
 | Severity | Harmful (latent race; not observed in daily use) |
 | Verified | Yes, by code reading against the current tree and the pre-step-4 tree |
 | Area | Route / Bluetooth SCO |
-| Spec | [route.md § Thread](../route.md#thread), [migration.md § Step 4](../migration.md#step-4--voice-control-and-route) item 1 |
+| Spec | [route.md § Thread](../route.md#thread), [migration.md § Step 4](../steps/4-voice-control-and-route.md#step-4--voice-control-and-route) item 1 |
 | Code | `libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt`, `audio/ScoLink.kt`, `route/RouteControl.kt`, `HumlaService.kt` (construction) |
 | Gates | Gated step 5a.3a; gate met |
 

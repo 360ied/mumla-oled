@@ -5,7 +5,7 @@ commits), after the step-5a merge was reset away. The spec edits proposed
 here were applied in `ec9faf63` and `4e9474c7`; issue statuses and the
 remaining-work queue were refreshed in `0746f5e4`.
 
-The first attempt at [step 5a](../../migration.md#step-5a--engine-refactor-codec-network-threads)
+The first attempt at [step 5a](../../steps/5a-engine-refactor-codec-network-threads.md#step-5a--engine-refactor-codec-network-threads)
 of the [target architecture](../../README.md) was merged,
 shipped as `v0.27.4`, and pulled: all voice was dead at runtime while the
 gate (`check.sh`), the murmur interop suite, and the release build all

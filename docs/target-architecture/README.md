@@ -70,7 +70,8 @@ with snapshot releases as the field test.
 | [app.md](app.md) | `AppContainer`, `ConnectionService`, features, screens and ViewModels, settings |
 | [enforcement.md](enforcement.md) | Architecture checks in `check.sh`, immutability test, remaining conventions |
 | [testing.md](testing.md) | Test layers, murmur interop harness, native suite additions, on-device testing, `PROGRESS.md` |
-| [migration.md](migration.md) | Steps and commits, done-when lists, spikes, kill criteria, decisions reversed |
+| [migration.md](migration.md) | Step order and status, ground rules, kill criteria, decisions reversed |
+| [steps/](steps/) | One file per step: commits, done-when lists, spikes, step kill criteria |
 | [open-items.md](open-items.md) | Underspecification tracker: open, gating, and resolved items |
 
 ## History
